@@ -49,7 +49,7 @@
 
   let user: any = null;
   let token: string | null = null;
-  let currentOrg: OrganizationWithRole | null = null;
+  let currentOrg = $state<OrganizationWithRole | null>(null);
   let saving = $state(false);
   let deleting = $state(false);
 

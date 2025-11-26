@@ -25,13 +25,12 @@ async function cleanupOldMigrations() {
       return;
     }
 
-    // Get current migrations
-    const currentMigrations = await db
-      .selectFrom('kysely_migration')
-      .selectAll()
-      .execute();
+    // Get current migrations using raw SQL (kysely_migration is not in our Database type)
+    const currentMigrations = await sql<{ name: string; timestamp: string }>`
+      SELECT name, timestamp FROM kysely_migration
+    `.execute(db);
 
-    console.log('Current migrations in database:', currentMigrations.map(m => m.name));
+    console.log('Current migrations in database:', currentMigrations.rows.map(m => m.name));
 
     // Migrations to remove (these were consolidated into 001_initial_schema.sql)
     const obsoleteMigrations = [
@@ -40,30 +39,29 @@ async function cleanupOldMigrations() {
       '004_sigma_notifications'
     ];
 
-    // Delete obsolete migration records
-    const result = await db
-      .deleteFrom('kysely_migration')
-      .where('name', 'in', obsoleteMigrations)
-      .executeTakeFirst();
+    // Delete obsolete migration records using raw SQL
+    const result = await sql`
+      DELETE FROM kysely_migration
+      WHERE name = ANY(${sql.val(obsoleteMigrations)})
+    `.execute(db);
 
-    const deletedCount = Number(result.numDeletedRows || 0);
+    const deletedCount = Number(result.numAffectedRows || 0);
 
     if (deletedCount > 0) {
       console.log(`✅ Removed ${deletedCount} obsolete migration record(s)`);
       console.log('   Removed:', obsoleteMigrations.filter(m =>
-        currentMigrations.some(cm => cm.name === m)
+        currentMigrations.rows.some(cm => cm.name === m)
       ));
     } else {
       console.log('✓ No obsolete migrations found to clean');
     }
 
     // Show remaining migrations
-    const remainingMigrations = await db
-      .selectFrom('kysely_migration')
-      .selectAll()
-      .execute();
+    const remainingMigrations = await sql<{ name: string; timestamp: string }>`
+      SELECT name, timestamp FROM kysely_migration
+    `.execute(db);
 
-    console.log('\nRemaining migrations:', remainingMigrations.map(m => m.name));
+    console.log('\nRemaining migrations:', remainingMigrations.rows.map(m => m.name));
     console.log('\n✅ Cleanup complete!');
 
   } catch (error) {
