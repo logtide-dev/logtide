@@ -110,6 +110,7 @@ We have ready-to-use SDKs for the most popular languages.
 * ✅ **Multi-Organization:** Isolate teams and projects strictly.
 * ✅ **Alerting:** Get notified via Email or Webhook (Slack/Discord) on error spikes.
 * ✅ **Retention Policy:** Automatic cleanup of old logs via TimescaleDB.
+* ✅ **Sigma Rules Detection:** Built-in engine to run security detection rules (YAML) against your logs, effectively turning LogWard into a lightweight SIEM for threat detection.
 
 ---
 
