@@ -41,3 +41,4 @@ coverage/
 tmp/
 /.claude/
 claude.md
+/packages/backend/.claude/
