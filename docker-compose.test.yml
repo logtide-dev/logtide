@@ -41,6 +41,34 @@ services:
     networks:
       - logward-test-network
 
+  # Frontend for E2E testing
+  frontend-test:
+    build:
+      context: .
+      dockerfile: packages/frontend/Dockerfile
+      args:
+        PUBLIC_API_URL: http://localhost:3001
+    container_name: logward-frontend-test
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+      PUBLIC_API_URL: http://localhost:3001
+      ORIGIN: http://localhost:3002
+    ports:
+      - "3002:3000"
+    depends_on:
+      backend-test:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "node", "-e", "require('http').get('http://localhost:3000/', (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - logward-test-network
+
   # Backend for E2E and load testing
   backend-test:
     build:
@@ -63,6 +91,10 @@ services:
       # Higher rate limits for load testing (100 req/s = 6000/min, use 100000 for safety)
       RATE_LIMIT_MAX: 100000
       RATE_LIMIT_WINDOW: 60000
+      # Higher auth rate limits for E2E testing (many user registrations)
+      AUTH_RATE_LIMIT_REGISTER: 10000
+      AUTH_RATE_LIMIT_LOGIN: 10000
+      AUTH_RATE_LIMIT_WINDOW: 60000
     ports:
       - "3001:8080"
     depends_on:

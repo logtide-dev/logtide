@@ -9,8 +9,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "playwright test",
+    "test:e2e": "E2E=true playwright test",
+    "test:e2e:headed": "E2E=true playwright test --headed",
+    "test:e2e:debug": "E2E=true playwright test --debug",
+    "test:e2e:ui": "E2E=true playwright test --ui",
+    "test:journeys": "E2E=true playwright test tests/journeys",
+    "test:edge-cases": "E2E=true playwright test tests/edge-cases",
     "typecheck": "svelte-kit sync && tsc --noEmit",
-    "clean": "rm -rf .svelte-kit build"
+    "clean": "rm -rf .svelte-kit build test-results"
   },
   "dependencies": {
     "@logward/shared": "workspace:*",

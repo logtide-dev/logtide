@@ -92,10 +92,10 @@ jobs:
         run: pnpm test:ci -- --coverage
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/backend/coverage/lcov.info
+          directory: packages/backend/coverage
           flags: backend
           name: backend-coverage
           fail_ci_if_error: false
@@ -149,12 +149,80 @@ jobs:
         run: pnpm --filter '@logward/frontend' typecheck
 
   # ====================
+  # E2E Tests (Playwright)
+  # ====================
+  e2e-test:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [backend-test, typecheck]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        working-directory: packages/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Start test infrastructure
+        run: |
+          docker compose -f docker-compose.test.yml up -d --build
+          # Wait for services to be healthy
+          echo "Waiting for services to be ready..."
+          timeout 120 bash -c 'until curl -s http://localhost:3001/health > /dev/null; do sleep 2; done'
+          echo "Backend is ready"
+          timeout 120 bash -c 'until curl -s http://localhost:3002 > /dev/null; do sleep 2; done'
+          echo "Frontend is ready"
+
+      - name: Run E2E tests
+        working-directory: packages/frontend
+        env:
+          E2E: 'true'
+          TEST_API_URL: http://localhost:3001
+          TEST_FRONTEND_URL: http://localhost:3002
+        run: npx playwright test --reporter=list
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: packages/frontend/playwright-report/
+          retention-days: 7
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: packages/frontend/test-results/
+          retention-days: 7
+
+      - name: Stop test infrastructure
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+  # ====================
   # Build Docker Images
   # ====================
   build:
     name: Build Docker Images
     runs-on: ubuntu-latest
-    needs: [backend-test, typecheck]
+    needs: [backend-test, typecheck, e2e-test]
 
     steps:
       - name: Checkout

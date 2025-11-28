@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { usersService } from './service.js';
+import { config } from '../../config/index.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -29,8 +30,8 @@ export async function usersRoutes(fastify: FastifyInstance) {
   fastify.post('/register', {
     config: {
       rateLimit: {
-        max: 10, // 10 registrations per 15 minutes
-        timeWindow: '15 minutes'
+        max: config.AUTH_RATE_LIMIT_REGISTER, // Configurable via AUTH_RATE_LIMIT_REGISTER env var
+        timeWindow: config.AUTH_RATE_LIMIT_WINDOW // Configurable via AUTH_RATE_LIMIT_WINDOW env var
       }
     },
     handler: async (request, reply) => {
@@ -82,8 +83,8 @@ export async function usersRoutes(fastify: FastifyInstance) {
   fastify.post('/login', {
     config: {
       rateLimit: {
-        max: 20, // 20 login attempts per 15 minutes
-        timeWindow: '15 minutes'
+        max: config.AUTH_RATE_LIMIT_LOGIN, // Configurable via AUTH_RATE_LIMIT_LOGIN env var
+        timeWindow: config.AUTH_RATE_LIMIT_WINDOW // Configurable via AUTH_RATE_LIMIT_WINDOW env var
       }
     },
     handler: async (request, reply) => {

@@ -42,6 +42,11 @@ const configSchema = z.object({
   // Rate limiting
   RATE_LIMIT_MAX: z.string().default('1000').transform(Number),
   RATE_LIMIT_WINDOW: z.string().default('60000').transform(Number), // 1 minute in ms
+
+  // Auth rate limiting (separate from general rate limiting for security)
+  AUTH_RATE_LIMIT_REGISTER: z.string().default('10').transform(Number), // Registrations per window
+  AUTH_RATE_LIMIT_LOGIN: z.string().default('20').transform(Number), // Login attempts per window
+  AUTH_RATE_LIMIT_WINDOW: z.string().default('900000').transform(Number), // 15 minutes in ms
 });
 
 export type Config = z.infer<typeof configSchema>;
