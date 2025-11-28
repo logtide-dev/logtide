@@ -11,6 +11,7 @@
   const navItems: NavItem[] = [
     { label: 'Dashboard', path: '/dashboard' },
     { label: 'Search', path: '/search' },
+    { label: 'Traces', path: '/traces' },
     { label: 'Alerts', path: '/alerts' },
     { label: 'Settings', path: '/settings' },
   ];
