@@ -42,3 +42,4 @@ tmp/
 /.claude/
 claude.md
 /packages/backend/.claude/
+/packages/backend/load-tests/

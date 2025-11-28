@@ -3,6 +3,7 @@ import request from 'supertest';
 import { build } from '../../../server.js';
 import { db } from '../../../database/index.js';
 import { createTestApiKey, createTestUser } from '../../helpers/factories.js';
+import { config } from '../../../config/index.js';
 
 describe('Rate Limiting', () => {
     let app: any;
@@ -99,9 +100,9 @@ describe('Rate Limiting', () => {
                 })
                 .expect(200);
 
-            // Batch ingestion should have max 200 per minute
+            // Batch ingestion should use configured rate limit
             const limit = parseInt(response.headers['x-ratelimit-limit'] || '0');
-            expect(limit).toBeLessThanOrEqual(200);
+            expect(limit).toBe(config.RATE_LIMIT_MAX);
         });
 
         it('should enforce rate limit on single ingestion endpoint', async () => {
@@ -118,9 +119,9 @@ describe('Rate Limiting', () => {
                 })
                 .expect(200);
 
-            // Single ingestion should have max 300 per minute
+            // Single ingestion should use configured rate limit
             const limit = parseInt(response.headers['x-ratelimit-limit'] || '0');
-            expect(limit).toBeLessThanOrEqual(300);
+            expect(limit).toBe(config.RATE_LIMIT_MAX);
         });
 
         it('should decrement remaining requests counter', async () => {
