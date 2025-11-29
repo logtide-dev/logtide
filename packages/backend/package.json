@@ -22,6 +22,7 @@
     "test:watch": "node src/scripts/run-tests.mjs --watch",
     "test:coverage": "node src/scripts/run-tests.mjs --coverage",
     "test:ci": "vitest run",
+    "test:ci:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "load:smoke": "k6 run load-tests/smoke.js",

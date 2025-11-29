@@ -194,6 +194,7 @@
     { label: "Projects", href: "/dashboard/projects", icon: FolderKanban },
     { label: "Logs", href: "/dashboard/search", icon: FileText },
     { label: "Traces", href: "/dashboard/traces", icon: GitBranch },
+    { label: "Traces", href: "/traces", icon: GitBranch },
     { label: "Alerts", href: "/dashboard/alerts", icon: AlertTriangle },
     { label: "Docs", href: "/docs", icon: Book },
     { label: "Settings", href: "/dashboard/settings", icon: Settings },
