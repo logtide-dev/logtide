@@ -12,8 +12,6 @@
     CardDescription,
   } from "$lib/components/ui/card";
   import { Badge } from "$lib/components/ui/badge";
-  import AppLayout from "$lib/components/AppLayout.svelte";
-  import RequireOrganization from "$lib/components/RequireOrganization.svelte";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
   import Clock from "@lucide/svelte/icons/clock";
@@ -219,14 +217,12 @@
   <title>Trace {traceId.substring(0, 8)}... - LogWard</title>
 </svelte:head>
 
-<AppLayout>
-  <RequireOrganization>
-    <div class="container mx-auto px-6 py-8 max-w-7xl">
-      <div class="mb-6">
-        <Button
-          variant="ghost"
-          size="sm"
-          onclick={() => goto("/traces")}
+<div class="container mx-auto px-6 py-8 max-w-7xl">
+  <div class="mb-6">
+    <Button
+      variant="ghost"
+      size="sm"
+      onclick={() => goto("/dashboard/traces")}
           class="mb-4"
         >
           <ArrowLeft class="w-4 h-4 mr-2" />
@@ -552,6 +548,4 @@
           </CardContent>
         </Card>
       {/if}
-    </div>
-  </RequireOrganization>
-</AppLayout>
+</div>

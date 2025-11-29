@@ -3,8 +3,6 @@
   import { currentOrganization } from '$lib/stores/organization';
   import { dashboardAPI } from '$lib/api/dashboard';
   import type { DashboardStats, TimeseriesDataPoint, TopService, RecentError } from '$lib/api/dashboard';
-  import AppLayout from '$lib/components/AppLayout.svelte';
-  import RequireOrganization from '$lib/components/RequireOrganization.svelte';
   import StatsCard from '$lib/components/dashboard/StatsCard.svelte';
   import LogsChart from '$lib/components/dashboard/LogsChart.svelte';
   import TopServicesWidget from '$lib/components/dashboard/TopServicesWidget.svelte';
@@ -95,9 +93,7 @@
   }
 </script>
 
-<AppLayout>
-  <RequireOrganization>
-    <div class="container mx-auto space-y-6 p-6">
+<div class="container mx-auto space-y-6 p-6">
       <div>
         <h1 class="text-3xl font-bold tracking-tight">Dashboard</h1>
         <div class="flex items-center gap-2 mt-2">
@@ -180,6 +176,4 @@
           <RecentErrorsWidget errors={recentErrors} />
         </div>
       {/if}
-    </div>
-  </RequireOrganization>
-</AppLayout>
+</div>

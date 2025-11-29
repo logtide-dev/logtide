@@ -10,10 +10,10 @@
 
   const navItems: NavItem[] = [
     { label: 'Dashboard', path: '/dashboard' },
-    { label: 'Search', path: '/search' },
-    { label: 'Traces', path: '/traces' },
-    { label: 'Alerts', path: '/alerts' },
-    { label: 'Settings', path: '/settings' },
+    { label: 'Search', path: '/dashboard/search' },
+    { label: 'Traces', path: '/dashboard/traces' },
+    { label: 'Alerts', path: '/dashboard/alerts' },
+    { label: 'Settings', path: '/dashboard/settings' },
   ];
 
   let currentPath = $derived($page.url.pathname);

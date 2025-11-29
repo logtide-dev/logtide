@@ -27,8 +27,6 @@
   } from "$lib/components/ui/table";
   import * as Select from "$lib/components/ui/select";
   import * as Popover from "$lib/components/ui/popover";
-  import AppLayout from "$lib/components/AppLayout.svelte";
-  import RequireOrganization from "$lib/components/RequireOrganization.svelte";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -291,9 +289,7 @@
   <title>Traces - LogWard</title>
 </svelte:head>
 
-<AppLayout>
-  <RequireOrganization>
-    <div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto px-6 py-8 max-w-7xl">
       <div class="mb-6">
         <div class="flex items-center gap-3 mb-2">
           <GitBranch class="w-8 h-8 text-primary" />
@@ -732,6 +728,4 @@
           {/if}
         </CardContent>
       </Card>
-    </div>
-  </RequireOrganization>
-</AppLayout>
+</div>

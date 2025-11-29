@@ -37,8 +37,6 @@
 		AlertDialogTrigger,
 	} from "$lib/components/ui/alert-dialog";
 	import { Switch } from "$lib/components/ui/switch";
-	import AppLayout from "$lib/components/AppLayout.svelte";
-	import RequireOrganization from "$lib/components/RequireOrganization.svelte";
 	import CreateAlertDialog from "$lib/components/CreateAlertDialog.svelte";
 	import SigmaRulesList from "$lib/components/SigmaRulesList.svelte";
 	import SigmaRuleDetailsDialog from "$lib/components/SigmaRuleDetailsDialog.svelte";
@@ -291,9 +289,7 @@
 	<title>Alerts - LogWard</title>
 </svelte:head>
 
-<AppLayout>
-	<RequireOrganization>
-		<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto px-6 py-8 max-w-7xl">
 			<div class="flex items-start justify-between mb-6">
 				<div>
 					<div class="flex items-center gap-3 mb-2">
@@ -631,7 +627,7 @@
 												</div>
 												{#if history.projectId}
 													<a
-														href="/search?project={history.projectId}&from={new Date(
+														href="/dashboard/search?project={history.projectId}&from={new Date(
 															new Date(
 																history.triggeredAt,
 															).getTime() -
@@ -1024,6 +1020,4 @@
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
-		{/if}
-	</RequireOrganization>
-</AppLayout>
+	{/if}
