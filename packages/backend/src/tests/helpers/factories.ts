@@ -300,3 +300,163 @@ export async function createTestContext() {
         apiKey,
     };
 }
+
+/**
+ * Factory for creating test spans
+ */
+export async function createTestSpan(overrides: {
+    projectId?: string;
+    organizationId?: string;
+    traceId?: string;
+    spanId?: string;
+    parentSpanId?: string | null;
+    serviceName?: string;
+    operationName?: string;
+    startTime?: Date;
+    endTime?: Date;
+    durationMs?: number;
+    kind?: 'INTERNAL' | 'SERVER' | 'CLIENT' | 'PRODUCER' | 'CONSUMER';
+    statusCode?: 'UNSET' | 'OK' | 'ERROR';
+    statusMessage?: string | null;
+    attributes?: Record<string, unknown> | null;
+    events?: Record<string, unknown>[] | null;
+    links?: Record<string, unknown>[] | null;
+    resourceAttributes?: Record<string, unknown> | null;
+} = {}) {
+    // Create project if not provided
+    let projectId = overrides.projectId;
+    let organizationId = overrides.organizationId;
+
+    if (!projectId) {
+        const project = await createTestProject();
+        projectId = project.id;
+        const org = await db
+            .selectFrom('organizations')
+            .select('id')
+            .where('id', '=', project.organization_id)
+            .executeTakeFirstOrThrow();
+        organizationId = org.id;
+    } else if (!organizationId) {
+        const project = await db
+            .selectFrom('projects')
+            .select('organization_id')
+            .where('id', '=', projectId)
+            .executeTakeFirstOrThrow();
+        organizationId = project.organization_id;
+    }
+
+    const now = new Date();
+    const startTime = overrides.startTime || now;
+    const durationMs = overrides.durationMs || 100;
+    const endTime = overrides.endTime || new Date(startTime.getTime() + durationMs);
+
+    const traceId = overrides.traceId || crypto.randomBytes(16).toString('hex');
+    const spanId = overrides.spanId || crypto.randomBytes(8).toString('hex');
+
+    // Use raw SQL for JSONB fields to ensure proper serialization
+    const { sql } = await import('kysely');
+
+    const attributesJson = overrides.attributes ? JSON.stringify(overrides.attributes) : null;
+    const eventsJson = overrides.events ? JSON.stringify(overrides.events) : null;
+    const linksJson = overrides.links ? JSON.stringify(overrides.links) : null;
+    const resourceAttributesJson = overrides.resourceAttributes ? JSON.stringify(overrides.resourceAttributes) : null;
+
+    const result = await sql`
+        INSERT INTO spans (
+            time, project_id, organization_id, trace_id, span_id, parent_span_id,
+            service_name, operation_name, start_time, end_time, duration_ms,
+            kind, status_code, status_message, attributes, events, links, resource_attributes
+        ) VALUES (
+            ${startTime},
+            ${projectId},
+            ${organizationId!},
+            ${traceId},
+            ${spanId},
+            ${overrides.parentSpanId ?? null},
+            ${overrides.serviceName || 'test-service'},
+            ${overrides.operationName || 'test-operation'},
+            ${startTime},
+            ${endTime},
+            ${durationMs},
+            ${overrides.kind || null},
+            ${overrides.statusCode || null},
+            ${overrides.statusMessage ?? null},
+            ${attributesJson}::jsonb,
+            ${eventsJson}::jsonb,
+            ${linksJson}::jsonb,
+            ${resourceAttributesJson}::jsonb
+        )
+        RETURNING *
+    `.execute(db);
+
+    const span = result.rows[0] as any;
+
+    return span;
+}
+
+/**
+ * Factory for creating test traces
+ */
+export async function createTestTrace(overrides: {
+    projectId?: string;
+    organizationId?: string;
+    traceId?: string;
+    serviceName?: string;
+    rootServiceName?: string | null;
+    rootOperationName?: string | null;
+    startTime?: Date;
+    endTime?: Date;
+    durationMs?: number;
+    spanCount?: number;
+    error?: boolean;
+} = {}) {
+    // Create project if not provided
+    let projectId = overrides.projectId;
+    let organizationId = overrides.organizationId;
+
+    if (!projectId) {
+        const project = await createTestProject();
+        projectId = project.id;
+        const org = await db
+            .selectFrom('organizations')
+            .select('id')
+            .where('id', '=', project.organization_id)
+            .executeTakeFirstOrThrow();
+        organizationId = org.id;
+    } else if (!organizationId) {
+        const project = await db
+            .selectFrom('projects')
+            .select('organization_id')
+            .where('id', '=', projectId)
+            .executeTakeFirstOrThrow();
+        organizationId = project.organization_id;
+    }
+
+    const now = new Date();
+    const startTime = overrides.startTime || now;
+    const durationMs = overrides.durationMs || 100;
+    const endTime = overrides.endTime || new Date(startTime.getTime() + durationMs);
+
+    const traceId = overrides.traceId || crypto.randomBytes(16).toString('hex');
+    const serviceName = overrides.serviceName || 'test-service';
+
+    const trace = await db
+        .insertInto('traces')
+        .values({
+            project_id: projectId,
+            organization_id: organizationId!,
+            trace_id: traceId,
+            service_name: serviceName,
+            root_service_name: overrides.rootServiceName ?? serviceName,
+            root_operation_name: overrides.rootOperationName ?? 'root-operation',
+            start_time: startTime,
+            end_time: endTime,
+            duration_ms: durationMs,
+            span_count: overrides.spanCount || 1,
+            error: overrides.error || false,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+    return trace;
+}
