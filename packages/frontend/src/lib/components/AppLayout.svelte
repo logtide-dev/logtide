@@ -191,12 +191,13 @@
 
   const navigationItems = [
     { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { label: "Projects", href: "/projects", icon: FolderKanban },
-    { label: "Logs", href: "/search", icon: FileText },
+    { label: "Projects", href: "/dashboard/projects", icon: FolderKanban },
+    { label: "Logs", href: "/dashboard/search", icon: FileText },
+    { label: "Traces", href: "/dashboard/traces", icon: GitBranch },
     { label: "Traces", href: "/traces", icon: GitBranch },
-    { label: "Alerts", href: "/alerts", icon: AlertTriangle },
+    { label: "Alerts", href: "/dashboard/alerts", icon: AlertTriangle },
     { label: "Docs", href: "/docs", icon: Book },
-    { label: "Settings", href: "/organization/settings", icon: Settings },
+    { label: "Settings", href: "/dashboard/settings", icon: Settings },
   ];
 
   function isActive(href: string): boolean {
@@ -252,9 +253,9 @@
       {#if user?.is_admin}
         <Separator class="my-2" />
         <a
-          href="/admin"
+          href="/dashboard/admin"
           class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive(
-            '/admin',
+            '/dashboard/admin',
           )
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
@@ -465,7 +466,7 @@
                 User Settings
               </DropdownMenuItem>
               <DropdownMenuItem
-                onclick={() => goto("/organization/settings")}
+                onclick={() => goto("/dashboard/settings")}
                 class="cursor-pointer"
               >
                 <Building2 class="w-4 h-4 mr-2" />

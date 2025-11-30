@@ -101,7 +101,7 @@ test.describe('New User Journey', () => {
 
     // Try to navigate to projects page if not already there
     if (!page.url().includes('/projects')) {
-      await page.goto(`${TEST_FRONTEND_URL}/projects`);
+      await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
     }
     await page.waitForLoadState('networkidle');
 
@@ -146,7 +146,7 @@ test.describe('New User Journey', () => {
 
     // Navigate to project settings
     await page.waitForURL(/dashboard|projects/, { timeout: 15000 });
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/settings`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
 
     // Wait for page to load
     await page.waitForLoadState('networkidle');
@@ -256,7 +256,7 @@ test.describe('New User Journey', () => {
     await page.waitForURL(/dashboard|projects/, { timeout: 15000 });
 
     // Navigate to search/logs page
-    await page.goto(`${TEST_FRONTEND_URL}/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
     await page.waitForLoadState('networkidle');
 
     // Wait for logs to load and verify our log appears

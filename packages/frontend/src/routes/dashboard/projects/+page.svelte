@@ -282,7 +282,7 @@
                 </div>
                 <div class="flex gap-2">
                   <a
-                    href="/projects/{project.id}"
+                    href="/dashboard/projects/{project.id}"
                     class={buttonVariants({
                       variant: "outline",
                       size: "sm",

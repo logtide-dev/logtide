@@ -13,22 +13,22 @@
     const navigation = [
         {
             name: "Dashboard",
-            href: "/admin",
+            href: "/dashboard/admin",
             icon: LayoutDashboard,
         },
         {
             name: "User Management",
-            href: "/admin/users",
+            href: "/dashboard/admin/users",
             icon: Users,
         },
         {
             name: "Organizations",
-            href: "/admin/organizations",
+            href: "/dashboard/admin/organizations",
             icon: Building2,
         },
         {
             name: "Projects",
-            href: "/admin/projects",
+            href: "/dashboard/admin/projects",
             icon: FolderKanban,
         },
     ];
@@ -36,8 +36,8 @@
     const currentPath = $derived($page.url.pathname);
 
     function isActive(href: string) {
-        if (href === "/admin") {
-            return currentPath === "/admin";
+        if (href === "/dashboard/admin") {
+            return currentPath === "/dashboard/admin";
         }
         return currentPath.startsWith(href);
     }

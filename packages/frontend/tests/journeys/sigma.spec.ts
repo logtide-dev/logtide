@@ -45,7 +45,7 @@ test.describe('Sigma Journey', () => {
   });
 
   test('1. User can navigate to project settings', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/settings`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
     await page.waitForLoadState('networkidle');
 
     // Verify settings page loads
@@ -53,7 +53,7 @@ test.describe('Sigma Journey', () => {
   });
 
   test('2. User can import a Sigma rule via dialog', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000); // Wait for page to fully load
 
@@ -123,7 +123,7 @@ falsepositives:
       // Rule might already exist or import might fail - continue with test
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/settings`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -166,7 +166,7 @@ tags:
       // Continue with test
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/settings`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -212,7 +212,7 @@ falsepositives:
       // Continue with test
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/settings`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -255,7 +255,7 @@ falsepositives:
       // Continue with test
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/settings`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -331,7 +331,7 @@ falsepositives:
     await wait(3000);
 
     // Navigate to search and verify page loads
-    await page.goto(`${TEST_FRONTEND_URL}/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(3000);
 
@@ -342,7 +342,7 @@ falsepositives:
   });
 
   test('8. Sigma rule validation shows errors for invalid YAML', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
 
     // Click create alert button

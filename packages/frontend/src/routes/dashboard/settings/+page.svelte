@@ -5,8 +5,6 @@
   import { organizationStore } from '$lib/stores/organization';
   import { toastStore } from '$lib/stores/toast';
   import { OrganizationsAPI } from '$lib/api/organizations';
-  import AppLayout from '$lib/components/AppLayout.svelte';
-  import RequireOrganization from '$lib/components/RequireOrganization.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -167,9 +165,7 @@
   <title>Organization Settings - LogWard</title>
 </svelte:head>
 
-<AppLayout>
-  <RequireOrganization>
-    <div class="container mx-auto space-y-6 p-6">
+<div class="container mx-auto space-y-6 p-6">
       <div>
         <h1 class="text-3xl font-bold tracking-tight">Organization Settings</h1>
         <div class="flex items-center gap-2 mt-2">
@@ -346,6 +342,4 @@
           </CardContent>
         </Card>
       {/if}
-    </div>
-  </RequireOrganization>
-</AppLayout>
+</div>

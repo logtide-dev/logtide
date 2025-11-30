@@ -47,7 +47,7 @@ test.describe('Empty States', () => {
   });
 
   test('Search page shows empty state when no logs match', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -76,7 +76,7 @@ test.describe('Empty States', () => {
     await page.reload();
 
     // This user has no org, so should be redirected to onboarding
-    await page.goto(`${TEST_FRONTEND_URL}/projects`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -89,7 +89,7 @@ test.describe('Empty States', () => {
   });
 
   test('Alerts page shows empty state when no alerts exist', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -102,7 +102,7 @@ test.describe('Empty States', () => {
   });
 
   test('Alert history shows empty state when no alerts triggered', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -114,7 +114,7 @@ test.describe('Empty States', () => {
   });
 
   test('Project settings shows appropriate state for new project', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/settings`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 

@@ -50,7 +50,7 @@
 			if (!foundProject) {
 				error = 'Project not found';
 				toastStore.error('Project not found');
-				goto('/projects');
+				goto('/dashboard/projects');
 				return;
 			}
 
@@ -123,7 +123,7 @@
 			await projectsAPI.deleteProject($currentOrganization.id, projectId);
 
 			toastStore.success('Project deleted successfully');
-			goto('/projects');
+			goto('/dashboard/projects');
 		} catch (e) {
 			toastStore.error(e instanceof Error ? e.message : 'Failed to delete project');
 		}

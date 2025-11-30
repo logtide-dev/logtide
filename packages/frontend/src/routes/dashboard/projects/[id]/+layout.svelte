@@ -41,7 +41,7 @@
 			if (!foundProject) {
 				error = 'Project not found';
 				toastStore.error('Project not found');
-				goto('/projects');
+				goto('/dashboard/projects');
 				return;
 			}
 

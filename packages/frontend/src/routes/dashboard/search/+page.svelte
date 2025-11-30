@@ -30,8 +30,6 @@
   import * as Select from "$lib/components/ui/select";
   import * as Popover from "$lib/components/ui/popover";
   import Switch from "$lib/components/ui/switch/switch.svelte";
-  import AppLayout from "$lib/components/AppLayout.svelte";
-  import RequireOrganization from "$lib/components/RequireOrganization.svelte";
   import LogContextDialog from "$lib/components/LogContextDialog.svelte";
   import FileJson from "@lucide/svelte/icons/file-json";
   import FileText from "@lucide/svelte/icons/file-text";
@@ -514,9 +512,7 @@
   <title>Search Logs - LogWard</title>
 </svelte:head>
 
-<AppLayout>
-  <RequireOrganization>
-    <div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto px-6 py-8 max-w-7xl">
       <div class="mb-6">
         <div class="flex items-center gap-3 mb-2">
           <SearchIcon class="w-8 h-8 text-primary" />
@@ -975,7 +971,7 @@
                       </TableCell>
                       <TableCell>
                         <a
-                          href="/projects/{log.projectId}"
+                          href="/dashboard/projects/{log.projectId}"
                           class="inline-flex items-center rounded-md border border-input bg-background px-2.5 py-0.5 text-xs font-semibold transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
                         >
                           {projects.find((p) => p.id === log.projectId)?.name ||
@@ -1211,11 +1207,9 @@
       </Card>
     </div>
 
-    <LogContextDialog
-      open={contextDialogOpen}
-      projectId={selectedLogForContext?.projectId || ""}
-      selectedLog={selectedLogForContext}
-      onClose={closeContextDialog}
-    />
-  </RequireOrganization>
-</AppLayout>
+<LogContextDialog
+  open={contextDialogOpen}
+  projectId={selectedLogForContext?.projectId || ""}
+  selectedLog={selectedLogForContext}
+  onClose={closeContextDialog}
+/>
