@@ -16,11 +16,11 @@ test.describe('Navigation', () => {
 		await expect(page).toHaveURL(/\/login/);
 
 		// Try to access search without auth
-		await page.goto('/search');
+		await page.goto('/dashboard/search');
 		await expect(page).toHaveURL(/\/login/);
 
 		// Try to access projects without auth
-		await page.goto('/projects');
+		await page.goto('/dashboard/projects');
 		await expect(page).toHaveURL(/\/login/);
 	});
 

@@ -77,7 +77,7 @@ test.describe('Network Edge Cases', () => {
   });
 
   test('Search page handles API error gracefully', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
     await page.waitForLoadState('networkidle');
 
     // Intercept logs API to return error
@@ -118,7 +118,7 @@ test.describe('Network Edge Cases', () => {
   });
 
   test('Form handles validation errors from API', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
 
@@ -147,7 +147,7 @@ test.describe('Network Edge Cases', () => {
   });
 
   test('Page recovers after network comes back', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
     await page.waitForLoadState('networkidle');
 
     // Simulate network going offline
@@ -308,11 +308,11 @@ test.describe('Browser Edge Cases', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(500);
 
-    await page.goto(`${TEST_FRONTEND_URL}/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(500);
 
-    await page.goto(`${TEST_FRONTEND_URL}/projects`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(500);
 

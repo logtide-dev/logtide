@@ -46,7 +46,7 @@ test.describe('Alert Journey', () => {
   });
 
   test('1. User can view the alerts page', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000); // Wait for page to fully load
 
@@ -59,7 +59,7 @@ test.describe('Alert Journey', () => {
   });
 
   test('2. User can open the create alert dialog', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000); // Wait for page to fully load
 
@@ -79,7 +79,7 @@ test.describe('Alert Journey', () => {
   });
 
   test('3. User can create an alert rule', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
 
     // Click create alert button
@@ -132,7 +132,7 @@ test.describe('Alert Journey', () => {
       emailRecipients: ['test@e2e-test.logward.dev'],
     });
 
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -161,7 +161,7 @@ test.describe('Alert Journey', () => {
       emailRecipients: ['test@e2e-test.logward.dev'],
     });
 
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
@@ -206,7 +206,7 @@ test.describe('Alert Journey', () => {
     await wait(5000);
 
     // Navigate to alert history page
-    await page.goto(`${TEST_FRONTEND_URL}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(3000);
 
@@ -218,7 +218,7 @@ test.describe('Alert Journey', () => {
   });
 
   test('7. User can view alert history', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/alerts`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000); // Wait for page to fully load with org context
 
@@ -240,7 +240,7 @@ test.describe('Alert Journey', () => {
   });
 
   test('8. User can import Sigma rule as alert', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/projects/${projectId}/alerts`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('networkidle');
 
     // Click create alert button
