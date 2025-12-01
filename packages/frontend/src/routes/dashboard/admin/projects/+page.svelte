@@ -274,7 +274,7 @@
                                 <Table.Cell class="text-right">
                                     <div class="flex justify-end gap-2">
                                         <a
-                                            href="/admin/projects/{project.id}"
+                                            href="/dashboard/admin/projects/{project.id}"
                                             class={buttonVariants({
                                                 variant: "outline",
                                                 size: "sm",

@@ -136,7 +136,7 @@
 <div class="container mx-auto p-6 space-y-6">
     <div class="flex items-center gap-4">
         <a
-            href="/admin/users"
+            href="/dashboard/admin/users"
             class={buttonVariants({
                 variant: "ghost",
                 size: "icon",
@@ -162,7 +162,7 @@
                 <div class="text-center">
                     <p class="text-destructive">{error}</p>
                     <a
-                        href="/admin/users"
+                        href="/dashboard/admin/users"
                         class={buttonVariants({
                             variant: "outline",
                         }) + " mt-4"}
