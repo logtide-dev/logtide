@@ -185,6 +185,27 @@ export interface SpansTable {
   created_at: Generated<Timestamp>;
 }
 
+// ============================================================================
+// CONTINUOUS AGGREGATES (TimescaleDB Materialized Views)
+// ============================================================================
+// These are pre-computed aggregations for fast dashboard queries
+
+export interface LogsHourlyStatsTable {
+  bucket: Timestamp;
+  project_id: string | null;
+  level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  service: string;
+  log_count: number;
+}
+
+export interface LogsDailyStatsTable {
+  bucket: Timestamp;
+  project_id: string | null;
+  level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  service: string;
+  log_count: number;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -199,4 +220,7 @@ export interface Database {
   sigma_rules: SigmaRulesTable;
   traces: TracesTable;
   spans: SpansTable;
+  // Continuous aggregates (TimescaleDB materialized views)
+  logs_hourly_stats: LogsHourlyStatsTable;
+  logs_daily_stats: LogsDailyStatsTable;
 }

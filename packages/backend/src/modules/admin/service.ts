@@ -1,4 +1,4 @@
-import { db } from '../../database/index.js';
+import { db, getPoolStats } from '../../database/index.js';
 import { sql } from 'kysely';
 import { connection as redis } from '../../queue/connection.js';
 
@@ -134,6 +134,12 @@ export interface HealthStats {
     redis: {
         status: 'healthy' | 'degraded' | 'down';
         latency: number;
+    };
+    // Connection pool statistics (application-level)
+    pool: {
+        totalConnections: number;  // Total connections in pool
+        idleConnections: number;   // Available connections
+        waitingRequests: number;   // Queries waiting for connection
     };
     overall: 'healthy' | 'degraded' | 'down';
 }
@@ -628,13 +634,16 @@ export class AdminService {
      * Get health check statistics
      */
     async getHealthStats(): Promise<HealthStats> {
+        // Get application-level pool stats
+        const poolStats = getPoolStats();
+
         // Database health
         const dbStart = Date.now();
         try {
             await db.selectFrom('users').select('id').limit(1).execute();
             const dbLatency = Date.now() - dbStart;
 
-            // Get connection count
+            // Get connection count from PostgreSQL
             const connResult = await db.executeQuery<{ count: number }>(
                 sql`SELECT COUNT(*)::int AS count FROM pg_stat_activity WHERE datname = current_database()`.compile(
                     db
@@ -659,8 +668,11 @@ export class AdminService {
             const dbStatus: 'healthy' | 'degraded' | 'down' =
                 dbLatency < 50 ? 'healthy' : dbLatency < 200 ? 'degraded' : 'down';
 
+            // Check pool health: degraded if waiting requests > 0
+            const poolHealthy = poolStats.waitingCount === 0;
+
             const overall: 'healthy' | 'degraded' | 'down' =
-                dbStatus === 'healthy' && redisStatus === 'healthy'
+                dbStatus === 'healthy' && redisStatus === 'healthy' && poolHealthy
                     ? 'healthy'
                     : dbStatus === 'down' || redisStatus === 'down'
                         ? 'down'
@@ -676,6 +688,11 @@ export class AdminService {
                     status: redisStatus,
                     latency: redisLatency,
                 },
+                pool: {
+                    totalConnections: poolStats.totalCount,
+                    idleConnections: poolStats.idleCount,
+                    waitingRequests: poolStats.waitingCount,
+                },
                 overall,
             };
         } catch (error) {
@@ -688,6 +705,11 @@ export class AdminService {
                 redis: {
                     status: 'down',
                     latency: -1,
+                },
+                pool: {
+                    totalConnections: poolStats.totalCount,
+                    idleConnections: poolStats.idleCount,
+                    waitingRequests: poolStats.waitingCount,
                 },
                 overall: 'down',
             };
