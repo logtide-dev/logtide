@@ -47,6 +47,10 @@ const configSchema = z.object({
   AUTH_RATE_LIMIT_REGISTER: z.string().default('10').transform(Number), // Registrations per window
   AUTH_RATE_LIMIT_LOGIN: z.string().default('20').transform(Number), // Login attempts per window
   AUTH_RATE_LIMIT_WINDOW: z.string().default('900000').transform(Number), // 15 minutes in ms
+
+  // Caching
+  CACHE_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+  CACHE_TTL: z.string().default('60').transform(Number), // Default TTL in seconds
 });
 
 export type Config = z.infer<typeof configSchema>;

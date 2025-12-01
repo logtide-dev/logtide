@@ -32,6 +32,9 @@ vi.mock('../../../config/index.js', () => ({
         SMTP_PASS: 'password',
         SMTP_FROM: 'alerts@test.com',
         SMTP_SECURE: false,
+        REDIS_URL: 'redis://localhost:6379',
+        CACHE_ENABLED: true,
+        CACHE_TTL: 60,
     },
 }));
 

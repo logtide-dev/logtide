@@ -177,7 +177,7 @@
                                     </TableCell>
                                     <TableCell class="text-right">
                                         <a
-                                            href="/admin/organizations/{org.id}"
+                                            href="/dashboard/admin/organizations/{org.id}"
                                             class={buttonVariants({
                                                 variant: "ghost",
                                                 size: "sm",

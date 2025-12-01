@@ -189,7 +189,7 @@
                                     </TableCell>
                                     <TableCell class="text-right">
                                         <a
-                                            href="/admin/users/{user.id}"
+                                            href="/dashboard/admin/users/{user.id}"
                                             class={buttonVariants({
                                                 variant: "ghost",
                                                 size: "sm",

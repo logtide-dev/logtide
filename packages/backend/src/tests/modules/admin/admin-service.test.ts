@@ -261,5 +261,207 @@ describe('AdminService', () => {
             expect(stats.database.status).toBe('healthy');
             expect(stats.database.latency).toBeGreaterThanOrEqual(0);
         });
+
+        it('should return pool stats', async () => {
+            const stats = await adminService.getHealthStats();
+
+            expect(stats.pool).toBeDefined();
+            expect(stats.pool.totalConnections).toBeGreaterThanOrEqual(0);
+            expect(stats.pool.idleConnections).toBeGreaterThanOrEqual(0);
+            expect(stats.pool.waitingRequests).toBeGreaterThanOrEqual(0);
+        });
+    });
+
+    describe('getDatabaseStats', () => {
+        it('should return database statistics', async () => {
+            const stats = await adminService.getDatabaseStats();
+
+            expect(stats).toHaveProperty('tables');
+            expect(stats).toHaveProperty('totalSize');
+            expect(stats).toHaveProperty('totalRows');
+            expect(Array.isArray(stats.tables)).toBe(true);
+        });
+    });
+
+    describe('getLogsStats', () => {
+        it('should return log statistics', async () => {
+            const stats = await adminService.getLogsStats();
+
+            expect(stats).toHaveProperty('total');
+            expect(stats).toHaveProperty('perDay');
+            expect(stats).toHaveProperty('topOrganizations');
+            expect(stats).toHaveProperty('topProjects');
+            expect(stats).toHaveProperty('growth');
+            expect(Array.isArray(stats.perDay)).toBe(true);
+        });
+
+        it('should count logs with projects', async () => {
+            const { project } = await createTestContext();
+            await createTestLog({ projectId: project.id });
+            await createTestLog({ projectId: project.id });
+
+            const stats = await adminService.getLogsStats();
+
+            expect(stats.total).toBe(2);
+        });
+    });
+
+    describe('getPerformanceStats', () => {
+        it('should return performance statistics', async () => {
+            const stats = await adminService.getPerformanceStats();
+
+            expect(stats).toHaveProperty('ingestion');
+            expect(stats).toHaveProperty('storage');
+            expect(stats.ingestion).toHaveProperty('throughput');
+            expect(stats.ingestion).toHaveProperty('avgLatency');
+            expect(stats.storage).toHaveProperty('logsSize');
+        });
+    });
+
+    describe('getAlertsStats', () => {
+        it('should return alert system statistics', async () => {
+            const stats = await adminService.getAlertsStats();
+
+            expect(stats).toHaveProperty('rules');
+            expect(stats).toHaveProperty('triggered');
+            expect(stats).toHaveProperty('perOrganization');
+            expect(stats).toHaveProperty('notifications');
+            expect(stats.rules).toHaveProperty('total');
+            expect(stats.rules).toHaveProperty('active');
+            expect(stats.rules).toHaveProperty('disabled');
+        });
+    });
+
+    describe('getRedisStats', () => {
+        it('should return Redis statistics', async () => {
+            const stats = await adminService.getRedisStats();
+
+            expect(stats).toHaveProperty('memory');
+            expect(stats).toHaveProperty('queues');
+            expect(stats).toHaveProperty('connections');
+            expect(stats.memory).toHaveProperty('used');
+            expect(stats.memory).toHaveProperty('peak');
+        });
+    });
+
+    describe('updateUserStatus', () => {
+        it('should disable a user', async () => {
+            const user = await createTestUser();
+
+            const result = await adminService.updateUserStatus(user.id, true);
+
+            expect(result.disabled).toBe(true);
+        });
+
+        it('should enable a user', async () => {
+            const user = await createTestUser();
+            await db.updateTable('users').set({ disabled: true }).where('id', '=', user.id).execute();
+
+            const result = await adminService.updateUserStatus(user.id, false);
+
+            expect(result.disabled).toBe(false);
+        });
+
+        it('should delete sessions when disabling user', async () => {
+            const user = await createTestUser();
+            // Create a session
+            await db.insertInto('sessions').values({
+                user_id: user.id,
+                token: 'test-token',
+                expires_at: new Date(Date.now() + 3600000),
+            }).execute();
+
+            await adminService.updateUserStatus(user.id, true);
+
+            const sessions = await db.selectFrom('sessions').selectAll().where('user_id', '=', user.id).execute();
+            expect(sessions.length).toBe(0);
+        });
+    });
+
+    describe('resetUserPassword', () => {
+        it('should reset user password', async () => {
+            const user = await createTestUser();
+            const oldHash = user.password_hash;
+
+            const result = await adminService.resetUserPassword(user.id, 'newpassword123');
+
+            expect(result.id).toBe(user.id);
+            // Verify password was changed
+            const updatedUser = await db.selectFrom('users').select('password_hash').where('id', '=', user.id).executeTakeFirst();
+            expect(updatedUser?.password_hash).not.toBe(oldHash);
+        });
+
+        it('should delete sessions after password reset', async () => {
+            const user = await createTestUser();
+            await db.insertInto('sessions').values({
+                user_id: user.id,
+                token: 'test-token-2',
+                expires_at: new Date(Date.now() + 3600000),
+            }).execute();
+
+            await adminService.resetUserPassword(user.id, 'newpassword456');
+
+            const sessions = await db.selectFrom('sessions').selectAll().where('user_id', '=', user.id).execute();
+            expect(sessions.length).toBe(0);
+        });
+    });
+
+    describe('deleteOrganization', () => {
+        it('should delete an organization', async () => {
+            const org = await createTestOrganization();
+
+            const result = await adminService.deleteOrganization(org.id);
+
+            expect(result.message).toContain('deleted');
+
+            const deletedOrg = await db.selectFrom('organizations').selectAll().where('id', '=', org.id).executeTakeFirst();
+            expect(deletedOrg).toBeUndefined();
+        });
+    });
+
+    describe('deleteProject', () => {
+        it('should delete a project', async () => {
+            const { project } = await createTestContext();
+
+            const result = await adminService.deleteProject(project.id);
+
+            expect(result.message).toContain('deleted');
+        });
+
+        it('should throw error for non-existent project', async () => {
+            await expect(
+                adminService.deleteProject('00000000-0000-0000-0000-000000000000')
+            ).rejects.toThrow('Project not found');
+        });
+    });
+
+    describe('getCacheStats', () => {
+        it('should return cache statistics with enabled status', async () => {
+            const stats = await adminService.getCacheStats();
+
+            expect(stats).toHaveProperty('hits');
+            expect(stats).toHaveProperty('misses');
+            expect(stats).toHaveProperty('hitRate');
+            expect(stats).toHaveProperty('keyCount');
+            expect(stats).toHaveProperty('enabled');
+        });
+    });
+
+    describe('clearCache', () => {
+        it('should clear all caches', async () => {
+            const result = await adminService.clearCache();
+
+            expect(result).toHaveProperty('cleared');
+            expect(typeof result.cleared).toBe('number');
+        });
+    });
+
+    describe('invalidateProjectCache', () => {
+        it('should invalidate project cache without error', async () => {
+            const { project } = await createTestContext();
+
+            // Should not throw
+            await expect(adminService.invalidateProjectCache(project.id)).resolves.not.toThrow();
+        });
     });
 });

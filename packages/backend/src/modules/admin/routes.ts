@@ -500,4 +500,74 @@ export async function adminRoutes(fastify: FastifyInstance) {
             }
         }
     );
+
+    // Cache Management Routes
+    // GET /api/v1/admin/cache/stats - Get cache statistics
+    fastify.get(
+        '/cache/stats',
+        {
+            config: {
+                rateLimit: rateLimitConfig,
+            },
+        },
+        async (_request, reply) => {
+            try {
+                const stats = await adminService.getCacheStats();
+                return reply.send(stats);
+            } catch (error) {
+                console.error('Error getting cache stats:', error);
+                return reply.status(500).send({
+                    error: 'Failed to retrieve cache statistics',
+                });
+            }
+        }
+    );
+
+    // POST /api/v1/admin/cache/clear - Clear all caches
+    fastify.post(
+        '/cache/clear',
+        {
+            config: {
+                rateLimit: rateLimitConfig,
+            },
+        },
+        async (_request, reply) => {
+            try {
+                const result = await adminService.clearCache();
+                return reply.send({
+                    message: 'Cache cleared successfully',
+                    ...result,
+                });
+            } catch (error) {
+                console.error('Error clearing cache:', error);
+                return reply.status(500).send({
+                    error: 'Failed to clear cache',
+                });
+            }
+        }
+    );
+
+    // POST /api/v1/admin/cache/invalidate/:projectId - Invalidate project cache
+    fastify.post(
+        '/cache/invalidate/:projectId',
+        {
+            config: {
+                rateLimit: rateLimitConfig,
+            },
+        },
+        async (request, reply) => {
+            try {
+                const { projectId } = request.params as { projectId: string };
+                await adminService.invalidateProjectCache(projectId);
+                return reply.send({
+                    message: `Cache invalidated for project ${projectId}`,
+                });
+            } catch (error) {
+                console.error('Error invalidating project cache:', error);
+                return reply.status(500).send({
+                    error: 'Failed to invalidate project cache',
+                });
+            }
+        }
+    );
 }

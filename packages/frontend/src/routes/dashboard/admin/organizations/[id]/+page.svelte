@@ -52,7 +52,7 @@
         deleting = true;
         try {
             await adminAPI.deleteOrganization(org.id);
-            window.location.href = "/admin/organizations";
+            window.location.href = "/dashboard/admin/organizations";
         } catch (err: any) {
             error = err.message || "Failed to delete organization";
         } finally {
@@ -73,7 +73,7 @@
 <div class="container mx-auto p-6 space-y-6">
     <div class="flex items-center gap-4">
         <a
-            href="/admin/organizations"
+            href="/dashboard/admin/organizations"
             class={buttonVariants({
                 variant: "ghost",
                 size: "sm",

@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { db } from '../../database/connection.js';
+import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 
 const SALT_ROUNDS = 10;
 const SESSION_DURATION_DAYS = 30;
@@ -155,8 +156,29 @@ export class UsersService {
 
   /**
    * Validate a session token and return user info
+   * Cached for performance - session validation happens on every request
    */
   async validateSession(token: string): Promise<UserProfile | null> {
+    // Try cache first
+    const cacheKey = CacheManager.sessionKey(token);
+    const cached = await CacheManager.get<UserProfile & { expiresAt: string }>(cacheKey);
+
+    if (cached) {
+      // Check if cached session is expired
+      if (new Date(cached.expiresAt) < new Date()) {
+        await CacheManager.invalidateSession(token);
+        await db.deleteFrom('sessions').where('token', '=', token).execute();
+        return null;
+      }
+      // Convert date strings back to Date objects
+      return {
+        ...cached,
+        createdAt: new Date(cached.createdAt),
+        lastLogin: cached.lastLogin ? new Date(cached.lastLogin) : null,
+      };
+    }
+
+    // Cache miss - query database
     const session = await db
       .selectFrom('sessions')
       .innerJoin('users', 'users.id', 'sessions.user_id')
@@ -193,7 +215,7 @@ export class UsersService {
       return null;
     }
 
-    return {
+    const userProfile: UserProfile = {
       id: session.id,
       email: session.email,
       name: session.name,
@@ -202,12 +224,31 @@ export class UsersService {
       createdAt: new Date(session.created_at),
       lastLogin: session.last_login ? new Date(session.last_login) : null,
     };
+
+    // Cache the session with expiry info
+    // Calculate TTL based on session expiry (max 30 minutes)
+    const expiresAt = new Date(session.expires_at);
+    const ttlMs = expiresAt.getTime() - now.getTime();
+    const ttlSeconds = Math.min(Math.floor(ttlMs / 1000), CACHE_TTL.SESSION);
+
+    if (ttlSeconds > 0) {
+      await CacheManager.set(
+        cacheKey,
+        { ...userProfile, expiresAt: session.expires_at },
+        ttlSeconds
+      );
+    }
+
+    return userProfile;
   }
 
   /**
    * Logout (delete session)
    */
   async logout(token: string): Promise<void> {
+    // Invalidate cache first
+    await CacheManager.invalidateSession(token);
+
     await db
       .deleteFrom('sessions')
       .where('token', '=', token)

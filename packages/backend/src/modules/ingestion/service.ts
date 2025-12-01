@@ -2,6 +2,7 @@ import { db } from '../../database/index.js';
 import type { LogInput } from '@logward/shared';
 import { createQueue, publisher } from '../../queue/connection.js';
 import type { LogEntry } from '../sigma/detection-engine.js';
+import { CacheManager } from '../../utils/cache.js';
 
 export class IngestionService {
   /**
@@ -33,6 +34,11 @@ export class IngestionService {
     // Trigger Sigma detection (async, non-blocking)
     this.triggerSigmaDetection(logs, projectId).catch((err) => {
       console.error('[Ingestion] Failed to trigger Sigma detection:', err);
+    });
+
+    // Invalidate query caches for this project (async, non-blocking)
+    CacheManager.invalidateProjectQueries(projectId).catch((err) => {
+      console.error('[Ingestion] Failed to invalidate cache:', err);
     });
 
     // Publish to Redis for live tail

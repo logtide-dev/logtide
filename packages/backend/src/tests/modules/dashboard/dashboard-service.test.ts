@@ -168,6 +168,28 @@ describe('DashboardService', () => {
             expect(point.info).toBe(2);
             expect(point.error).toBe(1);
         });
+
+        it('should aggregate all log levels correctly', async () => {
+            const { organization, project } = await createTestContext();
+
+            // Create logs with all levels
+            await createTestLog({ projectId: project.id, level: 'debug' });
+            await createTestLog({ projectId: project.id, level: 'info' });
+            await createTestLog({ projectId: project.id, level: 'warn' });
+            await createTestLog({ projectId: project.id, level: 'error' });
+            await createTestLog({ projectId: project.id, level: 'critical' });
+
+            const timeseries = await dashboardService.getTimeseries(organization.id);
+
+            expect(timeseries.length).toBe(1);
+            const point = timeseries[0];
+            expect(point.total).toBe(5);
+            expect(point.debug).toBe(1);
+            expect(point.info).toBe(1);
+            expect(point.warn).toBe(1);
+            expect(point.error).toBe(1);
+            expect(point.critical).toBe(1);
+        });
     });
 
     describe('getTopServices', () => {

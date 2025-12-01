@@ -1,6 +1,6 @@
 import { sql } from 'kysely';
 import { db } from '../../database/index.js';
-import { connection } from '../../queue/connection.js';
+import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 import type { LogLevel } from '@logward/shared';
 
 export interface LogQueryParams {
@@ -19,6 +19,7 @@ export interface LogQueryParams {
 export class QueryService {
   /**
    * Query logs with filters
+   * Cached for performance - common queries are frequently repeated
    */
   async queryLogs(params: LogQueryParams) {
     const {
@@ -34,12 +35,30 @@ export class QueryService {
       cursor,
     } = params;
 
-    // Generate cache key (include cursor)
-    const cacheKey = `logs:query:${JSON.stringify(params)}`;
-    const cached = await connection.get(cacheKey);
+    // Generate deterministic cache key
+    const cacheParams = {
+      service: service || null,
+      level: level || null,
+      traceId: traceId || null,
+      from: from?.toISOString() || null,
+      to: to?.toISOString() || null,
+      q: q || null,
+      limit,
+      offset,
+      cursor: cursor || null,
+    };
+    const cacheKey = CacheManager.queryKey(projectId, cacheParams);
+    const cached = await CacheManager.get<any>(cacheKey);
 
     if (cached) {
-      return JSON.parse(cached);
+      // Convert date strings back to Date objects
+      return {
+        ...cached,
+        logs: cached.logs.map((log: any) => ({
+          ...log,
+          time: new Date(log.time),
+        })),
+      };
     }
 
     let query = db.selectFrom('logs').selectAll();
@@ -160,16 +179,28 @@ export class QueryService {
       nextCursor,
     };
 
-    // Cache result for 30 seconds
-    await connection.setex(cacheKey, 30, JSON.stringify(result));
+    // Cache result using CacheManager
+    await CacheManager.set(cacheKey, result, CACHE_TTL.QUERY);
 
     return result;
   }
 
   /**
    * Get logs by trace ID
+   * Cached for longer since trace data is immutable
    */
   async getLogsByTraceId(projectId: string, traceId: string) {
+    // Try cache first
+    const cacheKey = CacheManager.traceKey(projectId, traceId);
+    const cached = await CacheManager.get<any[]>(cacheKey);
+
+    if (cached) {
+      return cached.map(log => ({
+        ...log,
+        time: new Date(log.time),
+      }));
+    }
+
     const logs = await db
       .selectFrom('logs')
       .selectAll()
@@ -178,7 +209,7 @@ export class QueryService {
       .orderBy('time', 'asc')
       .execute();
 
-    return logs.map(log => ({
+    const result = logs.map(log => ({
       id: log.id,
       time: log.time,
       projectId: log.project_id,
@@ -188,6 +219,11 @@ export class QueryService {
       metadata: log.metadata,
       traceId: log.trace_id,
     }));
+
+    // Cache for longer since trace data is immutable
+    await CacheManager.set(cacheKey, result, CACHE_TTL.TRACE);
+
+    return result;
   }
 
   /**
@@ -309,8 +345,21 @@ export class QueryService {
 
   /**
    * Get top services by log count
+   * Cached for performance - aggregation queries are expensive
    */
   async getTopServices(projectId: string, limit: number = 5, from?: Date, to?: Date) {
+    // Try cache first
+    const cacheKey = CacheManager.statsKey(projectId, 'top-services', {
+      limit,
+      from: from?.toISOString() || null,
+      to: to?.toISOString() || null,
+    });
+    const cached = await CacheManager.get<any[]>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     let query = db
       .selectFrom('logs')
       .select([
@@ -330,13 +379,31 @@ export class QueryService {
       query = query.where('time', '<=', to);
     }
 
-    return query.execute();
+    const result = await query.execute();
+
+    // Cache aggregation results
+    await CacheManager.set(cacheKey, result, CACHE_TTL.STATS);
+
+    return result;
   }
 
   /**
    * Get top error messages
+   * Cached for performance - aggregation queries are expensive
    */
   async getTopErrors(projectId: string, limit: number = 10, from?: Date, to?: Date) {
+    // Try cache first
+    const cacheKey = CacheManager.statsKey(projectId, 'top-errors', {
+      limit,
+      from: from?.toISOString() || null,
+      to: to?.toISOString() || null,
+    });
+    const cached = await CacheManager.get<any[]>(cacheKey);
+
+    if (cached) {
+      return cached;
+    }
+
     let query = db
       .selectFrom('logs')
       .select([
@@ -357,7 +424,12 @@ export class QueryService {
       query = query.where('time', '<=', to);
     }
 
-    return query.execute();
+    const result = await query.execute();
+
+    // Cache aggregation results
+    await CacheManager.set(cacheKey, result, CACHE_TTL.STATS);
+
+    return result;
   }
 }
 

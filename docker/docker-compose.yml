@@ -12,6 +12,37 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      # Parallel query settings for faster aggregations
+      - "-c"
+      - "max_parallel_workers_per_gather=4"
+      - "-c"
+      - "max_parallel_workers=8"
+      - "-c"
+      - "parallel_tuple_cost=0.01"
+      - "-c"
+      - "parallel_setup_cost=100"
+      - "-c"
+      - "min_parallel_table_scan_size=8MB"
+      # Write-ahead log tuning for ingestion
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      # Logging for slow queries (>100ms)
+      - "-c"
+      - "log_min_duration_statement=100"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
       interval: 10s

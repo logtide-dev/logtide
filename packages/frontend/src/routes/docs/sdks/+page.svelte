@@ -217,7 +217,7 @@
                     <div>
                         <p class="text-sm font-semibold mb-1">Installation:</p>
                         <code class="text-xs bg-muted px-2 py-1 rounded"
-                            >implementation("io.github.logward-dev:logward-sdk-kotlin:0.2.0")</code
+                            >implementation("io.github.logward-dev:logward-sdk-kotlin:0.2.1")</code
                         >
                     </div>
                     <div>

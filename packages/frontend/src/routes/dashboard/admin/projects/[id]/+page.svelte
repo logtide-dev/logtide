@@ -57,7 +57,7 @@
         try {
             await adminAPI.deleteProject(projectId);
             // Redirect to projects list after delete
-            window.location.href = "/admin/projects";
+            window.location.href = "/dashboard/admin/projects";
         } catch (e: any) {
             error = `Failed to delete project: ${e.message}`;
             deleteConfirm = false;
@@ -99,7 +99,7 @@
         <div class="flex items-start justify-between">
             <div class="space-y-1">
                 <a
-                    href="/admin/projects"
+                    href="/dashboard/admin/projects"
                     class={buttonVariants({
                         variant: "ghost",
                         size: "sm",
