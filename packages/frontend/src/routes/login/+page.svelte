@@ -69,8 +69,8 @@
       toastStore.success('Welcome back!');
 
       if (orgs.length === 0) {
-        // No organizations -> redirect to onboarding
-        goto('/onboarding/create-organization');
+        // No organizations -> redirect to onboarding tutorial
+        goto('/onboarding');
       } else {
         // Has organizations (auto-selected by fetchOrganizations) -> redirect to dashboard
         goto('/dashboard');

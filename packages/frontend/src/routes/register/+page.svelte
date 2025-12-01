@@ -75,8 +75,8 @@
       authStore.setAuth(response.user, response.session.token);
       toastStore.success('Account created successfully!');
 
-      // New users don't have organizations yet -> redirect to onboarding
-      goto('/onboarding/create-organization');
+      // New users don't have organizations yet -> redirect to onboarding tutorial
+      goto('/onboarding');
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Registration failed';
       error = errorMsg;
