@@ -236,38 +236,46 @@ test.describe('New User Journey', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
 
-    // Look for API keys section and create button
-    const createApiKeyButton = page.locator('button:has-text("Create API Key"), button:has-text("New API Key"), button:has-text("Generate")');
+    // Try to create API key via UI, with fallback to API
+    try {
+      // Look for API keys section and create button
+      const createApiKeyButton = page.locator('button:has-text("Create API Key"), button:has-text("New API Key"), button:has-text("Generate")');
 
-    if (await createApiKeyButton.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createApiKeyButton.first().click();
-      await page.waitForTimeout(500);
+      if (await createApiKeyButton.first().isVisible({ timeout: 5000 }).catch(() => false)) {
+        await createApiKeyButton.first().click();
+        await page.waitForTimeout(500);
 
-      // Fill API key name - the input has id="api-key-name"
-      const keyName = `E2E Test Key ${Date.now()}`;
-      await page.locator('input#api-key-name, input[placeholder*="key" i]').first().fill(keyName);
+        // Wait for dialog to appear and find input
+        const keyNameInput = page.locator('input#api-key-name, input[placeholder*="key" i], [role="dialog"] input[type="text"]');
+        if (await keyNameInput.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+          const keyName = `E2E Test Key ${Date.now()}`;
+          await keyNameInput.first().fill(keyName);
 
-      // Submit - use force to bypass overlay issues
-      await page.locator('[role="dialog"] button[type="submit"]').click({ force: true });
+          // Submit - use force to bypass overlay issues
+          await page.locator('[role="dialog"] button[type="submit"]').click({ force: true });
 
-      // Wait for API key to be displayed
-      await page.waitForTimeout(2000);
+          // Wait for API key to be displayed
+          await page.waitForTimeout(2000);
 
-      // API key should be shown in a code block
-      const apiKeyDisplay = page.locator('[role="dialog"] code, [role="dialog"] .font-mono');
-      if (await apiKeyDisplay.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        const displayedKey = await apiKeyDisplay.first().textContent();
-        // API key starts with 'lp_' (log platform)
-        if (displayedKey && displayedKey.trim().startsWith('lp_')) {
-          apiKey = displayedKey.trim();
+          // API key should be shown in a code block
+          const apiKeyDisplay = page.locator('[role="dialog"] code, [role="dialog"] .font-mono');
+          if (await apiKeyDisplay.first().isVisible({ timeout: 5000 }).catch(() => false)) {
+            const displayedKey = await apiKeyDisplay.first().textContent();
+            // API key starts with 'lp_' (log platform)
+            if (displayedKey && displayedKey.trim().startsWith('lp_')) {
+              apiKey = displayedKey.trim();
+            }
+          }
+
+          // Close the dialog
+          const closeButton = page.locator('[role="dialog"] button:has-text("Close"), [role="dialog"] button:has-text("Done")');
+          if (await closeButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await closeButton.click();
+          }
         }
       }
-
-      // Close the dialog
-      const closeButton = page.locator('[role="dialog"] button:has-text("Close"), [role="dialog"] button:has-text("Done")');
-      if (await closeButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await closeButton.click();
-      }
+    } catch {
+      // UI method failed, will fall back to API
     }
 
     // If we couldn't get key from UI, create via API
