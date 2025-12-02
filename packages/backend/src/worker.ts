@@ -143,16 +143,30 @@ setInterval(checkAlerts, 60000);
 checkAlerts();
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
-  await shutdownInternalLogging();
-  await alertWorker.close();
-  await sigmaWorker.close();
-  process.exit(0);
-});
+async function gracefulShutdown(signal: string) {
+  console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
 
-process.on('SIGTERM', async () => {
-  await shutdownInternalLogging();
-  await alertWorker.close();
-  await sigmaWorker.close();
-  process.exit(0);
-});
+  try {
+    // Stop accepting new jobs
+    await alertWorker.close();
+    await sigmaWorker.close();
+    console.log('✅ Workers closed');
+
+    // Close internal logging
+    await shutdownInternalLogging();
+    console.log('✅ Internal logging closed');
+
+    // Close database pool - CRITICAL: prevents connection leaks
+    const { closeDatabase } = await import('./database/connection.js');
+    await closeDatabase();
+    console.log('✅ Database pool closed');
+
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Error during shutdown:', error);
+    process.exit(1);
+  }
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

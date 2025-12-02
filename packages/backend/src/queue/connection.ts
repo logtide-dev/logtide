@@ -68,8 +68,28 @@ setupRedisEventHandlers(connection, 'main');
 export const publisher = new Redis(config.REDIS_URL, redisOptions);
 setupRedisEventHandlers(publisher, 'publisher');
 
+/**
+ * Default job options for cleanup
+ * CRITICAL: Without these, job records accumulate forever in Redis
+ */
+const defaultJobOptions = {
+  // Remove completed jobs, keep only last 100 for debugging
+  removeOnComplete: {
+    count: 100,
+    age: 3600, // Remove jobs older than 1 hour
+  },
+  // Remove failed jobs, keep only last 50 for debugging
+  removeOnFail: {
+    count: 50,
+    age: 86400, // Remove failed jobs older than 24 hours
+  },
+};
+
 export function createQueue<T = any>(name: string) {
-  return new Queue<T>(name, { connection });
+  return new Queue<T>(name, {
+    connection,
+    defaultJobOptions,
+  });
 }
 
 export function createWorker<T = any>(

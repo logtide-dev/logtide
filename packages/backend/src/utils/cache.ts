@@ -218,15 +218,31 @@ export const CacheManager = {
   },
 
   /**
-   * Delete keys matching a pattern
+   * Delete keys matching a pattern using SCAN (non-blocking)
+   * IMPORTANT: Uses SCAN instead of KEYS to avoid blocking Redis
    */
   async deletePattern(pattern: string): Promise<number> {
     try {
-      const keys = await connection.keys(pattern);
-      if (keys.length > 0) {
-        await connection.del(...keys);
-      }
-      return keys.length;
+      let cursor = '0';
+      let totalDeleted = 0;
+
+      do {
+        // SCAN is O(1) per call, iterates incrementally
+        const [nextCursor, keys] = await connection.scan(
+          cursor,
+          'MATCH', pattern,
+          'COUNT', 100  // Process 100 keys per iteration
+        );
+        cursor = nextCursor;
+
+        if (keys.length > 0) {
+          // Use UNLINK for async deletion (non-blocking)
+          await connection.unlink(...keys);
+          totalDeleted += keys.length;
+        }
+      } while (cursor !== '0');
+
+      return totalDeleted;
     } catch (error) {
       console.error('[Cache] Error deleting pattern:', pattern, error);
       return 0;
@@ -297,6 +313,7 @@ export const CacheManager = {
 
   /**
    * Get cache statistics
+   * Uses DBSIZE instead of KEYS for key count (O(1) vs O(N))
    */
   async getStats(): Promise<CacheStats> {
     try {
@@ -304,12 +321,8 @@ export const CacheManager = {
       const memoryMatch = info.match(/used_memory_human:(\S+)/);
       const memoryUsage = memoryMatch ? memoryMatch[1] : 'unknown';
 
-      // Count keys by pattern
-      let keyCount = 0;
-      for (const prefix of Object.values(CACHE_PREFIX)) {
-        const keys = await connection.keys(`${prefix}:*`);
-        keyCount += keys.length;
-      }
+      // Use DBSIZE for total key count - O(1) operation
+      const keyCount = await connection.dbsize();
 
       const total = cacheHits + cacheMisses;
       const hitRate = total > 0 ? (cacheHits / total) * 100 : 0;
