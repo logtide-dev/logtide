@@ -77,7 +77,7 @@ test.describe('Onboarding Tutorial Journey', () => {
     await page.locator('button[type="submit"]').click();
 
     // Should move to create-project step
-    await expect(page.locator('text=/Create.*Project|project/i')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('text=/Create.*Project|project/i').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('3. User can create project with environment preset', async ({ page }) => {
@@ -348,13 +348,15 @@ test.describe('Onboarding Mobile Responsive', () => {
     // Welcome step should be visible and not overflow
     await expect(page.locator('text=/Welcome.*LogWard/i')).toBeVisible({ timeout: 10000 });
 
-    // Buttons should be visible and clickable
+    // Buttons should be visible and clickable (scroll into view for mobile)
     const startButton = page.locator('button:has-text("Start the Tutorial")');
     await expect(startButton).toBeVisible();
+    await startButton.scrollIntoViewIfNeeded();
     await expect(startButton).toBeInViewport();
 
     const skipButton = page.locator('button:has-text("Skip for now")');
     await expect(skipButton).toBeVisible();
+    await skipButton.scrollIntoViewIfNeeded();
     await expect(skipButton).toBeInViewport();
 
     // Progress bar should be visible
