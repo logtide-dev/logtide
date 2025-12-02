@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { cn } from "$lib/utils.js";
 	import { Tooltip as TooltipPrimitive } from "bits-ui";
+	import type { Snippet } from "svelte";
 
 	let {
 		ref = $bindable(null),
 		class: className,
 		sideOffset = 4,
+		children,
 		...restProps
-	}: TooltipPrimitive.ContentProps = $props();
+	}: TooltipPrimitive.ContentProps & { children?: Snippet } = $props();
 </script>
 
 <TooltipPrimitive.Portal>
@@ -19,5 +21,7 @@
 			className
 		)}
 		{...restProps}
-	/>
+	>
+		{@render children?.()}
+	</TooltipPrimitive.Content>
 </TooltipPrimitive.Portal>

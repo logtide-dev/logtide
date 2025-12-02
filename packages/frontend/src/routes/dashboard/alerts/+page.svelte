@@ -320,17 +320,13 @@
 					<TabsTrigger value="rules" class="gap-1">
 						Alert Rules
 						<HelpTooltip
-							id="help-alert-rules"
 							text="Alert rules trigger notifications when log volume exceeds a threshold within a time window."
-							docsLink="/docs/alerts"
 						/>
 					</TabsTrigger>
 					<TabsTrigger value="sigma" class="gap-1">
 						Sigma Rules
 						<HelpTooltip
-							id="help-sigma-rules"
 							text="Sigma rules are industry-standard detection rules for security threats. Import from SigmaHQ or create your own."
-							docsLink="/docs/sigma"
 						/>
 					</TabsTrigger>
 					<TabsTrigger value="history">Alert History</TabsTrigger>
