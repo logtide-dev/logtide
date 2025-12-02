@@ -122,13 +122,20 @@ test.describe('New User Journey', () => {
     await page.locator('input[type="password"]').fill(userPassword);
     await page.locator('button[type="submit"]').click();
 
-    // Navigate to projects
-    await page.waitForURL(/dashboard|projects/, { timeout: 15000 });
+    // Wait for redirect (could be dashboard, projects, or onboarding)
+    await page.waitForURL(/dashboard|projects|onboarding/, { timeout: 15000 });
 
-    // Try to navigate to projects page if not already there
-    if (!page.url().includes('/projects')) {
-      await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
+    // If redirected to onboarding, skip it to get to dashboard
+    if (page.url().includes('onboarding')) {
+      const skipButton = page.locator('button:has-text("Skip for now"), button:has-text("Skip tutorial")');
+      if (await skipButton.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+        await skipButton.first().click();
+        await page.waitForURL(/dashboard/, { timeout: 10000 });
+      }
     }
+
+    // Navigate to projects page
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
     await page.waitForLoadState('networkidle');
 
     // Look for create project button or dialog trigger
@@ -141,7 +148,9 @@ test.describe('New User Journey', () => {
 
       // Fill project form in dialog - input has id="project-name"
       const projectName = `Test Project ${Date.now()}`;
-      await page.locator('input#project-name').fill(projectName);
+      const projectInput = page.locator('input#project-name');
+      await expect(projectInput).toBeVisible({ timeout: 5000 });
+      await projectInput.fill(projectName);
 
       // Submit
       await page.locator('button[type="submit"]').click();
