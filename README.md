@@ -14,6 +14,7 @@
 
   <a href="https://github.com/logward-dev/logward/actions/workflows/ci.yml"><img src="https://github.com/logward-dev/logward/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://codecov.io/gh/logward-dev/logward"><img src="https://codecov.io/gh/logward-dev/logward/branch/main/graph/badge.svg" alt="Coverage"></a>
+  <a href="https://hub.docker.com/r/logward/backend"><img src="https://img.shields.io/docker/v/logward/backend?label=docker&logo=docker" alt="Docker"></a>
   <img src="https://img.shields.io/badge/version-0.2.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Status">
@@ -73,25 +74,88 @@ We host it for you. Perfect for testing and small projects. **Currently Free.**
     ```
 
 ### Option B: Self-Hosted (Docker)
-Total control over your data.
+Total control over your data. **No build required** - uses pre-built images from Docker Hub.
 
 **Prerequisites:** Docker & Docker Compose.
 
-1.  **Clone the repo**
-    ```bash
-    git clone [https://github.com/YOUR_USERNAME/logward.git](https://github.com/YOUR_USERNAME/logward.git)
-    cd logward
+1.  **Create `docker-compose.yml`**
+    ```yaml
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        environment:
+          POSTGRES_DB: logward
+          POSTGRES_USER: logward
+          POSTGRES_PASSWORD: ${DB_PASSWORD}
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+        healthcheck:
+          test: ["CMD-SHELL", "pg_isready -U logward"]
+          interval: 10s
+          timeout: 5s
+          retries: 5
+
+      redis:
+        image: redis:7-alpine
+        command: redis-server --requirepass ${REDIS_PASSWORD}
+        volumes:
+          - redis_data:/data
+
+      backend:
+        image: logward/backend:latest
+        ports:
+          - "8080:8080"
+        environment:
+          DATABASE_URL: postgresql://logward:${DB_PASSWORD}@postgres:5432/logward
+          REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+          API_KEY_SECRET: ${API_KEY_SECRET}
+        depends_on:
+          postgres:
+            condition: service_healthy
+
+      worker:
+        image: logward/backend:latest
+        command: ["worker"]
+        environment:
+          DATABASE_URL: postgresql://logward:${DB_PASSWORD}@postgres:5432/logward
+          REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+          API_KEY_SECRET: ${API_KEY_SECRET}
+        depends_on:
+          postgres:
+            condition: service_healthy
+
+      frontend:
+        image: logward/frontend:latest
+        ports:
+          - "3000:3000"
+        environment:
+          PUBLIC_API_URL: http://localhost:8080
+
+    volumes:
+      postgres_data:
+      redis_data:
     ```
 
-2.  **Start the stack**
+2.  **Create `.env`** with secure passwords
+    ```bash
+    DB_PASSWORD=your_secure_db_password
+    REDIS_PASSWORD=your_secure_redis_password
+    API_KEY_SECRET=your_32_character_secret_key_here
+    ```
+
+3.  **Start the stack**
     ```bash
     docker compose up -d
     ```
 
-3.  **Access LogWard**
+4.  **Access LogWard**
     * **URL:** `http://localhost:3000`
     * **First Time?** Click "Sign up" to create your account
     * **Then:** Create your first organization and project
+
+**Docker Images:** [Docker Hub](https://hub.docker.com/r/logward/backend) | [GitHub Container Registry](https://github.com/logward-dev/logward/pkgs/container/logward-backend)
+
+> **Production:** Pin versions with `image: logward/backend:0.2.2` instead of `latest`.
 
 ---
 

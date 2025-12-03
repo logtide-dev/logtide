@@ -7,7 +7,7 @@
         CardHeader,
         CardTitle,
     } from "$lib/components/ui/card";
-    import { AlertCircle, CheckCircle2 } from "lucide-svelte";
+    import { AlertCircle, CheckCircle2, Package, Server } from "lucide-svelte";
 </script>
 
 <div class="docs-content">
@@ -15,119 +15,150 @@
 
     <h1 class="text-3xl font-bold mb-4">Deployment Guide</h1>
     <p class="text-lg text-muted-foreground mb-8">
-        Production deployment instructions for LogWard using Docker Compose.
+        Deploy LogWard on your infrastructure using pre-built Docker images or build from source.
     </p>
 
     <h2
-        id="automated-deployment"
+        id="pre-built-images"
         class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
     >
-        Automated Deployment (Recommended)
+        Pre-built Images (Recommended)
     </h2>
 
     <div class="mb-12 space-y-6">
         <Card>
             <CardHeader>
                 <div class="flex items-start gap-3">
-                    <CheckCircle2 class="w-5 h-5 text-green-500 mt-0.5" />
+                    <Package class="w-5 h-5 text-primary mt-0.5" />
                     <div>
-                        <CardTitle class="text-base"
-                            >One-Click Installation</CardTitle
-                        >
+                        <CardTitle class="text-base">No Build Required</CardTitle>
                     </div>
                 </div>
             </CardHeader>
             <CardContent class="text-sm text-muted-foreground">
-                The automated installer handles everything for you - from
-                prerequisites checks to database migrations.
+                Use our official pre-built images from Docker Hub or GitHub Container Registry.
+                Just download the config, set your passwords, and run.
             </CardContent>
         </Card>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Quick Start (5 Minutes)</h3>
+            <h3 class="text-lg font-semibold mb-3">Quick Start (2 Minutes)</h3>
             <CodeBlock
                 lang="bash"
-                code={`# Clone the repository
-git clone https://github.com/logward-dev/logward.git
-cd logward
+                code={`# Create project directory
+mkdir logward && cd logward
 
-# Run the installer
-chmod +x install.sh
-./install.sh`}
+# Download docker-compose.yml
+curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/docker-compose.yml
+
+# Download environment template
+curl -O https://raw.githubusercontent.com/logward-dev/logward/main/.env.example
+mv .env.example .env
+
+# Edit .env with secure passwords
+nano .env
+
+# Start LogWard
+docker compose up -d`}
             />
+        </div>
 
-            <div class="mt-4 space-y-3">
-                <p class="text-sm text-muted-foreground">
-                    The installer will automatically:
-                </p>
-                <ul class="space-y-2 text-sm text-muted-foreground ml-4">
-                    <li class="flex items-start gap-2">
-                        <CheckCircle2
-                            class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
-                        />
-                        <span>Check Docker and Docker Compose installation</span
-                        >
-                    </li>
-                    <li class="flex items-start gap-2">
-                        <CheckCircle2
-                            class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
-                        />
-                        <span
-                            >Verify required ports (5432, 6379, 8080, 3000)</span
-                        >
-                    </li>
-                    <li class="flex items-start gap-2">
-                        <CheckCircle2
-                            class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
-                        />
-                        <span
-                            >Generate secure random passwords (32 characters)</span
-                        >
-                    </li>
-                    <li class="flex items-start gap-2">
-                        <CheckCircle2
-                            class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
-                        />
-                        <span
-                            >Create <code>docker/.env</code> configuration file</span
-                        >
-                    </li>
-                    <li class="flex items-start gap-2">
-                        <CheckCircle2
-                            class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
-                        />
-                        <span>Pull and build Docker images</span>
-                    </li>
-                    <li class="flex items-start gap-2">
-                        <CheckCircle2
-                            class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
-                        />
-                        <span
-                            ><strong
-                                >Run database migrations automatically</strong
-                            ></span
-                        >
-                    </li>
-                    <li class="flex items-start gap-2">
-                        <CheckCircle2
-                            class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
-                        />
-                        <span
-                            >Start all services (PostgreSQL, Redis, Backend,
-                            Worker, Frontend)</span
-                        >
-                    </li>
-                    <li class="flex items-start gap-2">
-                        <CheckCircle2
-                            class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
-                        />
-                        <span
-                            >Perform health checks and display access URLs</span
-                        >
-                    </li>
-                </ul>
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Required Environment Variables</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm border border-border rounded-lg">
+                    <thead class="bg-muted">
+                        <tr>
+                            <th class="text-left p-3 border-b border-border">Variable</th>
+                            <th class="text-left p-3 border-b border-border">Description</th>
+                            <th class="text-left p-3 border-b border-border">Example</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">DB_PASSWORD</td>
+                            <td class="p-3 border-b border-border">PostgreSQL password</td>
+                            <td class="p-3 border-b border-border font-mono text-xs">random_secure_password</td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">REDIS_PASSWORD</td>
+                            <td class="p-3 border-b border-border">Redis password</td>
+                            <td class="p-3 border-b border-border font-mono text-xs">another_secure_password</td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">API_KEY_SECRET</td>
+                            <td class="p-3 border-b border-border">Encryption key (32+ chars)</td>
+                            <td class="p-3 border-b border-border font-mono text-xs">your_32_character_secret_key_here</td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 font-mono text-xs">PUBLIC_API_URL</td>
+                            <td class="p-3">Backend API URL</td>
+                            <td class="p-3 font-mono text-xs">http://localhost:8080</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Available Docker Images</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm border border-border rounded-lg">
+                    <thead class="bg-muted">
+                        <tr>
+                            <th class="text-left p-3 border-b border-border">Image</th>
+                            <th class="text-left p-3 border-b border-border">Registry</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">logward/backend</td>
+                            <td class="p-3 border-b border-border">
+                                <a href="https://hub.docker.com/r/logward/backend" class="text-primary hover:underline" target="_blank">Docker Hub</a>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">logward/frontend</td>
+                            <td class="p-3 border-b border-border">
+                                <a href="https://hub.docker.com/r/logward/frontend" class="text-primary hover:underline" target="_blank">Docker Hub</a>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">ghcr.io/logward-dev/logward-backend</td>
+                            <td class="p-3 border-b border-border">
+                                <a href="https://github.com/logward-dev/logward/pkgs/container/logward-backend" class="text-primary hover:underline" target="_blank">GitHub Container Registry</a>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 font-mono text-xs">ghcr.io/logward-dev/logward-frontend</td>
+                            <td class="p-3">
+                                <a href="https://github.com/logward-dev/logward/pkgs/container/logward-frontend" class="text-primary hover:underline" target="_blank">GitHub Container Registry</a>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <Card class="border-yellow-500/30 bg-yellow-500/5">
+            <CardHeader>
+                <div class="flex items-start gap-3">
+                    <AlertCircle class="w-5 h-5 text-yellow-500 mt-0.5" />
+                    <div>
+                        <CardTitle class="text-base">Production Tip</CardTitle>
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+                <p>Always pin to a specific version in production instead of using <code>latest</code>:</p>
+                <CodeBlock
+                    lang="bash"
+                    code={`# In your .env file
+LOGWARD_BACKEND_IMAGE=logward/backend:0.2.3
+LOGWARD_FRONTEND_IMAGE=logward/frontend:0.2.3`}
+                />
+            </CardContent>
+        </Card>
 
         <div class="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
             <div class="flex items-start gap-3">
@@ -138,11 +169,11 @@ chmod +x install.sh
                     <p
                         class="font-semibold text-green-600 dark:text-green-400 mb-1"
                     >
-                        Installation Complete
+                        Ready to Go
                     </p>
                     <p class="text-sm text-muted-foreground">
-                        Access LogWard at <code>http://localhost:3000</code> or
-                        <code>http://your-server-ip:3000</code>
+                        Access LogWard at <code>http://localhost:3000</code> -
+                        database migrations run automatically on first start.
                     </p>
                 </div>
             </div>
@@ -150,34 +181,30 @@ chmod +x install.sh
     </div>
 
     <h2
-        id="manual-deployment"
+        id="build-from-source"
         class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
     >
-        Manual Deployment (Alternative)
+        Build from Source (Alternative)
     </h2>
 
     <div class="mb-12 space-y-6">
         <Card>
             <CardHeader>
                 <div class="flex items-start gap-3">
-                    <AlertCircle class="w-5 h-5 text-yellow-500 mt-0.5" />
+                    <Server class="w-5 h-5 text-muted-foreground mt-0.5" />
                     <div>
-                        <CardTitle class="text-base"
-                            >Before You Deploy</CardTitle
-                        >
+                        <CardTitle class="text-base">For Contributors & Custom Builds</CardTitle>
                     </div>
                 </div>
             </CardHeader>
             <CardContent class="text-sm text-muted-foreground">
-                Make sure you have Docker and Docker Compose installed on your
-                server.
+                Build Docker images locally from source code. Useful for development
+                or when you need custom modifications.
             </CardContent>
         </Card>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">
-                Step 1: Clone and Configure
-            </h3>
+            <h3 class="text-lg font-semibold mb-3">Clone and Build</h3>
             <CodeBlock
                 lang="bash"
                 code={`# Clone the repository
@@ -188,56 +215,11 @@ cd logward/docker
 cp ../.env.example .env
 
 # Edit .env with your configuration
-nano .env`}
+nano .env
+
+# Build and start all services
+docker compose up -d --build`}
             />
-        </div>
-
-        <div>
-            <h3 class="text-lg font-semibold mb-3">
-                Step 2: Start All Services
-            </h3>
-            <CodeBlock
-                lang="bash"
-                code={`# Build and start all services
-docker compose up -d --build
-
-# Check service health
-docker compose ps
-
-# View logs
-docker compose logs -f backend`}
-            />
-
-            <Card class="mt-4">
-                <CardHeader>
-                    <div class="flex items-start gap-3">
-                        <CheckCircle2 class="w-5 h-5 text-primary mt-0.5" />
-                        <div>
-                            <CardTitle class="text-base"
-                                >Automatic Migrations</CardTitle
-                            >
-                            <p class="text-sm text-muted-foreground mt-2">
-                                Database migrations run automatically when the
-                                backend container starts. No manual commands
-                                needed!
-                            </p>
-                        </div>
-                    </div>
-                </CardHeader>
-                <CardContent class="text-sm text-muted-foreground">
-                    <p>The entrypoint script will:</p>
-                    <ul class="list-disc list-inside mt-2 space-y-1 ml-2">
-                        <li>Wait for PostgreSQL to be ready</li>
-                        <li>Run pending migrations automatically</li>
-                        <li>Start the application</li>
-                    </ul>
-                    <p class="mt-3">
-                        View migration logs: <code class="text-xs"
-                            >docker compose logs backend | grep migration</code
-                        >
-                    </p>
-                </CardContent>
-            </Card>
         </div>
 
         <div class="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
@@ -252,13 +234,13 @@ docker compose logs -f backend`}
                         Services Running
                     </p>
                     <p class="text-sm text-muted-foreground">
-                        Access LogWard at <code>http://your-server-ip:3000</code
-                        >
+                        Access LogWard at <code>http://your-server-ip:3000</code>
                     </p>
                 </div>
             </div>
         </div>
     </div>
+
 
     <h2
         id="monitoring"
@@ -297,8 +279,8 @@ docker compose logs --tail=100 -f backend
 docker compose down
 
 # Update to latest version
-git pull origin main
-docker compose up -d --build`}
+docker compose pull
+docker compose up -d`}
             />
         </div>
 

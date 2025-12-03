@@ -186,26 +186,90 @@ curl -X POST https://api.logward.dev/api/v1/ingest \\
                 <CardHeader>
                     <CardTitle class="flex items-center gap-2">
                         <Rocket class="w-5 h-5 text-primary" />
-                        Self-Hosted: Deploy in 5 Minutes
+                        Self-Hosted: Deploy in 2 Minutes
                     </CardTitle>
                     <CardDescription>
-                        Run LogWard on your infrastructure
+                        Run LogWard on your infrastructure with pre-built Docker images
                     </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent class="space-y-4">
+                    <p class="text-sm text-muted-foreground">
+                        1. Create a <code>docker-compose.yml</code> file:
+                    </p>
+                    <CodeBlock
+                        lang="yaml"
+                        code={`services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_DB: logward
+      POSTGRES_USER: logward
+      POSTGRES_PASSWORD: \${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logward"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass \${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+
+  backend:
+    image: logward/backend:latest
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://logward:\${DB_PASSWORD}@postgres:5432/logward
+      REDIS_URL: redis://:\${REDIS_PASSWORD}@redis:6379
+      API_KEY_SECRET: \${API_KEY_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    image: logward/backend:latest
+    command: ["worker"]
+    environment:
+      DATABASE_URL: postgresql://logward:\${DB_PASSWORD}@postgres:5432/logward
+      REDIS_URL: redis://:\${REDIS_PASSWORD}@redis:6379
+      API_KEY_SECRET: \${API_KEY_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    image: logward/frontend:latest
+    ports:
+      - "3000:3000"
+    environment:
+      PUBLIC_API_URL: http://localhost:8080
+
+volumes:
+  postgres_data:
+  redis_data:`}
+                    />
+                    <p class="text-sm text-muted-foreground">
+                        2. Create a <code>.env</code> file with secure passwords:
+                    </p>
                     <CodeBlock
                         lang="bash"
-                        code={`# Clone the repository
-git clone https://github.com/logward-dev/logward.git
-cd logward
+                        code={`DB_PASSWORD=your_secure_db_password
+REDIS_PASSWORD=your_secure_redis_password
+API_KEY_SECRET=your_32_character_secret_key_here`}
+                    />
+                    <p class="text-sm text-muted-foreground">
+                        3. Start LogWard:
+                    </p>
+                    <CodeBlock
+                        lang="bash"
+                        code={`docker compose up -d
 
-# Run the automated installer
-chmod +x install.sh
-./install.sh
-
-# Access LogWard
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8080`}
+# Access LogWard at http://localhost:3000`}
                     />
                 </CardContent>
             </Card>
