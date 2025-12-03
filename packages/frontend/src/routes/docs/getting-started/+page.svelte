@@ -158,22 +158,30 @@
                 </li>
             </ul>
             <p class="text-sm text-muted-foreground mt-3 ml-6">
-                That's it! No Node.js, no build tools, no database setup.
+                That's it! No Node.js, no build tools, no database setup. Uses pre-built images from Docker Hub.
             </p>
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Installation</h3>
+            <h3 class="text-lg font-semibold mb-3">Installation (2 minutes)</h3>
             <CodeBlock
                 lang="bash"
-                code={`# 1. Clone repository
-git clone https://github.com/logward-dev/logward.git
-cd logward
+                code={`# 1. Create project directory
+mkdir logward && cd logward
 
-# 2. Start LogWard with Docker
+# 2. Download configuration files
+curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/logward-dev/logward/main/.env.example
+mv .env.example .env
+
+# 3. Configure secure passwords (IMPORTANT!)
+nano .env
+# Change: DB_PASSWORD, REDIS_PASSWORD, API_KEY_SECRET
+
+# 4. Start LogWard
 docker compose up -d
 
-# 3. Access the dashboard
+# 5. Access the dashboard
 # Open http://localhost:3000 in your browser`}
             />
         </div>
@@ -190,7 +198,7 @@ docker compose up -d
                         <CheckCircle2
                             class="w-4 h-4 text-primary mt-0.5 flex-shrink-0"
                         />
-                        <span>Pulls all Docker images</span>
+                        <span>Pulls pre-built images from Docker Hub</span>
                     </li>
                     <li class="flex items-start gap-2">
                         <CheckCircle2
@@ -227,25 +235,55 @@ docker compose up -d
         </Card>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Configuration (Optional)</h3>
+            <h3 class="text-lg font-semibold mb-3">Required Configuration</h3>
             <p class="text-muted-foreground mb-3">
-                Customize your deployment by editing the <code
-                    >.env.example</code
-                > file before starting:
+                Edit your <code>.env</code> file and set secure values for these variables:
             </p>
-            <CodeBlock
-                lang="bash"
-                code={`# Copy example configuration
-cp .env.example .env
-
-# Edit .env with your settings (domain, email, etc.)
-nano .env
-
-# Restart to apply changes
-docker compose down
-docker compose up -d`}
-            />
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm border border-border rounded-lg">
+                    <thead class="bg-muted">
+                        <tr>
+                            <th class="text-left p-3 border-b border-border">Variable</th>
+                            <th class="text-left p-3 border-b border-border">Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">DB_PASSWORD</td>
+                            <td class="p-3 border-b border-border">PostgreSQL database password</td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">REDIS_PASSWORD</td>
+                            <td class="p-3 border-b border-border">Redis password</td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 border-b border-border font-mono text-xs">API_KEY_SECRET</td>
+                            <td class="p-3 border-b border-border">Encryption key (32+ characters)</td>
+                        </tr>
+                        <tr>
+                            <td class="p-3 font-mono text-xs">PUBLIC_API_URL</td>
+                            <td class="p-3">Backend URL (default: http://localhost:8080)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
+
+        <Card class="border-primary/30 bg-primary/5">
+            <CardHeader>
+                <CardTitle class="text-base">Docker Images</CardTitle>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+                <p class="mb-2">Pre-built images are available from:</p>
+                <ul class="space-y-1 ml-4">
+                    <li><strong>Docker Hub:</strong> <code>logward/backend</code>, <code>logward/frontend</code></li>
+                    <li><strong>GitHub:</strong> <code>ghcr.io/logward-dev/logward-backend</code></li>
+                </ul>
+                <p class="mt-3 text-xs">
+                    Pin versions in production: <code>LOGWARD_BACKEND_IMAGE=logward/backend:0.2.3</code>
+                </p>
+            </CardContent>
+        </Card>
     </div>
 
     <h2
