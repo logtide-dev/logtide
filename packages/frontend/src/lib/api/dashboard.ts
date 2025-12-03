@@ -1,7 +1,5 @@
 // Dashboard API Client
-import { PUBLIC_API_URL } from '$env/static/public';
-
-const API_URL = PUBLIC_API_URL;
+import { getApiUrl } from '$lib/config';
 
 export interface DashboardStats {
   totalLogsToday: {
@@ -70,7 +68,7 @@ export class DashboardAPI {
     const params = new URLSearchParams();
     params.append('organizationId', organizationId);
 
-    const url = `${API_URL}/api/v1/dashboard/stats?${params.toString()}`;
+    const url = `${getApiUrl()}/api/v1/dashboard/stats?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -91,7 +89,7 @@ export class DashboardAPI {
     const params = new URLSearchParams();
     params.append('organizationId', organizationId);
 
-    const url = `${API_URL}/api/v1/dashboard/timeseries?${params.toString()}`;
+    const url = `${getApiUrl()}/api/v1/dashboard/timeseries?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -113,7 +111,7 @@ export class DashboardAPI {
     const params = new URLSearchParams();
     params.append('organizationId', organizationId);
 
-    const url = `${API_URL}/api/v1/dashboard/top-services?${params.toString()}`;
+    const url = `${getApiUrl()}/api/v1/dashboard/top-services?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -135,7 +133,7 @@ export class DashboardAPI {
     const params = new URLSearchParams();
     params.append('organizationId', organizationId);
 
-    const url = `${API_URL}/api/v1/dashboard/recent-errors?${params.toString()}`;
+    const url = `${getApiUrl()}/api/v1/dashboard/recent-errors?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',

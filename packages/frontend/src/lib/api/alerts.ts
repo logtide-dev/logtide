@@ -1,6 +1,4 @@
-import { PUBLIC_API_URL } from '$env/static/public';
-
-const API_URL = PUBLIC_API_URL;
+import { getApiUrl } from '$lib/config';
 
 export interface AlertRule {
   id: string;
@@ -80,7 +78,7 @@ export class AlertsAPI {
   private async request(endpoint: string, options: RequestInit = {}) {
     const token = this.getToken();
 
-    const response = await fetch(`${API_URL}${endpoint}`, {
+    const response = await fetch(`${getApiUrl()}${endpoint}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',

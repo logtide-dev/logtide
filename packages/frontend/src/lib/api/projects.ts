@@ -1,7 +1,5 @@
 import type { Project } from '@logward/shared';
-import { PUBLIC_API_URL } from '$env/static/public';
-
-const API_URL = `${PUBLIC_API_URL}/api/v1`;
+import { getApiBaseUrl } from '$lib/config';
 
 export interface CreateProjectInput {
   organizationId: string;
@@ -26,7 +24,7 @@ export class ProjectsAPI {
       throw new Error('Not authenticated');
     }
 
-    const response = await fetch(`${API_URL}${path}`, {
+    const response = await fetch(`${getApiBaseUrl()}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',

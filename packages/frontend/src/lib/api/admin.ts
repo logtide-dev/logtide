@@ -2,9 +2,7 @@ import { browser } from '$app/environment';
 import { goto } from '$app/navigation';
 import { get } from 'svelte/store';
 import { authStore } from '$lib/stores/auth';
-import { PUBLIC_API_URL } from '$env/static/public';
-
-const API_BASE = `${PUBLIC_API_URL}/api/v1/admin`;
+import { getApiBaseUrl } from '$lib/config';
 
 export interface SystemStats {
     users: {
@@ -269,7 +267,7 @@ class AdminAPI {
             throw new Error('No token found');
         }
 
-        const response = await fetch(`${API_BASE}${endpoint}`, {
+        const response = await fetch(`${getApiBaseUrl()}/admin${endpoint}`, {
             headers: {
                 Authorization: `Bearer ${token}`,
             },
@@ -346,7 +344,7 @@ class AdminAPI {
             throw new Error('No token found');
         }
 
-        const response = await fetch(`${API_BASE}/users/${userId}/status`, {
+        const response = await fetch(`${getApiBaseUrl()}/admin/users/${userId}/status`, {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
@@ -371,7 +369,7 @@ class AdminAPI {
             throw new Error('No token found');
         }
 
-        const response = await fetch(`${API_BASE}/users/${userId}/reset-password`, {
+        const response = await fetch(`${getApiBaseUrl()}/admin/users/${userId}/reset-password`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -412,7 +410,7 @@ class AdminAPI {
             throw new Error('No token found');
         }
 
-        const response = await fetch(`${API_BASE}/organizations/${orgId}`, {
+        const response = await fetch(`${getApiBaseUrl()}/admin/organizations/${orgId}`, {
             method: 'DELETE',
             headers: {
                 Authorization: `Bearer ${token}`,
@@ -451,7 +449,7 @@ class AdminAPI {
             throw new Error('No token found');
         }
 
-        const response = await fetch(`${API_BASE}/projects/${projectId}`, {
+        const response = await fetch(`${getApiBaseUrl()}/admin/projects/${projectId}`, {
             method: 'DELETE',
             headers: {
                 Authorization: `Bearer ${token}`,

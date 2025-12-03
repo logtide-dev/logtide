@@ -1,6 +1,4 @@
-import { PUBLIC_API_URL } from '$env/static/public';
-
-const API_BASE_URL = `${PUBLIC_API_URL}/api/v1`;
+import { getApiBaseUrl } from '$lib/config';
 
 export interface OnboardingState {
   checklistItems: Record<string, boolean>;
@@ -29,7 +27,7 @@ export class OnboardingAPI {
       throw new Error('No authentication token available');
     }
 
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await fetch(`${getApiBaseUrl()}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',

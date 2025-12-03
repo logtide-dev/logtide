@@ -1,4 +1,4 @@
-import { PUBLIC_API_URL } from '$env/static/public';
+import { getApiBaseUrl } from '$lib/config';
 
 export interface TraceRecord {
   trace_id: string;
@@ -71,7 +71,6 @@ export interface ServiceDependencies {
   edges: ServiceDependencyEdge[];
 }
 
-const API_BASE_URL = `${PUBLIC_API_URL}/api/v1`;
 
 export class TracesAPI {
   constructor(private getToken: () => string | null) {}
@@ -101,7 +100,7 @@ export class TracesAPI {
     if (filters.limit) params.append('limit', filters.limit.toString());
     if (filters.offset) params.append('offset', filters.offset.toString());
 
-    const url = `${API_BASE_URL}/traces?${params.toString()}`;
+    const url = `${getApiBaseUrl()}/traces?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -121,7 +120,7 @@ export class TracesAPI {
     const params = new URLSearchParams();
     params.append('projectId', projectId);
 
-    const url = `${API_BASE_URL}/traces/${traceId}?${params.toString()}`;
+    const url = `${getApiBaseUrl()}/traces/${traceId}?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -139,7 +138,7 @@ export class TracesAPI {
     const params = new URLSearchParams();
     params.append('projectId', projectId);
 
-    const url = `${API_BASE_URL}/traces/${traceId}/spans?${params.toString()}`;
+    const url = `${getApiBaseUrl()}/traces/${traceId}/spans?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -158,7 +157,7 @@ export class TracesAPI {
     const params = new URLSearchParams();
     params.append('projectId', projectId);
 
-    const url = `${API_BASE_URL}/traces/services?${params.toString()}`;
+    const url = `${getApiBaseUrl()}/traces/services?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -179,7 +178,7 @@ export class TracesAPI {
     if (from) params.append('from', from);
     if (to) params.append('to', to);
 
-    const url = `${API_BASE_URL}/traces/stats?${params.toString()}`;
+    const url = `${getApiBaseUrl()}/traces/stats?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -199,7 +198,7 @@ export class TracesAPI {
     if (from) params.append('from', from);
     if (to) params.append('to', to);
 
-    const url = `${API_BASE_URL}/traces/dependencies?${params.toString()}`;
+    const url = `${getApiBaseUrl()}/traces/dependencies?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
