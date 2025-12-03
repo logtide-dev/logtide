@@ -1,6 +1,7 @@
 import { createWorker } from './queue/connection.js';
 import { processAlertNotification } from './queue/jobs/alert-notification.js';
 import { processSigmaDetection } from './queue/jobs/sigma-detection.js';
+import { processIncidentAutoGrouping } from './queue/jobs/incident-autogrouping.js';
 import { alertsService } from './modules/alerts/index.js';
 import { initializeInternalLogging, shutdownInternalLogging, getInternalLogger } from './utils/internal-logger.js';
 
@@ -15,6 +16,11 @@ const alertWorker = createWorker('alert-notifications', async (job) => {
 // Create worker for Sigma detection
 const sigmaWorker = createWorker('sigma-detection', async (job) => {
   await processSigmaDetection(job);
+});
+
+// Create worker for incident auto-grouping
+const autoGroupWorker = createWorker('incident-autogrouping', async (job) => {
+  await processIncidentAutoGrouping(job);
 });
 
 alertWorker.on('completed', (job) => {
@@ -62,6 +68,27 @@ sigmaWorker.on('failed', (job, err) => {
       error: err,
       jobId: job?.id,
       logCount: job?.data?.logs?.length,
+    });
+  }
+});
+
+autoGroupWorker.on('completed', (job) => {
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.info('worker-autogrouping-completed', `Incident auto-grouping job completed`, {
+      jobId: job.id,
+    });
+  }
+});
+
+autoGroupWorker.on('failed', (job, err) => {
+  console.error(`❌ Incident auto-grouping job ${job?.id} failed:`, err);
+
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.error('worker-autogrouping-failed', `Incident auto-grouping job failed: ${err.message}`, {
+      error: err,
+      jobId: job?.id,
     });
   }
 });
@@ -142,6 +169,48 @@ setInterval(checkAlerts, 60000);
 // Run immediately on start
 checkAlerts();
 
+// Lock to prevent overlapping auto-grouping (race condition protection)
+let isAutoGrouping = false;
+
+// Schedule incident auto-grouping every 5 minutes
+async function runAutoGrouping() {
+  // Skip if already running
+  if (isAutoGrouping) {
+    console.warn('⚠️  Auto-grouping already in progress, skipping...');
+    return;
+  }
+
+  isAutoGrouping = true;
+  const logger = getInternalLogger();
+
+  try {
+    const { createQueue } = await import('./queue/connection.js');
+    const autoGroupQueue = createQueue('incident-autogrouping');
+
+    await autoGroupQueue.add('group-incidents', {});
+
+    if (logger) {
+      logger.info('worker-autogrouping-scheduled', `Incident auto-grouping job scheduled`);
+    }
+  } catch (error) {
+    console.error('Error scheduling auto-grouping:', error);
+
+    if (logger) {
+      logger.error('worker-autogrouping-schedule-error', `Failed to schedule auto-grouping: ${(error as Error).message}`, {
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
+  } finally {
+    isAutoGrouping = false;
+  }
+}
+
+// Run auto-grouping every 5 minutes
+setInterval(runAutoGrouping, 5 * 60 * 1000);
+
+// Run immediately on start (after 10 seconds delay to let system stabilize)
+setTimeout(runAutoGrouping, 10000);
+
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {
   console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
@@ -150,6 +219,7 @@ async function gracefulShutdown(signal: string) {
     // Stop accepting new jobs
     await alertWorker.close();
     await sigmaWorker.close();
+    await autoGroupWorker.close();
     console.log('✅ Workers closed');
 
     // Close internal logging

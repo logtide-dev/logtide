@@ -1,6 +1,9 @@
 import { SigmaDetectionEngine, type LogEntry } from '../../modules/sigma/detection-engine.js';
 import { db } from '../../database/connection.js';
 import { createQueue } from '../connection.js';
+import { SiemService } from '../../modules/siem/service.js';
+
+const siemService = new SiemService(db);
 
 export interface SigmaDetectionData {
   logs: LogEntry[];
@@ -14,6 +17,8 @@ export interface SigmaDetectionMatch {
   ruleTitle: string;
   ruleLevel: string;
   matchedAt: Date;
+  mitreTactics?: string[];
+  mitreTechniques?: string[];
 }
 
 /**
@@ -41,12 +46,22 @@ export async function processSigmaDetection(job: any) {
     results.forEach((result, logIndex) => {
       if (result.matched) {
         result.matchedRules.forEach((matchedRule) => {
+          // Extract MITRE tactics and techniques from tags
+          const mitreTactics = matchedRule.ruleTags
+            ?.filter(t => t.startsWith('attack.') && !t.match(/\bt\d{4}/i))
+            .map(t => t.replace('attack.', '')) || [];
+          const mitreTechniques = matchedRule.ruleTags
+            ?.filter(t => t.match(/attack\.t\d{4}/i))
+            .map(t => t.replace('attack.', '').toUpperCase()) || [];
+
           allMatches.push({
             logIndex,
             sigmaRuleId: matchedRule.sigmaRuleId,
             ruleTitle: matchedRule.ruleTitle,
             ruleLevel: matchedRule.ruleLevel,
             matchedAt: matchedRule.matchedAt,
+            mitreTactics,
+            mitreTechniques,
           });
         });
       }
@@ -60,6 +75,46 @@ export async function processSigmaDetection(job: any) {
     console.log(
       `[SigmaDetection] Found ${allMatches.length} matches across ${data.logs.length} logs`
     );
+
+    // Create detection_event records for SIEM dashboard
+    try {
+      for (const match of allMatches) {
+        const log = data.logs[match.logIndex] as any;
+
+        // Get the full Sigma rule for additional metadata
+        const sigmaRule = await db
+          .selectFrom('sigma_rules')
+          .select(['id', 'title', 'description', 'level', 'mitre_tactics', 'mitre_techniques'])
+          .where('sigma_id', '=', match.sigmaRuleId)
+          .where('organization_id', '=', data.organizationId)
+          .executeTakeFirst();
+
+        if (!sigmaRule) continue;
+
+        // Create detection event
+        await siemService.createDetectionEvent({
+          organizationId: data.organizationId,
+          projectId: data.projectId || null,
+          sigmaRuleId: sigmaRule.id,
+          logId: log.id || '', // Log ID from ingestion
+          severity: (match.ruleLevel as any) || 'medium',
+          ruleTitle: match.ruleTitle,
+          ruleDescription: sigmaRule.description,
+          mitreTactics: sigmaRule.mitre_tactics || match.mitreTactics || null,
+          mitreTechniques: sigmaRule.mitre_techniques || match.mitreTechniques || null,
+          service: log.service || 'unknown',
+          logLevel: log.level || 'info',
+          logMessage: log.message || '',
+          traceId: log.trace_id || null,
+          matchedFields: null, // TODO: Capture matched fields from detection engine
+        });
+      }
+
+      console.log(`[SigmaDetection] Created ${allMatches.length} detection_event records`);
+    } catch (error) {
+      console.error('[SigmaDetection] Error creating detection events:', error);
+      // Continue with notifications even if detection event creation fails
+    }
 
     // Group matches by Sigma rule
     const matchesByRule = new Map<string, SigmaDetectionMatch[]>();

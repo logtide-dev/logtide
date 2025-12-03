@@ -222,6 +222,86 @@ export interface UserOnboardingTable {
   updated_at: Generated<Timestamp>;
 }
 
+// ============================================================================
+// SIEM TABLES (Security Incident & Event Management)
+// ============================================================================
+
+export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'informational';
+export type IncidentStatus = 'open' | 'investigating' | 'resolved' | 'false_positive';
+
+export interface DetectionEventsTable {
+  time: Timestamp;
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string | null;
+  sigma_rule_id: string;
+  log_id: string;
+  severity: Severity;
+  rule_title: string;
+  rule_description: string | null;
+  mitre_tactics: string[] | null;
+  mitre_techniques: string[] | null;
+  service: string;
+  log_level: string;
+  log_message: string;
+  trace_id: string | null;
+  matched_fields: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  incident_id: string | null;
+}
+
+export interface IncidentsTable {
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string | null;
+  title: string;
+  description: string | null;
+  severity: Severity;
+  status: Generated<IncidentStatus>;
+  assignee_id: string | null;
+  trace_id: string | null;
+  time_window_start: Timestamp | null;
+  time_window_end: Timestamp | null;
+  detection_count: Generated<number>;
+  affected_services: string[] | null;
+  mitre_tactics: string[] | null;
+  mitre_techniques: string[] | null;
+  ip_reputation: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  geo_data: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+  resolved_at: Timestamp | null;
+}
+
+export interface IncidentAlertsTable {
+  id: Generated<string>;
+  incident_id: string;
+  detection_event_id: string | null;
+  alert_history_id: string | null;
+  added_at: Generated<Timestamp>;
+}
+
+export interface IncidentCommentsTable {
+  id: Generated<string>;
+  incident_id: string;
+  user_id: string;
+  comment: string;
+  edited: Generated<boolean>;
+  edited_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
+export interface IncidentHistoryTable {
+  id: Generated<string>;
+  incident_id: string;
+  user_id: string | null;  // Nullable: trigger might not find user context
+  action: string;
+  field_name: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  metadata: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  created_at: Generated<Timestamp>;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -237,6 +317,12 @@ export interface Database {
   traces: TracesTable;
   spans: SpansTable;
   user_onboarding: UserOnboardingTable;
+  // SIEM tables
+  detection_events: DetectionEventsTable;
+  incidents: IncidentsTable;
+  incident_alerts: IncidentAlertsTable;
+  incident_comments: IncidentCommentsTable;
+  incident_history: IncidentHistoryTable;
   // Continuous aggregates (TimescaleDB materialized views)
   logs_hourly_stats: LogsHourlyStatsTable;
   logs_daily_stats: LogsDailyStatsTable;
