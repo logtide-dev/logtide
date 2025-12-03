@@ -70,9 +70,7 @@ services:
       - logward-network
 
   backend:
-    build:
-      context: ..
-      dockerfile: packages/backend/Dockerfile
+    image: ${LOGWARD_BACKEND_IMAGE:-logward/backend:latest}
     container_name: logward-backend
     ports:
       - "8080:8080"
@@ -103,9 +101,7 @@ services:
       - logward-network
 
   worker:
-    build:
-      context: ..
-      dockerfile: packages/backend/Dockerfile
+    image: ${LOGWARD_BACKEND_IMAGE:-logward/backend:latest}
     container_name: logward-worker
     command: ["worker"]
     healthcheck:
@@ -135,11 +131,7 @@ services:
       - logward-network
 
   frontend:
-    build:
-      context: ..
-      dockerfile: packages/frontend/Dockerfile
-      args:
-        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+    image: ${LOGWARD_FRONTEND_IMAGE:-logward/frontend:latest}
     container_name: logward-frontend
     ports:
       - "3000:3000"
