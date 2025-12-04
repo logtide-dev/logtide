@@ -14,9 +14,14 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import PartyPopper from '@lucide/svelte/icons/party-popper';
   import confetti from 'canvas-confetti';
-  import { PUBLIC_API_URL } from '$env/static/public';
+  import { getApiUrl } from '$lib/config';
 
   let isPolling = $state(true);
+  let apiUrlValue = $state('http://localhost:8080');
+
+  $effect(() => {
+    apiUrlValue = getApiUrl();
+  });
   let logReceived = $state(false);
   let receivedLog = $state<any>(null);
   let pollCount = $state(0);
@@ -181,7 +186,7 @@
 
           <div class="bg-muted/50 rounded-lg p-4 text-sm text-muted-foreground">
             <p class="font-medium mb-2">Quick test with cURL:</p>
-            <pre class="bg-background rounded p-2 overflow-x-auto text-xs"><code>curl -X POST {PUBLIC_API_URL}/api/v1/ingest \
+            <pre class="bg-background rounded p-2 overflow-x-auto text-xs"><code>curl -X POST {apiUrlValue}/api/v1/ingest \
   -H "X-API-Key: {onboardingState.apiKey || 'YOUR_API_KEY'}" \
   -H "Content-Type: application/json" \
   -d '{`{"logs":[{"level":"info","service":"test","message":"Hello!","time":"${new Date().toISOString()}"}]}`}'</code></pre>

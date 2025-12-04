@@ -69,7 +69,7 @@ export async function build(opts = {}) {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
-      version: '0.2.2',
+      version: '0.2.4',
     };
   });
 

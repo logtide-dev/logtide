@@ -54,8 +54,17 @@
                 { title: "Overview", href: "/docs/sdks" },
                 { title: "Node.js", href: "/docs/sdks/nodejs" },
                 { title: "Python", href: "/docs/sdks/python" },
+                { title: "Go", href: "/docs/sdks/go" },
                 { title: "PHP", href: "/docs/sdks/php" },
                 { title: "Kotlin", href: "/docs/sdks/kotlin" },
+            ],
+        },
+        {
+            title: "Integrations",
+            icon: Code,
+            collapsed: false,
+            items: [
+                { title: "Syslog", href: "/docs/syslog" },
                 { title: "OpenTelemetry", href: "/docs/opentelemetry" },
             ],
         },

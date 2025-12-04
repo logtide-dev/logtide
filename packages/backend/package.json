@@ -1,6 +1,6 @@
 {
   "name": "@logward/backend",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "private": true,
   "description": "LogWard Backend API",
   "type": "module",

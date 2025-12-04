@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from "$app/stores";
 	import { browser } from "$app/environment";
-	import { PUBLIC_API_URL } from "$env/static/public";
+	import { getApiUrl } from "$lib/config";
 	import { logsAPI } from "$lib/api/logs";
 	import { toastStore } from "$lib/stores/toast";
 	import { authStore } from "$lib/stores/auth";
@@ -146,7 +146,7 @@
 		if (selectedLevels.length > 0)
 			params.append("level", selectedLevels[0]);
 
-		const url = `${PUBLIC_API_URL}/api/v1/logs/stream?${params.toString()}`;
+		const url = `${getApiUrl()}/api/v1/logs/stream?${params.toString()}`;
 
 		try {
 			const es = new EventSource(url);

@@ -2,7 +2,6 @@
   import { onMount, onDestroy } from "svelte";
   import { browser } from "$app/environment";
   import { page } from "$app/stores";
-  import { PUBLIC_API_URL } from "$env/static/public";
   import { currentOrganization } from "$lib/stores/organization";
   import { authStore } from "$lib/stores/auth";
   import { checklistStore } from "$lib/stores/checklist";

@@ -24,8 +24,10 @@
   }
 
   function skipTutorial() {
-    onboardingStore.skip();
-    goto('/dashboard');
+    // Skip the welcome intro and go directly to creating an organization
+    // (user still needs an org to access dashboard, then skip to dashboard)
+    onboardingStore.setSkipAfterOrgCreation(true);
+    onboardingStore.goToStep('create-organization');
   }
 
   const features = [

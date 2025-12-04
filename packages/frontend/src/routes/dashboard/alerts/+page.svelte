@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { browser } from "$app/environment";
-	import { PUBLIC_API_URL } from "$env/static/public";
+	import { getApiUrl } from "$lib/config";
 	import { currentOrganization } from "$lib/stores/organization";
 	import {
 		alertsAPI,
@@ -237,7 +237,7 @@
 			}
 
 			const response = await fetch(
-				`${PUBLIC_API_URL}/api/v1/logs?${params.toString()}`,
+				`${getApiUrl()}/api/v1/logs?${params.toString()}`,
 				{
 					headers: {
 						Authorization: `Bearer ${token}`,

@@ -24,6 +24,7 @@ export interface OnboardingState {
   currentStep: OnboardingStep;
   completedSteps: OnboardingStep[];
   skipped: boolean;
+  skipAfterOrgCreation: boolean;
   organizationId: string | null;
   projectId: string | null;
   apiKey: string | null;
@@ -48,6 +49,7 @@ const defaultState: OnboardingState = {
   currentStep: 'welcome',
   completedSteps: [],
   skipped: false,
+  skipAfterOrgCreation: false,
   organizationId: null,
   projectId: null,
   apiKey: null,
@@ -269,6 +271,17 @@ function createOnboardingStore() {
       update(state => ({
         ...state,
         apiKey: apiKey
+      }));
+    },
+
+    /**
+     * Set flag to skip tutorial after org creation
+     * (used when user clicks "skip" but still needs to create an org)
+     */
+    setSkipAfterOrgCreation: (skip: boolean) => {
+      update(state => ({
+        ...state,
+        skipAfterOrgCreation: skip
       }));
     },
 

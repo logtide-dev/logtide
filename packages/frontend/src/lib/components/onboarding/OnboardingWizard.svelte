@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { onboardingStore, type OnboardingStep } from '$lib/stores/onboarding';
+  import { organizationStore } from '$lib/stores/organization';
   import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
   import { fade, fly, scale } from 'svelte/transition';
@@ -70,9 +71,20 @@
     return state.currentStep === step;
   }
 
-  function handleSkip() {
-    onboardingStore.skip();
-    goto('/dashboard');
+  async function handleSkip() {
+    // Check if user already has an organization
+    const hasOrg = $organizationStore.organizations.length > 0 || $organizationStore.currentOrganization !== null;
+
+    if (hasOrg) {
+      // User has an org, can skip directly to dashboard
+      await onboardingStore.skip();
+      goto('/dashboard');
+    } else {
+      // Skip the tutorial intro but still require organization creation
+      // (user needs an org to access dashboard)
+      onboardingStore.setSkipAfterOrgCreation(true);
+      onboardingStore.goToStep('create-organization');
+    }
   }
 </script>
 

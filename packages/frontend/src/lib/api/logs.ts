@@ -1,5 +1,5 @@
 // LogsAPI Client for backend integration
-import { PUBLIC_API_URL } from '$env/static/public';
+import { getApiBaseUrl, getApiUrl } from '$lib/config';
 
 interface LogEntry {
   time: string;
@@ -55,7 +55,6 @@ interface StatsFilters {
   interval?: '1m' | '5m' | '1h' | '1d';
 }
 
-const API_BASE_URL = `${PUBLIC_API_URL}/api/v1`;
 
 export class LogsAPI {
   constructor(private getToken: () => string | null) { }
@@ -114,7 +113,7 @@ export class LogsAPI {
     if (filters.offset) params.append('offset', filters.offset.toString());
     if (filters.cursor) params.append('cursor', filters.cursor);
 
-    const url = `${API_BASE_URL}/logs?${params.toString()}`;
+    const url = `${getApiBaseUrl()}/logs?${params.toString()}`;
 
     console.log('Fetching logs from:', url);
 
@@ -143,7 +142,7 @@ export class LogsAPI {
     if (filters.to) params.append('to', filters.to);
     if (filters.interval) params.append('interval', filters.interval);
 
-    const url = `${API_BASE_URL}/stats?${params.toString()}`;
+    const url = `${getApiBaseUrl()}/stats?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -173,8 +172,8 @@ export class LogsAPI {
     }
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Use PUBLIC_API_URL but replace protocol
-    const apiUrl = new URL(PUBLIC_API_URL);
+    // Use runtime API URL but replace protocol
+    const apiUrl = new URL(getApiUrl());
     const wsUrl = `${wsProtocol}//${apiUrl.host}/api/v1/logs/ws?${params.toString()}`;
 
     return new WebSocket(wsUrl);
@@ -206,7 +205,7 @@ export class LogsAPI {
     if (params.before) queryParams.append('before', params.before.toString());
     if (params.after) queryParams.append('after', params.after.toString());
 
-    const url = `${API_BASE_URL}/logs/context?${queryParams.toString()}`;
+    const url = `${getApiBaseUrl()}/logs/context?${queryParams.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',

@@ -404,8 +404,7 @@
 
     <div class="max-w-4xl mx-auto text-center relative">
       <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
-        <Euro class="w-4 h-4" aria-hidden="true" />
-        No credit card required
+          Now in Alpha & Free
       </div>
 
       <h2 id="cta-heading" class="text-3xl md:text-5xl font-bold mb-6">Ready to own your logs?</h2>

@@ -259,9 +259,8 @@
                     <p class="text-sm text-muted-foreground">
                         LogWard Cloud is currently in beta. Sign up at
                         <a
-                            href="https://logward.dev/signup"
-                            class="text-primary underline"
-                            target="_blank">logward.dev</a
+                            href="/register"
+                            class="text-primary underline">logward.dev</a
                         >
                         to get early access and we'll notify you when Fluentd logging
                         driver support is available.
@@ -1073,6 +1072,21 @@ networks:
         </div>
     </div>
 
+    <div class="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-4">
+        <div class="flex items-start gap-3">
+            <Info class="w-5 h-5 text-blue-500 mt-0.5 flex-shrink-0" />
+            <div>
+                <p class="font-semibold text-blue-600 dark:text-blue-400 mb-1">
+                    Collecting Syslog from Infrastructure?
+                </p>
+                <p class="text-sm text-muted-foreground">
+                    Want to collect logs from Proxmox, ESXi, firewalls, or network devices?
+                    Check out the <a href="/docs/syslog" class="text-primary underline">Syslog Integration</a> guide.
+                </p>
+            </div>
+        </div>
+    </div>
+
     <div class="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
         <div class="flex items-start gap-3">
             <Info class="w-5 h-5 text-blue-500 mt-0.5 flex-shrink-0" />
@@ -1084,7 +1098,7 @@ networks:
                     Want to explore SDKs for advanced features? Check out the
                     <a href="/docs/sdks" class="text-primary underline"
                         >SDK documentation</a
-                    > for Node.js, Python, PHP, and Kotlin.
+                    > for Node.js, Python, Go, PHP, and Kotlin.
                 </p>
             </div>
         </div>

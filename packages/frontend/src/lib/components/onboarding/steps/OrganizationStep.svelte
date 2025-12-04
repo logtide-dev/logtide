@@ -4,6 +4,7 @@
   import { organizationStore } from '$lib/stores/organization';
   import { OrganizationsAPI } from '$lib/api/organizations';
   import { toastStore } from '$lib/stores/toast';
+  import { goto } from '$app/navigation';
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
@@ -20,12 +21,17 @@
   let orgSlug = $state('');
   let orgDescription = $state('');
   let token = $state<string | null>(null);
+  let skipAfterOrgCreation = $state(false);
   let organizationsAPI = $derived(new OrganizationsAPI(() => token));
 
   let isFormValid = $derived(orgName.trim().length > 0);
 
   authStore.subscribe((state) => {
     token = state.token;
+  });
+
+  onboardingStore.subscribe((state) => {
+    skipAfterOrgCreation = state.skipAfterOrgCreation;
   });
 
   // Domain-based suggestions
@@ -79,7 +85,14 @@
 
       onboardingStore.setOrganizationId(newOrg.id);
       toastStore.success('Organization created!');
-      onboardingStore.completeStep('create-organization');
+
+      // If user clicked "skip tutorial", go directly to dashboard
+      if (skipAfterOrgCreation) {
+        onboardingStore.skip();
+        goto('/dashboard');
+      } else {
+        onboardingStore.completeStep('create-organization');
+      }
     } catch (error: any) {
       console.error('Failed to create organization:', error);
       toastStore.error(error.message || 'Failed to create organization');

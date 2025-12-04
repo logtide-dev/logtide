@@ -2,7 +2,7 @@
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
   import * as Tabs from '$lib/components/ui/tabs';
-  import { PUBLIC_API_URL } from '$env/static/public';
+  import { getApiUrl } from '$lib/config';
   import { toastStore } from '$lib/stores/toast';
   import SearchIcon from '@lucide/svelte/icons/search';
   import Key from '@lucide/svelte/icons/key';
@@ -14,11 +14,14 @@
   import Filter from '@lucide/svelte/icons/filter';
 
   let selectedTab = $state('curl');
+  let apiUrlValue = $state('http://localhost:8080');
 
-  const API_URL = PUBLIC_API_URL;
+  $effect(() => {
+    apiUrlValue = getApiUrl();
+  });
 
-  const codeExamples: Record<string, string> = {
-    curl: `curl -X POST ${API_URL}/v1/ingest \\
+  let codeExamples: Record<string, string> = $derived({
+    curl: `curl -X POST ${apiUrlValue}/v1/ingest \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: YOUR_API_KEY" \\
   -d '{
@@ -48,7 +51,7 @@ logger = LogWard(
 
 logger.info("Hello from LogWard!")
 logger.error("Something went wrong", metadata={"user_id": 123})`
-  };
+  });
 
   async function copyCode(code: string) {
     try {

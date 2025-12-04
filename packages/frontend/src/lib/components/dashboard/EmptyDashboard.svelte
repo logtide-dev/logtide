@@ -2,7 +2,7 @@
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
   import * as Tabs from '$lib/components/ui/tabs';
-  import { PUBLIC_API_URL } from '$env/static/public';
+  import { getApiUrl } from '$lib/config';
   import Rocket from '@lucide/svelte/icons/rocket';
   import Key from '@lucide/svelte/icons/key';
   import Book from '@lucide/svelte/icons/book';
@@ -13,11 +13,14 @@
   import { toastStore } from '$lib/stores/toast';
 
   let selectedTab = $state('curl');
+  let apiUrlValue = $state('http://localhost:8080');
 
-  const API_URL = PUBLIC_API_URL;
+  $effect(() => {
+    apiUrlValue = getApiUrl();
+  });
 
-  const codeExamples: Record<string, string> = {
-    curl: `curl -X POST ${API_URL}/api/v1/ingest \\
+  let codeExamples: Record<string, string> = $derived({
+    curl: `curl -X POST ${apiUrlValue}/api/v1/ingest \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: YOUR_API_KEY" \\
   -d '{
@@ -51,10 +54,10 @@ logger.info("Hello from LogWard!")`,
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
 
 const exporter = new OTLPLogExporter({
-  url: '${API_URL}/api/v1/otlp/logs',
+  url: '${apiUrlValue}/api/v1/otlp/logs',
   headers: { 'X-API-Key': 'YOUR_API_KEY' }
 });`
-  };
+  });
 
   async function copyCode(code: string) {
     try {

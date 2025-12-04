@@ -1,6 +1,4 @@
-import { PUBLIC_API_URL } from '$env/static/public';
-
-const API_URL = `${PUBLIC_API_URL}/api/v1`;
+import { getApiBaseUrl } from '$lib/config';
 
 export interface RegisterInput {
   email: string;
@@ -32,7 +30,7 @@ export interface ErrorResponse {
 
 export class AuthAPI {
   async register(input: RegisterInput): Promise<AuthResponse> {
-    const response = await fetch(`${API_URL}/auth/register`, {
+    const response = await fetch(`${getApiBaseUrl()}/auth/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -49,7 +47,7 @@ export class AuthAPI {
   }
 
   async login(input: LoginInput): Promise<AuthResponse> {
-    const response = await fetch(`${API_URL}/auth/login`, {
+    const response = await fetch(`${getApiBaseUrl()}/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -66,7 +64,7 @@ export class AuthAPI {
   }
 
   async logout(token: string): Promise<void> {
-    const response = await fetch(`${API_URL}/auth/logout`, {
+    const response = await fetch(`${getApiBaseUrl()}/auth/logout`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -80,7 +78,7 @@ export class AuthAPI {
   }
 
   async getMe(token: string): Promise<{ user: any }> {
-    const response = await fetch(`${API_URL}/auth/me`, {
+    const response = await fetch(`${getApiBaseUrl()}/auth/me`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },

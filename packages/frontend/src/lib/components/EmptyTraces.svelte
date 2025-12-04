@@ -2,7 +2,7 @@
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
   import * as Tabs from '$lib/components/ui/tabs';
-  import { PUBLIC_API_URL } from '$env/static/public';
+  import { getApiUrl } from '$lib/config';
   import { toastStore } from '$lib/stores/toast';
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import Key from '@lucide/svelte/icons/key';
@@ -15,10 +15,13 @@
   import AlertCircle from '@lucide/svelte/icons/alert-circle';
 
   let selectedTab = $state('nodejs');
+  let apiUrlValue = $state('http://localhost:8080');
 
-  const API_URL = PUBLIC_API_URL;
+  $effect(() => {
+    apiUrlValue = getApiUrl();
+  });
 
-  const codeExamples: Record<string, string> = {
+  let codeExamples: Record<string, string> = $derived({
     nodejs: `// Node.js with OpenTelemetry
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
@@ -26,7 +29,7 @@ import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentation
 
 const sdk = new NodeSDK({
   traceExporter: new OTLPTraceExporter({
-    url: '${API_URL}/api/v1/otlp/traces',
+    url: '${apiUrlValue}/api/v1/otlp/traces',
     headers: { 'X-API-Key': 'YOUR_API_KEY' }
   }),
   instrumentations: [getNodeAutoInstrumentations()]
@@ -42,7 +45,7 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 
 provider = TracerProvider()
 exporter = OTLPSpanExporter(
-    endpoint="${API_URL}/api/v1/otlp/traces",
+    endpoint="${apiUrlValue}/api/v1/otlp/traces",
     headers={"X-API-Key": "YOUR_API_KEY"}
 )
 provider.add_span_processor(BatchSpanProcessor(exporter))
@@ -61,7 +64,7 @@ import (
 )
 
 exporter, _ := otlptracehttp.New(ctx,
-    otlptracehttp.WithEndpoint("${API_URL.replace('https://', '').replace('http://', '')}"),
+    otlptracehttp.WithEndpoint("${apiUrlValue.replace('https://', '').replace('http://', '')}"),
     otlptracehttp.WithURLPath("/api/v1/otlp/traces"),
     otlptracehttp.WithHeaders(map[string]string{
         "X-API-Key": "YOUR_API_KEY",
@@ -72,7 +75,7 @@ tp := trace.NewTracerProvider(
     trace.WithBatcher(exporter),
 )
 otel.SetTracerProvider(tp)`
-  };
+  });
 
   async function copyCode(code: string) {
     try {

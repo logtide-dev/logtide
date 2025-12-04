@@ -28,7 +28,7 @@
                 </p>
                 <p class="text-sm text-muted-foreground mb-2">
                     No problem! LogWard supports stdout-based logging for
-                    <strong>any language</strong> (Go, Rust, Ruby, Java, .NET, etc.).
+                    <strong>any language</strong> (Rust, Ruby, Java, .NET, etc.).
                     Just write to stdout and let Fluent Bit collect your logs automatically.
                 </p>
                 <a
@@ -135,6 +135,53 @@
                         </ul>
                     </div>
                     <a href="/docs/sdks/python">
+                        <Button variant="outline" size="sm" class="w-full mt-2"
+                            >View Documentation</Button
+                        >
+                    </a>
+                </div>
+            </CardContent>
+        </Card>
+
+        <!-- Go SDK -->
+        <Card>
+            <CardHeader>
+                <div class="flex items-center justify-between">
+                    <CardTitle class="flex items-center gap-2">
+                        <Package class="w-5 h-5 text-primary" />
+                        Go SDK
+                    </CardTitle>
+                    <a
+                        href="https://github.com/logward-dev/logward-sdk-go"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        <Button variant="ghost" size="sm" class="gap-1">
+                            <ExternalLink class="w-4 h-4" />
+                        </Button>
+                    </a>
+                </div>
+                <CardDescription
+                    >Official SDK for Go applications</CardDescription
+                >
+            </CardHeader>
+            <CardContent>
+                <div class="space-y-3">
+                    <div>
+                        <p class="text-sm font-semibold mb-1">Installation:</p>
+                        <code class="text-xs bg-muted px-2 py-1 rounded"
+                            >go get github.com/logward-dev/logward-sdk-go</code
+                        >
+                    </div>
+                    <div>
+                        <p class="text-sm font-semibold mb-1">Features:</p>
+                        <ul class="text-sm text-muted-foreground space-y-1">
+                            <li>✅ Goroutine-safe logging</li>
+                            <li>✅ Automatic batching & retry</li>
+                            <li>✅ Context support for tracing</li>
+                        </ul>
+                    </div>
+                    <a href="/docs/sdks/go">
                         <Button variant="outline" size="sm" class="w-full mt-2"
                             >View Documentation</Button
                         >

@@ -13,9 +13,15 @@
   import Check from '@lucide/svelte/icons/check';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
-  import { PUBLIC_API_URL } from '$env/static/public';
+  import { getApiUrl } from '$lib/config';
+  import { onMount } from 'svelte';
 
   let isLoading = $state(false);
+  let apiUrlValue = $state('http://localhost:8080');
+
+  onMount(() => {
+    apiUrlValue = getApiUrl();
+  });
   let apiKey = $state<string | null>(null);
   let copied = $state(false);
   let selectedTab = $state('curl');
@@ -80,10 +86,8 @@
     onboardingStore.completeStep('api-key');
   }
 
-  const API_URL = PUBLIC_API_URL;
-
   let codeExamples = $derived({
-    curl: `curl -X POST ${API_URL}/api/v1/ingest \\
+    curl: `curl -X POST ${apiUrlValue}/api/v1/ingest \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: ${apiKey || 'YOUR_API_KEY'}" \\
   -d '{
@@ -129,7 +133,7 @@ services:
 [OUTPUT]
     Name  http
     Match *
-    Host  ${API_URL.replace('https://', '').replace('http://', '')}
+    Host  ${apiUrlValue.replace('https://', '').replace('http://', '')}
     Port  443
     URI   /api/v1/ingest
     Format json
@@ -143,7 +147,7 @@ import { LoggerProvider, SimpleLogRecordProcessor } from '@opentelemetry/sdk-log
 import { Resource } from '@opentelemetry/resources';
 
 const logExporter = new OTLPLogExporter({
-  url: '${API_URL}/api/v1/otlp/logs',
+  url: '${apiUrlValue}/api/v1/otlp/logs',
   headers: {
     'X-API-Key': '${apiKey || 'YOUR_API_KEY'}'
   }
@@ -164,7 +168,7 @@ from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 
 exporter = OTLPLogExporter(
-    endpoint="${API_URL}/api/v1/otlp/logs",
+    endpoint="${apiUrlValue}/api/v1/otlp/logs",
     headers={"X-API-Key": "${apiKey || 'YOUR_API_KEY'}"}
 )
 
