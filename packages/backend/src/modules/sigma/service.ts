@@ -68,6 +68,35 @@ export class SigmaService {
   }
 
   /**
+   * Extract MITRE ATT&CK tactics and techniques from tags
+   */
+  private extractMitreTags(tags: string[] | undefined): {
+    tactics: string[];
+    techniques: string[];
+  } {
+    if (!tags || tags.length === 0) {
+      return { tactics: [], techniques: [] };
+    }
+
+    const tactics: string[] = [];
+    const techniques: string[] = [];
+
+    for (const tag of tags) {
+      const lowerTag = tag.toLowerCase();
+      // MITRE technique pattern: attack.t1234 or attack.t1234.001
+      if (/^attack\.t\d{4}(\.\d{3})?$/i.test(lowerTag)) {
+        techniques.push(tag.replace('attack.', '').toUpperCase());
+      }
+      // MITRE tactic pattern: attack.tactic_name (not a technique)
+      else if (lowerTag.startsWith('attack.') && !lowerTag.match(/^attack\.t\d/)) {
+        tactics.push(tag.replace('attack.', ''));
+      }
+    }
+
+    return { tactics, techniques };
+  }
+
+  /**
    * Save Sigma rule to database
    */
   private async saveSigmaRule(
@@ -80,6 +109,9 @@ export class SigmaService {
     conversionStatus: 'success' | 'partial' | 'failed',
     conversionNotes: string
   ): Promise<SigmaRuleRecord> {
+    // Extract MITRE tags
+    const mitre = this.extractMitreTags(rule.tags);
+
     const record = await db
       .insertInto('sigma_rules')
       .values({
@@ -99,6 +131,9 @@ export class SigmaService {
         alert_rule_id: alertRuleId,
         conversion_status: conversionStatus,
         conversion_notes: conversionNotes,
+        tags: rule.tags || null,
+        mitre_tactics: mitre.tactics.length > 0 ? mitre.tactics : null,
+        mitre_techniques: mitre.techniques.length > 0 ? mitre.techniques : null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -157,6 +192,7 @@ export class SigmaService {
       alertRuleId: record.alert_rule_id,
       conversionStatus: record.conversion_status,
       conversionNotes: record.conversion_notes,
+      enabled: record.enabled,
       createdAt: record.created_at,
       updatedAt: record.updated_at,
     })) as unknown as SigmaRuleRecord[];
@@ -199,6 +235,51 @@ export class SigmaService {
       alertRuleId: record.alert_rule_id,
       conversionStatus: record.conversion_status,
       conversionNotes: record.conversion_notes,
+      enabled: record.enabled,
+      createdAt: record.created_at,
+      updatedAt: record.updated_at,
+    } as unknown as SigmaRuleRecord;
+  }
+
+  /**
+   * Toggle enabled status for a Sigma rule
+   */
+  async toggleSigmaRule(
+    id: string,
+    organizationId: string,
+    enabled: boolean
+  ): Promise<SigmaRuleRecord | null> {
+    const record = await db
+      .updateTable('sigma_rules')
+      .set({ enabled, updated_at: new Date() })
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .returningAll()
+      .executeTakeFirst();
+
+    if (!record) {
+      return null;
+    }
+
+    return {
+      id: record.id,
+      organizationId: record.organization_id,
+      projectId: record.project_id,
+      sigmaId: record.sigma_id,
+      title: record.title,
+      description: record.description,
+      author: record.author,
+      date: record.date,
+      level: record.level,
+      status: record.status,
+      logsource: record.logsource,
+      detection: record.detection,
+      emailRecipients: record.email_recipients,
+      webhookUrl: record.webhook_url,
+      alertRuleId: record.alert_rule_id,
+      conversionStatus: record.conversion_status,
+      conversionNotes: record.conversion_notes,
+      enabled: record.enabled,
       createdAt: record.created_at,
       updatedAt: record.updated_at,
     } as unknown as SigmaRuleRecord;

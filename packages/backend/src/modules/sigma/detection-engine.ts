@@ -115,7 +115,8 @@ export class SigmaDetectionEngine {
       .selectFrom('sigma_rules')
       .selectAll()
       .where('organization_id', '=', organizationId)
-      .where('conversion_status', 'in', ['success', 'partial']);
+      .where('conversion_status', 'in', ['success', 'partial'])
+      .where('enabled', '=', true);
 
     // Filter by project if specified
     if (projectId) {
@@ -175,19 +176,23 @@ export class SigmaDetectionEngine {
     // Match product field (if present in log metadata)
     if (logsource.product) {
       const productPattern = String(logsource.product).toLowerCase();
-      const logProduct = String(
-        logEntry.metadata?.product || logEntry.product || ''
-      ).toLowerCase();
 
-      // If log product is "unknown", skip validation (check all rules)
-      if (logProduct !== 'unknown') {
-        if (productPattern.includes('*')) {
-          const regex = new RegExp(`^${productPattern.replace(/\*/g, '.*')}$`);
-          if (!regex.test(logProduct)) {
+      // Skip validation if product is "any" (matches all logs)
+      if (productPattern !== 'any') {
+        const logProduct = String(
+          logEntry.metadata?.product || logEntry.product || ''
+        ).toLowerCase();
+
+        // If log product is "unknown", skip validation (check all rules)
+        if (logProduct !== 'unknown') {
+          if (productPattern.includes('*')) {
+            const regex = new RegExp(`^${productPattern.replace(/\*/g, '.*')}$`);
+            if (!regex.test(logProduct)) {
+              return false;
+            }
+          } else if (logProduct !== productPattern) {
             return false;
           }
-        } else if (logProduct !== productPattern) {
-          return false;
         }
       }
     }

@@ -213,6 +213,12 @@
       badge: { id: 'traces-feature', type: 'new', showUntil: '2025-03-01' }
     },
     { label: "Alerts", href: "/dashboard/alerts", icon: AlertTriangle },
+    {
+      label: "Security",
+      href: "/dashboard/security",
+      icon: Shield,
+      badge: { id: 'security-feature', type: 'new', showUntil: '2025-06-01' }
+    },
     { label: "Docs", href: "/docs", icon: Book },
     { label: "Settings", href: "/dashboard/settings", icon: Settings },
   ];

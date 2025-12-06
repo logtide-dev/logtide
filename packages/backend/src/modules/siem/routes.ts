@@ -135,6 +135,73 @@ export async function siemRoutes(fastify: FastifyInstance) {
     }
   );
 
+  /**
+   * GET /api/v1/siem/detections
+   * Get recent detection events
+   */
+  fastify.get(
+    '/api/v1/siem/detections',
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: '1 minute',
+        },
+      },
+      schema: {
+        querystring: {
+          type: 'object',
+          required: ['organizationId'],
+          properties: {
+            organizationId: { type: 'string', format: 'uuid' },
+            projectId: { type: 'string', format: 'uuid' },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+            offset: { type: 'integer', minimum: 0 },
+          },
+        },
+      },
+    },
+    async (request: any, reply) => {
+      try {
+        const schema = z.object({
+          organizationId: z.string().uuid(),
+          projectId: z.string().uuid().optional(),
+          limit: z.coerce.number().min(1).max(100).optional().default(10),
+          offset: z.coerce.number().min(0).optional().default(0),
+        });
+
+        const query = schema.parse(request.query);
+
+        // Verify user is member of organization
+        const isMember = await checkOrganizationMembership(
+          request.user.id,
+          query.organizationId
+        );
+
+        if (!isMember) {
+          return reply.status(403).send({
+            error: 'You are not a member of this organization',
+          });
+        }
+
+        const detections = await siemService.getDetectionEvents({
+          organizationId: query.organizationId,
+          projectId: query.projectId,
+          limit: query.limit,
+          offset: query.offset,
+        });
+
+        return reply.send({ detections });
+      } catch (error: any) {
+        console.error('Error getting detection events:', error);
+        return reply.status(500).send({
+          error: 'Failed to get detection events',
+          details: error.message,
+        });
+      }
+    }
+  );
+
   // ==========================================================================
   // INCIDENTS
   // ==========================================================================
@@ -275,6 +342,8 @@ export async function siemRoutes(fastify: FastifyInstance) {
               },
             },
             assigneeId: { type: 'string', format: 'uuid' },
+            service: { type: 'string' },
+            technique: { type: 'string' },
             limit: { type: 'integer', minimum: 1, maximum: 100 },
             offset: { type: 'integer', minimum: 0 },
           },
@@ -297,6 +366,8 @@ export async function siemRoutes(fastify: FastifyInstance) {
             )
             .optional(),
           assigneeId: z.string().uuid().optional(),
+          service: z.string().optional(),
+          technique: z.string().optional(),
           limit: z.number().int().min(1).max(100).optional(),
           offset: z.number().int().min(0).optional(),
         });
@@ -321,6 +392,8 @@ export async function siemRoutes(fastify: FastifyInstance) {
           status: query.status,
           severity: query.severity,
           assigneeId: query.assigneeId,
+          service: query.service,
+          technique: query.technique,
           limit: query.limit,
           offset: query.offset,
         });
@@ -775,7 +848,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
    * GET /api/v1/siem/enrichment/status
    * Check enrichment services configuration status
    */
-  fastify.get('/api/v1/siem/enrichment/status', async (request, reply) => {
+  fastify.get('/api/v1/siem/enrichment/status', async (_request, reply) => {
     const status = enrichmentService.isConfigured();
     return reply.send(status);
   });

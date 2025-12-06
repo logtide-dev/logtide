@@ -260,6 +260,83 @@ export class TestApiClient {
       body: JSON.stringify({ enabled }),
     });
   }
+
+  async getSiemDashboard(organizationId: string, timeRange: '24h' | '7d' | '30d' = '24h') {
+    const params = new URLSearchParams({ organizationId, timeRange });
+    return this.request<{
+      topThreats: any[];
+      timeline: any[];
+      affectedServices: any[];
+      severityDistribution: any[];
+      mitreHeatmap: any[];
+      totalDetections: number;
+      totalIncidents: number;
+      openIncidents: number;
+      criticalIncidents: number;
+    }>(`/siem/dashboard?${params}`);
+  }
+
+  async listSiemIncidents(organizationId: string, filters?: { status?: string[]; severity?: string[] }) {
+    const params = new URLSearchParams({ organizationId });
+    if (filters?.status) {
+      filters.status.forEach(s => params.append('status', s));
+    }
+    if (filters?.severity) {
+      filters.severity.forEach(s => params.append('severity', s));
+    }
+    return this.request<{ incidents: any[] }>(`/siem/incidents?${params}`);
+  }
+
+  async getSiemIncident(incidentId: string, organizationId: string) {
+    const params = new URLSearchParams({ organizationId });
+    return this.request<{
+      incident: any;
+      detections: any[];
+      comments: any[];
+      history: any[];
+    }>(`/siem/incidents/${incidentId}?${params}`);
+  }
+
+  async createSiemIncident(params: {
+    organizationId: string;
+    projectId?: string;
+    title: string;
+    description?: string;
+    severity: 'critical' | 'high' | 'medium' | 'low' | 'informational';
+    status?: 'open' | 'investigating' | 'resolved' | 'false_positive';
+  }) {
+    return this.request<any>('/siem/incidents', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async updateSiemIncident(incidentId: string, params: {
+    organizationId: string;
+    status?: 'open' | 'investigating' | 'resolved' | 'false_positive';
+    severity?: 'critical' | 'high' | 'medium' | 'low' | 'informational';
+    title?: string;
+    description?: string;
+  }) {
+    return this.request<any>(`/siem/incidents/${incidentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async deleteSiemIncident(incidentId: string, organizationId: string) {
+    const params = new URLSearchParams({ organizationId });
+    return this.request<void>(`/siem/incidents/${incidentId}?${params}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async addSiemComment(incidentId: string, organizationId: string, comment: string) {
+    return this.request<any>(`/siem/incidents/${incidentId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ comment, organizationId }),
+    });
+  }
 }
 
 // Create test with authenticated user fixture

@@ -134,6 +134,7 @@ export interface SigmaRulesTable {
   alert_rule_id: string | null;
   conversion_status: string | null;
   conversion_notes: string | null;
+  enabled: Generated<boolean>;
   // Phase 3: SigmaHQ integration fields
   tags: string[] | null;
   mitre_tactics: string[] | null;

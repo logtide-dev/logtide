@@ -15,6 +15,7 @@ import { apiKeysRoutes } from './modules/api-keys/routes.js';
 import dashboardRoutes from './modules/dashboard/routes.js';
 import { sigmaRoutes } from './modules/sigma/routes.js';
 import { siemRoutes } from './modules/siem/routes.js';
+import { registerSiemSseRoutes } from './modules/siem/sse-events.js';
 import { adminRoutes } from './modules/admin/index.js';
 import { otlpRoutes, otlpTraceRoutes } from './modules/otlp/index.js';
 import { tracesRoutes } from './modules/traces/index.js';
@@ -96,6 +97,9 @@ export async function build(opts = {}) {
 
   // SIEM routes (session-based auth)
   await fastify.register(siemRoutes);
+
+  // SIEM SSE routes for real-time updates (session-based auth)
+  await fastify.register(registerSiemSseRoutes);
 
   // API keys management routes (session-based auth)
   await fastify.register(apiKeysRoutes, { prefix: '/api/v1/projects' });

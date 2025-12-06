@@ -151,6 +151,8 @@ export interface IncidentFilters {
     status?: IncidentStatus[];
     severity?: Severity[];
     assigneeId?: string;
+    service?: string;
+    technique?: string;
     limit?: number;
     offset?: number;
 }
@@ -183,6 +185,23 @@ export interface GeoIpData {
 // ============================================================================
 
 /**
+ * Get auth token from localStorage
+ */
+function getToken(): string | null {
+    if (typeof window === 'undefined') return null;
+    try {
+        const stored = localStorage.getItem('logward_auth');
+        if (stored) {
+            const data = JSON.parse(stored);
+            return data.token;
+        }
+    } catch (e) {
+        console.error('Failed to get token:', e);
+    }
+    return null;
+}
+
+/**
  * Get SIEM dashboard statistics
  */
 export async function getDashboardStats(params: {
@@ -191,7 +210,7 @@ export async function getDashboardStats(params: {
     timeRange: '24h' | '7d' | '30d';
     severity?: Severity[];
 }): Promise<DashboardStats> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
     const searchParams = new URLSearchParams({
         organizationId: params.organizationId,
         timeRange: params.timeRange,
@@ -223,7 +242,7 @@ export async function getDashboardStats(params: {
  * Create a new incident
  */
 export async function createIncident(params: CreateIncidentParams): Promise<Incident> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
 
     const response = await fetch(`${API_URL}/api/v1/siem/incidents`, {
         method: 'POST',
@@ -246,7 +265,7 @@ export async function createIncident(params: CreateIncidentParams): Promise<Inci
  * List incidents
  */
 export async function listIncidents(filters: IncidentFilters): Promise<{ incidents: Incident[] }> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
     const searchParams = new URLSearchParams({
         organizationId: filters.organizationId,
     });
@@ -265,6 +284,14 @@ export async function listIncidents(filters: IncidentFilters): Promise<{ inciden
 
     if (filters.assigneeId) {
         searchParams.append('assigneeId', filters.assigneeId);
+    }
+
+    if (filters.service) {
+        searchParams.append('service', filters.service);
+    }
+
+    if (filters.technique) {
+        searchParams.append('technique', filters.technique);
     }
 
     if (filters.limit) {
@@ -301,7 +328,7 @@ export async function getIncident(
     comments: IncidentComment[];
     history: IncidentHistoryEntry[];
 }> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
     const searchParams = new URLSearchParams({ organizationId });
 
     const response = await fetch(
@@ -328,7 +355,7 @@ export async function updateIncident(
     incidentId: string,
     params: UpdateIncidentParams
 ): Promise<Incident> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
 
     const response = await fetch(`${API_URL}/api/v1/siem/incidents/${incidentId}`, {
         method: 'PATCH',
@@ -351,7 +378,7 @@ export async function updateIncident(
  * Delete an incident
  */
 export async function deleteIncident(incidentId: string, organizationId: string): Promise<void> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
     const searchParams = new URLSearchParams({ organizationId });
 
     const response = await fetch(
@@ -375,9 +402,10 @@ export async function deleteIncident(incidentId: string, organizationId: string)
  */
 export async function addIncidentComment(
     incidentId: string,
+    organizationId: string,
     comment: string
 ): Promise<IncidentComment> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
 
     const response = await fetch(`${API_URL}/api/v1/siem/incidents/${incidentId}/comments`, {
         method: 'POST',
@@ -385,7 +413,7 @@ export async function addIncidentComment(
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ comment }),
+        body: JSON.stringify({ comment, organizationId }),
     });
 
     if (!response.ok) {
@@ -400,7 +428,7 @@ export async function addIncidentComment(
  * Check IP reputation
  */
 export async function checkIpReputation(ip: string): Promise<IpReputationData> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
 
     const response = await fetch(`${API_URL}/api/v1/siem/enrichment/ip-reputation`, {
         method: 'POST',
@@ -423,7 +451,7 @@ export async function checkIpReputation(ip: string): Promise<IpReputationData> {
  * Get GeoIP data
  */
 export async function getGeoIpData(ip: string): Promise<GeoIpData> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
 
     const response = await fetch(`${API_URL}/api/v1/siem/enrichment/geoip`, {
         method: 'POST',
@@ -449,7 +477,7 @@ export async function getEnrichmentStatus(): Promise<{
     ipReputation: boolean;
     geoIp: boolean;
 }> {
-    const token = localStorage.getItem('session_token');
+    const token = getToken();
 
     const response = await fetch(`${API_URL}/api/v1/siem/enrichment/status`, {
         headers: {
@@ -460,6 +488,44 @@ export async function getEnrichmentStatus(): Promise<{
     if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || 'Failed to get enrichment status');
+    }
+
+    return response.json();
+}
+
+/**
+ * Get recent detection events
+ */
+export async function getRecentDetections(params: {
+    organizationId: string;
+    projectId?: string;
+    limit?: number;
+    offset?: number;
+}): Promise<{ detections: DetectionEvent[] }> {
+    const token = getToken();
+    const searchParams = new URLSearchParams({
+        organizationId: params.organizationId,
+    });
+
+    if (params.projectId) {
+        searchParams.append('projectId', params.projectId);
+    }
+    if (params.limit) {
+        searchParams.append('limit', params.limit.toString());
+    }
+    if (params.offset) {
+        searchParams.append('offset', params.offset.toString());
+    }
+
+    const response = await fetch(`${API_URL}/api/v1/siem/detections?${searchParams}`, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to get recent detections');
     }
 
     return response.json();

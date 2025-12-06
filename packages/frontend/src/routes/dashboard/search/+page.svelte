@@ -42,6 +42,7 @@
   import Radio from "@lucide/svelte/icons/radio";
 
   interface LogEntry {
+    id?: string;
     time: string;
     service: string;
     level: "debug" | "info" | "warn" | "error" | "critical";
@@ -84,6 +85,7 @@
 
   let contextDialogOpen = $state(false);
   let selectedLogForContext = $state<LogEntry | null>(null);
+  let loadingLogById = $state(false);
 
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -173,6 +175,41 @@
       loadLogs();
     }
   });
+
+  $effect(() => {
+    if (!browser || !$page.url.searchParams) return;
+
+    const params = $page.url.searchParams;
+    const logIdParam = params.get("logId");
+    const projectIdParam = params.get("projectId");
+
+    if (logIdParam && projectIdParam && !loadingLogById && !selectedLogForContext) {
+      loadLogById(logIdParam, projectIdParam);
+    }
+  });
+
+  async function loadLogById(logId: string, projectId: string) {
+    loadingLogById = true;
+    try {
+      const result = await logsAPI.getLogById(logId, projectId);
+      if (result && result.log) {
+        selectedLogForContext = result.log as LogEntry;
+        contextDialogOpen = true;
+
+        // Also select the project if not already selected
+        if (!selectedProjects.includes(projectId)) {
+          selectedProjects = [projectId];
+        }
+      } else {
+        toastStore.error("Log not found");
+      }
+    } catch (e) {
+      console.error("Failed to load log by ID:", e);
+      toastStore.error("Failed to load log");
+    } finally {
+      loadingLogById = false;
+    }
+  }
 
   async function loadProjects() {
     if (!$currentOrganization) {

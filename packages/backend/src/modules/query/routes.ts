@@ -220,6 +220,60 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
     },
   });
 
+  // GET /api/v1/logs/:logId - Get a single log by ID
+  fastify.get('/api/v1/logs/:logId', {
+    schema: {
+      description: 'Get a single log entry by ID',
+      tags: ['query'],
+      params: {
+        type: 'object',
+        properties: {
+          logId: { type: 'string', format: 'uuid' },
+        },
+        required: ['logId'],
+      },
+      querystring: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+        },
+      },
+    },
+    handler: async (request: any, reply) => {
+      const { logId } = request.params as { logId: string };
+      const { projectId: queryProjectId } = request.query as { projectId?: string };
+
+      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
+      const projectId = queryProjectId || request.projectId;
+
+      if (!projectId) {
+        return reply.code(400).send({
+          error: 'Project context missing - provide projectId query parameter',
+        });
+      }
+
+      if (request.user?.id) {
+        const hasAccess = await verifyProjectAccess(projectId, request.user.id);
+
+        if (!hasAccess) {
+          return reply.code(403).send({
+            error: 'Access denied - you do not have access to this project',
+          });
+        }
+      }
+
+      const log = await queryService.getLogById(logId, projectId);
+
+      if (!log) {
+        return reply.code(404).send({
+          error: 'Log not found',
+        });
+      }
+
+      return { log };
+    },
+  });
+
   // GET /api/v1/logs/aggregated - Get aggregated statistics
   fastify.get('/api/v1/logs/aggregated', {
     schema: {

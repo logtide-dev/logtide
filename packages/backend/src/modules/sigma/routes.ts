@@ -241,6 +241,74 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
   );
 
   /**
+   * PATCH /api/v1/sigma/rules/:id
+   * Update a Sigma rule (enable/disable)
+   */
+  fastify.patch(
+    '/api/v1/sigma/rules/:id',
+    {
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['organizationId'],
+          properties: {
+            organizationId: { type: 'string', format: 'uuid' },
+            enabled: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    async (request: any, reply) => {
+      const paramsSchema = z.object({
+        id: z.string().uuid(),
+      });
+
+      const bodySchema = z.object({
+        organizationId: z.string().uuid(),
+        enabled: z.boolean().optional(),
+      });
+
+      const params = paramsSchema.parse(request.params);
+      const body = bodySchema.parse(request.body);
+
+      // Verify user is member of organization
+      const isMember = await checkOrganizationMembership(
+        request.user.id,
+        body.organizationId
+      );
+
+      if (!isMember) {
+        return reply.code(403).send({
+          error: 'User is not a member of this organization',
+        });
+      }
+
+      if (body.enabled !== undefined) {
+        const rule = await sigmaService.toggleSigmaRule(
+          params.id,
+          body.organizationId,
+          body.enabled
+        );
+
+        if (!rule) {
+          return reply.code(404).send({ error: 'Sigma rule not found' });
+        }
+
+        return reply.send({ rule });
+      }
+
+      return reply.code(400).send({ error: 'No update fields provided' });
+    }
+  );
+
+  /**
    * DELETE /api/v1/sigma/rules/:id
    * Delete a Sigma rule (and optionally its alert rule)
    */

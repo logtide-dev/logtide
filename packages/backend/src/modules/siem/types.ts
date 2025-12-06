@@ -98,6 +98,8 @@ export interface IncidentFilters {
   status?: IncidentStatus | IncidentStatus[];
   severity?: Severity | Severity[];
   assigneeId?: string | null;
+  service?: string;
+  technique?: string;
   limit?: number;
   offset?: number;
 }

@@ -175,6 +175,20 @@ export class SiemService {
       query = query.where('assignee_id', '=', filters.assigneeId);
     }
 
+    // Filter by service (check if service is in affected_services array)
+    if (filters.service) {
+      query = query.where(
+        sql`${filters.service} = ANY(affected_services)`
+      );
+    }
+
+    // Filter by MITRE technique (check if technique is in mitre_techniques array)
+    if (filters.technique) {
+      query = query.where(
+        sql`${filters.technique} = ANY(mitre_techniques)`
+      );
+    }
+
     query = query
       .orderBy('created_at', 'desc')
       .limit(filters.limit ?? 50)
