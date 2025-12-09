@@ -260,6 +260,144 @@ export class TestApiClient {
       body: JSON.stringify({ enabled }),
     });
   }
+
+  async getSiemDashboard(organizationId: string, timeRange: '24h' | '7d' | '30d' = '24h') {
+    const params = new URLSearchParams({ organizationId, timeRange });
+    return this.request<{
+      topThreats: any[];
+      timeline: any[];
+      affectedServices: any[];
+      severityDistribution: any[];
+      mitreHeatmap: any[];
+      totalDetections: number;
+      totalIncidents: number;
+      openIncidents: number;
+      criticalIncidents: number;
+    }>(`/siem/dashboard?${params}`);
+  }
+
+  async listSiemIncidents(organizationId: string, filters?: { status?: string[]; severity?: string[] }) {
+    const params = new URLSearchParams({ organizationId });
+    if (filters?.status) {
+      filters.status.forEach(s => params.append('status', s));
+    }
+    if (filters?.severity) {
+      filters.severity.forEach(s => params.append('severity', s));
+    }
+    return this.request<{ incidents: any[] }>(`/siem/incidents?${params}`);
+  }
+
+  async getSiemIncident(incidentId: string, organizationId: string) {
+    const params = new URLSearchParams({ organizationId });
+    return this.request<{
+      incident: any;
+      detections: any[];
+      comments: any[];
+      history: any[];
+    }>(`/siem/incidents/${incidentId}?${params}`);
+  }
+
+  async createSiemIncident(params: {
+    organizationId: string;
+    projectId?: string;
+    title: string;
+    description?: string;
+    severity: 'critical' | 'high' | 'medium' | 'low' | 'informational';
+    status?: 'open' | 'investigating' | 'resolved' | 'false_positive';
+  }) {
+    return this.request<any>('/siem/incidents', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async updateSiemIncident(incidentId: string, params: {
+    organizationId: string;
+    status?: 'open' | 'investigating' | 'resolved' | 'false_positive';
+    severity?: 'critical' | 'high' | 'medium' | 'low' | 'informational';
+    title?: string;
+    description?: string;
+  }) {
+    return this.request<any>(`/siem/incidents/${incidentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async deleteSiemIncident(incidentId: string, organizationId: string) {
+    const params = new URLSearchParams({ organizationId });
+    return this.request<void>(`/siem/incidents/${incidentId}?${params}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async addSiemComment(incidentId: string, organizationId: string, comment: string) {
+    return this.request<any>(`/siem/incidents/${incidentId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ comment, organizationId }),
+    });
+  }
+
+  // Invitation methods
+  async inviteUser(organizationId: string, email: string, role: 'admin' | 'member' = 'member') {
+    return this.request<{ type: string; message: string }>(`/invitations/${organizationId}/invite`, {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    });
+  }
+
+  async getPendingInvitations(organizationId: string) {
+    return this.request<{ invitations: any[] }>(`/invitations/${organizationId}/invitations`);
+  }
+
+  async revokeInvitation(organizationId: string, invitationId: string) {
+    return this.request<void>(`/invitations/${organizationId}/invitations/${invitationId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async resendInvitation(organizationId: string, invitationId: string) {
+    return this.request<{ success: boolean; message: string }>(`/invitations/${organizationId}/invitations/${invitationId}/resend`, {
+      method: 'POST',
+    });
+  }
+
+  async getInvitationByToken(token: string) {
+    // This is a public endpoint, no auth required
+    const response = await fetch(`${TEST_API_URL}/api/v1/invitations/token/${token}`, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Request failed' }));
+      throw new Error(error.error || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async acceptInvitation(token: string) {
+    return this.request<{ success: boolean; organizationId: string; role: string }>('/invitations/accept', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  // Organization members
+  async getOrganizationMembers(organizationId: string) {
+    return this.request<{ members: any[] }>(`/organizations/${organizationId}/members`);
+  }
+
+  async removeMember(organizationId: string, userId: string) {
+    return this.request<void>(`/organizations/${organizationId}/members/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateMemberRole(organizationId: string, userId: string, role: 'admin' | 'member') {
+    return this.request<{ member: any }>(`/organizations/${organizationId}/members/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  }
 }
 
 // Create test with authenticated user fixture

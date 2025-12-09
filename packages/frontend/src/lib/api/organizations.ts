@@ -1,4 +1,4 @@
-import type { Organization, OrganizationWithRole } from '@logward/shared';
+import type { Organization, OrganizationWithRole, OrganizationMemberWithUser, OrgRole } from '@logward/shared';
 import { getApiBaseUrl } from '$lib/config';
 
 export interface CreateOrganizationInput {
@@ -87,10 +87,48 @@ export class OrganizationsAPI {
   }
 
   /**
-   * Get organization members
+   * Get organization members with user details
    */
-  async getOrganizationMembers(id: string): Promise<{ members: any[] }> {
-    return this.request(`/organizations/${id}/members`);
+  async getOrganizationMembers(id: string): Promise<{ members: OrganizationMemberWithUser[] }> {
+    const result = await this.request<{ members: any[] }>(`/organizations/${id}/members`);
+    return {
+      members: result.members.map((m) => ({
+        ...m,
+        createdAt: new Date(m.createdAt),
+      })),
+    };
+  }
+
+  /**
+   * Update a member's role
+   */
+  async updateMemberRole(
+    organizationId: string,
+    memberId: string,
+    role: OrgRole
+  ): Promise<{ success: boolean }> {
+    return this.request(`/organizations/${organizationId}/members/${memberId}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  /**
+   * Remove a member from the organization
+   */
+  async removeMember(organizationId: string, memberId: string): Promise<void> {
+    await this.request(`/organizations/${organizationId}/members/${memberId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /**
+   * Leave an organization (self-removal)
+   */
+  async leaveOrganization(organizationId: string): Promise<void> {
+    await this.request(`/organizations/${organizationId}/leave`, {
+      method: 'POST',
+    });
   }
 
   /**

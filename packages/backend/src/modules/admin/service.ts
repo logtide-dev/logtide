@@ -463,16 +463,60 @@ export class AdminService {
             sql`SELECT pg_size_pretty(pg_total_relation_size('logs')) AS size`.compile(db)
         );
 
+        // Calculate average latency from recent ingestion (time between log generation and ingestion)
+        // This is a simplified metric - for production, use dedicated metrics service like Prometheus
+        const avgLatencyResult = await db.executeQuery<{ avg_latency: number }>(
+            sql`
+                SELECT AVG(EXTRACT(EPOCH FROM (NOW() - time)) * 1000)::int AS avg_latency
+                FROM logs
+                WHERE time > NOW() - INTERVAL '5 minutes'
+                AND time <= NOW()
+            `.compile(db)
+        );
+        const avgLatency = avgLatencyResult.rows[0]?.avg_latency || 0;
+
         return {
             ingestion: {
                 throughput,
-                avgLatency: 0, // TODO: implement actual latency tracking
+                avgLatency,
             },
             storage: {
                 logsSize: logsSize.rows[0]?.size || '0 bytes',
-                compressionRatio: 0, // TODO: query TimescaleDB compression stats
+                compressionRatio: await this.getCompressionRatio(),
             },
         };
+    }
+
+    /**
+     * Get TimescaleDB compression ratio for logs table
+     * Returns the ratio of compressed size to uncompressed size
+     */
+    private async getCompressionRatio(): Promise<number> {
+        try {
+            const compressionStats = await db.executeQuery<{
+                uncompressed_bytes: number;
+                compressed_bytes: number;
+            }>(
+                sql`
+                    SELECT
+                        SUM(before_compression_total_bytes)::bigint AS uncompressed_bytes,
+                        SUM(after_compression_total_bytes)::bigint AS compressed_bytes
+                    FROM timescaledb_information.chunk_compression_stats
+                    WHERE hypertable_name = 'logs'
+                `.compile(db)
+            );
+
+            const row = compressionStats.rows[0];
+            if (row && row.uncompressed_bytes && row.compressed_bytes && row.uncompressed_bytes > 0) {
+                // Ratio = uncompressed / compressed (e.g., 10x means 10:1 compression)
+                return parseFloat((row.uncompressed_bytes / row.compressed_bytes).toFixed(2));
+            }
+
+            return 0; // No compression stats available yet
+        } catch (error) {
+            console.error('[AdminService] Error fetching compression ratio:', error);
+            return 0;
+        }
     }
 
     /**

@@ -7,7 +7,7 @@
  * - Case-insensitive matching
  */
 
-export type FieldModifier = 'contains' | 'startswith' | 'endswith' | 'base64' | 're' | 'all' | 'base64offset';
+export type FieldModifier = 'contains' | 'startswith' | 'endswith' | 'base64' | 're' | 'all' | 'base64offset' | 'exists';
 
 export interface FieldMatchOptions {
   caseSensitive?: boolean;
@@ -230,6 +230,13 @@ export class SigmaFieldMatcher {
 
       // Get field value from log (support nested fields with dot notation)
       const fieldValue = this.getNestedField(logData, fieldName);
+
+      // Handle |exists modifier specially
+      if (modifier === 'exists') {
+        const exists = fieldValue !== null && fieldValue !== undefined;
+        // pattern should be true/false
+        return pattern === true ? exists : !exists;
+      }
 
       // Match with modifier
       return this.match(fieldValue, pattern, { caseSensitive, modifier });

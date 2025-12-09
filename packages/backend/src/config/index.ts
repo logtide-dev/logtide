@@ -80,3 +80,7 @@ export function isProduction(): boolean {
 export function isTest(): boolean {
   return config.NODE_ENV === 'test';
 }
+
+export function isSmtpConfigured(): boolean {
+  return !!(config.SMTP_HOST && config.SMTP_USER && config.SMTP_PASS);
+}

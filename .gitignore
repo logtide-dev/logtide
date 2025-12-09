@@ -47,3 +47,6 @@ claude.md
 /packages/backend/.claude/
 /packages/backend/load-tests/
 /testing-scripts/
+
+# Enrichment databases (downloaded on first run: GeoLite2, IPsum)
+/packages/backend/data/

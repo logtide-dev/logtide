@@ -25,14 +25,15 @@ export class IngestionService {
       span_id: (log as { span_id?: string }).span_id || null,
     }));
 
-    // Insert logs in batch
-    await db
+    // Insert logs in batch and return IDs
+    const insertedLogs = await db
       .insertInto('logs')
       .values(dbLogs)
+      .returningAll()
       .execute();
 
-    // Trigger Sigma detection (async, non-blocking)
-    this.triggerSigmaDetection(logs, projectId).catch((err) => {
+    // Trigger Sigma detection (async, non-blocking) with log IDs
+    this.triggerSigmaDetection(logs, insertedLogs, projectId).catch((err) => {
       console.error('[Ingestion] Failed to trigger Sigma detection:', err);
     });
 
@@ -70,7 +71,7 @@ export class IngestionService {
   /**
    * Trigger Sigma detection job for ingested logs
    */
-  private async triggerSigmaDetection(logs: LogInput[], projectId: string): Promise<void> {
+  private async triggerSigmaDetection(logs: LogInput[], insertedLogs: any[], projectId: string): Promise<void> {
     try {
       // Get project to find organization_id
       const project = await db
@@ -84,8 +85,9 @@ export class IngestionService {
         return;
       }
 
-      // Convert logs to LogEntry format for detection engine
-      const logEntries: LogEntry[] = logs.map((log) => ({
+      // Convert logs to LogEntry format for detection engine with IDs
+      const logEntries: Array<LogEntry & { id: string }> = logs.map((log, index) => ({
+        id: insertedLogs[index]?.id || '',
         service: log.service,
         level: log.level,
         message: log.message,

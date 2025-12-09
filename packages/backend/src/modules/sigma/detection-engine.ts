@@ -23,6 +23,7 @@ export interface MatchedRule {
   ruleLevel: string;
   ruleTags?: string[];
   matchedAt: Date;
+  matchedFields?: Record<string, any>; // Fields that triggered the match
 }
 
 export interface LogEntry {
@@ -76,12 +77,16 @@ export class SigmaDetectionEngine {
         console.log(`[DEBUG] Detection result: ${matched}`);
 
         if (matched) {
+          // Extract matched fields from detection patterns
+          const matchedFields = this.extractMatchedFields(rule.detection, flattenedLog);
+
           matchedRules.push({
             sigmaRuleId: rule.id,
             ruleTitle: rule.title,
             ruleLevel: rule.level || 'medium',
             ruleTags: rule.tags,
             matchedAt: new Date(),
+            matchedFields,
           });
         }
       } catch (error) {
@@ -110,7 +115,8 @@ export class SigmaDetectionEngine {
       .selectFrom('sigma_rules')
       .selectAll()
       .where('organization_id', '=', organizationId)
-      .where('conversion_status', 'in', ['success', 'partial']);
+      .where('conversion_status', 'in', ['success', 'partial'])
+      .where('enabled', '=', true);
 
     // Filter by project if specified
     if (projectId) {
@@ -170,19 +176,23 @@ export class SigmaDetectionEngine {
     // Match product field (if present in log metadata)
     if (logsource.product) {
       const productPattern = String(logsource.product).toLowerCase();
-      const logProduct = String(
-        logEntry.metadata?.product || logEntry.product || ''
-      ).toLowerCase();
 
-      // If log product is "unknown", skip validation (check all rules)
-      if (logProduct !== 'unknown') {
-        if (productPattern.includes('*')) {
-          const regex = new RegExp(`^${productPattern.replace(/\*/g, '.*')}$`);
-          if (!regex.test(logProduct)) {
+      // Skip validation if product is "any" (matches all logs)
+      if (productPattern !== 'any') {
+        const logProduct = String(
+          logEntry.metadata?.product || logEntry.product || ''
+        ).toLowerCase();
+
+        // If log product is "unknown", skip validation (check all rules)
+        if (logProduct !== 'unknown') {
+          if (productPattern.includes('*')) {
+            const regex = new RegExp(`^${productPattern.replace(/\*/g, '.*')}$`);
+            if (!regex.test(logProduct)) {
+              return false;
+            }
+          } else if (logProduct !== productPattern) {
             return false;
           }
-        } else if (logProduct !== productPattern) {
-          return false;
         }
       }
     }
@@ -304,12 +314,16 @@ export class SigmaDetectionEngine {
           console.log(`[DEBUG BATCH] Detection result: ${matched}`);
 
           if (matched) {
+            // Extract matched fields from detection patterns
+            const matchedFields = this.extractMatchedFields(rule.detection, flattenedLog);
+
             matchedRules.push({
               sigmaRuleId: rule.id,
               ruleTitle: rule.title,
               ruleLevel: rule.level || 'medium',
               ruleTags: rule.tags,
               matchedAt: new Date(),
+              matchedFields,
             });
           }
         } catch (error) {
@@ -327,5 +341,39 @@ export class SigmaDetectionEngine {
     }
 
     return results;
+  }
+
+  /**
+   * Extract matched fields from detection patterns
+   * Returns the field names and values that were checked in the detection
+   */
+  private static extractMatchedFields(
+    detection: any,
+    flattenedLog: Record<string, any>
+  ): Record<string, any> {
+    const matchedFields: Record<string, any> = {};
+
+    try {
+      // Extract field names from all detection patterns
+      const patterns = Object.keys(detection).filter(k => k !== 'condition' && k !== 'timeframe');
+
+      for (const patternKey of patterns) {
+        const pattern = detection[patternKey];
+
+        if (typeof pattern === 'object' && pattern !== null) {
+          // Extract field names from the pattern
+          Object.keys(pattern).forEach(fieldName => {
+            // If this field exists in the log, include it
+            if (fieldName in flattenedLog) {
+              matchedFields[fieldName] = flattenedLog[fieldName];
+            }
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[SigmaDetectionEngine] Error extracting matched fields:', error);
+    }
+
+    return matchedFields;
   }
 }

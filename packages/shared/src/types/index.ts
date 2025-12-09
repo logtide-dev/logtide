@@ -21,17 +21,55 @@ export interface Organization {
   updatedAt: Date;
 }
 
+// Organization role type
+export type OrgRole = 'owner' | 'admin' | 'member';
+
 export interface OrganizationMember {
   id: string;
   organizationId: string;
   userId: string;
-  role: 'owner' | 'member';
+  role: OrgRole;
   createdAt: Date;
 }
 
+export interface OrganizationMemberWithUser extends OrganizationMember {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+  };
+}
+
 export interface OrganizationWithRole extends Organization {
-  role: 'owner' | 'member';
+  role: OrgRole;
   memberCount?: number;
+}
+
+// Invitation types
+export interface OrganizationInvitation {
+  id: string;
+  organizationId: string;
+  email: string;
+  role: OrgRole;
+  invitedBy: string;
+  expiresAt: Date;
+  acceptedAt?: Date;
+  createdAt: Date;
+}
+
+export interface PendingInvitation {
+  id: string;
+  email: string;
+  role: OrgRole;
+  invitedBy: string;
+  inviterName: string;
+  expiresAt: Date;
+  createdAt: Date;
+}
+
+// Permission helper
+export function canManageMembers(role: OrgRole): boolean {
+  return role === 'owner' || role === 'admin';
 }
 
 // Project types

@@ -349,13 +349,16 @@ export class SigmaSyncService {
       .where('conversion_status', '=', 'failed')
       .executeTakeFirst();
 
+    // Calculate next scheduled sync (daily at 2:00 AM)
+    const nextSync = this.calculateNextSyncTime();
+
     return {
       organizationId,
       lastSyncedAt: stats?.last_synced_at ? new Date(stats.last_synced_at) : null,
       totalRules: Number(stats?.total_rules || 0),
       syncedRules: Number(stats?.total_rules || 0) - Number(failedCount?.count || 0),
       failedRules: Number(failedCount?.count || 0),
-      nextScheduledSync: null, // TODO: Implement scheduler config
+      nextScheduledSync: nextSync,
     };
   }
 
@@ -405,6 +408,26 @@ export class SigmaSyncService {
       .execute();
 
     return rules;
+  }
+
+  /**
+   * Calculate next scheduled sync time
+   * Default: Daily at 2:00 AM local time
+   * For production: store schedule config in database
+   */
+  private calculateNextSyncTime(): Date {
+    const now = new Date();
+    const next = new Date(now);
+
+    // Set to 2:00 AM
+    next.setHours(2, 0, 0, 0);
+
+    // If 2:00 AM has already passed today, schedule for tomorrow
+    if (next <= now) {
+      next.setDate(next.getDate() + 1);
+    }
+
+    return next;
   }
 }
 

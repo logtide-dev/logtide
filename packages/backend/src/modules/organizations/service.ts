@@ -1,5 +1,6 @@
 import { db } from '../../database/connection.js';
-import type { Organization, OrganizationMember, OrganizationWithRole } from '@logward/shared';
+import { notificationsService } from '../notifications/service.js';
+import type { Organization, OrganizationMember, OrganizationMemberWithUser, OrganizationWithRole, OrgRole } from '@logward/shared';
 
 export interface CreateOrganizationInput {
   userId: string;
@@ -122,7 +123,7 @@ export class OrganizationsService {
       ownerId: org.owner_id,
       createdAt: new Date(org.created_at),
       updatedAt: new Date(org.updated_at),
-      role: org.role as 'owner' | 'member',
+      role: org.role as OrgRole,
     }));
   }
 
@@ -162,7 +163,7 @@ export class OrganizationsService {
       ownerId: org.owner_id,
       createdAt: new Date(org.created_at),
       updatedAt: new Date(org.updated_at),
-      role: org.role as 'owner' | 'member',
+      role: org.role as OrgRole,
     };
   }
 
@@ -202,7 +203,7 @@ export class OrganizationsService {
       ownerId: org.owner_id,
       createdAt: new Date(org.created_at),
       updatedAt: new Date(org.updated_at),
-      role: org.role as 'owner' | 'member',
+      role: org.role as OrgRole,
     };
   }
 
@@ -311,8 +312,243 @@ export class OrganizationsService {
       id: m.id,
       organizationId: m.organization_id,
       userId: m.user_id,
-      role: m.role as 'owner' | 'member',
+      role: m.role as OrgRole,
       createdAt: new Date(m.created_at),
     }));
+  }
+
+  /**
+   * Get organization members with user details
+   */
+  async getOrganizationMembersWithDetails(
+    organizationId: string,
+    userId: string
+  ): Promise<OrganizationMemberWithUser[]> {
+    // Check if user has access to this organization
+    const hasAccess = await db
+      .selectFrom('organization_members')
+      .select('id')
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+
+    if (!hasAccess) {
+      throw new Error('You do not have access to this organization');
+    }
+
+    const members = await db
+      .selectFrom('organization_members')
+      .innerJoin('users', 'organization_members.user_id', 'users.id')
+      .select([
+        'organization_members.id',
+        'organization_members.organization_id',
+        'organization_members.user_id',
+        'organization_members.role',
+        'organization_members.created_at',
+        'users.name',
+        'users.email',
+      ])
+      .where('organization_members.organization_id', '=', organizationId)
+      .orderBy('organization_members.created_at', 'asc')
+      .execute();
+
+    return members.map((m) => ({
+      id: m.id,
+      organizationId: m.organization_id,
+      userId: m.user_id,
+      role: m.role as OrgRole,
+      createdAt: new Date(m.created_at),
+      user: {
+        id: m.user_id,
+        name: m.name,
+        email: m.email,
+      },
+    }));
+  }
+
+  /**
+   * Check if user is owner or admin
+   */
+  async isOwnerOrAdmin(organizationId: string, userId: string): Promise<boolean> {
+    const member = await db
+      .selectFrom('organization_members')
+      .select(['role'])
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+
+    return member?.role === 'owner' || member?.role === 'admin';
+  }
+
+  /**
+   * Update member role (owner/admin only)
+   */
+  async updateMemberRole(
+    organizationId: string,
+    memberId: string,
+    newRole: OrgRole,
+    userId: string
+  ): Promise<void> {
+    // Check if user has permission
+    const currentUserMember = await db
+      .selectFrom('organization_members')
+      .select(['role'])
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+
+    if (!currentUserMember || (currentUserMember.role !== 'owner' && currentUserMember.role !== 'admin')) {
+      throw new Error('Only owners and admins can change member roles');
+    }
+
+    // Get target member
+    const targetMember = await db
+      .selectFrom('organization_members')
+      .select(['user_id', 'role'])
+      .where('id', '=', memberId)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+
+    if (!targetMember) {
+      throw new Error('Member not found');
+    }
+
+    // Prevent changing owner role (unless you're the owner)
+    if (targetMember.role === 'owner' && currentUserMember.role !== 'owner') {
+      throw new Error('Only the owner can change the owner role');
+    }
+
+    // Prevent changing to owner (unless you're the owner)
+    if (newRole === 'owner' && currentUserMember.role !== 'owner') {
+      throw new Error('Only the owner can promote someone to owner');
+    }
+
+    // Don't allow self-demotion from owner
+    if (targetMember.user_id === userId && currentUserMember.role === 'owner' && newRole !== 'owner') {
+      throw new Error('Cannot demote yourself from owner. Transfer ownership first.');
+    }
+
+    await db
+      .updateTable('organization_members')
+      .set({ role: newRole })
+      .where('id', '=', memberId)
+      .execute();
+
+    // Create notification for the affected user
+    const org = await db
+      .selectFrom('organizations')
+      .select(['name'])
+      .where('id', '=', organizationId)
+      .executeTakeFirst();
+
+    if (org && targetMember.user_id !== userId) {
+      await notificationsService.createNotification({
+        userId: targetMember.user_id,
+        type: 'system',
+        title: `Role changed in ${org.name}`,
+        message: `Your role has been changed to ${newRole}`,
+        organizationId,
+      });
+    }
+  }
+
+  /**
+   * Remove member from organization (owner/admin only)
+   */
+  async removeMember(
+    organizationId: string,
+    memberId: string,
+    userId: string
+  ): Promise<void> {
+    // Check if user has permission
+    const currentUserMember = await db
+      .selectFrom('organization_members')
+      .select(['role', 'user_id'])
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+
+    if (!currentUserMember) {
+      throw new Error('You are not a member of this organization');
+    }
+
+    if (currentUserMember.role !== 'owner' && currentUserMember.role !== 'admin') {
+      throw new Error('Only owners and admins can remove members');
+    }
+
+    // Get target member
+    const targetMember = await db
+      .selectFrom('organization_members')
+      .select(['role', 'user_id'])
+      .where('id', '=', memberId)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+
+    if (!targetMember) {
+      throw new Error('Member not found');
+    }
+
+    // Cannot remove yourself
+    if (targetMember.user_id === userId) {
+      throw new Error('Cannot remove yourself. Use leave organization instead.');
+    }
+
+    // Cannot remove owner
+    if (targetMember.role === 'owner') {
+      throw new Error('Cannot remove the organization owner');
+    }
+
+    // Admin cannot remove other admin or owner
+    if (currentUserMember.role === 'admin' && targetMember.role !== 'member') {
+      throw new Error('Admins can only remove members');
+    }
+
+    await db
+      .deleteFrom('organization_members')
+      .where('id', '=', memberId)
+      .where('organization_id', '=', organizationId)
+      .execute();
+
+    // Notify the removed user
+    const org = await db
+      .selectFrom('organizations')
+      .select(['name'])
+      .where('id', '=', organizationId)
+      .executeTakeFirst();
+
+    if (org) {
+      await notificationsService.createNotification({
+        userId: targetMember.user_id,
+        type: 'system',
+        title: `Removed from ${org.name}`,
+        message: `You have been removed from ${org.name}`,
+        organizationId,
+      });
+    }
+  }
+
+  /**
+   * Leave organization (member self-removal)
+   */
+  async leaveOrganization(organizationId: string, userId: string): Promise<void> {
+    const member = await db
+      .selectFrom('organization_members')
+      .select(['id', 'role'])
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+
+    if (!member) {
+      throw new Error('You are not a member of this organization');
+    }
+
+    if (member.role === 'owner') {
+      throw new Error('Cannot leave as owner. Transfer ownership or delete the organization.');
+    }
+
+    await db
+      .deleteFrom('organization_members')
+      .where('id', '=', member.id)
+      .execute();
   }
 }

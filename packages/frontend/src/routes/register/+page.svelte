@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { authStore } from '$lib/stores/auth';
   import { toastStore } from '$lib/stores/toast';
   import { authAPI } from '$lib/api/auth';
@@ -10,6 +11,9 @@
   import { Alert, AlertDescription } from '$lib/components/ui/alert';
   import Spinner from '$lib/components/Spinner.svelte';
   import Footer from '$lib/components/Footer.svelte';
+
+  // Get redirect URL from query params (e.g., for invitation flow)
+  let redirectUrl = $derived($page.url.searchParams.get('redirect'));
 
   let name = '';
   let email = '';
@@ -75,8 +79,13 @@
       authStore.setAuth(response.user, response.session.token);
       toastStore.success('Account created successfully!');
 
-      // New users don't have organizations yet -> redirect to onboarding tutorial
-      goto('/onboarding');
+      // If there's a redirect URL (e.g., invitation), go there; otherwise go to onboarding
+      if (redirectUrl) {
+        goto(redirectUrl);
+      } else {
+        // New users don't have organizations yet -> redirect to onboarding tutorial
+        goto('/onboarding');
+      }
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Registration failed';
       error = errorMsg;
@@ -187,7 +196,7 @@
 
           <p class="text-sm text-muted-foreground text-center">
             Already have an account?
-            <a href="/login" class="text-primary hover:underline">Sign in</a>
+            <a href="/login{redirectUrl ? `?redirect=${encodeURIComponent(redirectUrl)}` : ''}" class="text-primary hover:underline">Sign in</a>
           </p>
         </CardFooter>
       </form>

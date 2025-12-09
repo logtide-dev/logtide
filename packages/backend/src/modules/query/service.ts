@@ -186,6 +186,33 @@ export class QueryService {
   }
 
   /**
+   * Get a single log by ID
+   */
+  async getLogById(logId: string, projectId: string) {
+    const log = await db
+      .selectFrom('logs')
+      .selectAll()
+      .where('id', '=', logId)
+      .where('project_id', '=', projectId)
+      .executeTakeFirst();
+
+    if (!log) {
+      return null;
+    }
+
+    return {
+      id: log.id,
+      time: log.time,
+      projectId: log.project_id,
+      service: log.service,
+      level: log.level,
+      message: log.message,
+      metadata: log.metadata,
+      traceId: log.trace_id,
+    };
+  }
+
+  /**
    * Get logs by trace ID
    * Cached for longer since trace data is immutable
    */

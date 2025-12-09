@@ -23,6 +23,7 @@
     "@tanstack/svelte-table": "^8.21.3",
     "canvas-confetti": "^1.9.4",
     "echarts": "^6.0.0",
+    "leaflet": "^1.9.4",
     "lucide-svelte": "^0.553.0",
     "shiki": "^3.18.0"
   },
@@ -34,6 +35,7 @@
     "@sveltejs/kit": "^2.49.0",
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "@types/canvas-confetti": "^1.9.0",
+    "@types/leaflet": "^1.9.21",
     "autoprefixer": "^10.4.22",
     "bits-ui": "^1.8.0",
     "clsx": "^2.1.1",

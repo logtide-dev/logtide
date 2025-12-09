@@ -218,6 +218,28 @@ export class LogsAPI {
 
     return response.json();
   }
+
+  async getLogById(logId: string, projectId: string): Promise<{ log: LogEntry } | null> {
+    const queryParams = new URLSearchParams();
+    queryParams.append('projectId', projectId);
+
+    const url = `${getApiBaseUrl()}/logs/${logId}?${queryParams.toString()}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch log: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
 }
 
 // Singleton instance

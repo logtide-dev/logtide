@@ -10,10 +10,13 @@ import { alertsRoutes } from './modules/alerts/index.js';
 import { usersRoutes } from './modules/users/routes.js';
 import { projectsRoutes } from './modules/projects/routes.js';
 import { organizationsRoutes } from './modules/organizations/routes.js';
+import { invitationsRoutes } from './modules/invitations/routes.js';
 import { notificationsRoutes } from './modules/notifications/routes.js';
 import { apiKeysRoutes } from './modules/api-keys/routes.js';
 import dashboardRoutes from './modules/dashboard/routes.js';
 import { sigmaRoutes } from './modules/sigma/routes.js';
+import { siemRoutes } from './modules/siem/routes.js';
+import { registerSiemSseRoutes } from './modules/siem/sse-events.js';
 import { adminRoutes } from './modules/admin/index.js';
 import { otlpRoutes, otlpTraceRoutes } from './modules/otlp/index.js';
 import { tracesRoutes } from './modules/traces/index.js';
@@ -22,6 +25,7 @@ import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
 import websocketPlugin from './plugins/websocket.js';
 import websocketRoutes from './modules/query/websocket.js';
+import { enrichmentService } from './modules/siem/enrichment-service.js';
 
 const PORT = config.PORT;
 const HOST = config.HOST;
@@ -78,6 +82,9 @@ export async function build(opts = {}) {
   // Organizations routes (session-based auth)
   await fastify.register(organizationsRoutes, { prefix: '/api/v1/organizations' });
 
+  // Invitations routes (session-based auth, some public endpoints)
+  await fastify.register(invitationsRoutes, { prefix: '/api/v1/invitations' });
+
   // Projects routes (session-based auth)
   await fastify.register(projectsRoutes, { prefix: '/api/v1/projects' });
 
@@ -92,6 +99,12 @@ export async function build(opts = {}) {
 
   // Sigma rules routes (session-based auth)
   await fastify.register(sigmaRoutes);
+
+  // SIEM routes (session-based auth)
+  await fastify.register(siemRoutes);
+
+  // SIEM SSE routes for real-time updates (session-based auth)
+  await fastify.register(registerSiemSseRoutes);
 
   // API keys management routes (session-based auth)
   await fastify.register(apiKeysRoutes, { prefix: '/api/v1/projects' });
@@ -127,6 +140,9 @@ async function start() {
 
   // Initialize internal logging first
   await initializeInternalLogging();
+
+  // Initialize enrichment services (GeoLite2 database, etc.)
+  await enrichmentService.initialize();
 
   const app = await build();
 
