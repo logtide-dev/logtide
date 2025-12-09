@@ -337,6 +337,67 @@ export class TestApiClient {
       body: JSON.stringify({ comment, organizationId }),
     });
   }
+
+  // Invitation methods
+  async inviteUser(organizationId: string, email: string, role: 'admin' | 'member' = 'member') {
+    return this.request<{ type: string; message: string }>(`/invitations/${organizationId}/invite`, {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    });
+  }
+
+  async getPendingInvitations(organizationId: string) {
+    return this.request<{ invitations: any[] }>(`/invitations/${organizationId}/invitations`);
+  }
+
+  async revokeInvitation(organizationId: string, invitationId: string) {
+    return this.request<void>(`/invitations/${organizationId}/invitations/${invitationId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async resendInvitation(organizationId: string, invitationId: string) {
+    return this.request<{ success: boolean; message: string }>(`/invitations/${organizationId}/invitations/${invitationId}/resend`, {
+      method: 'POST',
+    });
+  }
+
+  async getInvitationByToken(token: string) {
+    // This is a public endpoint, no auth required
+    const response = await fetch(`${TEST_API_URL}/api/v1/invitations/token/${token}`, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Request failed' }));
+      throw new Error(error.error || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async acceptInvitation(token: string) {
+    return this.request<{ success: boolean; organizationId: string; role: string }>('/invitations/accept', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  // Organization members
+  async getOrganizationMembers(organizationId: string) {
+    return this.request<{ members: any[] }>(`/organizations/${organizationId}/members`);
+  }
+
+  async removeMember(organizationId: string, userId: string) {
+    return this.request<void>(`/organizations/${organizationId}/members/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateMemberRole(organizationId: string, userId: string, role: 'admin' | 'member') {
+    return this.request<{ member: any }>(`/organizations/${organizationId}/members/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  }
 }
 
 // Create test with authenticated user fixture

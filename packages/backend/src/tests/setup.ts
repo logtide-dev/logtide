@@ -31,6 +31,12 @@ beforeEach(async () => {
     // Delete all data from tables in reverse dependency order
     await db.deleteFrom('logs').execute();
     await db.deleteFrom('alert_history').execute();
+    // SIEM tables (must delete before incidents and sigma_rules)
+    await db.deleteFrom('incident_comments').execute();
+    await db.deleteFrom('incident_history').execute();
+    await db.deleteFrom('detection_events').execute();
+    await db.deleteFrom('incidents').execute();
+    await db.deleteFrom('organization_invitations').execute();
     await db.deleteFrom('sigma_rules').execute();
     await db.deleteFrom('alert_rules').execute();
     await db.deleteFrom('api_keys').execute();
