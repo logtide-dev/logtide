@@ -220,7 +220,13 @@ describe('Incident Auto-Grouping Job', () => {
         });
 
         it('should group detection events by time window', async () => {
+            // Use a fixed base time in the middle of a 5-minute window to avoid edge cases
+            // The job groups by 5-minute windows, so we need all events in the same window
             const now = new Date();
+            // Align to the middle of current 5-minute window (add 2.5 minutes from window start)
+            const windowStart = new Date(now);
+            windowStart.setMinutes(Math.floor(now.getMinutes() / 5) * 5, 0, 0);
+            const baseTime = new Date(windowStart.getTime() + 2.5 * 60 * 1000); // Middle of window
 
             // Create 3 logs within same time window
             const logs = await Promise.all([
@@ -245,8 +251,9 @@ describe('Incident Auto-Grouping Job', () => {
             ]);
 
             // Create 3 detection events without trace_id, within 5-minute window
+            // All times are within 1 minute of each other, centered in the window
             for (let i = 0; i < 3; i++) {
-                const time = new Date(now.getTime() - i * 60 * 1000); // 1 minute apart
+                const time = new Date(baseTime.getTime() - i * 30 * 1000); // 30 seconds apart
                 await createTestDetectionEvent(
                     testOrganization.id,
                     testProject.id,
