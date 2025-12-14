@@ -113,6 +113,21 @@ Total control over your data. **No build required** - uses pre-built images from
 
 > **Note:** Database migrations run automatically on first start.
 
+5.  **(Optional) Enable Docker log collection with Fluent Bit**
+    ```bash
+    # Download Fluent Bit configuration files
+    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/fluent-bit.conf
+    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/parsers.conf
+    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/extract_container_id.lua
+    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/wrap_logs.lua
+
+    # Set your LogWard API key in .env
+    echo "FLUENT_BIT_API_KEY=your_api_key_here" >> .env
+
+    # Start with logging profile
+    docker compose --profile logging up -d
+    ```
+
 **Docker Images:** [Docker Hub](https://hub.docker.com/r/logward/backend) | [GitHub Container Registry](https://github.com/logward-dev/logward/pkgs/container/logward-backend)
 
 > **Production:** Pin versions with `LOGWARD_BACKEND_IMAGE=logward/backend:0.3.0` in your `.env` file.

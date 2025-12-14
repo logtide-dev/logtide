@@ -1,4 +1,6 @@
-version: '3.8'
+# LogWard Docker Compose Configuration
+# Basic usage: docker compose up -d
+# With Docker log collection: docker compose --profile logging up -d
 
 services:
   postgres:
@@ -153,6 +155,8 @@ services:
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: logward-fluent-bit
+    profiles:
+      - logging
     volumes:
       - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ./parsers.conf:/fluent-bit/etc/parsers.conf:ro
