@@ -2,24 +2,45 @@
     import { onMount } from "svelte";
     import { Check, Copy } from "lucide-svelte";
     import { codeToHtml } from "shiki";
+    import { themeStore } from "$lib/stores/theme";
+    import { browser } from "$app/environment";
 
     export let code: string;
     export let lang: string = "typescript";
 
     let highlightedCode = "";
     let copied = false;
+    let currentTheme: 'light' | 'dark' = 'dark';
 
-    onMount(async () => {
+    async function highlightCode(theme: 'light' | 'dark') {
         try {
+            // github-light has better contrast than vitesse-light
+            const shikiTheme = theme === 'dark' ? 'github-dark' : 'github-light';
             highlightedCode = await codeToHtml(code, {
                 lang,
-                theme: "vitesse-dark",
+                theme: shikiTheme,
             });
         } catch (error) {
             console.error("Shiki highlighting error:", error);
-            // Fallback to plain code if highlighting fails
-            highlightedCode = `<pre class="p-4 bg-background"><code>${escapeHtml(code)}</code></pre>`;
+            highlightedCode = `<pre class="p-4"><code>${escapeHtml(code)}</code></pre>`;
         }
+    }
+
+    onMount(() => {
+        // Get initial theme from DOM (more reliable than store on first load)
+        if (browser) {
+            const isDark = document.documentElement.classList.contains('dark');
+            currentTheme = isDark ? 'dark' : 'light';
+            highlightCode(currentTheme);
+        }
+
+        const unsubscribe = themeStore.subscribe((theme) => {
+            if (theme !== currentTheme) {
+                currentTheme = theme;
+                highlightCode(theme);
+            }
+        });
+        return unsubscribe;
     });
 
     function escapeHtml(text: string): string {
@@ -78,7 +99,6 @@
         border-radius: 0.5rem;
         border: 1px solid hsl(var(--border));
         overflow: hidden;
-        background-color: hsl(var(--card));
         margin-top: 1rem;
         margin-bottom: 1rem;
     }
@@ -86,9 +106,9 @@
     .code-content :global(pre) {
         padding: 1rem;
         margin: 0;
-        background-color: hsl(var(--background));
         font-size: 0.875rem;
         line-height: 1.7;
+        /* Let Shiki handle the background color */
     }
 
     .code-content :global(code) {

@@ -1,6 +1,8 @@
 <script lang="ts">
     import { page } from "$app/stores";
     import { Menu, X, Github } from "lucide-svelte";
+    import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+    import { logoPath } from "$lib/utils/theme";
 
     let mobileMenuOpen = false;
 
@@ -25,7 +27,7 @@
     <div class="navbar-container">
         <!-- Logo/Brand -->
         <a href="/" class="navbar-brand" on:click={closeMobileMenu}>
-            <img src="/logo/purple.svg" alt="LogWard" class="h-10 w-auto" />
+            <img src={$logoPath} alt="LogWard" class="h-10 w-auto" />
         </a>
 
         <!-- Desktop Navigation -->
@@ -43,6 +45,7 @@
             >
                 <Github class="w-4 h-4" />
             </a>
+            <ThemeToggle />
         </div>
 
         <!-- Mobile Menu Button -->
