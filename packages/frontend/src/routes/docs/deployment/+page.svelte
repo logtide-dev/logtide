@@ -97,6 +97,30 @@ docker compose up -d`}
         </div>
 
         <div>
+            <h3 id="fluent-bit" class="text-lg font-semibold mb-3 scroll-mt-20">(Optional) Docker Log Collection with Fluent Bit</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                To automatically collect logs from all Docker containers using Fluent Bit:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# Download Fluent Bit configuration files
+curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/fluent-bit.conf
+curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/parsers.conf
+curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/extract_container_id.lua
+curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/wrap_logs.lua
+
+# Add your LogWard API key to .env
+echo "FLUENT_BIT_API_KEY=your_api_key_here" >> .env
+
+# Start with logging profile enabled
+docker compose --profile logging up -d`}
+            />
+            <p class="text-sm text-muted-foreground mt-3">
+                This profile is optional. Without it, LogWard runs without the Fluent Bit container.
+            </p>
+        </div>
+
+        <div>
             <h3 id="docker-images" class="text-lg font-semibold mb-3 scroll-mt-20">Available Docker Images</h3>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm border border-border rounded-lg">
