@@ -154,7 +154,7 @@ func main() {
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Basic Logging</h3>
+            <h3 id="basic-logging" class="text-lg font-semibold mb-3 scroll-mt-20">Basic Logging</h3>
             <CodeBlock
                 lang="go"
                 code={`ctx := context.Background()
@@ -169,7 +169,7 @@ client.Critical(ctx, "Out of memory", map[string]any{"used": "95%"})`}
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">With Trace ID</h3>
+            <h3 id="with-trace-id" class="text-lg font-semibold mb-3 scroll-mt-20">With Trace ID</h3>
             <CodeBlock
                 lang="go"
                 code={`// Add trace ID to context
@@ -251,7 +251,7 @@ func handleRequest(ctx context.Context) {
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Standard Library</h3>
+            <h3 id="standard-library" class="text-lg font-semibold mb-3 scroll-mt-20">Standard Library</h3>
             <CodeBlock
                 lang="go"
                 code={`func LoggingMiddleware(client *logward.Client) func(http.Handler) http.Handler {
@@ -282,7 +282,7 @@ http.ListenAndServe(":8080", handler)`}
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Gin Framework</h3>
+            <h3 id="gin-framework" class="text-lg font-semibold mb-3 scroll-mt-20">Gin Framework</h3>
             <CodeBlock
                 lang="go"
                 code={`func GinLoggingMiddleware(client *logward.Client) gin.HandlerFunc {

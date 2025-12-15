@@ -539,7 +539,7 @@ span.end();`}
     </h2>
 
     <div class="mb-8">
-        <h3 class="text-lg font-semibold mb-3">Response Codes</h3>
+        <h3 id="response-codes" class="text-lg font-semibold mb-3 scroll-mt-20">Response Codes</h3>
 
         <div class="overflow-x-auto mb-6">
             <table class="w-full text-sm border border-border rounded-lg">
@@ -574,7 +574,7 @@ span.end();`}
             </table>
         </div>
 
-        <h3 class="text-lg font-semibold mb-3">Common Issues</h3>
+        <h3 id="common-issues" class="text-lg font-semibold mb-3 scroll-mt-20">Common Issues</h3>
 
         <div class="space-y-4">
             <Card>
@@ -620,7 +620,7 @@ span.end();`}
             </Card>
         </div>
 
-        <h3 class="text-lg font-semibold mt-6 mb-3">Enable Debug Logging</h3>
+        <h3 id="debug-logging" class="text-lg font-semibold mt-6 mb-3 scroll-mt-20">Enable Debug Logging</h3>
 
         <p class="mb-4 text-sm text-muted-foreground">
             Enable debug logging in your OpenTelemetry SDK to see request details:

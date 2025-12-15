@@ -159,7 +159,7 @@ atexit.register(client.close)`}
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Basic Logging</h3>
+            <h3 id="basic-logging" class="text-lg font-semibold mb-3 scroll-mt-20">Basic Logging</h3>
             <CodeBlock
                 lang="python"
                 code={`# Log levels: debug, info, warn, error, critical
@@ -172,7 +172,7 @@ client.critical("system", "Out of memory", {"used": "95%"})`}
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">
+            <h3 id="trace-context" class="text-lg font-semibold mb-3 scroll-mt-20">
                 Context Manager for Trace IDs
             </h3>
             <CodeBlock
@@ -195,7 +195,7 @@ with client.trace_context("550e8400-e29b-41d4-a716-446655440000"):
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Flask Middleware</h3>
+            <h3 id="flask-middleware" class="text-lg font-semibold mb-3 scroll-mt-20">Flask Middleware</h3>
             <CodeBlock
                 lang="python"
                 code={`from flask import Flask
@@ -220,7 +220,7 @@ def get_users():
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Django Middleware</h3>
+            <h3 id="django-middleware" class="text-lg font-semibold mb-3 scroll-mt-20">Django Middleware</h3>
             <CodeBlock
                 lang="python"
                 code={`# settings.py
@@ -240,7 +240,7 @@ LOGWARD_CLIENT = LogWardClient(
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">FastAPI Middleware</h3>
+            <h3 id="fastapi-middleware" class="text-lg font-semibold mb-3 scroll-mt-20">FastAPI Middleware</h3>
             <CodeBlock
                 lang="python"
                 code={`from fastapi import FastAPI

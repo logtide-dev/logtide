@@ -4,6 +4,8 @@
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import type { TimelineBucket } from '$lib/api/siem';
 	import Activity from '@lucide/svelte/icons/activity';
+	import { themeStore } from '$lib/stores/theme';
+	import { chartColors, getEChartsTheme, getAxisStyle, getTooltipStyle } from '$lib/utils/echarts-theme';
 
 	interface Props {
 		data: TimelineBucket[] | undefined;
@@ -37,10 +39,11 @@
 		}
 	}
 
-	onMount(() => {
-		chart = echarts.init(chartContainer);
+	function getChartOption(): echarts.EChartsOption {
+		const axisStyle = getAxisStyle();
+		const tooltipStyle = getTooltipStyle();
 
-		const option: echarts.EChartsOption = {
+		return {
 			tooltip: {
 				trigger: 'axis',
 				formatter: (params: unknown) => {
@@ -51,6 +54,7 @@
 					}
 					return '';
 				},
+				...tooltipStyle
 			},
 			grid: {
 				left: '3%',
@@ -63,22 +67,11 @@
 				type: 'category',
 				boundaryGap: false,
 				data: data?.map((d) => formatTimeLabel(d.timestamp)) || [],
-				axisLabel: {
-					fontSize: 10,
-					color: '#888',
-				},
+				...axisStyle
 			},
 			yAxis: {
 				type: 'value',
-				axisLabel: {
-					fontSize: 10,
-					color: '#888',
-				},
-				splitLine: {
-					lineStyle: {
-						color: '#333',
-					},
-				},
+				...axisStyle
 			},
 			series: [
 				{
@@ -93,11 +86,11 @@
 						]),
 					},
 					lineStyle: {
-						color: '#ef4444',
+						color: chartColors.series.red,
 						width: 2,
 					},
 					itemStyle: {
-						color: '#ef4444',
+						color: chartColors.series.red,
 					},
 					emphasis: {
 						focus: 'series',
@@ -105,14 +98,25 @@
 				},
 			],
 		};
+	}
 
-		chart.setOption(option);
+	onMount(() => {
+		chart = echarts.init(chartContainer);
+		chart.setOption(getChartOption());
 
 		const handleResize = () => chart?.resize();
 		window.addEventListener('resize', handleResize);
 
+		// Subscribe to theme changes
+		const unsubscribe = themeStore.subscribe(() => {
+			if (chart) {
+				chart.setOption(getChartOption());
+			}
+		});
+
 		return () => {
 			window.removeEventListener('resize', handleResize);
+			unsubscribe();
 			chart?.dispose();
 		};
 	});

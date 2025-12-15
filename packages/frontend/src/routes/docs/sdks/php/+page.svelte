@@ -156,7 +156,7 @@ $client = new LogWardClient(new LogWardClientOptions(
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Basic Logging</h3>
+            <h3 id="basic-logging" class="text-lg font-semibold mb-3 scroll-mt-20">Basic Logging</h3>
             <CodeBlock
                 lang="php"
                 code={`<?php
@@ -171,7 +171,7 @@ $client->critical('system', 'Out of memory', ['used' => '95%']);`}
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Scoped Trace ID</h3>
+            <h3 id="scoped-trace-id" class="text-lg font-semibold mb-3 scroll-mt-20">Scoped Trace ID</h3>
             <CodeBlock
                 lang="php"
                 code={`<?php
@@ -194,7 +194,7 @@ $client->withTraceId('550e8400-e29b-41d4-a716-446655440000', function() use ($cl
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Laravel Middleware</h3>
+            <h3 id="laravel-middleware" class="text-lg font-semibold mb-3 scroll-mt-20">Laravel Middleware</h3>
             <CodeBlock
                 lang="php"
                 code={`<?php
@@ -214,7 +214,7 @@ protected $middleware = [
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Symfony Event Subscriber</h3>
+            <h3 id="symfony-subscriber" class="text-lg font-semibold mb-3 scroll-mt-20">Symfony Event Subscriber</h3>
             <CodeBlock
                 lang="php"
                 code={`<?php
@@ -238,7 +238,7 @@ services:
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">PSR-15 Middleware</h3>
+            <h3 id="psr15-middleware" class="text-lg font-semibold mb-3 scroll-mt-20">PSR-15 Middleware</h3>
             <CodeBlock
                 lang="php"
                 code={`<?php

@@ -1,9 +1,27 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>LogWard</title>
+    <script>
+      // Prevent FOUC (Flash of Unstyled Content) by applying theme before render
+      (function() {
+        try {
+          var theme = localStorage.getItem('logward-theme');
+          if (theme === 'light' || theme === 'dark') {
+            if (theme === 'dark') {
+              document.documentElement.classList.add('dark');
+            }
+          } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) {
+          // Default to dark mode if localStorage is unavailable
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

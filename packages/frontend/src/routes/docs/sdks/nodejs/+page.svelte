@@ -165,7 +165,7 @@ process.on('SIGINT', async () => {
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Basic Logging</h3>
+            <h3 id="basic-logging" class="text-lg font-semibold mb-3 scroll-mt-20">Basic Logging</h3>
             <CodeBlock
                 lang="typescript"
                 code={`// Log levels: debug, info, warn, error, critical
@@ -178,7 +178,7 @@ client.critical('system', 'Out of memory', { used: '95%' });`}
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">
+            <h3 id="error-logging" class="text-lg font-semibold mb-3 scroll-mt-20">
                 Error Logging with Auto-Serialization
             </h3>
             <CodeBlock
@@ -202,7 +202,7 @@ client.critical('system', 'Out of memory', { used: '95%' });`}
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Express Middleware</h3>
+            <h3 id="express-middleware" class="text-lg font-semibold mb-3 scroll-mt-20">Express Middleware</h3>
             <CodeBlock
                 lang="typescript"
                 code={`import express from 'express';
@@ -227,7 +227,7 @@ app.get('/users', (req, res) => {
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Fastify Plugin</h3>
+            <h3 id="fastify-plugin" class="text-lg font-semibold mb-3 scroll-mt-20">Fastify Plugin</h3>
             <CodeBlock
                 lang="typescript"
                 code={`import Fastify from 'fastify';

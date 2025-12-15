@@ -4,6 +4,8 @@
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import type { SeverityDistribution, Severity } from '$lib/api/siem';
 	import PieChart from '@lucide/svelte/icons/pie-chart';
+	import { themeStore } from '$lib/stores/theme';
+	import { chartColors, getTooltipStyle, getLegendStyle } from '$lib/utils/echarts-theme';
 
 	interface Props {
 		distribution: SeverityDistribution[] | undefined;
@@ -17,17 +19,17 @@
 	function getSeverityColor(severity: Severity): string {
 		switch (severity) {
 			case 'critical':
-				return '#a855f7'; // purple-500
+				return chartColors.severity.critical;
 			case 'high':
-				return '#ef4444'; // red-500
+				return chartColors.severity.high;
 			case 'medium':
-				return '#f97316'; // orange-500
+				return chartColors.severity.medium;
 			case 'low':
-				return '#eab308'; // yellow-500
+				return chartColors.severity.low;
 			case 'informational':
-				return '#3b82f6'; // blue-500
+				return chartColors.severity.informational;
 			default:
-				return '#6b7280'; // gray-500
+				return chartColors.series.gray;
 		}
 	}
 
@@ -48,22 +50,24 @@
 		}
 	}
 
-	onMount(() => {
-		chart = echarts.init(chartContainer);
+	function getChartOption(): echarts.EChartsOption {
+		const tooltipStyle = getTooltipStyle();
+		const legendStyle = getLegendStyle();
 
-		const option: echarts.EChartsOption = {
+		return {
 			tooltip: {
 				trigger: 'item',
 				formatter: (params: unknown) => {
 					const p = params as { name: string; value: number; percent: number };
 					return `${p.name}<br/><strong>${p.value}</strong> (${p.percent.toFixed(1)}%)`;
 				},
+				...tooltipStyle
 			},
 			legend: {
 				orient: 'horizontal',
 				bottom: 0,
 				textStyle: {
-					color: '#888',
+					...legendStyle.textStyle,
 					fontSize: 11,
 				},
 			},
@@ -97,14 +101,25 @@
 				},
 			],
 		};
+	}
 
-		chart.setOption(option);
+	onMount(() => {
+		chart = echarts.init(chartContainer);
+		chart.setOption(getChartOption());
 
 		const handleResize = () => chart?.resize();
 		window.addEventListener('resize', handleResize);
 
+		// Subscribe to theme changes
+		const unsubscribe = themeStore.subscribe(() => {
+			if (chart) {
+				chart.setOption(getChartOption());
+			}
+		});
+
 		return () => {
 			window.removeEventListener('resize', handleResize);
+			unsubscribe();
 			chart?.dispose();
 		};
 	});

@@ -11,6 +11,7 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import X from '@lucide/svelte/icons/x';
   import type { Snippet } from 'svelte';
+  import { smallLogoPath } from '$lib/utils/theme';
 
   interface Props {
     /** Whether to show the progress bar */
@@ -95,7 +96,7 @@
       <div class="max-w-4xl mx-auto px-4 py-3">
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-3">
-            <img src="/small_logo/white.svg" alt="LogWard" class="h-8 w-auto" />
+            <img src={$smallLogoPath} alt="LogWard" class="h-8 w-auto" />
             <span class="text-sm text-muted-foreground">Getting Started</span>
           </div>
           {#if showSkip}

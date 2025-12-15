@@ -4,26 +4,38 @@
 
 @layer base {
   :root {
-    /* Light mode - keeping for potential light theme toggle */
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Light mode - clear contrast theme */
+    --background: 220 14% 96%;
+    --foreground: 224 71% 4%;
+
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 224 71% 4%;
+
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 239 84% 67%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 188 86% 53%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 239 84% 67%;
+    --popover-foreground: 224 71% 4%;
+
+    /* Purple primary - same hue as dark mode */
+    --primary: 262 83% 58%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 91%;
+    --secondary-foreground: 224 71% 4%;
+
+    /* Muted needs contrast with background for tabs etc */
+    --muted: 220 14% 88%;
+    --muted-foreground: 220 9% 40%;
+
+    /* Accent for active states - white to stand out */
+    --accent: 0 0% 100%;
+    --accent-foreground: 224 71% 4%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Visible borders */
+    --border: 220 13% 82%;
+    --input: 220 13% 82%;
+    --ring: 262 83% 58%;
     --radius: 0.5rem;
   }
 
@@ -66,5 +78,42 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  /* Smooth theme transition */
+  *,
+  *::before,
+  *::after {
+    transition: background-color 200ms ease-in-out,
+                border-color 200ms ease-in-out;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: more) {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+    --muted: 0 0% 90%;
+    --muted-foreground: 0 0% 20%;
+    --border: 0 0% 40%;
+    --input: 0 0% 40%;
+    --accent: 0 0% 85%;
+    --accent-foreground: 0 0% 0%;
+  }
+
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 5%;
+    --card-foreground: 0 0% 100%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 80%;
+    --border: 0 0% 60%;
+    --input: 0 0% 60%;
+    --accent: 0 0% 20%;
+    --accent-foreground: 0 0% 100%;
   }
 }

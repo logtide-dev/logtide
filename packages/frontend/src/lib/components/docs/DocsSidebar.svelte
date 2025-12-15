@@ -95,7 +95,7 @@
         },
     ];
 
-    function isActive(href: string, currentPath: string): boolean {
+    function isActive(href: string, currentPath: string, currentHash: string): boolean {
         // Special case for home/overview pages
         if (href === "/docs") {
             return currentPath === "/docs";
@@ -104,11 +104,13 @@
         // Check if it's a hash link (e.g., /docs/api#authentication)
         if (href.includes("#")) {
             const [path, hash] = href.split("#");
-            return currentPath === path;
+            // Only active if both path and hash match
+            return currentPath === path && currentHash === `#${hash}`;
         }
 
-        // Exact match for other pages
-        return currentPath === href;
+        // For non-hash links, active only if path matches AND no hash in URL
+        // (or it's an exact match for overview pages)
+        return currentPath === href && !currentHash;
     }
 
     function toggleSection(index: number) {
@@ -148,6 +150,7 @@
                                         class="nav-link {isActive(
                                             item.href,
                                             $page.url.pathname,
+                                            $page.url.hash,
                                         )
                                             ? 'active'
                                             : ''}"

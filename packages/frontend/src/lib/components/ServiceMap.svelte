@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from "svelte";
   import * as echarts from "echarts";
   import type { ServiceDependencies } from "$lib/api/traces";
+  import { themeStore } from "$lib/stores/theme";
+  import { getEChartsTheme, getTooltipStyle } from "$lib/utils/echarts-theme";
 
   interface Props {
     dependencies: ServiceDependencies;
@@ -35,6 +37,9 @@
   }
 
   function buildChartOptions() {
+    const theme = getEChartsTheme();
+    const tooltipStyle = getTooltipStyle();
+
     if (!dependencies || dependencies.nodes.length === 0) {
       return {
         title: {
@@ -42,7 +47,7 @@
           left: "center",
           top: "middle",
           textStyle: {
-            color: "#888",
+            color: theme.textColor,
             fontSize: 14,
           },
         },
@@ -104,6 +109,7 @@
           }
           return "";
         },
+        ...tooltipStyle
       },
       animationDuration: 1500,
       animationEasingUpdate: "quinticInOut",
@@ -157,13 +163,25 @@
     }
   }
 
+  let themeUnsubscribe: (() => void) | null = null;
+
   onMount(() => {
     initChart();
     window.addEventListener("resize", handleResize);
+
+    // Subscribe to theme changes
+    themeUnsubscribe = themeStore.subscribe(() => {
+      if (chart) {
+        initChart();
+      }
+    });
   });
 
   onDestroy(() => {
     window.removeEventListener("resize", handleResize);
+    if (themeUnsubscribe) {
+      themeUnsubscribe();
+    }
     if (chart) {
       chart.dispose();
       chart = null;

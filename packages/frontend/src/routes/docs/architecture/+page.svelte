@@ -132,7 +132,7 @@ User → Organizations (1:N) → Projects (1:N) → API Keys → Logs
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-2">Backend Server (Fastify)</h3>
+            <h3 id="backend-server" class="text-lg font-semibold mb-2 scroll-mt-20">Backend Server (Fastify)</h3>
             <p class="text-muted-foreground mb-3">
                 High-performance API server handling log ingestion, query, and
                 management endpoints. Modular architecture with feature-based
@@ -150,7 +150,7 @@ User → Organizations (1:N) → Projects (1:N) → API Keys → Logs
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-2">Worker Process (BullMQ)</h3>
+            <h3 id="worker-process" class="text-lg font-semibold mb-2 scroll-mt-20">Worker Process (BullMQ)</h3>
             <p class="text-muted-foreground">
                 Background job processor for alert evaluation, notifications,
                 and data retention. Runs independently from the main API server.
@@ -158,7 +158,7 @@ User → Organizations (1:N) → Projects (1:N) → API Keys → Logs
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-2">
+            <h3 id="frontend-dashboard" class="text-lg font-semibold mb-2 scroll-mt-20">
                 Frontend Dashboard (SvelteKit)
             </h3>
             <p class="text-muted-foreground">
@@ -169,7 +169,7 @@ User → Organizations (1:N) → Projects (1:N) → API Keys → Logs
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-2">TimescaleDB</h3>
+            <h3 id="timescaledb" class="text-lg font-semibold mb-2 scroll-mt-20">TimescaleDB</h3>
             <p class="text-muted-foreground">
                 PostgreSQL extension optimized for time-series data. Automatic
                 partitioning, compression, and retention policies for efficient
@@ -186,7 +186,7 @@ User → Organizations (1:N) → Projects (1:N) → API Keys → Logs
     </h2>
 
     <div class="mb-8">
-        <h3 class="text-lg font-semibold mb-3">Log Ingestion Flow</h3>
+        <h3 id="log-ingestion-flow" class="text-lg font-semibold mb-3 scroll-mt-20">Log Ingestion Flow</h3>
         <ol class="ml-6 space-y-2 text-muted-foreground">
             <li>
                 1. Client sends logs via <code>POST /api/v1/ingest</code> with API
@@ -199,7 +199,7 @@ User → Organizations (1:N) → Projects (1:N) → API Keys → Logs
             <li>6. Logs are broadcast to active SSE streams</li>
         </ol>
 
-        <h3 class="text-lg font-semibold mb-3 mt-6">Alert Processing Flow</h3>
+        <h3 id="alert-processing-flow" class="text-lg font-semibold mb-3 mt-6 scroll-mt-20">Alert Processing Flow</h3>
         <ol class="ml-6 space-y-2 text-muted-foreground">
             <li>1. Worker evaluates all enabled alert rules (every minute)</li>
             <li>2. For each rule, query logs matching conditions</li>

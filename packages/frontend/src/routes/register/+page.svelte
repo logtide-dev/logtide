@@ -11,6 +11,7 @@
   import { Alert, AlertDescription } from '$lib/components/ui/alert';
   import Spinner from '$lib/components/Spinner.svelte';
   import Footer from '$lib/components/Footer.svelte';
+  import { smallLogoPath } from '$lib/utils/theme';
 
   // Get redirect URL from query params (e.g., for invitation flow)
   let redirectUrl = $derived($page.url.searchParams.get('redirect'));
@@ -104,7 +105,7 @@
   <div class="flex-1 flex items-center justify-center p-4">
     <Card class="w-full max-w-md">
         <CardHeader class="flex flex-row justify-center items-center gap-4">
-            <img src="/small_logo/white.svg" alt="LogWard Logo" class="h-16 w-auto" />
+            <img src={$smallLogoPath} alt="LogWard Logo" class="h-16 w-auto" />
             <div>
                 <CardTitle class="text-2xl">Create an account</CardTitle>
                 <CardDescription>Get started with LogWard</CardDescription>

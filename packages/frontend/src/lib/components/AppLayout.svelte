@@ -39,6 +39,8 @@
   import Footer from "$lib/components/Footer.svelte";
   import OnboardingChecklist from "$lib/components/OnboardingChecklist.svelte";
   import FeatureBadge from "$lib/components/FeatureBadge.svelte";
+  import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import { logoPath } from "$lib/utils/theme";
 
   interface Props {
     children?: import("svelte").Snippet;
@@ -249,7 +251,7 @@
         class="flex items-center gap-3 hover:opacity-80 transition-opacity"
       >
         <div class="flex flex-col items-start mx-auto">
-            <img src="/logo/white.svg" alt="LogWard" class="h-14 w-auto" />
+            <img src={$logoPath} alt="LogWard" class="h-14 w-auto" />
         </div>
       </a>
     </div>
@@ -339,6 +341,8 @@
       </div>
 
       <div class="flex items-center gap-2">
+        <ThemeToggle />
+
         <DropdownMenu>
           <DropdownMenuTrigger
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:bg-accent hover:text-accent-foreground h-10 w-10 relative"

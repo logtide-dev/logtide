@@ -180,7 +180,7 @@
                             1
                         </div>
                         <div>
-                            <h3 class="font-semibold mb-1">Preparation & Assessment</h3>
+                            <h3 id="preparation-assessment" class="font-semibold mb-1 scroll-mt-20">Preparation & Assessment</h3>
                             <p class="text-sm text-muted-foreground">
                                 Document your current setup: log sources, volume, alerts, dashboards, and integrations.
                                 Export configurations where possible.
@@ -197,7 +197,7 @@
                             2
                         </div>
                         <div>
-                            <h3 class="font-semibold mb-1">Deploy LogWard</h3>
+                            <h3 id="deploy-logward" class="font-semibold mb-1 scroll-mt-20">Deploy LogWard</h3>
                             <p class="text-sm text-muted-foreground">
                                 Set up LogWard using Docker Compose. Create your organization, project, and generate an API key.
                                 See the <a href="/docs/deployment" class="text-primary hover:underline">Deployment Guide</a> for details.
@@ -214,7 +214,7 @@
                             3
                         </div>
                         <div>
-                            <h3 class="font-semibold mb-1">Parallel Ingestion</h3>
+                            <h3 id="parallel-ingestion" class="font-semibold mb-1 scroll-mt-20">Parallel Ingestion</h3>
                             <p class="text-sm text-muted-foreground">
                                 Configure your application to send logs to both platforms simultaneously.
                                 Run in parallel for 24-48 hours to validate data consistency.
@@ -231,7 +231,7 @@
                             4
                         </div>
                         <div>
-                            <h3 class="font-semibold mb-1">Migrate Alerts & Dashboards</h3>
+                            <h3 id="migrate-alerts-dashboards" class="font-semibold mb-1 scroll-mt-20">Migrate Alerts & Dashboards</h3>
                             <p class="text-sm text-muted-foreground">
                                 Convert your alert rules to LogWard's format. Recreate critical dashboards.
                                 Test notifications (email, Slack, webhooks).
@@ -248,7 +248,7 @@
                             5
                         </div>
                         <div>
-                            <h3 class="font-semibold mb-1">Cutover & Cleanup</h3>
+                            <h3 id="cutover-cleanup" class="font-semibold mb-1 scroll-mt-20">Cutover & Cleanup</h3>
                             <p class="text-sm text-muted-foreground">
                                 Once validated, update production configs to use LogWard exclusively.
                                 Decommission the old platform and remove unused agents.

@@ -138,7 +138,7 @@
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-3">Prerequisites</h3>
+            <h3 id="prerequisites" class="text-lg font-semibold mb-3 scroll-mt-20">Prerequisites</h3>
             <ul class="space-y-2 ml-6">
                 <li class="flex items-start gap-2">
                     <CheckCircle2
@@ -163,7 +163,7 @@
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Installation (2 minutes)</h3>
+            <h3 id="installation" class="text-lg font-semibold mb-3 scroll-mt-20">Installation (2 minutes)</h3>
             <CodeBlock
                 lang="bash"
                 code={`# 1. Create project directory
@@ -236,7 +236,7 @@ docker compose up -d
         </Card>
 
         <div>
-            <h3 class="text-lg font-semibold mb-3">Required Configuration</h3>
+            <h3 id="required-configuration" class="text-lg font-semibold mb-3 scroll-mt-20">Required Configuration</h3>
             <p class="text-muted-foreground mb-3">
                 Edit your <code>.env</code> file and set secure values for these variables:
             </p>
@@ -295,7 +295,7 @@ docker compose up -d
 
     <div class="mb-8 space-y-6">
         <div>
-            <h3 class="text-lg font-semibold mb-2">
+            <h3 id="create-organization" class="text-lg font-semibold mb-2 scroll-mt-20">
                 1. Create Your Organization
             </h3>
             <p class="text-muted-foreground">
@@ -305,7 +305,7 @@ docker compose up -d
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-2">2. Create a Project</h3>
+            <h3 id="create-project" class="text-lg font-semibold mb-2 scroll-mt-20">2. Create a Project</h3>
             <p class="text-muted-foreground">
                 Each organization can have multiple projects (e.g.,
                 "production", "staging"). Projects isolate logs and have their
@@ -314,7 +314,7 @@ docker compose up -d
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-2">3. Generate an API Key</h3>
+            <h3 id="generate-api-key" class="text-lg font-semibold mb-2 scroll-mt-20">3. Generate an API Key</h3>
             <p class="text-muted-foreground">
                 In your project settings, create an API key to start sending
                 logs. Save it securely - it's shown only once!
@@ -322,7 +322,7 @@ docker compose up -d
         </div>
 
         <div>
-            <h3 class="text-lg font-semibold mb-2">4. Send Your First Log</h3>
+            <h3 id="send-first-log" class="text-lg font-semibold mb-2 scroll-mt-20">4. Send Your First Log</h3>
             <p class="text-muted-foreground mb-3">
                 Use the ingestion API to send logs:
             </p>

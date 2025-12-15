@@ -5,6 +5,8 @@
 	import type { MitreHeatmapCell } from '$lib/api/siem';
 	import Grid3x3 from '@lucide/svelte/icons/grid-3x3';
 	import { getTacticName, getTechniqueName } from '$lib/utils/mitre';
+	import { themeStore } from '$lib/stores/theme';
+	import { getEChartsTheme, getTooltipStyle } from '$lib/utils/echarts-theme';
 
 	interface Props {
 		cells: MitreHeatmapCell[] | undefined;
@@ -70,14 +72,25 @@
 		const handleResize = () => chart?.resize();
 		window.addEventListener('resize', handleResize);
 
+		// Subscribe to theme changes
+		const unsubscribe = themeStore.subscribe(() => {
+			if (chart) {
+				updateChart();
+			}
+		});
+
 		return () => {
 			window.removeEventListener('resize', handleResize);
+			unsubscribe();
 			chart?.dispose();
 		};
 	});
 
 	function updateChart() {
 		if (!chart || !cells || cells.length === 0) return;
+
+		const theme = getEChartsTheme();
+		const tooltipStyle = getTooltipStyle();
 
 		// Extract unique tactics and techniques
 		const tactics = [...new Set(cells.map((c) => c.tactic))].sort();
@@ -99,6 +112,11 @@
 			});
 		});
 
+		// Theme-aware gradient colors
+		const gradientColors = theme.isDark
+			? ['#0f172a', '#1d4ed8', '#dc2626', '#991b1b']
+			: ['#e0f2fe', '#3b82f6', '#ef4444', '#b91c1c'];
+
 		const option: echarts.EChartsOption = {
 			tooltip: {
 				position: 'top',
@@ -111,6 +129,7 @@
 					const techniqueFullName = getFullTechniqueName(techniqueId);
 					return `<strong>${techniqueFullName}</strong><br/>Tactic: ${tacticFullName}<br/>${count} detection${count !== 1 ? 's' : ''}`;
 				},
+				...tooltipStyle
 			},
 			grid: {
 				left: '15%',
@@ -133,7 +152,7 @@
 				splitArea: { show: true },
 				axisLabel: {
 					fontSize: 9,
-					color: '#888',
+					color: theme.textColor,
 				},
 			},
 			visualMap: {
@@ -144,10 +163,10 @@
 				left: 'center',
 				bottom: '3%',
 				inRange: {
-					color: ['#0f172a', '#1d4ed8', '#dc2626', '#991b1b'],
+					color: gradientColors,
 				},
 				textStyle: {
-					color: '#888',
+					color: theme.textColor,
 					fontSize: 10,
 				},
 			},

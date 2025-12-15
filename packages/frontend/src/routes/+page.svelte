@@ -19,6 +19,7 @@
   import Lock from '@lucide/svelte/icons/lock';
   import Gauge from '@lucide/svelte/icons/gauge';
   import Euro from '@lucide/svelte/icons/euro';
+  import { logoPath } from '$lib/utils/theme';
 
   let isAuthenticated = $state(false);
   let checkingAuth = $state(true);
@@ -113,7 +114,7 @@
   <header class="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
     <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
       <a href="/" class="flex items-center gap-2">
-        <img src="/logo/white.svg" alt="LogWard" class="h-8 w-auto" />
+        <img src={$logoPath} alt="LogWard" class="h-8 w-auto" />
       </a>
 
       <nav class="hidden md:flex items-center gap-6">
@@ -452,7 +453,7 @@
     <div class="max-w-6xl mx-auto">
       <div class="grid md:grid-cols-4 gap-8 mb-8">
         <div class="md:col-span-2">
-          <img src="/logo/white.svg" alt="LogWard" class="h-8 w-auto mb-4" />
+          <img src={$logoPath} alt="LogWard" class="h-8 w-auto mb-4" />
           <p class="text-sm text-muted-foreground max-w-xs">
             Privacy-first log management. Open source, GDPR compliant, built in Europe.
           </p>
