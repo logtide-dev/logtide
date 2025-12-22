@@ -40,13 +40,13 @@ test.describe('Sigma Journey', () => {
 
     // Navigate to dashboard first to trigger organization loading
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(1000); // Wait for org store to populate
   });
 
   test('1. User can navigate to project settings', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Verify settings page loads
     await expect(page.locator('h1, h2').filter({ hasText: /settings|project/i })).toBeVisible();
@@ -54,7 +54,7 @@ test.describe('Sigma Journey', () => {
 
   test('2. User can import a Sigma rule via dialog', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000); // Wait for page to fully load
 
     // Click create alert button
@@ -124,7 +124,7 @@ falsepositives:
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Look for Sigma rules section
@@ -167,7 +167,7 @@ tags:
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Find and click view button for a rule
@@ -213,7 +213,7 @@ falsepositives:
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Look for enable/disable toggle
@@ -256,7 +256,7 @@ falsepositives:
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Find and click delete button for a rule
@@ -332,7 +332,7 @@ falsepositives:
 
     // Navigate to search and verify page loads
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
     // Verify search page loads correctly
@@ -343,7 +343,7 @@ falsepositives:
 
   test('8. Sigma rule validation shows errors for invalid YAML', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Click create alert button
     const createButton = page.locator('button:has-text("Create Alert"), button:has-text("Create Your First Alert")');

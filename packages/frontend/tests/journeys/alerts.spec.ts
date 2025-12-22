@@ -41,13 +41,13 @@ test.describe('Alert Journey', () => {
 
     // Navigate to dashboard first to trigger organization loading
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(1000); // Wait for org store to populate
   });
 
   test('1. User can view the alerts page', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000); // Wait for page to fully load
 
     // Verify alerts page elements - look for "Alert Rules" heading specifically
@@ -60,7 +60,7 @@ test.describe('Alert Journey', () => {
 
   test('2. User can open the create alert dialog', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000); // Wait for page to fully load
 
     // Click create alert button
@@ -80,7 +80,7 @@ test.describe('Alert Journey', () => {
 
   test('3. User can create an alert rule', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Click create alert button
     const createButton = page.locator('button:has-text("Create Alert"), button:has-text("Create Your First Alert")');
@@ -133,7 +133,7 @@ test.describe('Alert Journey', () => {
     });
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Find the disable button
@@ -162,7 +162,7 @@ test.describe('Alert Journey', () => {
     });
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Find and click delete button
@@ -207,7 +207,7 @@ test.describe('Alert Journey', () => {
 
     // Navigate to alert history page
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
     // Check if alert history shows triggered alerts
@@ -219,7 +219,7 @@ test.describe('Alert Journey', () => {
 
   test('7. User can view alert history', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000); // Wait for page to fully load with org context
 
     // Verify alert history page elements - look for the main heading "Alerts"
@@ -241,7 +241,7 @@ test.describe('Alert Journey', () => {
 
   test('8. User can import Sigma rule as alert', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Click create alert button
     const createButton = page.locator('button:has-text("Create Alert"), button:has-text("Create Your First Alert")');

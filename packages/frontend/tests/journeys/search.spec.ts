@@ -57,7 +57,7 @@ test.describe('Search Journey', () => {
 
   test('1. User can view the search page with logs', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Verify search page elements
     await expect(page.locator('h1')).toContainText(/log search|search/i);
@@ -75,7 +75,7 @@ test.describe('Search Journey', () => {
 
   test('2. User can filter logs by search query', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Search for error logs
@@ -92,7 +92,7 @@ test.describe('Search Journey', () => {
 
   test('3. User can filter logs by level', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Open levels filter
@@ -126,7 +126,7 @@ test.describe('Search Journey', () => {
 
   test('4. User can filter logs by service', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Open services filter
@@ -152,7 +152,7 @@ test.describe('Search Journey', () => {
 
   test('5. User can filter logs by trace ID', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Enter trace ID
@@ -169,7 +169,7 @@ test.describe('Search Journey', () => {
 
   test('6. User can expand log details', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
     // Click on Details button for first log
@@ -185,7 +185,7 @@ test.describe('Search Journey', () => {
 
   test('7. User can view log context', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
     // Click on Context button for first log
@@ -202,7 +202,7 @@ test.describe('Search Journey', () => {
 
   test('8. User can change time range', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click on Last Hour button
@@ -216,7 +216,7 @@ test.describe('Search Journey', () => {
 
   test('9. User can use custom time range', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click on Custom button
@@ -231,7 +231,7 @@ test.describe('Search Journey', () => {
 
   test('10. User can export logs', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
     // Look for export buttons
@@ -250,7 +250,7 @@ test.describe('Search Journey', () => {
 
   test('11. User can navigate pagination', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
     // Look for pagination controls
@@ -273,7 +273,7 @@ test.describe('Search Journey', () => {
 
   test('12. User can click on service badge to filter', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
     // Find a service badge and click it
