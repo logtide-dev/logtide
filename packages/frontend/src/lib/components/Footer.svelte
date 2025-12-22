@@ -1,7 +1,7 @@
 <script lang="ts">
   import Github from "@lucide/svelte/icons/github";
 
-  const version = "Alpha v0.3.1";
+  const version = "Alpha v0.3.2";
   const currentYear = new Date().getFullYear();
   const githubUrl = "https://github.com/logward-dev/logward";
 </script>

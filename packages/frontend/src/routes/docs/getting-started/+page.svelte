@@ -283,7 +283,7 @@ docker compose up -d
                     <li><strong>GitHub:</strong> <code>ghcr.io/logward-dev/logward-backend</code></li>
                 </ul>
                 <p class="mt-3 text-xs">
-                    Pin versions in production: <code>LOGWARD_BACKEND_IMAGE=logward/backend:0.3.1</code>
+                    Pin versions in production: <code>LOGWARD_BACKEND_IMAGE=logward/backend:0.3.2</code>
                 </p>
             </CardContent>
         </Card>

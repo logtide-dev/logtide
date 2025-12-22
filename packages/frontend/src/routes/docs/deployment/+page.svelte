@@ -174,8 +174,8 @@ docker compose --profile logging up -d`}
                 <CodeBlock
                     lang="bash"
                     code={`# In your .env file
-LOGWARD_BACKEND_IMAGE=logward/backend:0.3.1
-LOGWARD_FRONTEND_IMAGE=logward/frontend:0.3.1`}
+LOGWARD_BACKEND_IMAGE=logward/backend:0.3.2
+LOGWARD_FRONTEND_IMAGE=logward/frontend:0.3.2`}
                 />
             </CardContent>
         </Card>

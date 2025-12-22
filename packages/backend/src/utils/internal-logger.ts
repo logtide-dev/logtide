@@ -54,7 +54,7 @@ export async function initializeInternalLogging(): Promise<void> {
       globalMetadata: {
         service: process.env.SERVICE_NAME || 'logward-backend',
         env: process.env.NODE_ENV || 'development',
-        version: process.env.npm_package_version || '0.3.1',
+        version: process.env.npm_package_version || '0.3.2',
         hostname: process.env.HOSTNAME || 'unknown',
       },
     });

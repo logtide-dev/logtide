@@ -1,6 +1,6 @@
 {
   "name": "@logward/root",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "LogWard - Self-hosted log management platform",
   "author": "LogWard Team",

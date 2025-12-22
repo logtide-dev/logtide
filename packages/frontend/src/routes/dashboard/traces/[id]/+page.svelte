@@ -47,7 +47,7 @@
 
   onMount(async () => {
     if (!projectId) {
-      goto("/traces");
+      goto("/dashboard/traces");
       return;
     }
 
@@ -540,7 +540,7 @@
               <Button
                 variant="outline"
                 class="mt-4"
-                onclick={() => goto("/traces")}
+                onclick={() => goto("/dashboard/traces")}
               >
                 Back to Traces
               </Button>

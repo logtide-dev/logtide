@@ -1,6 +1,6 @@
 {
   "name": "@logward/shared",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Shared types, schemas and utilities for LogWard",
   "type": "module",

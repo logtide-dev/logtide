@@ -5,6 +5,35 @@ All notable changes to LogWard will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2025-12-22
+
+### Fixed
+
+- **SvelteKit 2 Compatibility**: Updated imports from `$app/stores` to `$app/state` and adjusted event handlers (#55)
+  - Migrated deprecated `$app/stores` imports to the new `$app/state` module
+  - Updated event handlers to use the new SvelteKit 2 patterns
+  - Ensures compatibility with latest SvelteKit versions
+
+- **Traces Page Navigation**: Fixed "Get API Key" button on empty traces page leading to 404 (#53)
+  - Corrected navigation path from `/projects` to `/dashboard/projects`
+  - Fixed navigation buttons on the 404 error page
+  - Fixed feature tour links missing `/dashboard` prefix (search, alerts, traces, projects)
+  - Fixed trace detail page "Back to Traces" navigation
+
+- **Registration Error**: Fixed "Failed to fetch" error during user registration (#54, fixes #52)
+  - Resolved network error that prevented new users from completing registration
+  - Improved error handling in the registration flow
+
+---
+
+## [0.3.1] - 2025-12-19
+
+### Changed
+
+- **Security Policy**: Updated supported versions in SECURITY.md
+
+---
+
 ## [0.3.0] - 2025-12-10
 
 ### Added
