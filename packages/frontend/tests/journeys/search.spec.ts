@@ -53,6 +53,13 @@ test.describe('Search Journey', () => {
     await page.evaluate((orgId) => {
       localStorage.setItem('currentOrganizationId', orgId);
     }, organizationId);
+
+    // Navigate to dashboard first to trigger organization loading
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
+    await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
+    await page.waitForTimeout(500);
   });
 
   test('1. User can view the search page with logs', async ({ page }) => {

@@ -42,7 +42,9 @@ test.describe('Alert Journey', () => {
     // Navigate to dashboard first to trigger organization loading
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(1000); // Wait for org store to populate
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
+    await page.waitForTimeout(500);
   });
 
   test('1. User can view the alerts page', async ({ page }) => {

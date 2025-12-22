@@ -32,6 +32,8 @@ test.describe('Empty States', () => {
     // Navigate to dashboard to trigger org loading
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
     await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
     await page.waitForTimeout(500);
   });
 

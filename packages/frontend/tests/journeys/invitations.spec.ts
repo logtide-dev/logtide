@@ -28,6 +28,12 @@ test.describe('Invitations Journey', () => {
     await page.evaluate((orgId) => {
       localStorage.setItem('currentOrganizationId', orgId);
     }, organizationId);
+
+    // Navigate to dashboard to trigger org loading
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
+    await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
   });
 
   test('1. Owner can navigate to settings page', async ({ page }) => {
@@ -392,6 +398,12 @@ test.describe('Member Management', () => {
     await page.evaluate((orgId) => {
       localStorage.setItem('currentOrganizationId', orgId);
     }, organizationId);
+
+    // Navigate to dashboard to trigger org loading
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
+    await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
   });
 
   test('1. Owner can see list of members', async ({ page }) => {
