@@ -599,6 +599,165 @@ esxcli system syslog reload`}
     </div>
 
     <h2
+        id="rsyslog-http"
+        class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
+    >
+        Rsyslog HTTP Forwarding (Advanced)
+    </h2>
+
+    <div class="mb-8 space-y-6">
+        <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
+            <div class="flex items-start gap-3">
+                <Info class="w-5 h-5 text-yellow-500 mt-0.5 flex-shrink-0" />
+                <div>
+                    <p class="font-semibold text-yellow-600 dark:text-yellow-400 mb-1">
+                        Known Limitation: omhttp Module
+                    </p>
+                    <p class="text-sm text-muted-foreground">
+                        The rsyslog <code>omhttp</code> module (for sending logs directly via HTTP)
+                        is <strong>not available in default rsyslog packages</strong> on many distributions,
+                        including Debian 13 (Trixie), Ubuntu, and some RHEL-based systems. This is a
+                        known upstream limitation, not a LogWard issue.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <p class="text-muted-foreground">
+            If you need to send syslog messages directly to LogWard's HTTP API without using
+            Fluent Bit's syslog input, you have several options:
+        </p>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Option 1: Use Fluent Bit (Recommended)</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                The simplest solution is to use Fluent Bit as described in this guide. Fluent Bit
+                receives syslog messages on port 514 and forwards them to LogWard's HTTP API.
+                This is the recommended approach.
+            </p>
+        </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Option 2: Vector as HTTP Bridge</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                <a href="https://vector.dev" target="_blank" rel="noopener noreferrer" class="text-primary underline">Vector</a>
+                is a high-performance observability data pipeline that can act as a syslog-to-HTTP bridge:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# Install Vector (Debian/Ubuntu)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.vector.dev | bash
+
+# Or via apt
+curl -1sLf 'https://repositories.timber.io/public/vector/cfg/setup/bash.deb.sh' | sudo bash
+sudo apt install vector`}
+            />
+            <p class="text-sm text-muted-foreground my-3">
+                Create <code>/etc/vector/vector.toml</code>:
+            </p>
+            <CodeBlock
+                lang="toml"
+                code={`# Vector configuration for rsyslog → LogWard
+
+[sources.rsyslog]
+type = "syslog"
+address = "0.0.0.0:514"
+mode = "tcp"  # or "udp"
+
+[transforms.format_logs]
+type = "remap"
+inputs = ["rsyslog"]
+source = '''
+# Transform syslog fields to LogWard format
+.message = string!(.message)
+.level = downcase(string(.severity) ?? "info")
+.service = string(.appname) ?? string(.hostname) ?? "syslog"
+.time = now()
+
+# Add metadata
+.metadata = {}
+.metadata.hostname = string(.hostname) ?? null
+.metadata.facility = string(.facility) ?? null
+.metadata.procid = string(.procid) ?? null
+
+# Remove original syslog fields
+del(.severity)
+del(.appname)
+del(.hostname)
+del(.facility)
+del(.procid)
+'''
+
+[sinks.logward]
+type = "http"
+inputs = ["format_logs"]
+uri = "http://YOUR_LOGWARD_HOST:8080/api/v1/ingest/single"
+encoding.codec = "json"
+
+[sinks.logward.request]
+headers.X-API-Key = "lp_your_api_key_here"
+headers.Content-Type = "application/json"`}
+            />
+            <CodeBlock
+                lang="bash"
+                code={`# Start Vector
+sudo systemctl enable vector
+sudo systemctl start vector
+
+# Check status
+sudo systemctl status vector
+vector --version`}
+            />
+        </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Option 3: Build rsyslog with omhttp</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                If you need native rsyslog HTTP support, you can compile rsyslog from source
+                with the omhttp module enabled. This requires development libraries and is
+                more complex to maintain:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# Install build dependencies (Debian/Ubuntu)
+sudo apt install build-essential pkg-config libestr-dev libfastjson-dev \\
+  zlib1g-dev libcurl4-openssl-dev uuid-dev libgcrypt20-dev
+
+# Download and compile rsyslog
+wget https://www.rsyslog.com/files/download/rsyslog/rsyslog-8.2312.0.tar.gz
+tar xzf rsyslog-8.2312.0.tar.gz
+cd rsyslog-8.2312.0
+
+./configure --enable-omhttp
+make
+sudo make install`}
+            />
+            <p class="text-xs text-muted-foreground mt-2">
+                Note: Building from source means you're responsible for security updates
+                and compatibility. The Fluent Bit or Vector approaches are generally preferred.
+            </p>
+        </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Option 4: Use omfwd + Local HTTP Forwarder</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                Forward syslog to a local Fluent Bit or Vector instance using standard
+                rsyslog forwarding (<code>omfwd</code>), then let that service handle HTTP:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# /etc/rsyslog.d/50-logward.conf
+# Forward all logs to local Fluent Bit syslog input
+*.* @@127.0.0.1:5514`}
+            />
+            <p class="text-xs text-muted-foreground mt-2">
+                This keeps your rsyslog configuration simple and delegates HTTP
+                complexity to a dedicated tool.
+            </p>
+        </div>
+    </div>
+
+    <h2
         id="troubleshooting"
         class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
     >

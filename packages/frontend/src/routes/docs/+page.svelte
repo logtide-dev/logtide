@@ -330,57 +330,32 @@ API_KEY_SECRET=your_32_character_secret_key_here`}
         </h3>
 
         <p class="text-muted-foreground mb-4">
-            After setting up LogWard, you can start sending logs immediately
-            using any HTTP client:
+            After setting up LogWard, you can start sending logs immediately.
+            Here's a quick curl example:
         </p>
 
         <div class="space-y-4">
-            <div>
-                <h4 class="text-sm font-semibold mb-2">
-                    Cloud (api.logward.dev)
-                </h4>
-                <CodeBlock
-                    lang="bash"
-                    code={`curl -X POST https://api.logward.dev/api/v1/ingest \\
+            <CodeBlock
+                lang="bash"
+                code={`# Cloud
+curl -X POST https://api.logward.dev/api/v1/ingest \\
   -H "X-API-Key: lp_your_api_key_here" \\
   -H "Content-Type: application/json" \\
-  -d '{
-    "logs": [{
-      "time": "2025-01-23T10:30:00Z",
-      "service": "api-gateway",
-      "level": "error",
-      "message": "Database connection timeout",
-      "metadata": {
-        "user_id": 123,
-        "endpoint": "/api/users"
-      }
-    }]
-  }'`}
-                />
-            </div>
+  -d '{"logs": [{"time": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "service": "my-app", "level": "info", "message": "Hello LogWard!"}]}'
 
-            <div>
-                <h4 class="text-sm font-semibold mb-2">
-                    Self-Hosted
-                </h4>
-                <CodeBlock
-                    lang="bash"
-                    code={`curl -X POST http://localhost:8080/api/v1/ingest \\
+# Self-Hosted (replace with your host)
+curl -X POST http://localhost:8080/api/v1/ingest \\
   -H "X-API-Key: lp_your_api_key_here" \\
   -H "Content-Type: application/json" \\
-  -d '{
-    "logs": [{
-      "time": "2025-01-23T10:30:00Z",
-      "service": "api-gateway",
-      "level": "error",
-      "message": "Database connection timeout",
-      "metadata": {
-        "user_id": 123,
-        "endpoint": "/api/users"
-      }
-    }]
-  }'`}
-                />
+  -d '{"logs": [{"time": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "service": "my-app", "level": "info", "message": "Hello LogWard!"}]}'`}
+            />
+
+            <div class="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+                <p class="text-sm">
+                    <strong>More options:</strong> See the
+                    <a href="/docs/getting-started#send-first-log" class="text-primary underline">Getting Started guide</a>
+                    for examples in <strong>Python</strong>, <strong>Node.js</strong>, <strong>Docker</strong>, and <strong>OpenTelemetry</strong>.
+                </p>
             </div>
         </div>
     </section>
