@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import { adminAPI, type UserDetails } from "$lib/api/admin";
     import { toastStore } from "$lib/stores/toast";
     import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -38,7 +38,7 @@
         CheckCircle,
     } from "lucide-svelte";
 
-    const userId = $derived($page.params.id);
+    const userId = $derived(page.params.id);
 
     let user: UserDetails | null = $state(null);
     let loading = $state(true);

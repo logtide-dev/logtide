@@ -1,10 +1,10 @@
 <script lang="ts">
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import { Menu, X, Github } from "lucide-svelte";
     import ThemeToggle from "$lib/components/ThemeToggle.svelte";
     import { logoPath } from "$lib/utils/theme";
 
-    let mobileMenuOpen = false;
+    let mobileMenuOpen = $state(false);
 
     function toggleMobileMenu() {
         mobileMenuOpen = !mobileMenuOpen;
@@ -14,19 +14,19 @@
         mobileMenuOpen = false;
     }
 
-    $: currentPath = $page.url.pathname;
-    $: isDashboard =
+    let currentPath = $derived(page.url.pathname);
+    let isDashboard = $derived(
         currentPath === "/" ||
         (!currentPath.startsWith("/docs") &&
             !currentPath.startsWith("/login") &&
-            !currentPath.startsWith("/register"));
-    $: isDocs = currentPath.startsWith("/docs");
+            !currentPath.startsWith("/register")));
+    let isDocs = $derived(currentPath.startsWith("/docs"));
 </script>
 
 <nav class="navbar">
     <div class="navbar-container">
         <!-- Logo/Brand -->
-        <a href="/" class="navbar-brand" on:click={closeMobileMenu}>
+        <a href="/" class="navbar-brand" onclick={closeMobileMenu}>
             <img src={$logoPath} alt="LogWard" class="h-10 w-auto" />
         </a>
 
@@ -51,7 +51,7 @@
         <!-- Mobile Menu Button -->
         <button
             class="mobile-menu-button"
-            on:click={toggleMobileMenu}
+            onclick={toggleMobileMenu}
             aria-label="Toggle menu"
         >
             {#if mobileMenuOpen}
@@ -68,14 +68,14 @@
             <a
                 href="/"
                 class="nav-link {isDashboard ? 'active' : ''}"
-                on:click={closeMobileMenu}
+                onclick={closeMobileMenu}
             >
                 Dashboard
             </a>
             <a
                 href="/docs"
                 class="nav-link {isDocs ? 'active' : ''}"
-                on:click={closeMobileMenu}
+                onclick={closeMobileMenu}
             >
                 Docs
             </a>
@@ -84,7 +84,7 @@
                 target="_blank"
                 rel="noopener noreferrer"
                 class="nav-link"
-                on:click={closeMobileMenu}
+                onclick={closeMobileMenu}
             >
                 <Github class="w-4 h-4 inline-block mr-2" />
                 GitHub

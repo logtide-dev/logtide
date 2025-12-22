@@ -101,7 +101,7 @@ otel.SetTracerProvider(tp)`
 
   <!-- Quick Actions -->
   <div class="grid gap-4 md:grid-cols-3 max-w-3xl mx-auto">
-    <a href="/projects" class="block">
+    <a href="/dashboard/projects" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
           <Key class="w-8 h-8 mx-auto text-green-500 mb-2" />

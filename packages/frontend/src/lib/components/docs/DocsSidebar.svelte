@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import {
         Book,
         Code,
@@ -130,7 +130,7 @@
                 <div class="section">
                     <button
                         class="section-header"
-                        on:click={() => toggleSection(index)}
+                        onclick={() => toggleSection(index)}
                     >
                         <svelte:component
                             this={section.collapsed
@@ -149,8 +149,8 @@
                                         href={item.href}
                                         class="nav-link {isActive(
                                             item.href,
-                                            $page.url.pathname,
-                                            $page.url.hash,
+                                            page.url.pathname,
+                                            page.url.hash,
                                         )
                                             ? 'active'
                                             : ''}"

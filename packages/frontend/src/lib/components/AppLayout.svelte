@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { browser } from "$app/environment";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { authStore } from "$lib/stores/auth";
   import { currentOrganization } from "$lib/stores/organization";
@@ -228,10 +228,10 @@
   function isActive(href: string): boolean {
     // Exact match for /dashboard to prevent it being always active
     if (href === "/dashboard") {
-      return $page.url.pathname === href;
+      return page.url.pathname === href;
     }
     return (
-      $page.url.pathname === href || $page.url.pathname.startsWith(href + "/")
+      page.url.pathname === href || page.url.pathname.startsWith(href + "/")
     );
   }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { browser } from "$app/environment";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { currentOrganization } from "$lib/stores/organization";
   import { authStore } from "$lib/stores/auth";
   import { checklistStore } from "$lib/stores/checklist";
@@ -135,9 +135,9 @@
   let urlParamsProcessed = $state(false);
 
   $effect(() => {
-    if (!browser || !$page.url.searchParams || urlParamsProcessed) return;
+    if (!browser || !page.url.searchParams || urlParamsProcessed) return;
 
-    const params = $page.url.searchParams;
+    const params = page.url.searchParams;
     let shouldLoadLogs = false;
 
     const projectParam = params.get("project");
@@ -177,9 +177,9 @@
   });
 
   $effect(() => {
-    if (!browser || !$page.url.searchParams) return;
+    if (!browser || !page.url.searchParams) return;
 
-    const params = $page.url.searchParams;
+    const params = page.url.searchParams;
     const logIdParam = params.get("logId");
     const projectIdParam = params.get("projectId");
 

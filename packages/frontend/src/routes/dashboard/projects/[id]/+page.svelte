@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from "$app/stores";
+	import { page } from "$app/state";
 	import { browser } from "$app/environment";
 	import { getApiUrl } from "$lib/config";
 	import { logsAPI } from "$lib/api/logs";
@@ -57,7 +57,7 @@
 	let contextDialogOpen = $state(false);
 	let selectedLogForContext = $state<any | null>(null);
 
-	const projectId = $derived($page.params.id);
+	const projectId = $derived(page.params.id);
 
 	async function loadLogs() {
 		if (!projectId) return;
