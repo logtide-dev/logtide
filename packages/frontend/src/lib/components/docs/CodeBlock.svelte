@@ -71,7 +71,7 @@
             >{lang}</span
         >
         <button
-            on:click={copyCode}
+            onclick={copyCode}
             class="flex items-center gap-1.5 px-2 py-1 text-xs rounded-md transition-colors hover:bg-background border border-transparent hover:border-border"
             title="Copy code"
         >

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import { goto } from "$app/navigation";
     import {
         Card,
@@ -18,9 +18,9 @@
     } from "lucide-svelte";
     import { fade, fly } from "svelte/transition";
 
-    $: status = $page.status;
-    $: message = $page.error?.message || "An unexpected error occurred";
-    $: is404 = status === 404;
+    let status = $derived(page.status);
+    let message = $derived(page.error?.message || "An unexpected error occurred");
+    let is404 = $derived(status === 404);
 
     function goBack() {
         window.history.back();
@@ -35,7 +35,7 @@
     }
 
     function goToSearch() {
-        goto("/search");
+        goto("/dashboard/search");
     }
 </script>
 
@@ -114,19 +114,19 @@
                     class="flex flex-col sm:flex-row gap-3 justify-center"
                     in:fly={{ y: 20, duration: 400, delay: 400 }}
                 >
-                    <Button variant="default" on:click={goBack} class="gap-2">
+                    <Button variant="default" onclick={goBack} class="gap-2">
                         <ArrowLeft class="w-4 h-4" />
                         Go Back
                     </Button>
 
-                    <Button variant="outline" on:click={goHome} class="gap-2">
+                    <Button variant="outline" onclick={goHome} class="gap-2">
                         <Home class="w-4 h-4" />
                         Home
                     </Button>
 
                     <Button
                         variant="outline"
-                        on:click={goToDashboard}
+                        onclick={goToDashboard}
                         class="gap-2"
                     >
                         <Home class="w-4 h-4" />
@@ -135,7 +135,7 @@
 
                     <Button
                         variant="outline"
-                        on:click={goToSearch}
+                        onclick={goToSearch}
                         class="gap-2"
                     >
                         <Search class="w-4 h-4" />

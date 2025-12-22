@@ -8,7 +8,7 @@
     import { onMount } from "svelte";
     import { adminAPI, type ProjectDetails } from "$lib/api/admin";
     import { authStore } from "$lib/stores/auth";
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import * as Table from "$lib/components/ui/table";
     import { Button, buttonVariants } from "$lib/components/ui/button";
     import {
@@ -23,7 +23,7 @@
     } from "lucide-svelte";
     import { Badge } from "$lib/components/ui/badge";
 
-    const projectId = $derived($page.params.id);
+    const projectId = $derived(page.params.id);
 
     let project = $state<ProjectDetails | null>(null);
     let loading = $state(true);
