@@ -32,14 +32,14 @@ declare global {
  */
 export function getApiUrl(): string {
   if (browser) {
-    const configuredUrl = window.__LOGWARD_CONFIG__?.apiUrl;
-
-    // If explicitly configured with a non-localhost URL, use it as-is
-    if (configuredUrl && !configuredUrl.includes('localhost')) {
-      return configuredUrl;
+    // If PUBLIC_API_URL is explicitly configured, use it as-is
+    // This includes localhost URLs (for E2E tests) and empty string (for reverse proxy)
+    if (window.__LOGWARD_CONFIG__?.apiUrl !== undefined) {
+      return window.__LOGWARD_CONFIG__.apiUrl;
     }
 
-    // Auto-detect based on how the user is accessing the frontend
+    // Auto-detect only when no explicit PUBLIC_API_URL is configured
+    // This helps self-hosted users who don't set PUBLIC_API_URL
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
     const port = window.location.port; // "" if 80/443, "3000" if explicit
