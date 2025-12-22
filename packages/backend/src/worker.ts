@@ -4,6 +4,8 @@ import { processSigmaDetection } from './queue/jobs/sigma-detection.js';
 import { processIncidentAutoGrouping } from './queue/jobs/incident-autogrouping.js';
 import { processInvitationEmail } from './queue/jobs/invitation-email.js';
 import { processIncidentNotification } from './queue/jobs/incident-notification.js';
+import { processExceptionParsing } from './queue/jobs/exception-parsing.js';
+import { processErrorNotification } from './queue/jobs/error-notification.js';
 import { alertsService } from './modules/alerts/index.js';
 import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { initializeInternalLogging, shutdownInternalLogging, getInternalLogger } from './utils/internal-logger.js';
@@ -37,6 +39,16 @@ const invitationWorker = createWorker('invitation-email', async (job) => {
 // Create worker for incident notifications
 const incidentNotificationWorker = createWorker('incident-notifications', async (job) => {
   await processIncidentNotification(job);
+});
+
+// Create worker for exception parsing
+const exceptionWorker = createWorker('exception-parsing', async (job) => {
+  await processExceptionParsing(job);
+});
+
+// Create worker for error notifications
+const errorNotificationWorker = createWorker('error-notifications', async (job) => {
+  await processErrorNotification(job);
 });
 
 alertWorker.on('completed', (job) => {
@@ -151,6 +163,53 @@ incidentNotificationWorker.on('failed', (job, err) => {
       error: err,
       jobId: job?.id,
       incidentId: job?.data?.incidentId,
+    });
+  }
+});
+
+exceptionWorker.on('completed', (job) => {
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.info('worker-exception-parsing-completed', `Exception parsing job completed`, {
+      jobId: job.id,
+      logCount: job.data?.logs?.length,
+    });
+  }
+});
+
+exceptionWorker.on('failed', (job, err) => {
+  console.error(`❌ Exception parsing job ${job?.id} failed:`, err);
+
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.error('worker-exception-parsing-failed', `Exception parsing job failed: ${err.message}`, {
+      error: err,
+      jobId: job?.id,
+      logCount: job?.data?.logs?.length,
+    });
+  }
+});
+
+errorNotificationWorker.on('completed', (job) => {
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.info('worker-error-notification-completed', `Error notification job completed`, {
+      jobId: job.id,
+      exceptionId: job.data?.exceptionId,
+      exceptionType: job.data?.exceptionType,
+    });
+  }
+});
+
+errorNotificationWorker.on('failed', (job, err) => {
+  console.error(`❌ Error notification job ${job?.id} failed:`, err);
+
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.error('worker-error-notification-failed', `Error notification job failed: ${err.message}`, {
+      error: err,
+      jobId: job?.id,
+      exceptionId: job?.data?.exceptionId,
     });
   }
 });
@@ -323,6 +382,8 @@ async function gracefulShutdown(signal: string) {
     await autoGroupWorker.close();
     await invitationWorker.close();
     await incidentNotificationWorker.close();
+    await exceptionWorker.close();
+    await errorNotificationWorker.close();
     console.log('✅ Workers closed');
 
     // Close internal logging

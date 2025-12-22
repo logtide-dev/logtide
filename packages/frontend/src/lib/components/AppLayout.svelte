@@ -26,6 +26,7 @@
   import FolderKanban from "@lucide/svelte/icons/folder-kanban";
   import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
   import GitBranch from "@lucide/svelte/icons/git-branch";
+  import Bug from "@lucide/svelte/icons/bug";
   import Bell from "@lucide/svelte/icons/bell";
   import Building2 from "@lucide/svelte/icons/building-2";
   import Settings from "@lucide/svelte/icons/settings";
@@ -215,6 +216,12 @@
       badge: { id: 'traces-feature', type: 'new', showUntil: '2025-03-01' }
     },
     { label: "Alerts", href: "/dashboard/alerts", icon: AlertTriangle },
+    {
+      label: "Errors",
+      href: "/dashboard/errors",
+      icon: Bug,
+      badge: { id: 'errors-feature', type: 'new', showUntil: '2025-06-01' }
+    },
     {
       label: "Security",
       href: "/dashboard/security",

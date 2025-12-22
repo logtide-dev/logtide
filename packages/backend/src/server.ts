@@ -22,6 +22,7 @@ import { adminRoutes } from './modules/admin/index.js';
 import { otlpRoutes, otlpTraceRoutes } from './modules/otlp/index.js';
 import { tracesRoutes } from './modules/traces/index.js';
 import { onboardingRoutes } from './modules/onboarding/index.js';
+import { exceptionsRoutes } from './modules/exceptions/index.js';
 import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
 import websocketPlugin from './plugins/websocket.js';
@@ -116,6 +117,9 @@ export async function build(opts = {}) {
 
   // SIEM SSE routes for real-time updates (session-based auth)
   await fastify.register(registerSiemSseRoutes);
+
+  // Exception tracking routes (session-based auth)
+  await fastify.register(exceptionsRoutes);
 
   // API keys management routes (session-based auth)
   await fastify.register(apiKeysRoutes, { prefix: '/api/v1/projects' });

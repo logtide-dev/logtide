@@ -37,6 +37,11 @@ export class IngestionService {
       console.error('[Ingestion] Failed to trigger Sigma detection:', err);
     });
 
+    // Trigger Exception parsing for error/critical logs (async, non-blocking)
+    this.triggerExceptionParsing(logs, insertedLogs, projectId).catch((err) => {
+      console.error('[Ingestion] Failed to trigger Exception parsing:', err);
+    });
+
     // Invalidate query caches for this project (async, non-blocking)
     CacheManager.invalidateProjectQueries(projectId).catch((err) => {
       console.error('[Ingestion] Failed to invalidate cache:', err);
@@ -109,6 +114,55 @@ export class IngestionService {
     } catch (error) {
       console.error('[Ingestion] Error triggering Sigma detection:', error);
       // Don't throw - ingestion should succeed even if detection queueing fails
+    }
+  }
+
+  /**
+   * Trigger Exception parsing job for error/critical logs
+   */
+  private async triggerExceptionParsing(logs: LogInput[], insertedLogs: any[], projectId: string): Promise<void> {
+    try {
+      // Filter only error/critical logs
+      const errorLogs = logs
+        .map((log, index) => ({ log, inserted: insertedLogs[index] }))
+        .filter(({ log }) => log.level === 'error' || log.level === 'critical')
+        .map(({ log, inserted }) => ({
+          id: inserted?.id || '',
+          message: log.message,
+          level: log.level as 'error' | 'critical',
+          service: log.service,
+          metadata: log.metadata,
+        }));
+
+      if (errorLogs.length === 0) {
+        return;
+      }
+
+      // Get project to find organization_id
+      const project = await db
+        .selectFrom('projects')
+        .select(['organization_id'])
+        .where('id', '=', projectId)
+        .executeTakeFirst();
+
+      if (!project) {
+        console.warn(`[Ingestion] Project not found for exception parsing: ${projectId}`);
+        return;
+      }
+
+      // Queue exception parsing job
+      const exceptionQueue = createQueue('exception-parsing');
+
+      await exceptionQueue.add('parse-exceptions', {
+        logs: errorLogs,
+        organizationId: project.organization_id,
+        projectId,
+      });
+
+      console.log(`[Ingestion] Queued exception parsing for ${errorLogs.length} error/critical logs`);
+    } catch (error) {
+      console.error('[Ingestion] Error triggering exception parsing:', error);
+      // Don't throw - ingestion should succeed even if exception parsing queueing fails
     }
   }
 

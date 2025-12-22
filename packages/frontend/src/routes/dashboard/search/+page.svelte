@@ -31,7 +31,9 @@
   import * as Popover from "$lib/components/ui/popover";
   import Switch from "$lib/components/ui/switch/switch.svelte";
   import LogContextDialog from "$lib/components/LogContextDialog.svelte";
+  import { ExceptionDetailsDialog } from "$lib/components/exceptions";
   import EmptyLogs from "$lib/components/EmptyLogs.svelte";
+  import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
   import FileJson from "@lucide/svelte/icons/file-json";
   import FileText from "@lucide/svelte/icons/file-text";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -86,6 +88,10 @@
   let contextDialogOpen = $state(false);
   let selectedLogForContext = $state<LogEntry | null>(null);
   let loadingLogById = $state(false);
+
+  // Exception dialog state
+  let exceptionDialogOpen = $state(false);
+  let selectedLogForException = $state<LogEntry | null>(null);
 
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -462,6 +468,20 @@
   function closeContextDialog() {
     contextDialogOpen = false;
     selectedLogForContext = null;
+  }
+
+  function openExceptionDialog(log: LogEntry) {
+    selectedLogForException = log;
+    exceptionDialogOpen = true;
+  }
+
+  function closeExceptionDialog() {
+    exceptionDialogOpen = false;
+    selectedLogForException = null;
+  }
+
+  function isErrorLevel(level: string): boolean {
+    return level === 'error' || level === 'critical';
   }
 
   function getLevelColor(level: LogEntry["level"]): string {
@@ -995,8 +1015,8 @@
           {#if paginatedLogs.length === 0}
             <EmptyLogs />
           {:else}
-            <div class="rounded-md border">
-              <Table>
+            <div class="rounded-md border overflow-x-auto">
+              <Table class="w-full">
                 <TableHeader>
                   <TableRow>
                     <TableHead class="w-[180px]">Time</TableHead>
@@ -1081,12 +1101,12 @@
                     </TableRow>
                     {#if expandedRows.has(globalIndex)}
                       <TableRow>
-                        <TableCell colspan={6} class="bg-muted/50">
-                          <div class="p-4 space-y-3">
+                        <TableCell colspan={6} class="bg-muted/50 !p-0">
+                          <div class="p-4 space-y-3 w-0 min-w-full">
                             <div>
                               <span class="font-semibold">Full Message:</span>
                               <div
-                                class="mt-2 p-3 bg-background rounded-md text-sm whitespace-pre-wrap break-words"
+                                class="mt-2 p-3 bg-background rounded-md text-sm whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
                               >
                                 {log.message}
                               </div>
@@ -1109,12 +1129,26 @@
                             {#if log.metadata}
                               <div>
                                 <span class="font-semibold">Metadata:</span>
-                                <pre
-                                  class="mt-2 p-3 bg-background rounded-md overflow-x-auto text-xs">{JSON.stringify(
+                                <div class="mt-2 p-3 bg-background rounded-md max-h-64 overflow-auto">
+                                  <pre class="text-xs w-max">{JSON.stringify(
                                     log.metadata,
                                     null,
                                     2,
                                   )}</pre>
+                                </div>
+                              </div>
+                            {/if}
+                            {#if isErrorLevel(log.level) && log.id}
+                              <div class="pt-2 border-t mt-3">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onclick={() => openExceptionDialog(log)}
+                                  class="gap-2"
+                                >
+                                  <AlertTriangle class="w-4 h-4 text-red-500" />
+                                  View Exception Details
+                                </Button>
                               </div>
                             {/if}
                           </div>
@@ -1255,6 +1289,14 @@
 <LogContextDialog
   open={contextDialogOpen}
   projectId={selectedLogForContext?.projectId || ""}
+  organizationId={$currentOrganization?.id || ""}
   selectedLog={selectedLogForContext}
   onClose={closeContextDialog}
+/>
+
+<ExceptionDetailsDialog
+  open={exceptionDialogOpen}
+  logId={selectedLogForException?.id || ""}
+  organizationId={$currentOrganization?.id || ""}
+  onClose={closeExceptionDialog}
 />
