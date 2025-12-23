@@ -9,28 +9,40 @@
  * @see https://opentelemetry.io/docs/specs/otlp/
  */
 
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { parseOtlpRequest, detectContentType } from './parser.js';
 import { transformOtlpToLogWard } from './transformer.js';
 import { ingestionService } from '../ingestion/service.js';
 import { config } from '../../config/index.js';
 
+/**
+ * Helper to collect chunks from a stream into a buffer.
+ * This handles both Content-Length and chunked transfer encoding.
+ */
+const collectStreamToBuffer = (stream: NodeJS.ReadableStream): Promise<Buffer> => {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+    stream.on('error', reject);
+  });
+};
+
 const otlpRoutes: FastifyPluginAsync = async (fastify) => {
   // Register content type parser for protobuf
+  // Use stream-based parsing to support both Content-Length and chunked encoding
   fastify.addContentTypeParser(
     'application/x-protobuf',
-    { parseAs: 'buffer' },
-    (_req, body, done) => {
-      done(null, body);
+    async (request: FastifyRequest) => {
+      return collectStreamToBuffer(request.raw);
     }
   );
 
   // Also handle application/protobuf (alternative)
   fastify.addContentTypeParser(
     'application/protobuf',
-    { parseAs: 'buffer' },
-    (_req, body, done) => {
-      done(null, body);
+    async (request: FastifyRequest) => {
+      return collectStreamToBuffer(request.raw);
     }
   );
 

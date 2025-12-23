@@ -65,8 +65,9 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
 
       const logData = request.body;
 
-      // Convert numeric log levels (Pino/Bunyan format) to string
+      // Convert numeric log levels (Pino/Bunyan format) and syslog levels to string
       const normalizeLevel = (level: any): string => {
+        // Handle numeric levels (Pino/Bunyan format)
         if (typeof level === 'number' || !isNaN(Number(level))) {
           const numLevel = Number(level);
           if (numLevel >= 60) return 'critical';
@@ -75,7 +76,54 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
           if (numLevel >= 30) return 'info';
           return 'debug';
         }
-        return level || 'info';
+
+        // Handle string levels (including syslog levels)
+        if (typeof level === 'string') {
+          const lowerLevel = level.toLowerCase().trim();
+
+          // Map syslog and common log levels to LogWard's 5 levels
+          switch (lowerLevel) {
+            // Critical levels
+            case 'emergency':
+            case 'emerg':
+            case 'alert':
+            case 'crit':
+            case 'critical':
+            case 'fatal':
+              return 'critical';
+
+            // Error levels
+            case 'error':
+            case 'err':
+              return 'error';
+
+            // Warning levels
+            case 'warning':
+            case 'warn':
+              return 'warn';
+
+            // Info levels
+            case 'notice':
+            case 'info':
+            case 'information':
+              return 'info';
+
+            // Debug levels
+            case 'debug':
+            case 'trace':
+            case 'verbose':
+              return 'debug';
+
+            default:
+              // If it's already a valid level, return it
+              if (['debug', 'info', 'warn', 'error', 'critical'].includes(lowerLevel)) {
+                return lowerLevel;
+              }
+              return 'info'; // Default fallback
+          }
+        }
+
+        return 'info'; // Default fallback for undefined/null
       };
 
       // Normalize fields from Fluent Bit format to LogWard format

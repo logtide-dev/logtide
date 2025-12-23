@@ -295,7 +295,10 @@
         <div>
             <h3 class="text-lg font-semibold mb-3">map_syslog_level.lua</h3>
             <p class="text-sm text-muted-foreground mb-3">
-                Lua script to convert syslog severity (0-7) to LogWard log levels:
+                Lua script to convert syslog severity (0-7) to log levels.
+                <strong>Note:</strong> LogWard automatically normalizes syslog levels server-side,
+                so you can send levels like "notice", "emergency", "warning" etc. and they will be
+                mapped to LogWard's 5 levels (debug, info, warn, error, critical).
             </p>
             <CodeBlock
                 lang="lua"
@@ -303,6 +306,13 @@
 -- Syslog severity levels (from RFC 3164/5424):
 -- 0 = Emergency, 1 = Alert, 2 = Critical, 3 = Error
 -- 4 = Warning, 5 = Notice, 6 = Informational, 7 = Debug
+--
+-- LogWard automatically maps these to its 5 levels:
+-- emergency/alert/critical -> critical
+-- error -> error
+-- warning -> warn
+-- notice/info -> info
+-- debug -> debug
 
 function map_syslog_level(tag, timestamp, record)
     local pri = tonumber(record["pri"])
@@ -312,6 +322,7 @@ function map_syslog_level(tag, timestamp, record)
         local severity = pri % 8
 
         -- Map severity number to log level string
+        -- LogWard will normalize these to its 5 levels
         local level_map = {
             [0] = "emergency",
             [1] = "alert",
