@@ -11,6 +11,9 @@
 
 import type { OtlpExportLogsRequest } from './transformer.js';
 import { createRequire } from 'module';
+import { createGunzip } from 'zlib';
+import { pipeline } from 'stream/promises';
+import { Readable, Writable } from 'stream';
 
 // Import the generated protobuf definitions from @opentelemetry/otlp-transformer
 // The module exports a protobufjs Root object with all OpenTelemetry proto definitions
@@ -20,6 +23,36 @@ const $root = require('@opentelemetry/otlp-transformer/build/esm/generated/root.
 // Get the ExportLogsServiceRequest message type for decoding protobuf messages
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ExportLogsServiceRequest: any = $root.opentelemetry?.proto?.collector?.logs?.v1?.ExportLogsServiceRequest;
+
+// ============================================================================
+// Gzip Decompression
+// ============================================================================
+
+/**
+ * Check if buffer is gzip compressed by checking magic bytes.
+ * Gzip files start with 0x1f 0x8b.
+ */
+export function isGzipCompressed(buffer: Buffer): boolean {
+  return buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
+}
+
+/**
+ * Decompress gzip data.
+ */
+export async function decompressGzip(buffer: Buffer): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  const gunzip = createGunzip();
+  const input = Readable.from(buffer);
+  const output = new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(chunk);
+      callback();
+    },
+  });
+
+  await pipeline(input, gunzip, output);
+  return Buffer.concat(chunks);
+}
 
 // ============================================================================
 // JSON Parser
@@ -132,11 +165,30 @@ function normalizeLogRecords(lr: unknown): unknown[] {
  * Uses the OpenTelemetry proto definitions from @opentelemetry/otlp-transformer
  * to properly decode binary protobuf messages.
  *
- * @param buffer - Raw protobuf buffer
+ * Automatically detects and decompresses gzip-compressed data by checking
+ * for gzip magic bytes (0x1f 0x8b), regardless of Content-Encoding header.
+ * This handles cases where OTLP clients (like OpenTelemetry Collector) send
+ * compressed data without setting the Content-Encoding header.
+ *
+ * @param buffer - Raw protobuf buffer (may be gzip compressed)
  * @returns Parsed OTLP request
  * @throws Error if parsing fails
  */
 export async function parseOtlpProtobuf(buffer: Buffer): Promise<OtlpExportLogsRequest> {
+  // Auto-detect gzip compression by magic bytes (0x1f 0x8b)
+  // This handles cases where Content-Encoding header is not set
+  if (isGzipCompressed(buffer)) {
+    console.log('[OTLP] Auto-detected gzip compression by magic bytes, decompressing...');
+    try {
+      buffer = await decompressGzip(buffer);
+      console.log(`[OTLP] Decompressed protobuf data to ${buffer.length} bytes`);
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[OTLP] Gzip decompression failed:', errMsg);
+      throw new Error(`Failed to decompress gzip data: ${errMsg}`);
+    }
+  }
+
   // First, try to parse as JSON (some clients send JSON with protobuf content-type)
   try {
     const jsonString = buffer.toString('utf-8');

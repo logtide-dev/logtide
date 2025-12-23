@@ -272,12 +272,15 @@
 # =============================================================================
 # RFC 3164 - Traditional syslog format
 # Used by: Proxmox, many Linux systems, older network devices
+# IMPORTANT: RFC 3164 does NOT include timezone info in timestamps!
+# Set Time_Offset to your local timezone offset (e.g., +0100 for CET, +0200 for CEST)
 [PARSER]
     Name        syslog-rfc3164
     Format      regex
     Regex       /^\\<(?<pri>[0-9]+)\\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[a-zA-Z0-9_\\/\\.\\-]*)(?:\\[(?<pid>[0-9]+)\\])?(?:[^\\:]*\\:)? *(?<message>.*)$/
     Time_Key    time
     Time_Format %b %d %H:%M:%S
+    Time_Offset +0100
     Time_Keep   On
 
 # RFC 5424 - Modern syslog format
@@ -313,6 +316,15 @@
 -- warning -> warn
 -- notice/info -> info
 -- debug -> debug
+--
+-- TIMEZONE FIX for RFC 3164:
+-- RFC 3164 timestamps don't include timezone info.
+-- Set SYSLOG_TZ_OFFSET env var to your timezone offset in hours.
+-- Examples: SYSLOG_TZ_OFFSET=1 (CET), SYSLOG_TZ_OFFSET=2 (CEST), SYSLOG_TZ_OFFSET=-5 (EST)
+
+-- Read timezone offset from environment (in hours, e.g., 1 for CET, 2 for CEST)
+local tz_offset_hours = tonumber(os.getenv("SYSLOG_TZ_OFFSET")) or 0
+local tz_offset_seconds = tz_offset_hours * 3600
 
 function map_syslog_level(tag, timestamp, record)
     local pri = tonumber(record["pri"])
@@ -339,8 +351,12 @@ function map_syslog_level(tag, timestamp, record)
         record["level"] = "info"
     end
 
-    -- Set 'time' field in ISO8601 format
-    record["time"] = os.date("!%Y-%m-%dT%H:%M:%SZ", timestamp)
+    -- Apply timezone offset for RFC 3164 (which lacks timezone info)
+    -- The offset converts local time to UTC
+    local adjusted_timestamp = timestamp - tz_offset_seconds
+
+    -- Set 'time' field in ISO8601 format (UTC)
+    record["time"] = os.date("!%Y-%m-%dT%H:%M:%SZ", adjusted_timestamp)
 
     -- Keep hostname from syslog
     if record["host"] and record["host"] ~= "-" then
@@ -361,7 +377,7 @@ function map_syslog_level(tag, timestamp, record)
     record["ident"] = nil
     record["host"] = nil
 
-    return 1, timestamp, record
+    return 1, adjusted_timestamp, record
 end`}
             />
         </div>
@@ -824,6 +840,47 @@ echo "<14>Test syslog message from terminal" | nc -w1 YOUR_LOGWARD_IP 514`}
                 The service name comes from the syslog "ident" field (program name).
                 If your device doesn't send an ident, the hostname will be used.
                 You can customize the Lua script to set service names based on hostname patterns.
+            </p>
+        </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-2">
+                RFC 3164 timestamps are wrong (off by hours)?
+            </h3>
+            <p class="text-sm text-muted-foreground mb-2">
+                RFC 3164 syslog format does NOT include timezone information in timestamps.
+                If your logs show incorrect times, set the <code>SYSLOG_TZ_OFFSET</code>
+                environment variable on your Fluent Bit container.
+            </p>
+            <p class="text-sm text-muted-foreground mb-2">
+                <strong>Quick fix:</strong> Add this to your <code>docker-compose.yml</code>:
+            </p>
+            <CodeBlock
+                lang="yaml"
+                code={`services:
+  fluent-bit:
+    environment:
+      - SYSLOG_TZ_OFFSET=1    # CET (Central European Time)
+      # - SYSLOG_TZ_OFFSET=2  # CEST (Summer time)
+      # - SYSLOG_TZ_OFFSET=-5 # EST (Eastern Standard Time)`}
+            />
+            <p class="text-sm text-muted-foreground mt-2 mb-2">
+                <strong>Alternative:</strong> You can also set <code>Time_Offset</code> directly
+                in the parser configuration (<code>parsers.conf</code>):
+            </p>
+            <CodeBlock
+                lang="conf"
+                code={`[PARSER]
+    Name        syslog-rfc3164
+    ...
+    Time_Format %b %d %H:%M:%S
+    Time_Offset +0100    # For CET
+    Time_Keep   On`}
+            />
+            <p class="text-sm text-muted-foreground mt-2">
+                <strong>Note:</strong> RFC 5424 includes timezone in the timestamp
+                (e.g., <code>2025-12-23T16:51:02+01:00</code>) and doesn't need this fix.
+                Consider configuring your devices to use RFC 5424 format if possible.
             </p>
         </div>
     </div>
