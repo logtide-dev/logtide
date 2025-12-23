@@ -19,6 +19,7 @@ import { sigmaRoutes } from './modules/sigma/routes.js';
 import { siemRoutes } from './modules/siem/routes.js';
 import { registerSiemSseRoutes } from './modules/siem/sse-events.js';
 import { adminRoutes } from './modules/admin/index.js';
+import { publicAuthRoutes, authenticatedAuthRoutes, adminAuthRoutes } from './modules/auth/external-routes.js';
 import { otlpRoutes, otlpTraceRoutes } from './modules/otlp/index.js';
 import { tracesRoutes } from './modules/traces/index.js';
 import { onboardingRoutes } from './modules/onboarding/index.js';
@@ -89,6 +90,11 @@ export async function build(opts = {}) {
 
   // User authentication routes (no API key required)
   await fastify.register(usersRoutes, { prefix: '/api/v1/auth' });
+
+  // External authentication routes (OIDC, LDAP)
+  await fastify.register(publicAuthRoutes, { prefix: '/api/v1/auth' });
+  await fastify.register(authenticatedAuthRoutes, { prefix: '/api/v1/auth' });
+  await fastify.register(adminAuthRoutes, { prefix: '/api/v1/admin/auth' });
 
   // Organizations routes (session-based auth)
   await fastify.register(organizationsRoutes, { prefix: '/api/v1/organizations' });
