@@ -289,7 +289,7 @@
                                 </p>
                                 <p class="text-sm text-muted-foreground">
                                     All users will be automatically logged in as the default user.
-                                    This mode is intended for single-user homelab deployments only.
+                                    This mode is intended for single-user deployments only.
                                 </p>
                             </div>
                         {:else}
@@ -368,7 +368,7 @@
                                 <ul class="text-sm text-muted-foreground list-disc list-inside space-y-1">
                                     <li>All requests bypass authentication and use the selected default user</li>
                                     <li>Login and registration pages redirect to the dashboard</li>
-                                    <li>Perfect for single-user homelab deployments</li>
+                                    <li>Perfect for single-user deployments</li>
                                     <li>The default user must have access to the desired organizations and projects</li>
                                 </ul>
                             </div>

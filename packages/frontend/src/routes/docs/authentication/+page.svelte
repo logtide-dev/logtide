@@ -7,7 +7,7 @@
         CardHeader,
         CardTitle,
     } from "$lib/components/ui/card";
-    import { AlertCircle, CheckCircle2, KeyRound, Server, Building2, Shield } from "lucide-svelte";
+    import { AlertCircle, CheckCircle2, KeyRound, Server, Building2, Shield, Home, UserCog, Settings } from "lucide-svelte";
 </script>
 
 <div class="docs-content">
@@ -474,6 +474,248 @@
     </div>
 
     <h2
+        id="auth-free-mode"
+        class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
+    >
+        Auth-Free Mode
+    </h2>
+
+    <div class="mb-12 space-y-6">
+        <p class="text-muted-foreground">
+            For single-user deployments, LogWard supports an <strong>auth-free mode</strong> that
+            bypasses authentication entirely. This is ideal for personal setups where you're the only user
+            and don't need login protection.
+        </p>
+
+        <Card class="border-yellow-500/30 bg-yellow-500/5">
+            <CardHeader>
+                <div class="flex items-start gap-3">
+                    <AlertCircle class="w-5 h-5 text-yellow-500 mt-0.5" />
+                    <div>
+                        <CardTitle class="text-base">Security Warning</CardTitle>
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+                <p>
+                    Auth-free mode disables all authentication. <strong>Only use this for private, single-user deployments</strong>
+                    where the LogWard instance is not exposed to the internet. Anyone with network access to your
+                    LogWard instance will have full admin access.
+                </p>
+            </CardContent>
+        </Card>
+
+        <div>
+            <h3 id="auth-free-how" class="text-lg font-semibold mb-3 scroll-mt-20">How It Works</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                When auth-free mode is enabled:
+            </p>
+            <ul class="list-disc list-inside space-y-2 text-sm text-muted-foreground">
+                <li>All API requests bypass token validation</li>
+                <li>The frontend automatically uses the configured default user</li>
+                <li>No login page is shown — users go directly to the dashboard</li>
+                <li>The default user must be an admin with at least one organization</li>
+            </ul>
+        </div>
+
+        <div>
+            <h3 id="auth-free-setup" class="text-lg font-semibold mb-3 scroll-mt-20">Setting Up Auth-Free Mode</h3>
+            <ol class="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
+                <li>First, create a local admin account through normal signup</li>
+                <li>Create at least one organization for the admin user</li>
+                <li>Go to <strong>Admin &gt; Settings</strong></li>
+                <li>Set <strong>Authentication Mode</strong> to "Auth-Free (No Login Required)"</li>
+                <li>Select the admin user as the <strong>Default User</strong></li>
+                <li>Save changes</li>
+            </ol>
+            <p class="text-sm text-muted-foreground mt-3">
+                After saving, you'll be automatically logged in as the default user. On subsequent visits,
+                no login will be required.
+            </p>
+        </div>
+
+        <div>
+            <h3 id="auth-free-requirements" class="text-lg font-semibold mb-3 scroll-mt-20">Requirements</h3>
+            <div class="grid md:grid-cols-2 gap-4">
+                <Card>
+                    <CardHeader>
+                        <div class="flex items-start gap-3">
+                            <UserCog class="w-5 h-5 text-primary mt-0.5" />
+                            <div>
+                                <CardTitle class="text-base">Admin User Required</CardTitle>
+                            </div>
+                        </div>
+                    </CardHeader>
+                    <CardContent class="text-sm text-muted-foreground">
+                        The default user must have admin privileges. Only admin users appear in the
+                        default user selection dropdown.
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <div class="flex items-start gap-3">
+                            <Building2 class="w-5 h-5 text-primary mt-0.5" />
+                            <div>
+                                <CardTitle class="text-base">Organization Required</CardTitle>
+                            </div>
+                        </div>
+                    </CardHeader>
+                    <CardContent class="text-sm text-muted-foreground">
+                        The default user must belong to at least one organization. Create an organization
+                        before enabling auth-free mode.
+                    </CardContent>
+                </Card>
+            </div>
+        </div>
+
+        <div>
+            <h3 id="auth-free-disable" class="text-lg font-semibold mb-3 scroll-mt-20">Disabling Auth-Free Mode</h3>
+            <p class="text-sm text-muted-foreground">
+                To re-enable authentication, go to <strong>Admin &gt; Settings</strong> and set
+                <strong>Authentication Mode</strong> back to "Standard (Login Required)". Users will
+                then need to log in with their credentials.
+            </p>
+        </div>
+    </div>
+
+    <h2
+        id="admin-settings"
+        class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
+    >
+        Admin Settings
+    </h2>
+
+    <div class="mb-12 space-y-6">
+        <p class="text-muted-foreground">
+            Administrators can configure authentication behavior from <strong>Admin &gt; Settings</strong>.
+        </p>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm border border-border rounded-lg">
+                <thead class="bg-muted">
+                    <tr>
+                        <th class="text-left p-3 border-b border-border">Setting</th>
+                        <th class="text-left p-3 border-b border-border">Description</th>
+                        <th class="text-left p-3 border-b border-border">Options</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="p-3 border-b border-border font-medium">Authentication Mode</td>
+                        <td class="p-3 border-b border-border">Controls whether users need to log in</td>
+                        <td class="p-3 border-b border-border">
+                            <ul class="list-disc list-inside space-y-1">
+                                <li><strong>Standard:</strong> Users must log in</li>
+                                <li><strong>Auth-Free:</strong> No login required</li>
+                            </ul>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="p-3 border-b border-border font-medium">Signups Enabled</td>
+                        <td class="p-3 border-b border-border">Allow new user registration</td>
+                        <td class="p-3 border-b border-border">
+                            <ul class="list-disc list-inside space-y-1">
+                                <li><strong>Enabled:</strong> Anyone can create an account</li>
+                                <li><strong>Disabled:</strong> Only existing users can log in</li>
+                            </ul>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="p-3 font-medium">Default User</td>
+                        <td class="p-3">User to use in auth-free mode</td>
+                        <td class="p-3">Select from admin users only</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div>
+            <h3 id="disable-signups" class="text-lg font-semibold mb-3 scroll-mt-20">Disabling Signups</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                To prevent new user registrations (useful for private instances):
+            </p>
+            <ol class="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
+                <li>Go to <strong>Admin &gt; Settings</strong></li>
+                <li>Toggle <strong>Signups Enabled</strong> to off</li>
+                <li>Save changes</li>
+            </ol>
+            <p class="text-sm text-muted-foreground mt-3">
+                When signups are disabled, the signup link is hidden from the login page. Users can only
+                be created by administrators or through external identity providers (OIDC/LDAP).
+            </p>
+        </div>
+    </div>
+
+    <h2
+        id="user-management"
+        class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
+    >
+        User Management
+    </h2>
+
+    <div class="mb-12 space-y-6">
+        <p class="text-muted-foreground">
+            Administrators can manage users from <strong>Admin &gt; Users</strong>.
+        </p>
+
+        <div>
+            <h3 id="admin-role" class="text-lg font-semibold mb-3 scroll-mt-20">Admin Role Management</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                From the user details page, administrators can promote or demote users:
+            </p>
+            <ul class="list-disc list-inside space-y-2 text-sm text-muted-foreground">
+                <li><strong>Promote to Admin:</strong> Gives the user full admin access including system settings,
+                    user management, and access to all organizations</li>
+                <li><strong>Remove Admin Role:</strong> Revokes admin privileges. The user retains their
+                    organization memberships and data access</li>
+            </ul>
+        </div>
+
+        <Card class="border-yellow-500/30 bg-yellow-500/5">
+            <CardHeader>
+                <div class="flex items-start gap-3">
+                    <AlertCircle class="w-5 h-5 text-yellow-500 mt-0.5" />
+                    <div>
+                        <CardTitle class="text-base">Self-Demotion Protection</CardTitle>
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent class="text-sm text-muted-foreground">
+                <p>
+                    You cannot remove the admin role from yourself. This prevents accidentally locking
+                    yourself out of admin access. Another admin must demote you if needed.
+                </p>
+            </CardContent>
+        </Card>
+
+        <div>
+            <h3 id="user-actions" class="text-lg font-semibold mb-3 scroll-mt-20">Other User Actions</h3>
+            <div class="grid md:grid-cols-2 gap-4">
+                <Card>
+                    <CardHeader>
+                        <CardTitle class="text-base">Enable/Disable User</CardTitle>
+                    </CardHeader>
+                    <CardContent class="text-sm text-muted-foreground">
+                        Disabled users are immediately logged out and cannot log in until re-enabled.
+                        Use this to temporarily revoke access without deleting the account.
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle class="text-base">Reset Password</CardTitle>
+                    </CardHeader>
+                    <CardContent class="text-sm text-muted-foreground">
+                        Set a new password for a user. This invalidates all their existing sessions,
+                        requiring them to log in again with the new password.
+                    </CardContent>
+                </Card>
+            </div>
+        </div>
+    </div>
+
+    <h2
         id="troubleshooting"
         class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
     >
@@ -519,6 +761,50 @@
                             <li>The Issuer URL must match exactly what the IdP returns in discovery</li>
                             <li>Check for trailing slashes - some providers require them, others don't</li>
                             <li>Visit <code>&#123;issuerUrl&#125;/.well-known/openid-configuration</code> to see the expected issuer</li>
+                        </ul>
+                    </CardContent>
+                </Card>
+            </div>
+        </div>
+
+        <div>
+            <h3 id="auth-free-errors" class="text-lg font-semibold mb-3 scroll-mt-20">Auth-Free Mode Issues</h3>
+            <div class="space-y-4">
+                <Card>
+                    <CardHeader>
+                        <CardTitle class="text-sm font-mono">Redirect loop between login and dashboard</CardTitle>
+                    </CardHeader>
+                    <CardContent class="text-sm text-muted-foreground">
+                        <ul class="list-disc list-inside space-y-1">
+                            <li>Ensure the default user is configured in Admin Settings</li>
+                            <li>Verify the default user has at least one organization</li>
+                            <li>Clear browser cache and cookies, then refresh</li>
+                        </ul>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle class="text-sm font-mono">"Auth-free mode enabled but default user not configured"</CardTitle>
+                    </CardHeader>
+                    <CardContent class="text-sm text-muted-foreground">
+                        <ul class="list-disc list-inside space-y-1">
+                            <li>Go to Admin &gt; Settings and select a default user</li>
+                            <li>The default user must be an admin with at least one organization</li>
+                            <li>If no users are available, switch back to standard mode and create an admin user first</li>
+                        </ul>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle class="text-sm font-mono">API returns "Invalid or expired session"</CardTitle>
+                    </CardHeader>
+                    <CardContent class="text-sm text-muted-foreground">
+                        <ul class="list-disc list-inside space-y-1">
+                            <li>Verify auth-free mode is properly enabled in the database</li>
+                            <li>Restart the backend service to clear any cached settings</li>
+                            <li>Check that the Redis cache has been updated (settings use a 5-minute cache TTL)</li>
                         </ul>
                     </CardContent>
                 </Card>
