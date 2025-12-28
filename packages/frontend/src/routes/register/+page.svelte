@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { authStore } from '$lib/stores/auth';
@@ -38,6 +39,26 @@
   let token = $state<string | null>(null);
   let hasLocalProvider = $state(true);
   let organizationsAPI = $derived(new OrganizationsAPI(() => token));
+  let checkingAuthConfig = $state(true);
+  let signupDisabled = $state(false);
+
+  // Check auth config on mount
+  onMount(async () => {
+    try {
+      const config = await authAPI.getAuthConfig();
+      if (config.authMode === 'none') {
+        // Auth-free mode: redirect to dashboard directly
+        goto(redirectUrl || '/dashboard');
+        return;
+      }
+      if (!config.signupEnabled) {
+        signupDisabled = true;
+      }
+    } catch (e) {
+      console.error('Failed to get auth config:', e);
+    }
+    checkingAuthConfig = false;
+  });
 
   authStore.subscribe((state) => {
     token = state.token;
@@ -172,6 +193,37 @@
 
 <div class="min-h-screen flex flex-col bg-background">
   <div class="flex-1 flex items-center justify-center p-4">
+    {#if checkingAuthConfig}
+      <Card class="w-full max-w-md">
+        <CardContent class="flex flex-col items-center justify-center py-12">
+          <Spinner size="lg" />
+          <p class="text-muted-foreground mt-4">Loading...</p>
+        </CardContent>
+      </Card>
+    {:else if signupDisabled}
+      <Card class="w-full max-w-md">
+        <CardHeader class="flex flex-row justify-center items-center gap-4">
+            <img src={$smallLogoPath} alt="LogWard Logo" class="h-16 w-auto" />
+            <div>
+                <CardTitle class="text-2xl">Registration Disabled</CardTitle>
+                <CardDescription>New accounts cannot be created</CardDescription>
+            </div>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <Alert variant="destructive">
+            <AlertDescription>
+              User registration is currently disabled. Please contact an administrator if you need access.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+        <CardFooter class="flex flex-col gap-4">
+          <p class="text-sm text-muted-foreground text-center">
+            Already have an account?
+            <a href="/login{redirectUrl ? `?redirect=${encodeURIComponent(redirectUrl)}` : ''}" class="text-primary hover:underline">Sign in</a>
+          </p>
+        </CardFooter>
+      </Card>
+    {:else}
     <Card class="w-full max-w-md">
         <CardHeader class="flex flex-row justify-center items-center gap-4">
             <img src={$smallLogoPath} alt="LogWard Logo" class="h-16 w-auto" />
@@ -294,6 +346,7 @@
         </p>
       </CardFooter>
     </Card>
+    {/if}
   </div>
 
   <Footer />

@@ -16,6 +16,8 @@ import { authenticationService } from './authentication-service.js';
 import { providerService } from './provider-service.js';
 import { usersService } from '../users/service.js';
 import { config } from '../../config/index.js';
+import { settingsService } from '../settings/service.js';
+import { bootstrapService } from '../bootstrap/service.js';
 
 // Validation schemas
 const ldapLoginSchema = z.object({
@@ -194,19 +196,32 @@ export async function publicAuthRoutes(fastify: FastifyInstance) {
 }
 
 /**
+ * Helper to get authenticated user (supports auth-free mode)
+ */
+async function getAuthenticatedUser(request: any): Promise<{ id: string; email: string; name: string; is_admin: boolean } | null> {
+  const authMode = await settingsService.getAuthMode();
+
+  if (authMode === 'none') {
+    return await bootstrapService.getDefaultUser();
+  }
+
+  const token = request.headers.authorization?.replace('Bearer ', '');
+  if (!token) {
+    return null;
+  }
+
+  return await usersService.validateSession(token);
+}
+
+/**
  * Authenticated routes (require session)
  */
 export async function authenticatedAuthRoutes(fastify: FastifyInstance) {
   // Get current user's linked identities
   fastify.get('/me/identities', async (request, reply) => {
-    const token = request.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return reply.status(401).send({ error: 'No token provided' });
-    }
-
-    const user = await usersService.validateSession(token);
+    const user = await getAuthenticatedUser(request);
     if (!user) {
-      return reply.status(401).send({ error: 'Invalid or expired session' });
+      return reply.status(401).send({ error: 'No token provided or invalid session' });
     }
 
     const identities = await authenticationService.getUserIdentities(user.id);
@@ -228,14 +243,9 @@ export async function authenticatedAuthRoutes(fastify: FastifyInstance) {
     Body: { username?: string; password?: string };
   }>('/me/identities/:slug', async (request, reply) => {
     try {
-      const token = request.headers.authorization?.replace('Bearer ', '');
-      if (!token) {
-        return reply.status(401).send({ error: 'No token provided' });
-      }
-
-      const user = await usersService.validateSession(token);
+      const user = await getAuthenticatedUser(request);
       if (!user) {
-        return reply.status(401).send({ error: 'Invalid or expired session' });
+        return reply.status(401).send({ error: 'No token provided or invalid session' });
       }
 
       const { slug } = request.params;
@@ -262,14 +272,9 @@ export async function authenticatedAuthRoutes(fastify: FastifyInstance) {
     Params: { id: string };
   }>('/me/identities/:id', async (request, reply) => {
     try {
-      const token = request.headers.authorization?.replace('Bearer ', '');
-      if (!token) {
-        return reply.status(401).send({ error: 'No token provided' });
-      }
-
-      const user = await usersService.validateSession(token);
+      const user = await getAuthenticatedUser(request);
       if (!user) {
-        return reply.status(401).send({ error: 'Invalid or expired session' });
+        return reply.status(401).send({ error: 'No token provided or invalid session' });
       }
 
       const { id } = request.params;
@@ -287,21 +292,35 @@ export async function authenticatedAuthRoutes(fastify: FastifyInstance) {
  * Admin routes (require admin privileges)
  */
 export async function adminAuthRoutes(fastify: FastifyInstance) {
-  // Add admin check hook
+  // Add admin check hook with auth-free mode support
   fastify.addHook('onRequest', async (request, reply) => {
-    const token = request.headers.authorization?.replace('Bearer ', '');
-    if (!token) {
-      return reply.status(401).send({ error: 'No token provided' });
-    }
+    // Check for auth-free mode first
+    const authMode = await settingsService.getAuthMode();
 
-    const user = await usersService.validateSession(token);
-    if (!user) {
-      return reply.status(401).send({ error: 'Invalid or expired session' });
+    let user;
+    if (authMode === 'none') {
+      user = await bootstrapService.getDefaultUser();
+      if (!user) {
+        return reply.status(503).send({ error: 'Auth-free mode enabled but default user not configured' });
+      }
+    } else {
+      const token = request.headers.authorization?.replace('Bearer ', '');
+      if (!token) {
+        return reply.status(401).send({ error: 'No token provided' });
+      }
+
+      user = await usersService.validateSession(token);
+      if (!user) {
+        return reply.status(401).send({ error: 'Invalid or expired session' });
+      }
     }
 
     if (!user.is_admin) {
       return reply.status(403).send({ error: 'Admin access required' });
     }
+
+    // Attach user to request for later use
+    (request as any).user = user;
   });
 
   // List all providers (admin view with full config)

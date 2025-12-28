@@ -23,6 +23,8 @@ import { publicAuthRoutes, authenticatedAuthRoutes, adminAuthRoutes } from './mo
 import { otlpRoutes, otlpTraceRoutes } from './modules/otlp/index.js';
 import { tracesRoutes } from './modules/traces/index.js';
 import { onboardingRoutes } from './modules/onboarding/index.js';
+import { settingsRoutes, publicSettingsRoutes, settingsService } from './modules/settings/index.js';
+import { bootstrapService } from './modules/bootstrap/index.js';
 import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
 import websocketPlugin from './plugins/websocket.js';
@@ -93,6 +95,7 @@ export async function build(opts = {}) {
 
   // External authentication routes (OIDC, LDAP)
   await fastify.register(publicAuthRoutes, { prefix: '/api/v1/auth' });
+  await fastify.register(publicSettingsRoutes, { prefix: '/api/v1/auth' }); // Public auth config endpoint
   await fastify.register(authenticatedAuthRoutes, { prefix: '/api/v1/auth' });
   await fastify.register(adminAuthRoutes, { prefix: '/api/v1/admin/auth' });
 
@@ -132,6 +135,9 @@ export async function build(opts = {}) {
   // Admin routes (session-based auth + admin middleware)
   await fastify.register(adminRoutes, { prefix: '/api/v1/admin' });
 
+  // Admin settings routes (session-based auth + admin middleware)
+  await fastify.register(settingsRoutes, { prefix: '/api/v1/admin/settings' });
+
   // Register API key auth plugin (applies to log ingestion/query routes below)
   await fastify.register(authPlugin);
 
@@ -160,6 +166,16 @@ async function start() {
 
   // Initialize enrichment services (GeoLite2 database, etc.)
   await enrichmentService.initialize();
+
+  // Run initial bootstrap (creates initial admin from env vars if no users exist)
+  await bootstrapService.runInitialBootstrap();
+
+  // Check auth mode and bootstrap if auth-free mode is enabled
+  const authMode = await settingsService.getAuthMode();
+  if (authMode === 'none') {
+    console.log('[Auth] Auth-free mode detected, ensuring default setup...');
+    await bootstrapService.ensureDefaultSetup();
+  }
 
   const app = await build();
 

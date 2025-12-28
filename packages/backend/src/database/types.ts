@@ -356,6 +356,18 @@ export interface OidcStatesTable {
   created_at: Generated<Timestamp>;
 }
 
+// ============================================================================
+// SYSTEM SETTINGS TABLE
+// ============================================================================
+
+export interface SystemSettingsTable {
+  key: string;
+  value: ColumnType<unknown, unknown, unknown>; // JSONB - can be any JSON value
+  description: string | null;
+  updated_at: Generated<Timestamp>;
+  updated_by: string | null;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -385,4 +397,6 @@ export interface Database {
   auth_providers: AuthProvidersTable;
   user_identities: UserIdentitiesTable;
   oidc_states: OidcStatesTable;
+  // System settings
+  system_settings: SystemSettingsTable;
 }

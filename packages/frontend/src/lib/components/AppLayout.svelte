@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { browser } from "$app/environment";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
@@ -67,6 +66,7 @@
 
     return unsubscribe;
   });
+
 
   // Update current time every minute to refresh relative timestamps
   $effect(() => {

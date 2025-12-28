@@ -3,37 +3,13 @@ import { z } from 'zod';
 import { SiemService } from './service.js';
 import { SiemDashboardService } from './dashboard-service.js';
 import { enrichmentService } from './enrichment-service.js';
-import { usersService } from '../users/service.js';
+import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { db } from '../../database/index.js';
 
 const siemService = new SiemService(db);
 const dashboardService = new SiemDashboardService(db);
 const organizationsService = new OrganizationsService();
-
-/**
- * Middleware to extract and validate session token
- */
-async function authenticate(request: any, reply: any) {
-  const token = request.headers.authorization?.replace('Bearer ', '');
-
-  if (!token) {
-    return reply.status(401).send({
-      error: 'No token provided',
-    });
-  }
-
-  const user = await usersService.validateSession(token);
-
-  if (!user) {
-    return reply.status(401).send({
-      error: 'Invalid or expired session',
-    });
-  }
-
-  // Attach user to request
-  request.user = user;
-}
 
 /**
  * Check if user is member of organization

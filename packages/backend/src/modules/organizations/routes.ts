@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { OrganizationsService } from './service.js';
-import { usersService } from '../users/service.js';
+import { authenticate } from '../auth/middleware.js';
 import type { OrgRole } from '@logward/shared';
 
 const organizationsService = new OrganizationsService();
@@ -32,30 +32,6 @@ const memberIdSchema = z.object({
 const updateMemberRoleSchema = z.object({
   role: z.enum(['admin', 'member']),
 });
-
-/**
- * Middleware to extract and validate session token
- */
-async function authenticate(request: any, reply: any) {
-  const token = request.headers.authorization?.replace('Bearer ', '');
-
-  if (!token) {
-    return reply.status(401).send({
-      error: 'No token provided',
-    });
-  }
-
-  const user = await usersService.validateSession(token);
-
-  if (!user) {
-    return reply.status(401).send({
-      error: 'Invalid or expired session',
-    });
-  }
-
-  // Attach user to request
-  request.user = user;
-}
 
 export async function organizationsRoutes(fastify: FastifyInstance) {
   // All routes require authentication

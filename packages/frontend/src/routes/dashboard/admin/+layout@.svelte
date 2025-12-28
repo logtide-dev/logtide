@@ -40,6 +40,11 @@
             href: "/dashboard/admin/auth-providers",
             icon: KeyRound,
         },
+        {
+            name: "Settings",
+            href: "/dashboard/admin/settings",
+            icon: Settings,
+        },
     ];
 
     const currentPath = $derived(page.url.pathname);

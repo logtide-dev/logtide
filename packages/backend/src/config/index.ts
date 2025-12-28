@@ -55,6 +55,11 @@ const configSchema = z.object({
   // Caching
   CACHE_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   CACHE_TTL: z.string().default('60').transform(Number), // Default TTL in seconds
+
+  // Initial Admin (for first deployment - creates admin user if no users exist)
+  INITIAL_ADMIN_EMAIL: z.string().email().optional(),
+  INITIAL_ADMIN_PASSWORD: z.string().min(8).optional(),
+  INITIAL_ADMIN_NAME: z.string().optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;

@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import { db } from '../../database/connection.js';
 import { CacheManager } from '../../utils/cache.js';
 import type { UserProfile, SessionInfo } from '../users/service.js';
+import { settingsService } from '../settings/service.js';
 import {
   providerRegistry,
   type AuthProvider,
@@ -321,6 +322,14 @@ export class AuthenticationService {
     if (providerConfig.allowAutoRegister === false) {
       throw new Error(
         'Automatic account creation is disabled for this authentication provider. Please contact your administrator.'
+      );
+    }
+
+    // Check if global signup is enabled
+    const signupEnabled = await settingsService.isSignupEnabled();
+    if (!signupEnabled) {
+      throw new Error(
+        'User registration is currently disabled. Please contact your administrator.'
       );
     }
 

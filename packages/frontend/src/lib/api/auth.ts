@@ -47,6 +47,11 @@ export interface UserIdentity {
   createdAt: string;
 }
 
+export interface AuthConfig {
+  authMode: 'standard' | 'none';
+  signupEnabled: boolean;
+}
+
 export class AuthAPI {
   async register(input: RegisterInput): Promise<AuthResponse> {
     const response = await fetch(`${getApiBaseUrl()}/auth/register`, {
@@ -96,11 +101,14 @@ export class AuthAPI {
     }
   }
 
-  async getMe(token: string): Promise<{ user: any }> {
+  async getMe(token?: string | null): Promise<{ user: any; authMode?: 'none' }> {
+    const headers: HeadersInit = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
     const response = await fetch(`${getApiBaseUrl()}/auth/me`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
     });
 
     if (!response.ok) {
@@ -109,6 +117,28 @@ export class AuthAPI {
     }
 
     return response.json();
+  }
+
+  /**
+   * Get current user in auth-free mode (no token required)
+   * Returns the default user configured for auth-free mode
+   */
+  async getCurrentUserAuthFree(): Promise<{ user: any; authMode: 'none' } | null> {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/auth/me`);
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = await response.json();
+      if (data.authMode === 'none') {
+        return data;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   // --- External Auth Methods ---
@@ -193,6 +223,17 @@ export class AuthAPI {
       const error: ErrorResponse = await response.json();
       throw new Error(error.error || 'Failed to unlink identity');
     }
+  }
+
+  async getAuthConfig(): Promise<AuthConfig> {
+    const response = await fetch(`${getApiBaseUrl()}/auth/config`);
+
+    if (!response.ok) {
+      // Default to standard mode if config endpoint fails
+      return { authMode: 'standard', signupEnabled: true };
+    }
+
+    return response.json();
   }
 }
 

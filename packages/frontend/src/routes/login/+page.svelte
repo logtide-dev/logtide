@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { authStore } from '$lib/stores/auth';
@@ -35,6 +36,22 @@
   let token = $state<string | null>(null);
   let hasLocalProvider = $state(true); // Default to true for initial load
   let organizationsAPI = $derived(new OrganizationsAPI(() => token));
+  let checkingAuthMode = $state(true);
+
+  // Check auth mode on mount - redirect if auth-free mode
+  onMount(async () => {
+    try {
+      const config = await authAPI.getAuthConfig();
+      if (config.authMode === 'none') {
+        // Auth-free mode: redirect to dashboard directly
+        goto(redirectUrl || '/dashboard');
+        return;
+      }
+    } catch (e) {
+      console.error('Failed to get auth config:', e);
+    }
+    checkingAuthMode = false;
+  });
 
   authStore.subscribe((state) => {
     token = state.token;
@@ -157,6 +174,14 @@
 
 <div class="min-h-screen flex flex-col bg-background">
   <div class="flex-1 flex items-center justify-center p-4">
+    {#if checkingAuthMode}
+      <Card class="w-full max-w-md">
+        <CardContent class="flex flex-col items-center justify-center py-12">
+          <Spinner size="lg" />
+          <p class="text-muted-foreground mt-4">Checking authentication...</p>
+        </CardContent>
+      </Card>
+    {:else}
     <Card class="w-full max-w-md">
       <CardHeader class="flex flex-row justify-center items-center gap-4">
         <img src={$smallLogoPath} alt="LogWard Logo" class="h-16 w-auto" />
@@ -247,6 +272,7 @@
         </p>
       </CardFooter>
     </Card>
+    {/if}
   </div>
 
   <Footer />

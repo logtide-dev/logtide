@@ -30,6 +30,7 @@
         UserCheck,
         UserX,
         Shield,
+        ShieldOff,
         Mail,
         Calendar,
         Building2,
@@ -37,6 +38,7 @@
         Ban,
         CheckCircle,
     } from "lucide-svelte";
+    import { authStore } from "$lib/stores/auth";
 
     const userId = $derived(page.params.id);
 
@@ -48,9 +50,14 @@
     let showDisableDialog = $state(false);
     let showEnableDialog = $state(false);
     let showResetPasswordDialog = $state(false);
+    let showPromoteAdminDialog = $state(false);
+    let showDemoteAdminDialog = $state(false);
     let newPassword = $state("");
     let confirmPassword = $state("");
     let passwordError = $state("");
+
+    // Check if current user is looking at their own profile
+    const isOwnProfile = $derived($authStore.user?.id === userId);
 
     async function loadUser() {
         loading = true;
@@ -87,6 +94,36 @@
             await loadUser();
         } catch (err: any) {
             error = err.message || "Failed to enable user";
+        } finally {
+            actionLoading = false;
+        }
+    }
+
+    async function promoteToAdmin() {
+        if (!user) return;
+        actionLoading = true;
+        try {
+            await adminAPI.updateUserRole(user.id, true);
+            showPromoteAdminDialog = false;
+            toastStore.success("User promoted to admin successfully");
+            await loadUser();
+        } catch (err: any) {
+            error = err.message || "Failed to promote user to admin";
+        } finally {
+            actionLoading = false;
+        }
+    }
+
+    async function demoteFromAdmin() {
+        if (!user) return;
+        actionLoading = true;
+        try {
+            await adminAPI.updateUserRole(user.id, false);
+            showDemoteAdminDialog = false;
+            toastStore.success("Admin role removed from user");
+            await loadUser();
+        } catch (err: any) {
+            error = err.message || "Failed to remove admin role";
         } finally {
             actionLoading = false;
         }
@@ -338,6 +375,30 @@
 
                         <Separator />
 
+                        {#if user.is_admin}
+                            <Button
+                                variant="outline"
+                                class="w-full gap-2"
+                                onclick={() => (showDemoteAdminDialog = true)}
+                                disabled={isOwnProfile}
+                                title={isOwnProfile ? "Cannot remove admin role from yourself" : ""}
+                            >
+                                <ShieldOff class="h-4 w-4" />
+                                Remove Admin Role
+                            </Button>
+                        {:else}
+                            <Button
+                                variant="outline"
+                                class="w-full gap-2"
+                                onclick={() => (showPromoteAdminDialog = true)}
+                            >
+                                <Shield class="h-4 w-4" />
+                                Promote to Admin
+                            </Button>
+                        {/if}
+
+                        <Separator />
+
                         <Button
                             variant="outline"
                             class="w-full gap-2"
@@ -444,6 +505,42 @@
             </AlertDialogCancel>
             <AlertDialogAction onclick={resetPassword} disabled={actionLoading}>
                 {actionLoading ? "Resetting..." : "Reset Password"}
+            </AlertDialogAction>
+        </AlertDialogFooter>
+    </AlertDialogContent>
+</AlertDialog>
+
+<AlertDialog bind:open={showPromoteAdminDialog}>
+    <AlertDialogContent>
+        <AlertDialogHeader>
+            <AlertDialogTitle>Promote to Admin</AlertDialogTitle>
+            <AlertDialogDescription>
+                Are you sure you want to promote this user to admin? They will have
+                full access to system settings, user management, and all organizations.
+            </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onclick={promoteToAdmin} disabled={actionLoading}>
+                {actionLoading ? "Promoting..." : "Promote to Admin"}
+            </AlertDialogAction>
+        </AlertDialogFooter>
+    </AlertDialogContent>
+</AlertDialog>
+
+<AlertDialog bind:open={showDemoteAdminDialog}>
+    <AlertDialogContent>
+        <AlertDialogHeader>
+            <AlertDialogTitle>Remove Admin Role</AlertDialogTitle>
+            <AlertDialogDescription>
+                Are you sure you want to remove admin privileges from this user?
+                They will lose access to system settings and user management.
+            </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onclick={demoteFromAdmin} disabled={actionLoading}>
+                {actionLoading ? "Removing..." : "Remove Admin Role"}
             </AlertDialogAction>
         </AlertDialogFooter>
     </AlertDialogContent>
