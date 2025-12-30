@@ -121,6 +121,42 @@ docker compose --profile logging up -d`}
         </div>
 
         <div>
+            <h3 id="arm64-raspberry-pi" class="text-lg font-semibold mb-3 scroll-mt-20">ARM64 / Raspberry Pi Support</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                LogWard images (<code>logward/backend</code>, <code>logward/frontend</code>) are built for both <code>linux/amd64</code> and <code>linux/arm64</code>,
+                so they work natively on Raspberry Pi 3/4/5 (64-bit OS).
+            </p>
+            <p class="text-sm text-muted-foreground mb-3">
+                <strong>Fluent Bit on ARM64:</strong> The default Fluent Bit image may have limited ARM64 support.
+                You can specify an alternative image in your <code>.env</code> file:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# For Raspberry Pi / ARM64, use the official multi-arch registry
+FLUENT_BIT_IMAGE=cr.fluentbit.io/fluent/fluent-bit:4.2.2
+
+# Or build your own ARM64 image
+FLUENT_BIT_IMAGE=myregistry/fluent-bit-arm64:latest`}
+            />
+            <Card class="border-yellow-500/30 bg-yellow-500/5 mt-4">
+                <CardHeader>
+                    <div class="flex items-start gap-3">
+                        <AlertCircle class="w-5 h-5 text-yellow-500 mt-0.5" />
+                        <div>
+                            <CardTitle class="text-base">Raspberry Pi Performance</CardTitle>
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent class="text-sm text-muted-foreground">
+                    <p>
+                        Raspberry Pi 4 (4GB+) or Pi 5 is recommended for homelab/small deployments.
+                        For high-volume workloads, consider x86 hardware or our managed cloud.
+                    </p>
+                </CardContent>
+            </Card>
+        </div>
+
+        <div>
             <h3 id="docker-images" class="text-lg font-semibold mb-3 scroll-mt-20">Available Docker Images</h3>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm border border-border rounded-lg">
@@ -174,8 +210,8 @@ docker compose --profile logging up -d`}
                 <CodeBlock
                     lang="bash"
                     code={`# In your .env file
-LOGWARD_BACKEND_IMAGE=logward/backend:0.3.2
-LOGWARD_FRONTEND_IMAGE=logward/frontend:0.3.2`}
+LOGWARD_BACKEND_IMAGE=logward/backend:0.3.3
+LOGWARD_FRONTEND_IMAGE=logward/frontend:0.3.3`}
                 />
             </CardContent>
         </Card>

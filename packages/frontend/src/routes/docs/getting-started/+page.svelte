@@ -283,7 +283,7 @@ docker compose up -d
                     <li><strong>GitHub:</strong> <code>ghcr.io/logward-dev/logward-backend</code></li>
                 </ul>
                 <p class="mt-3 text-xs">
-                    Pin versions in production: <code>LOGWARD_BACKEND_IMAGE=logward/backend:0.3.2</code>
+                    Pin versions in production: <code>LOGWARD_BACKEND_IMAGE=logward/backend:0.3.3</code>
                 </p>
             </CardContent>
         </Card>
@@ -485,7 +485,7 @@ services:
     # Your app just writes to stdout - no code changes needed!
 
   fluent-bit:
-    image: fluent/fluent-bit:latest
+    image: fluent/fluent-bit:4.2.2  # or cr.fluentbit.io/fluent/fluent-bit:4.2.2 for ARM64
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -495,6 +495,7 @@ services:
                     />
                     <p class="text-xs text-muted-foreground">
                         See the full <a href="/docs/no-sdk-setup" class="text-primary underline">No-SDK Setup guide</a> for complete Fluent Bit configuration.
+                        For ARM64/Raspberry Pi, use <code>cr.fluentbit.io/fluent/fluent-bit:4.2.2</code>.
                     </p>
                 </Tabs.Content>
 

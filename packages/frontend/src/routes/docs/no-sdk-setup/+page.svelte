@@ -527,7 +527,7 @@ echo json_encode($logData) . "\\n";
             lang="yaml"
             code={`# Add this service to your docker-compose.yml
 fluent-bit:
-  image: fluent/fluent-bit:latest
+  image: fluent/fluent-bit:4.2.2  # For ARM64/Raspberry Pi: cr.fluentbit.io/fluent/fluent-bit:4.2.2
   container_name: logward-fluent-bit
   volumes:
     - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
@@ -769,7 +769,7 @@ end`}
                 lang="yaml"
                 code={`services:
   fluent-bit:
-    image: fluent/fluent-bit:latest
+    image: fluent/fluent-bit:4.2.2  # For ARM64/Raspberry Pi: cr.fluentbit.io/fluent/fluent-bit:4.2.2
     container_name: my-fluent-bit
     volumes:
       # Mount configuration files

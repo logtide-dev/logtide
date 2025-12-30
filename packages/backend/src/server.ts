@@ -86,7 +86,7 @@ export async function build(opts = {}) {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
-      version: '0.3.2',
+      version: '0.3.3',
     };
   });
 

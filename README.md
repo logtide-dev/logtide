@@ -16,7 +16,7 @@
   <a href="https://codecov.io/gh/logward-dev/logward"><img src="https://codecov.io/gh/logward-dev/logward/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://hub.docker.com/r/logward/backend"><img src="https://img.shields.io/docker/v/logward/backend?label=docker&logo=docker" alt="Docker"></a>
   <a href="https://artifacthub.io/packages/helm/logward/logward"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logward" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-0.3.2-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.3.3-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Status">
   <img src="https://img.shields.io/badge/cloud-free_during_alpha-success.svg" alt="Free Cloud">
@@ -130,7 +130,9 @@ Total control over your data. **No build required** - uses pre-built images from
 
 **Docker Images:** [Docker Hub](https://hub.docker.com/r/logward/backend) | [GitHub Container Registry](https://github.com/logward-dev/logward/pkgs/container/logward-backend)
 
-> **Production:** Pin versions with `LOGWARD_BACKEND_IMAGE=logward/backend:0.3.2` in your `.env` file.
+> **Production:** Pin versions with `LOGWARD_BACKEND_IMAGE=logward/backend:0.3.3` in your `.env` file.
+
+> **ARM64 / Raspberry Pi:** LogWard images support `linux/amd64` and `linux/arm64`. For Fluent Bit on ARM64, set `FLUENT_BIT_IMAGE=cr.fluentbit.io/fluent/fluent-bit:4.2.2` in your `.env` file.
 
 > **Horizontal Scaling:** For scaling multiple backend instances, see [deployment docs](https://logward.dev/docs/deployment#horizontal-scaling).
 

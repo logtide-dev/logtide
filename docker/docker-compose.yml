@@ -153,7 +153,7 @@ services:
       - logward-network
 
   fluent-bit:
-    image: fluent/fluent-bit:latest
+    image: ${FLUENT_BIT_IMAGE:-fluent/fluent-bit:4.2.2}
     container_name: logward-fluent-bit
     profiles:
       - logging

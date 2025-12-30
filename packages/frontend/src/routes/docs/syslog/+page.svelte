@@ -428,7 +428,7 @@ end`}
   # ... your other services (postgres, redis, backend, frontend) ...
 
   fluent-bit:
-    image: fluent/fluent-bit:latest
+    image: fluent/fluent-bit:4.2.2  # For ARM64: cr.fluentbit.io/fluent/fluent-bit:4.2.2
     container_name: logward-fluent-bit
     ports:
       - "514:514/udp"  # Syslog UDP
