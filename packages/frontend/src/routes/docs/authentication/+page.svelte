@@ -658,6 +658,32 @@
                 </p>
             </CardContent>
         </Card>
+
+        <div>
+            <h3 id="auto-generated-credentials" class="text-lg font-semibold mb-3 scroll-mt-20">Auto-Generated Credentials</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                If you don't configure <code>INITIAL_ADMIN_*</code> environment variables, LogWard will
+                automatically create a <code>system@logward.internal</code> admin account with a randomly
+                generated password. The credentials are printed to the console on first startup:
+            </p>
+            <CodeBlock
+                lang="text"
+                code={`╔════════════════════════════════════════════════════════════════╗
+║  INITIAL ADMIN CREDENTIALS (save these!)                       ║
+╠════════════════════════════════════════════════════════════════╣
+║  Email:    system@logward.internal                             ║
+║  Password: xY7k2mN9pQ4rS1tU...                                 ║
+╠════════════════════════════════════════════════════════════════╣
+║  Change your password after first login!                       ║
+║  Or set INITIAL_ADMIN_* env vars for future deployments.       ║
+╚════════════════════════════════════════════════════════════════╝`}
+            />
+            <p class="text-sm text-muted-foreground mt-3">
+                Check your Docker logs or terminal output for these credentials. We recommend changing the
+                password after first login or using the <code>INITIAL_ADMIN_*</code> environment variables
+                for production deployments.
+            </p>
+        </div>
     </div>
 
     <h2

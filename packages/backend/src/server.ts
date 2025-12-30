@@ -161,14 +161,15 @@ export async function build(opts = {}) {
 
 async function start() {
 
-  // Initialize internal logging first
+  // Run initial bootstrap first (creates initial admin from env vars if no users exist)
+  // This must run before internal logging so the admin can be owner of internal org
+  await bootstrapService.runInitialBootstrap();
+
+  // Initialize internal logging (uses existing admin or creates system user)
   await initializeInternalLogging();
 
   // Initialize enrichment services (GeoLite2 database, etc.)
   await enrichmentService.initialize();
-
-  // Run initial bootstrap (creates initial admin from env vars if no users exist)
-  await bootstrapService.runInitialBootstrap();
 
   // Check auth mode and bootstrap if auth-free mode is enabled
   const authMode = await settingsService.getAuthMode();
