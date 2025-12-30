@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
+import { gzipSync } from 'zlib';
 import { build } from '../../server.js';
 import { createTestApiKey, createTestContext } from '../helpers/index.js';
 import { db } from '../../database/index.js';
@@ -443,6 +444,231 @@ describe('OTLP API', () => {
           .expect(200);
 
         expect(response.body).toEqual({ status: 'ok' });
+      });
+    });
+
+    describe('Gzip compression', () => {
+      it('should handle gzip-compressed JSON requests', async () => {
+        const uniqueMsg = `Gzip JSON test ${Date.now()}`;
+        const otlpRequest = {
+          resourceLogs: [
+            {
+              resource: {
+                attributes: [
+                  { key: 'service.name', value: { stringValue: 'gzip-json-test' } },
+                ],
+              },
+              scopeLogs: [
+                {
+                  logRecords: [
+                    {
+                      timeUnixNano: String(Date.now() * 1000000),
+                      severityNumber: 9,
+                      body: { stringValue: uniqueMsg },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+
+        const jsonData = JSON.stringify(otlpRequest);
+        const gzippedData = gzipSync(Buffer.from(jsonData));
+
+        // Use Fastify's inject() for proper binary body handling
+        const response = await app.inject({
+          method: 'POST',
+          url: '/v1/otlp/logs',
+          headers: {
+            'content-type': 'application/json',
+            'content-encoding': 'gzip',
+            'x-api-key': apiKey,
+          },
+          payload: gzippedData,
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        expect(body.partialSuccess.rejectedLogRecords).toBe(0);
+
+        // Verify log was stored
+        const storedLog = await db
+          .selectFrom('logs')
+          .selectAll()
+          .where('message', '=', uniqueMsg)
+          .executeTakeFirst();
+
+        expect(storedLog).toBeDefined();
+        expect(storedLog?.service).toBe('gzip-json-test');
+      });
+
+      it('should handle gzip-compressed protobuf requests', async () => {
+        // For protobuf, we'll test with JSON payload sent as protobuf content-type
+        // (which the parser handles by detecting JSON format)
+        const uniqueMsg = `Gzip protobuf test ${Date.now()}`;
+        const otlpRequest = {
+          resourceLogs: [
+            {
+              resource: {
+                attributes: [
+                  { key: 'service.name', value: { stringValue: 'gzip-protobuf-test' } },
+                ],
+              },
+              scopeLogs: [
+                {
+                  logRecords: [
+                    {
+                      timeUnixNano: String(Date.now() * 1000000),
+                      severityNumber: 13,
+                      body: { stringValue: uniqueMsg },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+
+        const jsonData = JSON.stringify(otlpRequest);
+        const gzippedData = gzipSync(Buffer.from(jsonData));
+
+        // Use Fastify's inject() for proper binary body handling
+        const response = await app.inject({
+          method: 'POST',
+          url: '/v1/otlp/logs',
+          headers: {
+            'content-type': 'application/x-protobuf',
+            'content-encoding': 'gzip',
+            'x-api-key': apiKey,
+          },
+          payload: gzippedData,
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        expect(body.partialSuccess.rejectedLogRecords).toBe(0);
+
+        const storedLog = await db
+          .selectFrom('logs')
+          .selectAll()
+          .where('message', '=', uniqueMsg)
+          .executeTakeFirst();
+
+        expect(storedLog).toBeDefined();
+        expect(storedLog?.level).toBe('warn');
+      });
+
+      it('should auto-detect gzip by magic bytes (without Content-Encoding header)', async () => {
+        // This tests the fix for OpenTelemetry Collector which sends gzip data
+        // without setting the Content-Encoding header
+        const uniqueMsg = `Gzip magic bytes test ${Date.now()}`;
+        const otlpRequest = {
+          resourceLogs: [
+            {
+              resource: {
+                attributes: [
+                  { key: 'service.name', value: { stringValue: 'gzip-magic-test' } },
+                ],
+              },
+              scopeLogs: [
+                {
+                  logRecords: [
+                    {
+                      timeUnixNano: String(Date.now() * 1000000),
+                      severityNumber: 9,
+                      body: { stringValue: uniqueMsg },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+
+        const jsonData = JSON.stringify(otlpRequest);
+        const gzippedData = gzipSync(Buffer.from(jsonData));
+
+        // Send gzip data WITHOUT Content-Encoding header
+        // The server should detect gzip by magic bytes (0x1f 0x8b)
+        const response = await app.inject({
+          method: 'POST',
+          url: '/v1/otlp/logs',
+          headers: {
+            'content-type': 'application/x-protobuf',
+            // NOTE: No 'content-encoding' header!
+            'x-api-key': apiKey,
+          },
+          payload: gzippedData,
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        expect(body.partialSuccess.rejectedLogRecords).toBe(0);
+
+        const storedLog = await db
+          .selectFrom('logs')
+          .selectAll()
+          .where('message', '=', uniqueMsg)
+          .executeTakeFirst();
+
+        expect(storedLog).toBeDefined();
+        expect(storedLog?.service).toBe('gzip-magic-test');
+      });
+
+      it('should auto-detect gzip JSON by magic bytes (without Content-Encoding header)', async () => {
+        const uniqueMsg = `Gzip JSON magic bytes test ${Date.now()}`;
+        const otlpRequest = {
+          resourceLogs: [
+            {
+              resource: {
+                attributes: [
+                  { key: 'service.name', value: { stringValue: 'gzip-json-magic-test' } },
+                ],
+              },
+              scopeLogs: [
+                {
+                  logRecords: [
+                    {
+                      timeUnixNano: String(Date.now() * 1000000),
+                      severityNumber: 17,
+                      body: { stringValue: uniqueMsg },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+
+        const jsonData = JSON.stringify(otlpRequest);
+        const gzippedData = gzipSync(Buffer.from(jsonData));
+
+        // Send gzip JSON data WITHOUT Content-Encoding header
+        const response = await app.inject({
+          method: 'POST',
+          url: '/v1/otlp/logs',
+          headers: {
+            'content-type': 'application/json',
+            // NOTE: No 'content-encoding' header!
+            'x-api-key': apiKey,
+          },
+          payload: gzippedData,
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = JSON.parse(response.payload);
+        expect(body.partialSuccess.rejectedLogRecords).toBe(0);
+
+        const storedLog = await db
+          .selectFrom('logs')
+          .selectAll()
+          .where('message', '=', uniqueMsg)
+          .executeTakeFirst();
+
+        expect(storedLog).toBeDefined();
+        expect(storedLog?.service).toBe('gzip-json-magic-test');
+        expect(storedLog?.level).toBe('error');
       });
     });
   });

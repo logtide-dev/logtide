@@ -28,20 +28,26 @@ test.describe('Invitations Journey', () => {
     await page.evaluate((orgId) => {
       localStorage.setItem('currentOrganizationId', orgId);
     }, organizationId);
+
+    // Navigate to dashboard to trigger org loading
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
+    await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
   });
 
   test('1. Owner can navigate to settings page', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Verify settings page loaded
-    await expect(page.locator('h1:has-text("Settings"), h1:has-text("Organization")').first()).toBeVisible();
+    await expect(page.locator('h1:has-text("Settings"), h1:has-text("Organization")').first()).toBeVisible({ timeout: 30000 });
   });
 
   test('2. Owner can see members tab in settings', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Look for Members tab
@@ -60,7 +66,7 @@ test.describe('Invitations Journey', () => {
 
   test('3. Owner can open invite member dialog', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click Members tab first if present
@@ -90,7 +96,7 @@ test.describe('Invitations Journey', () => {
 
   test('4. Owner can invite a new member via UI', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click Members tab first if present
@@ -140,7 +146,7 @@ test.describe('Invitations Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click Members tab
@@ -174,7 +180,7 @@ test.describe('Invitations Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click Members tab
@@ -228,7 +234,7 @@ test.describe('Invitations Journey', () => {
     });
 
     await page.goto(`${TEST_FRONTEND_URL}/invite/${invitationToken}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Should see invitation page with org name
@@ -262,7 +268,7 @@ test.describe('Invitations Journey', () => {
     });
 
     await page.goto(`${TEST_FRONTEND_URL}/invite/${invitationToken}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Should see login button
@@ -279,7 +285,7 @@ test.describe('Invitations Journey', () => {
     });
 
     await page.goto(`${TEST_FRONTEND_URL}/invite/invalid-token-12345`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Should show error message
@@ -320,7 +326,7 @@ test.describe('Invitations Journey', () => {
 
     // Go to invitation page
     await page.goto(`${TEST_FRONTEND_URL}/invite/${invitationToken}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Should see accept button
@@ -342,7 +348,7 @@ test.describe('Invitations Journey', () => {
 
   test('11. Settings page shows organization details', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Should show organization name input or display
@@ -356,7 +362,7 @@ test.describe('Invitations Journey', () => {
 
   test('12. Settings page has save functionality', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Look for save button
@@ -392,11 +398,17 @@ test.describe('Member Management', () => {
     await page.evaluate((orgId) => {
       localStorage.setItem('currentOrganizationId', orgId);
     }, organizationId);
+
+    // Navigate to dashboard to trigger org loading
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
+    await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
   });
 
   test('1. Owner can see list of members', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click Members tab
@@ -417,7 +429,7 @@ test.describe('Member Management', () => {
 
   test('2. Owner role badge is displayed correctly', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click Members tab
@@ -454,7 +466,7 @@ test.describe('Member Management', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click Members tab

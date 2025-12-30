@@ -22,7 +22,7 @@ test.describe('New User Journey', () => {
 
   test('1. User can view the register page', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/register`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Verify register form is displayed - look for text that indicates register page
     await expect(page.locator('text=/create.*account|sign up|get started/i').first()).toBeVisible();
@@ -157,7 +157,7 @@ test.describe('New User Journey', () => {
 
     // Navigate to projects page
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // First check if project already exists via API
     let projectsResponse = await fetch(`${TEST_API_URL}/api/v1/projects?organizationId=${organizationId}`, {
@@ -213,7 +213,7 @@ test.describe('New User Journey', () => {
         // Refresh the page to show the new project
         if (projectId) {
           await page.reload();
-          await page.waitForLoadState('networkidle');
+          await page.waitForLoadState('load');
         }
       }
     }
@@ -233,7 +233,7 @@ test.describe('New User Journey', () => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
 
     // Wait for page to load
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(1000);
 
     // Try to create API key via UI, with fallback to API
@@ -349,7 +349,7 @@ test.describe('New User Journey', () => {
 
     // Navigate to search/logs page
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Wait for logs to load and verify our log appears
     await page.waitForTimeout(3000);

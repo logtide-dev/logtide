@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { projectsService } from './service.js';
-import { usersService } from '../users/service.js';
+import { authenticate } from '../auth/middleware.js';
 
 const createProjectSchema = z.object({
   organizationId: z.string().uuid('Invalid organization ID'),
@@ -17,30 +17,6 @@ const updateProjectSchema = z.object({
 const projectIdSchema = z.object({
   id: z.string().uuid('Invalid project ID format'),
 });
-
-/**
- * Middleware to extract and validate session token
- */
-async function authenticate(request: any, reply: any) {
-  const token = request.headers.authorization?.replace('Bearer ', '');
-
-  if (!token) {
-    return reply.status(401).send({
-      error: 'No token provided',
-    });
-  }
-
-  const user = await usersService.validateSession(token);
-
-  if (!user) {
-    return reply.status(401).send({
-      error: 'Invalid or expired session',
-    });
-  }
-
-  // Attach user to request
-  request.user = user;
-}
 
 export async function projectsRoutes(fastify: FastifyInstance) {
   // All routes require authentication

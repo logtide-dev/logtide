@@ -5,32 +5,85 @@
  *
  * Endpoint: POST /v1/otlp/logs
  * Content-Types: application/json, application/x-protobuf
+ * Content-Encoding: gzip (supported)
  *
  * @see https://opentelemetry.io/docs/specs/otlp/
  */
 
-import type { FastifyPluginAsync } from 'fastify';
-import { parseOtlpRequest, detectContentType } from './parser.js';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import { parseOtlpRequest, detectContentType, decompressGzip, isGzipCompressed } from './parser.js';
 import { transformOtlpToLogWard } from './transformer.js';
 import { ingestionService } from '../ingestion/service.js';
 import { config } from '../../config/index.js';
 
+/**
+ * Helper to collect chunks from a stream into a buffer.
+ * This handles both Content-Length and chunked transfer encoding.
+ */
+const collectStreamToBuffer = (stream: NodeJS.ReadableStream): Promise<Buffer> => {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+    stream.on('error', reject);
+  });
+};
+
 const otlpRoutes: FastifyPluginAsync = async (fastify) => {
+  // Remove default JSON parser to add our own with gzip support
+  // This only affects routes registered in this plugin
+  fastify.removeContentTypeParser('application/json');
+
+  // Custom JSON parser with gzip decompression support
+  // Handles both Content-Encoding header and magic byte detection
+  fastify.addContentTypeParser(
+    'application/json',
+    async (request: FastifyRequest) => {
+      const contentEncoding = request.headers['content-encoding'] as string | undefined;
+      let buffer = await collectStreamToBuffer(request.raw);
+
+      // Handle gzip decompression - check header OR magic bytes
+      const needsDecompression = contentEncoding?.toLowerCase() === 'gzip' || isGzipCompressed(buffer);
+      if (needsDecompression) {
+        const detectedBy = isGzipCompressed(buffer) ? 'magic bytes' : 'Content-Encoding header';
+        console.log(`[OTLP] Decompressing gzip JSON (detected by ${detectedBy})`);
+        try {
+          buffer = await decompressGzip(buffer);
+          console.log(`[OTLP] Decompressed JSON to ${buffer.length} bytes`);
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : 'Unknown error';
+          console.error('[OTLP] Gzip JSON decompression failed:', errMsg);
+          throw new Error(`Failed to decompress gzip JSON data: ${errMsg}`);
+        }
+      }
+
+      // Parse JSON
+      try {
+        return JSON.parse(buffer.toString('utf-8'));
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : 'Invalid JSON';
+        // Create an error that Fastify will recognize as a 400 error
+        const parseError = new Error(`Invalid JSON: ${errMsg}`) as Error & { statusCode: number };
+        parseError.statusCode = 400;
+        throw parseError;
+      }
+    }
+  );
+
   // Register content type parser for protobuf
+  // Use stream-based parsing to support both Content-Length and chunked encoding
   fastify.addContentTypeParser(
     'application/x-protobuf',
-    { parseAs: 'buffer' },
-    (_req, body, done) => {
-      done(null, body);
+    async (request: FastifyRequest) => {
+      return collectStreamToBuffer(request.raw);
     }
   );
 
   // Also handle application/protobuf (alternative)
   fastify.addContentTypeParser(
     'application/protobuf',
-    { parseAs: 'buffer' },
-    (_req, body, done) => {
-      done(null, body);
+    async (request: FastifyRequest) => {
+      return collectStreamToBuffer(request.raw);
     }
   );
 
@@ -95,6 +148,7 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const contentType = request.headers['content-type'] as string | undefined;
+      const contentEncoding = request.headers['content-encoding'] as string | undefined;
       const detectedType = detectContentType(contentType);
 
       // Validate content type
@@ -103,8 +157,27 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
+        // Handle gzip decompression if needed (for protobuf - JSON is handled by content parser)
+        // Check both Content-Encoding header AND magic bytes for auto-detection
+        let body = request.body;
+        if (Buffer.isBuffer(body)) {
+          const needsDecompression = contentEncoding?.toLowerCase() === 'gzip' || isGzipCompressed(body);
+          if (needsDecompression) {
+            const detectedBy = isGzipCompressed(body) ? 'magic bytes' : 'Content-Encoding header';
+            console.log(`[OTLP] Decompressing gzip protobuf (detected by ${detectedBy})`);
+            try {
+              body = await decompressGzip(body);
+              console.log(`[OTLP] Decompressed protobuf to ${body.length} bytes`);
+            } catch (decompressError) {
+              const errMsg = decompressError instanceof Error ? decompressError.message : 'Unknown error';
+              console.error('[OTLP] Gzip decompression failed:', errMsg);
+              throw new Error(`Failed to decompress gzip data: ${errMsg}`);
+            }
+          }
+        }
+
         // Parse OTLP request
-        const otlpRequest = await parseOtlpRequest(request.body, contentType);
+        const otlpRequest = await parseOtlpRequest(body, contentType);
 
         // Transform to LogWard format
         const logs = transformOtlpToLogWard(otlpRequest);

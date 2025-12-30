@@ -19,10 +19,13 @@ import { sigmaRoutes } from './modules/sigma/routes.js';
 import { siemRoutes } from './modules/siem/routes.js';
 import { registerSiemSseRoutes } from './modules/siem/sse-events.js';
 import { adminRoutes } from './modules/admin/index.js';
+import { publicAuthRoutes, authenticatedAuthRoutes, adminAuthRoutes } from './modules/auth/external-routes.js';
 import { otlpRoutes, otlpTraceRoutes } from './modules/otlp/index.js';
 import { tracesRoutes } from './modules/traces/index.js';
 import { onboardingRoutes } from './modules/onboarding/index.js';
 import { exceptionsRoutes } from './modules/exceptions/index.js';
+import { settingsRoutes, publicSettingsRoutes, settingsService } from './modules/settings/index.js';
+import { bootstrapService } from './modules/bootstrap/index.js';
 import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
 import websocketPlugin from './plugins/websocket.js';
@@ -84,12 +87,18 @@ export async function build(opts = {}) {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
-      version: '0.3.1',
+      version: '0.3.3',
     };
   });
 
   // User authentication routes (no API key required)
   await fastify.register(usersRoutes, { prefix: '/api/v1/auth' });
+
+  // External authentication routes (OIDC, LDAP)
+  await fastify.register(publicAuthRoutes, { prefix: '/api/v1/auth' });
+  await fastify.register(publicSettingsRoutes, { prefix: '/api/v1/auth' }); // Public auth config endpoint
+  await fastify.register(authenticatedAuthRoutes, { prefix: '/api/v1/auth' });
+  await fastify.register(adminAuthRoutes, { prefix: '/api/v1/admin/auth' });
 
   // Organizations routes (session-based auth)
   await fastify.register(organizationsRoutes, { prefix: '/api/v1/organizations' });
@@ -130,6 +139,9 @@ export async function build(opts = {}) {
   // Admin routes (session-based auth + admin middleware)
   await fastify.register(adminRoutes, { prefix: '/api/v1/admin' });
 
+  // Admin settings routes (session-based auth + admin middleware)
+  await fastify.register(settingsRoutes, { prefix: '/api/v1/admin/settings' });
+
   // Register API key auth plugin (applies to log ingestion/query routes below)
   await fastify.register(authPlugin);
 
@@ -153,11 +165,22 @@ export async function build(opts = {}) {
 
 async function start() {
 
-  // Initialize internal logging first
+  // Run initial bootstrap first (creates initial admin from env vars if no users exist)
+  // This must run before internal logging so the admin can be owner of internal org
+  await bootstrapService.runInitialBootstrap();
+
+  // Initialize internal logging (uses existing admin or creates system user)
   await initializeInternalLogging();
 
   // Initialize enrichment services (GeoLite2 database, etc.)
   await enrichmentService.initialize();
+
+  // Check auth mode and bootstrap if auth-free mode is enabled
+  const authMode = await settingsService.getAuthMode();
+  if (authMode === 'none') {
+    console.log('[Auth] Auth-free mode detected, ensuring default setup...');
+    await bootstrapService.ensureDefaultSetup();
+  }
 
   const app = await build();
 

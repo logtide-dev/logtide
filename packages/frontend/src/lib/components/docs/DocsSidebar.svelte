@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import {
         Book,
         Code,
@@ -9,6 +9,7 @@
         ChevronDown,
         Github,
         ArrowRightLeft,
+        KeyRound,
     } from "lucide-svelte";
 
     interface NavItem {
@@ -71,6 +72,22 @@
             ],
         },
         {
+            title: "Authentication",
+            icon: KeyRound,
+            collapsed: false,
+            items: [
+                { title: "Overview", href: "/docs/authentication" },
+                { title: "OpenID Connect", href: "/docs/authentication#oidc" },
+                { title: "LDAP", href: "/docs/authentication#ldap" },
+                { title: "Initial Admin Setup", href: "/docs/authentication#initial-admin" },
+                { title: "Auth-Free Mode", href: "/docs/authentication#auth-free-mode" },
+                { title: "Admin Settings", href: "/docs/authentication#admin-settings" },
+                { title: "User Management", href: "/docs/authentication#user-management" },
+                { title: "Troubleshooting", href: "/docs/authentication#troubleshooting" },
+                { title: "Dev Testing", href: "/docs/authentication#dev-testing" },
+            ],
+        },
+        {
             title: "Migration",
             icon: ArrowRightLeft,
             collapsed: false,
@@ -130,7 +147,7 @@
                 <div class="section">
                     <button
                         class="section-header"
-                        on:click={() => toggleSection(index)}
+                        onclick={() => toggleSection(index)}
                     >
                         <svelte:component
                             this={section.collapsed
@@ -149,8 +166,8 @@
                                         href={item.href}
                                         class="nav-link {isActive(
                                             item.href,
-                                            $page.url.pathname,
-                                            $page.url.hash,
+                                            page.url.pathname,
+                                            page.url.hash,
                                         )
                                             ? 'active'
                                             : ''}"

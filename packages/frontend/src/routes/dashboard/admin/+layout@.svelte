@@ -1,11 +1,12 @@
 <script lang="ts">
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import {
         LayoutDashboard,
         Users,
         Building2,
         FolderKanban,
         Settings,
+        KeyRound,
     } from "lucide-svelte";
     import { cn } from "$lib/utils";
     import Footer from "$lib/components/Footer.svelte";
@@ -34,9 +35,19 @@
             href: "/dashboard/admin/projects",
             icon: FolderKanban,
         },
+        {
+            name: "Auth Providers",
+            href: "/dashboard/admin/auth-providers",
+            icon: KeyRound,
+        },
+        {
+            name: "Settings",
+            href: "/dashboard/admin/settings",
+            icon: Settings,
+        },
     ];
 
-    const currentPath = $derived($page.url.pathname);
+    const currentPath = $derived(page.url.pathname);
 
     function isActive(href: string) {
         if (href === "/dashboard/admin") {

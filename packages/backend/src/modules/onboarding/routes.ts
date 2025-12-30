@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { onboardingService } from './service.js';
-import { usersService } from '../users/service.js';
+import { authenticate } from '../auth/middleware.js';
 
 const updateOnboardingSchema = z.object({
   checklistItems: z.record(z.boolean()).optional(),
@@ -15,30 +15,6 @@ const updateOnboardingSchema = z.object({
 const completeItemSchema = z.object({
   itemId: z.string().min(1),
 });
-
-/**
- * Middleware to extract and validate session token
- */
-async function authenticate(request: any, reply: any) {
-  const token = request.headers.authorization?.replace('Bearer ', '');
-
-  if (!token) {
-    return reply.status(401).send({
-      error: 'No token provided',
-    });
-  }
-
-  const user = await usersService.validateSession(token);
-
-  if (!user) {
-    return reply.status(401).send({
-      error: 'Invalid or expired session',
-    });
-  }
-
-  // Attach user to request
-  request.user = user;
-}
 
 export async function onboardingRoutes(fastify: FastifyInstance) {
   // All routes require authentication

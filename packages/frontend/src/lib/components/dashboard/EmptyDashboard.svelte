@@ -73,14 +73,14 @@ const exporter = new OTLPLogExporter({
       icon: FolderKanban,
       title: 'Create a Project',
       description: 'Set up a project to organize your logs',
-      href: '/projects',
+      href: '/dashboard/projects',
       color: 'bg-blue-500/10 text-blue-500'
     },
     {
       icon: Key,
       title: 'Generate API Key',
       description: 'Get credentials to send logs',
-      href: '/projects',
+      href: '/dashboard/projects',
       color: 'bg-green-500/10 text-green-500'
     },
     {
@@ -112,7 +112,7 @@ const exporter = new OTLPLogExporter({
             <Book class="w-4 h-4" />
             View Docs
           </Button>
-          <Button href="/projects" class="gap-2">
+          <Button href="/dashboard/projects" class="gap-2">
             Get Started
             <ChevronRight class="w-4 h-4" />
           </Button>

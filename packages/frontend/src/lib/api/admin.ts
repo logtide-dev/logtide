@@ -257,6 +257,21 @@ export interface ProjectsListResponse {
     totalPages: number;
 }
 
+// System Settings Interfaces
+export interface SystemSetting {
+    key: string;
+    value: unknown;
+    description: string | null;
+    updated_at: string;
+    updated_by: string | null;
+}
+
+export interface AuthSettings {
+    'auth.signup_enabled': boolean;
+    'auth.mode': 'standard' | 'none';
+    'auth.default_user_id': string | null;
+}
+
 class AdminAPI {
     private async fetch<T>(endpoint: string): Promise<T> {
         if (!browser) return {} as T;
@@ -360,6 +375,32 @@ class AdminAPI {
         return response.json();
     }
 
+    async updateUserRole(userId: string, isAdmin: boolean): Promise<{ message: string; user: UserBasic }> {
+        const auth = get(authStore);
+        const token = auth.token;
+
+        if (!token) {
+            goto('/login');
+            throw new Error('No token found');
+        }
+
+        const response = await fetch(`${getApiBaseUrl()}/admin/users/${userId}/role`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ is_admin: isAdmin }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update user role');
+        }
+
+        return response.json();
+    }
+
     async resetUserPassword(userId: string, newPassword: string): Promise<{ message: string; user: UserBasic }> {
         const auth = get(authStore);
         const token = auth.token;
@@ -458,6 +499,42 @@ class AdminAPI {
 
         if (!response.ok) {
             throw new Error('Failed to delete project');
+        }
+
+        return response.json();
+    }
+
+    // System Settings
+    async getSettings(): Promise<Record<string, unknown>> {
+        const response = await this.fetch<{ settings: Record<string, unknown> }>('/settings');
+        return response.settings;
+    }
+
+    async getSetting(key: string): Promise<{ key: string; value: unknown; description: string | null }> {
+        return this.fetch<{ key: string; value: unknown; description: string | null }>(`/settings/${encodeURIComponent(key)}`);
+    }
+
+    async updateSettings(settings: Record<string, unknown>): Promise<{ success: boolean; settings: Record<string, unknown> }> {
+        const auth = get(authStore);
+        const token = auth.token;
+
+        if (!token) {
+            goto('/login');
+            throw new Error('No token found');
+        }
+
+        const response = await fetch(`${getApiBaseUrl()}/admin/settings`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(settings),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update settings');
         }
 
         return response.json();

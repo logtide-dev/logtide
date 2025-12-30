@@ -121,6 +121,42 @@ docker compose --profile logging up -d`}
         </div>
 
         <div>
+            <h3 id="arm64-raspberry-pi" class="text-lg font-semibold mb-3 scroll-mt-20">ARM64 / Raspberry Pi Support</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                LogWard images (<code>logward/backend</code>, <code>logward/frontend</code>) are built for both <code>linux/amd64</code> and <code>linux/arm64</code>,
+                so they work natively on Raspberry Pi 3/4/5 (64-bit OS).
+            </p>
+            <p class="text-sm text-muted-foreground mb-3">
+                <strong>Fluent Bit on ARM64:</strong> The default Fluent Bit image may have limited ARM64 support.
+                You can specify an alternative image in your <code>.env</code> file:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# For Raspberry Pi / ARM64, use the official multi-arch registry
+FLUENT_BIT_IMAGE=cr.fluentbit.io/fluent/fluent-bit:4.2.2
+
+# Or build your own ARM64 image
+FLUENT_BIT_IMAGE=myregistry/fluent-bit-arm64:latest`}
+            />
+            <Card class="border-yellow-500/30 bg-yellow-500/5 mt-4">
+                <CardHeader>
+                    <div class="flex items-start gap-3">
+                        <AlertCircle class="w-5 h-5 text-yellow-500 mt-0.5" />
+                        <div>
+                            <CardTitle class="text-base">Raspberry Pi Performance</CardTitle>
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent class="text-sm text-muted-foreground">
+                    <p>
+                        Raspberry Pi 4 (4GB+) or Pi 5 is recommended for homelab/small deployments.
+                        For high-volume workloads, consider x86 hardware or our managed cloud.
+                    </p>
+                </CardContent>
+            </Card>
+        </div>
+
+        <div>
             <h3 id="docker-images" class="text-lg font-semibold mb-3 scroll-mt-20">Available Docker Images</h3>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm border border-border rounded-lg">
@@ -174,8 +210,8 @@ docker compose --profile logging up -d`}
                 <CodeBlock
                     lang="bash"
                     code={`# In your .env file
-LOGWARD_BACKEND_IMAGE=logward/backend:0.3.1
-LOGWARD_FRONTEND_IMAGE=logward/frontend:0.3.1`}
+LOGWARD_BACKEND_IMAGE=logward/backend:0.3.3
+LOGWARD_FRONTEND_IMAGE=logward/frontend:0.3.3`}
                 />
             </CardContent>
         </Card>
@@ -207,78 +243,113 @@ LOGWARD_FRONTEND_IMAGE=logward/frontend:0.3.1`}
     </h2>
 
     <div class="mb-12 space-y-6">
-        <Card class="border-yellow-500/30 bg-yellow-500/5">
+        <Card class="border-green-500/30 bg-green-500/5">
             <CardHeader>
                 <div class="flex items-start gap-3">
-                    <AlertCircle class="w-5 h-5 text-yellow-500 mt-0.5" />
+                    <CheckCircle2 class="w-5 h-5 text-green-500 mt-0.5" />
                     <div>
-                        <CardTitle class="text-base">Important: Configure API URL</CardTitle>
+                        <CardTitle class="text-base">Auto-Detection Works in Most Cases</CardTitle>
                     </div>
                 </div>
             </CardHeader>
             <CardContent class="text-sm text-muted-foreground">
                 <p class="mb-3">
-                    When deploying on a remote server (not localhost), you must configure
-                    <code>PUBLIC_API_URL</code> so the frontend knows where to find the backend.
+                    LogWard automatically detects the correct API URL based on how you access the frontend:
                 </p>
-                <p>
-                    Without this, users accessing <code>http://your-server:3000</code> will get errors
-                    because the frontend will try to connect to <code>localhost:8080</code> (which doesn't exist on their machine).
+                <ul class="list-disc list-inside space-y-1">
+                    <li><strong>Via IP:3000</strong> (e.g., <code>http://192.168.1.100:3000</code>) → API auto-detected at <code>http://192.168.1.100:8080</code></li>
+                    <li><strong>Via domain on port 80/443</strong> (e.g., <code>https://logward.example.com</code>) → Uses relative URLs (assumes reverse proxy)</li>
+                </ul>
+                <p class="mt-3">
+                    No <code>PUBLIC_API_URL</code> configuration needed for these scenarios!
                 </p>
             </CardContent>
         </Card>
 
         <div>
-            <h3 id="remote-access" class="text-lg font-semibold mb-3 scroll-mt-20">Configure for Remote Access</h3>
-            <p class="text-sm text-muted-foreground mb-3">
-                In your <code>.env</code> file, set the public URL where the backend API is accessible:
-            </p>
-            <CodeBlock
-                lang="bash"
-                code={`# .env file on your server
-
-# Replace with your server's IP or domain
-PUBLIC_API_URL=http://your-server-ip:8080
-
-# Or if using a domain
-PUBLIC_API_URL=https://api.yourdomain.com`}
-            />
-        </div>
-
-        <div>
-            <h3 id="vps-deployment" class="text-lg font-semibold mb-3 scroll-mt-20">Example: VPS Deployment</h3>
+            <h3 id="vps-deployment" class="text-lg font-semibold mb-3 scroll-mt-20">Example: VPS Deployment (No Config Needed)</h3>
             <CodeBlock
                 lang="bash"
                 code={`# Server IP: 192.168.1.100
 
-# .env configuration
+# .env configuration - no PUBLIC_API_URL needed!
 DB_PASSWORD=secure_password
 REDIS_PASSWORD=secure_password
 API_KEY_SECRET=your_32_character_secret_key_here
-PUBLIC_API_URL=http://192.168.1.100:8080
 
 # Access points:
 # Frontend: http://192.168.1.100:3000
-# API: http://192.168.1.100:8080`}
+# API: http://192.168.1.100:8080 (auto-detected)`}
             />
         </div>
 
         <div>
             <h3 id="reverse-proxy" class="text-lg font-semibold mb-3 scroll-mt-20">With Reverse Proxy (nginx/Traefik)</h3>
+            <Card class="border-yellow-500/30 bg-yellow-500/5 mb-4">
+                <CardHeader>
+                    <div class="flex items-start gap-3">
+                        <AlertCircle class="w-5 h-5 text-yellow-500 mt-0.5" />
+                        <div>
+                            <CardTitle class="text-base">Important: Proxy Both Frontend and API</CardTitle>
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent class="text-sm text-muted-foreground">
+                    <p>
+                        When using a domain (port 80/443), LogWard assumes a reverse proxy is in place and uses relative URLs (<code>/api/v1</code>).
+                        Your reverse proxy <strong>must</strong> route both the frontend and the API, otherwise API calls will fail with 404.
+                    </p>
+                </CardContent>
+            </Card>
             <p class="text-sm text-muted-foreground mb-3">
-                If you're using a reverse proxy in front of LogWard, configure accordingly:
+                Example nginx configuration:
+            </p>
+            <CodeBlock
+                lang="nginx"
+                code={`server {
+    listen 443 ssl;
+    server_name logward.example.com;
+
+    # Frontend
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # Backend API - REQUIRED for relative URLs to work
+    location /api/ {
+        proxy_pass http://localhost:8080/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # SSE for live tail (requires special headers)
+    location /api/v1/logs/stream {
+        proxy_pass http://localhost:8080/api/v1/logs/stream;
+        proxy_set_header Connection '';
+        proxy_http_version 1.1;
+        chunked_transfer_encoding off;
+        proxy_buffering off;
+        proxy_cache off;
+    }
+}`}
+            />
+        </div>
+
+        <div>
+            <h3 id="subdomain-api" class="text-lg font-semibold mb-3 scroll-mt-20">Alternative: API on Subdomain</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                If you prefer to host the API on a separate subdomain instead of proxying <code>/api/</code>:
             </p>
             <CodeBlock
                 lang="bash"
-                code={`# With nginx/Traefik proxying to LogWard
+                code={`# .env configuration
+PUBLIC_API_URL=https://api.logward.example.com
 
-# If frontend and API are on same domain (recommended)
-# nginx proxies / to frontend:3000 and /api to backend:8080
-PUBLIC_API_URL=
-
-# If API is on a subdomain
-# frontend at example.com, api at api.example.com
-PUBLIC_API_URL=https://api.example.com`}
+# Access points:
+# Frontend: https://logward.example.com
+# API: https://api.logward.example.com`}
             />
         </div>
 
@@ -293,28 +364,34 @@ PUBLIC_API_URL=https://api.example.com`}
                             <tr>
                                 <th class="text-left p-3 border-b border-border">Scenario</th>
                                 <th class="text-left p-3 border-b border-border">PUBLIC_API_URL</th>
+                                <th class="text-left p-3 border-b border-border">Notes</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
-                                <td class="p-3 border-b border-border">Local development</td>
-                                <td class="p-3 border-b border-border font-mono text-xs">http://localhost:8080</td>
+                                <td class="p-3 border-b border-border">Docker via IP:3000</td>
+                                <td class="p-3 border-b border-border font-mono text-xs">(not needed)</td>
+                                <td class="p-3 border-b border-border text-muted-foreground">Auto-detected → IP:8080</td>
                             </tr>
                             <tr>
-                                <td class="p-3 border-b border-border">Remote server (IP)</td>
-                                <td class="p-3 border-b border-border font-mono text-xs">http://192.168.1.100:8080</td>
+                                <td class="p-3 border-b border-border">Domain + reverse proxy</td>
+                                <td class="p-3 border-b border-border font-mono text-xs">(not needed)</td>
+                                <td class="p-3 border-b border-border text-muted-foreground">Uses /api/v1 (proxy must route it)</td>
                             </tr>
                             <tr>
-                                <td class="p-3 border-b border-border">With domain</td>
+                                <td class="p-3 border-b border-border">API on subdomain</td>
                                 <td class="p-3 border-b border-border font-mono text-xs">https://api.example.com</td>
+                                <td class="p-3 border-b border-border text-muted-foreground">Explicit configuration</td>
                             </tr>
                             <tr>
-                                <td class="p-3 border-b border-border">Same-origin proxy</td>
-                                <td class="p-3 border-b border-border font-mono text-xs">(empty - uses relative URLs)</td>
+                                <td class="p-3 border-b border-border">Custom port setup</td>
+                                <td class="p-3 border-b border-border font-mono text-xs">http://host:custom-port</td>
+                                <td class="p-3 border-b border-border text-muted-foreground">When backend is not on :8080</td>
                             </tr>
                             <tr>
                                 <td class="p-3">LogWard Cloud</td>
                                 <td class="p-3 font-mono text-xs">https://api.logward.dev</td>
+                                <td class="p-3 text-muted-foreground">Pre-configured</td>
                             </tr>
                         </tbody>
                     </table>

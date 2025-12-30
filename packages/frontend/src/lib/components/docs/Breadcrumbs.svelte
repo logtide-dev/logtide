@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import { ChevronRight } from "lucide-svelte";
 
     interface Breadcrumb {
@@ -7,7 +7,7 @@
         href?: string;
     }
 
-    $: breadcrumbs = getBreadcrumbs($page.url.pathname);
+    let breadcrumbs = $derived(getBreadcrumbs(page.url.pathname));
 
     function getBreadcrumbs(pathname: string): Breadcrumb[] {
         const segments = pathname.split("/").filter(Boolean);

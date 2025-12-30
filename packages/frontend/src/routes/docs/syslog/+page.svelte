@@ -272,12 +272,15 @@
 # =============================================================================
 # RFC 3164 - Traditional syslog format
 # Used by: Proxmox, many Linux systems, older network devices
+# IMPORTANT: RFC 3164 does NOT include timezone info in timestamps!
+# Set Time_Offset to your local timezone offset (e.g., +0100 for CET, +0200 for CEST)
 [PARSER]
     Name        syslog-rfc3164
     Format      regex
     Regex       /^\\<(?<pri>[0-9]+)\\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[a-zA-Z0-9_\\/\\.\\-]*)(?:\\[(?<pid>[0-9]+)\\])?(?:[^\\:]*\\:)? *(?<message>.*)$/
     Time_Key    time
     Time_Format %b %d %H:%M:%S
+    Time_Offset +0100
     Time_Keep   On
 
 # RFC 5424 - Modern syslog format
@@ -295,7 +298,10 @@
         <div>
             <h3 class="text-lg font-semibold mb-3">map_syslog_level.lua</h3>
             <p class="text-sm text-muted-foreground mb-3">
-                Lua script to convert syslog severity (0-7) to LogWard log levels:
+                Lua script to convert syslog severity (0-7) to log levels.
+                <strong>Note:</strong> LogWard automatically normalizes syslog levels server-side,
+                so you can send levels like "notice", "emergency", "warning" etc. and they will be
+                mapped to LogWard's 5 levels (debug, info, warn, error, critical).
             </p>
             <CodeBlock
                 lang="lua"
@@ -303,6 +309,22 @@
 -- Syslog severity levels (from RFC 3164/5424):
 -- 0 = Emergency, 1 = Alert, 2 = Critical, 3 = Error
 -- 4 = Warning, 5 = Notice, 6 = Informational, 7 = Debug
+--
+-- LogWard automatically maps these to its 5 levels:
+-- emergency/alert/critical -> critical
+-- error -> error
+-- warning -> warn
+-- notice/info -> info
+-- debug -> debug
+--
+-- TIMEZONE FIX for RFC 3164:
+-- RFC 3164 timestamps don't include timezone info.
+-- Set SYSLOG_TZ_OFFSET env var to your timezone offset in hours.
+-- Examples: SYSLOG_TZ_OFFSET=1 (CET), SYSLOG_TZ_OFFSET=2 (CEST), SYSLOG_TZ_OFFSET=-5 (EST)
+
+-- Read timezone offset from environment (in hours, e.g., 1 for CET, 2 for CEST)
+local tz_offset_hours = tonumber(os.getenv("SYSLOG_TZ_OFFSET")) or 0
+local tz_offset_seconds = tz_offset_hours * 3600
 
 function map_syslog_level(tag, timestamp, record)
     local pri = tonumber(record["pri"])
@@ -312,6 +334,7 @@ function map_syslog_level(tag, timestamp, record)
         local severity = pri % 8
 
         -- Map severity number to log level string
+        -- LogWard will normalize these to its 5 levels
         local level_map = {
             [0] = "emergency",
             [1] = "alert",
@@ -328,8 +351,12 @@ function map_syslog_level(tag, timestamp, record)
         record["level"] = "info"
     end
 
-    -- Set 'time' field in ISO8601 format
-    record["time"] = os.date("!%Y-%m-%dT%H:%M:%SZ", timestamp)
+    -- Apply timezone offset for RFC 3164 (which lacks timezone info)
+    -- The offset converts local time to UTC
+    local adjusted_timestamp = timestamp - tz_offset_seconds
+
+    -- Set 'time' field in ISO8601 format (UTC)
+    record["time"] = os.date("!%Y-%m-%dT%H:%M:%SZ", adjusted_timestamp)
 
     -- Keep hostname from syslog
     if record["host"] and record["host"] ~= "-" then
@@ -350,7 +377,7 @@ function map_syslog_level(tag, timestamp, record)
     record["ident"] = nil
     record["host"] = nil
 
-    return 1, timestamp, record
+    return 1, adjusted_timestamp, record
 end`}
             />
         </div>
@@ -401,7 +428,7 @@ end`}
   # ... your other services (postgres, redis, backend, frontend) ...
 
   fluent-bit:
-    image: fluent/fluent-bit:latest
+    image: fluent/fluent-bit:4.2.2  # For ARM64: cr.fluentbit.io/fluent/fluent-bit:4.2.2
     container_name: logward-fluent-bit
     ports:
       - "514:514/udp"  # Syslog UDP
@@ -599,6 +626,165 @@ esxcli system syslog reload`}
     </div>
 
     <h2
+        id="rsyslog-http"
+        class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
+    >
+        Rsyslog HTTP Forwarding (Advanced)
+    </h2>
+
+    <div class="mb-8 space-y-6">
+        <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
+            <div class="flex items-start gap-3">
+                <Info class="w-5 h-5 text-yellow-500 mt-0.5 flex-shrink-0" />
+                <div>
+                    <p class="font-semibold text-yellow-600 dark:text-yellow-400 mb-1">
+                        Known Limitation: omhttp Module
+                    </p>
+                    <p class="text-sm text-muted-foreground">
+                        The rsyslog <code>omhttp</code> module (for sending logs directly via HTTP)
+                        is <strong>not available in default rsyslog packages</strong> on many distributions,
+                        including Debian 13 (Trixie), Ubuntu, and some RHEL-based systems. This is a
+                        known upstream limitation, not a LogWard issue.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <p class="text-muted-foreground">
+            If you need to send syslog messages directly to LogWard's HTTP API without using
+            Fluent Bit's syslog input, you have several options:
+        </p>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Option 1: Use Fluent Bit (Recommended)</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                The simplest solution is to use Fluent Bit as described in this guide. Fluent Bit
+                receives syslog messages on port 514 and forwards them to LogWard's HTTP API.
+                This is the recommended approach.
+            </p>
+        </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Option 2: Vector as HTTP Bridge</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                <a href="https://vector.dev" target="_blank" rel="noopener noreferrer" class="text-primary underline">Vector</a>
+                is a high-performance observability data pipeline that can act as a syslog-to-HTTP bridge:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# Install Vector (Debian/Ubuntu)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.vector.dev | bash
+
+# Or via apt
+curl -1sLf 'https://repositories.timber.io/public/vector/cfg/setup/bash.deb.sh' | sudo bash
+sudo apt install vector`}
+            />
+            <p class="text-sm text-muted-foreground my-3">
+                Create <code>/etc/vector/vector.toml</code>:
+            </p>
+            <CodeBlock
+                lang="toml"
+                code={`# Vector configuration for rsyslog → LogWard
+
+[sources.rsyslog]
+type = "syslog"
+address = "0.0.0.0:514"
+mode = "tcp"  # or "udp"
+
+[transforms.format_logs]
+type = "remap"
+inputs = ["rsyslog"]
+source = '''
+# Transform syslog fields to LogWard format
+.message = string!(.message)
+.level = downcase(string(.severity) ?? "info")
+.service = string(.appname) ?? string(.hostname) ?? "syslog"
+.time = now()
+
+# Add metadata
+.metadata = {}
+.metadata.hostname = string(.hostname) ?? null
+.metadata.facility = string(.facility) ?? null
+.metadata.procid = string(.procid) ?? null
+
+# Remove original syslog fields
+del(.severity)
+del(.appname)
+del(.hostname)
+del(.facility)
+del(.procid)
+'''
+
+[sinks.logward]
+type = "http"
+inputs = ["format_logs"]
+uri = "http://YOUR_LOGWARD_HOST:8080/api/v1/ingest/single"
+encoding.codec = "json"
+
+[sinks.logward.request]
+headers.X-API-Key = "lp_your_api_key_here"
+headers.Content-Type = "application/json"`}
+            />
+            <CodeBlock
+                lang="bash"
+                code={`# Start Vector
+sudo systemctl enable vector
+sudo systemctl start vector
+
+# Check status
+sudo systemctl status vector
+vector --version`}
+            />
+        </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Option 3: Build rsyslog with omhttp</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                If you need native rsyslog HTTP support, you can compile rsyslog from source
+                with the omhttp module enabled. This requires development libraries and is
+                more complex to maintain:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# Install build dependencies (Debian/Ubuntu)
+sudo apt install build-essential pkg-config libestr-dev libfastjson-dev \\
+  zlib1g-dev libcurl4-openssl-dev uuid-dev libgcrypt20-dev
+
+# Download and compile rsyslog
+wget https://www.rsyslog.com/files/download/rsyslog/rsyslog-8.2312.0.tar.gz
+tar xzf rsyslog-8.2312.0.tar.gz
+cd rsyslog-8.2312.0
+
+./configure --enable-omhttp
+make
+sudo make install`}
+            />
+            <p class="text-xs text-muted-foreground mt-2">
+                Note: Building from source means you're responsible for security updates
+                and compatibility. The Fluent Bit or Vector approaches are generally preferred.
+            </p>
+        </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-3">Option 4: Use omfwd + Local HTTP Forwarder</h3>
+            <p class="text-sm text-muted-foreground mb-3">
+                Forward syslog to a local Fluent Bit or Vector instance using standard
+                rsyslog forwarding (<code>omfwd</code>), then let that service handle HTTP:
+            </p>
+            <CodeBlock
+                lang="bash"
+                code={`# /etc/rsyslog.d/50-logward.conf
+# Forward all logs to local Fluent Bit syslog input
+*.* @@127.0.0.1:5514`}
+            />
+            <p class="text-xs text-muted-foreground mt-2">
+                This keeps your rsyslog configuration simple and delegates HTTP
+                complexity to a dedicated tool.
+            </p>
+        </div>
+    </div>
+
+    <h2
         id="troubleshooting"
         class="text-2xl font-semibold mb-4 scroll-mt-20 border-b border-border pb-2"
     >
@@ -654,6 +840,47 @@ echo "<14>Test syslog message from terminal" | nc -w1 YOUR_LOGWARD_IP 514`}
                 The service name comes from the syslog "ident" field (program name).
                 If your device doesn't send an ident, the hostname will be used.
                 You can customize the Lua script to set service names based on hostname patterns.
+            </p>
+        </div>
+
+        <div>
+            <h3 class="text-lg font-semibold mb-2">
+                RFC 3164 timestamps are wrong (off by hours)?
+            </h3>
+            <p class="text-sm text-muted-foreground mb-2">
+                RFC 3164 syslog format does NOT include timezone information in timestamps.
+                If your logs show incorrect times, set the <code>SYSLOG_TZ_OFFSET</code>
+                environment variable on your Fluent Bit container.
+            </p>
+            <p class="text-sm text-muted-foreground mb-2">
+                <strong>Quick fix:</strong> Add this to your <code>docker-compose.yml</code>:
+            </p>
+            <CodeBlock
+                lang="yaml"
+                code={`services:
+  fluent-bit:
+    environment:
+      - SYSLOG_TZ_OFFSET=1    # CET (Central European Time)
+      # - SYSLOG_TZ_OFFSET=2  # CEST (Summer time)
+      # - SYSLOG_TZ_OFFSET=-5 # EST (Eastern Standard Time)`}
+            />
+            <p class="text-sm text-muted-foreground mt-2 mb-2">
+                <strong>Alternative:</strong> You can also set <code>Time_Offset</code> directly
+                in the parser configuration (<code>parsers.conf</code>):
+            </p>
+            <CodeBlock
+                lang="conf"
+                code={`[PARSER]
+    Name        syslog-rfc3164
+    ...
+    Time_Format %b %d %H:%M:%S
+    Time_Offset +0100    # For CET
+    Time_Keep   On`}
+            />
+            <p class="text-sm text-muted-foreground mt-2">
+                <strong>Note:</strong> RFC 5424 includes timezone in the timestamp
+                (e.g., <code>2025-12-23T16:51:02+01:00</code>) and doesn't need this fix.
+                Consider configuring your devices to use RFC 5424 format if possible.
             </p>
         </div>
     </div>

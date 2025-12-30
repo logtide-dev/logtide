@@ -1,31 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { adminService } from './service.js';
-import { usersService } from '../users/service.js';
+import { authenticate } from '../auth/middleware.js';
 import { requireAdmin } from './middleware.js';
-
-/**
- * Middleware to extract and validate session token
- */
-async function authenticate(request: any, reply: any) {
-    const token = request.headers.authorization?.replace('Bearer ', '');
-
-    if (!token) {
-        return reply.status(401).send({
-            error: 'No token provided',
-        });
-    }
-
-    const user = await usersService.validateSession(token);
-
-    if (!user) {
-        return reply.status(401).send({
-            error: 'Invalid or expired session',
-        });
-    }
-
-    // Attach user to request
-    request.user = user;
-}
 
 export async function adminRoutes(fastify: FastifyInstance) {
     // All routes require session authentication + admin role
@@ -275,6 +251,48 @@ export async function adminRoutes(fastify: FastifyInstance) {
                 console.error('Error updating user status:', error);
                 return reply.status(500).send({
                     error: 'Failed to update user status',
+                });
+            }
+        }
+    );
+
+    // PATCH /api/v1/admin/users/:id/role - Update user admin role
+    fastify.patch(
+        '/users/:id/role',
+        {
+            config: {
+                rateLimit: rateLimitConfig,
+            },
+        },
+        async (request, reply) => {
+            try {
+                const { id } = request.params as { id: string };
+                const { is_admin } = request.body as { is_admin: boolean };
+
+                if (typeof is_admin !== 'boolean') {
+                    return reply.status(400).send({
+                        error: 'is_admin field must be a boolean',
+                    });
+                }
+
+                // Prevent admin from demoting themselves
+                const currentUser = (request as any).user;
+                if (currentUser?.id === id && !is_admin) {
+                    return reply.status(400).send({
+                        error: 'Cannot remove admin role from yourself',
+                    });
+                }
+
+                const user = await adminService.updateUserRole(id, is_admin);
+
+                return reply.send({
+                    message: `User ${is_admin ? 'promoted to admin' : 'demoted from admin'} successfully`,
+                    user,
+                });
+            } catch (error) {
+                console.error('Error updating user role:', error);
+                return reply.status(500).send({
+                    error: 'Failed to update user role',
                 });
             }
         }

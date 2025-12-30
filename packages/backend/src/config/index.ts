@@ -23,6 +23,8 @@ const configSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   // Trust proxy headers (X-Forwarded-For, etc.) - enable when behind reverse proxy
   TRUST_PROXY: z.string().default('false').transform((val) => val === 'true'),
+  // Frontend URL for OIDC redirects (defaults to localhost:5173 in development)
+  FRONTEND_URL: z.string().url().optional(),
 
   // Database
   DATABASE_URL: z.string().url(),
@@ -53,6 +55,11 @@ const configSchema = z.object({
   // Caching
   CACHE_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   CACHE_TTL: z.string().default('60').transform(Number), // Default TTL in seconds
+
+  // Initial Admin (for first deployment - creates admin user if no users exist)
+  INITIAL_ADMIN_EMAIL: z.string().email().optional(),
+  INITIAL_ADMIN_PASSWORD: z.string().min(8).optional(),
+  INITIAL_ADMIN_NAME: z.string().optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;

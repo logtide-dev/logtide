@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
     import { adminAPI, type OrganizationDetails } from "$lib/api/admin";
     import { Button, buttonVariants } from "$lib/components/ui/button";
     import { Badge } from "$lib/components/ui/badge";
@@ -28,7 +28,7 @@
         AlertTriangle,
     } from "lucide-svelte";
 
-    const orgId = $derived($page.params.id);
+    const orgId = $derived(page.params.id);
     let org: OrganizationDetails | null = $state(null);
     let loading = $state(true);
     let error = $state("");

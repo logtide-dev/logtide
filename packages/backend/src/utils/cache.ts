@@ -14,6 +14,7 @@ export const CACHE_TTL = {
   TRACE: 5 * 60, // 5 minutes
   SIGMA_RULES: 60 * 60, // 1 hour
   ADMIN: 60, // 1 minute
+  SETTINGS: 5 * 60, // 5 minutes - system settings
 } as const;
 
 /**
@@ -29,6 +30,7 @@ export const CACHE_PREFIX = {
   STATS: 'stats',
   SIGMA: 'sigma',
   ADMIN: 'admin',
+  SETTINGS: 'settings',
 } as const;
 
 /**
@@ -169,6 +171,13 @@ export const CacheManager = {
   },
 
   /**
+   * Build cache key for system settings
+   */
+  settingsKey(key: string): string {
+    return `${CACHE_PREFIX.SETTINGS}:${key}`;
+  },
+
+  /**
    * Get a cached value
    */
   async get<T>(key: string): Promise<T | null> {
@@ -294,6 +303,13 @@ export const CacheManager = {
    */
   async invalidateSigmaRules(orgId: string): Promise<void> {
     await this.delete(this.sigmaRulesKey(orgId));
+  },
+
+  /**
+   * Invalidate all settings cache
+   */
+  async invalidateSettings(): Promise<void> {
+    await this.deletePattern(`${CACHE_PREFIX.SETTINGS}:*`);
   },
 
   /**

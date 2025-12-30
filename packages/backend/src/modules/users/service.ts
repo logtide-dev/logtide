@@ -118,6 +118,11 @@ export class UsersService {
       throw new Error('Invalid email or password');
     }
 
+    // Check if user has a local password (external auth users may not)
+    if (!user.password_hash) {
+      throw new Error('Please log in using your organization SSO');
+    }
+
     // Verify password
     const isValidPassword = await this.verifyPassword(input.password, user.password_hash);
     if (!isValidPassword) {
@@ -318,6 +323,10 @@ export class UsersService {
         throw new Error('User not found');
       }
 
+      if (!userWithPassword.password_hash) {
+        throw new Error('Password cannot be changed for external auth users');
+      }
+
       const isValidPassword = await this.verifyPassword(
         input.currentPassword,
         userWithPassword.password_hash
@@ -370,6 +379,9 @@ export class UsersService {
     }
 
     // Verify password before deletion
+    if (!user.password_hash) {
+      throw new Error('Account deletion requires a local password. Please contact your administrator.');
+    }
     const isValidPassword = await this.verifyPassword(password, user.password_hash);
     if (!isValidPassword) {
       throw new Error('Invalid password');

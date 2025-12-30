@@ -248,6 +248,82 @@ describe('Ingestion API', () => {
             }
         });
 
+        it('should normalize syslog levels to LogWard levels', async () => {
+            const testCases = [
+                // Critical levels
+                { level: 'emergency', expected: 'critical' },
+                { level: 'emerg', expected: 'critical' },
+                { level: 'alert', expected: 'critical' },
+                { level: 'crit', expected: 'critical' },
+                { level: 'fatal', expected: 'critical' },
+                // Error levels
+                { level: 'err', expected: 'error' },
+                // Warning levels
+                { level: 'warning', expected: 'warn' },
+                // Info levels (notice maps to info)
+                { level: 'notice', expected: 'info' },
+                { level: 'information', expected: 'info' },
+                // Debug levels
+                { level: 'trace', expected: 'debug' },
+                { level: 'verbose', expected: 'debug' },
+            ];
+
+            for (const { level, expected } of testCases) {
+                const uniqueMsg = `Syslog-test-${level}-${Date.now()}-${Math.random()}`;
+
+                await request(app.server)
+                    .post('/api/v1/ingest/single')
+                    .set('x-api-key', apiKey)
+                    .send({
+                        time: new Date().toISOString(),
+                        service: 'test-syslog',
+                        level,
+                        message: uniqueMsg,
+                    })
+                    .expect(200);
+
+                const dbLog = await db
+                    .selectFrom('logs')
+                    .selectAll()
+                    .where('message', '=', uniqueMsg)
+                    .executeTakeFirst();
+
+                expect(dbLog?.level, `Level "${level}" should map to "${expected}"`).toBe(expected);
+            }
+        });
+
+        it('should handle case-insensitive syslog levels', async () => {
+            const testCases = [
+                { level: 'NOTICE', expected: 'info' },
+                { level: 'Warning', expected: 'warn' },
+                { level: 'ERROR', expected: 'error' },
+                { level: 'CRITICAL', expected: 'critical' },
+            ];
+
+            for (const { level, expected } of testCases) {
+                const uniqueMsg = `Syslog-case-test-${level}-${Date.now()}-${Math.random()}`;
+
+                await request(app.server)
+                    .post('/api/v1/ingest/single')
+                    .set('x-api-key', apiKey)
+                    .send({
+                        time: new Date().toISOString(),
+                        service: 'test-syslog-case',
+                        level,
+                        message: uniqueMsg,
+                    })
+                    .expect(200);
+
+                const dbLog = await db
+                    .selectFrom('logs')
+                    .selectAll()
+                    .where('message', '=', uniqueMsg)
+                    .executeTakeFirst();
+
+                expect(dbLog?.level, `Level "${level}" should map to "${expected}"`).toBe(expected);
+            }
+        });
+
         it('should handle NDJSON content type', async () => {
             const log = {
                 time: new Date().toISOString(),

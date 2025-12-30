@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { page } from "$app/stores";
+  import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { tracesAPI, type TraceRecord, type SpanRecord } from "$lib/api/traces";
   import Button from "$lib/components/ui/button/button.svelte";
@@ -32,8 +32,8 @@
     depth: number;
   }
 
-  let traceId = $derived($page.params.id);
-  let projectId = $derived($page.url.searchParams.get("projectId") || "");
+  let traceId = $derived(page.params.id);
+  let projectId = $derived(page.url.searchParams.get("projectId") || "");
 
   let trace = $state<TraceRecord | null>(null);
   let spans = $state<SpanRecord[]>([]);
