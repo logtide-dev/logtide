@@ -22,7 +22,7 @@ export interface LogsTable {
 export interface UsersTable {
   id: Generated<string>;
   email: string;
-  password_hash: string;
+  password_hash: string | null; // Nullable: OIDC/LDAP users may not have local passwords
   name: string;
   is_admin: Generated<boolean>;
   disabled: Generated<boolean>;
@@ -370,6 +370,59 @@ export interface ErrorGroupsTable {
   updated_at: Generated<Timestamp>;
 }
 
+// ============================================================================
+// EXTERNAL AUTHENTICATION TABLES (LDAP/OIDC)
+// ============================================================================
+
+export type AuthProviderType = 'local' | 'oidc' | 'ldap';
+
+export interface AuthProvidersTable {
+  id: Generated<string>;
+  type: AuthProviderType;
+  name: string;
+  slug: string;
+  enabled: Generated<boolean>;
+  is_default: Generated<boolean>;
+  display_order: Generated<number>;
+  icon: string | null;
+  config: ColumnType<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface UserIdentitiesTable {
+  id: Generated<string>;
+  user_id: string;
+  provider_id: string;
+  provider_user_id: string;
+  metadata: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  last_login_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface OidcStatesTable {
+  id: Generated<string>;
+  state: string;
+  nonce: string;
+  code_verifier: string; // PKCE code verifier for token exchange
+  provider_id: string;
+  redirect_uri: string; // Required for OIDC token exchange
+  created_at: Generated<Timestamp>;
+}
+
+// ============================================================================
+// SYSTEM SETTINGS TABLE
+// ============================================================================
+
+export interface SystemSettingsTable {
+  key: string;
+  value: ColumnType<unknown, unknown, unknown>; // JSONB - can be any JSON value
+  description: string | null;
+  updated_at: Generated<Timestamp>;
+  updated_by: string | null;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -399,4 +452,10 @@ export interface Database {
   exceptions: ExceptionsTable;
   stack_frames: StackFramesTable;
   error_groups: ErrorGroupsTable;
+  // External authentication tables
+  auth_providers: AuthProvidersTable;
+  user_identities: UserIdentitiesTable;
+  oidc_states: OidcStatesTable;
+  // System settings
+  system_settings: SystemSettingsTable;
 }

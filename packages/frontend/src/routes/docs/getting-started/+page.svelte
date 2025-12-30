@@ -14,7 +14,10 @@
         CollapsibleTrigger,
     } from "$lib/components/ui/collapsible";
     import { Button } from "$lib/components/ui/button";
-    import { CheckCircle2, Cloud, Server, ChevronDown } from "lucide-svelte";
+    import * as Tabs from "$lib/components/ui/tabs";
+    import { CheckCircle2, Cloud, Server, ChevronDown, Terminal, Code, Container, Activity } from "lucide-svelte";
+
+    let selectedTab = "curl";
 </script>
 
 <div class="docs-content">
@@ -280,7 +283,7 @@ docker compose up -d
                     <li><strong>GitHub:</strong> <code>ghcr.io/logward-dev/logward-backend</code></li>
                 </ul>
                 <p class="mt-3 text-xs">
-                    Pin versions in production: <code>LOGWARD_BACKEND_IMAGE=logward/backend:0.3.1</code>
+                    Pin versions in production: <code>LOGWARD_BACKEND_IMAGE=logward/backend:0.3.3</code>
                 </p>
             </CardContent>
         </Card>
@@ -324,17 +327,42 @@ docker compose up -d
         <div>
             <h3 id="send-first-log" class="text-lg font-semibold mb-2 scroll-mt-20">4. Send Your First Log</h3>
             <p class="text-muted-foreground mb-3">
-                Use the ingestion API to send logs:
+                Choose your preferred method to start sending logs to LogWard:
             </p>
 
-            <div class="space-y-4">
-                <div>
-                    <h4 class="text-sm font-semibold mb-2">
-                        Cloud (api.logward.dev)
-                    </h4>
-                    <CodeBlock
-                        lang="bash"
-                        code={`curl -X POST https://api.logward.dev/api/v1/ingest \\
+            <Tabs.Root bind:value={selectedTab} class="w-full">
+                <Tabs.List class="grid w-full grid-cols-5 mb-4">
+                    <Tabs.Trigger value="curl" class="flex items-center gap-1.5">
+                        <Terminal class="w-3.5 h-3.5" />
+                        <span class="hidden sm:inline">curl</span>
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="python" class="flex items-center gap-1.5">
+                        <Code class="w-3.5 h-3.5" />
+                        <span class="hidden sm:inline">Python</span>
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="nodejs" class="flex items-center gap-1.5">
+                        <Code class="w-3.5 h-3.5" />
+                        <span class="hidden sm:inline">Node.js</span>
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="docker" class="flex items-center gap-1.5">
+                        <Container class="w-3.5 h-3.5" />
+                        <span class="hidden sm:inline">Docker</span>
+                    </Tabs.Trigger>
+                    <Tabs.Trigger value="otel" class="flex items-center gap-1.5">
+                        <Activity class="w-3.5 h-3.5" />
+                        <span class="hidden sm:inline">OTel</span>
+                    </Tabs.Trigger>
+                </Tabs.List>
+
+                <Tabs.Content value="curl" class="space-y-4">
+                    <p class="text-sm text-muted-foreground">
+                        The simplest way to test log ingestion using curl:
+                    </p>
+                    <div>
+                        <h4 class="text-sm font-semibold mb-2">Cloud (api.logward.dev)</h4>
+                        <CodeBlock
+                            lang="bash"
+                            code={`curl -X POST https://api.logward.dev/api/v1/ingest \\
   -H "X-API-Key: lp_your_api_key_here" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -343,21 +371,16 @@ docker compose up -d
       "service": "my-app",
       "level": "info",
       "message": "Hello from LogWard Cloud!",
-      "metadata": {
-        "environment": "production"
-      }
+      "metadata": { "environment": "production" }
     }]
   }'`}
-                    />
-                </div>
-
-                <div>
-                    <h4 class="text-sm font-semibold mb-2">
-                        Self-Hosted
-                    </h4>
-                    <CodeBlock
-                        lang="bash"
-                        code={`curl -X POST http://localhost:8080/api/v1/ingest \\
+                        />
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-semibold mb-2">Self-Hosted</h4>
+                        <CodeBlock
+                            lang="bash"
+                            code={`curl -X POST http://localhost:8080/api/v1/ingest \\
   -H "X-API-Key: lp_your_api_key_here" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -366,14 +389,156 @@ docker compose up -d
       "service": "my-app",
       "level": "info",
       "message": "Hello from LogWard!",
-      "metadata": {
-        "environment": "production"
-      }
+      "metadata": { "environment": "production" }
     }]
   }'`}
+                        />
+                    </div>
+                </Tabs.Content>
+
+                <Tabs.Content value="python" class="space-y-4">
+                    <p class="text-sm text-muted-foreground">
+                        Send logs from Python using the requests library (no SDK needed):
+                    </p>
+                    <CodeBlock
+                        lang="python"
+                        code={`import requests
+from datetime import datetime, timezone
+
+# Configuration
+API_URL = "https://api.logward.dev/api/v1/ingest"  # or http://localhost:8080 for self-hosted
+API_KEY = "lp_your_api_key_here"
+
+# Send a log
+response = requests.post(
+    API_URL,
+    headers={
+        "X-API-Key": API_KEY,
+        "Content-Type": "application/json"
+    },
+    json={
+        "logs": [{
+            "time": datetime.now(timezone.utc).isoformat(),
+            "service": "my-python-app",
+            "level": "info",
+            "message": "Hello from Python!",
+            "metadata": {"user_id": 123}
+        }]
+    }
+)
+
+print(f"Status: {response.status_code}")`}
                     />
-                </div>
-            </div>
+                    <p class="text-xs text-muted-foreground">
+                        For production use, consider the <a href="/docs/sdks/python" class="text-primary underline">Python SDK</a> with retry logic and batching.
+                    </p>
+                </Tabs.Content>
+
+                <Tabs.Content value="nodejs" class="space-y-4">
+                    <p class="text-sm text-muted-foreground">
+                        Send logs from Node.js using fetch (no SDK needed):
+                    </p>
+                    <CodeBlock
+                        lang="javascript"
+                        code={`// Node.js 18+ (native fetch) or install node-fetch
+const API_URL = "https://api.logward.dev/api/v1/ingest"; // or http://localhost:8080
+const API_KEY = "lp_your_api_key_here";
+
+async function sendLog() {
+  const response = await fetch(API_URL, {
+    method: "POST",
+    headers: {
+      "X-API-Key": API_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      logs: [{
+        time: new Date().toISOString(),
+        service: "my-node-app",
+        level: "info",
+        message: "Hello from Node.js!",
+        metadata: { userId: 123 }
+      }]
+    })
+  });
+
+  console.log(\`Status: \${response.status}\`);
+}
+
+sendLog();`}
+                    />
+                    <p class="text-xs text-muted-foreground">
+                        For production use, consider the <a href="/docs/sdks/nodejs" class="text-primary underline">Node.js SDK</a> with circuit breaker and batching.
+                    </p>
+                </Tabs.Content>
+
+                <Tabs.Content value="docker" class="space-y-4">
+                    <p class="text-sm text-muted-foreground">
+                        Automatically collect logs from Docker containers using Fluent Bit:
+                    </p>
+                    <CodeBlock
+                        lang="yaml"
+                        code={`# Add to your docker-compose.yml
+services:
+  my-app:
+    image: my-app:latest
+    # Your app just writes to stdout - no code changes needed!
+
+  fluent-bit:
+    image: fluent/fluent-bit:4.2.2  # or cr.fluentbit.io/fluent/fluent-bit:4.2.2 for ARM64
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      LOGWARD_API_KEY: lp_your_api_key_here
+      LOGWARD_API_HOST: api.logward.dev  # or backend for self-hosted`}
+                    />
+                    <p class="text-xs text-muted-foreground">
+                        See the full <a href="/docs/no-sdk-setup" class="text-primary underline">No-SDK Setup guide</a> for complete Fluent Bit configuration.
+                        For ARM64/Raspberry Pi, use <code>cr.fluentbit.io/fluent/fluent-bit:4.2.2</code>.
+                    </p>
+                </Tabs.Content>
+
+                <Tabs.Content value="otel" class="space-y-4">
+                    <p class="text-sm text-muted-foreground">
+                        Use OpenTelemetry for vendor-neutral instrumentation:
+                    </p>
+                    <CodeBlock
+                        lang="bash"
+                        code={`# Install OpenTelemetry packages (Node.js example)
+npm install @opentelemetry/api-logs @opentelemetry/sdk-logs \\
+  @opentelemetry/exporter-logs-otlp-http`}
+                    />
+                    <CodeBlock
+                        lang="typescript"
+                        code={`import { logs, SeverityNumber } from '@opentelemetry/api-logs';
+import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
+import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
+
+// Configure exporter
+const exporter = new OTLPLogExporter({
+  url: 'https://api.logward.dev/api/v1/otlp/logs', // or localhost:8080
+  headers: { 'X-API-Key': 'lp_your_api_key_here' },
+});
+
+// Setup provider
+const provider = new LoggerProvider();
+provider.addLogRecordProcessor(new BatchLogRecordProcessor(exporter));
+logs.setGlobalLoggerProvider(provider);
+
+// Send a log
+const logger = logs.getLogger('my-app');
+logger.emit({
+  severityNumber: SeverityNumber.INFO,
+  body: 'Hello from OpenTelemetry!',
+  attributes: { 'user.id': '123' },
+});`}
+                    />
+                    <p class="text-xs text-muted-foreground">
+                        See the full <a href="/docs/opentelemetry" class="text-primary underline">OpenTelemetry guide</a> for Python, Go, and collector setup.
+                    </p>
+                </Tabs.Content>
+            </Tabs.Root>
         </div>
     </div>
 

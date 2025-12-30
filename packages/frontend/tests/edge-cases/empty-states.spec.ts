@@ -31,14 +31,16 @@ test.describe('Empty States', () => {
 
     // Navigate to dashboard to trigger org loading
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
     await page.waitForTimeout(500);
   });
 
   test('Dashboard shows empty state when no logs exist', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(1000);
 
     // Dashboard should load but might show zero stats or empty widgets
     const pageContent = await page.content();
@@ -48,15 +50,15 @@ test.describe('Empty States', () => {
 
   test('Search page shows empty state when no logs match', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(1000);
 
     // Search for something that definitely doesn't exist
     const searchInput = page.locator('input#search, input[placeholder*="search" i]');
     if (await searchInput.isVisible({ timeout: 5000 }).catch(() => false)) {
       await searchInput.fill('nonexistent-query-that-will-never-match-12345');
       await searchInput.press('Enter');
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
     }
 
     // Should show "No logs found" or similar empty state
@@ -77,8 +79,8 @@ test.describe('Empty States', () => {
 
     // This user has no org, so should be redirected to onboarding
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(1000);
 
     // Should show onboarding or empty state
     const pageContent = await page.content();
@@ -90,8 +92,8 @@ test.describe('Empty States', () => {
 
   test('Alerts page shows empty state when no alerts exist', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(1000);
 
     // Should show alert rules page with create button or empty state
     const hasAlertRulesHeading = await page.locator('h2:has-text("Alert Rules")').isVisible().catch(() => false);
@@ -103,8 +105,8 @@ test.describe('Empty States', () => {
 
   test('Alert history shows empty state when no alerts triggered', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/alerts`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(1000);
 
     // Should show empty state or no rows
     const hasEmptyState = await page.locator('text=/no.*alert/i, text=/no.*history/i').isVisible().catch(() => false);
@@ -115,8 +117,8 @@ test.describe('Empty States', () => {
 
   test('Project settings shows appropriate state for new project', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('load');
+    await page.waitForTimeout(1000);
 
     // Settings page should load without errors - look for any heading
     const hasHeading = await page.locator('h1, h2').first().isVisible().catch(() => false);

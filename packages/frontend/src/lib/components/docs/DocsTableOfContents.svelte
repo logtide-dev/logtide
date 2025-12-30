@@ -1,6 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
-    import { page } from "$app/stores";
+    import { page } from "$app/state";
 
     interface TocItem {
         id: string;
@@ -8,14 +8,16 @@
         level: number;
     }
 
-    let headings: TocItem[] = [];
-    let activeId = "";
+    let headings: TocItem[] = $state([]);
+    let activeId = $state("");
 
     // Re-extract headings when page changes (browser only)
-    $: if (typeof window !== "undefined" && $page.url.pathname) {
-        // Use setTimeout to ensure DOM has updated
-        setTimeout(() => extractHeadings(), 50);
-    }
+    $effect(() => {
+        if (typeof window !== "undefined" && page.url.pathname) {
+            // Use setTimeout to ensure DOM has updated
+            setTimeout(() => extractHeadings(), 50);
+        }
+    });
 
     function extractHeadings() {
         // Only run in browser
@@ -98,7 +100,7 @@
                         class:toc-item-h3={heading.level === 3}
                     >
                         <button
-                            on:click={() => scrollToHeading(heading.id)}
+                            onclick={() => scrollToHeading(heading.id)}
                             title={heading.text}
                             class="toc-link {activeId === heading.id
                                 ? 'active'

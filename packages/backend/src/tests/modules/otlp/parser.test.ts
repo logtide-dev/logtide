@@ -276,13 +276,22 @@ describe('OTLP Parser', () => {
       expect(result.resourceLogs).toHaveLength(1);
     });
 
-    it('should throw error for actual protobuf data', async () => {
-      // Binary data that isn't JSON
+    it('should throw error for invalid protobuf data', async () => {
+      // Invalid binary data that cannot be parsed as valid protobuf
       const buffer = Buffer.from([0x0a, 0x0b, 0x0c, 0x0d]);
 
       await expect(parseOtlpProtobuf(buffer)).rejects.toThrow(
-        'Protobuf parsing requires proto definitions'
+        'Failed to decode OTLP protobuf'
       );
+    });
+
+    it('should parse valid empty protobuf message', async () => {
+      // An empty ExportLogsServiceRequest (just the message with no resourceLogs)
+      // In protobuf, an empty message is literally empty bytes
+      const buffer = Buffer.from([]);
+
+      const result = await parseOtlpProtobuf(buffer);
+      expect(result.resourceLogs).toEqual([]);
     });
 
     it('should handle array JSON format', async () => {

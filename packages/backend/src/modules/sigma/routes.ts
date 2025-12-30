@@ -3,35 +3,11 @@ import { z } from 'zod';
 import { SigmaService } from './service.js';
 import { sigmaSyncService } from './sync-service.js';
 import { MITREMapper } from './mitre-mapper.js';
-import { usersService } from '../users/service.js';
+import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 
 const sigmaService = new SigmaService();
 const organizationsService = new OrganizationsService();
-
-/**
- * Middleware to extract and validate session token
- */
-async function authenticate(request: any, reply: any) {
-  const token = request.headers.authorization?.replace('Bearer ', '');
-
-  if (!token) {
-    return reply.status(401).send({
-      error: 'No token provided',
-    });
-  }
-
-  const user = await usersService.validateSession(token);
-
-  if (!user) {
-    return reply.status(401).send({
-      error: 'Invalid or expired session',
-    });
-  }
-
-  // Attach user to request
-  request.user = user;
-}
 
 /**
  * Check if user is member of organization

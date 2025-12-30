@@ -5,6 +5,7 @@
   import { authStore } from '$lib/stores/auth';
   import { currentOrganization, organizationStore } from '$lib/stores/organization';
   import { OrganizationsAPI } from '$lib/api/organizations';
+  import { authAPI } from '$lib/api/auth';
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -34,11 +35,43 @@
   let checkingOrg = $state(true);
 
   onMount(async () => {
-    if (!$authStore.user) {
-      goto('/login');
-      return;
+    // Check auth-free mode first
+    try {
+      const config = await authAPI.getAuthConfig();
+
+      if (config.authMode === 'none') {
+        // Auth-free mode: get user from backend without token
+        const result = await authAPI.getCurrentUserAuthFree();
+
+        if (result && result.user) {
+          // Set user in authStore (use dummy token for auth-free mode)
+          authStore.setAuth(result.user, 'auth-free');
+          // Also update token immediately for organizationsAPI
+          token = 'auth-free';
+        } else {
+          // Auth-free mode is enabled but no default user configured
+          console.error('Auth-free mode enabled but no default user configured');
+          loading = false;
+          checkingOrg = false;
+          return;
+        }
+      } else {
+        // Standard mode: check for token
+        if (!$authStore.user) {
+          goto('/login');
+          return;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to check auth config:', e);
+      // Fall back to standard auth check
+      if (!$authStore.user) {
+        goto('/login');
+        return;
+      }
     }
 
+    // Now check organizations
     if (!$currentOrganization) {
       try {
         const orgs = await organizationStore.fetchOrganizations(async () => {

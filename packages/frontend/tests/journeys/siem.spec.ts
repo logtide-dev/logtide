@@ -46,13 +46,15 @@ test.describe('SIEM Journey', () => {
 
     // Navigate to dashboard first to trigger organization loading
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
+    await page.waitForTimeout(500);
   });
 
   test('1. User can navigate to Security dashboard', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Verify security dashboard elements
@@ -71,7 +73,7 @@ test.describe('SIEM Journey', () => {
 
   test('2. User can view the incidents list page', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Verify incidents page elements
@@ -86,7 +88,7 @@ test.describe('SIEM Journey', () => {
 
   test('3. User can filter incidents by status', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Look for filter buttons/dropdowns
@@ -112,7 +114,7 @@ test.describe('SIEM Journey', () => {
 
   test('4. User can filter incidents by severity', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Look for severity filter
@@ -154,7 +156,7 @@ test.describe('SIEM Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Either we see incident details or error
@@ -182,7 +184,7 @@ test.describe('SIEM Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Find and click status dropdown
@@ -222,7 +224,7 @@ test.describe('SIEM Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Switch to Comments tab
@@ -276,7 +278,7 @@ test.describe('SIEM Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Switch to History tab
@@ -311,7 +313,7 @@ test.describe('SIEM Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Verify Detections tab is present
@@ -344,7 +346,7 @@ test.describe('SIEM Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Find the actions dropdown (3-dot menu)
@@ -374,7 +376,7 @@ test.describe('SIEM Journey', () => {
 
   test('11. Dashboard shows summary stats widgets', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Look for summary stat cards
@@ -396,7 +398,7 @@ test.describe('SIEM Journey', () => {
 
   test('12. Dashboard time range filter works', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Look for time range selector
@@ -421,14 +423,14 @@ test.describe('SIEM Journey', () => {
 
   test('13. Navigation from dashboard to incidents works', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click on "View All Incidents" or similar link
     const viewIncidentsLink = page.locator('a:has-text("View All"), a:has-text("Incidents"), button:has-text("View Incidents")').first();
     if (await viewIncidentsLink.isVisible({ timeout: 5000 }).catch(() => false)) {
       await viewIncidentsLink.click();
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('load');
       await page.waitForTimeout(1000);
 
       // Should be on incidents page
@@ -454,14 +456,14 @@ test.describe('SIEM Journey', () => {
     }
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Click back button
     const backButton = page.locator('button:has([class*="ArrowLeft"]), a:has([class*="ArrowLeft"]), button[aria-label*="Back"]').first();
     if (await backButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await backButton.click();
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('load');
       await page.waitForTimeout(1000);
 
       // Should be back on incidents list
@@ -471,7 +473,7 @@ test.describe('SIEM Journey', () => {
 
   test('15. Security link appears in main navigation', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(1000);
 
     // Look for Security link in navigation
@@ -480,7 +482,7 @@ test.describe('SIEM Journey', () => {
 
     if (isVisible) {
       await securityLink.click();
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('load');
       await page.waitForTimeout(1000);
 
       // Should navigate to security dashboard

@@ -2,6 +2,8 @@ import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
 import { apiKeysService } from '../api-keys/service.js';
 import { usersService } from '../users/service.js';
+import { settingsService } from '../settings/service.js';
+import { bootstrapService } from '../bootstrap/service.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -34,6 +36,17 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       request.url.startsWith('/api/v1/invitations')
     ) {
       return;
+    }
+
+    // Check for auth-free mode first
+    const authMode = await settingsService.getAuthMode();
+    if (authMode === 'none') {
+      const defaultUser = await bootstrapService.getDefaultUser();
+      if (defaultUser) {
+        request.authenticated = true;
+        // In auth-free mode, projectId comes from query params
+        return;
+      }
     }
 
     const apiKey = request.headers['x-api-key'] as string;

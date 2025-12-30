@@ -37,14 +37,15 @@
         <p class="mb-4">
             The OTLP endpoint accepts logs in both JSON and Protobuf formats,
             making it compatible with all OpenTelemetry SDKs and collectors.
+            Both content types are fully supported with automatic format detection.
         </p>
 
         <Card class="mb-4">
             <CardContent class="pt-4">
                 <div class="grid gap-3 text-sm">
                     <div class="flex justify-between">
-                        <span class="text-muted-foreground">Endpoint:</span>
-                        <code class="font-mono">POST /api/v1/otlp/logs</code>
+                        <span class="text-muted-foreground">Endpoint Path:</span>
+                        <code class="font-mono">/api/v1/otlp/logs</code>
                     </div>
                     <div class="flex justify-between">
                         <span class="text-muted-foreground">Content Types:</span>
@@ -58,6 +59,30 @@
                         <code class="font-mono">X-API-Key</code> header
                     </div>
                 </div>
+            </CardContent>
+        </Card>
+
+        <Card class="mb-4 border-blue-500/30 bg-blue-500/5">
+            <CardContent class="pt-4">
+                <h4 class="font-semibold mb-2">Full Endpoint URLs</h4>
+                <div class="grid gap-2 text-sm">
+                    <div>
+                        <span class="text-muted-foreground">LogWard Cloud:</span>
+                        <code class="ml-2 font-mono">https://api.logward.dev/api/v1/otlp/logs</code>
+                    </div>
+                    <div>
+                        <span class="text-muted-foreground">Self-hosted (default):</span>
+                        <code class="ml-2 font-mono">http://your-server:8080/api/v1/otlp/logs</code>
+                    </div>
+                    <div>
+                        <span class="text-muted-foreground">Self-hosted (with TLS):</span>
+                        <code class="ml-2 font-mono">https://your-server:443/api/v1/otlp/logs</code>
+                    </div>
+                </div>
+                <p class="text-xs text-muted-foreground mt-3">
+                    <strong>Note:</strong> The default backend port is <code>8080</code> (HTTP).
+                    If you're using a reverse proxy with TLS, use port <code>443</code> (HTTPS).
+                </p>
             </CardContent>
         </Card>
     </div>
@@ -203,8 +228,10 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { logs, SeverityNumber } from '@opentelemetry/api-logs';
 
 // Configure the OTLP exporter
+// Self-hosted: http://your-server:8080/api/v1/otlp/logs
+// Cloud: https://api.logward.dev/api/v1/otlp/logs
 const logExporter = new OTLPLogExporter({
-  url: 'https://your-logward-instance.com/api/v1/otlp/logs',
+  url: 'http://your-server:8080/api/v1/otlp/logs',
   headers: {
     'X-API-Key': 'your-api-key-here',
   },
@@ -267,8 +294,10 @@ resource = Resource.create({
 })
 
 # Configure the OTLP exporter
+# Self-hosted: http://your-server:8080/api/v1/otlp/logs
+# Cloud: https://api.logward.dev/api/v1/otlp/logs
 exporter = OTLPLogExporter(
-    endpoint="https://your-logward-instance.com/api/v1/otlp/logs",
+    endpoint="http://your-server:8080/api/v1/otlp/logs",
     headers={"X-API-Key": "your-api-key-here"},
 )
 
@@ -331,9 +360,12 @@ func main() {
     ctx := context.Background()
 
     // Create the OTLP exporter
+    // Self-hosted: your-server:8080 (with WithInsecure())
+    // Cloud: api.logward.dev (HTTPS by default)
     exporter, err := otlploghttp.New(ctx,
-        otlploghttp.WithEndpoint("your-logward-instance.com"),
+        otlploghttp.WithEndpoint("your-server:8080"),
         otlploghttp.WithURLPath("/api/v1/otlp/logs"),
+        otlploghttp.WithInsecure(), // Remove for HTTPS
         otlploghttp.WithHeaders(map[string]string{
             "X-API-Key": "your-api-key-here",
         }),
@@ -392,9 +424,13 @@ processors:
 
 exporters:
   otlphttp/logward:
-    endpoint: https://your-logward-instance.com
+    # Self-hosted: http://your-server:8080
+    # Cloud: https://api.logward.dev
+    endpoint: http://your-server:8080
     headers:
       X-API-Key: your-api-key-here
+    tls:
+      insecure: true  # Set to false for HTTPS
 
 service:
   pipelines:
@@ -431,7 +467,8 @@ services:
 
     <div class="mb-8">
         <p class="mb-4">
-            Fluent Bit can forward logs to LogWard using the OpenTelemetry output plugin:
+            Fluent Bit can forward logs to LogWard using the OpenTelemetry output plugin.
+            Both JSON and Protobuf formats are supported:
         </p>
 
         <CodeBlock
@@ -448,13 +485,20 @@ services:
 [OUTPUT]
     Name         opentelemetry
     Match        *
-    Host         your-logward-instance.com
-    Port         443
+    # Self-hosted (HTTP): Host your-server, Port 8080, Tls Off
+    # Cloud (HTTPS): Host api.logward.dev, Port 443, Tls On
+    Host         your-server
+    Port         8080
     Uri          /api/v1/otlp/logs
     Log_response_payload True
-    Tls          On
+    Tls          Off
     Header       X-API-Key your-api-key-here`}
         />
+
+        <p class="mt-4 text-sm text-muted-foreground">
+            <strong>Note:</strong> LogWard supports both Protobuf (default) and JSON encoding.
+            To use JSON instead, add <code>Logs_encoding json</code> to the OUTPUT section.
+        </p>
     </div>
 
     <h2
@@ -588,7 +632,7 @@ span.end();`}
                     <ul class="list-disc pl-4 space-y-1">
                         <li>Check that your API key is valid and has ingestion permissions</li>
                         <li>Verify you're sending to <code>/api/v1/otlp/logs</code></li>
-                        <li>Use <code>application/json</code> content type for best compatibility</li>
+                        <li>Both <code>application/json</code> and <code>application/x-protobuf</code> are supported</li>
                         <li>Check rate limits (default: 200 req/min per API key)</li>
                     </ul>
                 </CardContent>
@@ -623,18 +667,28 @@ span.end();`}
         <h3 id="debug-logging" class="text-lg font-semibold mt-6 mb-3 scroll-mt-20">Enable Debug Logging</h3>
 
         <p class="mb-4 text-sm text-muted-foreground">
-            Enable debug logging in your OpenTelemetry SDK to see request details:
+            Enable debug logging to troubleshoot ingestion issues:
         </p>
 
         <CodeBlock
             lang="bash"
-            code={`# Node.js
+            code={`# LogWard Backend - Enable OTLP debug logging
+# Shows raw protobuf structure for debugging parsing issues
+OTLP_DEBUG=true
+
+# OpenTelemetry SDK - Node.js
 export OTEL_LOG_LEVEL=debug
 
-# Python
+# OpenTelemetry SDK - Python
 import logging
 logging.basicConfig(level=logging.DEBUG)`}
         />
+
+        <p class="mt-4 text-sm text-muted-foreground">
+            When <code>OTLP_DEBUG=true</code> is set on the LogWard backend,
+            it will log the raw protobuf structure of incoming log records,
+            which helps diagnose parsing or field mapping issues.
+        </p>
     </div>
 
     <h2

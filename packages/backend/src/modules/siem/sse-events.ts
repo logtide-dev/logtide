@@ -4,6 +4,8 @@ import { SiemService } from './service.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { UsersService } from '../users/service.js';
 import { db } from '../../database/index.js';
+import { settingsService } from '../settings/service.js';
+import { bootstrapService } from '../bootstrap/service.js';
 
 const siemService = new SiemService(db);
 const organizationsService = new OrganizationsService();
@@ -62,12 +64,26 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
 
         const query = schema.parse(request.query);
 
-        // Validate session token
-        const user = await usersService.validateSession(query.token);
-        if (!user) {
-          return reply.status(401).send({
-            error: 'Invalid or expired session token',
-          });
+        // Check for auth-free mode first
+        const authMode = await settingsService.getAuthMode();
+        let user;
+
+        if (authMode === 'none') {
+          // Auth-free mode: use default user
+          user = await bootstrapService.getDefaultUser();
+          if (!user) {
+            return reply.status(503).send({
+              error: 'Auth-free mode enabled but default user not configured',
+            });
+          }
+        } else {
+          // Standard mode: validate session token
+          user = await usersService.validateSession(query.token);
+          if (!user) {
+            return reply.status(401).send({
+              error: 'Invalid or expired session token',
+            });
+          }
         }
 
         // Verify user is member of organization

@@ -5,6 +5,101 @@ All notable changes to LogWard will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2025-12-30
+
+### Added
+
+- **LDAP Authentication**: Enterprise directory integration for user authentication (#63)
+  - LDAP/Active Directory server configuration via environment variables
+  - Bind DN and search filter customization
+  - Automatic user provisioning on first login
+  - Secure LDAPS (SSL/TLS) support
+
+- **OpenID Connect (OIDC)**: SSO integration with identity providers (#63)
+  - Support for any OIDC-compliant provider (Authentik, Keycloak, Okta, Auth0, etc.)
+  - Automatic discovery via `.well-known/openid-configuration`
+  - Configurable scopes and claims mapping
+  - Silent token refresh for seamless sessions
+
+- **Initial Admin via Environment Variables**: Bootstrap admin account on first deployment (#64, #65)
+  - Set `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD`, `INITIAL_ADMIN_NAME` in `.env`
+  - Auto-generates secure password if not provided (displayed in logs)
+  - Only creates admin if no users with login credentials exist
+  - Safe to leave configured - ignored after first user creation
+
+- **Disable Sign-ups**: Control user registration for private deployments (#64)
+  - Set `DISABLE_SIGNUPS=true` to prevent new user registration
+  - Existing users and external auth (LDAP/OIDC) unaffected
+  - Useful for invitation-only or enterprise deployments
+
+- **Auth-free Mode for Home Labs**: Simplified single-user access (#64)
+  - Set `AUTH_FREE_MODE=true` to bypass authentication entirely
+  - Automatically uses first available organization
+  - Perfect for home lab and development environments
+  - Warning displayed in UI when enabled
+
+- **ARM64 / Raspberry Pi Support**: Full support for ARM-based deployments (#57)
+  - LogWard images built for both `linux/amd64` and `linux/arm64`
+  - Native support for Raspberry Pi 3/4/5 (64-bit OS)
+  - Configurable Fluent Bit image via `FLUENT_BIT_IMAGE` environment variable
+  - Documentation for ARM64-specific Fluent Bit registry (`cr.fluentbit.io`)
+
+### Changed
+
+- **Fluent Bit**: Updated default version from `latest` to `4.2.2`
+  - All documentation updated with pinned version
+  - ARM64 alternative documented in all code examples
+
+### Fixed
+
+- **Journald Log Format Detection**: Automatic parsing of systemd-journald logs (#60, #61)
+  - Auto-detects journald format (`_SYSTEMD_UNIT`, `SYSLOG_IDENTIFIER`, `MESSAGE`, `PRIORITY`, etc.)
+  - Extracts service name from `SYSLOG_IDENTIFIER` → `_SYSTEMD_UNIT` → `_COMM` → `_EXE`
+  - Extracts actual message from `MESSAGE` field instead of showing raw JSON
+  - Maps `PRIORITY` (0-7) to LogWard levels (critical/error/warn/info/debug)
+  - Uses journald timestamp (`__REALTIME_TIMESTAMP`) when present (already UTC)
+
+- **Syslog Level Mapping**: Improved handling of syslog severity levels (#60)
+  - Automatic mapping of syslog levels (notice, alert, emerg) to LogWard levels
+  - Case-insensitive level normalization
+  - Fixes logs appearing as "unknown" level
+
+- **OTLP Protobuf Parsing**: Proper binary protobuf support for OpenTelemetry (#61)
+  - Added `@opentelemetry/otlp-transformer` for correct protobuf decoding
+  - Fixes "Request body size did not match Content-Length" errors
+  - JSON and Protobuf formats both fully supported
+
+---
+
+## [0.3.2] - 2025-12-22
+
+### Fixed
+
+- **SvelteKit 2 Compatibility**: Updated imports from `$app/stores` to `$app/state` and adjusted event handlers (#55)
+  - Migrated deprecated `$app/stores` imports to the new `$app/state` module
+  - Updated event handlers to use the new SvelteKit 2 patterns
+  - Ensures compatibility with latest SvelteKit versions
+
+- **Traces Page Navigation**: Fixed "Get API Key" button on empty traces page leading to 404 (#53)
+  - Corrected navigation path from `/projects` to `/dashboard/projects`
+  - Fixed navigation buttons on the 404 error page
+  - Fixed feature tour links missing `/dashboard` prefix (search, alerts, traces, projects)
+  - Fixed trace detail page "Back to Traces" navigation
+
+- **Registration Error**: Fixed "Failed to fetch" error during user registration (#54, fixes #52)
+  - Resolved network error that prevented new users from completing registration
+  - Improved error handling in the registration flow
+
+---
+
+## [0.3.1] - 2025-12-19
+
+### Changed
+
+- **Security Policy**: Updated supported versions in SECURITY.md
+
+---
+
 ## [0.3.0] - 2025-12-10
 
 ### Added

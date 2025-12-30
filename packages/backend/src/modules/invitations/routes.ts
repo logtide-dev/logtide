@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { invitationsService } from './service.js';
-import { usersService } from '../users/service.js';
+import { authenticate } from '../auth/middleware.js';
 import type { OrgRole } from '@logward/shared';
 
 const organizationIdSchema = z.object({
@@ -21,30 +21,6 @@ const inviteUserSchema = z.object({
 const acceptInvitationSchema = z.object({
   token: z.string().min(1, 'Token is required'),
 });
-
-/**
- * Middleware to extract and validate session token
- */
-async function authenticate(request: any, reply: any) {
-  const token = request.headers.authorization?.replace('Bearer ', '');
-
-  if (!token) {
-    return reply.status(401).send({
-      error: 'No token provided',
-    });
-  }
-
-  const user = await usersService.validateSession(token);
-
-  if (!user) {
-    return reply.status(401).send({
-      error: 'Invalid or expired session',
-    });
-  }
-
-  // Attach user to request
-  request.user = user;
-}
 
 export async function invitationsRoutes(fastify: FastifyInstance) {
   // Get invitation details by token (public - for accept page preview)
@@ -171,6 +147,11 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
               error: error.message,
             });
           }
+          if (error.message.includes('Email server is not configured')) {
+            return reply.status(503).send({
+              error: error.message,
+            });
+          }
         }
 
         throw error;
@@ -271,6 +252,11 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
           }
           if (error.message.includes('not found or already accepted')) {
             return reply.status(404).send({
+              error: error.message,
+            });
+          }
+          if (error.message.includes('Email server is not configured')) {
+            return reply.status(503).send({
               error: error.message,
             });
           }

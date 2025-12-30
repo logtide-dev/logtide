@@ -896,6 +896,24 @@ export class AdminService {
     }
 
     /**
+     * Update user admin role
+     */
+    async updateUserRole(userId: string, isAdmin: boolean) {
+        const user = await db
+            .updateTable('users')
+            .set({ is_admin: isAdmin })
+            .where('id', '=', userId)
+            .returning(['id', 'email', 'name', 'is_admin', 'disabled'])
+            .executeTakeFirst();
+
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        return user;
+    }
+
+    /**
      * Reset user password (admin action)
      */
     async resetUserPassword(userId: string, newPassword: string) {

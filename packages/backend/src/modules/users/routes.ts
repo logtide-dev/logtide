@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { usersService } from './service.js';
 import { config } from '../../config/index.js';
+import { settingsService } from '../settings/service.js';
+import { bootstrapService } from '../bootstrap/service.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -36,6 +38,15 @@ export async function usersRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       try {
+        // Check if signup is enabled
+        const signupEnabled = await settingsService.isSignupEnabled();
+        if (!signupEnabled) {
+          return reply.status(403).send({
+            error: 'User registration is currently disabled',
+            code: 'SIGNUP_DISABLED',
+          });
+        }
+
         const body = registerSchema.parse(request.body);
 
         const user = await usersService.createUser(body);
@@ -150,8 +161,36 @@ export async function usersRoutes(fastify: FastifyInstance) {
     });
   });
 
-  // Get current user (requires auth)
+  // Get current user (requires auth, or returns default user in auth-free mode)
   fastify.get('/me', async (request, reply) => {
+    // Check for auth-free mode first
+    const authMode = await settingsService.getAuthMode();
+
+    if (authMode === 'none') {
+      // Auth-free mode: return default user
+      const defaultUser = await bootstrapService.getDefaultUser();
+
+      if (!defaultUser) {
+        return reply.status(503).send({
+          error: 'Service not ready',
+          message: 'Auth-free mode is enabled but default user not configured',
+        });
+      }
+
+      return reply.send({
+        user: {
+          id: defaultUser.id,
+          email: defaultUser.email,
+          name: defaultUser.name,
+          is_admin: defaultUser.is_admin,
+          createdAt: defaultUser.createdAt,
+          lastLogin: defaultUser.lastLogin,
+        },
+        authMode: 'none',
+      });
+    }
+
+    // Standard mode: validate session token
     const token = request.headers.authorization?.replace('Bearer ', '');
 
     if (!token) {

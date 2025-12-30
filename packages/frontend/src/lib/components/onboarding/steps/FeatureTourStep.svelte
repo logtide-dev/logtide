@@ -27,35 +27,35 @@
       icon: Search,
       title: 'Search & Filter',
       description: 'Find any log instantly with powerful filters by service, level, time, and full-text search.',
-      link: '/search',
+      link: '/dashboard/search',
       color: 'bg-purple-500/10 text-purple-500'
     },
     {
       icon: Bell,
       title: 'Alerts',
       description: 'Set up threshold-based alerts with email and webhook notifications.',
-      link: '/alerts',
+      link: '/dashboard/alerts',
       color: 'bg-orange-500/10 text-orange-500'
     },
     {
       icon: Route,
       title: 'Traces',
       description: 'Visualize distributed traces and analyze request flows across your services.',
-      link: '/traces',
+      link: '/dashboard/traces',
       color: 'bg-cyan-500/10 text-cyan-500'
     },
     {
       icon: Radio,
       title: 'Live Tail',
       description: 'Watch logs stream in real-time as they happen. Perfect for debugging.',
-      link: '/search?live=true',
+      link: '/dashboard/search?live=true',
       color: 'bg-green-500/10 text-green-500'
     },
     {
       icon: Shield,
       title: 'Sigma Rules',
       description: 'Detect security threats with industry-standard Sigma detection rules.',
-      link: '/projects',
+      link: '/dashboard/projects',
       color: 'bg-red-500/10 text-red-500'
     }
   ];

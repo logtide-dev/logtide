@@ -1,6 +1,6 @@
 import { db } from '../database/connection.js';
-import { randomBytes } from 'crypto';
-import { createHash } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
+import bcrypt from 'bcrypt';
 
 /**
  * Bootstrap the internal logging setup
@@ -18,24 +18,53 @@ export async function bootstrapInternalLogging(): Promise<string | null> {
 
     if (!organization) {
 
-      // Create a system user for internal organization (if not exists)
-      let systemUser = await db
+      // Find an admin user to be the owner of the internal organization
+      // Priority: 1) Any existing admin with password (real user), 2) Create system user as fallback
+      let ownerUser = await db
         .selectFrom('users')
         .selectAll()
-        .where('email', '=', 'system@logward.internal')
+        .where('is_admin', '=', true)
+        .where('password_hash', '!=', '') // Real user with login credentials
+        .orderBy('created_at', 'asc') // Use the first admin created
         .executeTakeFirst();
 
-      if (!systemUser) {
-        systemUser = await db
-          .insertInto('users')
-          .values({
-            email: 'system@logward.internal',
-            password_hash: '', // No login for system user (use enable-system-login.ts to set password)
-            name: 'System',
-            is_admin: true, // System user is always admin
-          })
-          .returningAll()
-          .executeTakeFirstOrThrow();
+      if (!ownerUser) {
+        // Fallback: check for existing system user or create one
+        ownerUser = await db
+          .selectFrom('users')
+          .selectAll()
+          .where('email', '=', 'system@logward.internal')
+          .executeTakeFirst();
+
+        if (!ownerUser) {
+          // Generate a random password for the system user
+          const generatedPassword = randomBytes(16).toString('base64url');
+          const passwordHash = await bcrypt.hash(generatedPassword, 10);
+
+          ownerUser = await db
+            .insertInto('users')
+            .values({
+              email: 'system@logward.internal',
+              password_hash: passwordHash,
+              name: 'System Admin',
+              is_admin: true,
+            })
+            .returningAll()
+            .executeTakeFirstOrThrow();
+
+          // Log the credentials so the admin can use them
+          console.log('');
+          console.log('╔════════════════════════════════════════════════════════════════╗');
+          console.log('║  INITIAL ADMIN CREDENTIALS (save these!)                       ║');
+          console.log('╠════════════════════════════════════════════════════════════════╣');
+          console.log(`║  Email:    system@logward.internal                             ║`);
+          console.log(`║  Password: ${generatedPassword.padEnd(40)}       ║`);
+          console.log('╠════════════════════════════════════════════════════════════════╣');
+          console.log('║  Change your password after first login!                       ║');
+          console.log('║  Or set INITIAL_ADMIN_* env vars for future deployments.       ║');
+          console.log('╚════════════════════════════════════════════════════════════════╝');
+          console.log('');
+        }
       }
 
       // Create internal organization
@@ -45,7 +74,7 @@ export async function bootstrapInternalLogging(): Promise<string | null> {
           name: 'LogWard',
           slug: 'logward-internal',
           description: 'Internal monitoring and logging',
-          owner_id: systemUser.id,
+          owner_id: ownerUser.id,
         })
         .returningAll()
         .executeTakeFirstOrThrow();

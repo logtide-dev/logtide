@@ -8,6 +8,16 @@
 
 import type { SpanKind, SpanStatusCode } from '../../database/types.js';
 import { attributesToRecord, sanitizeForPostgres, type OtlpKeyValue } from './transformer.js';
+import { isGzipCompressed, decompressGzip } from './parser.js';
+import { createRequire } from 'module';
+
+// Import the generated protobuf definitions from @opentelemetry/otlp-transformer
+const require = createRequire(import.meta.url);
+const $root = require('@opentelemetry/otlp-transformer/build/esm/generated/root.js');
+
+// Get the ExportTraceServiceRequest message type for decoding protobuf messages
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ExportTraceServiceRequest: any = $root.opentelemetry?.proto?.collector?.trace?.v1?.ExportTraceServiceRequest;
 
 // ============================================================================
 // OTLP Trace Type Definitions
@@ -525,4 +535,203 @@ function normalizeSpans(spans: unknown): OtlpSpan[] | undefined {
       status: data.status as OtlpStatus | undefined,
     };
   });
+}
+
+// ============================================================================
+// Protobuf Parser for Traces
+// ============================================================================
+
+/**
+ * Parse OTLP Protobuf trace request body.
+ *
+ * Uses the OpenTelemetry proto definitions from @opentelemetry/otlp-transformer
+ * to properly decode binary protobuf messages.
+ *
+ * Automatically detects and decompresses gzip-compressed data by checking
+ * for gzip magic bytes (0x1f 0x8b), regardless of Content-Encoding header.
+ *
+ * @param buffer - Raw protobuf buffer (may be gzip compressed)
+ * @returns Parsed OTLP traces request
+ * @throws Error if parsing fails
+ */
+export async function parseOtlpTracesProtobuf(buffer: Buffer): Promise<OtlpExportTracesRequest> {
+  // Auto-detect gzip compression by magic bytes (0x1f 0x8b)
+  if (isGzipCompressed(buffer)) {
+    console.log('[OTLP Traces] Auto-detected gzip compression by magic bytes, decompressing...');
+    try {
+      buffer = await decompressGzip(buffer);
+      console.log(`[OTLP Traces] Decompressed protobuf data to ${buffer.length} bytes`);
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[OTLP Traces] Gzip decompression failed:', errMsg);
+      throw new Error(`Failed to decompress gzip data: ${errMsg}`);
+    }
+  }
+
+  // First, try to parse as JSON (some clients send JSON with protobuf content-type)
+  try {
+    const jsonString = buffer.toString('utf-8');
+    if (jsonString.startsWith('{') || jsonString.startsWith('[')) {
+      console.log('[OTLP Traces] Protobuf content-type but JSON payload detected, parsing as JSON');
+      return parseOtlpTracesJson(jsonString);
+    }
+  } catch {
+    // Not JSON, continue to protobuf parsing
+  }
+
+  // Verify ExportTraceServiceRequest is available
+  if (!ExportTraceServiceRequest) {
+    throw new Error(
+      'OTLP protobuf support not available. The OpenTelemetry proto definitions could not be loaded. ' +
+      'Please use application/json content-type.'
+    );
+  }
+
+  // Decode the protobuf message using OpenTelemetry proto definitions
+  try {
+    const decoded = ExportTraceServiceRequest.decode(buffer);
+
+    // Convert to plain JavaScript object for processing
+    const message = ExportTraceServiceRequest.toObject(decoded, {
+      longs: String,  // Convert Long to string for JSON compatibility
+      bytes: String,  // Convert bytes to base64 string
+      defaults: false, // Don't include default values
+      arrays: true,   // Always return arrays even if empty
+      objects: true,  // Always return nested objects
+    });
+
+    console.log('[OTLP Traces] Successfully decoded protobuf message with',
+      message.resourceSpans?.length || 0, 'resourceSpans');
+
+    // Normalize the decoded message to match our OtlpExportTracesRequest interface
+    return normalizeDecodedTracesProtobuf(message);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[OTLP Traces] Failed to decode protobuf:', errorMessage);
+    throw new Error(`Failed to decode OTLP traces protobuf: ${errorMessage}`);
+  }
+}
+
+/**
+ * Normalize decoded protobuf message to OtlpExportTracesRequest format.
+ */
+function normalizeDecodedTracesProtobuf(message: Record<string, unknown>): OtlpExportTracesRequest {
+  const resourceSpans = message.resourceSpans as unknown[] | undefined;
+
+  if (!Array.isArray(resourceSpans)) {
+    return { resourceSpans: [] };
+  }
+
+  return {
+    resourceSpans: resourceSpans.map(normalizeResourceSpansFromProtobuf),
+  };
+}
+
+/**
+ * Normalize ResourceSpans from protobuf format.
+ */
+function normalizeResourceSpansFromProtobuf(rs: unknown): OtlpResourceSpans {
+  if (!rs || typeof rs !== 'object') return {};
+
+  const data = rs as Record<string, unknown>;
+
+  return {
+    resource: data.resource as OtlpResource | undefined,
+    scopeSpans: normalizeScopeSpansFromProtobuf(data.scopeSpans),
+    schemaUrl: data.schemaUrl as string | undefined,
+  };
+}
+
+/**
+ * Normalize ScopeSpans from protobuf format.
+ */
+function normalizeScopeSpansFromProtobuf(ss: unknown): OtlpScopeSpans[] | undefined {
+  if (!Array.isArray(ss)) return undefined;
+
+  return ss.map((s) => {
+    if (!s || typeof s !== 'object') return {};
+    const data = s as Record<string, unknown>;
+
+    return {
+      scope: data.scope as OtlpInstrumentationScope | undefined,
+      spans: normalizeSpansFromProtobuf(data.spans),
+      schemaUrl: data.schemaUrl as string | undefined,
+    };
+  });
+}
+
+/**
+ * Normalize Spans from protobuf format.
+ * Handles the conversion of protobuf field types to our expected format.
+ */
+function normalizeSpansFromProtobuf(spans: unknown): OtlpSpan[] | undefined {
+  if (!Array.isArray(spans)) return undefined;
+
+  return spans.map((span) => {
+    if (!span || typeof span !== 'object') return {};
+    const data = span as Record<string, unknown>;
+
+    return {
+      traceId: normalizeTraceSpanId(data.traceId),
+      spanId: normalizeTraceSpanId(data.spanId),
+      traceState: data.traceState as string | undefined,
+      parentSpanId: normalizeTraceSpanId(data.parentSpanId),
+      name: data.name as string | undefined,
+      kind: data.kind as number | undefined,
+      startTimeUnixNano: data.startTimeUnixNano as string | bigint | undefined,
+      endTimeUnixNano: data.endTimeUnixNano as string | bigint | undefined,
+      attributes: data.attributes as OtlpKeyValue[] | undefined,
+      events: data.events as OtlpSpanEvent[] | undefined,
+      links: normalizeLinksFromProtobuf(data.links),
+      status: data.status as OtlpStatus | undefined,
+    };
+  });
+}
+
+/**
+ * Normalize links from protobuf format.
+ */
+function normalizeLinksFromProtobuf(links: unknown): OtlpSpanLink[] | undefined {
+  if (!Array.isArray(links)) return undefined;
+
+  return links.map((link) => {
+    if (!link || typeof link !== 'object') return {};
+    const data = link as Record<string, unknown>;
+
+    return {
+      traceId: normalizeTraceSpanId(data.traceId),
+      spanId: normalizeTraceSpanId(data.spanId),
+      traceState: data.traceState as string | undefined,
+      attributes: data.attributes as OtlpKeyValue[] | undefined,
+    };
+  });
+}
+
+/**
+ * Convert trace/span ID from protobuf format (Uint8Array or base64 string) to hex string.
+ */
+function normalizeTraceSpanId(id: unknown): string | undefined {
+  if (!id) return undefined;
+
+  // If already a hex string, return as-is
+  if (typeof id === 'string') {
+    // Check if it's base64 encoded (from protobuf toObject with bytes: String)
+    if (id.length > 0 && !/^[0-9a-fA-F]+$/.test(id)) {
+      // It's base64, convert to hex
+      try {
+        const buffer = Buffer.from(id, 'base64');
+        return buffer.toString('hex');
+      } catch {
+        return id; // Return as-is if conversion fails
+      }
+    }
+    return id;
+  }
+
+  // If Uint8Array, convert to hex
+  if (id instanceof Uint8Array || Buffer.isBuffer(id)) {
+    return Buffer.from(id).toString('hex');
+  }
+
+  return undefined;
 }

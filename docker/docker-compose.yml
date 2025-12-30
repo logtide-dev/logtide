@@ -153,20 +153,28 @@ services:
       - logward-network
 
   fluent-bit:
-    image: fluent/fluent-bit:latest
+    image: ${FLUENT_BIT_IMAGE:-fluent/fluent-bit:4.2.2}
     container_name: logward-fluent-bit
     profiles:
       - logging
+    ports:
+      # Syslog ports - uncomment to receive syslog from external devices
+      - "514:514/udp"
+      - "514:514/tcp"
     volumes:
       - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ./parsers.conf:/fluent-bit/etc/parsers.conf:ro
       - ./extract_container_id.lua:/fluent-bit/etc/extract_container_id.lua:ro
+      - ./map_syslog_level.lua:/fluent-bit/etc/map_syslog_level.lua:ro
       - ./wrap_logs.lua:/fluent-bit/etc/wrap_logs.lua:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       LOGWARD_API_KEY: ${FLUENT_BIT_API_KEY:-}
       LOGWARD_API_HOST: backend
+      # Timezone offset for RFC3164 syslog (hours from UTC)
+      # Examples: 1 for CET, 2 for CEST, -5 for EST
+      SYSLOG_TZ_OFFSET: ${SYSLOG_TZ_OFFSET:-0}
     depends_on:
       - backend
     restart: unless-stopped

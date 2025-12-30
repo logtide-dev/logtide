@@ -481,6 +481,36 @@ describe('Invitations Routes', () => {
 
             expect(response.statusCode).toBe(400);
         });
+
+        it('should return 503 when email server is not configured', async () => {
+            // Mock the invitations service to throw email not configured error
+            const { invitationsService } = await import(
+                '../../../modules/invitations/service.js'
+            );
+            const originalInviteUser = invitationsService.inviteUser;
+            invitationsService.inviteUser = vi.fn().mockRejectedValueOnce(
+                new Error('Email server is not configured')
+            );
+
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/invitations/${testOrganization.id}/invite`,
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    email: 'newuser@test.com',
+                    role: 'member',
+                },
+            });
+
+            expect(response.statusCode).toBe(503);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toContain('Email server is not configured');
+
+            // Restore original
+            invitationsService.inviteUser = originalInviteUser;
+        });
     });
 
     // ==========================================================================
@@ -754,6 +784,38 @@ describe('Invitations Routes', () => {
             });
 
             expect(response.statusCode).toBe(404);
+        });
+
+        it('should return 503 when email server is not configured', async () => {
+            const invitation = await createTestInvitation(
+                testOrganization.id,
+                'resend503@test.com',
+                testUser.id
+            );
+
+            // Mock the invitations service to throw email not configured error
+            const { invitationsService } = await import(
+                '../../../modules/invitations/service.js'
+            );
+            const originalResendInvitation = invitationsService.resendInvitation;
+            invitationsService.resendInvitation = vi.fn().mockRejectedValueOnce(
+                new Error('Email server is not configured')
+            );
+
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/invitations/${testOrganization.id}/invitations/${invitation.id}/resend`,
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+            });
+
+            expect(response.statusCode).toBe(503);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toContain('Email server is not configured');
+
+            // Restore original
+            invitationsService.resendInvitation = originalResendInvitation;
         });
     });
 });

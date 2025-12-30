@@ -65,8 +65,90 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
 
       const logData = request.body;
 
-      // Convert numeric log levels (Pino/Bunyan format) to string
+      // Detect if this is a systemd-journald formatted log
+      const isJournaldFormat = (data: any): boolean => {
+        // journald logs have specific fields starting with underscore
+        return data._SYSTEMD_UNIT || data._COMM || data._EXE ||
+               data.SYSLOG_IDENTIFIER || data.MESSAGE !== undefined ||
+               data.PRIORITY !== undefined || data._HOSTNAME;
+      };
+
+      // Extract service name from journald fields
+      const extractJournaldService = (data: any): string => {
+        // Priority order for service name extraction
+        if (data.SYSLOG_IDENTIFIER) return data.SYSLOG_IDENTIFIER;
+        if (data._SYSTEMD_UNIT) {
+          // Remove .service suffix for cleaner display
+          return data._SYSTEMD_UNIT.replace(/\.service$/, '');
+        }
+        if (data._COMM) return data._COMM;
+        if (data._EXE) {
+          // Extract basename from path
+          const parts = data._EXE.split('/');
+          return parts[parts.length - 1];
+        }
+        return 'unknown';
+      };
+
+      // Extract message from journald format
+      const extractJournaldMessage = (data: any): string => {
+        // MESSAGE is the standard journald field
+        if (data.MESSAGE) return data.MESSAGE;
+        // Fallback to other common fields
+        if (data.message) return data.message;
+        if (data.log) return data.log;
+        return '';
+      };
+
+      // Convert syslog PRIORITY (0-7) to LogWard level
+      const priorityToLevel = (priority: number | string): string => {
+        const p = typeof priority === 'string' ? parseInt(priority, 10) : priority;
+        // Syslog priority levels: 0=emerg, 1=alert, 2=crit, 3=err, 4=warning, 5=notice, 6=info, 7=debug
+        if (p <= 2) return 'critical';  // emerg, alert, crit
+        if (p === 3) return 'error';     // err
+        if (p === 4) return 'warn';      // warning
+        if (p <= 6) return 'info';       // notice, info
+        return 'debug';                   // debug
+      };
+
+      // Extract journald metadata fields (underscore-prefixed)
+      const extractJournaldMetadata = (data: any): Record<string, unknown> => {
+        const metadata: Record<string, unknown> = {};
+        const journaldFields = [
+          '_HOSTNAME', '_MACHINE_ID', '_BOOT_ID', '_PID', '_UID', '_GID',
+          '_COMM', '_EXE', '_CMDLINE', '_SYSTEMD_CGROUP', '_SYSTEMD_UNIT',
+          '_SYSTEMD_SLICE', '_SYSTEMD_USER_UNIT', '_STREAM_ID', '_TRANSPORT',
+          'SYSLOG_FACILITY', 'SYSLOG_IDENTIFIER', 'SYSLOG_PID',
+          '_SELINUX_CONTEXT', '_RUNTIME_SCOPE', '_SYSTEMD_CGROUP'
+        ];
+        for (const field of journaldFields) {
+          if (data[field] !== undefined) {
+            metadata[field] = data[field];
+          }
+        }
+        return metadata;
+      };
+
+      // Extract timestamp from journald fields (microseconds epoch, already UTC)
+      const extractJournaldTimestamp = (data: any): string | null => {
+        // Priority: __REALTIME_TIMESTAMP > _SOURCE_REALTIME_TIMESTAMP
+        // These are in microseconds since epoch (UTC)
+        const realtimeTs = data.__REALTIME_TIMESTAMP || data._SOURCE_REALTIME_TIMESTAMP;
+        if (realtimeTs) {
+          try {
+            const microseconds = typeof realtimeTs === 'string' ? parseInt(realtimeTs, 10) : realtimeTs;
+            const milliseconds = Math.floor(microseconds / 1000);
+            return new Date(milliseconds).toISOString();
+          } catch {
+            // Invalid timestamp, fall through
+          }
+        }
+        return null;
+      };
+
+      // Convert numeric log levels (Pino/Bunyan format) and syslog levels to string
       const normalizeLevel = (level: any): string => {
+        // Handle numeric levels (Pino/Bunyan format)
         if (typeof level === 'number' || !isNaN(Number(level))) {
           const numLevel = Number(level);
           if (numLevel >= 60) return 'critical';
@@ -75,21 +157,102 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
           if (numLevel >= 30) return 'info';
           return 'debug';
         }
-        return level || 'info';
+
+        // Handle string levels (including syslog levels)
+        if (typeof level === 'string') {
+          const lowerLevel = level.toLowerCase().trim();
+
+          // Map syslog and common log levels to LogWard's 5 levels
+          switch (lowerLevel) {
+            // Critical levels
+            case 'emergency':
+            case 'emerg':
+            case 'alert':
+            case 'crit':
+            case 'critical':
+            case 'fatal':
+              return 'critical';
+
+            // Error levels
+            case 'error':
+            case 'err':
+              return 'error';
+
+            // Warning levels
+            case 'warning':
+            case 'warn':
+              return 'warn';
+
+            // Info levels
+            case 'notice':
+            case 'info':
+            case 'information':
+              return 'info';
+
+            // Debug levels
+            case 'debug':
+            case 'trace':
+            case 'verbose':
+              return 'debug';
+
+            default:
+              // If it's already a valid level, return it
+              if (['debug', 'info', 'warn', 'error', 'critical'].includes(lowerLevel)) {
+                return lowerLevel;
+              }
+              return 'info'; // Default fallback
+          }
+        }
+
+        return 'info'; // Default fallback for undefined/null
       };
 
-      // Normalize fields from Fluent Bit format to LogWard format
-      const log = {
-        time: logData.time || (logData.date ? new Date(logData.date * 1000).toISOString() : new Date().toISOString()),
-        service: logData.service || logData.container_name || 'unknown',
-        level: normalizeLevel(logData.level),
-        message: logData.message || logData.log || '',
-        metadata: {
-          ...logData.metadata,
-          container_id: logData.container_id,
-          container_short_id: logData.container_short_id,
-        },
-      };
+      // Build log object based on format detection
+      let log;
+
+      if (isJournaldFormat(logData)) {
+        // systemd-journald format - extract from journald-specific fields
+        const journaldMetadata = extractJournaldMetadata(logData);
+
+        // Get level from PRIORITY field if available, otherwise from level field
+        const level = logData.PRIORITY !== undefined
+          ? priorityToLevel(logData.PRIORITY)
+          : normalizeLevel(logData.level);
+
+        // Get timestamp: prefer journald's __REALTIME_TIMESTAMP (already UTC),
+        // then fall back to syslog timestamp from Fluent Bit
+        const journaldTime = extractJournaldTimestamp(logData);
+        const time = journaldTime
+          || logData.time
+          || (logData.date ? new Date(logData.date * 1000).toISOString() : new Date().toISOString());
+
+        log = {
+          time,
+          service: logData.service || extractJournaldService(logData),
+          level,
+          message: extractJournaldMessage(logData),
+          metadata: {
+            ...logData.metadata,
+            ...journaldMetadata,
+            container_id: logData.container_id,
+            container_short_id: logData.container_short_id,
+            source: 'journald',
+          },
+        };
+      } else {
+        // Standard Fluent Bit format
+        log = {
+          time: logData.time || (logData.date ? new Date(logData.date * 1000).toISOString() : new Date().toISOString()),
+          service: logData.service || logData.container_name || 'unknown',
+          level: normalizeLevel(logData.level),
+          message: logData.message || logData.log || '',
+          metadata: {
+            ...logData.metadata,
+            container_id: logData.container_id,
+            container_short_id: logData.container_short_id,
+          },
+        };
+      }
 
       // Validate normalized log
       const parseResult = logSchema.safeParse(log);

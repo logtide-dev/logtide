@@ -29,7 +29,9 @@ test.describe('Network Edge Cases', () => {
 
     // Navigate to dashboard to trigger org loading
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
+    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
+    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
     await page.waitForTimeout(500);
   });
 
@@ -78,7 +80,7 @@ test.describe('Network Edge Cases', () => {
 
   test('Search page handles API error gracefully', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Intercept logs API to return error
     await page.route('**/api/v1/logs**', (route) => {
@@ -104,7 +106,7 @@ test.describe('Network Edge Cases', () => {
 
   test('Page handles 401 unauthorized and redirects to login', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Clear auth to simulate expired session
     await page.evaluate(() => localStorage.clear());
@@ -119,7 +121,7 @@ test.describe('Network Edge Cases', () => {
 
   test('Form handles validation errors from API', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(1000);
 
     // Click create alert button
@@ -148,7 +150,7 @@ test.describe('Network Edge Cases', () => {
 
   test('Page recovers after network comes back', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Simulate network going offline
     await page.route('**/api/v1/**', (route) => {
@@ -168,11 +170,10 @@ test.describe('Network Edge Cases', () => {
 
     // Reload page
     await page.reload();
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState('load');
 
     // Page should work again
-    await expect(page.locator('h1')).toBeVisible();
+    await expect(page.locator('h1')).toBeVisible({ timeout: 30000 });
   });
 });
 
@@ -211,12 +212,12 @@ test.describe('Session Edge Cases', () => {
     await page1.goto(`${TEST_FRONTEND_URL}/dashboard`);
     await page2.goto(`${TEST_FRONTEND_URL}/dashboard`);
 
-    await page1.waitForLoadState('networkidle');
-    await page2.waitForLoadState('networkidle');
+    await page1.waitForLoadState('load');
+    await page2.waitForLoadState('load');
 
-    // Both should work - use .first() to avoid strict mode violation
-    await expect(page1.locator('h1, h2').first()).toBeVisible();
-    await expect(page2.locator('h1, h2').first()).toBeVisible();
+    // Both should work - use .first() to avoid strict mode violation, with timeout for CI
+    await expect(page1.locator('h1, h2').first()).toBeVisible({ timeout: 30000 });
+    await expect(page2.locator('h1, h2').first()).toBeVisible({ timeout: 30000 });
 
     // Cleanup
     await context1.close();
@@ -270,12 +271,12 @@ test.describe('Browser Edge Cases', () => {
       localStorage.setItem('currentOrganizationId', orgId);
     }, organizationId);
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(1000);
 
     // Refresh the page
     await page.reload();
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(1000);
 
     // Should still be authenticated and on dashboard (or at least not on login)
@@ -305,20 +306,20 @@ test.describe('Browser Edge Cases', () => {
 
     // Navigate to different pages
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(500);
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(500);
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(500);
 
     // Go back
     await page.goBack();
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(500);
 
     // Should be on search or still navigating
@@ -327,7 +328,7 @@ test.describe('Browser Edge Cases', () => {
 
     // Go back again
     await page.goBack();
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.waitForTimeout(500);
 
     // Should be on dashboard or search
