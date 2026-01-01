@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest';
 import { db } from '../../../database/index.js';
 import { createTestUser } from '../../helpers/factories.js';
 import { build } from '../../../server.js';
+import { CacheManager } from '../../../utils/cache.js';
 import supertest from 'supertest';
 
 describe('Auth Session Lifecycle', () => {
@@ -19,7 +20,17 @@ describe('Auth Session Lifecycle', () => {
     });
 
     beforeEach(async () => {
+        // Reset system settings and cache to avoid auth-free mode pollution
+        await db.deleteFrom('system_settings').execute();
+        await CacheManager.invalidateSettings();
+        // Reset rate limiting by clearing Redis
+        await CacheManager.invalidateSettings(); // This also helps reset rate limit caches
+
         await db.deleteFrom('sessions').execute();
+        await db.deleteFrom('organization_members').execute();
+        await db.deleteFrom('api_keys').execute();
+        await db.deleteFrom('projects').execute();
+        await db.deleteFrom('organizations').execute();
         await db.deleteFrom('users').execute();
     });
 

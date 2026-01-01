@@ -5,7 +5,50 @@ All notable changes to LogWard will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.3] - 2026-01-01
+
+### Added
+
+- **LDAP Authentication**: Enterprise directory integration for user authentication (#58)
+  - LDAP/Active Directory server configuration via environment variables
+  - Bind DN and search filter customization
+  - Automatic user provisioning on first login
+  - Secure LDAPS (SSL/TLS) support
+
+- **OpenID Connect (OIDC)**: SSO integration with identity providers (#58)
+  - Support for any OIDC-compliant provider (Authentik, Keycloak, Okta, Auth0, etc.)
+  - Automatic discovery via `.well-known/openid-configuration`
+  - Configurable scopes and claims mapping
+  - Silent token refresh for seamless sessions
+
+- **Initial Admin via Environment Variables**: Bootstrap admin account on first deployment (#58, #57)
+  - Set `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD`, `INITIAL_ADMIN_NAME` in `.env`
+  - Auto-generates secure password if not provided (displayed in logs)
+  - Only creates admin if no users with login credentials exist
+  - Safe to leave configured - ignored after first user creation
+
+- **Disable Sign-ups**: Control user registration for private deployments (#58)
+  - Set `DISABLE_SIGNUPS=true` to prevent new user registration
+  - Existing users and external auth (LDAP/OIDC) unaffected
+  - Useful for invitation-only or enterprise deployments
+
+- **Auth-free Mode for Home Labs**: Simplified single-user access (#58)
+  - Set `AUTH_FREE_MODE=true` to bypass authentication entirely
+  - Automatically uses first available organization
+  - Perfect for home lab and development environments
+  - Warning displayed in UI when enabled
+
+- **ARM64 / Raspberry Pi Support**: Full support for ARM-based deployments (#58)
+  - LogWard images built for both `linux/amd64` and `linux/arm64`
+  - Native support for Raspberry Pi 3/4/5 (64-bit OS)
+  - Configurable Fluent Bit image via `FLUENT_BIT_IMAGE` environment variable
+  - Documentation for ARM64-specific Fluent Bit registry (`cr.fluentbit.io`)
+
+### Changed
+
+- **Fluent Bit**: Updated default version from `latest` to `4.2.2`
+  - All documentation updated with pinned version
+  - ARM64 alternative documented in all code examples
 
 ### Fixed
 
@@ -27,56 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Selected services persist when changing time range (shows "no logs" indicator if empty)
   - Reset filters correctly when switching organization
 
----
-
-## [0.3.3] - 2025-12-30
-
-### Added
-
-- **LDAP Authentication**: Enterprise directory integration for user authentication (#63)
-  - LDAP/Active Directory server configuration via environment variables
-  - Bind DN and search filter customization
-  - Automatic user provisioning on first login
-  - Secure LDAPS (SSL/TLS) support
-
-- **OpenID Connect (OIDC)**: SSO integration with identity providers (#63)
-  - Support for any OIDC-compliant provider (Authentik, Keycloak, Okta, Auth0, etc.)
-  - Automatic discovery via `.well-known/openid-configuration`
-  - Configurable scopes and claims mapping
-  - Silent token refresh for seamless sessions
-
-- **Initial Admin via Environment Variables**: Bootstrap admin account on first deployment (#64, #65)
-  - Set `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD`, `INITIAL_ADMIN_NAME` in `.env`
-  - Auto-generates secure password if not provided (displayed in logs)
-  - Only creates admin if no users with login credentials exist
-  - Safe to leave configured - ignored after first user creation
-
-- **Disable Sign-ups**: Control user registration for private deployments (#64)
-  - Set `DISABLE_SIGNUPS=true` to prevent new user registration
-  - Existing users and external auth (LDAP/OIDC) unaffected
-  - Useful for invitation-only or enterprise deployments
-
-- **Auth-free Mode for Home Labs**: Simplified single-user access (#64)
-  - Set `AUTH_FREE_MODE=true` to bypass authentication entirely
-  - Automatically uses first available organization
-  - Perfect for home lab and development environments
-  - Warning displayed in UI when enabled
-
-- **ARM64 / Raspberry Pi Support**: Full support for ARM-based deployments (#57)
-  - LogWard images built for both `linux/amd64` and `linux/arm64`
-  - Native support for Raspberry Pi 3/4/5 (64-bit OS)
-  - Configurable Fluent Bit image via `FLUENT_BIT_IMAGE` environment variable
-  - Documentation for ARM64-specific Fluent Bit registry (`cr.fluentbit.io`)
-
-### Changed
-
-- **Fluent Bit**: Updated default version from `latest` to `4.2.2`
-  - All documentation updated with pinned version
-  - ARM64 alternative documented in all code examples
-
-### Fixed
-
-- **Journald Log Format Detection**: Automatic parsing of systemd-journald logs (#60, #61)
+- **Journald Log Format Detection**: Automatic parsing of systemd-journald logs (#60)
   - Auto-detects journald format (`_SYSTEMD_UNIT`, `SYSLOG_IDENTIFIER`, `MESSAGE`, `PRIORITY`, etc.)
   - Extracts service name from `SYSLOG_IDENTIFIER` → `_SYSTEMD_UNIT` → `_COMM` → `_EXE`
   - Extracts actual message from `MESSAGE` field instead of showing raw JSON
@@ -88,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Case-insensitive level normalization
   - Fixes logs appearing as "unknown" level
 
-- **OTLP Protobuf Parsing**: Proper binary protobuf support for OpenTelemetry (#61)
+- **OTLP Protobuf Parsing**: Proper binary protobuf support for OpenTelemetry (#60)
   - Added `@opentelemetry/otlp-transformer` for correct protobuf decoding
   - Fixes "Request body size did not match Content-Length" errors
   - JSON and Protobuf formats both fully supported

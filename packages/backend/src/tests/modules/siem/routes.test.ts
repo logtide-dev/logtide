@@ -3,6 +3,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { siemRoutes } from '../../../modules/siem/routes.js';
 import { createTestContext, createTestLog } from '../../helpers/factories.js';
+import { CacheManager } from '../../../utils/cache.js';
 import crypto from 'crypto';
 
 // Helper to create a session for a user
@@ -97,6 +98,10 @@ describe('SIEM Routes', () => {
     });
 
     beforeEach(async () => {
+        // Clean up system settings first (reset auth mode to standard)
+        await db.deleteFrom('system_settings').execute();
+        await CacheManager.invalidateSettings();
+
         // Clean up in correct order (respecting foreign keys)
         await db.deleteFrom('incident_comments').execute();
         await db.deleteFrom('incident_history').execute();
