@@ -18,6 +18,25 @@ describe('ProviderService', () => {
     // Delete non-local providers
     await db.deleteFrom('auth_providers').where('slug', '!=', 'local').execute();
 
+    // Ensure local provider exists
+    const localExists = await db.selectFrom('auth_providers')
+      .select('id')
+      .where('slug', '=', 'local')
+      .executeTakeFirst();
+
+    if (!localExists) {
+      await db.insertInto('auth_providers').values({
+        type: 'local',
+        name: 'Email & Password',
+        slug: 'local',
+        enabled: true,
+        is_default: true,
+        display_order: 0,
+        icon: 'mail',
+        config: {},
+      }).execute();
+    }
+
     vi.clearAllMocks();
   });
 
