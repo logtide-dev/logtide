@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Services list sorted alphabetically for easier navigation
   - Auto-refresh when changing time range or project selection
   - Loading indicator while fetching services
+  - Selected services persist when changing time range (shows "no logs" indicator if empty)
+  - Reset filters correctly when switching organization
 
 ---
 

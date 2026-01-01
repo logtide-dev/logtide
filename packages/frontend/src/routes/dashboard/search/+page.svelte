@@ -343,14 +343,9 @@
         to: timeRange.to.toISOString(),
       });
       availableServices = services;
-
-      // Clean up selectedServices: remove any that no longer exist
-      if (selectedServices.length > 0) {
-        const validServices = selectedServices.filter((s) => services.includes(s));
-        if (validServices.length !== selectedServices.length) {
-          selectedServices = validServices;
-        }
-      }
+      // Note: We intentionally do NOT remove selected services that aren't in the new time range.
+      // This preserves user intent - if they selected "foo", switching time range should still
+      // filter by "foo" (showing 0 results) rather than unexpectedly showing all services.
     } catch (e) {
       console.error("Failed to load services:", e);
       availableServices = [];
@@ -358,6 +353,12 @@
       isLoadingServices = false;
     }
   }
+
+  // Combine available services with selected services (in case selected ones aren't in current time range)
+  let displayedServices = $derived(() => {
+    const combined = new Set([...availableServices, ...selectedServices]);
+    return [...combined].sort((a, b) => a.localeCompare(b));
+  });
 
   function getTimeRange(
     type: TimeRangeType,
@@ -751,7 +752,7 @@
                       <span class="truncate">
                         {#if selectedServices.length === 0}
                           All services
-                        {:else if selectedServices.length === availableServices.length}
+                        {:else if selectedServices.length === availableServices.length && availableServices.length > 0}
                           All services ({availableServices.length})
                         {:else if selectedServices.length === 1}
                           {selectedServices[0]}
@@ -771,7 +772,7 @@
                         size="sm"
                         class="flex-1"
                         onclick={() => {
-                          selectedServices = availableServices;
+                          selectedServices = [...availableServices];
                           applyFilters();
                         }}
                       >
@@ -797,7 +798,7 @@
                       >
                         Loading services...
                       </div>
-                    {:else if availableServices.length === 0}
+                    {:else if displayedServices().length === 0}
                       <div
                         class="text-center py-4 text-sm text-muted-foreground"
                       >
@@ -805,7 +806,8 @@
                       </div>
                     {:else}
                       <div class="space-y-1">
-                        {#each availableServices as service}
+                        {#each displayedServices() as service}
+                          {@const hasLogsInTimeRange = availableServices.includes(service)}
                           <label
                             class="flex items-center gap-2 cursor-pointer hover:bg-accent px-3 py-2 rounded-sm"
                           >
@@ -828,7 +830,10 @@
                               }}
                               class="h-4 w-4 rounded border-gray-300"
                             />
-                            <span class="text-sm flex-1">{service}</span>
+                            <span class="text-sm flex-1 {!hasLogsInTimeRange ? 'text-muted-foreground italic' : ''}">{service}</span>
+                            {#if !hasLogsInTimeRange}
+                              <span class="text-xs text-muted-foreground">(no logs)</span>
+                            {/if}
                           </label>
                         {/each}
                       </div>
