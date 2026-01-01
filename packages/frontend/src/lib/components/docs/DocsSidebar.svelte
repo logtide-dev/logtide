@@ -12,6 +12,12 @@
         KeyRound,
     } from "lucide-svelte";
 
+    interface Props {
+        mobile?: boolean;
+    }
+
+    let { mobile = false }: Props = $props();
+
     interface NavItem {
         title: string;
         href: string;
@@ -135,7 +141,7 @@
     }
 </script>
 
-<nav class="docs-sidebar">
+<nav class="docs-sidebar" class:mobile>
     <div class="sidebar-content">
         <a href="/docs" class="sidebar-header">
             <FileText class="w-5 h-5 text-primary" />
@@ -360,6 +366,14 @@
     @media (max-width: 1024px) {
         .docs-sidebar {
             display: none;
+        }
+
+        .docs-sidebar.mobile {
+            display: block;
+            width: 100%;
+            height: auto;
+            position: static;
+            border-right: none;
         }
     }
 </style>

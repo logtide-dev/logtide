@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile Navigation Menu**: Fixed hamburger menu button not working on mobile devices (#69)
+  - Added `mobileMenuOpen` state to track menu visibility
+  - Hamburger button now opens a sliding drawer with full navigation
+  - Mobile menu includes all navigation items, organization switcher, and onboarding checklist
+  - Smooth slide-in animation with backdrop overlay
+  - Menu closes when clicking outside, pressing Escape, or navigating to a new page
+  - Added mobile sidebar for documentation pages with "Menu" button
+
 - **Services Dropdown in Log Search**: Fixed services combo box only showing services from current page (#66)
   - New `GET /api/v1/logs/services` endpoint returns all distinct services within the time range
   - Services dropdown now loads from API instead of deriving from current page logs

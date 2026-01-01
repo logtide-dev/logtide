@@ -55,6 +55,7 @@
   let loadingNotifications = $state(false);
   let lastLoadedToken = $state<string | null>(null);
   let currentTime = $state(new Date());
+  let mobileMenuOpen = $state(false);
 
   $effect(() => {
     if (!browser) return;
@@ -321,12 +322,103 @@
     </div>
   </aside>
 
+  <!-- Mobile Menu Overlay -->
+  {#if mobileMenuOpen}
+    <div
+      class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 lg:hidden"
+      onclick={() => mobileMenuOpen = false}
+      onkeydown={(e) => e.key === 'Escape' && (mobileMenuOpen = false)}
+      role="button"
+      tabindex="-1"
+    ></div>
+  {/if}
+
+  <!-- Mobile Menu Drawer -->
+  <aside
+    class="fixed left-0 top-0 h-screen w-64 flex-col border-r border-border bg-card z-50 lg:hidden transform transition-transform duration-300 ease-in-out {mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}"
+    class:flex={mobileMenuOpen}
+    class:hidden={!mobileMenuOpen}
+  >
+    <div class="p-6 flex items-center justify-between">
+      <a href="/dashboard" class="flex items-center gap-3 hover:opacity-80 transition-opacity" onclick={() => mobileMenuOpen = false}>
+        <div class="flex flex-col items-start">
+          <img src={$logoPath} alt="LogWard" class="h-14 w-auto" />
+        </div>
+      </a>
+      <Button variant="ghost" size="icon" onclick={() => mobileMenuOpen = false}>
+        <X class="w-5 h-5" />
+      </Button>
+    </div>
+
+    <Separator />
+
+    <div class="px-4 py-4 flex">
+      <OrganizationSwitcher />
+    </div>
+
+    <Separator />
+
+    <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
+      {#each navigationItems as item}
+        {@const Icon = item.icon}
+        <a
+          href={item.href}
+          onclick={() => mobileMenuOpen = false}
+          data-nav-item={item.label.toLowerCase()}
+          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive(item.href)
+            ? 'bg-accent text-accent-foreground'
+            : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
+        >
+          <Icon class="w-4 h-4" />
+          <span class="flex-1">{item.label}</span>
+          {#if item.badge}
+            <FeatureBadge
+              id={item.badge.id}
+              type={item.badge.type}
+              showUntil={item.badge.showUntil}
+            />
+          {/if}
+        </a>
+      {/each}
+
+      {#if user?.is_admin}
+        <Separator class="my-2" />
+        <a
+          href="/dashboard/admin"
+          onclick={() => mobileMenuOpen = false}
+          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive('/dashboard/admin')
+            ? 'bg-accent text-accent-foreground'
+            : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
+        >
+          <Shield class="w-4 h-4" />
+          <span>Admin</span>
+        </a>
+      {/if}
+
+      <Separator class="my-2" />
+      <a
+        href="https://github.com/logward-dev/logward"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
+      >
+        <Github class="w-4 h-4" />
+        <span>GitHub</span>
+      </a>
+    </nav>
+
+    <!-- Onboarding Checklist for Mobile -->
+    <div class="p-4 border-t border-border">
+      <OnboardingChecklist />
+    </div>
+  </aside>
+
   <div class="flex flex-col min-h-screen lg:ml-64">
     <header
       class="h-16 border-b border-border bg-card px-6 flex items-center justify-between"
     >
       <div class="flex items-center gap-4">
-        <Button variant="ghost" size="icon" class="lg:hidden">
+        <Button variant="ghost" size="icon" class="lg:hidden" onclick={() => mobileMenuOpen = true}>
           <Menu class="w-5 h-5" />
         </Button>
 
