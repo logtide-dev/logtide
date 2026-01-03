@@ -210,8 +210,8 @@ FLUENT_BIT_IMAGE=myregistry/fluent-bit-arm64:latest`}
                 <CodeBlock
                     lang="bash"
                     code={`# In your .env file
-LOGWARD_BACKEND_IMAGE=logward/backend:0.3.3
-LOGWARD_FRONTEND_IMAGE=logward/frontend:0.3.3`}
+LOGWARD_BACKEND_IMAGE=logward/backend:0.4.0
+LOGWARD_FRONTEND_IMAGE=logward/frontend:0.4.0`}
                 />
             </CardContent>
         </Card>
