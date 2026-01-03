@@ -5,6 +5,12 @@
   import { themeStore } from '$lib/stores/theme';
   import { chartColors, getEChartsTheme, getAxisStyle, getTooltipStyle, getLegendStyle } from '$lib/utils/echarts-theme';
 
+  interface ChartClickParams {
+    seriesName: string;
+    time: string;
+    value: number;
+  }
+
   interface Props {
     data: {
       time: string;
@@ -13,9 +19,10 @@
       warn: number;
       info: number;
     }[];
+    onDataPointClick?: (params: ChartClickParams) => void;
   }
 
-  let { data }: Props = $props();
+  let { data, onDataPointClick }: Props = $props();
   let chartContainer: HTMLDivElement;
   let chart: echarts.ECharts | null = null;
 
@@ -94,6 +101,17 @@
     chart = echarts.init(chartContainer);
     chart.setOption(getChartOption());
 
+    // Handle click events on chart data points
+    chart.on('click', (params: any) => {
+      if (params.componentType === 'series' && onDataPointClick && data[params.dataIndex]) {
+        onDataPointClick({
+          seriesName: params.seriesName,
+          time: data[params.dataIndex].time,
+          value: params.value
+        });
+      }
+    });
+
     const handleResize = () => chart?.resize();
     window.addEventListener('resize', handleResize);
 
@@ -107,6 +125,7 @@
     return () => {
       window.removeEventListener('resize', handleResize);
       unsubscribe();
+      chart?.off('click');
       chart?.dispose();
     };
   });

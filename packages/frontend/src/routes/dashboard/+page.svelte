@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { goto } from '$app/navigation';
   import { currentOrganization } from '$lib/stores/organization';
   import { dashboardAPI } from '$lib/api/dashboard';
   import type { DashboardStats, TimeseriesDataPoint, TopService, RecentError } from '$lib/api/dashboard';
@@ -100,6 +101,74 @@
     stats.activeServices.value === 0 &&
     chartData.length === 0
   );
+
+  // Navigation handlers for clickable dashboard elements
+  function getLast24HoursParams(): string {
+    const now = new Date();
+    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    return `from=${from.toISOString()}&to=${now.toISOString()}`;
+  }
+
+  function handleTotalLogsClick() {
+    goto(`/dashboard/search?${getLast24HoursParams()}`);
+  }
+
+  function handleErrorRateClick() {
+    goto(`/dashboard/search?level=error,critical&${getLast24HoursParams()}`);
+  }
+
+  function handleActiveServicesClick() {
+    goto(`/dashboard/search?${getLast24HoursParams()}`);
+  }
+
+  function handleThroughputClick() {
+    goto(`/dashboard/search?${getLast24HoursParams()}`);
+  }
+
+  function handleChartClick(params: { seriesName: string; time: string; value: number }) {
+    // Map series name to log level
+    const levelMap: Record<string, string> = {
+      'Errors': 'error',
+      'Warnings': 'warn',
+      'Info': 'info'
+    };
+    const level = levelMap[params.seriesName];
+
+    // Create a 1-hour time window around the clicked point
+    const clickedTime = new Date(params.time);
+    const from = new Date(clickedTime.getTime() - 30 * 60 * 1000);
+    const to = new Date(clickedTime.getTime() + 30 * 60 * 1000);
+
+    const timeParams = `from=${from.toISOString()}&to=${to.toISOString()}`;
+    const levelParam = level ? `&level=${level}` : '';
+
+    goto(`/dashboard/search?${timeParams}${levelParam}`);
+  }
+
+  function handleServiceClick(service: TopService) {
+    goto(`/dashboard/search?service=${encodeURIComponent(service.name)}&${getLast24HoursParams()}`);
+  }
+
+  function handleErrorClick(error: RecentError) {
+    // Create a 1-hour time window around the error
+    const errorTime = new Date(error.time);
+    const from = new Date(errorTime.getTime() - 30 * 60 * 1000);
+    const to = new Date(errorTime.getTime() + 30 * 60 * 1000);
+
+    const params = new URLSearchParams();
+    params.set('service', error.service);
+    params.set('level', error.level);
+    params.set('from', from.toISOString());
+    params.set('to', to.toISOString());
+    if (error.projectId) {
+      params.set('project', error.projectId);
+    }
+    if (error.traceId) {
+      params.set('traceId', error.traceId);
+    }
+
+    goto(`/dashboard/search?${params.toString()}`);
+  }
 </script>
 
 <div class="container mx-auto space-y-6 p-6">
@@ -141,6 +210,7 @@
               isPositive: stats.totalLogsToday.trend >= 0
             }}
             icon={Activity}
+            onclick={handleTotalLogsClick}
           />
           <StatsCard
             title="Error Rate"
@@ -151,6 +221,7 @@
               isPositive: stats.errorRate.trend <= 0
             }}
             icon={AlertTriangle}
+            onclick={handleErrorRateClick}
           />
           <StatsCard
             title="Active Services"
@@ -161,6 +232,7 @@
               isPositive: stats.activeServices.trend >= 0
             }}
             icon={Server}
+            onclick={handleActiveServicesClick}
           />
           <StatsCard
             title="Throughput"
@@ -171,11 +243,12 @@
               isPositive: stats.avgThroughput.trend >= 0
             }}
             icon={TrendingUp}
+            onclick={handleThroughputClick}
           />
         </div>
 
         {#if chartData.length > 0}
-          <LogsChart data={chartData} />
+          <LogsChart data={chartData} onDataPointClick={handleChartClick} />
         {:else}
           <div class="text-center py-12 text-muted-foreground">
             No log data available for the last 24 hours
@@ -183,8 +256,8 @@
         {/if}
 
         <div class="grid gap-4 md:grid-cols-2">
-          <TopServicesWidget services={topServices} />
-          <RecentErrorsWidget errors={recentErrors} />
+          <TopServicesWidget services={topServices} onServiceClick={handleServiceClick} />
+          <RecentErrorsWidget errors={recentErrors} onErrorClick={handleErrorClick} />
         </div>
       {/if}
 </div>
