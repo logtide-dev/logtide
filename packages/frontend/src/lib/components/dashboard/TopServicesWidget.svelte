@@ -10,9 +10,10 @@
 
   interface Props {
     services: ServiceStat[];
+    onServiceClick?: (service: ServiceStat) => void;
   }
 
-  let { services }: Props = $props();
+  let { services, onServiceClick }: Props = $props();
 </script>
 
 <Card>
@@ -22,7 +23,12 @@
   <CardContent>
     <div class="space-y-4">
       {#each services as service, index (`${service.name}-${index}`)}
-        <div class="flex items-center justify-between">
+        <button
+          type="button"
+          class="flex w-full items-center justify-between rounded-lg p-2 -m-2 text-left transition-colors hover:bg-accent cursor-pointer"
+          onclick={() => onServiceClick?.(service)}
+          title="Click to view logs for {service.name}"
+        >
           <div class="flex items-center gap-3">
             <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-sm font-medium text-primary">
               {index + 1}
@@ -33,7 +39,7 @@
             </div>
           </div>
           <Badge variant="secondary">{service.percentage.toFixed(2)}%</Badge>
-        </div>
+        </button>
         {#if index < services.length - 1}
           <div class="h-px bg-border"></div>
         {/if}
