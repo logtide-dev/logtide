@@ -32,10 +32,10 @@
   import Switch from "$lib/components/ui/switch/switch.svelte";
   import LogContextDialog from "$lib/components/LogContextDialog.svelte";
   import { ExceptionDetailsDialog } from "$lib/components/exceptions";
+  import ExportLogsDialog from "$lib/components/ExportLogsDialog.svelte";
   import EmptyLogs from "$lib/components/EmptyLogs.svelte";
   import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
-  import FileJson from "@lucide/svelte/icons/file-json";
-  import FileText from "@lucide/svelte/icons/file-text";
+  import Download from "@lucide/svelte/icons/download";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -92,6 +92,9 @@
   // Exception dialog state
   let exceptionDialogOpen = $state(false);
   let selectedLogForException = $state<LogEntry | null>(null);
+
+  // Export dialog state
+  let exportDialogOpen = $state(false);
 
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -570,47 +573,29 @@
     applyFilters();
   }
 
-  function exportLogs(format: "csv" | "json") {
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .slice(0, -5);
-    const filename = `logs-export-${timestamp}.${format === "json" ? "json" : "csv"}`;
-
-    if (format === "json") {
-      const dataStr = JSON.stringify(filteredLogs, null, 2);
-      downloadFile(dataStr, filename, "application/json");
-    } else {
-      const headers = [
-        "Time",
-        "Service",
-        "Level",
-        "Message",
-        "Metadata",
-        "TraceID",
-      ];
-      const rows = filteredLogs.map((log) => [
-        log.time,
-        log.service,
-        log.level,
-        `"${log.message.replace(/"/g, '""')}"`, // Escape quotes in CSV
-        `"${JSON.stringify(log.metadata || {}).replace(/"/g, '""')}"`,
-        log.traceId || "",
-      ]);
-      const csv = [headers, ...rows].map((row) => row.join(",")).join("\n");
-      downloadFile(csv, filename, "text/csv");
-    }
-  }
-
-  function downloadFile(content: string, filename: string, type: string) {
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  // Compute current export filters for the dialog
+  let exportFilters = $derived({
+    projectId:
+      selectedProjects.length === 1
+        ? selectedProjects[0]
+        : selectedProjects,
+    service:
+      selectedServices.length > 0
+        ? selectedServices.length === 1
+          ? selectedServices[0]
+          : selectedServices
+        : undefined,
+    level:
+      selectedLevels.length > 0
+        ? selectedLevels.length === 1
+          ? selectedLevels[0]
+          : selectedLevels
+        : undefined,
+    traceId: traceId || undefined,
+    q: searchQuery || undefined,
+    from: getTimeRange(timeRangeType, customFromTime, customToTime).from.toISOString(),
+    to: getTimeRange(timeRangeType, customFromTime, customToTime).to.toISOString(),
+  });
 
   function formatDateTime(dateStr: string): string {
     const date = new Date(dateStr);
@@ -1033,20 +1018,15 @@
             <Button
               variant="outline"
               size="sm"
-              onclick={() => exportLogs("json")}
+              onclick={() => (exportDialogOpen = true)}
+              disabled={liveTail || totalLogs === 0}
               class="gap-2"
             >
-              <FileJson class="w-4 h-4" />
-              Export JSON
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onclick={() => exportLogs("csv")}
-              class="gap-2"
-            >
-              <FileText class="w-4 h-4" />
-              Export CSV
+              <Download class="w-4 h-4" />
+              Export
+              {#if totalLogs > 0}
+                ({totalLogs.toLocaleString()})
+              {/if}
             </Button>
           </div>
         </CardContent>
@@ -1361,4 +1341,10 @@
   logId={selectedLogForException?.id || ""}
   organizationId={$currentOrganization?.id || ""}
   onClose={closeExceptionDialog}
+/>
+
+<ExportLogsDialog
+  bind:open={exportDialogOpen}
+  totalLogs={totalLogs}
+  filters={exportFilters}
 />
