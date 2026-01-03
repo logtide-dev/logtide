@@ -228,6 +228,192 @@ describe('Query API Integration Tests', () => {
 
     });
 
+    describe('GET /api/v1/logs - Substring Search Mode (Issue #68)', () => {
+        beforeEach(async () => {
+            // Insert test logs with various message patterns for substring testing
+            const now = new Date();
+
+            // Log with compound words (e.g., "spa.bluez5.native")
+            await createTestLog({
+                projectId,
+                time: now,
+                service: 'audio',
+                level: 'info',
+                message: 'PipeWire spa.bluez5.native connected to device',
+            });
+
+            // Log with hyphenated terms
+            await createTestLog({
+                projectId,
+                time: now,
+                service: 'network',
+                level: 'error',
+                message: 'Connection to api-gateway-v2.internal.svc failed',
+            });
+
+            // Log with underscored terms
+            await createTestLog({
+                projectId,
+                time: now,
+                service: 'db',
+                level: 'warn',
+                message: 'Query on user_profile_settings_v3 took 500ms',
+            });
+
+            // Log with normal words (for fulltext comparison)
+            await createTestLog({
+                projectId,
+                time: now,
+                service: 'api',
+                level: 'info',
+                message: 'User authentication completed successfully',
+            });
+
+            // Log with special LIKE characters to test escaping
+            await createTestLog({
+                projectId,
+                time: now,
+                service: 'search',
+                level: 'debug',
+                message: 'Query: SELECT * FROM logs WHERE status = 100% AND type_id = 5',
+            });
+        });
+
+        it('should find text anywhere in message with substring mode', async () => {
+            // "bluez" should match "spa.bluez5.native" with substring mode
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'bluez', searchMode: 'substring' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            expect(response.body.logs).toBeInstanceOf(Array);
+            expect(response.body.logs.length).toBeGreaterThan(0);
+            expect(response.body.logs[0].message).toContain('bluez');
+        });
+
+        it('should NOT find partial text with default fulltext mode', async () => {
+            // "bluez" should NOT match "spa.bluez5.native" with fulltext mode
+            // because fulltext search is word-based and "bluez5" is treated as one word
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'bluez' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            expect(response.body.logs).toBeInstanceOf(Array);
+            // Fulltext won't find "bluez" inside "spa.bluez5.native"
+            expect(response.body.logs.length).toBe(0);
+        });
+
+        it('should find hyphenated terms with substring mode', async () => {
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'gateway-v2', searchMode: 'substring' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            expect(response.body.logs).toBeInstanceOf(Array);
+            expect(response.body.logs.length).toBeGreaterThan(0);
+            expect(response.body.logs[0].message).toContain('gateway-v2');
+        });
+
+        it('should find underscored terms with substring mode', async () => {
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'profile_settings', searchMode: 'substring' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            expect(response.body.logs).toBeInstanceOf(Array);
+            expect(response.body.logs.length).toBeGreaterThan(0);
+            expect(response.body.logs[0].message).toContain('profile_settings');
+        });
+
+        it('should handle special LIKE characters (% and _) safely', async () => {
+            // Search for "100%" - the % should be escaped and not act as wildcard
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: '100%', searchMode: 'substring' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            expect(response.body.logs).toBeInstanceOf(Array);
+            expect(response.body.logs.length).toBeGreaterThan(0);
+            expect(response.body.logs[0].message).toContain('100%');
+        });
+
+        it('should handle underscore character safely', async () => {
+            // Search for "type_id" - the _ should be escaped and not act as single-char wildcard
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'type_id', searchMode: 'substring' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            expect(response.body.logs).toBeInstanceOf(Array);
+            expect(response.body.logs.length).toBeGreaterThan(0);
+            expect(response.body.logs[0].message).toContain('type_id');
+        });
+
+        it('should default to fulltext mode when searchMode not specified', async () => {
+            // "authentication" is a normal word, should be found with fulltext
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'authentication' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            expect(response.body.logs).toBeInstanceOf(Array);
+            expect(response.body.logs.length).toBeGreaterThan(0);
+            expect(response.body.logs[0].message).toContain('authentication');
+        });
+
+        it('should reject invalid searchMode value', async () => {
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'test', searchMode: 'invalid' })
+                .set('x-api-key', apiKey)
+                .expect(400);
+
+            expect(response.body).toHaveProperty('message');
+        });
+
+        it('should return different results for fulltext vs substring mode', async () => {
+            // Get results with fulltext mode
+            const fulltextResponse = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'bluez', searchMode: 'fulltext' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            // Get results with substring mode
+            const substringResponse = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'bluez', searchMode: 'substring' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            // Fulltext should not find "bluez" (it's part of "bluez5")
+            expect(fulltextResponse.body.logs.length).toBe(0);
+            // Substring should find it
+            expect(substringResponse.body.logs.length).toBeGreaterThan(0);
+        });
+
+        it('should be case-insensitive in substring mode', async () => {
+            const response = await request(app.server)
+                .get('/api/v1/logs')
+                .query({ projectId, q: 'BLUEZ', searchMode: 'substring' })
+                .set('x-api-key', apiKey)
+                .expect(200);
+
+            expect(response.body.logs).toBeInstanceOf(Array);
+            expect(response.body.logs.length).toBeGreaterThan(0);
+            // Original message has lowercase "bluez"
+            expect(response.body.logs[0].message.toLowerCase()).toContain('bluez');
+        });
+    });
+
     describe('GET /api/v1/logs/trace/:traceId - Get Logs by Trace ID', () => {
         beforeEach(async () => {
             // Insert logs with same trace ID

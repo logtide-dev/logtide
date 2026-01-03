@@ -6,7 +6,7 @@
   import { authStore } from "$lib/stores/auth";
   import { checklistStore } from "$lib/stores/checklist";
   import { ProjectsAPI } from "$lib/api/projects";
-  import { logsAPI } from "$lib/api/logs";
+  import { logsAPI, type SearchMode } from "$lib/api/logs";
   import { toastStore } from "$lib/stores/toast";
   import type { Project } from "@logward/shared";
   import Button from "$lib/components/ui/button/button.svelte";
@@ -63,6 +63,7 @@
   let logsContainer = $state<HTMLDivElement | null>(null);
 
   let searchQuery = $state("");
+  let searchMode = $state<SearchMode>("fulltext");
   let traceId = $state("");
   let selectedProjects = $state<string[]>([]);
   let selectedServices = $state<string[]>([]);
@@ -134,6 +135,12 @@
   }
 
   onMount(() => {
+    // Restore search mode preference from session storage
+    const savedSearchMode = sessionStorage.getItem("logward_search_mode");
+    if (savedSearchMode === "fulltext" || savedSearchMode === "substring") {
+      searchMode = savedSearchMode;
+    }
+
     if ($currentOrganization) {
       loadProjects();
     }
@@ -315,6 +322,7 @@
             : undefined,
         traceId: traceId || undefined,
         q: searchQuery || undefined,
+        searchMode: searchQuery ? searchMode : undefined,
         from: timeRange.from.toISOString(),
         to: timeRange.to.toISOString(),
         limit: pageSize,
@@ -611,15 +619,42 @@
         </CardHeader>
         <CardContent>
           <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
-            <div class="space-y-2">
+            <div class="space-y-2 lg:col-span-2">
               <Label for="search">Search Message</Label>
-              <Input
-                id="search"
-                type="search"
-                placeholder="Search in messages..."
-                bind:value={searchQuery}
-                oninput={debouncedSearch}
-              />
+              <div class="flex gap-2">
+                <Input
+                  id="search"
+                  type="search"
+                  placeholder={searchMode === "fulltext" ? "Search words..." : "Find text anywhere..."}
+                  bind:value={searchQuery}
+                  oninput={debouncedSearch}
+                  class="flex-1"
+                />
+                <Select.Root
+                  type="single"
+                  value={{ value: searchMode, label: searchMode === "fulltext" ? "Full-text" : "Substring" }}
+                  onValueChange={(v) => {
+                    if (v) {
+                      const newValue = typeof v === 'string' ? v : v.value;
+                      if (newValue === "fulltext" || newValue === "substring") {
+                        searchMode = newValue;
+                        sessionStorage.setItem("logward_search_mode", searchMode);
+                        if (searchQuery) {
+                          debouncedSearch();
+                        }
+                      }
+                    }
+                  }}
+                >
+                  <Select.Trigger class="w-[130px]" title="Search mode: Full-text (word-based) or Substring (find anywhere)">
+                    {searchMode === "fulltext" ? "Full-text" : "Substring"}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Item value="fulltext">Full-text</Select.Item>
+                    <Select.Item value="substring">Substring</Select.Item>
+                  </Select.Content>
+                </Select.Root>
+              </div>
             </div>
 
             <div class="space-y-2">

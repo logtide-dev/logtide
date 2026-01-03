@@ -23,6 +23,7 @@
         Save,
         Info,
         User,
+        Search,
     } from "lucide-svelte";
     import { browser } from "$app/environment";
     import { untrack } from "svelte";
@@ -38,6 +39,10 @@
     let signupEnabled = $state(true);
     let authMode = $state<"standard" | "none">("standard");
     let defaultUserId = $state<string | null>(null);
+
+    // Search settings state
+    let searchDefaultMode = $state<"fulltext" | "substring">("fulltext");
+    let searchSubstringIndexed = $state(true);
 
     // Users list for auth-free mode selector
     let usersList = $state<UserBasic[]>([]);
@@ -89,6 +94,9 @@
             signupEnabled = settings["auth.signup_enabled"] as boolean ?? true;
             authMode = (settings["auth.mode"] as "standard" | "none") ?? "standard";
             defaultUserId = (settings["auth.default_user_id"] as string) ?? null;
+            // Search settings
+            searchDefaultMode = (settings["search.default_mode"] as "fulltext" | "substring") ?? "fulltext";
+            searchSubstringIndexed = (settings["search.substring_indexed"] as boolean) ?? true;
             // Only show active admin users for default user selection
             usersList = usersResponse.users.filter(u => !u.disabled && u.is_admin);
         } catch (e: any) {
@@ -108,6 +116,8 @@
                 "auth.signup_enabled": signupEnabled,
                 "auth.mode": authMode,
                 "auth.default_user_id": defaultUserId,
+                "search.default_mode": searchDefaultMode,
+                "search.substring_indexed": searchSubstringIndexed,
             });
             success = "Settings saved successfully";
             setTimeout(() => {
@@ -375,6 +385,70 @@
                         </CardContent>
                     </Card>
                 {/if}
+
+                <!-- Search Settings -->
+                <Card class="md:col-span-2">
+                    <CardHeader>
+                        <CardTitle class="flex items-center gap-2">
+                            <Search class="h-5 w-5" />
+                            Search Settings
+                        </CardTitle>
+                        <CardDescription>
+                            Configure log search behavior and performance
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent class="space-y-4">
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div class="space-y-2">
+                                <Label>Default Search Mode</Label>
+                                <Select.Root
+                                    type="single"
+                                    value={{ value: searchDefaultMode, label: searchDefaultMode === "fulltext" ? "Full-text (Word-based)" : "Substring (Anywhere)" }}
+                                    onValueChange={(v) => {
+                                        if (v) {
+                                            const newValue = typeof v === 'string' ? v : v.value;
+                                            if (newValue === 'fulltext' || newValue === 'substring') {
+                                                searchDefaultMode = newValue;
+                                            }
+                                        }
+                                    }}
+                                >
+                                    <Select.Trigger class="w-full">
+                                        {searchDefaultMode === "fulltext" ? "Full-text (Word-based)" : "Substring (Anywhere)"}
+                                    </Select.Trigger>
+                                    <Select.Content>
+                                        <Select.Item value="fulltext">Full-text (Word-based)</Select.Item>
+                                        <Select.Item value="substring">Substring (Anywhere)</Select.Item>
+                                    </Select.Content>
+                                </Select.Root>
+                                <p class="text-xs text-muted-foreground">
+                                    Default mode for new search sessions
+                                </p>
+                            </div>
+                            <div class="space-y-2">
+                                <div class="flex items-center justify-between">
+                                    <div class="space-y-0.5">
+                                        <Label>Substring Index Enabled</Label>
+                                        <p class="text-sm text-muted-foreground">
+                                            pg_trgm trigram index is active
+                                        </p>
+                                    </div>
+                                    <Switch
+                                        checked={searchSubstringIndexed}
+                                        onCheckedChange={(checked) => (searchSubstringIndexed = checked)}
+                                        disabled
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-blue-500/10 border border-blue-500/20 rounded-md p-3">
+                            <p class="text-sm text-blue-600 dark:text-blue-400">
+                                <strong>Full-text:</strong> Word-based search with stemming (e.g., "fail" finds "failed", "failing").<br/>
+                                <strong>Substring:</strong> Finds text anywhere in the message (e.g., "bluez" finds "spa.bluez5.native").
+                            </p>
+                        </div>
+                    </CardContent>
+                </Card>
             </div>
 
             <!-- Warning Banner -->

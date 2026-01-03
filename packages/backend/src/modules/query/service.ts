@@ -3,6 +3,9 @@ import { db } from '../../database/index.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 import type { LogLevel } from '@logward/shared';
 
+/** Supported search modes */
+export type SearchMode = 'fulltext' | 'substring';
+
 export interface LogQueryParams {
   projectId: string | string[]; // Support single or multiple projects
   service?: string | string[]; // Support single or multiple services
@@ -10,7 +13,8 @@ export interface LogQueryParams {
   traceId?: string; // Filter by trace ID
   from?: Date;
   to?: Date;
-  q?: string; // Full-text search
+  q?: string; // Search query
+  searchMode?: SearchMode; // Search mode: 'fulltext' (default) or 'substring'
   limit?: number;
   offset?: number;
   cursor?: string;
@@ -30,6 +34,7 @@ export class QueryService {
       from,
       to,
       q,
+      searchMode = 'fulltext',
       limit = 100,
       offset = 0,
       cursor,
@@ -43,6 +48,7 @@ export class QueryService {
       from: from?.toISOString() || null,
       to: to?.toISOString() || null,
       q: q || null,
+      searchMode: searchMode || 'fulltext',
       limit,
       offset,
       cursor: cursor || null,
@@ -123,11 +129,25 @@ export class QueryService {
       query = query.where('time', '<=', to);
     }
 
-    // Full-text search on message
+    // Search on message - support both fulltext and substring modes
     if (q) {
-      query = query.where(
-        sql<boolean>`to_tsvector('english', message) @@ plainto_tsquery('english', ${q})`
-      );
+      if (searchMode === 'substring') {
+        // Substring search using ILIKE with trigram index (pg_trgm)
+        // This finds text anywhere in the message, unlike fulltext which is word-based
+        // Escape special LIKE characters (% and _) to prevent pattern manipulation
+        const escapedQuery = q.replace(/[%_]/g, '\\$&');
+        // Build the pattern and pass it as a parameter to Kysely
+        const pattern = `%${escapedQuery}%`;
+        query = query.where(
+          sql<boolean>`message ILIKE ${pattern}`
+        );
+      } else {
+        // Full-text search (default) - word-based with stemming
+        // Uses GIN index on to_tsvector('english', message)
+        query = query.where(
+          sql<boolean>`to_tsvector('english', message) @@ plainto_tsquery('english', ${q})`
+        );
+      }
     }
 
     // Get total count (only if no cursor, or separate query?)

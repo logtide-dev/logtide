@@ -190,7 +190,7 @@ We have ready-to-use SDKs for the most popular languages.
 
 * ✅ **High-Performance Ingestion:** Batch API handling thousands of logs/sec.
 * ✅ **Real-time Live Tail:** See logs as they arrive via Server-Sent Events (SSE).
-* ✅ **Powerful Search:** Filter by service, level, time range, and full-text search.
+* ✅ **Powerful Search:** Filter by service, level, time range. Two search modes: **Full-text** (word-based with stemming) and **Substring** (find text anywhere in messages, e.g., find "bluez" in "spa.bluez5.native").
 * ✅ **Multi-Organization:** Isolate teams and projects strictly.
 * ✅ **Alerting:** Get notified via Email or Webhook (Slack/Discord) on error spikes.
 * ✅ **Retention Policy:** Automatic cleanup of old logs via TimescaleDB.

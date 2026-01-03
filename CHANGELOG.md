@@ -5,6 +5,19 @@ All notable changes to LogWard will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0]
+
+### Added
+
+- **Substring Search Mode**: Find text anywhere in log messages (#68)
+  - New search mode dropdown in the Logs Search page
+  - **Full-text** mode: Word-based search with stemming (default, existing behavior)
+  - **Substring** mode: Find partial matches anywhere in messages (e.g., "bluez" in "spa.bluez5.native")
+  - Powered by PostgreSQL `pg_trgm` extension with GIN trigram index for fast performance
+  - Admin settings to configure default search mode system-wide
+  - Search mode preference saved per-session in browser
+  - 10 new integration tests for substring search
+
 ## [0.3.3] - 2026-01-02
 
 ### Added

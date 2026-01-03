@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { queryService } from './service.js';
+import { queryService, type SearchMode } from './service.js';
 import type { LogLevel } from '@logward/shared';
 import { db } from '../../database/index.js';
 
@@ -50,6 +50,7 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
           from: { type: 'string', format: 'date-time' },
           to: { type: 'string', format: 'date-time' },
           q: { type: 'string' },
+          searchMode: { type: 'string', enum: ['fulltext', 'substring'], default: 'fulltext' },
           limit: { type: 'number', minimum: 1, maximum: 1000, default: 100 },
           offset: { type: 'number', minimum: 0, default: 0 },
           cursor: { type: 'string' },
@@ -57,13 +58,14 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     handler: async (request: any, reply) => {
-      const { service, level, traceId, from, to, q, limit, offset, cursor, projectId: queryProjectId } = request.query as {
+      const { service, level, traceId, from, to, q, searchMode, limit, offset, cursor, projectId: queryProjectId } = request.query as {
         service?: string | string[];
         level?: LogLevel | LogLevel[];
         traceId?: string;
         from?: string;
         to?: string;
         q?: string;
+        searchMode?: SearchMode;
         limit?: number;
         offset?: number;
         cursor?: string;
@@ -112,6 +114,7 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         from: from ? new Date(from) : undefined,
         to: to ? new Date(to) : undefined,
         q,
+        searchMode,
         limit: limit || 100,
         offset: offset || 0,
         cursor,
