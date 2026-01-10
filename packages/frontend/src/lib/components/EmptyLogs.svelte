@@ -86,7 +86,7 @@ logger.error("Something went wrong", metadata={"user_id": 123})`
         </CardContent>
       </Card>
     </a>
-    <a href="/docs/getting-started" class="block">
+    <a href="https://logward.dev/docs/getting-started" target="_blank" rel="noopener noreferrer" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
           <Book class="w-8 h-8 mx-auto text-purple-500 mb-2" />
@@ -95,7 +95,7 @@ logger.error("Something went wrong", metadata={"user_id": 123})`
         </CardContent>
       </Card>
     </a>
-    <a href="/docs/sdks" class="block">
+    <a href="https://logward.dev/docs/sdks" target="_blank" rel="noopener noreferrer" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
           <Terminal class="w-8 h-8 mx-auto text-blue-500 mb-2" />

@@ -18,6 +18,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Search mode preference saved per-session in browser
   - 10 new integration tests for substring search
 
+### Changed
+
+- **Website Separation**: Homepage and documentation moved to dedicated website
+  - Landing page and all documentation pages moved to [logward.dev](https://logward.dev)
+  - App homepage now redirects to `/dashboard` (authenticated) or `/login` (unauthenticated)
+  - All internal `/docs` links updated to external `https://logward.dev/docs`
+  - Navbar, Footer, and empty state components updated with external documentation links
+  - Cleaner separation between marketing website and application
+
+### Removed
+
+- **Documentation Pages**: Removed 24 documentation pages from the app
+  - Getting Started, API Reference, SDK docs (Node.js, Python, Go, PHP, Kotlin, C#)
+  - Migration guides (Datadog, Splunk, ELK, Loki, SigNoz)
+  - Authentication, Deployment, Architecture, Contributing guides
+  - All documentation now available at [logward.dev/docs](https://logward.dev/docs)
+
+- **Documentation Components**: Removed docs-specific UI components
+  - DocsSidebar, DocsTableOfContents, CodeBlock, Breadcrumbs components removed
+  - These components are now part of the dedicated website project
+
 ## [0.3.3] - 2026-01-02
 
 ### Added

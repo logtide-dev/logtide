@@ -199,6 +199,7 @@
     label: string;
     href: string;
     icon: typeof LayoutDashboard;
+    external?: boolean;
     badge?: {
       id: string;
       type: 'new' | 'updated' | 'beta';
@@ -229,7 +230,7 @@
       icon: Shield,
       badge: { id: 'security-feature', type: 'new', showUntil: '2025-06-01' }
     },
-    { label: "Docs", href: "/docs", icon: Book },
+    { label: "Docs", href: "https://logward.dev/docs", icon: Book, external: true },
     { label: "Settings", href: "/dashboard/settings", icon: Settings },
   ];
 
@@ -277,10 +278,12 @@
         {@const Icon = item.icon}
         <a
           href={item.href}
+          target={item.external ? '_blank' : undefined}
+          rel={item.external ? 'noopener noreferrer' : undefined}
           data-nav-item={item.label.toLowerCase()}
-          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive(
-            item.href,
-          )
+          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {item.external
+            ? 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
+            : isActive(item.href)
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
         >
@@ -370,9 +373,13 @@
         {@const Icon = item.icon}
         <a
           href={item.href}
+          target={item.external ? '_blank' : undefined}
+          rel={item.external ? 'noopener noreferrer' : undefined}
           onclick={() => mobileMenuOpen = false}
           data-nav-item={item.label.toLowerCase()}
-          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive(item.href)
+          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {item.external
+            ? 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
+            : isActive(item.href)
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
         >

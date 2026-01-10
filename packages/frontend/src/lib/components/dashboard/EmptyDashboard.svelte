@@ -87,7 +87,8 @@ const exporter = new OTLPLogExporter({
       icon: Book,
       title: 'Read the Docs',
       description: 'Learn how to integrate LogWard',
-      href: '/docs/getting-started',
+      href: 'https://logward.dev/docs/getting-started',
+      external: true,
       color: 'bg-purple-500/10 text-purple-500'
     }
   ];
@@ -108,10 +109,12 @@ const exporter = new OTLPLogExporter({
           </p>
         </div>
         <div class="flex gap-2">
-          <Button href="/docs/getting-started" variant="outline" class="gap-2">
-            <Book class="w-4 h-4" />
-            View Docs
-          </Button>
+          <a href="https://logward.dev/docs/getting-started" target="_blank" rel="noopener noreferrer">
+            <Button variant="outline" class="gap-2">
+              <Book class="w-4 h-4" />
+              View Docs
+            </Button>
+          </a>
           <Button href="/dashboard/projects" class="gap-2">
             Get Started
             <ChevronRight class="w-4 h-4" />
@@ -124,7 +127,7 @@ const exporter = new OTLPLogExporter({
   <!-- Quick Actions -->
   <div class="grid gap-4 md:grid-cols-3">
     {#each quickActions as action}
-      <a href={action.href} class="block">
+      <a href={action.href} class="block" target={action.external ? '_blank' : undefined} rel={action.external ? 'noopener noreferrer' : undefined}>
         <Card class="h-full hover:border-primary/50 transition-all cursor-pointer">
           <CardContent class="pt-6">
             <div class="flex items-start gap-4">

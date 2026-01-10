@@ -118,7 +118,7 @@
         <li>Use <kbd class="px-1.5 py-0.5 bg-muted rounded text-xs">Ctrl+K</kbd> for quick search anywhere</li>
         <li>Click on a trace ID to see all related logs</li>
         <li>Set up alerts before going to production</li>
-        <li>Check out the <a href="/docs" class="text-primary hover:underline">documentation</a> for SDK guides</li>
+        <li>Check out the <a href="https://logward.dev/docs" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">documentation</a> for SDK guides</li>
       </ul>
     </CardContent>
   </Card>

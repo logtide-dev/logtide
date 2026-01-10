@@ -18,7 +18,9 @@
     <div class="flex items-center gap-4">
       <span>© {currentYear} LogWard</span>
       <a
-        href="/docs"
+        href="https://logward.dev/docs"
+        target="_blank"
+        rel="noopener noreferrer"
         class="hover:text-foreground transition-colors"
       >
         Documentation

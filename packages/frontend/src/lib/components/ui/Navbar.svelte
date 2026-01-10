@@ -17,25 +17,23 @@
     let currentPath = $derived(page.url.pathname);
     let isDashboard = $derived(
         currentPath === "/" ||
-        (!currentPath.startsWith("/docs") &&
-            !currentPath.startsWith("/login") &&
+        (!currentPath.startsWith("/login") &&
             !currentPath.startsWith("/register")));
-    let isDocs = $derived(currentPath.startsWith("/docs"));
 </script>
 
 <nav class="navbar">
     <div class="navbar-container">
         <!-- Logo/Brand -->
-        <a href="/" class="navbar-brand" onclick={closeMobileMenu}>
+        <a href="/dashboard" class="navbar-brand" onclick={closeMobileMenu}>
             <img src={$logoPath} alt="LogWard" class="h-10 w-auto" />
         </a>
 
         <!-- Desktop Navigation -->
         <div class="navbar-links desktop">
-            <a href="/" class="nav-link {isDashboard ? 'active' : ''}">
+            <a href="/dashboard" class="nav-link {isDashboard ? 'active' : ''}">
                 Dashboard
             </a>
-            <a href="/docs" class="nav-link {isDocs ? 'active' : ''}"> Docs </a>
+            <a href="https://logward.dev/docs" target="_blank" rel="noopener noreferrer" class="nav-link"> Docs </a>
             <a
                 href="https://github.com/logward-dev/logward"
                 target="_blank"
@@ -66,15 +64,17 @@
     {#if mobileMenuOpen}
         <div class="navbar-links mobile">
             <a
-                href="/"
+                href="/dashboard"
                 class="nav-link {isDashboard ? 'active' : ''}"
                 onclick={closeMobileMenu}
             >
                 Dashboard
             </a>
             <a
-                href="/docs"
-                class="nav-link {isDocs ? 'active' : ''}"
+                href="https://logward.dev/docs"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="nav-link"
                 onclick={closeMobileMenu}
             >
                 Docs
