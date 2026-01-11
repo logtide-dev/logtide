@@ -39,8 +39,6 @@ export interface OrganizationRetentionStatus {
 // ============================================================================
 
 export class RetentionService {
-  private readonly BATCH_SIZE = 10000; // Delete in batches to avoid long locks
-
   /**
    * Validate retention days value
    */
