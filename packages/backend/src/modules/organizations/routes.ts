@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { OrganizationsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
-import type { OrgRole } from '@logward/shared';
+import type { OrgRole } from '@logtide/shared';
 
 const organizationsService = new OrganizationsService();
 

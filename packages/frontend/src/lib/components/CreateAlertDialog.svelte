@@ -407,7 +407,7 @@
 					>
 						Import a Sigma rule in YAML format. If the rule is
 						compatible, it will be automatically converted to a
-						LogWard alert rule.
+						LogTide alert rule.
 					</div>
 
 					<div class="space-y-2">

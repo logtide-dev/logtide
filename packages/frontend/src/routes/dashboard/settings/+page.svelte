@@ -13,8 +13,8 @@
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Separator } from '$lib/components/ui/separator';
   import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '$lib/components/ui/select';
-  import type { OrganizationWithRole, OrganizationMemberWithUser, PendingInvitation, OrgRole } from '@logward/shared';
-  import { canManageMembers } from '@logward/shared';
+  import type { OrganizationWithRole, OrganizationMemberWithUser, PendingInvitation, OrgRole } from '@logtide/shared';
+  import { canManageMembers } from '@logtide/shared';
   import { Badge } from '$lib/components/ui/badge';
   import Building2 from '@lucide/svelte/icons/building-2';
   import Save from '@lucide/svelte/icons/save';
@@ -329,7 +329,7 @@
 </script>
 
 <svelte:head>
-  <title>Organization Settings - LogWard</title>
+  <title>Organization Settings - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto space-y-6 p-6">
@@ -397,6 +397,34 @@
           {saving ? 'Saving...' : 'Save Changes'}
         </Button>
       </form>
+    </CardContent>
+  </Card>
+
+  <Card>
+    <CardHeader>
+      <div class="flex items-center gap-2">
+        <Clock class="w-5 h-5 text-primary" />
+        <div>
+          <CardTitle>Log Retention Policy</CardTitle>
+          <CardDescription>How long logs are retained for this organization</CardDescription>
+        </div>
+      </div>
+    </CardHeader>
+    <CardContent>
+      <div class="space-y-4">
+        <div class="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+          <div class="flex-1">
+            <div class="text-2xl font-bold">{currentOrg?.retentionDays || 90} days</div>
+            <p class="text-sm text-muted-foreground">
+              Logs older than this will be automatically deleted
+            </p>
+          </div>
+        </div>
+        <p class="text-sm text-muted-foreground">
+          The log retention policy is configured by your system administrator.
+          Contact your admin if you need to change this setting.
+        </p>
+      </div>
     </CardContent>
   </Card>
 

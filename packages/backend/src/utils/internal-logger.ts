@@ -1,7 +1,7 @@
-import { LogWardClient } from '@logward-dev/sdk-node';
+import { LogTideClient } from '@logtide/sdk-node';
 import { getInternalApiKey } from './internal-logging-bootstrap.js';
 
-let internalLogger: LogWardClient | null = null;
+let internalLogger: LogTideClient | null = null;
 let isEnabled = false;
 
 /**
@@ -29,7 +29,7 @@ export async function initializeInternalLogging(): Promise<void> {
       process.env.INTERNAL_LOGGING_API_URL || process.env.API_URL || 'http://localhost:8080';
 
     // Initialize client
-    internalLogger = new LogWardClient({
+    internalLogger = new LogTideClient({
       apiUrl,
       apiKey,
 
@@ -52,9 +52,9 @@ export async function initializeInternalLogging(): Promise<void> {
 
       // Global metadata
       globalMetadata: {
-        service: process.env.SERVICE_NAME || 'logward-backend',
+        service: process.env.SERVICE_NAME || 'logtide-backend',
         env: process.env.NODE_ENV || 'development',
-        version: process.env.npm_package_version || '0.3.3',
+        version: process.env.npm_package_version || '0.4.0',
         hostname: process.env.HOSTNAME || 'unknown',
       },
     });
@@ -68,7 +68,7 @@ export async function initializeInternalLogging(): Promise<void> {
 /**
  * Get the internal logger instance (or null if not initialized)
  */
-export function getInternalLogger(): LogWardClient | null {
+export function getInternalLogger(): LogTideClient | null {
   return internalLogger;
 }
 

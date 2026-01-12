@@ -156,7 +156,7 @@ export function createTestSigmaRule(overrides: Partial<SigmaRuleOptions> = {}): 
     author: 'E2E Test',
     logsource: {
       category: 'application',
-      product: 'logward',
+      product: 'logtide',
     },
     detection: {
       selection: {
@@ -218,7 +218,7 @@ description: Detects logs containing the keyword "${keyword}"
 author: E2E Test
 logsource:
     category: application
-    product: logward
+    product: logtide
 detection:
     selection:
         message|contains: '${keyword}'

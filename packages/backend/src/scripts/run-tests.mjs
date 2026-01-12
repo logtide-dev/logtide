@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, '../../../..');
 
-console.log('🧪 LogWard Test Runner\n');
+console.log('🧪 LogTide Test Runner\n');
 
 // Check if Docker is available
 try {

@@ -129,7 +129,7 @@
 </script>
 
 <svelte:head>
-	<title>Security Dashboard - LogWard</title>
+	<title>Security Dashboard - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto px-4 py-6 max-w-7xl">

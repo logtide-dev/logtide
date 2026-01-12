@@ -248,7 +248,7 @@
         <div>
           <h3 class="text-lg font-semibold">Onboarding Tutorial</h3>
           <p class="text-sm text-muted-foreground mt-1">
-            Restart the onboarding tutorial to learn about LogWard features
+            Restart the onboarding tutorial to learn about LogTide features
           </p>
         </div>
 

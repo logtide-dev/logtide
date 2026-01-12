@@ -115,7 +115,7 @@ class IpsumService {
 
       const response = await fetch(IPSUM_DOWNLOAD_URL, {
         headers: {
-          'User-Agent': 'LogWard/1.0',
+          'User-Agent': 'LogTide/1.0',
         },
       });
 

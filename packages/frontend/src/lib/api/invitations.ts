@@ -1,4 +1,4 @@
-import type { PendingInvitation, OrgRole } from '@logward/shared';
+import type { PendingInvitation, OrgRole } from '@logtide/shared';
 import { getApiBaseUrl } from '$lib/config';
 
 export interface InviteUserInput {
@@ -128,7 +128,7 @@ export class InvitationsAPI {
 export const invitationsAPI = new InvitationsAPI(() => {
   if (typeof window !== 'undefined') {
     try {
-      const stored = localStorage.getItem('logward_auth');
+      const stored = localStorage.getItem('logtide_auth');
       if (stored) {
         const data = JSON.parse(stored);
         return data.token;

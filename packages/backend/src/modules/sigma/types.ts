@@ -56,7 +56,7 @@ export interface ParsedSigmaRule extends SigmaRule {
 }
 
 /**
- * Conversion result from Sigma to LogWard Alert Rule
+ * Conversion result from Sigma to LogTide Alert Rule
  */
 export interface SigmaConversionResult {
   success: boolean;

@@ -15,8 +15,8 @@ COPY packages/backend ./packages/backend
 RUN pnpm install --frozen-lockfile
 
 # Build packages in order
-RUN pnpm --filter '@logward/shared' build
-RUN pnpm --filter '@logward/backend' build
+RUN pnpm --filter '@logtide/shared' build
+RUN pnpm --filter '@logtide/backend' build
 
 # Production stage
 FROM node:20-alpine

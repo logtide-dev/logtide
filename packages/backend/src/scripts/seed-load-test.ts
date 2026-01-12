@@ -8,7 +8,7 @@ import { db } from '../database/index.js';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 
-const LOAD_TEST_EMAIL = 'loadtest@logward.dev';
+const LOAD_TEST_EMAIL = 'loadtest@logtide.dev';
 const LOAD_TEST_ORG_SLUG = 'load-test-org';
 
 async function seedLoadTestData() {

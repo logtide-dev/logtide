@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest a new feature or enhancement for LogWard
+about: Suggest a new feature or enhancement for LogTide
 title: "[Feature] "
 labels: ''
 assignees: ''
@@ -24,7 +24,7 @@ assignees: ''
 
 ## Priority
 <!-- How important is this feature to you? -->
-- [ ] Critical - Blocking my usage of LogWard
+- [ ] Critical - Blocking my usage of LogTide
 - [ ] High - Would significantly improve my workflow
 - [ ] Medium - Nice to have
 - [ ] Low - Minor enhancement

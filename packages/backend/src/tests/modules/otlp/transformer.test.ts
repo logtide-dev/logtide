@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  transformOtlpToLogWard,
+  transformOtlpToLogTide,
   transformLogRecord,
   extractServiceName,
   nanosToIso,
@@ -15,14 +15,14 @@ import {
 } from '../../../modules/otlp/transformer.js';
 
 describe('OTLP Transformer', () => {
-  describe('transformOtlpToLogWard', () => {
+  describe('transformOtlpToLogTide', () => {
     it('should transform empty request', () => {
-      const result = transformOtlpToLogWard({});
+      const result = transformOtlpToLogTide({});
       expect(result).toEqual([]);
     });
 
     it('should transform empty resourceLogs', () => {
-      const result = transformOtlpToLogWard({ resourceLogs: [] });
+      const result = transformOtlpToLogTide({ resourceLogs: [] });
       expect(result).toEqual([]);
     });
 
@@ -53,7 +53,7 @@ describe('OTLP Transformer', () => {
         ],
       };
 
-      const result = transformOtlpToLogWard(request);
+      const result = transformOtlpToLogTide(request);
 
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
@@ -104,7 +104,7 @@ describe('OTLP Transformer', () => {
         ],
       };
 
-      const result = transformOtlpToLogWard(request);
+      const result = transformOtlpToLogTide(request);
 
       expect(result).toHaveLength(3);
       expect(result[0].service).toBe('service-a');
@@ -134,7 +134,7 @@ describe('OTLP Transformer', () => {
         ],
       };
 
-      const result = transformOtlpToLogWard(request);
+      const result = transformOtlpToLogTide(request);
 
       expect(result[0].metadata).toMatchObject({
         'otel.scope.name': 'my-library',
@@ -162,7 +162,7 @@ describe('OTLP Transformer', () => {
         ],
       };
 
-      const result = transformOtlpToLogWard(request);
+      const result = transformOtlpToLogTide(request);
 
       expect(result[0].metadata).toMatchObject({
         'service.name': 'my-service',

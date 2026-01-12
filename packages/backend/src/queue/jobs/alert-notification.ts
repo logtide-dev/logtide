@@ -167,8 +167,8 @@ async function sendEmailNotification(data: AlertNotificationData) {
           </div>
 
           <div class="footer">
-            <p>This is an automated alert from LogWard.</p>
-            <p>To manage your alerts, visit your LogWard dashboard.</p>
+            <p>This is an automated alert from LogTide.</p>
+            <p>To manage your alerts, visit your LogTide dashboard.</p>
           </div>
         </div>
       </body>
@@ -186,12 +186,12 @@ Alert Details:
 
 Your application has generated ${data.log_count} logs in the last ${data.time_window} minutes, exceeding the threshold of ${data.threshold}.
 
-This is an automated alert from LogWard.
+This is an automated alert from LogTide.
   `.trim();
 
   // Send email to all recipients
   await transporter.sendMail({
-    from: `"LogWard Alerts" <${config.SMTP_FROM || config.SMTP_USER}>`,
+    from: `"LogTide Alerts" <${config.SMTP_FROM || config.SMTP_USER}>`,
     to: data.email_recipients.join(', '),
     subject,
     text,

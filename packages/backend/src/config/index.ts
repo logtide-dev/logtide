@@ -41,7 +41,7 @@ const configSchema = z.object({
   SMTP_SECURE: z.string().default('false').transform((val) => val === 'true'),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().email().default('noreply@logward.local'),
+  SMTP_FROM: z.string().email().default('noreply@logtide.local'),
 
   // Rate limiting
   RATE_LIMIT_MAX: z.string().default('1000').transform(Number),

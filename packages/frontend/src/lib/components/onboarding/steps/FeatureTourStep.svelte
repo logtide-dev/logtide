@@ -77,7 +77,7 @@
     </div>
     <h2 class="text-2xl font-bold">You're All Set!</h2>
     <p class="text-muted-foreground max-w-md mx-auto">
-      Here's a quick overview of what you can do with LogWard. Explore these features to get the most out of your logs.
+      Here's a quick overview of what you can do with LogTide. Explore these features to get the most out of your logs.
     </p>
   </div>
 
@@ -118,7 +118,7 @@
         <li>Use <kbd class="px-1.5 py-0.5 bg-muted rounded text-xs">Ctrl+K</kbd> for quick search anywhere</li>
         <li>Click on a trace ID to see all related logs</li>
         <li>Set up alerts before going to production</li>
-        <li>Check out the <a href="/docs" class="text-primary hover:underline">documentation</a> for SDK guides</li>
+        <li>Check out the <a href="https://logtide.dev/docs" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">documentation</a> for SDK guides</li>
       </ul>
     </CardContent>
   </Card>

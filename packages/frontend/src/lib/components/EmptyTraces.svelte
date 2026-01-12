@@ -110,7 +110,7 @@ otel.SetTracerProvider(tp)`
         </CardContent>
       </Card>
     </a>
-    <a href="/docs/getting-started" class="block">
+    <a href="https://logtide.dev/docs/opentelemetry" target="_blank" rel="noopener noreferrer" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
           <Book class="w-8 h-8 mx-auto text-purple-500 mb-2" />
@@ -138,7 +138,7 @@ otel.SetTracerProvider(tp)`
         <CardTitle class="text-lg">Send Traces with OpenTelemetry</CardTitle>
       </div>
       <CardDescription>
-        Configure your application to send traces to LogWard
+        Configure your application to send traces to LogTide
       </CardDescription>
     </CardHeader>
     <CardContent>

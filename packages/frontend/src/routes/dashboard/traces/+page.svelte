@@ -6,7 +6,7 @@
   import { ProjectsAPI } from "$lib/api/projects";
   import { tracesAPI, type TraceRecord, type TraceStats, type ServiceDependencies } from "$lib/api/traces";
   import ServiceMap from "$lib/components/ServiceMap.svelte";
-  import type { Project } from "@logward/shared";
+  import type { Project } from "@logtide/shared";
   import Button from "$lib/components/ui/button/button.svelte";
   import Input from "$lib/components/ui/input/input.svelte";
   import Label from "$lib/components/ui/label/label.svelte";
@@ -31,12 +31,12 @@
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
-  import Clock from "@lucide/svelte/icons/clock";
   import AlertCircle from "@lucide/svelte/icons/alert-circle";
   import Timer from "@lucide/svelte/icons/timer";
   import Layers from "@lucide/svelte/icons/layers";
   import Network from "@lucide/svelte/icons/network";
   import EmptyTraces from "$lib/components/EmptyTraces.svelte";
+  import TimeRangePicker, { type TimeRangeType } from "$lib/components/TimeRangePicker.svelte";
 
   let token = $state<string | null>(null);
   let projects = $state<Project[]>([]);
@@ -59,10 +59,36 @@
     token = state.token;
   });
 
-  type TimeRangeType = "last_hour" | "last_24h" | "last_7d" | "custom";
+  // Time range picker reference and state
+  let timeRangePicker = $state<ReturnType<typeof TimeRangePicker> | null>(null);
   let timeRangeType = $state<TimeRangeType>("last_24h");
   let customFromTime = $state("");
   let customToTime = $state("");
+
+  // Helper to get time range from picker or fallback to local state
+  function getTimeRange(): { from: Date; to: Date } {
+    if (timeRangePicker) {
+      return timeRangePicker.getTimeRange();
+    }
+    // Fallback for initial render before picker is mounted
+    const now = new Date();
+    switch (timeRangeType) {
+      case "last_hour":
+        return { from: new Date(now.getTime() - 60 * 60 * 1000), to: now };
+      case "last_24h":
+        return { from: new Date(now.getTime() - 24 * 60 * 60 * 1000), to: now };
+      case "last_7d":
+        return { from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), to: now };
+      case "custom":
+        const from = customFromTime
+          ? new Date(customFromTime)
+          : new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const to = customToTime ? new Date(customToTime) : now;
+        return { from, to };
+      default:
+        return { from: new Date(now.getTime() - 24 * 60 * 60 * 1000), to: now };
+    }
+  }
 
   let pageSize = $state(25);
   let currentPage = $state(1);
@@ -122,11 +148,7 @@
     isLoading = true;
 
     try {
-      const timeRange = getTimeRange(
-        timeRangeType,
-        customFromTime,
-        customToTime,
-      );
+      const timeRange = getTimeRange();
 
       const offset = (currentPage - 1) * pageSize;
 
@@ -178,11 +200,7 @@
     }
 
     try {
-      const timeRange = getTimeRange(
-        timeRangeType,
-        customFromTime,
-        customToTime,
-      );
+      const timeRange = getTimeRange();
       dependencies = await tracesAPI.getDependencies(
         selectedProject,
         timeRange.from.toISOString(),
@@ -192,37 +210,6 @@
       console.error("Failed to load dependencies:", e);
       dependencies = null;
     }
-  }
-
-  function getTimeRange(
-    type: TimeRangeType,
-    customFrom: string,
-    customTo: string,
-  ): { from: Date; to: Date } {
-    const now = new Date();
-    let from: Date;
-
-    switch (type) {
-      case "last_hour":
-        from = new Date(now.getTime() - 60 * 60 * 1000);
-        break;
-      case "last_24h":
-        from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      case "last_7d":
-        from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case "custom":
-        from = customFrom
-          ? new Date(customFrom)
-          : new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        const to = customTo ? new Date(customTo) : now;
-        return { from, to };
-      default:
-        from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    }
-
-    return { from, to: now };
   }
 
   function goToPage(page: number) {
@@ -252,12 +239,7 @@
     loadServices();
   }
 
-  function setQuickTimeRange(type: TimeRangeType) {
-    timeRangeType = type;
-    if (type !== "custom") {
-      customFromTime = "";
-      customToTime = "";
-    }
+  function handleTimeRangeChange() {
     applyFilters();
   }
 
@@ -287,7 +269,7 @@
 </script>
 
 <svelte:head>
-  <title>Traces - LogWard</title>
+  <title>Traces - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto px-6 py-8 max-w-7xl">
@@ -459,64 +441,14 @@
             </div>
           </div>
 
-          <div class="mt-4 space-y-3">
-            <div class="flex items-center gap-2">
-              <Clock class="w-4 h-4 text-muted-foreground" />
-              <Label>Time Range</Label>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <Button
-                variant={timeRangeType === "last_hour" ? "default" : "outline"}
-                size="sm"
-                onclick={() => setQuickTimeRange("last_hour")}
-              >
-                Last Hour
-              </Button>
-              <Button
-                variant={timeRangeType === "last_24h" ? "default" : "outline"}
-                size="sm"
-                onclick={() => setQuickTimeRange("last_24h")}
-              >
-                Last 24 Hours
-              </Button>
-              <Button
-                variant={timeRangeType === "last_7d" ? "default" : "outline"}
-                size="sm"
-                onclick={() => setQuickTimeRange("last_7d")}
-              >
-                Last 7 Days
-              </Button>
-              <Button
-                variant={timeRangeType === "custom" ? "default" : "outline"}
-                size="sm"
-                onclick={() => setQuickTimeRange("custom")}
-              >
-                Custom
-              </Button>
-            </div>
-
-            {#if timeRangeType === "custom"}
-              <div class="grid gap-3 md:grid-cols-2 pt-2">
-                <div class="space-y-2">
-                  <Label for="from-time">From</Label>
-                  <Input
-                    id="from-time"
-                    type="datetime-local"
-                    bind:value={customFromTime}
-                    onchange={applyFilters}
-                  />
-                </div>
-                <div class="space-y-2">
-                  <Label for="to-time">To</Label>
-                  <Input
-                    id="to-time"
-                    type="datetime-local"
-                    bind:value={customToTime}
-                    onchange={applyFilters}
-                  />
-                </div>
-              </div>
-            {/if}
+          <div class="mt-4">
+            <TimeRangePicker
+              bind:this={timeRangePicker}
+              initialType={timeRangeType}
+              initialCustomFrom={customFromTime}
+              initialCustomTo={customToTime}
+              onchange={handleTimeRangeChange}
+            />
           </div>
         </CardContent>
       </Card>

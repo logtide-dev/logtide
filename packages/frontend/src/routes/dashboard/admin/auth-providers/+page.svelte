@@ -250,7 +250,7 @@
 </script>
 
 <svelte:head>
-  <title>Authentication Providers - Admin - LogWard</title>
+  <title>Authentication Providers - Admin - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto py-6 space-y-6">

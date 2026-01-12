@@ -1,7 +1,7 @@
 /**
  * OTLP Trace Transformer
  *
- * Transforms OpenTelemetry Span messages to LogWard format.
+ * Transforms OpenTelemetry Span messages to LogTide format.
  *
  * @see https://opentelemetry.io/docs/specs/otel/trace/api/
  */
@@ -137,11 +137,11 @@ export interface OtlpExportTracesRequest {
 }
 
 // ============================================================================
-// LogWard Output Types
+// LogTide Output Types
 // ============================================================================
 
 /**
- * Transformed span ready for LogWard ingestion
+ * Transformed span ready for LogTide ingestion
  */
 export interface TransformedSpan {
   trace_id: string;
@@ -193,7 +193,7 @@ export interface AggregatedTrace {
 // ============================================================================
 
 /**
- * Transform OTLP ExportTracesRequest to LogWard format.
+ * Transform OTLP ExportTracesRequest to LogTide format.
  *
  * @param request - OTLP export request
  * @returns Object with spans array and aggregated trace info
@@ -223,7 +223,7 @@ export function transformOtlpToSpans(
 }
 
 /**
- * Transform a single OTLP Span to LogWard format.
+ * Transform a single OTLP Span to LogTide format.
  */
 export function transformSpan(
   span: OtlpSpan,
@@ -376,7 +376,7 @@ export function calculateDurationMs(
 }
 
 /**
- * Map OTLP span kind to LogWard SpanKind.
+ * Map OTLP span kind to LogTide SpanKind.
  */
 export function mapSpanKind(kind?: number): SpanKind | undefined {
   switch (kind) {
@@ -396,7 +396,7 @@ export function mapSpanKind(kind?: number): SpanKind | undefined {
 }
 
 /**
- * Map OTLP status code to LogWard SpanStatusCode.
+ * Map OTLP status code to LogTide SpanStatusCode.
  */
 export function mapStatusCode(code?: number): SpanStatusCode | undefined {
   switch (code) {

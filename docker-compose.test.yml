@@ -1,26 +1,26 @@
 services:
   postgres-test:
     image: timescale/timescaledb:latest-pg16
-    container_name: logward-postgres-test
+    container_name: logtide-postgres-test
     environment:
-      POSTGRES_DB: logward_test
-      POSTGRES_USER: logward_test
+      POSTGRES_DB: logtide_test
+      POSTGRES_USER: logtide_test
       POSTGRES_PASSWORD: test_password
     ports:
       - "5433:5432"
     tmpfs:
       - /var/lib/postgresql/data # In-memory for speed
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U logward_test" ]
+      test: [ "CMD-SHELL", "pg_isready -U logtide_test" ]
       interval: 5s
       timeout: 3s
       retries: 5
     networks:
-      - logward-test-network
+      - logtide-test-network
 
   redis-test:
     image: redis:7-alpine
-    container_name: logward-redis-test
+    container_name: logtide-redis-test
     command: redis-server --requirepass test_password
     ports:
       - "6380:6379"
@@ -30,16 +30,16 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - logward-test-network
+      - logtide-test-network
 
   mailhog-test:
     image: mailhog/mailhog:latest
-    container_name: logward-mailhog-test
+    container_name: logtide-mailhog-test
     ports:
       - "1025:1025" # SMTP
       - "8025:8025" # API/UI
     networks:
-      - logward-test-network
+      - logtide-test-network
 
   # Frontend for E2E testing
   frontend-test:
@@ -48,7 +48,7 @@ services:
       dockerfile: packages/frontend/Dockerfile
       args:
         PUBLIC_API_URL: http://localhost:3001
-    container_name: logward-frontend-test
+    container_name: logtide-frontend-test
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -67,27 +67,27 @@ services:
       retries: 10
       start_period: 30s
     networks:
-      - logward-test-network
+      - logtide-test-network
 
   # Backend for E2E and load testing
   backend-test:
     build:
       context: .
       dockerfile: packages/backend/Dockerfile
-    container_name: logward-backend-test
+    container_name: logtide-backend-test
     environment:
       NODE_ENV: test
       PORT: 8080
-      DATABASE_URL: postgresql://logward_test:test_password@postgres-test:5432/logward_test
+      DATABASE_URL: postgresql://logtide_test:test_password@postgres-test:5432/logtide_test
       DATABASE_HOST: postgres-test
-      DB_USER: logward_test
+      DB_USER: logtide_test
       REDIS_URL: redis://:test_password@redis-test:6379
       API_KEY_SECRET: test_secret_key_32_chars_long!!!
       SMTP_HOST: mailhog-test
       SMTP_PORT: 1025
       SMTP_USER: ""
       SMTP_PASS: ""
-      SMTP_FROM: test@logward.dev
+      SMTP_FROM: test@logtide.dev
       # Higher rate limits for load testing (100 req/s = 6000/min, use 100000 for safety)
       RATE_LIMIT_MAX: 100000
       RATE_LIMIT_WINDOW: 60000
@@ -109,8 +109,8 @@ services:
       retries: 10
       start_period: 30s
     networks:
-      - logward-test-network
+      - logtide-test-network
 
 networks:
-  logward-test-network:
+  logtide-test-network:
     driver: bridge

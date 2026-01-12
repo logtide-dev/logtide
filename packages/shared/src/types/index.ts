@@ -17,6 +17,7 @@ export interface Organization {
   slug: string;
   description?: string;
   ownerId: string;
+  retentionDays: number; // 1-365 days, default 90
   createdAt: Date;
   updatedAt: Date;
 }

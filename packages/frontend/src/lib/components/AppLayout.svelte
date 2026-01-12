@@ -25,6 +25,7 @@
   import FolderKanban from "@lucide/svelte/icons/folder-kanban";
   import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
   import GitBranch from "@lucide/svelte/icons/git-branch";
+  import Bug from "@lucide/svelte/icons/bug";
   import Bell from "@lucide/svelte/icons/bell";
   import Building2 from "@lucide/svelte/icons/building-2";
   import Settings from "@lucide/svelte/icons/settings";
@@ -198,6 +199,7 @@
     label: string;
     href: string;
     icon: typeof LayoutDashboard;
+    external?: boolean;
     badge?: {
       id: string;
       type: 'new' | 'updated' | 'beta';
@@ -217,12 +219,18 @@
     },
     { label: "Alerts", href: "/dashboard/alerts", icon: AlertTriangle },
     {
+      label: "Errors",
+      href: "/dashboard/errors",
+      icon: Bug,
+      badge: { id: 'errors-feature', type: 'new', showUntil: '2025-06-01' }
+    },
+    {
       label: "Security",
       href: "/dashboard/security",
       icon: Shield,
       badge: { id: 'security-feature', type: 'new', showUntil: '2025-06-01' }
     },
-    { label: "Docs", href: "/docs", icon: Book },
+    { label: "Docs", href: "https://logtide.dev/docs", icon: Book, external: true },
     { label: "Settings", href: "/dashboard/settings", icon: Settings },
   ];
 
@@ -252,7 +260,7 @@
         class="flex items-center gap-3 hover:opacity-80 transition-opacity"
       >
         <div class="flex flex-col items-start mx-auto">
-            <img src={$logoPath} alt="LogWard" class="h-14 w-auto" />
+            <img src={$logoPath} alt="LogTide" class="h-14 w-auto" />
         </div>
       </a>
     </div>
@@ -270,10 +278,12 @@
         {@const Icon = item.icon}
         <a
           href={item.href}
+          target={item.external ? '_blank' : undefined}
+          rel={item.external ? 'noopener noreferrer' : undefined}
           data-nav-item={item.label.toLowerCase()}
-          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive(
-            item.href,
-          )
+          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {item.external
+            ? 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
+            : isActive(item.href)
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
         >
@@ -306,7 +316,7 @@
 
       <Separator class="my-2" />
       <a
-        href="https://github.com/logward-dev/logward"
+        href="https://github.com/logtide-dev/logtide"
         target="_blank"
         rel="noopener noreferrer"
         class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
@@ -342,7 +352,7 @@
     <div class="p-6 flex items-center justify-between">
       <a href="/dashboard" class="flex items-center gap-3 hover:opacity-80 transition-opacity" onclick={() => mobileMenuOpen = false}>
         <div class="flex flex-col items-start">
-          <img src={$logoPath} alt="LogWard" class="h-14 w-auto" />
+          <img src={$logoPath} alt="LogTide" class="h-14 w-auto" />
         </div>
       </a>
       <Button variant="ghost" size="icon" onclick={() => mobileMenuOpen = false}>
@@ -363,9 +373,13 @@
         {@const Icon = item.icon}
         <a
           href={item.href}
+          target={item.external ? '_blank' : undefined}
+          rel={item.external ? 'noopener noreferrer' : undefined}
           onclick={() => mobileMenuOpen = false}
           data-nav-item={item.label.toLowerCase()}
-          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive(item.href)
+          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {item.external
+            ? 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
+            : isActive(item.href)
             ? 'bg-accent text-accent-foreground'
             : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
         >
@@ -397,7 +411,7 @@
 
       <Separator class="my-2" />
       <a
-        href="https://github.com/logward-dev/logward"
+        href="https://github.com/logtide-dev/logtide"
         target="_blank"
         rel="noopener noreferrer"
         class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"

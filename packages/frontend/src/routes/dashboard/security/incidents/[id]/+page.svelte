@@ -223,7 +223,7 @@
 </script>
 
 <svelte:head>
-	<title>{incident?.title || 'Incident'} - LogWard</title>
+	<title>{incident?.title || 'Incident'} - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto px-6 py-8 max-w-7xl">

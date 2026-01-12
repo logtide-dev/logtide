@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { OrganizationWithRole } from '@logward/shared';
+import type { OrganizationWithRole } from '@logtide/shared';
 
 interface OrganizationState {
   organizations: OrganizationWithRole[];

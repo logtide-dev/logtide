@@ -87,7 +87,7 @@ export class SigmaHQClient {
   constructor(githubToken?: string) {
     this.headers = {
       Accept: 'application/vnd.github.v3+json',
-      'User-Agent': 'LogWard-SigmaHQ-Client',
+      'User-Agent': 'LogTide-SigmaHQ-Client',
     };
 
     if (githubToken) {

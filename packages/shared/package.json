@@ -1,8 +1,8 @@
 {
-  "name": "@logward/shared",
-  "version": "0.3.3",
+  "name": "@logtide/shared",
+  "version": "0.4.0",
   "private": true,
-  "description": "Shared types, schemas and utilities for LogWard",
+  "description": "Shared types, schemas and utilities for LogTide",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -6,7 +6,7 @@
   import { ProjectsAPI } from "$lib/api/projects";
   import { tracesAPI, type TraceRecord, type TraceStats, type ServiceDependencies } from "$lib/api/traces";
   import ServiceMap from "$lib/components/ServiceMap.svelte";
-  import type { Project } from "@logward/shared";
+  import type { Project } from "@logtide/shared";
   import Button from "$lib/components/ui/button/button.svelte";
   import Input from "$lib/components/ui/input/input.svelte";
   import Label from "$lib/components/ui/label/label.svelte";
@@ -289,7 +289,7 @@
 </script>
 
 <svelte:head>
-  <title>Traces - LogWard</title>
+  <title>Traces - LogTide</title>
 </svelte:head>
 
 <AppLayout>

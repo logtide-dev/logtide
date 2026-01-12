@@ -58,8 +58,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            logward/backend
-            ghcr.io/${{ github.repository_owner }}/logward-backend
+            logtide/backend
+            ghcr.io/${{ github.repository_owner }}/logtide-backend
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=latest,enable=${{ steps.version.outputs.is_stable }}
@@ -69,8 +69,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            logward/frontend
-            ghcr.io/${{ github.repository_owner }}/logward-frontend
+            logtide/frontend
+            ghcr.io/${{ github.repository_owner }}/logtide-frontend
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
             type=raw,value=latest,enable=${{ steps.version.outputs.is_stable }}
@@ -120,12 +120,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Backend" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "docker pull logward/backend:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/${{ github.repository_owner }}/logward-backend:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull logtide/backend:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ github.repository_owner }}/logtide-backend:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Frontend" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "docker pull logward/frontend:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/${{ github.repository_owner }}/logward-frontend:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull logtide/frontend:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ github.repository_owner }}/logtide-frontend:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

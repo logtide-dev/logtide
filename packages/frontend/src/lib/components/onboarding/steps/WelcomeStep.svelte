@@ -61,7 +61,7 @@
 
     <div in:fade={{ duration: 400, delay: 200 }}>
       <h1 class="text-3xl font-bold tracking-tight">
-        Welcome to LogWard, {userName}!
+        Welcome to LogTide, {userName}!
       </h1>
       <p class="text-muted-foreground mt-2 max-w-md mx-auto">
         Let's get you set up with log monitoring in just a few steps. This guided tour will help you send your first log.

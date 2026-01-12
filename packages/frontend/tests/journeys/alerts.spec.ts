@@ -108,7 +108,7 @@ test.describe('Alert Journey', () => {
     await page.locator('input#timeWindow').fill('5');
 
     // Set email recipient
-    await page.locator('input#emails').fill('test@e2e-test.logward.dev');
+    await page.locator('input#emails').fill('test@e2e-test.logtide.dev');
 
     // Submit the form
     await page.locator('button:has-text("Create Alert")').last().click();
@@ -131,7 +131,7 @@ test.describe('Alert Journey', () => {
       level: ['error'],
       threshold: 5,
       timeWindow: 5,
-      emailRecipients: ['test@e2e-test.logward.dev'],
+      emailRecipients: ['test@e2e-test.logtide.dev'],
     });
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
@@ -160,7 +160,7 @@ test.describe('Alert Journey', () => {
       level: ['error'],
       threshold: 5,
       timeWindow: 5,
-      emailRecipients: ['test@e2e-test.logward.dev'],
+      emailRecipients: ['test@e2e-test.logtide.dev'],
     });
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
@@ -197,7 +197,7 @@ test.describe('Alert Journey', () => {
       level: ['error'],
       threshold: 3,
       timeWindow: 5,
-      emailRecipients: ['test@e2e-test.logward.dev'],
+      emailRecipients: ['test@e2e-test.logtide.dev'],
     });
 
     // Ingest enough error logs to trigger the alert
@@ -270,7 +270,7 @@ description: Test rule for E2E testing
 author: E2E Test
 logsource:
     category: application
-    product: logward
+    product: logtide
 detection:
     selection:
         message|contains: 'error'
@@ -284,7 +284,7 @@ falsepositives:
       // Add email recipient
       const sigmaEmailInput = page.locator('input#sigmaEmails');
       if (await sigmaEmailInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await sigmaEmailInput.fill('test@e2e-test.logward.dev');
+        await sigmaEmailInput.fill('test@e2e-test.logtide.dev');
       }
 
       // Submit the form

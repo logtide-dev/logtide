@@ -153,7 +153,7 @@ export class DashboardAPI {
 export const dashboardAPI = new DashboardAPI(() => {
   if (typeof window !== 'undefined') {
     try {
-      const stored = localStorage.getItem('logward_auth');
+      const stored = localStorage.getItem('logtide_auth');
       if (stored) {
         const data = JSON.parse(stored);
         return data.token;

@@ -4,8 +4,11 @@ import { processSigmaDetection } from './queue/jobs/sigma-detection.js';
 import { processIncidentAutoGrouping } from './queue/jobs/incident-autogrouping.js';
 import { processInvitationEmail } from './queue/jobs/invitation-email.js';
 import { processIncidentNotification } from './queue/jobs/incident-notification.js';
+import { processExceptionParsing } from './queue/jobs/exception-parsing.js';
+import { processErrorNotification } from './queue/jobs/error-notification.js';
 import { alertsService } from './modules/alerts/index.js';
 import { enrichmentService } from './modules/siem/enrichment-service.js';
+import { retentionService } from './modules/retention/index.js';
 import { initializeInternalLogging, shutdownInternalLogging, getInternalLogger } from './utils/internal-logger.js';
 
 // Initialize internal logging
@@ -37,6 +40,16 @@ const invitationWorker = createWorker('invitation-email', async (job) => {
 // Create worker for incident notifications
 const incidentNotificationWorker = createWorker('incident-notifications', async (job) => {
   await processIncidentNotification(job);
+});
+
+// Create worker for exception parsing
+const exceptionWorker = createWorker('exception-parsing', async (job) => {
+  await processExceptionParsing(job);
+});
+
+// Create worker for error notifications
+const errorNotificationWorker = createWorker('error-notifications', async (job) => {
+  await processErrorNotification(job);
 });
 
 alertWorker.on('completed', (job) => {
@@ -151,6 +164,53 @@ incidentNotificationWorker.on('failed', (job, err) => {
       error: err,
       jobId: job?.id,
       incidentId: job?.data?.incidentId,
+    });
+  }
+});
+
+exceptionWorker.on('completed', (job) => {
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.info('worker-exception-parsing-completed', `Exception parsing job completed`, {
+      jobId: job.id,
+      logCount: job.data?.logs?.length,
+    });
+  }
+});
+
+exceptionWorker.on('failed', (job, err) => {
+  console.error(`❌ Exception parsing job ${job?.id} failed:`, err);
+
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.error('worker-exception-parsing-failed', `Exception parsing job failed: ${err.message}`, {
+      error: err,
+      jobId: job?.id,
+      logCount: job?.data?.logs?.length,
+    });
+  }
+});
+
+errorNotificationWorker.on('completed', (job) => {
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.info('worker-error-notification-completed', `Error notification job completed`, {
+      jobId: job.id,
+      exceptionId: job.data?.exceptionId,
+      exceptionType: job.data?.exceptionType,
+    });
+  }
+});
+
+errorNotificationWorker.on('failed', (job, err) => {
+  console.error(`❌ Error notification job ${job?.id} failed:`, err);
+
+  const logger = getInternalLogger();
+  if (logger) {
+    logger.error('worker-error-notification-failed', `Error notification job failed: ${err.message}`, {
+      error: err,
+      jobId: job?.id,
+      exceptionId: job?.data?.exceptionId,
     });
   }
 });
@@ -312,6 +372,98 @@ setInterval(updateEnrichmentDatabases, 24 * 60 * 60 * 1000);
 // Check for updates on start (after 30 seconds delay)
 setTimeout(updateEnrichmentDatabases, 30000);
 
+// ============================================================================
+// Log Retention Cleanup (Daily at 2 AM)
+// ============================================================================
+
+let isRunningRetentionCleanup = false;
+
+async function runRetentionCleanup() {
+  // Skip if already running
+  if (isRunningRetentionCleanup) {
+    console.warn('⚠️  Retention cleanup already in progress, skipping...');
+    return;
+  }
+
+  isRunningRetentionCleanup = true;
+  const logger = getInternalLogger();
+  const startTime = Date.now();
+
+  try {
+    console.log('🗑️  Starting retention cleanup...');
+    const summary = await retentionService.executeRetentionForAllOrganizations();
+    const duration = Date.now() - startTime;
+
+    console.log(`✅ Retention cleanup completed: ${summary.totalLogsDeleted} logs deleted from ${summary.successfulOrganizations}/${summary.totalOrganizations} orgs in ${duration}ms`);
+
+    if (logger) {
+      logger.info('worker-retention-completed', 'Retention cleanup completed', {
+        totalOrganizations: summary.totalOrganizations,
+        successfulOrganizations: summary.successfulOrganizations,
+        failedOrganizations: summary.failedOrganizations,
+        totalLogsDeleted: summary.totalLogsDeleted,
+        duration_ms: duration,
+      });
+    }
+
+    // Log any failures
+    for (const result of summary.results.filter(r => r.error)) {
+      console.error(`❌ Retention failed for org ${result.organizationName}: ${result.error}`);
+      if (logger) {
+        logger.error('worker-retention-org-failed', `Retention failed for org ${result.organizationName}`, {
+          organizationId: result.organizationId,
+          organizationName: result.organizationName,
+          error: result.error,
+        });
+      }
+    }
+  } catch (error) {
+    console.error('❌ Retention cleanup failed:', error);
+
+    if (logger) {
+      logger.error('worker-retention-failed', `Retention cleanup failed: ${(error as Error).message}`, {
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+    }
+  } finally {
+    isRunningRetentionCleanup = false;
+  }
+}
+
+// Calculate milliseconds until next 2 AM
+function getMillisecondsUntil2AM(): number {
+  const now = new Date();
+  const next2AM = new Date(now);
+  next2AM.setHours(2, 0, 0, 0);
+
+  // If it's already past 2 AM today, schedule for tomorrow
+  if (now.getTime() > next2AM.getTime()) {
+    next2AM.setDate(next2AM.getDate() + 1);
+  }
+
+  return next2AM.getTime() - now.getTime();
+}
+
+// Schedule daily run at 2 AM
+function scheduleNextRetentionCleanup() {
+  const msUntilNext = getMillisecondsUntil2AM();
+  const nextRunTime = new Date(Date.now() + msUntilNext);
+
+  console.log(`📅 Next retention cleanup scheduled for ${nextRunTime.toLocaleString()}`);
+
+  setTimeout(() => {
+    runRetentionCleanup();
+    // Schedule next run (24 hours later)
+    scheduleNextRetentionCleanup();
+  }, msUntilNext);
+}
+
+// Start scheduling
+scheduleNextRetentionCleanup();
+
+// Also run on startup (after 2 minutes delay to let system stabilize)
+setTimeout(runRetentionCleanup, 2 * 60 * 1000);
+
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {
   console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
@@ -323,6 +475,8 @@ async function gracefulShutdown(signal: string) {
     await autoGroupWorker.close();
     await invitationWorker.close();
     await incidentNotificationWorker.close();
+    await exceptionWorker.close();
+    await errorNotificationWorker.close();
     console.log('✅ Workers closed');
 
     // Close internal logging

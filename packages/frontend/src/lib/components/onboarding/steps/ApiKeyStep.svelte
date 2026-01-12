@@ -95,29 +95,29 @@
       "time": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'",
       "level": "info",
       "service": "my-app",
-      "message": "Hello from LogWard!"
+      "message": "Hello from LogTide!"
     }]
   }'`,
 
-    nodejs: `import { LogWard } from '@logward/sdk';
+    nodejs: `import { LogTide } from '@logtide/sdk';
 
-const logger = new LogWard({
+const logger = new LogTide({
   apiKey: '${apiKey || 'YOUR_API_KEY'}',
   service: 'my-app'
 });
 
 // Send your first log!
-await logger.info('Hello from LogWard!');`,
+await logger.info('Hello from LogTide!');`,
 
-    python: `from logward import LogWard
+    python: `from logtide import LogTide
 
-logger = LogWard(
+logger = LogTide(
     api_key="${apiKey || 'YOUR_API_KEY'}",
     service="my-app"
 )
 
 # Send your first log!
-logger.info("Hello from LogWard!")`,
+logger.info("Hello from LogTide!")`,
 
     docker: `# docker-compose.yml
 services:
@@ -127,7 +127,7 @@ services:
       - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - /var/log:/var/log:ro
     environment:
-      - LOGWARD_API_KEY=${apiKey || 'YOUR_API_KEY'}
+      - LOGTIDE_API_KEY=${apiKey || 'YOUR_API_KEY'}
 
 # fluent-bit.conf
 [OUTPUT]
@@ -137,7 +137,7 @@ services:
     Port  443
     URI   /api/v1/ingest
     Format json
-    Header X-API-Key \${LOGWARD_API_KEY}
+    Header X-API-Key \${LOGTIDE_API_KEY}
     Header Content-Type application/json
     tls On`,
 

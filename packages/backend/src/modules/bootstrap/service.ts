@@ -44,7 +44,7 @@ export class BootstrapService {
       return;
     }
 
-    // Check if any "real" users exist (with password set - excludes system@logward.internal)
+    // Check if any "real" users exist (with password set - excludes system@logtide.internal)
     const userCount = await db
       .selectFrom('users')
       .select(db.fn.count('id').as('count'))

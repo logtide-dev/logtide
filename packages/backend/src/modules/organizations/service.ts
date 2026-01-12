@@ -1,6 +1,6 @@
 import { db } from '../../database/connection.js';
 import { notificationsService } from '../notifications/service.js';
-import type { Organization, OrganizationMember, OrganizationMemberWithUser, OrganizationWithRole, OrgRole } from '@logward/shared';
+import type { Organization, OrganizationMember, OrganizationMemberWithUser, OrganizationWithRole, OrgRole } from '@logtide/shared';
 
 export interface CreateOrganizationInput {
   userId: string;
@@ -70,7 +70,7 @@ export class OrganizationsService {
         description: input.description || null,
         owner_id: input.userId,
       })
-      .returning(['id', 'name', 'slug', 'description', 'owner_id', 'created_at', 'updated_at'])
+      .returning(['id', 'name', 'slug', 'description', 'owner_id', 'retention_days', 'created_at', 'updated_at'])
       .executeTakeFirstOrThrow();
 
     // Add user as owner member
@@ -89,6 +89,7 @@ export class OrganizationsService {
       slug: org.slug,
       description: org.description || undefined,
       ownerId: org.owner_id,
+      retentionDays: org.retention_days,
       createdAt: new Date(org.created_at),
       updatedAt: new Date(org.updated_at),
     };
@@ -107,6 +108,7 @@ export class OrganizationsService {
         'organizations.slug',
         'organizations.description',
         'organizations.owner_id',
+        'organizations.retention_days',
         'organizations.created_at',
         'organizations.updated_at',
         'organization_members.role',
@@ -121,6 +123,7 @@ export class OrganizationsService {
       slug: org.slug,
       description: org.description || undefined,
       ownerId: org.owner_id,
+      retentionDays: org.retention_days,
       createdAt: new Date(org.created_at),
       updatedAt: new Date(org.updated_at),
       role: org.role as OrgRole,
@@ -143,6 +146,7 @@ export class OrganizationsService {
         'organizations.slug',
         'organizations.description',
         'organizations.owner_id',
+        'organizations.retention_days',
         'organizations.created_at',
         'organizations.updated_at',
         'organization_members.role',
@@ -161,6 +165,7 @@ export class OrganizationsService {
       slug: org.slug,
       description: org.description || undefined,
       ownerId: org.owner_id,
+      retentionDays: org.retention_days,
       createdAt: new Date(org.created_at),
       updatedAt: new Date(org.updated_at),
       role: org.role as OrgRole,
@@ -183,6 +188,7 @@ export class OrganizationsService {
         'organizations.slug',
         'organizations.description',
         'organizations.owner_id',
+        'organizations.retention_days',
         'organizations.created_at',
         'organizations.updated_at',
         'organization_members.role',
@@ -201,6 +207,7 @@ export class OrganizationsService {
       slug: org.slug,
       description: org.description || undefined,
       ownerId: org.owner_id,
+      retentionDays: org.retention_days,
       createdAt: new Date(org.created_at),
       updatedAt: new Date(org.updated_at),
       role: org.role as OrgRole,
@@ -246,7 +253,7 @@ export class OrganizationsService {
         updated_at: new Date(),
       })
       .where('id', '=', organizationId)
-      .returning(['id', 'name', 'slug', 'description', 'owner_id', 'created_at', 'updated_at'])
+      .returning(['id', 'name', 'slug', 'description', 'owner_id', 'retention_days', 'created_at', 'updated_at'])
       .executeTakeFirstOrThrow();
 
     return {
@@ -255,6 +262,7 @@ export class OrganizationsService {
       slug: updated.slug,
       description: updated.description || undefined,
       ownerId: updated.owner_id,
+      retentionDays: updated.retention_days,
       createdAt: new Date(updated.created_at),
       updatedAt: new Date(updated.updated_at),
     };

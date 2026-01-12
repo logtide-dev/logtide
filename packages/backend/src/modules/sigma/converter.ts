@@ -1,7 +1,7 @@
 import type { ParsedSigmaRule, SigmaConversionResult } from './types.js';
 
 /**
- * Convert Sigma rules to LogWard Alert Rules
+ * Convert Sigma rules to LogTide Alert Rules
  *
  * Phase 1: Basic conversion (threshold-based)
  * - Maps logsource.service → Alert Rule service filter
@@ -10,7 +10,7 @@ import type { ParsedSigmaRule, SigmaConversionResult } from './types.js';
  */
 export class SigmaConverter {
   /**
-   * Convert Sigma rule to LogWard Alert Rule
+   * Convert Sigma rule to LogTide Alert Rule
    */
   static convert(
     sigmaRule: ParsedSigmaRule,

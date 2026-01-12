@@ -7,7 +7,7 @@
   import { toastStore } from "$lib/stores/toast";
   import { projectsAPI } from "$lib/api/projects";
   import { organizationsAPI } from "$lib/api/organizations";
-  import type { Project, OrganizationWithRole } from "@logward/shared";
+  import type { Project, OrganizationWithRole } from "@logtide/shared";
   import Button from "$lib/components/ui/button/button.svelte";
   import { buttonVariants } from "$lib/components/ui/button";
   import Input from "$lib/components/ui/input/input.svelte";
@@ -179,7 +179,7 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard - LogWard</title>
+  <title>Dashboard - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto px-6 py-8 max-w-7xl">

@@ -98,7 +98,7 @@ test.describe('New User Journey', () => {
 
     // Get organization ID from API or localStorage
     const authData = await page.evaluate(() => {
-      return localStorage.getItem('logward_auth');
+      return localStorage.getItem('logtide_auth');
     });
 
     if (authData) {

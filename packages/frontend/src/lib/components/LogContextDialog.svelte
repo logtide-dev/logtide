@@ -3,8 +3,11 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import { ExceptionDetailsDialog } from '$lib/components/exceptions';
+	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 
 	interface LogEntry {
+		id?: string;
 		time: string;
 		service: string;
 		level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
@@ -17,11 +20,27 @@
 	interface Props {
 		open: boolean;
 		projectId: string;
+		organizationId?: string;
 		selectedLog: LogEntry | null;
 		onClose: () => void;
 	}
 
-	let { open = false, projectId, selectedLog, onClose }: Props = $props();
+	let { open = false, projectId, organizationId = '', selectedLog, onClose }: Props = $props();
+
+	// Exception dialog state
+	let exceptionDialogOpen = $state(false);
+
+	function isErrorLevel(level: string): boolean {
+		return level === 'error' || level === 'critical';
+	}
+
+	function openExceptionDialog() {
+		exceptionDialogOpen = true;
+	}
+
+	function closeExceptionDialog() {
+		exceptionDialogOpen = false;
+	}
 
 	let loading = $state(false);
 	let error = $state('');
@@ -166,6 +185,19 @@
 								<pre class="mt-2 p-2 bg-muted rounded overflow-x-auto">{JSON.stringify(selectedLog.metadata, null, 2)}</pre>
 							</details>
 						{/if}
+						{#if isErrorLevel(selectedLog.level) && selectedLog.id && organizationId}
+							<div class="mt-3 pt-2 border-t">
+								<Button
+									variant="outline"
+									size="sm"
+									onclick={openExceptionDialog}
+									class="gap-2"
+								>
+									<AlertTriangle class="w-4 h-4 text-red-500" />
+									View Exception Details
+								</Button>
+							</div>
+						{/if}
 					</div>
 				{/if}
 
@@ -215,3 +247,12 @@
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
+
+{#if selectedLog?.id && organizationId}
+	<ExceptionDetailsDialog
+		open={exceptionDialogOpen}
+		logId={selectedLog.id}
+		{organizationId}
+		onClose={closeExceptionDialog}
+	/>
+{/if}

@@ -248,7 +248,7 @@ describe('Ingestion API', () => {
             }
         });
 
-        it('should normalize syslog levels to LogWard levels', async () => {
+        it('should normalize syslog levels to LogTide levels', async () => {
             const testCases = [
                 // Critical levels
                 { level: 'emergency', expected: 'critical' },

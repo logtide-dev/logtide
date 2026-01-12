@@ -228,7 +228,7 @@ test.describe('Session Edge Cases', () => {
     // Set an invalid/expired token
     await page.goto(TEST_FRONTEND_URL);
     await page.evaluate(() => {
-      localStorage.setItem('logward_auth', JSON.stringify({
+      localStorage.setItem('logtide_auth', JSON.stringify({
         user: { id: 'test', email: 'test@test.com', name: 'Test' },
         token: 'invalid-expired-token',
         loading: false,

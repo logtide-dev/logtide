@@ -31,10 +31,10 @@ importers:
       '@fastify/websocket':
         specifier: ^10.0.1
         version: 10.0.1
-      '@logward-dev/sdk-node':
+      '@logtide/sdk-node':
         specifier: ^0.1.0
-        version: 0.1.0(fastify@4.29.1)
-      '@logward/shared':
+        version: 0.1.1(fastify@4.29.1)
+      '@logtide/shared':
         specifier: workspace:*
         version: link:../shared
       '@maxmind/geoip2-node':
@@ -125,7 +125,7 @@ importers:
 
   packages/frontend:
     dependencies:
-      '@logward/shared':
+      '@logtide/shared':
         specifier: workspace:*
         version: link:../shared
       '@tanstack/svelte-table':
@@ -749,8 +749,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@logward-dev/sdk-node@0.1.0':
-    resolution: {integrity: sha512-9H9d9J5uqy+1uKQGcUX0WVRwvpBKUyne3PS3k8oRPVuC4hY45zXpiPqYndPB9UCXlX9ypAn6FHIXeC3jwTffGQ==}
+  '@logtide/sdk-node@0.1.1':
+    resolution: {integrity: sha512-PTAx1YQd2yqO19RmhcqouZhAXGghZg2NZKfAcO16mQnYQKpQmsbLJ6FPMAyLmM1uENpWeMwtjS89MHIy2QFMZg==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       express: '>=5.2.0'
@@ -3621,7 +3621,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@logward-dev/sdk-node@0.1.0(fastify@4.29.1)':
+  '@logtide/sdk-node@0.1.1(fastify@4.29.1)':
     optionalDependencies:
       fastify: 4.29.1
 

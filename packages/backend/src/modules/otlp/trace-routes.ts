@@ -195,7 +195,7 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
           otlpRequest = parseOtlpTracesJson(request.body);
         }
 
-        // Transform to LogWard format
+        // Transform to LogTide format
         const { spans, traces } = transformOtlpToSpans(otlpRequest);
 
         if (spans.length === 0) {

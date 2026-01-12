@@ -12,7 +12,7 @@
 
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { parseOtlpRequest, detectContentType, decompressGzip, isGzipCompressed } from './parser.js';
-import { transformOtlpToLogWard } from './transformer.js';
+import { transformOtlpToLogTide } from './transformer.js';
 import { ingestionService } from '../ingestion/service.js';
 import { config } from '../../config/index.js';
 
@@ -179,8 +179,8 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
         // Parse OTLP request
         const otlpRequest = await parseOtlpRequest(body, contentType);
 
-        // Transform to LogWard format
-        const logs = transformOtlpToLogWard(otlpRequest);
+        // Transform to LogTide format
+        const logs = transformOtlpToLogTide(otlpRequest);
 
         if (logs.length === 0) {
           // Empty request is valid per OTLP spec

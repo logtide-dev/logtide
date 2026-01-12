@@ -17,7 +17,7 @@ export interface AuthState {
   loading: boolean;
 }
 
-const STORAGE_KEY = 'logward_auth';
+const STORAGE_KEY = 'logtide_auth';
 
 function loadInitialState(): AuthState {
   if (browser) {

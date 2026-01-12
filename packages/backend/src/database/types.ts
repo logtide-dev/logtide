@@ -45,6 +45,7 @@ export interface OrganizationsTable {
   slug: string;
   description: string | null;
   owner_id: string;
+  retention_days: Generated<number>; // 1-365 days, default 90
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -316,6 +317,94 @@ export interface IncidentHistoryTable {
 }
 
 // ============================================================================
+// EXCEPTION TRACKING TABLES
+// ============================================================================
+
+export type ExceptionLanguage = 'nodejs' | 'python' | 'java' | 'go' | 'php' | 'unknown';
+export type ErrorGroupStatus = 'open' | 'resolved' | 'ignored';
+
+export interface ExceptionsTable {
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string | null;
+  log_id: string;
+  exception_type: string;
+  exception_message: string | null;
+  language: ExceptionLanguage;
+  fingerprint: string;
+  raw_stack_trace: string;
+  frame_count: number;
+  created_at: Generated<Timestamp>;
+}
+
+export interface StackFramesTable {
+  id: Generated<string>;
+  exception_id: string;
+  frame_index: number;
+  file_path: string;
+  function_name: string | null;
+  line_number: number | null;
+  column_number: number | null;
+  is_app_code: boolean;
+  code_context: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  metadata: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  created_at: Generated<Timestamp>;
+}
+
+export interface ErrorGroupsTable {
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string | null;
+  fingerprint: string;
+  exception_type: string;
+  exception_message: string | null;
+  language: ExceptionLanguage;
+  occurrence_count: number;
+  first_seen: Timestamp;
+  last_seen: Timestamp;
+  status: Generated<ErrorGroupStatus>;
+  resolved_at: Timestamp | null;
+  resolved_by: string | null;
+  affected_services: string[] | null;
+  sample_log_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface UserIdentitiesTable {
+  id: Generated<string>;
+  user_id: string;
+  provider_id: string;
+  provider_user_id: string;
+  metadata: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  last_login_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface OidcStatesTable {
+  id: Generated<string>;
+  state: string;
+  nonce: string;
+  code_verifier: string; // PKCE code verifier for token exchange
+  provider_id: string;
+  redirect_uri: string; // Required for OIDC token exchange
+  created_at: Generated<Timestamp>;
+}
+
+// ============================================================================
+// SYSTEM SETTINGS TABLE
+// ============================================================================
+
+export interface SystemSettingsTable {
+  key: string;
+  value: ColumnType<unknown, unknown, unknown>; // JSONB - can be any JSON value
+  description: string | null;
+  updated_at: Generated<Timestamp>;
+  updated_by: string | null;
+}
+
+// ============================================================================
 // EXTERNAL AUTHENTICATION TABLES (LDAP/OIDC)
 // ============================================================================
 
@@ -393,6 +482,10 @@ export interface Database {
   // Continuous aggregates (TimescaleDB materialized views)
   logs_hourly_stats: LogsHourlyStatsTable;
   logs_daily_stats: LogsDailyStatsTable;
+  // Exception tracking tables
+  exceptions: ExceptionsTable;
+  stack_frames: StackFramesTable;
+  error_groups: ErrorGroupsTable;
   // External authentication tables
   auth_providers: AuthProvidersTable;
   user_identities: UserIdentitiesTable;

@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { connection } from '../../queue/connection.js';
 import { db } from '../../database/index.js';
-import type { LogLevel } from '@logward/shared';
+import type { LogLevel } from '@logtide/shared';
 
 interface LogMessage {
     projectId: string;

@@ -1,11 +1,11 @@
 blank_issues_enabled: true
 contact_links:
   - name: 📚 Documentation
-    url: https://logward.dev/docs
+    url: https://logtide.dev/docs
     about: Check our documentation for guides and API references
   - name: 💬 Community Discussions
-    url: https://github.com/logward-dev/logward/discussions
+    url: https://github.com/logtide-dev/logtide/discussions
     about: Ask questions and discuss ideas with the community
   - name: 🔒 Security Issue
-    url: https://github.com/logward-dev/logward/security/advisories/new
+    url: https://github.com/logtide-dev/logtide/security/advisories/new
     about: Report security vulnerabilities privately

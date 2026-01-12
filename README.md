@@ -1,22 +1,22 @@
 <div align="center">
   <br />
-  <img src="docs/images/logo.png" alt="🛡️ LogWard" width="auto" height="120" />
+  <img src="docs/images/logo.png" alt="🛡️ LogTide" width="auto" height="120" />
   <p>
     <strong>Privacy-first log management. Open Source.</strong>
   </p>
 
   <p>
-    <a href="https://logward.dev"><strong>☁️ Try Cloud (Free Alpha)</strong></a> •
+    <a href="https://logtide.dev"><strong>☁️ Try Cloud (Free Alpha)</strong></a> •
     <a href="#self-hosting">Self-Host</a> •
     <a href="#sdks--integrations">SDKs</a> •
-    <a href="https://logward.dev/docs">Docs</a>
+    <a href="https://logtide.dev/docs">Docs</a>
   </p>
 
-  <a href="https://github.com/logward-dev/logward/actions/workflows/ci.yml"><img src="https://github.com/logward-dev/logward/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://codecov.io/gh/logward-dev/logward"><img src="https://codecov.io/gh/logward-dev/logward/branch/main/graph/badge.svg" alt="Coverage"></a>
-  <a href="https://hub.docker.com/r/logward/backend"><img src="https://img.shields.io/docker/v/logward/backend?label=docker&logo=docker" alt="Docker"></a>
-  <a href="https://artifacthub.io/packages/helm/logward/logward"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logward" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-0.3.3-blue.svg" alt="Version">
+  <a href="https://github.com/logtide-dev/logtide/actions/workflows/ci.yml"><img src="https://github.com/logtide-dev/logtide/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://codecov.io/gh/logtide-dev/logtide"><img src="https://codecov.io/gh/logtide-dev/logtide/branch/main/graph/badge.svg" alt="Coverage"></a>
+  <a href="https://hub.docker.com/r/logtide/backend"><img src="https://img.shields.io/docker/v/logtide/backend?label=docker&logo=docker" alt="Docker"></a>
+  <a href="https://artifacthub.io/packages/helm/logtide/logtide"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logtide" alt="Artifact Hub"></a>
+  <img src="https://img.shields.io/badge/version-0.4.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Status">
   <img src="https://img.shields.io/badge/cloud-free_during_alpha-success.svg" alt="Free Cloud">
@@ -25,17 +25,19 @@
 
 <br />
 
-> **⚠️ ALPHA RELEASE:** LogWard is currently in active Alpha.
+> **⚠️ ALPHA RELEASE:** LogTide is currently in active Alpha.
 > The Cloud version is **100% FREE** for early adopters. We are looking for feedback to improve stability!
+
+> **📢 Rebranded:** LogTide was previously known as LogWard. We changed our name due to a trademark conflict. [Read more about the rebrand](https://github.com/orgs/logtide-dev/discussions/81).
 
 ---
 
-## 👋 What is LogWard?
+## 👋 What is LogTide?
 
-LogWard is an open-source alternative to Datadog, Splunk, and ELK.
+LogTide is an open-source alternative to Datadog, Splunk, and ELK.
 Designed for developers and European SMBs who need **GDPR compliance**, **data ownership**, and **simplicity** without the complexity of managing an ElasticSearch cluster.
 
-### Why LogWard?
+### Why LogTide?
 * 🇪🇺 **GDPR Friendly:** Keep data on your servers or use our EU-based cloud.
 * ⚡ **Lightweight:** Built on **TimescaleDB** & **Fastify** (low RAM usage compared to Java stacks).
 * 🚀 **Developer Experience:** 5-minute setup with Docker. Native SDKs.
@@ -46,32 +48,35 @@ Designed for developers and European SMBs who need **GDPR compliance**, **data o
 ## 📸 Screenshots
 
 ### Logs Explorer
-![LogWard Logs](docs/images/logs.png)
+![LogTide Logs](docs/images/logs.png)
 
 ### Distributed Tracing
-![LogWard Traces](docs/images/traces.png)
+![LogTide Traces](docs/images/traces.png)
+
+### Error Groups
+![LogTide Errors](docs/images/errors.png)
 
 ### SIEM Dashboard
-![LogWard Security](docs/images/security.png)
+![LogTide Security](docs/images/security.png)
 
 ### Alerts & Notifications
-![LogWard Alerts](docs/images/alerts.png)
+![LogTide Alerts](docs/images/alerts.png)
 
 ---
 
 ## 🚀 Quick Start
 
-Choose how you want to use LogWard.
+Choose how you want to use LogTide.
 
 ### Option A: Cloud (Fastest & Free)
 We host it for you. Perfect for testing and small projects. **Currently Free.**
 
-1.  **Sign up:** Go to [**logward.dev**](https://logward.dev).
+1.  **Sign up:** Go to [**logtide.dev**](https://logtide.dev).
 2.  **Create Project:** Create an organization and a project.
 3.  **Get API Key:** Copy your project-scoped API Key.
 4.  **Send a Log:**
     ```bash
-    curl -X POST https://api.logward.dev/api/v1/ingest \
+    curl -X POST https://api.logtide.dev/api/v1/ingest \
       -H "X-API-Key: YOUR_API_KEY" \
       -H "Content-Type: application/json" \
       -d '{ "logs": [{ "service": "test", "level": "info", "message": "Hello Cloud!" }] }'
@@ -84,9 +89,9 @@ Total control over your data. **No build required** - uses pre-built images from
 
 1.  **Download configuration**
     ```bash
-    mkdir logward && cd logward
-    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/docker-compose.yml
-    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/.env.example
+    mkdir logtide && cd logtide
+    curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/docker-compose.yml
+    curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/.env.example
     mv .env.example .env
     ```
 
@@ -106,7 +111,7 @@ Total control over your data. **No build required** - uses pre-built images from
     docker compose up -d
     ```
 
-4.  **Access LogWard**
+4.  **Access LogTide**
     * **Frontend:** `http://localhost:3000`
     * **API:** `http://localhost:8080`
     * **First Time?** Click "Sign up" to create your account
@@ -116,55 +121,55 @@ Total control over your data. **No build required** - uses pre-built images from
 5.  **(Optional) Enable Docker log collection with Fluent Bit**
     ```bash
     # Download Fluent Bit configuration files
-    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/fluent-bit.conf
-    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/parsers.conf
-    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/extract_container_id.lua
-    curl -O https://raw.githubusercontent.com/logward-dev/logward/main/docker/wrap_logs.lua
+    curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/fluent-bit.conf
+    curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/parsers.conf
+    curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/extract_container_id.lua
+    curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/wrap_logs.lua
 
-    # Set your LogWard API key in .env
+    # Set your LogTide API key in .env
     echo "FLUENT_BIT_API_KEY=your_api_key_here" >> .env
 
     # Start with logging profile
     docker compose --profile logging up -d
     ```
 
-**Docker Images:** [Docker Hub](https://hub.docker.com/r/logward/backend) | [GitHub Container Registry](https://github.com/logward-dev/logward/pkgs/container/logward-backend)
+**Docker Images:** [Docker Hub](https://hub.docker.com/r/logtide/backend) | [GitHub Container Registry](https://github.com/logtide-dev/logtide/pkgs/container/logtide-backend)
 
-> **Production:** Pin versions with `LOGWARD_BACKEND_IMAGE=logward/backend:0.3.3` in your `.env` file.
+> **Production:** Pin versions with `LOGTIDE_BACKEND_IMAGE=logtide/backend:0.4.0` in your `.env` file.
 
-> **ARM64 / Raspberry Pi:** LogWard images support `linux/amd64` and `linux/arm64`. For Fluent Bit on ARM64, set `FLUENT_BIT_IMAGE=cr.fluentbit.io/fluent/fluent-bit:4.2.2` in your `.env` file.
+> **ARM64 / Raspberry Pi:** LogTide images support `linux/amd64` and `linux/arm64`. For Fluent Bit on ARM64, set `FLUENT_BIT_IMAGE=cr.fluentbit.io/fluent/fluent-bit:4.2.2` in your `.env` file.
 
-> **Horizontal Scaling:** For scaling multiple backend instances, see [deployment docs](https://logward.dev/docs/deployment#horizontal-scaling).
+> **Horizontal Scaling:** For scaling multiple backend instances, see [deployment docs](https://logtide.dev/docs/deployment#horizontal-scaling).
 
 ### Option C: Kubernetes (Helm)
-Deploy LogWard on any Kubernetes cluster with our official Helm chart.
+Deploy LogTide on any Kubernetes cluster with our official Helm chart.
 
 **Prerequisites:** Kubernetes 1.25+, Helm 3.10+
 
 1. **Add the Helm repository**
     ```bash
-    helm repo add logward https://logward-dev.github.io/logward-helm-chart
+    helm repo add logtide https://logtide-dev.github.io/logtide-helm-chart
     helm repo update
     ```
 
-2. **Install LogWard**
+2. **Install LogTide**
     ```bash
-    helm install logward logward/logward \
-      --namespace logward \
+    helm install logtide logtide/logtide \
+      --namespace logtide \
       --create-namespace \
       --set timescaledb.auth.password=<your-db-password> \
       --set redis.auth.password=<your-redis-password>
     ```
 
-3. **Access LogWard**
+3. **Access LogTide**
     ```bash
-    kubectl port-forward svc/logward-frontend 3000:3000 -n logward
+    kubectl port-forward svc/logtide-frontend 3000:3000 -n logtide
     ```
     Open `http://localhost:3000`
 
 **Includes:** Backend (2+ replicas), Frontend, Worker, TimescaleDB, Redis, HPA, Ingress support, Prometheus monitoring.
 
-> **Helm Chart:** [Artifact Hub](https://artifacthub.io/packages/helm/logward/logward) | [GitHub](https://github.com/logward-dev/logward-helm-chart) | [Full Docs](https://logward.dev/docs/deployment#kubernetes)
+> **Helm Chart:** [Artifact Hub](https://artifacthub.io/packages/helm/logtide/logtide) | [GitHub](https://github.com/logtide-dev/logtide-helm-chart) | [Full Docs](https://logtide.dev/docs/deployment#kubernetes)
 
 ---
 
@@ -174,12 +179,12 @@ We have ready-to-use SDKs for the most popular languages.
 
 | Language | Status | Package / Link |
 | :--- | :--- | :--- |
-| **Node.js** | ✅ Ready | [`@logward-dev/sdk-node`](https://www.npmjs.com/package/@logward-dev/sdk-node) |
-| **Python** | ✅ Ready | [`logward-sdk`](https://pypi.org/project/logward-sdk/) |
-| **Go** | ✅ Ready | [`logward-sdk-go`](https://github.com/logward-dev/logward-sdk-go) |
-| **PHP** | ✅ Ready | [`logward-dev/sdk-php`](https://packagist.org/packages/logward-dev/sdk-php) |
-| **Kotlin** | ✅ Ready | [`logward-sdk-kotlin`](https://github.com/logward-dev/logward-sdk-kotlin) |
-| **C# / .NET** | ✅ Ready | [`LogWard.SDK`](https://github.com/logward-dev/lgoward-sdk-csharp) |
+| **Node.js** | ✅ Ready | [`@logtide/sdk-node`](https://www.npmjs.com/package/@logtide/sdk-node) |
+| **Python** | ✅ Ready | [`logtide-sdk`](https://pypi.org/project/logtide-sdk/) |
+| **Go** | ✅ Ready | [`logtide-sdk-go`](https://github.com/logtide-dev/logtide-sdk-go) |
+| **PHP** | ✅ Ready | [`logtide-dev/sdk-php`](https://packagist.org/packages/logtide-dev/sdk-php) |
+| **Kotlin** | ✅ Ready | [`logtide-sdk-kotlin`](https://github.com/logtide-dev/logtide-sdk-kotlin) |
+| **C# / .NET** | ✅ Ready | [`LogTide.SDK`](https://github.com/logtide-dev/lgoward-sdk-csharp) |
 | **Docker** | ✅ Ready | Use Fluent Bit / Syslog driver |
 | **HTTP** | ✅ Ready | [API Reference](#) |
 | **OpenTelemetry** | ✅ Ready | OTLP endpoint (logs + traces) |
@@ -190,7 +195,7 @@ We have ready-to-use SDKs for the most popular languages.
 
 * ✅ **High-Performance Ingestion:** Batch API handling thousands of logs/sec.
 * ✅ **Real-time Live Tail:** See logs as they arrive via Server-Sent Events (SSE).
-* ✅ **Powerful Search:** Filter by service, level, time range, and full-text search.
+* ✅ **Powerful Search:** Filter by service, level, time range. Two search modes: **Full-text** (word-based with stemming) and **Substring** (find text anywhere in messages, e.g., find "bluez" in "spa.bluez5.native").
 * ✅ **Multi-Organization:** Isolate teams and projects strictly.
 * ✅ **Alerting:** Get notified via Email or Webhook (Slack/Discord) on error spikes.
 * ✅ **Retention Policy:** Automatic cleanup of old logs via TimescaleDB.
@@ -203,7 +208,7 @@ We have ready-to-use SDKs for the most popular languages.
 
 ## 🛡️ Security & Sigma Rules
 
-LogWard goes beyond simple monitoring by transforming your logs into a security advantage. We support **Sigma Rules**, the industry-standard format for describing log signatures.
+LogTide goes beyond simple monitoring by transforming your logs into a security advantage. We support **Sigma Rules**, the industry-standard format for describing log signatures.
 
 * **Threat Detection:** Automatically detect suspicious activities (e.g., SSH brute force, clearing of history, web shells).
 * **Standard Format:** Write rules in standard YAML or import existing ones from the [Sigma community](https://github.com/SigmaHQ/sigma).
@@ -229,7 +234,7 @@ level: high
 
 ## 🚨 SIEM Dashboard & Incident Management (New in 0.3.0)
 
-LogWard now includes a full-featured **Security Information and Event Management (SIEM)** dashboard, turning your log platform into a lightweight security operations center.
+LogTide now includes a full-featured **Security Information and Event Management (SIEM)** dashboard, turning your log platform into a lightweight security operations center.
 
 ### Security Dashboard
 * **Summary Stats:** Total detections, open incidents, critical alerts at a glance
@@ -266,9 +271,9 @@ We use modern, type-safe tools to ensure performance and maintainability.
 
 Distributed under the **GNU AGPLv3** License. See `LICENSE` for more information.
 
-* **Free for Internal Use:** You can use LogWard internally for free.
+* **Free for Internal Use:** You can use LogTide internally for free.
 * **Open Source:** The code is available for audit and contribution.
-* **Commercial Protection:** If you offer LogWard as a SaaS (Service) to others, you must release your source code or purchase a Commercial License.
+* **Commercial Protection:** If you offer LogTide as a SaaS (Service) to others, you must release your source code or purchase a Commercial License.
 
 ---
 
@@ -276,7 +281,7 @@ Distributed under the **GNU AGPLv3** License. See `LICENSE` for more information
   <br />
   <p>Built with ❤️ in Europe</p>
   <p>
-    <a href="https://logward.dev"><strong>Start for Free</strong></a> •
-    <a href="https://github.com/logward-dev/logward/issues">Report a Bug</a>
+    <a href="https://logtide.dev"><strong>Start for Free</strong></a> •
+    <a href="https://github.com/logtide-dev/logtide/issues">Report a Bug</a>
   </p>
 </div>

@@ -17,7 +17,7 @@
     showUntil
   }: Props = $props();
 
-  const ACKNOWLEDGED_KEY = 'logward_acknowledged_badges';
+  const ACKNOWLEDGED_KEY = 'logtide_acknowledged_badges';
 
   let isAcknowledged = $state(false);
   let isExpired = $state(false);

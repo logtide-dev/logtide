@@ -96,7 +96,7 @@
       <div class="max-w-4xl mx-auto px-4 py-3">
         <div class="flex items-center justify-between mb-3">
           <div class="flex items-center gap-3">
-            <img src={$smallLogoPath} alt="LogWard" class="h-8 w-auto" />
+            <img src={$smallLogoPath} alt="LogTide" class="h-8 w-auto" />
             <span class="text-sm text-muted-foreground">Getting Started</span>
           </div>
           {#if showSkip}

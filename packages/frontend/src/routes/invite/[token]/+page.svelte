@@ -133,7 +133,7 @@
 </script>
 
 <svelte:head>
-  <title>Accept Invitation - LogWard</title>
+  <title>Accept Invitation - LogTide</title>
 </svelte:head>
 
 <div class="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/30 p-4">

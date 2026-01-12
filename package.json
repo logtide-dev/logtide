@@ -1,9 +1,9 @@
 {
-  "name": "@logward/root",
-  "version": "0.3.3",
+  "name": "@logtide/root",
+  "version": "0.4.0",
   "private": true,
-  "description": "LogWard - Self-hosted log management platform",
-  "author": "LogWard Team",
+  "description": "LogTide - Self-hosted log management platform",
+  "author": "LogTide Team",
   "license": "AGPL-3.0",
   "pnpm": {
     "overrides": {
@@ -15,17 +15,17 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter \"./packages/**\" dev",
-    "dev:backend": "pnpm --filter \"@logward/backend\" dev",
-    "dev:frontend": "pnpm --filter \"@logward/frontend\" dev",
+    "dev:backend": "pnpm --filter \"@logtide/backend\" dev",
+    "dev:frontend": "pnpm --filter \"@logtide/frontend\" dev",
     "build": "pnpm --recursive --filter \"./packages/**\" build",
-    "build:shared": "pnpm --filter \"@logward/shared\" build",
+    "build:shared": "pnpm --filter \"@logtide/shared\" build",
     "test": "pnpm --recursive --filter \"./packages/**\" test",
-    "test:e2e": "pnpm --filter \"@logward/frontend\" test:e2e",
+    "test:e2e": "pnpm --filter \"@logtide/frontend\" test:e2e",
     "test:e2e:up": "docker-compose -f docker-compose.test.yml up -d --build",
     "test:e2e:down": "docker-compose -f docker-compose.test.yml down -v",
     "test:e2e:run": "pnpm test:e2e:up && pnpm test:e2e && pnpm test:e2e:down",
-    "test:e2e:headed": "pnpm --filter \"@logward/frontend\" test:e2e:headed",
-    "test:e2e:debug": "pnpm --filter \"@logward/frontend\" test:e2e:debug",
+    "test:e2e:headed": "pnpm --filter \"@logtide/frontend\" test:e2e:headed",
+    "test:e2e:debug": "pnpm --filter \"@logtide/frontend\" test:e2e:debug",
     "typecheck": "pnpm --recursive --filter \"./packages/**\" typecheck",
     "clean": "pnpm --recursive --filter \"./packages/**\" clean"
   },

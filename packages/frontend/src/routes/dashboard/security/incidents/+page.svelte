@@ -211,7 +211,7 @@
 </script>
 
 <svelte:head>
-	<title>Security Incidents - LogWard</title>
+	<title>Security Incidents - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto px-6 py-8 max-w-7xl">

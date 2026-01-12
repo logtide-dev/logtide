@@ -5,7 +5,7 @@ import {
     logSchema,
     ingestRequestSchema,
     alertRuleSchema,
-} from '@logward/shared';
+} from '@logtide/shared';
 
 describe('Input Validation - Zod Schemas', () => {
     describe('logLevelSchema', () => {

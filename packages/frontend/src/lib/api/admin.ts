@@ -179,6 +179,7 @@ export interface OrganizationDetails {
     id: string;
     name: string;
     slug: string;
+    retentionDays: number;
     created_at: string;
     updated_at: string;
     members: Array<{
@@ -460,6 +461,32 @@ class AdminAPI {
 
         if (!response.ok) {
             throw new Error('Failed to delete organization');
+        }
+
+        return response.json();
+    }
+
+    async updateOrganizationRetention(orgId: string, retentionDays: number): Promise<{ message: string; success: boolean; retentionDays: number }> {
+        const auth = get(authStore);
+        const token = auth.token;
+
+        if (!token) {
+            goto('/login');
+            throw new Error('No token found');
+        }
+
+        const response = await fetch(`${getApiBaseUrl()}/admin/organizations/${orgId}/retention`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ retentionDays }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update retention policy');
         }
 
         return response.json();

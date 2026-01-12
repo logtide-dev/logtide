@@ -28,7 +28,7 @@ dev-frontend: ## Start frontend only
 	@pnpm dev:frontend
 
 dev-worker: ## Start worker only
-	@pnpm --filter '@logward/backend' dev:worker
+	@pnpm --filter '@logtide/backend' dev:worker
 
 test: ## Run tests
 	@pnpm test
@@ -56,10 +56,10 @@ docker-logs: ## View Docker logs
 	@docker-compose -f docker/docker-compose.yml logs -f
 
 migrate: ## Run database migrations
-	@pnpm --filter '@logward/backend' migrate
+	@pnpm --filter '@logtide/backend' migrate
 
 migrate-down: ## Rollback last migration
-	@pnpm --filter '@logward/backend' migrate:down
+	@pnpm --filter '@logtide/backend' migrate:down
 
 seed: ## Seed database with sample data
 	@bash scripts/seed-data.sh

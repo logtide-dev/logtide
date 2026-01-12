@@ -1,12 +1,12 @@
 /**
  * OTLP Transformer
  *
- * Transforms OpenTelemetry LogRecord messages to LogWard format.
+ * Transforms OpenTelemetry LogRecord messages to LogTide format.
  *
  * @see https://opentelemetry.io/docs/specs/otel/logs/data-model/
  */
 
-import { mapSeverityToLevel, type LogWardLevel } from './severity-mapper.js';
+import { mapSeverityToLevel, type LogTideLevel } from './severity-mapper.js';
 
 // ============================================================================
 // OTLP Type Definitions (based on OpenTelemetry proto)
@@ -92,16 +92,16 @@ export interface OtlpExportLogsRequest {
 }
 
 // ============================================================================
-// LogWard Output Types
+// LogTide Output Types
 // ============================================================================
 
 /**
- * Transformed log ready for LogWard ingestion
+ * Transformed log ready for LogTide ingestion
  */
 export interface TransformedLog {
   time: string; // ISO 8601 timestamp
   service: string;
-  level: LogWardLevel;
+  level: LogTideLevel;
   message: string;
   metadata?: Record<string, unknown>;
   trace_id?: string; // Any string format (OTLP uses 32 hex chars)
@@ -113,12 +113,12 @@ export interface TransformedLog {
 // ============================================================================
 
 /**
- * Transform OTLP ExportLogsRequest to LogWard format.
+ * Transform OTLP ExportLogsRequest to LogTide format.
  *
  * @param request - OTLP export request
  * @returns Array of transformed logs
  */
-export function transformOtlpToLogWard(
+export function transformOtlpToLogTide(
   request: OtlpExportLogsRequest
 ): TransformedLog[] {
   const logs: TransformedLog[] = [];
@@ -150,7 +150,7 @@ export function transformOtlpToLogWard(
 }
 
 /**
- * Transform a single OTLP LogRecord to LogWard format.
+ * Transform a single OTLP LogRecord to LogTide format.
  */
 export function transformLogRecord(
   record: OtlpLogRecord,

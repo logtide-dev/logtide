@@ -1,5 +1,5 @@
 -- ============================================================================
--- LogWard - Add span_id Column for OpenTelemetry Support
+-- LogTide - Add span_id Column for OpenTelemetry Support
 -- ============================================================================
 -- This migration adds the span_id column to the logs table for trace correlation
 -- with OpenTelemetry distributed tracing (Phase 2: OTLP Traces).

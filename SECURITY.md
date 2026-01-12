@@ -2,11 +2,11 @@
 
 ## Reporting a Vulnerability
 
-At LogWard, we prioritize the security of our users' data and strive to maintain a robust and secure platform. If you discover any potential threats or vulnerabilities in our system, we kindly ask that you notify us immediately.
+At LogTide, we prioritize the security of our users' data and strive to maintain a robust and secure platform. If you discover any potential threats or vulnerabilities in our system, we kindly ask that you notify us immediately.
 
 ### How to Report
 
-1. **Email**: Send an email to [support@logward.dev](mailto:support@logward.dev) with details of the discovered vulnerability.
+1. **Email**: Send an email to [support@logtide.dev](mailto:support@logtide.dev) with details of the discovered vulnerability.
 
 2. **Include**:
    - A detailed description of the vulnerability
@@ -43,9 +43,9 @@ We provide security updates for the following versions:
 
 ## Security Best Practices
 
-When self-hosting LogWard, we recommend:
+When self-hosting LogTide, we recommend:
 
-1. **Keep LogWard updated** to the latest version
+1. **Keep LogTide updated** to the latest version
 2. **Use HTTPS** for all connections
 3. **Secure your database** with strong passwords and network isolation
 4. **Enable rate limiting** (configured by default)
@@ -55,7 +55,7 @@ When self-hosting LogWard, we recommend:
 
 ## Security Features
 
-LogWard includes several built-in security features:
+LogTide includes several built-in security features:
 
 - **API Key Authentication** with SHA-256 hashing
 - **Session-based Authentication** with secure token generation
@@ -68,4 +68,4 @@ LogWard includes several built-in security features:
 
 ## Contact
 
-For any security-related questions or concerns, please contact us at [support@logward.dev](mailto:support@logward.dev).
+For any security-related questions or concerns, please contact us at [support@logtide.dev](mailto:support@logtide.dev).

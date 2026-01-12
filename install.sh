@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# LogWard Installation Script
+# LogTide Installation Script
 # Inspired by SigNoz install.sh
 # https://github.com/SigNoz/signoz/blob/main/deploy/install.sh
 
@@ -19,7 +19,7 @@ VERSION="1.0.0"
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════╗"
 echo "║                                       ║"
-echo "║         LogWard Installer             ║"
+echo "║         LogTide Installer             ║"
 echo "║      Self-Hosted Log Management       ║"
 echo "║                                       ║"
 echo "║            Version $VERSION              ║"
@@ -168,14 +168,14 @@ setup_env() {
 
     # Create .env file in docker directory
     cat > docker/.env << EOF
-# LogWard Production Configuration
+# LogTide Production Configuration
 # Auto-generated on $(date)
 
 # Database
-DB_NAME=logward
-DB_USER=logward
+DB_NAME=logtide
+DB_USER=logtide
 DB_PASSWORD=$DB_PASSWORD
-DATABASE_URL=postgresql://logward:$DB_PASSWORD@postgres:5432/logward
+DATABASE_URL=postgresql://logtide:$DB_PASSWORD@postgres:5432/logtide
 
 # Redis
 REDIS_PASSWORD=$REDIS_PASSWORD
@@ -191,7 +191,7 @@ PUBLIC_API_URL=http://localhost:8080
 # SMTP_PORT=587
 # SMTP_USER=your_email@example.com
 # SMTP_PASS=your_smtp_password
-# SMTP_FROM=noreply@logward.local
+# SMTP_FROM=noreply@logtide.local
 
 # Internal Logging (Self-Monitoring)
 INTERNAL_LOGGING_ENABLED=false
@@ -217,7 +217,7 @@ pull_images() {
 # Start services
 start_services() {
     echo ""
-    echo -e "${BLUE}→${NC} Starting LogWard services..."
+    echo -e "${BLUE}→${NC} Starting LogTide services..."
     echo ""
 
     cd docker
@@ -231,14 +231,14 @@ start_services() {
 # Wait for backend to be healthy
 wait_for_backend() {
     echo ""
-    echo -e "${BLUE}→${NC} Waiting for LogWard backend to be ready..."
+    echo -e "${BLUE}→${NC} Waiting for LogTide backend to be ready..."
 
     MAX_RETRIES=60
     RETRY_COUNT=0
 
     while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
         if curl -s -f http://localhost:8080/health >/dev/null 2>&1; then
-            echo -e "${GREEN}✓${NC} LogWard backend is ready!"
+            echo -e "${GREEN}✓${NC} LogTide backend is ready!"
             return 0
         fi
 
@@ -261,12 +261,12 @@ show_completion() {
     echo -e "${GREEN}"
     echo "╔═══════════════════════════════════════╗"
     echo "║                                       ║"
-    echo "║   ✓ LogWard Installation Complete!   ║"
+    echo "║   ✓ LogTide Installation Complete!   ║"
     echo "║                                       ║"
     echo "╚═══════════════════════════════════════╝"
     echo -e "${NC}"
     echo ""
-    echo -e "${BLUE}→${NC} Access LogWard:"
+    echo -e "${BLUE}→${NC} Access LogTide:"
     echo -e "   Frontend: ${GREEN}http://localhost:3000${NC}"
     echo -e "   Backend API: ${GREEN}http://localhost:8080${NC}"
     echo -e "   API Docs: ${GREEN}http://localhost:8080/docs${NC}"

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   mapSeverityToLevel,
   levelToSeverityNumber,
-  type LogWardLevel,
+  type LogTideLevel,
 } from '../../../modules/otlp/severity-mapper.js';
 
 describe('OTLP Severity Mapper', () => {
@@ -151,7 +151,7 @@ describe('OTLP Severity Mapper', () => {
     });
 
     it('should be consistent with mapSeverityToLevel', () => {
-      const levels: LogWardLevel[] = ['debug', 'info', 'warn', 'error', 'critical'];
+      const levels: LogTideLevel[] = ['debug', 'info', 'warn', 'error', 'critical'];
 
       for (const level of levels) {
         const severityNumber = levelToSeverityNumber(level);

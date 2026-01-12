@@ -1,7 +1,7 @@
 /**
  * OTLP Severity Mapper
  *
- * Maps OpenTelemetry SeverityNumber (0-24) to LogWard log levels.
+ * Maps OpenTelemetry SeverityNumber (0-24) to LogTide log levels.
  *
  * OpenTelemetry Severity Levels:
  * - 0: UNSPECIFIED
@@ -15,19 +15,19 @@
  * @see https://opentelemetry.io/docs/specs/otel/logs/data-model/#field-severitynumber
  */
 
-export type LogWardLevel = 'debug' | 'info' | 'warn' | 'error' | 'critical';
+export type LogTideLevel = 'debug' | 'info' | 'warn' | 'error' | 'critical';
 
 /**
- * Maps OpenTelemetry SeverityNumber to LogWard level.
+ * Maps OpenTelemetry SeverityNumber to LogTide level.
  *
  * @param severityNumber - OTLP severity number (0-24)
  * @param severityText - Optional severity text (e.g., "ERROR", "WARN")
- * @returns LogWard log level
+ * @returns LogTide log level
  */
 export function mapSeverityToLevel(
   severityNumber?: number,
   severityText?: string
-): LogWardLevel {
+): LogTideLevel {
   // Try severityText first if provided (allows custom SDK severity names)
   if (severityText) {
     const normalized = severityText.toLowerCase();
@@ -63,13 +63,13 @@ export function mapSeverityToLevel(
 }
 
 /**
- * Reverse mapping: LogWard level to OTLP SeverityNumber.
+ * Reverse mapping: LogTide level to OTLP SeverityNumber.
  * Useful for testing or exporting logs.
  *
- * @param level - LogWard log level
+ * @param level - LogTide log level
  * @returns OTLP severity number
  */
-export function levelToSeverityNumber(level: LogWardLevel): number {
+export function levelToSeverityNumber(level: LogTideLevel): number {
   switch (level) {
     case 'debug':
       return 5; // DEBUG

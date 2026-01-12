@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a bug or unexpected behavior in LogWard
+about: Report a bug or unexpected behavior in LogTide
 title: "[BUG]"
 labels: ''
 assignees: ''
@@ -22,7 +22,7 @@ assignees: ''
 <!-- What actually happened -->
 
 ## Environment
-- **LogWard Version**: <!-- e.g., 0.2.3 -->
+- **LogTide Version**: <!-- e.g., 0.2.3 -->
 - **Deployment Type**: <!-- Cloud-hosted or Self-hosted -->
 - **OS**: <!-- e.g., Ubuntu 22.04, macOS 14 -->
 - **Browser** (if applicable): <!-- e.g., Chrome 120, Firefox 121 -->

@@ -1,5 +1,5 @@
--- Wrap logs for LogWard API format
--- LogWard expects: { "logs": [ {...}, {...} ] }
+-- Wrap logs for LogTide API format
+-- LogTide expects: { "logs": [ {...}, {...} ] }
 
 function wrap_logs(tag, timestamp, record)
     -- Extract fields from the log record

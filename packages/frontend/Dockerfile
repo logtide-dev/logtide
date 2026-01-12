@@ -15,13 +15,13 @@ COPY packages/frontend ./packages/frontend
 RUN pnpm install --frozen-lockfile
 
 # Build shared package first
-RUN pnpm --filter '@logward/shared' build
+RUN pnpm --filter '@logtide/shared' build
 
 # Build frontend
 ARG PUBLIC_API_URL=http://localhost:8080
 ENV PUBLIC_API_URL=$PUBLIC_API_URL
 
-RUN pnpm --filter '@logward/frontend' build
+RUN pnpm --filter '@logtide/frontend' build
 
 # Production stage
 FROM node:20-alpine

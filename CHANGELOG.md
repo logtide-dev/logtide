@@ -1,9 +1,122 @@
 # Changelog
 
-All notable changes to LogWard will be documented in this file.
+All notable changes to LogTide will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.4.0]
+
+### Added
+
+- **Substring Search Mode**: Find text anywhere in log messages (#68)
+  - New search mode dropdown in the Logs Search page
+  - **Full-text** mode: Word-based search with stemming (default, existing behavior)
+  - **Substring** mode: Find partial matches anywhere in messages (e.g., "bluez" in "spa.bluez5.native")
+  - Powered by PostgreSQL `pg_trgm` extension with GIN trigram index for fast performance
+  - Admin settings to configure default search mode system-wide
+  - Search mode preference saved per-session in browser
+  - 10 new integration tests for substring search
+
+- **Clickable Dashboard Elements**: Interactive navigation from dashboard (#67)
+  - Recent errors, top services, and other dashboard items are now clickable
+  - Clicking an item navigates to the corresponding search page with pre-applied filters
+  - Improved discoverability and workflow efficiency
+
+- **Enhanced Exception & Stack Trace Visualization**: Better debugging experience (#23)
+  - Auto-detect stack traces from multiple languages (Node.js, Python, Java, Go, PHP)
+  - Parse traces into structured frames with file, line, function, and column information
+  - Syntax highlighting for better readability
+  - Exception type badges (e.g., "TypeError", "ValueError")
+  - Collapsible frames showing top 3-5 by default
+  - Copy functionality for traces and individual frames
+  - Error grouping by stack trace fingerprint with frequency tracking
+
+- **Customizable Log Retention Policy**: Per-organization retention settings
+  - Configure retention period per organization
+  - Admin UI for managing retention policies
+  - Background worker for automatic log cleanup
+
+### Changed
+
+- **Project Rebranding**: LogWard renamed to LogTide ([discussion](https://github.com/orgs/logtide-dev/discussions/81))
+  - Name change due to trademark conflict with a European supply chain software company
+  - New name reflects the platform's mission: "Log" for what we manage, "Tide" for the continuous flow of observability data
+  - All references updated across codebase, documentation, and UI
+
+- **Improved Custom Time Range Picker**: Stateful time selection (#72)
+  - Custom time range fields now pre-populated with values from recently used presets
+  - Previously entered date/time values preserved when switching between preset and custom modes
+  - Quick adjustments without complete re-entry of time ranges
+  - Better UX for power users who frequently adjust time windows
+
+### Fixed
+
+- **Export All Pages**: Log export now includes all matching logs (#71)
+  - CSV and JSON exports previously only captured logs from the current visible page (~25 entries)
+  - Export now retrieves all logs matching the current filters across all pages
+  - No more manual merging of multiple exports required
+
+### BREAKING CHANGES
+
+Due to the rebrand from LogWard to LogTide, the following changes require action when upgrading:
+
+**Environment Variables (rename in your `.env` file):**
+| Old Variable | New Variable |
+|-------------|--------------|
+| `LOGWARD_PORT` | `LOGTIDE_PORT` |
+| `LOGWARD_BACKEND_IMAGE` | `LOGTIDE_BACKEND_IMAGE` |
+| `LOGWARD_FRONTEND_IMAGE` | `LOGTIDE_FRONTEND_IMAGE` |
+
+**Fluent Bit Configuration (if using custom config):**
+- Internal variables in `fluent-bit.conf` renamed: `${LOGWARD_API_KEY}` → `${LOGTIDE_API_KEY}`, `${LOGWARD_API_HOST}` → `${LOGTIDE_API_HOST}`
+- If you're using the default config from the repo, just pull the new version
+- The `.env` variable `FLUENT_BIT_API_KEY` remains unchanged
+
+**Database Defaults (only affects new installations):**
+- Default database name: `logward` → `logtide`
+- Default database user: `logward` → `logtide`
+- Existing installations can keep the old names by setting `DB_NAME` and `DB_USER` explicitly
+
+**Docker (update your docker-compose overrides if any):**
+- Container names: `logward-*` → `logtide-*` (e.g., `logward-backend` → `logtide-backend`)
+- Network name: `logward-network` → `logtide-network`
+- Default images: `logward/backend` → `logtide/backend`, `logward/frontend` → `logtide/frontend`
+- GHCR images: `ghcr.io/logward-dev/logward-*` → `ghcr.io/logtide-dev/logtide-*`
+
+**Service Names:**
+- Internal service names changed from `logward-backend`/`logward-worker` to `logtide-backend`/`logtide-worker`
+- This affects logs if you filter by service name
+
+**SMTP Default:**
+- Default sender: `noreply@logward.local` → `noreply@logtide.local`
+- Override with `SMTP_FROM` if you have a custom sender
+
+**Migration Guide:**
+1. Stop your containers: `docker compose down`
+2. Update your `.env` file with renamed variables
+3. Pull new images: `docker compose pull`
+4. Start containers: `docker compose up -d`
+5. Data is preserved - no database migration needed
+
+- **Website Separation**: Homepage and documentation moved to dedicated website
+  - Landing page and all documentation pages moved to [logtide.dev](https://logtide.dev)
+  - App homepage now redirects to `/dashboard` (authenticated) or `/login` (unauthenticated)
+  - All internal `/docs` links updated to external `https://logtide.dev/docs`
+  - Navbar, Footer, and empty state components updated with external documentation links
+  - Cleaner separation between marketing website and application
+
+### Removed
+
+- **Documentation Pages**: Removed 24 documentation pages from the app
+  - Getting Started, API Reference, SDK docs (Node.js, Python, Go, PHP, Kotlin, C#)
+  - Migration guides (Datadog, Splunk, ELK, Loki, SigNoz)
+  - Authentication, Deployment, Architecture, Contributing guides
+  - All documentation now available at [logtide.dev/docs](https://logtide.dev/docs)
+
+- **Documentation Components**: Removed docs-specific UI components
+  - DocsSidebar, DocsTableOfContents, CodeBlock, Breadcrumbs components removed
+  - These components are now part of the dedicated website project
 
 ## [0.3.3] - 2026-01-02
 
@@ -39,7 +152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Warning displayed in UI when enabled
 
 - **ARM64 / Raspberry Pi Support**: Full support for ARM-based deployments (#58)
-  - LogWard images built for both `linux/amd64` and `linux/arm64`
+  - LogTide images built for both `linux/amd64` and `linux/arm64`
   - Native support for Raspberry Pi 3/4/5 (64-bit OS)
   - Configurable Fluent Bit image via `FLUENT_BIT_IMAGE` environment variable
   - Documentation for ARM64-specific Fluent Bit registry (`cr.fluentbit.io`)
@@ -74,11 +187,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Auto-detects journald format (`_SYSTEMD_UNIT`, `SYSLOG_IDENTIFIER`, `MESSAGE`, `PRIORITY`, etc.)
   - Extracts service name from `SYSLOG_IDENTIFIER` → `_SYSTEMD_UNIT` → `_COMM` → `_EXE`
   - Extracts actual message from `MESSAGE` field instead of showing raw JSON
-  - Maps `PRIORITY` (0-7) to LogWard levels (critical/error/warn/info/debug)
+  - Maps `PRIORITY` (0-7) to LogTide levels (critical/error/warn/info/debug)
   - Uses journald timestamp (`__REALTIME_TIMESTAMP`) when present (already UTC)
 
 - **Syslog Level Mapping**: Improved handling of syslog severity levels (#60)
-  - Automatic mapping of syslog levels (notice, alert, emerg) to LogWard levels
+  - Automatic mapping of syslog levels (notice, alert, emerg) to LogTide levels
   - Case-insensitive level normalization
   - Fixes logs appearing as "unknown" level
 
@@ -163,7 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Invitation acceptance flow with automatic org membership
   - Invitation expiration handling
 
-- **Horizontal Scaling Documentation**: Guide for scaling LogWard across multiple instances
+- **Horizontal Scaling Documentation**: Guide for scaling LogTide across multiple instances
   - Traefik reverse proxy configuration with load balancing
   - Docker Compose overlay for scaled deployments
   - Sticky sessions for SSE connections
@@ -239,8 +352,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - GitHub Actions workflow (`publish-images.yml`) for building and pushing images
   - Multi-platform builds (linux/amd64, linux/arm64)
   - Automatic semantic versioning tags (e.g., 0.2.3, 0.2, 0, latest)
-  - **Docker Hub**: `logward/backend`, `logward/frontend`
-  - **GitHub Container Registry**: `ghcr.io/logward-dev/logward-backend`, `ghcr.io/logward-dev/logward-frontend`
+  - **Docker Hub**: `logtide/backend`, `logtide/frontend`
+  - **GitHub Container Registry**: `ghcr.io/logtide-dev/logtide-backend`, `ghcr.io/logtide-dev/logtide-frontend`
   - Triggered on git tags (`v*.*.*`) or manual workflow dispatch
 
 - **Self-Hosting Documentation**: Comprehensive deployment guides
@@ -252,7 +365,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **docker-compose.yml**: Now uses pre-built images from Docker Hub by default
-  - Configurable via `LOGWARD_BACKEND_IMAGE` and `LOGWARD_FRONTEND_IMAGE` environment variables
+  - Configurable via `LOGTIDE_BACKEND_IMAGE` and `LOGTIDE_FRONTEND_IMAGE` environment variables
   - No local build required for self-hosting
 
 - **Documentation**: Updated all docs pages

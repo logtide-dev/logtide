@@ -27,8 +27,8 @@ jobs:
       postgres:
         image: timescale/timescaledb:latest-pg16
         env:
-          POSTGRES_DB: logward_test
-          POSTGRES_USER: logward_test
+          POSTGRES_DB: logtide_test
+          POSTGRES_USER: logtide_test
           POSTGRES_PASSWORD: test_password
         ports:
           - 5433:5432
@@ -73,25 +73,25 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build shared package
-        run: pnpm --filter '@logward/shared' build
+        run: pnpm --filter '@logtide/shared' build
 
       - name: Run backend tests with coverage
         working-directory: packages/backend
         env:
           NODE_ENV: test
-          DATABASE_URL: postgresql://logward_test:test_password@localhost:5433/logward_test
+          DATABASE_URL: postgresql://logtide_test:test_password@localhost:5433/logtide_test
           DATABASE_HOST: localhost
           DATABASE_PORT: 5433
-          DB_USER: logward_test
+          DB_USER: logtide_test
           DB_PASSWORD: test_password
-          DB_NAME: logward_test
+          DB_NAME: logtide_test
           REDIS_URL: redis://localhost:6380
           API_KEY_SECRET: test_secret_key_32_chars_long!!!
           SMTP_HOST: localhost
           SMTP_PORT: 1025
           SMTP_USER: ''
           SMTP_PASS: ''
-          SMTP_FROM: test@logward.dev
+          SMTP_FROM: test@logtide.dev
           RATE_LIMIT_MAX: 1000
           RATE_LIMIT_WINDOW: 60000
         run: pnpm test:ci:coverage
@@ -143,15 +143,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build shared package
-        run: pnpm --filter '@logward/shared' build
+        run: pnpm --filter '@logtide/shared' build
 
       - name: Typecheck backend
-        run: pnpm --filter '@logward/backend' typecheck
+        run: pnpm --filter '@logtide/backend' typecheck
 
       - name: Typecheck frontend
         env:
           PUBLIC_API_URL: http://localhost:8080
-        run: pnpm --filter '@logward/frontend' typecheck
+        run: pnpm --filter '@logtide/frontend' typecheck
 
   # ====================
   # E2E Tests (Playwright)
@@ -242,7 +242,7 @@ jobs:
           context: .
           file: packages/backend/Dockerfile
           push: false
-          tags: logward/backend:${{ github.sha }}
+          tags: logtide/backend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -252,6 +252,6 @@ jobs:
           context: .
           file: packages/frontend/Dockerfile
           push: false
-          tags: logward/frontend:${{ github.sha }}
+          tags: logtide/frontend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

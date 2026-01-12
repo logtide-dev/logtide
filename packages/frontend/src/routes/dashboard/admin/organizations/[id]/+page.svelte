@@ -19,6 +19,8 @@
         TableHeader,
         TableRow,
     } from "$lib/components/ui/table";
+    import Input from "$lib/components/ui/input/input.svelte";
+    import Label from "$lib/components/ui/label/label.svelte";
     import {
         Building2,
         Users,
@@ -26,6 +28,8 @@
         Trash2,
         ArrowLeft,
         AlertTriangle,
+        Clock,
+        Save,
     } from "lucide-svelte";
 
     const orgId = $derived(page.params.id);
@@ -34,16 +38,39 @@
     let error = $state("");
     let showDeleteDialog = $state(false);
     let deleting = $state(false);
+    let retentionDays = $state(90);
+    let savingRetention = $state(false);
+    let retentionError = $state("");
 
     async function loadOrganization() {
         loading = true;
         error = "";
         try {
             org = await adminAPI.getOrganizationDetails(orgId);
+            retentionDays = org.retentionDays || 90;
         } catch (err: any) {
             error = err.message || "Failed to load organization";
         } finally {
             loading = false;
+        }
+    }
+
+    async function saveRetention() {
+        if (!org) return;
+        if (retentionDays < 1 || retentionDays > 365) {
+            retentionError = "Retention must be between 1 and 365 days";
+            return;
+        }
+
+        savingRetention = true;
+        retentionError = "";
+        try {
+            await adminAPI.updateOrganizationRetention(org.id, retentionDays);
+            org = { ...org, retentionDays };
+        } catch (err: any) {
+            retentionError = err.message || "Failed to update retention";
+        } finally {
+            savingRetention = false;
         }
     }
 
@@ -122,7 +149,7 @@
                 </div>
             </CardHeader>
             <CardContent>
-                <div class="grid gap-4 md:grid-cols-2">
+                <div class="grid gap-4 md:grid-cols-3">
                     <div class="flex items-center gap-2">
                         <Users class="h-5 w-5 text-muted-foreground" />
                         <span class="font-medium">{org.members.length}</span>
@@ -133,6 +160,52 @@
                         <span class="font-medium">{org.projects.length}</span>
                         <span class="text-muted-foreground">Projects</span>
                     </div>
+                    <div class="flex items-center gap-2">
+                        <Clock class="h-5 w-5 text-muted-foreground" />
+                        <span class="font-medium">{org.retentionDays}</span>
+                        <span class="text-muted-foreground">days retention</span>
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+
+        <Card>
+            <CardHeader>
+                <CardTitle>Log Retention Policy</CardTitle>
+                <CardDescription>
+                    Configure how long logs are retained for this organization
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                <div class="space-y-4">
+                    <div class="flex items-end gap-4">
+                        <div class="space-y-2">
+                            <Label for="retention-days">Retention Period (days)</Label>
+                            <Input
+                                id="retention-days"
+                                type="number"
+                                min="1"
+                                max="365"
+                                bind:value={retentionDays}
+                                disabled={savingRetention}
+                                class="w-32"
+                            />
+                        </div>
+                        <Button
+                            onclick={saveRetention}
+                            disabled={savingRetention || retentionDays === org.retentionDays}
+                        >
+                            <Save class="h-4 w-4 mr-2" />
+                            {savingRetention ? "Saving..." : "Save"}
+                        </Button>
+                    </div>
+                    {#if retentionError}
+                        <p class="text-sm text-destructive">{retentionError}</p>
+                    {/if}
+                    <p class="text-sm text-muted-foreground">
+                        Logs older than {retentionDays} days will be automatically deleted during the daily cleanup.
+                        Valid range: 1-365 days.
+                    </p>
                 </div>
             </CardContent>
         </Card>

@@ -2,6 +2,7 @@ import { beforeAll, afterAll, beforeEach } from 'vitest';
 import dotenv from 'dotenv';
 import path from 'path';
 import { db } from '../database/index.js';
+import { connection } from '../queue/connection.js';
 
 // Load test environment variables
 dotenv.config({ path: path.resolve(__dirname, '../../.env.test') });
@@ -24,10 +25,17 @@ beforeAll(async () => {
 });
 
 /**
- * Clean up database before each test
+ * Clean up database and Redis before each test
  * This ensures test isolation
  */
 beforeEach(async () => {
+    // Clear Redis rate limit keys to prevent 429 errors in tests
+    // @fastify/rate-limit uses keys starting with 'rl:'
+    const rateLimitKeys = await connection.keys('rl:*');
+    if (rateLimitKeys.length > 0) {
+        await connection.del(...rateLimitKeys);
+    }
+
     // Delete all data from tables in reverse dependency order
     await db.deleteFrom('logs').execute();
     await db.deleteFrom('alert_history').execute();
@@ -53,6 +61,9 @@ beforeEach(async () => {
  */
 afterAll(async () => {
     console.log('🧹 Cleaning up test environment...');
+
+    // Close Redis connection
+    await connection.quit();
 
     // Close database connection
     await db.destroy();

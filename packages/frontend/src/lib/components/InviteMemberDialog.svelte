@@ -6,7 +6,7 @@
     import Spinner from './Spinner.svelte';
   import UserPlus from '@lucide/svelte/icons/user-plus';
   import Mail from '@lucide/svelte/icons/mail';
-  import type { OrgRole } from '@logward/shared';
+  import type { OrgRole } from '@logtide/shared';
 
   interface Props {
     onSubmit: (data: { email: string; role: OrgRole }) => Promise<{ type: 'direct_add' | 'email_sent'; message: string }>;
@@ -77,7 +77,7 @@
           <Input
             id="member-email"
             type="email"
-            placeholder="colleague@logward.dev"
+            placeholder="colleague@logtide.dev"
             bind:value={email}
             disabled={submitting || !!successMessage}
             required

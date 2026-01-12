@@ -3,7 +3,7 @@ import { db } from '../../database/connection.js';
 import { notificationsService } from '../notifications/service.js';
 import { invitationEmailQueue } from '../../queue/jobs/invitation-email.js';
 import { isSmtpConfigured } from '../../config/index.js';
-import type { OrganizationInvitation, PendingInvitation, OrgRole } from '@logward/shared';
+import type { OrganizationInvitation, PendingInvitation, OrgRole } from '@logtide/shared';
 
 const INVITATION_EXPIRY_DAYS = 7;
 

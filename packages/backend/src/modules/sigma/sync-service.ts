@@ -187,7 +187,7 @@ export class SigmaSyncService {
           // Extract MITRE data from tags
           const mitre = MITREMapper.parseFromTags(sigmaRule.tags || []);
 
-          // Convert to LogWard Alert Rule (if enabled)
+          // Convert to LogTide Alert Rule (if enabled)
           // Note: We ALWAYS create Alert Rules (even for complex rules) to store
           // notification settings (email, webhook). The Detection Engine handles
           // all Sigma features, so no need to distinguish simple vs complex.

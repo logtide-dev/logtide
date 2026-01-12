@@ -1,4 +1,4 @@
-import type { Organization, OrganizationWithRole, OrganizationMemberWithUser, OrgRole } from '@logward/shared';
+import type { Organization, OrganizationWithRole, OrganizationMemberWithUser, OrgRole } from '@logtide/shared';
 import { getApiBaseUrl } from '$lib/config';
 
 export interface CreateOrganizationInput {
@@ -145,7 +145,7 @@ export class OrganizationsAPI {
 export const organizationsAPI = new OrganizationsAPI(() => {
   if (typeof window !== 'undefined') {
     try {
-      const stored = localStorage.getItem('logward_auth');
+      const stored = localStorage.getItem('logtide_auth');
       if (stored) {
         const data = JSON.parse(stored);
         return data.token;

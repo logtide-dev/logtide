@@ -30,7 +30,7 @@ CREATE TRIGGER trigger_system_settings_updated_at
 INSERT INTO system_settings (key, value, description) VALUES
   ('auth.signup_enabled', 'true'::jsonb, 'Enable user registration'),
   ('auth.mode', '"standard"'::jsonb, 'Authentication mode: "standard" (normal login) or "none" (auth-free mode)'),
-  ('auth.default_user_email', '"admin@logward.local"'::jsonb, 'Default user email for auth-free mode'),
+  ('auth.default_user_email', '"admin@logtide.local"'::jsonb, 'Default user email for auth-free mode'),
   ('auth.default_user_name', '"Admin"'::jsonb, 'Default user name for auth-free mode')
 ON CONFLICT (key) DO NOTHING;
 

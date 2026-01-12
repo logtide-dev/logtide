@@ -1,8 +1,8 @@
 {
-  "name": "@logward/frontend",
-  "version": "0.3.3",
+  "name": "@logtide/frontend",
+  "version": "0.4.0",
   "private": true,
-  "description": "LogWard Frontend Dashboard",
+  "description": "LogTide Frontend Dashboard",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
@@ -19,7 +19,7 @@
     "clean": "rm -rf .svelte-kit build test-results"
   },
   "dependencies": {
-    "@logward/shared": "workspace:*",
+    "@logtide/shared": "workspace:*",
     "@tanstack/svelte-table": "^8.21.3",
     "canvas-confetti": "^1.9.4",
     "echarts": "^6.0.0",

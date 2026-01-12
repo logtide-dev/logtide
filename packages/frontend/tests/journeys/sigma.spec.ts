@@ -79,7 +79,7 @@ test.describe('Sigma Journey', () => {
       // Add email recipient
       const sigmaEmailInput = page.locator('input#sigmaEmails');
       if (await sigmaEmailInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await sigmaEmailInput.fill('test@e2e-test.logward.dev');
+        await sigmaEmailInput.fill('test@e2e-test.logtide.dev');
       }
 
       // Submit the form
@@ -110,7 +110,7 @@ description: Test rule for viewing in list
 author: E2E Test
 logsource:
     category: application
-    product: logward
+    product: logtide
 detection:
     selection:
         message|contains: 'list-test'
@@ -150,7 +150,7 @@ description: Test rule for viewing details
 author: E2E Test
 logsource:
     category: application
-    product: logward
+    product: logtide
 detection:
     selection:
         message|contains: 'details-test'
@@ -199,7 +199,7 @@ description: Test rule for toggling
 author: E2E Test
 logsource:
     category: application
-    product: logward
+    product: logtide
 detection:
     selection:
         message|contains: 'toggle-test'
@@ -242,7 +242,7 @@ description: Test rule for deletion
 author: E2E Test
 logsource:
     category: application
-    product: logward
+    product: logtide
 detection:
     selection:
         message|contains: 'delete-test'
@@ -290,7 +290,7 @@ description: Detects logs containing ${keyword}
 author: E2E Test
 logsource:
     category: application
-    product: logward
+    product: logtide
 detection:
     selection:
         message|contains: '${keyword}'

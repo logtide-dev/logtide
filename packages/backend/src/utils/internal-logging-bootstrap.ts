@@ -4,7 +4,7 @@ import bcrypt from 'bcrypt';
 
 /**
  * Bootstrap the internal logging setup
- * Creates organization, project, and API key for LogWard self-monitoring
+ * Creates organization, project, and API key for LogTide self-monitoring
  */
 export async function bootstrapInternalLogging(): Promise<string | null> {
   try {
@@ -13,7 +13,7 @@ export async function bootstrapInternalLogging(): Promise<string | null> {
     let organization = await db
       .selectFrom('organizations')
       .selectAll()
-      .where('slug', '=', 'logward-internal')
+      .where('slug', '=', 'logtide-internal')
       .executeTakeFirst();
 
     if (!organization) {
@@ -33,7 +33,7 @@ export async function bootstrapInternalLogging(): Promise<string | null> {
         ownerUser = await db
           .selectFrom('users')
           .selectAll()
-          .where('email', '=', 'system@logward.internal')
+          .where('email', '=', 'system@logtide.internal')
           .executeTakeFirst();
 
         if (!ownerUser) {
@@ -44,7 +44,7 @@ export async function bootstrapInternalLogging(): Promise<string | null> {
           ownerUser = await db
             .insertInto('users')
             .values({
-              email: 'system@logward.internal',
+              email: 'system@logtide.internal',
               password_hash: passwordHash,
               name: 'System Admin',
               is_admin: true,
@@ -57,7 +57,7 @@ export async function bootstrapInternalLogging(): Promise<string | null> {
           console.log('╔════════════════════════════════════════════════════════════════╗');
           console.log('║  INITIAL ADMIN CREDENTIALS (save these!)                       ║');
           console.log('╠════════════════════════════════════════════════════════════════╣');
-          console.log(`║  Email:    system@logward.internal                             ║`);
+          console.log(`║  Email:    system@logtide.internal                             ║`);
           console.log(`║  Password: ${generatedPassword.padEnd(40)}       ║`);
           console.log('╠════════════════════════════════════════════════════════════════╣');
           console.log('║  Change your password after first login!                       ║');
@@ -71,8 +71,8 @@ export async function bootstrapInternalLogging(): Promise<string | null> {
       organization = await db
         .insertInto('organizations')
         .values({
-          name: 'LogWard',
-          slug: 'logward-internal',
+          name: 'LogTide',
+          slug: 'logtide-internal',
           description: 'Internal monitoring and logging',
           owner_id: ownerUser.id,
         })
@@ -96,7 +96,7 @@ export async function bootstrapInternalLogging(): Promise<string | null> {
           organization_id: organization.id,
           user_id: organization.owner_id,
           name: 'Internal Monitoring',
-          description: 'Self-monitoring logs for LogWard backend and worker',
+          description: 'Self-monitoring logs for LogTide backend and worker',
         })
         .returningAll()
         .executeTakeFirstOrThrow();

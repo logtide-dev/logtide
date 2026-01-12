@@ -73,7 +73,7 @@
 </script>
 
 <svelte:head>
-  <title>Getting Started - LogWard</title>
+  <title>Getting Started - LogTide</title>
 </svelte:head>
 
 {#if isAuthenticated && !checkingOrgs}

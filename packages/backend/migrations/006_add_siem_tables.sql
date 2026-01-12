@@ -1,5 +1,5 @@
 -- ============================================================================
--- LogWard - SIEM Dashboard & Incident Management Tables
+-- LogTide - SIEM Dashboard & Incident Management Tables
 -- ============================================================================
 -- Migration: 006_add_siem_tables.sql
 -- Created: 2025-12-03

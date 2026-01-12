@@ -199,7 +199,7 @@
 			// Get session token
 			let token = null;
 			try {
-				const stored = localStorage.getItem("logward_auth");
+				const stored = localStorage.getItem("logtide_auth");
 				if (stored) {
 					const data = JSON.parse(stored);
 					token = data.token;
@@ -288,7 +288,7 @@
 </script>
 
 <svelte:head>
-	<title>Alerts - LogWard</title>
+	<title>Alerts - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto px-6 py-8 max-w-7xl">

@@ -1013,6 +1013,7 @@ export class AdminService {
                 'id',
                 'name',
                 'slug',
+                'retention_days',
                 'created_at',
                 'updated_at',
             ])
@@ -1050,6 +1051,7 @@ export class AdminService {
 
         return {
             ...org,
+            retentionDays: org.retention_days,
             members,
             projects,
         };

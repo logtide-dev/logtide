@@ -3,7 +3,7 @@ import { browser } from '$app/environment';
 
 export type Theme = 'light' | 'dark';
 
-const STORAGE_KEY = 'logward-theme';
+const STORAGE_KEY = 'logtide-theme';
 
 function getInitialTheme(): Theme {
   if (!browser) return 'dark';

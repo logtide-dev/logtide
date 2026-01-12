@@ -177,7 +177,7 @@
 
         <div class="bg-muted p-3 rounded-md space-y-1">
           <p class="text-xs font-medium">Usage Example:</p>
-          <pre class="text-xs text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all"><code>curl -X POST https://api.logward.dev/api/v1/ingest \
+          <pre class="text-xs text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all"><code>curl -X POST https://api.logtide.dev/api/v1/ingest \
   -H "X-API-Key: {generatedApiKey}" \
   -d '{`{"logs": [...]}`}'</code></pre>
         </div>

@@ -1,7 +1,7 @@
 -- ============================================================================
--- LogWard - Complete Database Schema (Fully Consolidated)
+-- LogTide - Complete Database Schema (Fully Consolidated)
 -- ============================================================================
--- This file contains the complete database schema for LogWard.
+-- This file contains the complete database schema for LogTide.
 -- It includes all tables, indexes, constraints, and TimescaleDB configurations.
 -- All previous migrations have been consolidated into this single schema file.
 --
@@ -206,7 +206,7 @@ CREATE TABLE IF NOT EXISTS sigma_rules (
   logsource JSONB,  -- {product, service, category}
   detection JSONB,  -- Original Sigma detection logic
 
-  -- LogWard conversion (deprecated - Sigma rules now handle notifications independently)
+  -- LogTide conversion (deprecated - Sigma rules now handle notifications independently)
   alert_rule_id UUID REFERENCES alert_rules(id) ON DELETE SET NULL,
   conversion_status TEXT,  -- success, partial, failed
   conversion_notes TEXT,

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "🚀 LogWard Backend Starting..."
+echo "🚀 LogTide Backend Starting..."
 echo "================================"
 
 # Wait for PostgreSQL to be ready
@@ -38,9 +38,9 @@ echo ""
 
 # Start the application (server or worker)
 if [ "$1" = "worker" ]; then
-  echo "👷 Starting LogWard Worker..."
+  echo "👷 Starting LogTide Worker..."
   exec node dist/worker.js
 else
-  echo "🌐 Starting LogWard API Server..."
+  echo "🌐 Starting LogTide API Server..."
   exec node dist/server.js
 fi

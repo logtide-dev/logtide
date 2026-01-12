@@ -245,7 +245,7 @@ describe('Email Template', () => {
     );
   });
 
-  it('should include LogWard branding', async () => {
+  it('should include LogTide branding', async () => {
     const emailData: InvitationEmailData = {
       email: 'test@example.com',
       token: 'token',
@@ -261,7 +261,7 @@ describe('Email Template', () => {
 
     expect(mockSendMail).toHaveBeenCalledWith(
       expect.objectContaining({
-        html: expect.stringContaining('LogWard'),
+        html: expect.stringContaining('LogTide'),
       })
     );
   });

@@ -3,26 +3,26 @@ version: '3.8'
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
-    container_name: logward-postgres
+    container_name: logtide-postgres
     environment:
-      POSTGRES_DB: ${DB_NAME:-logward}
-      POSTGRES_USER: ${DB_USER:-logward}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-logward}
+      POSTGRES_DB: ${DB_NAME:-logtide}
+      POSTGRES_USER: ${DB_USER:-logtide}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-logtide}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-logward}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-logtide}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - logward-network
+      - logtide-network
 
   redis:
     image: redis:7-alpine
-    container_name: logward-redis
+    container_name: logtide-redis
     command: redis-server --requirepass ${REDIS_PASSWORD:-redisdev123}
     ports:
       - "6379:6379"
@@ -34,7 +34,7 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - logward-network
+      - logtide-network
 
 volumes:
   postgres_data:
@@ -43,5 +43,5 @@ volumes:
     driver: local
 
 networks:
-  logward-network:
+  logtide-network:
     driver: bridge

@@ -50,3 +50,4 @@ claude.md
 
 # Enrichment databases (downloaded on first run: GeoLite2, IPsum)
 /packages/backend/data/
+/GEMINI.md

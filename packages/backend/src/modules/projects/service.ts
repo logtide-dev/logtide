@@ -1,5 +1,5 @@
 import { db } from '../../database/connection.js';
-import type { Project } from '@logward/shared';
+import type { Project } from '@logtide/shared';
 
 export interface CreateProjectInput {
   organizationId: string;

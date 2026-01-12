@@ -3,7 +3,7 @@
 -- 0 = Emergency, 1 = Alert, 2 = Critical, 3 = Error
 -- 4 = Warning, 5 = Notice, 6 = Informational, 7 = Debug
 --
--- LogWard automatically maps these to its 5 levels:
+-- LogTide automatically maps these to its 5 levels:
 -- emergency/alert/critical -> critical
 -- error -> error
 -- warning -> warn
@@ -27,7 +27,7 @@ function map_syslog_level(tag, timestamp, record)
         local severity = pri % 8
 
         -- Map severity number to log level string
-        -- LogWard will normalize these to its 5 levels
+        -- LogTide will normalize these to its 5 levels
         local level_map = {
             [0] = "emergency",
             [1] = "alert",

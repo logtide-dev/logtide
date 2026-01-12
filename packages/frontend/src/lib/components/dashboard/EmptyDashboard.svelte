@@ -28,27 +28,27 @@
       "time": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'",
       "level": "info",
       "service": "my-app",
-      "message": "Hello from LogWard!"
+      "message": "Hello from LogTide!"
     }]
   }'`,
 
-    nodejs: `import { LogWard } from '@logward/sdk';
+    nodejs: `import { LogTide } from '@logtide/sdk';
 
-const logger = new LogWard({
+const logger = new LogTide({
   apiKey: 'YOUR_API_KEY',
   service: 'my-app'
 });
 
-await logger.info('Hello from LogWard!');`,
+await logger.info('Hello from LogTide!');`,
 
-    python: `from logward import LogWard
+    python: `from logtide import LogTide
 
-logger = LogWard(
+logger = LogTide(
     api_key="YOUR_API_KEY",
     service="my-app"
 )
 
-logger.info("Hello from LogWard!")`,
+logger.info("Hello from LogTide!")`,
 
     otel: `// OpenTelemetry (Node.js)
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http';
@@ -86,8 +86,9 @@ const exporter = new OTLPLogExporter({
     {
       icon: Book,
       title: 'Read the Docs',
-      description: 'Learn how to integrate LogWard',
-      href: '/docs/getting-started',
+      description: 'Learn how to integrate LogTide',
+      href: 'https://logtide.dev/docs/getting-started',
+      external: true,
       color: 'bg-purple-500/10 text-purple-500'
     }
   ];
@@ -102,16 +103,18 @@ const exporter = new OTLPLogExporter({
           <Rocket class="w-10 h-10 text-primary" />
         </div>
         <div class="text-center md:text-left flex-1">
-          <h2 class="text-2xl font-bold mb-2">Welcome to LogWard!</h2>
+          <h2 class="text-2xl font-bold mb-2">Welcome to LogTide!</h2>
           <p class="text-muted-foreground max-w-lg">
             Your dashboard is ready. Start sending logs to see real-time stats, charts, and insights about your applications.
           </p>
         </div>
         <div class="flex gap-2">
-          <Button href="/docs/getting-started" variant="outline" class="gap-2">
-            <Book class="w-4 h-4" />
-            View Docs
-          </Button>
+          <a href="https://logtide.dev/docs/getting-started" target="_blank" rel="noopener noreferrer">
+            <Button variant="outline" class="gap-2">
+              <Book class="w-4 h-4" />
+              View Docs
+            </Button>
+          </a>
           <Button href="/dashboard/projects" class="gap-2">
             Get Started
             <ChevronRight class="w-4 h-4" />
@@ -124,7 +127,7 @@ const exporter = new OTLPLogExporter({
   <!-- Quick Actions -->
   <div class="grid gap-4 md:grid-cols-3">
     {#each quickActions as action}
-      <a href={action.href} class="block">
+      <a href={action.href} class="block" target={action.external ? '_blank' : undefined} rel={action.external ? 'noopener noreferrer' : undefined}>
         <Card class="h-full hover:border-primary/50 transition-all cursor-pointer">
           <CardContent class="pt-6">
             <div class="flex items-start gap-4">

@@ -9,13 +9,16 @@
     service: string;
     level: 'error' | 'critical';
     message: string;
+    projectId: string;
+    traceId?: string;
   }
 
   interface Props {
     errors: LogError[];
+    onErrorClick?: (error: LogError) => void;
   }
 
-  let { errors }: Props = $props();
+  let { errors, onErrorClick }: Props = $props();
 
   function formatTime(time: string): string {
     const date = new Date(time);
@@ -39,7 +42,12 @@
   <CardContent>
     <div class="space-y-3">
       {#each errors as error, index (`${error.time}-${error.service}-${index}`)}
-        <div class="flex gap-3 rounded-lg border p-3">
+        <button
+          type="button"
+          class="flex w-full gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary hover:bg-accent/50 cursor-pointer overflow-hidden"
+          onclick={() => onErrorClick?.(error)}
+          title="Click to view related logs"
+        >
           <div class="flex-shrink-0">
             {#if error.level === 'critical'}
               <AlertCircle class="h-5 w-5 text-red-600" />
@@ -47,17 +55,17 @@
               <AlertTriangle class="h-5 w-5 text-orange-600" />
             {/if}
           </div>
-          <div class="flex-1 space-y-1">
-            <div class="flex items-center justify-between">
-              <p class="text-sm font-medium">{error.service}</p>
-              <p class="text-xs text-muted-foreground">{formatTime(error.time)}</p>
+          <div class="flex-1 min-w-0 space-y-1">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-sm font-medium truncate">{error.service}</p>
+              <p class="text-xs text-muted-foreground flex-shrink-0">{formatTime(error.time)}</p>
             </div>
-            <p class="text-xs text-muted-foreground line-clamp-2">{error.message}</p>
+            <p class="text-xs text-muted-foreground line-clamp-2 break-all">{error.message}</p>
             <Badge variant={error.level === 'critical' ? 'destructive' : 'secondary'} class="text-xs">
               {error.level}
             </Badge>
           </div>
-        </div>
+        </button>
       {/each}
     </div>
   </CardContent>

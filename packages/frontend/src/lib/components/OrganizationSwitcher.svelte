@@ -3,7 +3,7 @@
   import { toastStore } from "$lib/stores/toast";
   import { OrganizationsAPI } from "$lib/api/organizations";
   import { authStore } from "$lib/stores/auth";
-  import type { OrganizationWithRole } from "@logward/shared";
+  import type { OrganizationWithRole } from "@logtide/shared";
   import {
     Popover,
     PopoverContent,

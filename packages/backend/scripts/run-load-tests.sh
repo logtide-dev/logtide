@@ -16,7 +16,7 @@ BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$(dirname "$BACKEND_DIR")")"
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║           LogWard E2E Load Testing Suite                   ║${NC}"
+echo -e "${BLUE}║           LogTide E2E Load Testing Suite                   ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 

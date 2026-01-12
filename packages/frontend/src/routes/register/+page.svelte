@@ -134,7 +134,7 @@
     });
 
     if (isLocalRegistration || response.isNewUser) {
-      toastStore.success('Welcome to LogWard! Your account has been created.');
+      toastStore.success('Welcome to LogTide! Your account has been created.');
     } else {
       toastStore.success('Welcome back!');
     }
@@ -188,7 +188,7 @@
 </script>
 
 <svelte:head>
-  <title>Sign Up - LogWard</title>
+  <title>Sign Up - LogTide</title>
 </svelte:head>
 
 <div class="min-h-screen flex flex-col bg-background">
@@ -203,7 +203,7 @@
     {:else if signupDisabled}
       <Card class="w-full max-w-md">
         <CardHeader class="flex flex-row justify-center items-center gap-4">
-            <img src={$smallLogoPath} alt="LogWard Logo" class="h-16 w-auto" />
+            <img src={$smallLogoPath} alt="LogTide Logo" class="h-16 w-auto" />
             <div>
                 <CardTitle class="text-2xl">Registration Disabled</CardTitle>
                 <CardDescription>New accounts cannot be created</CardDescription>
@@ -226,10 +226,10 @@
     {:else}
     <Card class="w-full max-w-md">
         <CardHeader class="flex flex-row justify-center items-center gap-4">
-            <img src={$smallLogoPath} alt="LogWard Logo" class="h-16 w-auto" />
+            <img src={$smallLogoPath} alt="LogTide Logo" class="h-16 w-auto" />
             <div>
                 <CardTitle class="text-2xl">Create an account</CardTitle>
-                <CardDescription>Get started with LogWard</CardDescription>
+                <CardDescription>Get started with LogTide</CardDescription>
             </div>
         </CardHeader>
 

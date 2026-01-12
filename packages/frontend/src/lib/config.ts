@@ -1,4 +1,4 @@
-// Runtime configuration for LogWard frontend
+// Runtime configuration for LogTide frontend
 // This allows the API URL to be configured at runtime via Docker environment variables
 
 import { browser } from '$app/environment';
@@ -6,7 +6,7 @@ import { browser } from '$app/environment';
 // Declare the global window config type
 declare global {
   interface Window {
-    __LOGWARD_CONFIG__?: {
+    __LOGTIDE_CONFIG__?: {
       apiUrl: string;
     };
   }
@@ -18,7 +18,7 @@ declare global {
  * Auto-detection logic (when PUBLIC_API_URL is not explicitly set):
  *
  * 1. Standard port (80/443) → Assume reverse proxy → Use relative URLs ("/api/v1")
- *    Example: https://logward.example.com → API: /api/v1
+ *    Example: https://logtide.example.com → API: /api/v1
  *
  * 2. Non-standard port (e.g., 3000) → Assume Docker direct → Use same host + port 8080
  *    Example: http://192.168.1.100:3000 → API: http://192.168.1.100:8080/api/v1
@@ -34,8 +34,8 @@ export function getApiUrl(): string {
   if (browser) {
     // If PUBLIC_API_URL is explicitly configured, use it as-is
     // This includes localhost URLs (for E2E tests) and empty string (for reverse proxy)
-    if (window.__LOGWARD_CONFIG__?.apiUrl !== undefined) {
-      return window.__LOGWARD_CONFIG__.apiUrl;
+    if (window.__LOGTIDE_CONFIG__?.apiUrl !== undefined) {
+      return window.__LOGTIDE_CONFIG__.apiUrl;
     }
 
     // Auto-detect only when no explicit PUBLIC_API_URL is configured

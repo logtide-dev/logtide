@@ -1,10 +1,10 @@
-# Contributing to LogWard
+# Contributing to LogTide
 
-First off, thank you for considering contributing to LogWard! It's people like you that make LogWard such a great tool.
+First off, thank you for considering contributing to LogTide! It's people like you that make LogTide such a great tool.
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [support@logward.dev](mailto:support@logward.dev).
+This project and everyone participating in it is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code. Please report unacceptable behavior to [support@logtide.dev](mailto:support@logtide.dev).
 
 ## How Can I Contribute?
 
@@ -25,7 +25,7 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 
 - **Use a clear and descriptive title**
 - **Provide a detailed description** of the suggested enhancement
-- **Explain why this enhancement would be useful** to most LogWard users
+- **Explain why this enhancement would be useful** to most LogTide users
 - **List any alternative solutions** you've considered
 
 ### Pull Requests
@@ -50,8 +50,8 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 
 ```bash
 # Clone the repository
-git clone https://github.com/logward-dev/logward.git
-cd logward
+git clone https://github.com/logtide-dev/logtide.git
+cd logtide
 
 # Install dependencies
 pnpm install
@@ -67,7 +67,7 @@ pnpm dev              # Start backend and frontend
 ### Project Structure
 
 ```
-logward/
+logtide/
 ├── packages/
 │   ├── backend/      # Fastify API server
 │   ├── frontend/     # SvelteKit dashboard
@@ -127,8 +127,8 @@ pnpm test:e2e
 
 Feel free to reach out:
 
-- **Email**: [support@logward.dev](mailto:support@logward.dev)
+- **Email**: [support@logtide.dev](mailto:support@logtide.dev)
 - **GitHub Issues**: For bugs and feature requests
 - **Discussions**: For questions and community discussions
 
-Thank you for contributing to LogWard!
+Thank you for contributing to LogTide!

@@ -1,5 +1,5 @@
 -- ============================================================================
--- LogWard - Fix incident_history user_id column
+-- LogTide - Fix incident_history user_id column
 -- ============================================================================
 -- Migration: 007_fix_incident_history_user_id.sql
 -- Created: 2025-12-03

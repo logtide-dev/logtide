@@ -143,7 +143,7 @@ function generateIncidentEmailHtml(job: IncidentNotificationJob, orgName: string
               <tr>
                 <td style="padding: 24px 32px; background-color: #f4f4f5; border-radius: 0 0 8px 8px;">
                   <p style="margin: 0; font-size: 12px; color: #71717a; text-align: center;">
-                    This is an automated security alert from LogWard.<br>
+                    This is an automated security alert from LogTide.<br>
                     <a href="${frontendUrl}/dashboard/settings" style="color: #18181b;">Manage notification preferences</a>
                   </p>
                 </td>

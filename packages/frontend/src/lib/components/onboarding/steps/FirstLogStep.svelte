@@ -165,7 +165,7 @@
     </h2>
     <p class="text-muted-foreground max-w-md mx-auto">
       {#if logReceived}
-        Congratulations! Your application is now sending logs to LogWard.
+        Congratulations! Your application is now sending logs to LogTide.
       {:else}
         Use the code from the previous step to send a test log. We'll detect it automatically.
       {/if}

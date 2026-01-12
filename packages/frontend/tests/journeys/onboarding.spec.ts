@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { generateTestEmail, generateTestName, TEST_FRONTEND_URL, TEST_API_URL } from '../fixtures/auth';
 
-const ONBOARDING_STORAGE_KEY = 'logward_onboarding';
+const ONBOARDING_STORAGE_KEY = 'logtide_onboarding';
 
 test.describe('Onboarding Tutorial Journey', () => {
   test.describe.configure({ mode: 'serial' });
@@ -34,7 +34,7 @@ test.describe('Onboarding Tutorial Journey', () => {
     await expect(page).toHaveURL(/onboarding/, { timeout: 15000 });
 
     // Should see welcome step with user's name (use h1 heading to avoid matching multiple elements)
-    await expect(page.getByRole('heading', { name: /Welcome.*LogWard/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: /Welcome.*LogTide/i })).toBeVisible({ timeout: 10000 });
 
     // Should see "Start the Tutorial" button
     await expect(page.locator('button:has-text("Start the Tutorial")')).toBeVisible();
@@ -43,7 +43,7 @@ test.describe('Onboarding Tutorial Journey', () => {
     await expect(page.locator('button:has-text("Skip for now")')).toBeVisible();
 
     // Store auth token for later tests
-    const authData = await page.evaluate(() => localStorage.getItem('logward_auth'));
+    const authData = await page.evaluate(() => localStorage.getItem('logtide_auth'));
     if (authData) {
       authToken = JSON.parse(authData).token;
     }
@@ -349,7 +349,7 @@ test.describe('Tutorial Skip and Resume', () => {
       await expect(page).toHaveURL(/onboarding/, { timeout: 10000 });
 
       // Should see welcome step again (use h1 heading to avoid matching multiple elements)
-      await expect(page.getByRole('heading', { name: /Welcome.*LogWard/i })).toBeVisible({ timeout: 5000 });
+      await expect(page.getByRole('heading', { name: /Welcome.*LogTide/i })).toBeVisible({ timeout: 5000 });
     }
   });
 });
@@ -384,7 +384,7 @@ test.describe('Onboarding Mobile Responsive', () => {
     await expect(page).toHaveURL(/onboarding/, { timeout: 15000 });
 
     // Welcome step should be visible and not overflow (use h1 heading to avoid matching multiple elements)
-    await expect(page.getByRole('heading', { name: /Welcome.*LogWard/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: /Welcome.*LogTide/i })).toBeVisible({ timeout: 10000 });
 
     // Buttons should be visible and clickable (scroll into view for mobile)
     const startButton = page.locator('button:has-text("Start the Tutorial")');
@@ -556,7 +556,7 @@ test.describe('Onboarding Accessibility', () => {
     await expect(page).toHaveURL(/onboarding/, { timeout: 15000 });
 
     // Wait for welcome step (use h1 heading to avoid matching multiple elements)
-    await expect(page.getByRole('heading', { name: /Welcome.*LogWard/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: /Welcome.*LogTide/i })).toBeVisible({ timeout: 10000 });
 
     // Tab to "Start the Tutorial" button
     await page.keyboard.press('Tab');

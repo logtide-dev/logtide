@@ -1,24 +1,26 @@
 <script lang="ts">
   import Github from "@lucide/svelte/icons/github";
 
-  const version = "Alpha v0.3.3";
+  const version = "Alpha v0.4.0";
   const currentYear = new Date().getFullYear();
-  const githubUrl = "https://github.com/logward-dev/logward";
+  const githubUrl = "https://github.com/logtide-dev/logtide";
 </script>
 
 <footer class="border-t border-border bg-card">
   <div class="container mx-auto px-6 py-4 flex items-center justify-between text-sm text-muted-foreground">
     <div class="flex items-center gap-2">
-      <span class="font-medium">LogWard</span>
+      <span class="font-medium">LogTide</span>
       <span class="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">
         {version}
       </span>
     </div>
 
     <div class="flex items-center gap-4">
-      <span>© {currentYear} LogWard</span>
+      <span>© {currentYear} LogTide</span>
       <a
-        href="/docs"
+        href="https://logtide.dev/docs"
+        target="_blank"
+        rel="noopener noreferrer"
         class="hover:text-foreground transition-colors"
       >
         Documentation

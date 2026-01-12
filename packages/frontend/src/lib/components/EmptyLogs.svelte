@@ -28,28 +28,28 @@
     "logs": [{
       "level": "info",
       "service": "my-app",
-      "message": "Hello from LogWard!"
+      "message": "Hello from LogTide!"
     }]
   }'`,
 
-    nodejs: `import { LogWard } from '@logward/sdk';
+    nodejs: `import { LogTide } from '@logtide/sdk';
 
-const logger = new LogWard({
+const logger = new LogTide({
   apiKey: 'YOUR_API_KEY',
   service: 'my-app'
 });
 
-await logger.info('Hello from LogWard!');
+await logger.info('Hello from LogTide!');
 await logger.error('Something went wrong', { userId: 123 });`,
 
-    python: `from logward import LogWard
+    python: `from logtide import LogTide
 
-logger = LogWard(
+logger = LogTide(
     api_key="YOUR_API_KEY",
     service="my-app"
 )
 
-logger.info("Hello from LogWard!")
+logger.info("Hello from LogTide!")
 logger.error("Something went wrong", metadata={"user_id": 123})`
   });
 
@@ -86,7 +86,7 @@ logger.error("Something went wrong", metadata={"user_id": 123})`
         </CardContent>
       </Card>
     </a>
-    <a href="/docs/getting-started" class="block">
+    <a href="https://logtide.dev/docs/getting-started" target="_blank" rel="noopener noreferrer" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
           <Book class="w-8 h-8 mx-auto text-purple-500 mb-2" />
@@ -95,7 +95,7 @@ logger.error("Something went wrong", metadata={"user_id": 123})`
         </CardContent>
       </Card>
     </a>
-    <a href="/docs/sdks" class="block">
+    <a href="https://logtide.dev/docs/sdks" target="_blank" rel="noopener noreferrer" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
           <Terminal class="w-8 h-8 mx-auto text-blue-500 mb-2" />

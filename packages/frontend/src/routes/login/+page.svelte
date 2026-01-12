@@ -109,7 +109,7 @@
     });
 
     if (response.isNewUser) {
-      toastStore.success('Welcome to LogWard! Your account has been created.');
+      toastStore.success('Welcome to LogTide! Your account has been created.');
     } else {
       toastStore.success('Welcome back!');
     }
@@ -169,7 +169,7 @@
 </script>
 
 <svelte:head>
-  <title>Login - LogWard</title>
+  <title>Login - LogTide</title>
 </svelte:head>
 
 <div class="min-h-screen flex flex-col bg-background">
@@ -184,10 +184,10 @@
     {:else}
     <Card class="w-full max-w-md">
       <CardHeader class="flex flex-row justify-center items-center gap-4">
-        <img src={$smallLogoPath} alt="LogWard Logo" class="h-16 w-auto" />
+        <img src={$smallLogoPath} alt="LogTide Logo" class="h-16 w-auto" />
         <div>
           <CardTitle class="text-2xl">Welcome back</CardTitle>
-          <CardDescription>Sign in to your LogWard account</CardDescription>
+          <CardDescription>Sign in to your LogTide account</CardDescription>
         </div>
       </CardHeader>
 

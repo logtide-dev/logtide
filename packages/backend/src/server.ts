@@ -23,7 +23,9 @@ import { publicAuthRoutes, authenticatedAuthRoutes, adminAuthRoutes } from './mo
 import { otlpRoutes, otlpTraceRoutes } from './modules/otlp/index.js';
 import { tracesRoutes } from './modules/traces/index.js';
 import { onboardingRoutes } from './modules/onboarding/index.js';
+import { exceptionsRoutes } from './modules/exceptions/index.js';
 import { settingsRoutes, publicSettingsRoutes, settingsService } from './modules/settings/index.js';
+import { retentionRoutes } from './modules/retention/index.js';
 import { bootstrapService } from './modules/bootstrap/index.js';
 import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
@@ -86,7 +88,7 @@ export async function build(opts = {}) {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
-      version: '0.3.3',
+      version: '0.4.0',
     };
   });
 
@@ -126,6 +128,9 @@ export async function build(opts = {}) {
   // SIEM SSE routes for real-time updates (session-based auth)
   await fastify.register(registerSiemSseRoutes);
 
+  // Exception tracking routes (session-based auth)
+  await fastify.register(exceptionsRoutes);
+
   // API keys management routes (session-based auth)
   await fastify.register(apiKeysRoutes, { prefix: '/api/v1/projects' });
 
@@ -137,6 +142,9 @@ export async function build(opts = {}) {
 
   // Admin settings routes (session-based auth + admin middleware)
   await fastify.register(settingsRoutes, { prefix: '/api/v1/admin/settings' });
+
+  // Retention routes (session-based auth + admin middleware)
+  await fastify.register(retentionRoutes, { prefix: '/api/v1/admin' });
 
   // Register API key auth plugin (applies to log ingestion/query routes below)
   await fastify.register(authPlugin);

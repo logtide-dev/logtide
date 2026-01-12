@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { ingestRequestSchema, logSchema } from '@logward/shared';
+import { ingestRequestSchema, logSchema } from '@logtide/shared';
 import { ingestionService } from './service.js';
 import { config } from '../../config/index.js';
 
@@ -100,7 +100,7 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
         return '';
       };
 
-      // Convert syslog PRIORITY (0-7) to LogWard level
+      // Convert syslog PRIORITY (0-7) to LogTide level
       const priorityToLevel = (priority: number | string): string => {
         const p = typeof priority === 'string' ? parseInt(priority, 10) : priority;
         // Syslog priority levels: 0=emerg, 1=alert, 2=crit, 3=err, 4=warning, 5=notice, 6=info, 7=debug
@@ -162,7 +162,7 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
         if (typeof level === 'string') {
           const lowerLevel = level.toLowerCase().trim();
 
-          // Map syslog and common log levels to LogWard's 5 levels
+          // Map syslog and common log levels to LogTide's 5 levels
           switch (lowerLevel) {
             // Critical levels
             case 'emergency':

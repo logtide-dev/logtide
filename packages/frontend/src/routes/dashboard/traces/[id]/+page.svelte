@@ -214,7 +214,7 @@
 </script>
 
 <svelte:head>
-  <title>Trace {traceId.substring(0, 8)}... - LogWard</title>
+  <title>Trace {traceId.substring(0, 8)}... - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto px-6 py-8 max-w-7xl">

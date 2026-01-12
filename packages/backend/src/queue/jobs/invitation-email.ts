@@ -60,10 +60,10 @@ async function sendInvitationEmail(data: InvitationEmailData) {
 
   // Build the invitation URL
   // In production, this should be configured. For now, use environment-based defaults.
-  const baseUrl = process.env.FRONTEND_URL || (config.NODE_ENV === 'production' ? 'https://logward.dev' : 'http://localhost:5173');
+  const baseUrl = process.env.FRONTEND_URL || (config.NODE_ENV === 'production' ? 'https://logtide.dev' : 'http://localhost:5173');
   const inviteUrl = `${baseUrl}/invite/${data.token}`;
 
-  const subject = `You've been invited to join ${data.organizationName} on LogWard`;
+  const subject = `You've been invited to join ${data.organizationName} on LogTide`;
   const html = `
     <html>
       <head>
@@ -87,7 +87,7 @@ async function sendInvitationEmail(data: InvitationEmailData) {
           <div class="content">
             <p>Hi there,</p>
 
-            <p><strong>${data.inviterName}</strong> has invited you to join <strong>${data.organizationName}</strong> on LogWard.</p>
+            <p><strong>${data.inviterName}</strong> has invited you to join <strong>${data.organizationName}</strong> on LogTide.</p>
 
             <div class="info">
               <p style="margin: 0;"><strong>Role:</strong> <span class="role-badge">${data.role}</span></p>
@@ -107,8 +107,8 @@ async function sendInvitationEmail(data: InvitationEmailData) {
             </p>
           </div>
           <div class="footer">
-            <p>This is an automated message from LogWard.</p>
-            <p>&copy; ${new Date().getFullYear()} LogWard. All rights reserved.</p>
+            <p>This is an automated message from LogTide.</p>
+            <p>&copy; ${new Date().getFullYear()} LogTide. All rights reserved.</p>
           </div>
         </div>
       </body>
@@ -118,7 +118,7 @@ async function sendInvitationEmail(data: InvitationEmailData) {
   const text = `
 You're Invited to ${data.organizationName}!
 
-${data.inviterName} has invited you to join ${data.organizationName} on LogWard as a ${data.role}.
+${data.inviterName} has invited you to join ${data.organizationName} on LogTide as a ${data.role}.
 
 Click the link below to accept the invitation:
 ${inviteUrl}
@@ -128,11 +128,11 @@ This invitation link will expire in 7 days.
 If you didn't expect this invitation, you can safely ignore this email.
 
 ---
-This is an automated message from LogWard.
+This is an automated message from LogTide.
   `.trim();
 
   await transporter.sendMail({
-    from: `"LogWard" <${config.SMTP_FROM || config.SMTP_USER}>`,
+    from: `"LogTide" <${config.SMTP_FROM || config.SMTP_USER}>`,
     to: data.email,
     subject,
     text,

@@ -19,6 +19,9 @@ interface LogsResponse {
   nextCursor?: string;
 }
 
+/** Supported search modes */
+export type SearchMode = 'fulltext' | 'substring';
+
 interface LogFilters {
   projectId?: string | string[]; // Support single or multiple projects
   service?: string | string[]; // Support single or multiple services
@@ -26,7 +29,8 @@ interface LogFilters {
   traceId?: string; // Filter by trace ID
   from?: string;
   to?: string;
-  q?: string; // Full-text search
+  q?: string; // Search query
+  searchMode?: SearchMode; // Search mode: 'fulltext' (default) or 'substring'
   limit?: number;
   offset?: number;
   cursor?: string;
@@ -109,6 +113,7 @@ export class LogsAPI {
     if (filters.from) params.append('from', filters.from);
     if (filters.to) params.append('to', filters.to);
     if (filters.q) params.append('q', filters.q);
+    if (filters.searchMode) params.append('searchMode', filters.searchMode);
     if (filters.limit) params.append('limit', filters.limit.toString());
     if (filters.offset) params.append('offset', filters.offset.toString());
     if (filters.cursor) params.append('cursor', filters.cursor);
@@ -281,7 +286,7 @@ export class LogsAPI {
 export const logsAPI = new LogsAPI(() => {
   if (typeof window !== 'undefined') {
     try {
-      const stored = localStorage.getItem('logward_auth');
+      const stored = localStorage.getItem('logtide_auth');
       if (stored) {
         const data = JSON.parse(stored);
         return data.token;

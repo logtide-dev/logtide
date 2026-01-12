@@ -14,7 +14,7 @@ if (process.env.NODE_ENV === 'test') {
   dotenv.config({ path: path.resolve(__dirname, '../../.env.test'), override: true });
 }
 
-const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost:5432/logward';
+const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost:5432/logtide';
 console.log('[Database Connection] Using DATABASE_URL:', DATABASE_URL.replace(/:[^:@]+@/, ':****@'));
 
 // Connection Pool Configuration
@@ -54,7 +54,7 @@ const poolConfig = {
 
   // Application name for PostgreSQL logging
   // Helps identify connections in pg_stat_activity
-  application_name: `logward-${process.env.NODE_ENV || 'development'}`,
+  application_name: `logtide-${process.env.NODE_ENV || 'development'}`,
 };
 
 const pool = new Pool(poolConfig);

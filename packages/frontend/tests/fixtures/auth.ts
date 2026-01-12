@@ -5,7 +5,7 @@ export const TEST_API_URL = process.env.TEST_API_URL || 'http://localhost:3001';
 export const TEST_FRONTEND_URL = process.env.TEST_FRONTEND_URL || 'http://localhost:3002';
 
 // Auth storage key (same as frontend)
-const AUTH_STORAGE_KEY = 'logward_auth';
+const AUTH_STORAGE_KEY = 'logtide_auth';
 
 export interface TestUser {
   id: string;
@@ -122,7 +122,7 @@ export async function clearAuthState(page: Page): Promise<void> {
 export function generateTestEmail(): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(7);
-  return `test-${timestamp}-${random}@e2e-test.logward.dev`;
+  return `test-${timestamp}-${random}@e2e-test.logtide.dev`;
 }
 
 /**

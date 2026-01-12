@@ -6,9 +6,9 @@
   import { authStore } from "$lib/stores/auth";
   import { checklistStore } from "$lib/stores/checklist";
   import { ProjectsAPI } from "$lib/api/projects";
-  import { logsAPI } from "$lib/api/logs";
+  import { logsAPI, type SearchMode } from "$lib/api/logs";
   import { toastStore } from "$lib/stores/toast";
-  import type { Project } from "@logward/shared";
+  import type { Project } from "@logtide/shared";
   import Button from "$lib/components/ui/button/button.svelte";
   import Input from "$lib/components/ui/input/input.svelte";
   import Label from "$lib/components/ui/label/label.svelte";
@@ -31,14 +31,16 @@
   import * as Popover from "$lib/components/ui/popover";
   import Switch from "$lib/components/ui/switch/switch.svelte";
   import LogContextDialog from "$lib/components/LogContextDialog.svelte";
+  import { ExceptionDetailsDialog } from "$lib/components/exceptions";
+  import ExportLogsDialog from "$lib/components/ExportLogsDialog.svelte";
   import EmptyLogs from "$lib/components/EmptyLogs.svelte";
-  import FileJson from "@lucide/svelte/icons/file-json";
-  import FileText from "@lucide/svelte/icons/file-text";
+  import TimeRangePicker, { type TimeRangeType } from "$lib/components/TimeRangePicker.svelte";
+  import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
+  import Download from "@lucide/svelte/icons/download";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import SearchIcon from "@lucide/svelte/icons/search";
-  import Clock from "@lucide/svelte/icons/clock";
   import Radio from "@lucide/svelte/icons/radio";
 
   interface LogEntry {
@@ -61,6 +63,7 @@
   let logsContainer = $state<HTMLDivElement | null>(null);
 
   let searchQuery = $state("");
+  let searchMode = $state<SearchMode>("fulltext");
   let traceId = $state("");
   let selectedProjects = $state<string[]>([]);
   let selectedServices = $state<string[]>([]);
@@ -74,10 +77,36 @@
     token = state.token;
   });
 
-  type TimeRangeType = "last_hour" | "last_24h" | "last_7d" | "custom";
+  // Time range picker reference and state
+  let timeRangePicker = $state<ReturnType<typeof TimeRangePicker> | null>(null);
   let timeRangeType = $state<TimeRangeType>("last_24h");
   let customFromTime = $state("");
   let customToTime = $state("");
+
+  // Helper to get time range from picker or fallback to local state
+  function getTimeRange(): { from: Date; to: Date } {
+    if (timeRangePicker) {
+      return timeRangePicker.getTimeRange();
+    }
+    // Fallback for initial render before picker is mounted
+    const now = new Date();
+    switch (timeRangeType) {
+      case "last_hour":
+        return { from: new Date(now.getTime() - 60 * 60 * 1000), to: now };
+      case "last_24h":
+        return { from: new Date(now.getTime() - 24 * 60 * 60 * 1000), to: now };
+      case "last_7d":
+        return { from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), to: now };
+      case "custom":
+        const from = customFromTime
+          ? new Date(customFromTime)
+          : new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const to = customToTime ? new Date(customToTime) : now;
+        return { from, to };
+      default:
+        return { from: new Date(now.getTime() - 24 * 60 * 60 * 1000), to: now };
+    }
+  }
 
   let pageSize = $state(25);
 
@@ -86,6 +115,13 @@
   let contextDialogOpen = $state(false);
   let selectedLogForContext = $state<LogEntry | null>(null);
   let loadingLogById = $state(false);
+
+  // Exception dialog state
+  let exceptionDialogOpen = $state(false);
+  let selectedLogForException = $state<LogEntry | null>(null);
+
+  // Export dialog state
+  let exportDialogOpen = $state(false);
 
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -99,6 +135,12 @@
   }
 
   onMount(() => {
+    // Restore search mode preference from session storage
+    const savedSearchMode = sessionStorage.getItem("logtide_search_mode");
+    if (savedSearchMode === "fulltext" || savedSearchMode === "substring") {
+      searchMode = savedSearchMode;
+    }
+
     if ($currentOrganization) {
       loadProjects();
     }
@@ -257,11 +299,7 @@
     isLoading = true;
 
     try {
-      const timeRange = getTimeRange(
-        timeRangeType,
-        customFromTime,
-        customToTime,
-      );
+      const timeRange = getTimeRange();
 
       const offset = (currentPage - 1) * pageSize;
 
@@ -284,6 +322,7 @@
             : undefined,
         traceId: traceId || undefined,
         q: searchQuery || undefined,
+        searchMode: searchQuery ? searchMode : undefined,
         from: timeRange.from.toISOString(),
         to: timeRange.to.toISOString(),
         limit: pageSize,
@@ -336,7 +375,7 @@
 
     isLoadingServices = true;
     try {
-      const timeRange = getTimeRange(timeRangeType, customFromTime, customToTime);
+      const timeRange = getTimeRange();
       const services = await logsAPI.getServices({
         projectId: selectedProjects,
         from: timeRange.from.toISOString(),
@@ -359,37 +398,6 @@
     const combined = new Set([...availableServices, ...selectedServices]);
     return [...combined].sort((a, b) => a.localeCompare(b));
   });
-
-  function getTimeRange(
-    type: TimeRangeType,
-    customFrom: string,
-    customTo: string,
-  ): { from: Date; to: Date } {
-    const now = new Date();
-    let from: Date;
-
-    switch (type) {
-      case "last_hour":
-        from = new Date(now.getTime() - 60 * 60 * 1000);
-        break;
-      case "last_24h":
-        from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      case "last_7d":
-        from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case "custom":
-        from = customFrom
-          ? new Date(customFrom)
-          : new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        const to = customTo ? new Date(customTo) : now;
-        return { from, to };
-      default:
-        from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    }
-
-    return { from, to: now };
-  }
 
   let paginatedLogs = $derived(logs);
   let filteredLogs = $derived(logs);
@@ -507,6 +515,20 @@
     selectedLogForContext = null;
   }
 
+  function openExceptionDialog(log: LogEntry) {
+    selectedLogForException = log;
+    exceptionDialogOpen = true;
+  }
+
+  function closeExceptionDialog() {
+    exceptionDialogOpen = false;
+    selectedLogForException = null;
+  }
+
+  function isErrorLevel(level: string): boolean {
+    return level === 'error' || level === 'critical';
+  }
+
   function getLevelColor(level: LogEntry["level"]): string {
     switch (level) {
       case "critical":
@@ -535,62 +557,34 @@
     loadLogs();
   }
 
-  async function setQuickTimeRange(type: TimeRangeType) {
-    timeRangeType = type;
-    if (type !== "custom") {
-      customFromTime = "";
-      customToTime = "";
-    }
+  async function handleTimeRangeChange() {
     await loadServices();
     applyFilters();
   }
 
-  async function onCustomTimeChange() {
-    await loadServices();
-    applyFilters();
-  }
-
-  function exportLogs(format: "csv" | "json") {
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .slice(0, -5);
-    const filename = `logs-export-${timestamp}.${format === "json" ? "json" : "csv"}`;
-
-    if (format === "json") {
-      const dataStr = JSON.stringify(filteredLogs, null, 2);
-      downloadFile(dataStr, filename, "application/json");
-    } else {
-      const headers = [
-        "Time",
-        "Service",
-        "Level",
-        "Message",
-        "Metadata",
-        "TraceID",
-      ];
-      const rows = filteredLogs.map((log) => [
-        log.time,
-        log.service,
-        log.level,
-        `"${log.message.replace(/"/g, '""')}"`, // Escape quotes in CSV
-        `"${JSON.stringify(log.metadata || {}).replace(/"/g, '""')}"`,
-        log.traceId || "",
-      ]);
-      const csv = [headers, ...rows].map((row) => row.join(",")).join("\n");
-      downloadFile(csv, filename, "text/csv");
-    }
-  }
-
-  function downloadFile(content: string, filename: string, type: string) {
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  // Compute current export filters for the dialog
+  let exportFilters = $derived({
+    projectId:
+      selectedProjects.length === 1
+        ? selectedProjects[0]
+        : selectedProjects,
+    service:
+      selectedServices.length > 0
+        ? selectedServices.length === 1
+          ? selectedServices[0]
+          : selectedServices
+        : undefined,
+    level:
+      selectedLevels.length > 0
+        ? selectedLevels.length === 1
+          ? selectedLevels[0]
+          : selectedLevels
+        : undefined,
+    traceId: traceId || undefined,
+    q: searchQuery || undefined,
+    from: getTimeRange().from.toISOString(),
+    to: getTimeRange().to.toISOString(),
+  });
 
   function formatDateTime(dateStr: string): string {
     const date = new Date(dateStr);
@@ -605,7 +599,7 @@
 </script>
 
 <svelte:head>
-  <title>Search Logs - LogWard</title>
+  <title>Search Logs - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto px-6 py-8 max-w-7xl">
@@ -625,15 +619,42 @@
         </CardHeader>
         <CardContent>
           <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
-            <div class="space-y-2">
+            <div class="space-y-2 lg:col-span-2">
               <Label for="search">Search Message</Label>
-              <Input
-                id="search"
-                type="search"
-                placeholder="Search in messages..."
-                bind:value={searchQuery}
-                oninput={debouncedSearch}
-              />
+              <div class="flex gap-2">
+                <Input
+                  id="search"
+                  type="search"
+                  placeholder={searchMode === "fulltext" ? "Search words..." : "Find text anywhere..."}
+                  bind:value={searchQuery}
+                  oninput={debouncedSearch}
+                  class="flex-1"
+                />
+                <Select.Root
+                  type="single"
+                  value={{ value: searchMode, label: searchMode === "fulltext" ? "Full-text" : "Substring" }}
+                  onValueChange={(v) => {
+                    if (v) {
+                      const newValue = typeof v === 'string' ? v : v.value;
+                      if (newValue === "fulltext" || newValue === "substring") {
+                        searchMode = newValue;
+                        sessionStorage.setItem("logtide_search_mode", searchMode);
+                        if (searchQuery) {
+                          debouncedSearch();
+                        }
+                      }
+                    }
+                  }}
+                >
+                  <Select.Trigger class="w-[130px]" title="Search mode: Full-text (word-based) or Substring (find anywhere)">
+                    {searchMode === "fulltext" ? "Full-text" : "Substring"}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Item value="fulltext">Full-text</Select.Item>
+                    <Select.Item value="substring">Substring</Select.Item>
+                  </Select.Content>
+                </Select.Root>
+              </div>
             </div>
 
             <div class="space-y-2">
@@ -949,84 +970,29 @@
             </div>
           </div>
 
-          <div class="mt-4 space-y-3">
-            <div class="flex items-center gap-2">
-              <Clock class="w-4 h-4 text-muted-foreground" />
-              <Label>Time Range</Label>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <Button
-                variant={timeRangeType === "last_hour" ? "default" : "outline"}
-                size="sm"
-                onclick={() => setQuickTimeRange("last_hour")}
-              >
-                Last Hour
-              </Button>
-              <Button
-                variant={timeRangeType === "last_24h" ? "default" : "outline"}
-                size="sm"
-                onclick={() => setQuickTimeRange("last_24h")}
-              >
-                Last 24 Hours
-              </Button>
-              <Button
-                variant={timeRangeType === "last_7d" ? "default" : "outline"}
-                size="sm"
-                onclick={() => setQuickTimeRange("last_7d")}
-              >
-                Last 7 Days
-              </Button>
-              <Button
-                variant={timeRangeType === "custom" ? "default" : "outline"}
-                size="sm"
-                onclick={() => setQuickTimeRange("custom")}
-              >
-                Custom
-              </Button>
-            </div>
-
-            {#if timeRangeType === "custom"}
-              <div class="grid gap-3 md:grid-cols-2 pt-2">
-                <div class="space-y-2">
-                  <Label for="from-time">From</Label>
-                  <Input
-                    id="from-time"
-                    type="datetime-local"
-                    bind:value={customFromTime}
-                    onchange={onCustomTimeChange}
-                  />
-                </div>
-                <div class="space-y-2">
-                  <Label for="to-time">To</Label>
-                  <Input
-                    id="to-time"
-                    type="datetime-local"
-                    bind:value={customToTime}
-                    onchange={onCustomTimeChange}
-                  />
-                </div>
-              </div>
-            {/if}
+          <div class="mt-4">
+            <TimeRangePicker
+              bind:this={timeRangePicker}
+              initialType={timeRangeType}
+              initialCustomFrom={customFromTime}
+              initialCustomTo={customToTime}
+              onchange={handleTimeRangeChange}
+            />
           </div>
 
           <div class="flex gap-2 mt-4">
             <Button
               variant="outline"
               size="sm"
-              onclick={() => exportLogs("json")}
+              onclick={() => (exportDialogOpen = true)}
+              disabled={liveTail || totalLogs === 0}
               class="gap-2"
             >
-              <FileJson class="w-4 h-4" />
-              Export JSON
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onclick={() => exportLogs("csv")}
-              class="gap-2"
-            >
-              <FileText class="w-4 h-4" />
-              Export CSV
+              <Download class="w-4 h-4" />
+              Export
+              {#if totalLogs > 0}
+                ({totalLogs.toLocaleString()})
+              {/if}
             </Button>
           </div>
         </CardContent>
@@ -1057,8 +1023,8 @@
           {#if paginatedLogs.length === 0}
             <EmptyLogs />
           {:else}
-            <div class="rounded-md border">
-              <Table>
+            <div class="rounded-md border overflow-x-auto">
+              <Table class="w-full">
                 <TableHeader>
                   <TableRow>
                     <TableHead class="w-[180px]">Time</TableHead>
@@ -1143,12 +1109,12 @@
                     </TableRow>
                     {#if expandedRows.has(globalIndex)}
                       <TableRow>
-                        <TableCell colspan={6} class="bg-muted/50">
-                          <div class="p-4 space-y-3">
+                        <TableCell colspan={6} class="bg-muted/50 !p-0">
+                          <div class="p-4 space-y-3 w-0 min-w-full">
                             <div>
                               <span class="font-semibold">Full Message:</span>
                               <div
-                                class="mt-2 p-3 bg-background rounded-md text-sm whitespace-pre-wrap break-words"
+                                class="mt-2 p-3 bg-background rounded-md text-sm whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
                               >
                                 {log.message}
                               </div>
@@ -1171,12 +1137,26 @@
                             {#if log.metadata}
                               <div>
                                 <span class="font-semibold">Metadata:</span>
-                                <pre
-                                  class="mt-2 p-3 bg-background rounded-md overflow-x-auto text-xs">{JSON.stringify(
+                                <div class="mt-2 p-3 bg-background rounded-md max-h-64 overflow-auto">
+                                  <pre class="text-xs w-max">{JSON.stringify(
                                     log.metadata,
                                     null,
                                     2,
                                   )}</pre>
+                                </div>
+                              </div>
+                            {/if}
+                            {#if isErrorLevel(log.level) && log.id}
+                              <div class="pt-2 border-t mt-3">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onclick={() => openExceptionDialog(log)}
+                                  class="gap-2"
+                                >
+                                  <AlertTriangle class="w-4 h-4 text-red-500" />
+                                  View Exception Details
+                                </Button>
                               </div>
                             {/if}
                           </div>
@@ -1317,6 +1297,20 @@
 <LogContextDialog
   open={contextDialogOpen}
   projectId={selectedLogForContext?.projectId || ""}
+  organizationId={$currentOrganization?.id || ""}
   selectedLog={selectedLogForContext}
   onClose={closeContextDialog}
+/>
+
+<ExceptionDetailsDialog
+  open={exceptionDialogOpen}
+  logId={selectedLogForException?.id || ""}
+  organizationId={$currentOrganization?.id || ""}
+  onClose={closeExceptionDialog}
+/>
+
+<ExportLogsDialog
+  bind:open={exportDialogOpen}
+  totalLogs={totalLogs}
+  filters={exportFilters}
 />
