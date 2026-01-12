@@ -28,6 +28,8 @@
 > **⚠️ ALPHA RELEASE:** LogTide is currently in active Alpha.
 > The Cloud version is **100% FREE** for early adopters. We are looking for feedback to improve stability!
 
+> **📢 Rebranded:** LogTide was previously known as LogWard. We changed our name due to a trademark conflict. [Read more about the rebrand](https://github.com/orgs/logtide-dev/discussions/81).
+
 ---
 
 ## 👋 What is LogTide?
@@ -50,6 +52,9 @@ Designed for developers and European SMBs who need **GDPR compliance**, **data o
 
 ### Distributed Tracing
 ![LogTide Traces](docs/images/traces.png)
+
+### Error Groups
+![LogTide Errors](docs/images/errors.png)
 
 ### SIEM Dashboard
 ![LogTide Security](docs/images/security.png)
