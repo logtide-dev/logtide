@@ -96,13 +96,14 @@ ModuleNotFoundError: No module named 'nonexistent'`;
   File "/usr/lib/python3.9/site-packages/django/core/handlers/base.py", line 100, in get_response
     response = self._middleware_chain(request)
   File "/app/views.py", line 20, in my_view
-    raise Exception("error")
-Exception: error`;
+    raise RuntimeError("error")
+RuntimeError: error`;
 
       const result = parser.parse(message);
 
       expect(result).not.toBeNull();
-      expect(result!.frames[0].isAppCode).toBe(true); // app/views.py
+      // Python reverses frames, so index 0 is the most recent (app/views.py)
+      expect(result!.frames[0].isAppCode).toBe(true); // app/views.py (most recent)
       expect(result!.frames[1].isAppCode).toBe(false); // site-packages
     });
 

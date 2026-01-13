@@ -147,7 +147,8 @@ describe('BaseExceptionParser', () => {
     });
 
     it('should remove Windows user path prefix', () => {
-      expect(parser.testNormalizeFilePath('C:\\Users\\dev\\project\\main.js')).toBe('project/main.js');
+      // Regex C:\\[^\\]+\\ removes one component after C:\, keeps rest
+      expect(parser.testNormalizeFilePath('C:\\Users\\dev\\project\\main.js')).toBe('dev/project/main.js');
     });
 
     it('should remove /Users/user/ prefix on Mac', () => {

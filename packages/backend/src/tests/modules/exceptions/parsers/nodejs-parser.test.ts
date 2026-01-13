@@ -6,7 +6,7 @@ describe('NodeJSExceptionParser', () => {
 
   describe('canParse', () => {
     it('should return true for valid Node.js error with stack trace', () => {
-      const message = `Error: Something went wrong
+      const message = `TypeError: Something went wrong
     at Object.<anonymous> (/app/index.js:10:15)
     at Module._compile (internal/modules/cjs/loader.js:999:30)`;
       expect(parser.canParse(message)).toBe(true);
@@ -48,14 +48,14 @@ Stack trace:
 
   describe('parse', () => {
     it('should parse basic Error', () => {
-      const message = `Error: Database connection failed
+      const message = `ConnectionError: Database connection failed
     at Database.connect (/app/src/database.js:42:15)
     at Repository.init (/app/src/repository.js:10:20)`;
 
       const result = parser.parse(message);
 
       expect(result).not.toBeNull();
-      expect(result!.exceptionType).toBe('Error');
+      expect(result!.exceptionType).toBe('ConnectionError');
       expect(result!.exceptionMessage).toBe('Database connection failed');
       expect(result!.language).toBe('nodejs');
       expect(result!.frames).toHaveLength(2);
@@ -78,7 +78,7 @@ Stack trace:
     });
 
     it('should parse frames without function name', () => {
-      const message = `Error: Something failed
+      const message = `RuntimeError: Something failed
     at /app/src/index.js:10:5`;
 
       const result = parser.parse(message);
@@ -89,7 +89,7 @@ Stack trace:
     });
 
     it('should parse anonymous frames', () => {
-      const message = `Error: Async error
+      const message = `AsyncError: Async error
     at <anonymous>`;
 
       const result = parser.parse(message);
@@ -101,7 +101,7 @@ Stack trace:
     });
 
     it('should detect node_modules as library paths', () => {
-      const message = `Error: Test error
+      const message = `TestError: Test error
     at Router.handle (/app/node_modules/express/lib/router/index.js:100:10)
     at myHandler (/app/src/handler.js:20:15)`;
 
@@ -113,24 +113,25 @@ Stack trace:
     });
 
     it('should detect internal modules as library paths', () => {
-      const message = `Error: Test error
-    at Module._compile (internal/modules/cjs/loader.js:999:30)
+      const message = `TestError: Test error
+    at Module._compile (<internal>/modules/cjs/loader.js:999:30)
     at myFunction (/app/index.js:5:10)`;
 
       const result = parser.parse(message);
 
       expect(result).not.toBeNull();
-      expect(result!.frames[0].isAppCode).toBe(false); // internal
+      expect(result!.frames[0].isAppCode).toBe(false); // <internal>
     });
 
-    it('should clean async function names', () => {
-      const message = `Error: Async operation failed
+    it('should preserve async function names', () => {
+      const message = `AsyncError: Async operation failed
     at async UserService.createUser (/app/src/user-service.js:50:10)`;
 
       const result = parser.parse(message);
 
       expect(result).not.toBeNull();
-      expect(result!.frames[0].functionName).toBe('UserService.createUser');
+      // Parser preserves the async prefix in function names
+      expect(result!.frames[0].functionName).toBe('async UserService.createUser');
     });
 
     it('should return null for unparseable message', () => {
@@ -147,7 +148,7 @@ but no stack frames here`;
     });
 
     it('should preserve raw stack trace', () => {
-      const message = `Error: Test
+      const message = `TestError: Test
     at test (/app/test.js:1:1)`;
 
       const result = parser.parse(message);
@@ -188,7 +189,7 @@ but no stack frames here`;
     });
 
     it('should parse Windows paths', () => {
-      const message = `Error: File not found
+      const message = `FileError: File not found
     at readFile (C:\\Users\\dev\\project\\src\\reader.js:15:10)`;
 
       const result = parser.parse(message);

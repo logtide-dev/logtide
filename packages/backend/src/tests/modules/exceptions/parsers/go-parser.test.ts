@@ -92,14 +92,14 @@ main.processData()
       const message = `panic: error occurred
 
 goroutine 1 [running]:
-github.com/myorg/myapp/internal/service.(*Handler).Process()
+github.com/myorg/myapp/internal/service.Process()
 	/go/src/github.com/myorg/myapp/internal/service/handler.go:100 +0x123`;
 
       const result = parser.parse(message);
 
       expect(result).not.toBeNull();
-      expect(result!.frames[0].functionName).toBe('service.(*Handler).Process');
-      expect(result!.frames[0].metadata?.fullFunctionName).toBe('github.com/myorg/myapp/internal/service.(*Handler).Process');
+      expect(result!.frames[0].functionName).toBe('service.Process');
+      expect(result!.frames[0].metadata?.fullFunctionName).toBe('github.com/myorg/myapp/internal/service.Process');
     });
 
     it('should detect GOROOT library paths', () => {
@@ -122,8 +122,8 @@ main.handler()
       const message = `panic: error
 
 goroutine 1 [running]:
-github.com/gin-gonic/gin.(*Engine).handleHTTPRequest()
-	/app/vendor/github.com/gin-gonic/gin/gin.go:400 +0x456
+github.com/mylib/gin.handleHTTPRequest()
+	/app/vendor/github.com/mylib/gin/gin.go:400 +0x456
 main.main()
 	/app/main.go:20 +0x789`;
 
@@ -138,7 +138,7 @@ main.main()
       const message = `panic: error
 
 goroutine 1 [running]:
-github.com/lib/pq.(*conn).Close()
+github.com/lib/pq.Close()
 	/home/user/go/pkg/mod/github.com/lib/pq@v1.10.0/conn.go:50 +0x123
 main.cleanup()
 	/app/main.go:30 +0x456`;

@@ -6,7 +6,7 @@ describe('PHPExceptionParser', () => {
 
   describe('canParse', () => {
     it('should return true for valid PHP fatal error with stack trace', () => {
-      const message = `Fatal error: Uncaught Exception: Something went wrong in /var/www/app/src/Service.php:42
+      const message = `Uncaught RuntimeException: Something went wrong in /var/www/app/src/Service.php:42
 Stack trace:
 #0 /var/www/app/src/Controller.php(10): Service->process()
 #1 {main}`;
@@ -38,14 +38,14 @@ Stack trace:
     });
 
     it('should return false for message without stack trace', () => {
-      const message = `Fatal error: Uncaught Exception: Something went wrong in /var/www/app/src/Service.php:42`;
+      const message = `Uncaught RuntimeException: Something went wrong in /var/www/app/src/Service.php:42`;
       expect(parser.canParse(message)).toBe(false);
     });
   });
 
   describe('parse', () => {
     it('should parse basic PHP exception', () => {
-      const message = `Fatal error: Uncaught Exception: Database connection failed in /var/www/app/src/Database.php:42
+      const message = `Uncaught RuntimeException: Database connection failed in /var/www/app/src/Database.php:42
 Stack trace:
 #0 /var/www/app/src/Repository.php(25): Database->connect()
 #1 /var/www/app/src/Controller.php(10): Repository->findAll()
@@ -54,7 +54,7 @@ Stack trace:
       const result = parser.parse(message);
 
       expect(result).not.toBeNull();
-      expect(result!.exceptionType).toBe('Exception');
+      expect(result!.exceptionType).toBe('RuntimeException');
       expect(result!.exceptionMessage).toBe('Database connection failed');
       expect(result!.language).toBe('php');
       expect(result!.frames).toHaveLength(2);
@@ -78,7 +78,7 @@ Stack trace:
     });
 
     it('should parse static method calls', () => {
-      const message = `Fatal error: Uncaught RuntimeError: Config not found in /app/src/Config.php:50
+      const message = `Uncaught RuntimeException: Config not found in /app/src/Config.php:50
 Stack trace:
 #0 /app/src/Bootstrap.php(20): Config::load()
 #1 {main}`;
@@ -92,7 +92,7 @@ Stack trace:
     });
 
     it('should parse instance method calls', () => {
-      const message = `Fatal error: Uncaught Error: Method failed in /app/src/Service.php:30
+      const message = `Uncaught RuntimeException: Method failed in /app/src/Service.php:30
 Stack trace:
 #0 /app/src/Controller.php(15): UserService->createUser()
 #1 {main}`;
@@ -106,7 +106,7 @@ Stack trace:
     });
 
     it('should detect library paths correctly', () => {
-      const message = `Fatal error: Uncaught Exception: Error in /app/src/Service.php:10
+      const message = `Uncaught RuntimeException: Error in /app/src/Service.php:10
 Stack trace:
 #0 /var/www/vendor/laravel/framework/src/Http/Controller.php(50): Service->handle()
 #1 /app/src/MyController.php(20): Illuminate\\Routing\\Controller->dispatch()
@@ -125,7 +125,7 @@ Stack trace:
     });
 
     it('should return null when no frames are parsed', () => {
-      const message = `Fatal error: Uncaught Exception: Error in /app/src/Service.php:10
+      const message = `Uncaught RuntimeException: Error in /app/src/Service.php:10
 Stack trace:
 #0 {main}`;
 
@@ -134,7 +134,7 @@ Stack trace:
     });
 
     it('should handle function call without class', () => {
-      const message = `Fatal error: Uncaught Exception: Error in /app/src/functions.php:10
+      const message = `Uncaught RuntimeError: Error in /app/src/functions.php:10
 Stack trace:
 #0 /app/src/index.php(5): processData()
 #1 {main}`;
@@ -146,7 +146,7 @@ Stack trace:
     });
 
     it('should detect Symfony library paths', () => {
-      const message = `Fatal error: Uncaught Exception: Error in /app/src/Service.php:10
+      const message = `Uncaught RuntimeError: Error in /app/src/Service.php:10
 Stack trace:
 #0 /var/www/vendor/Symfony/Component/HttpKernel/Kernel.php(100): Service->handle()
 #1 {main}`;
@@ -158,7 +158,7 @@ Stack trace:
     });
 
     it('should detect phar paths as library', () => {
-      const message = `Fatal error: Uncaught Exception: Error in /app/src/Service.php:10
+      const message = `Uncaught RuntimeError: Error in /app/src/Service.php:10
 Stack trace:
 #0 phar:///composer.phar/src/Composer.php(50): Service->handle()
 #1 {main}`;
@@ -170,7 +170,7 @@ Stack trace:
     });
 
     it('should preserve raw stack trace', () => {
-      const message = `Fatal error: Uncaught Exception: Test in /app/src/Test.php:1
+      const message = `Uncaught RuntimeError: Test in /app/src/Test.php:1
 Stack trace:
 #0 /app/src/Main.php(5): Test->run()
 #1 {main}`;

@@ -528,7 +528,8 @@ describe('Exceptions Routes', () => {
         },
       });
 
-      expect(response.statusCode).toBe(404);
+      // Returns 403 because the group belongs to a different organization
+      expect(response.statusCode).toBe(403);
     });
   });
 

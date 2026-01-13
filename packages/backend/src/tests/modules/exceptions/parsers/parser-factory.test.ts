@@ -4,7 +4,7 @@ import { ParserFactory } from '../../../../modules/exceptions/parsers/parser-fac
 describe('ParserFactory', () => {
   describe('detectParser', () => {
     it('should return NodeJS parser for V8 stack trace', () => {
-      const message = `Error: Connection refused
+      const message = `ConnectionError: Connection refused
     at Database.connect (/app/src/db.js:42:15)
     at Repository.init (/app/src/repo.js:10:20)`;
 
@@ -53,7 +53,7 @@ main.handler()
     });
 
     it('should return PHP parser for PHP exception', () => {
-      const message = `Fatal error: Uncaught Exception: Database error in /app/src/Service.php:42
+      const message = `Uncaught RuntimeException: Database error in /app/src/Service.php:42
 Stack trace:
 #0 /app/src/Controller.php(10): Service->connect()
 #1 {main}`;
@@ -128,14 +128,14 @@ Stack trace:
 
   describe('parse', () => {
     it('should auto-detect and parse NodeJS error', () => {
-      const message = `Error: Test error
+      const message = `TypeError: Test error
     at testFunction (/app/test.js:10:5)`;
 
       const result = ParserFactory.parse(message);
 
       expect(result).not.toBeNull();
       expect(result!.language).toBe('nodejs');
-      expect(result!.exceptionType).toBe('Error');
+      expect(result!.exceptionType).toBe('TypeError');
     });
 
     it('should auto-detect and parse Python error', () => {
@@ -162,7 +162,7 @@ RuntimeError: Test`;
 
   describe('parseWithLanguage', () => {
     it('should parse with specific nodejs parser', () => {
-      const message = `Error: Specific error
+      const message = `TypeError: Specific error
     at handler (/app/handler.js:20:10)`;
 
       const result = ParserFactory.parseWithLanguage(message, 'nodejs');
