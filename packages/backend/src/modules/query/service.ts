@@ -134,8 +134,9 @@ export class QueryService {
       if (searchMode === 'substring') {
         // Substring search using ILIKE with trigram index (pg_trgm)
         // This finds text anywhere in the message, unlike fulltext which is word-based
-        // Escape special LIKE characters (% and _) to prevent pattern manipulation
-        const escapedQuery = q.replace(/[%_]/g, '\\$&');
+        // Escape special LIKE characters (%, _, \) to prevent pattern manipulation
+        // Backslash must be escaped first to avoid double-escaping
+        const escapedQuery = q.replace(/\\/g, '\\\\').replace(/[%_]/g, '\\$&');
         // Build the pattern and pass it as a parameter to Kysely
         const pattern = `%${escapedQuery}%`;
         query = query.where(
