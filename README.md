@@ -125,6 +125,7 @@ Total control over your data. **No build required** - uses pre-built images from
     curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/parsers.conf
     curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/extract_container_id.lua
     curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/wrap_logs.lua
+    curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/map_syslog_level.lua
 
     # Set your LogTide API key in .env
     echo "FLUENT_BIT_API_KEY=your_api_key_here" >> .env
