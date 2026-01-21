@@ -49,6 +49,7 @@
     "dotenv": "^17.2.3",
     "fastify": "^4.29.1",
     "fastify-plugin": "^4.5.1",
+    "graphile-worker": "^0.16.6",
     "ioredis": "^5.8.2",
     "js-yaml": "^4.1.1",
     "ldapts": "^7.2.1",

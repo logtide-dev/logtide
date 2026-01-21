@@ -1,6 +1,6 @@
 import { db, getPoolStats } from '../../database/index.js';
 import { sql } from 'kysely';
-import { connection as redis } from '../../queue/connection.js';
+import { connection as redis, isRedisAvailable } from '../../queue/connection.js';
 import { CacheManager, type CacheStats, isCacheEnabled } from '../../utils/cache.js';
 
 // System-wide statistics
@@ -133,7 +133,7 @@ export interface HealthStats {
         connections: number;
     };
     redis: {
-        status: 'healthy' | 'degraded' | 'down';
+        status: 'healthy' | 'degraded' | 'down' | 'not_configured';
         latency: number;
     };
     // Connection pool statistics (application-level)
@@ -608,6 +608,21 @@ export class AdminService {
      * Get Redis statistics
      */
     async getRedisStats(): Promise<RedisStats> {
+        // Return empty stats if Redis is not configured
+        if (!isRedisAvailable() || !redis) {
+            return {
+                memory: {
+                    used: 'N/A (Redis not configured)',
+                    peak: 'N/A',
+                },
+                queues: {
+                    alertNotifications: { waiting: 0, active: 0, completed: 0, failed: 0 },
+                    sigmaDetection: { waiting: 0, active: 0, completed: 0, failed: 0 },
+                },
+                connections: 0,
+            };
+        }
+
         try {
             // Get Redis memory info
             const info = await redis.info('memory');
@@ -696,18 +711,20 @@ export class AdminService {
             );
             const dbConnections = connResult.rows[0]?.count || 0;
 
-            // Redis health
+            // Redis health (only if configured)
             const redisStart = Date.now();
-            let redisStatus: 'healthy' | 'degraded' | 'down' = 'healthy';
+            let redisStatus: 'healthy' | 'degraded' | 'down' | 'not_configured' = 'not_configured';
             let redisLatency = 0;
 
-            try {
-                await redis.ping();
-                redisLatency = Date.now() - redisStart;
-                if (redisLatency > 100) redisStatus = 'degraded';
-            } catch {
-                redisStatus = 'down';
-                redisLatency = -1;
+            if (isRedisAvailable() && redis) {
+                try {
+                    await redis.ping();
+                    redisLatency = Date.now() - redisStart;
+                    redisStatus = redisLatency > 100 ? 'degraded' : 'healthy';
+                } catch {
+                    redisStatus = 'down';
+                    redisLatency = -1;
+                }
             }
 
             const dbStatus: 'healthy' | 'degraded' | 'down' =
@@ -716,8 +733,11 @@ export class AdminService {
             // Check pool health: degraded if waiting requests > 0
             const poolHealthy = poolStats.waitingCount === 0;
 
+            // Redis is not required - only affects overall status if configured and down
+            const redisHealthy = redisStatus === 'healthy' || redisStatus === 'not_configured';
+
             const overall: 'healthy' | 'degraded' | 'down' =
-                dbStatus === 'healthy' && redisStatus === 'healthy' && poolHealthy
+                dbStatus === 'healthy' && redisHealthy && poolHealthy
                     ? 'healthy'
                     : dbStatus === 'down' || redisStatus === 'down'
                         ? 'down'

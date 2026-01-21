@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { connection } from '../queue/connection.js';
+import { connection, isRedisAvailable } from '../queue/connection.js';
 import { config } from '../config/index.js';
 
 /**
@@ -51,10 +51,14 @@ let cacheHits = 0;
 let cacheMisses = 0;
 
 /**
- * Check if caching is enabled via config
+ * Check if caching is enabled
+ *
+ * Caching requires both:
+ * 1. CACHE_ENABLED=true in config
+ * 2. Redis to be available (REDIS_URL set)
  */
 export function isCacheEnabled(): boolean {
-  return config.CACHE_ENABLED;
+  return config.CACHE_ENABLED && isRedisAvailable() && connection !== null;
 }
 
 /**
@@ -181,7 +185,7 @@ export const CacheManager = {
    * Get a cached value
    */
   async get<T>(key: string): Promise<T | null> {
-    if (!isCacheEnabled()) {
+    if (!isCacheEnabled() || !connection) {
       return null;
     }
 
@@ -204,7 +208,7 @@ export const CacheManager = {
    * Set a cached value with TTL
    */
   async set<T>(key: string, value: T, ttl: number = CACHE_TTL.QUERY): Promise<void> {
-    if (!isCacheEnabled()) {
+    if (!isCacheEnabled() || !connection) {
       return;
     }
 
@@ -219,6 +223,10 @@ export const CacheManager = {
    * Delete a specific key
    */
   async delete(key: string): Promise<void> {
+    if (!connection) {
+      return;
+    }
+
     try {
       await connection.del(key);
     } catch (error) {
@@ -231,6 +239,10 @@ export const CacheManager = {
    * IMPORTANT: Uses SCAN instead of KEYS to avoid blocking Redis
    */
   async deletePattern(pattern: string): Promise<number> {
+    if (!connection) {
+      return 0;
+    }
+
     try {
       let cursor = '0';
       let totalDeleted = 0;
@@ -332,6 +344,16 @@ export const CacheManager = {
    * Uses DBSIZE instead of KEYS for key count (O(1) vs O(N))
    */
   async getStats(): Promise<CacheStats> {
+    if (!connection) {
+      return {
+        hits: cacheHits,
+        misses: cacheMisses,
+        hitRate: 0,
+        keyCount: 0,
+        memoryUsage: 'not available (Redis not configured)',
+      };
+    }
+
     try {
       const info = await connection.info('memory');
       const memoryMatch = info.match(/used_memory_human:(\S+)/);

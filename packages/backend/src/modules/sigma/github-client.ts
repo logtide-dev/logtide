@@ -4,7 +4,7 @@
  * Fetches Sigma rules from https://github.com/SigmaHQ/sigma
  */
 
-import { connection as redis } from '../../queue/connection.js';
+import { connection as redis, isRedisAvailable } from '../../queue/connection.js';
 
 // Cache TTLs (in seconds)
 const CACHE_TTL = {
@@ -12,6 +12,17 @@ const CACHE_TTL = {
   CATEGORIES: 86400,   // 24 hours
   RULES: 21600,        // 6 hours
 } as const;
+
+// Cache helper functions (handle Redis unavailability)
+async function cacheGet(key: string): Promise<string | null> {
+  if (!isRedisAvailable() || !redis) return null;
+  return redis.get(key);
+}
+
+async function cacheSet(key: string, ttl: number, value: string): Promise<void> {
+  if (!isRedisAvailable() || !redis) return;
+  await redis.setex(key, ttl, value);
+}
 
 interface GitHubTreeItem {
   path: string;
@@ -103,7 +114,7 @@ export class SigmaHQClient {
 
     // Try cache first
     try {
-      const cached = await redis.get(cacheKey);
+      const cached = await cacheGet(cacheKey);
       if (cached) {
         console.log('[SigmaHQ] Using cached commit hash');
         return cached;
@@ -125,7 +136,7 @@ export class SigmaHQClient {
 
     // Cache the result
     try {
-      await redis.setex(cacheKey, CACHE_TTL.COMMIT, commit);
+      await cacheSet(cacheKey, CACHE_TTL.COMMIT, commit);
     } catch (error) {
       console.warn('[SigmaHQ] Failed to cache commit hash:', error);
     }
@@ -141,7 +152,7 @@ export class SigmaHQClient {
 
     // Try cache first
     try {
-      const cached = await redis.get(cacheKey);
+      const cached = await cacheGet(cacheKey);
       if (cached) {
         console.log('[SigmaHQ] Using cached categories');
         return JSON.parse(cached);
@@ -181,7 +192,7 @@ export class SigmaHQClient {
 
     // Cache the result
     try {
-      await redis.setex(cacheKey, CACHE_TTL.CATEGORIES, JSON.stringify(categories));
+      await cacheSet(cacheKey, CACHE_TTL.CATEGORIES, JSON.stringify(categories));
     } catch (error) {
       console.warn('[SigmaHQ] Failed to cache categories:', error);
     }
@@ -236,7 +247,7 @@ export class SigmaHQClient {
 
     // Try cache first
     try {
-      const cached = await redis.get(cacheKey);
+      const cached = await cacheGet(cacheKey);
       if (cached) {
         console.log(`[SigmaHQ] Using cached rules for category: ${category}`);
         return JSON.parse(cached);
@@ -282,7 +293,7 @@ export class SigmaHQClient {
 
     // Cache the result
     try {
-      await redis.setex(cacheKey, CACHE_TTL.RULES, JSON.stringify(rules));
+      await cacheSet(cacheKey, CACHE_TTL.RULES, JSON.stringify(rules));
     } catch (error) {
       console.warn('[SigmaHQ] Failed to cache rules:', error);
     }
@@ -345,7 +356,7 @@ export class SigmaHQClient {
 
     // Try cache first
     try {
-      const cached = await redis.get(cacheKey);
+      const cached = await cacheGet(cacheKey);
       if (cached) {
         console.log('[SigmaHQ] Using cached all rules');
         return JSON.parse(cached);
@@ -396,7 +407,7 @@ export class SigmaHQClient {
 
     // Cache the result
     try {
-      await redis.setex(cacheKey, CACHE_TTL.RULES, JSON.stringify(rules));
+      await cacheSet(cacheKey, CACHE_TTL.RULES, JSON.stringify(rules));
     } catch (error) {
       console.warn('[SigmaHQ] Failed to cache all rules:', error);
     }
@@ -412,7 +423,7 @@ export class SigmaHQClient {
 
     // Try cache first
     try {
-      const cached = await redis.get(cacheKey);
+      const cached = await cacheGet(cacheKey);
       if (cached) {
         console.log('[SigmaHQ] Using cached category tree');
         return JSON.parse(cached);
@@ -454,7 +465,7 @@ export class SigmaHQClient {
 
     // Cache the result
     try {
-      await redis.setex(cacheKey, CACHE_TTL.CATEGORIES, JSON.stringify(tree));
+      await cacheSet(cacheKey, CACHE_TTL.CATEGORIES, JSON.stringify(tree));
     } catch (error) {
       console.warn('[SigmaHQ] Failed to cache category tree:', error);
     }
@@ -557,7 +568,7 @@ export class SigmaHQClient {
 
     // Try cache first
     try {
-      const cached = await redis.get(cacheKey);
+      const cached = await cacheGet(cacheKey);
       if (cached) {
         console.log(`[SigmaHQ] Using cached search results for: ${query}`);
         return JSON.parse(cached);
@@ -611,7 +622,7 @@ export class SigmaHQClient {
 
     // Cache the result (shorter TTL for search results)
     try {
-      await redis.setex(cacheKey, 1800, JSON.stringify(results)); // 30 minutes
+      await cacheSet(cacheKey, 1800, JSON.stringify(results)); // 30 minutes
     } catch (error) {
       console.warn('[SigmaHQ] Failed to cache search results:', error);
     }

@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import type { Job } from 'bullmq';
+import type { IJob } from '../abstractions/types.js';
 import { config, isSmtpConfigured } from '../../config/index.js';
 import { db } from '../../database/connection.js';
 import { notificationsService } from '../../modules/notifications/service.js';
@@ -160,7 +160,7 @@ function generateIncidentEmailHtml(job: IncidentNotificationJob, orgName: string
 /**
  * Process incident notification job
  */
-export async function processIncidentNotification(job: Job<IncidentNotificationJob>): Promise<void> {
+export async function processIncidentNotification(job: IJob<IncidentNotificationJob>): Promise<void> {
   const data = job.data;
   console.log(`[IncidentNotification] Processing notification for incident ${data.incidentId}`);
 

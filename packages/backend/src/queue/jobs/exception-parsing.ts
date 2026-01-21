@@ -11,7 +11,7 @@ import { ParserFactory } from '../../modules/exceptions/parsers/parser-factory.j
 import { FingerprintService } from '../../modules/exceptions/fingerprint-service.js';
 import { ExceptionService } from '../../modules/exceptions/service.js';
 import { errorNotificationQueue, type ErrorNotificationJobData } from './error-notification.js';
-import type { Job } from 'bullmq';
+import type { IJob } from '../abstractions/types.js';
 
 export interface ExceptionParsingJobData {
   logs: Array<{
@@ -31,7 +31,7 @@ const exceptionService = new ExceptionService(db);
  * Process exception parsing job
  * Parses stack traces from error/critical logs and stores in database
  */
-export async function processExceptionParsing(job: Job<ExceptionParsingJobData>): Promise<void> {
+export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>): Promise<void> {
   const { logs, organizationId, projectId } = job.data;
 
   console.log(`[ExceptionParsing] Processing ${logs.length} error/critical logs`);

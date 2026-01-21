@@ -5,6 +5,54 @@ All notable changes to LogTide will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+### Added
+
+- **Optional Redis Dependency**: Redis is now optional for simpler deployments (#90)
+  - PostgreSQL-based job queues using `graphile-worker` when Redis is unavailable
+  - PostgreSQL `LISTEN/NOTIFY` for real-time log streaming (live tail)
+  - In-memory rate limiting fallback when Redis is not configured
+  - Queue abstraction layer with adapter pattern (BullMQ for Redis, graphile-worker for PostgreSQL)
+  - New `docker-compose.simple.yml` for Redis-free deployments
+  - Automatic backend selection based on `REDIS_URL` environment variable
+  - Graceful degradation: caching disabled, rate limiting in-memory, jobs via PostgreSQL
+
+- **Queue System Architecture**: Unified queue interface supporting multiple backends
+  - `IQueueAdapter` and `IWorkerAdapter` interfaces for queue operations
+  - `QueueSystemManager` singleton with queue/worker instance caching
+  - Proper resource cleanup on shutdown (closes all cached queue/worker instances)
+  - Type-safe job processors with `IJob<T>` generic interface
+
+### Changed
+
+- **Configuration**: `REDIS_URL` is now optional
+  - If not set, backend automatically uses PostgreSQL alternatives
+  - Existing deployments with Redis continue to work unchanged
+  - Health check endpoint reports Redis as `not_configured` when unavailable
+
+- **Cache System**: Graceful handling of missing Redis
+  - All cache operations return `null` when Redis unavailable
+  - No errors thrown, application continues without caching
+  - SigmaHQ GitHub client works without Redis (skips caching)
+
+### Fixed
+
+- **WebSocket Memory Leak**: Fixed potential memory leak in live tail WebSocket handler
+  - Added proper socket cleanup in error handler
+  - `safeSend` helper prevents sending to closed sockets
+  - Race condition fix with `isSocketOpen` tracking
+
+- **SQL Injection Prevention**: Fixed potential SQL injection in notification publisher
+  - Removed manual quote escaping, using Kysely parameterized queries
+
+### Documentation
+
+- Updated deployment docs for Redis-optional configuration
+- Added `docker-compose.simple.yml` example for minimal deployments
+
+---
+
 ## [0.4.0]
 
 ### Added

@@ -1,11 +1,11 @@
-import { createWorker } from './queue/connection.js';
-import { processAlertNotification } from './queue/jobs/alert-notification.js';
-import { processSigmaDetection } from './queue/jobs/sigma-detection.js';
+import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
+import { processAlertNotification, type AlertNotificationData } from './queue/jobs/alert-notification.js';
+import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
 import { processIncidentAutoGrouping } from './queue/jobs/incident-autogrouping.js';
-import { processInvitationEmail } from './queue/jobs/invitation-email.js';
-import { processIncidentNotification } from './queue/jobs/incident-notification.js';
-import { processExceptionParsing } from './queue/jobs/exception-parsing.js';
-import { processErrorNotification } from './queue/jobs/error-notification.js';
+import { processInvitationEmail, type InvitationEmailData } from './queue/jobs/invitation-email.js';
+import { processIncidentNotification, type IncidentNotificationJob } from './queue/jobs/incident-notification.js';
+import { processExceptionParsing, type ExceptionParsingJobData } from './queue/jobs/exception-parsing.js';
+import { processErrorNotification, type ErrorNotificationJobData } from './queue/jobs/error-notification.js';
 import { alertsService } from './modules/alerts/index.js';
 import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { retentionService } from './modules/retention/index.js';
@@ -18,12 +18,12 @@ await initializeInternalLogging();
 await enrichmentService.initialize();
 
 // Create worker for alert notifications
-const alertWorker = createWorker('alert-notifications', async (job) => {
+const alertWorker = createWorker<AlertNotificationData>('alert-notifications', async (job) => {
   await processAlertNotification(job);
 });
 
 // Create worker for Sigma detection
-const sigmaWorker = createWorker('sigma-detection', async (job) => {
+const sigmaWorker = createWorker<SigmaDetectionData>('sigma-detection', async (job) => {
   await processSigmaDetection(job);
 });
 
@@ -33,33 +33,37 @@ const autoGroupWorker = createWorker('incident-autogrouping', async (job) => {
 });
 
 // Create worker for invitation emails
-const invitationWorker = createWorker('invitation-email', async (job) => {
+const invitationWorker = createWorker<InvitationEmailData>('invitation-email', async (job) => {
   await processInvitationEmail(job);
 });
 
 // Create worker for incident notifications
-const incidentNotificationWorker = createWorker('incident-notifications', async (job) => {
+const incidentNotificationWorker = createWorker<IncidentNotificationJob>('incident-notifications', async (job) => {
   await processIncidentNotification(job);
 });
 
 // Create worker for exception parsing
-const exceptionWorker = createWorker('exception-parsing', async (job) => {
+const exceptionWorker = createWorker<ExceptionParsingJobData>('exception-parsing', async (job) => {
   await processExceptionParsing(job);
 });
 
 // Create worker for error notifications
-const errorNotificationWorker = createWorker('error-notifications', async (job) => {
+const errorNotificationWorker = createWorker<ErrorNotificationJobData>('error-notifications', async (job) => {
   await processErrorNotification(job);
 });
 
-alertWorker.on('completed', (job) => {
+// Start workers (required for graphile-worker backend, no-op for BullMQ)
+console.log(`[Worker] Using queue backend: ${getQueueBackend()}`);
+await startQueueWorkers();
+console.log('[Worker] All workers started');
 
+alertWorker.on('completed', (job) => {
   const logger = getInternalLogger();
   if (logger) {
     logger.info('worker-job-completed', `Alert notification job completed`, {
       jobId: job.id,
-      alertRuleId: job.data?.alertRuleId,
-      logCount: job.data?.logCount,
+      alertRuleId: job.data?.rule_id,
+      logCount: job.data?.log_count,
     });
   }
 });
@@ -72,7 +76,7 @@ alertWorker.on('failed', (job, err) => {
     logger.error('worker-job-failed', `Alert notification job failed: ${err.message}`, {
       error: err,
       jobId: job?.id,
-      alertRuleId: job?.data?.alertRuleId,
+      alertRuleId: job?.data?.rule_id,
     });
   }
 });
@@ -478,6 +482,10 @@ async function gracefulShutdown(signal: string) {
     await exceptionWorker.close();
     await errorNotificationWorker.close();
     console.log('✅ Workers closed');
+
+    // Close queue system (Redis/PostgreSQL connections)
+    await shutdownQueueSystem();
+    console.log('✅ Queue system closed');
 
     // Close internal logging
     await shutdownInternalLogging();
