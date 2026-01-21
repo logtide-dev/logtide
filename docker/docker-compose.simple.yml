@@ -1,0 +1,152 @@
+# LogTide Docker Compose - Simplified (No Redis)
+#
+# This configuration runs LogTide with PostgreSQL only.
+# Redis is optional and not required for basic functionality.
+#
+# Benefits:
+# - Simpler deployment (2 containers instead of 3)
+# - Lower resource usage
+# - Easier backup (single database)
+#
+# Trade-offs:
+# - No distributed rate limiting (single instance only)
+# - No Redis caching (relies on PostgreSQL)
+# - Job queue uses PostgreSQL (graphile-worker)
+#
+# Usage: docker compose -f docker-compose.simple.yml up -d
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: logtide-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=768MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      # Parallel query settings for faster aggregations
+      - "-c"
+      - "max_parallel_workers_per_gather=4"
+      - "-c"
+      - "max_parallel_workers=8"
+      - "-c"
+      - "parallel_tuple_cost=0.01"
+      - "-c"
+      - "parallel_setup_cost=100"
+      - "-c"
+      - "min_parallel_table_scan_size=8MB"
+      # Write-ahead log tuning for ingestion
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      # Logging for slow queries (>100ms)
+      - "-c"
+      - "log_min_duration_statement=100"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - logtide-network
+
+  backend:
+    image: ${LOGTIDE_BACKEND_IMAGE:-logtide/backend:latest}
+    container_name: logtide-backend
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      DATABASE_HOST: postgres
+      DB_USER: ${DB_USER}
+      # REDIS_URL intentionally not set - uses PostgreSQL queue
+      API_KEY_SECRET: ${API_KEY_SECRET}
+      PORT: 8080
+      HOST: 0.0.0.0
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@logtide.local}
+      INTERNAL_LOGGING_ENABLED: ${INTERNAL_LOGGING_ENABLED:-false}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      SERVICE_NAME: logtide-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - logtide-network
+
+  worker:
+    image: ${LOGTIDE_BACKEND_IMAGE:-logtide/backend:latest}
+    container_name: logtide-worker
+    command: ["worker"]
+    healthcheck:
+      disable: true
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      DATABASE_HOST: postgres
+      DB_USER: ${DB_USER}
+      # REDIS_URL intentionally not set - uses PostgreSQL queue
+      API_KEY_SECRET: ${API_KEY_SECRET}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@logtide.local}
+      INTERNAL_LOGGING_ENABLED: ${INTERNAL_LOGGING_ENABLED:-false}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      SERVICE_NAME: logtide-worker
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - logtide-network
+
+  frontend:
+    image: ${LOGTIDE_FRONTEND_IMAGE:-logtide/frontend:latest}
+    container_name: logtide-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - logtide-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  logtide-network:

@@ -2,8 +2,9 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
-import { config } from './config/index.js';
+import { config, isRedisConfigured } from './config/index.js';
 import { connection } from './queue/connection.js';
+import { notificationManager } from './modules/streaming/index.js';
 import authPlugin from './modules/auth/plugin.js';
 import { ingestionRoutes } from './modules/ingestion/index.js';
 import { queryRoutes } from './modules/query/index.js';
@@ -68,17 +69,24 @@ export async function build(opts = {}) {
     crossOriginEmbedderPolicy: false, // Allow embedding for SSE
   });
 
-  // Rate limiting with Redis store for horizontal scaling
-  // Using Redis ensures rate limits are shared across all backend instances
-  await fastify.register(rateLimit, {
-    max: config.RATE_LIMIT_MAX,
-    timeWindow: config.RATE_LIMIT_WINDOW,
-    redis: connection,
-    // Use real client IP when behind proxy (requires trustProxy: true)
-    keyGenerator: (request) => {
-      return request.ip;
-    },
-  });
+  // Rate limiting
+  // Uses Redis for horizontal scaling when available, otherwise in-memory
+  if (isRedisConfigured() && connection) {
+    await fastify.register(rateLimit, {
+      max: config.RATE_LIMIT_MAX,
+      timeWindow: config.RATE_LIMIT_WINDOW,
+      keyGenerator: (request) => request.ip,
+      redis: connection,
+    });
+    console.log('[RateLimit] Using Redis store (distributed rate limiting)');
+  } else {
+    await fastify.register(rateLimit, {
+      max: config.RATE_LIMIT_MAX,
+      timeWindow: config.RATE_LIMIT_WINDOW,
+      keyGenerator: (request) => request.ip,
+    });
+    console.log('[RateLimit] Using in-memory store (single instance only)');
+  }
 
   // Internal logging plugin (logs all requests except ingestion endpoints)
   await fastify.register(internalLoggingPlugin);
@@ -179,6 +187,9 @@ async function start() {
   // Initialize enrichment services (GeoLite2 database, etc.)
   await enrichmentService.initialize();
 
+  // Initialize notification manager for live tail (PostgreSQL LISTEN/NOTIFY)
+  await notificationManager.initialize(config.DATABASE_URL);
+
   // Check auth mode and bootstrap if auth-free mode is enabled
   const authMode = await settingsService.getAuthMode();
   if (authMode === 'none') {
@@ -190,6 +201,8 @@ async function start() {
 
   // Graceful shutdown handlers
   const shutdown = async () => {
+    console.log('[Server] Shutting down gracefully...');
+    await notificationManager.shutdown();
     await shutdownInternalLogging();
     await app.close();
     process.exit(0);

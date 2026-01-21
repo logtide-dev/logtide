@@ -6,7 +6,7 @@
  */
 
 import nodemailer from 'nodemailer';
-import type { Job } from 'bullmq';
+import type { IJob } from '../abstractions/types.js';
 import { config, isSmtpConfigured } from '../../config/index.js';
 import { db } from '../../database/connection.js';
 import { notificationsService } from '../../modules/notifications/service.js';
@@ -173,7 +173,7 @@ function generateErrorEmailHtml(
 /**
  * Process error notification job
  */
-export async function processErrorNotification(job: Job<ErrorNotificationJobData>): Promise<void> {
+export async function processErrorNotification(job: IJob<ErrorNotificationJobData>): Promise<void> {
   const data = job.data;
   console.log(`[ErrorNotification] Processing notification for exception ${data.exceptionId}`);
 
