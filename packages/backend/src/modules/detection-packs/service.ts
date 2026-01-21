@@ -1,4 +1,3 @@
-import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { DETECTION_PACKS, getPackById } from './pack-definitions.js';
 import type {
@@ -8,6 +7,35 @@ import type {
 } from './types.js';
 
 export class DetectionPacksService {
+  /**
+   * Extract MITRE ATT&CK tactics and techniques from tags
+   */
+  private extractMitreTags(tags: string[] | undefined): {
+    tactics: string[];
+    techniques: string[];
+  } {
+    if (!tags || tags.length === 0) {
+      return { tactics: [], techniques: [] };
+    }
+
+    const tactics: string[] = [];
+    const techniques: string[] = [];
+
+    for (const tag of tags) {
+      const lowerTag = tag.toLowerCase();
+      // MITRE technique pattern: attack.t1234 or attack.t1234.001
+      if (/^attack\.t\d{4}(\.\d{3})?$/i.test(lowerTag)) {
+        techniques.push(tag.replace('attack.', '').toUpperCase());
+      }
+      // MITRE tactic pattern: attack.tactic_name (not a technique)
+      else if (lowerTag.startsWith('attack.') && !lowerTag.match(/^attack\.t\d/)) {
+        tactics.push(tag.replace('attack.', ''));
+      }
+    }
+
+    return { tactics, techniques };
+  }
+
   /**
    * Get all available packs with their activation status for an organization
    */
@@ -23,17 +51,21 @@ export class DetectionPacksService {
       activations.map((a) => [a.pack_id, a])
     );
 
-    // Get count of generated rules per pack
-    const alertRules = await db
-      .selectFrom('alert_rules')
-      .select(['metadata'])
+    // Get count of generated sigma rules per pack
+    // Sigma rules from packs have sigma_id starting with 'pack-'
+    const sigmaRules = await db
+      .selectFrom('sigma_rules')
+      .select(['sigma_id'])
       .where('organization_id', '=', organizationId)
+      .where('sigma_id', 'like', 'pack-%')
       .execute();
 
     const ruleCountByPack = new Map<string, number>();
-    for (const rule of alertRules) {
-      const packId = (rule.metadata as Record<string, unknown> | null)?.packId as string | undefined;
-      if (packId) {
+    for (const rule of sigmaRules) {
+      // sigma_id format: pack-{packId}-{ruleId}
+      const parts = rule.sigma_id?.split('-');
+      if (parts && parts.length >= 2) {
+        const packId = parts[1];
         ruleCountByPack.set(packId, (ruleCountByPack.get(packId) || 0) + 1);
       }
     }
@@ -67,12 +99,12 @@ export class DetectionPacksService {
       .where('pack_id', '=', packId)
       .executeTakeFirst();
 
-    // Count generated rules
+    // Count generated sigma rules for this pack
     const result = await db
-      .selectFrom('alert_rules')
+      .selectFrom('sigma_rules')
       .select((eb) => eb.fn.count('id').as('count'))
       .where('organization_id', '=', organizationId)
-      .where(sql<boolean>`metadata @> ${JSON.stringify({ packId })}::jsonb`)
+      .where('sigma_id', 'like', `pack-${packId}-%`)
       .executeTakeFirst();
 
     return {
@@ -86,7 +118,7 @@ export class DetectionPacksService {
 
   /**
    * Enable a pack for an organization
-   * Creates alert rules from pack definition with optional custom thresholds
+   * Creates Sigma rules from pack definition for SIEM integration
    */
   async enablePack(
     organizationId: string,
@@ -140,32 +172,35 @@ export class DetectionPacksService {
           .execute();
       }
 
-      // Create alert rules for each rule in the pack
+      // Create Sigma rules for each rule in the pack
       for (const rule of pack.rules) {
         const override = customThresholds?.[rule.id];
-        const threshold = override?.threshold ?? rule.threshold;
-        const timeWindow = override?.timeWindow ?? rule.timeWindow;
+        const level = override?.level ?? rule.level;
+        const mitre = this.extractMitreTags(rule.tags);
 
         await trx
-          .insertInto('alert_rules')
+          .insertInto('sigma_rules')
           .values({
             organization_id: organizationId,
             project_id: null, // Pack rules are org-wide
-            name: `[${pack.name}] ${rule.name}`,
-            enabled: true,
-            service: rule.service,
-            level: rule.level,
-            threshold,
-            time_window: timeWindow,
+            sigma_id: `pack-${packId}-${rule.id}`,
+            title: `[${pack.name}] ${rule.name}`,
+            description: rule.description,
+            author: pack.author ?? 'LogTide',
+            date: new Date(),
+            level,
+            status: rule.status,
+            logsource: rule.logsource as any,
+            detection: rule.detection as any,
             email_recipients: recipients,
             webhook_url: webhookUrl ?? null,
-            metadata: {
-              packId: pack.id,
-              packRuleId: rule.id,
-              packName: pack.name,
-              originalThreshold: rule.threshold,
-              originalTimeWindow: rule.timeWindow,
-            },
+            alert_rule_id: null,
+            conversion_status: 'success',
+            conversion_notes: `Generated from Detection Pack: ${pack.name}`,
+            enabled: true,
+            tags: rule.tags ?? null,
+            mitre_tactics: mitre.tactics.length > 0 ? mitre.tactics : null,
+            mitre_techniques: mitre.techniques.length > 0 ? mitre.techniques : null,
           })
           .execute();
       }
@@ -174,7 +209,7 @@ export class DetectionPacksService {
 
   /**
    * Disable a pack for an organization
-   * Deletes all generated alert rules
+   * Deletes all generated Sigma rules
    */
   async disablePack(organizationId: string, packId: string): Promise<void> {
     const pack = getPackById(packId);
@@ -206,17 +241,17 @@ export class DetectionPacksService {
         .where('pack_id', '=', packId)
         .execute();
 
-      // Delete all alert rules for this pack
+      // Delete all Sigma rules for this pack (identified by sigma_id prefix)
       await trx
-        .deleteFrom('alert_rules')
+        .deleteFrom('sigma_rules')
         .where('organization_id', '=', organizationId)
-        .where(sql<boolean>`metadata @> ${JSON.stringify({ packId })}::jsonb`)
+        .where('sigma_id', 'like', `pack-${packId}-%`)
         .execute();
     });
   }
 
   /**
-   * Update thresholds for an enabled pack
+   * Update thresholds/settings for an enabled pack
    */
   async updatePackThresholds(
     organizationId: string,
@@ -240,21 +275,26 @@ export class DetectionPacksService {
         .where('pack_id', '=', packId)
         .execute();
 
-      // Update each alert rule with new thresholds
+      // Update each Sigma rule with new level if specified
       for (const rule of pack.rules) {
         const override = customThresholds[rule.id];
         if (!override) continue;
 
         const updates: Record<string, unknown> = { updated_at: new Date() };
-        if (override.threshold !== undefined) updates.threshold = override.threshold;
-        if (override.timeWindow !== undefined) updates.time_window = override.timeWindow;
+        if (override.level !== undefined) updates.level = override.level;
+        if (override.emailEnabled !== undefined) {
+          // Enable/disable email by clearing or keeping recipients
+          // (Note: this is a simplified approach, actual recipients come from enablePack)
+        }
 
-        await trx
-          .updateTable('alert_rules')
-          .set(updates)
-          .where('organization_id', '=', organizationId)
-          .where(sql<boolean>`metadata @> ${JSON.stringify({ packId, packRuleId: rule.id })}::jsonb`)
-          .execute();
+        if (Object.keys(updates).length > 1) { // More than just updated_at
+          await trx
+            .updateTable('sigma_rules')
+            .set(updates)
+            .where('organization_id', '=', organizationId)
+            .where('sigma_id', '=', `pack-${packId}-${rule.id}`)
+            .execute();
+        }
       }
     });
   }

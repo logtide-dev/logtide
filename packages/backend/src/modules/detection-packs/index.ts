@@ -9,5 +9,8 @@ export type {
   PackCategory,
   ThresholdMap,
   ThresholdOverride,
-  LogLevel,
+  SigmaLevel,
+  SigmaStatus,
+  SigmaLogsource,
+  SigmaDetection,
 } from './types.js';

@@ -8,8 +8,9 @@ import { OrganizationsService } from '../organizations/service.js';
 const organizationsService = new OrganizationsService();
 
 const thresholdOverrideSchema = z.object({
-  threshold: z.number().int().min(1).optional(),
-  timeWindow: z.number().int().min(1).optional(),
+  level: z.enum(['informational', 'low', 'medium', 'high', 'critical']).optional(),
+  emailEnabled: z.boolean().optional(),
+  webhookEnabled: z.boolean().optional(),
 });
 
 const enablePackSchema = z.object({

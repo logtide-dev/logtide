@@ -102,8 +102,8 @@
 				<h2 class="text-2xl font-bold tracking-tight">Detection Packs</h2>
 			</div>
 			<p class="text-muted-foreground">
-				Pre-configured alert bundles for common production scenarios.
-				Enable a pack to instantly add battle-tested monitoring to your logs.
+				Pre-configured Sigma rule bundles for common production scenarios.
+				Enable a pack to instantly add battle-tested SIEM detection to your logs.
 			</p>
 		</div>
 	</div>

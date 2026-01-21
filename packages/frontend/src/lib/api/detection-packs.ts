@@ -1,16 +1,30 @@
 import { getApiUrl } from '$lib/config';
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'critical';
+export type SigmaLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
+export type SigmaStatus = 'experimental' | 'test' | 'stable' | 'deprecated' | 'unsupported';
 export type PackCategory = 'reliability' | 'security' | 'database' | 'business';
+
+export interface SigmaLogsource {
+  product?: string;
+  service?: string;
+  category?: string;
+}
+
+export interface SigmaDetection {
+  condition: string;
+  [key: string]: unknown;
+}
 
 export interface DetectionPackRule {
   id: string;
   name: string;
   description: string;
-  service: string | null;
-  level: LogLevel[];
-  threshold: number;
-  timeWindow: number;
+  logsource: SigmaLogsource;
+  detection: SigmaDetection;
+  level: SigmaLevel;
+  status: SigmaStatus;
+  tags?: string[];
+  references?: string[];
 }
 
 export interface DetectionPack {
@@ -20,11 +34,14 @@ export interface DetectionPack {
   category: PackCategory;
   icon: string;
   rules: DetectionPackRule[];
+  author?: string;
+  version?: string;
 }
 
 export interface ThresholdOverride {
-  threshold?: number;
-  timeWindow?: number;
+  level?: SigmaLevel;
+  emailEnabled?: boolean;
+  webhookEnabled?: boolean;
 }
 
 export type ThresholdMap = Record<string, ThresholdOverride>;
