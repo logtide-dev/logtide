@@ -32,7 +32,6 @@
   import LogOut from "@lucide/svelte/icons/log-out";
   import Menu from "@lucide/svelte/icons/menu";
   import Shield from "@lucide/svelte/icons/shield";
-  import Package from "@lucide/svelte/icons/package";
   import Book from "@lucide/svelte/icons/book";
   import Github from "@lucide/svelte/icons/github";
   import X from "@lucide/svelte/icons/x";
@@ -219,12 +218,6 @@
       badge: { id: 'traces-feature', type: 'new', showUntil: '2025-03-01' }
     },
     { label: "Alerts", href: "/dashboard/alerts", icon: AlertTriangle },
-    {
-      label: "Detection Packs",
-      href: "/dashboard/detection-packs",
-      icon: Package,
-      badge: { id: 'detection-packs-feature', type: 'new', showUntil: '2026-03-01' }
-    },
     {
       label: "Errors",
       href: "/dashboard/errors",
