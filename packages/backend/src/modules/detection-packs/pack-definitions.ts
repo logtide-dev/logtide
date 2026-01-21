@@ -19,8 +19,7 @@ const startupReliabilityPack: DetectionPack = {
       name: 'High Error Rate Detection',
       description: 'Detects application errors and exceptions in logs.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -38,8 +37,7 @@ const startupReliabilityPack: DetectionPack = {
       name: 'Critical System Errors',
       description: 'Alerts on critical-level errors that require immediate attention.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -56,8 +54,7 @@ const startupReliabilityPack: DetectionPack = {
       name: 'Out of Memory Detection',
       description: 'Detects out-of-memory errors and memory exhaustion patterns.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -75,8 +72,7 @@ const startupReliabilityPack: DetectionPack = {
       name: 'Unhandled Exceptions',
       description: 'Detects unhandled exceptions and uncaught errors.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -93,8 +89,7 @@ const startupReliabilityPack: DetectionPack = {
       name: 'Service Crash Detection',
       description: 'Detects service crashes and unexpected terminations.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -129,8 +124,7 @@ const authSecurityPack: DetectionPack = {
       name: 'Failed Login Attempts',
       description: 'Detects failed authentication attempts indicating potential brute force attacks.',
       logsource: {
-        product: 'application',
-        category: 'authentication',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -148,8 +142,7 @@ const authSecurityPack: DetectionPack = {
       name: 'Brute Force Attack Detection',
       description: 'Detects rapid repeated authentication failures from same source.',
       logsource: {
-        product: 'application',
-        category: 'authentication',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -167,8 +160,7 @@ const authSecurityPack: DetectionPack = {
       name: 'Suspicious User Agent',
       description: 'Detects requests with suspicious or automated user agents.',
       logsource: {
-        product: 'webserver',
-        category: 'webserver',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -186,8 +178,7 @@ const authSecurityPack: DetectionPack = {
       name: 'Privilege Escalation Attempt',
       description: 'Monitors for unauthorized access attempts to admin or elevated resources.',
       logsource: {
-        product: 'application',
-        category: 'authentication',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -205,8 +196,7 @@ const authSecurityPack: DetectionPack = {
       name: 'Session Hijacking Detection',
       description: 'Detects potential session hijacking or token theft.',
       logsource: {
-        product: 'application',
-        category: 'authentication',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -241,8 +231,7 @@ const databaseHealthPack: DetectionPack = {
       name: 'Slow Query Detection',
       description: 'Detects database queries exceeding performance thresholds.',
       logsource: {
-        product: 'database',
-        category: 'database',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -260,8 +249,7 @@ const databaseHealthPack: DetectionPack = {
       name: 'Connection Pool Exhaustion',
       description: 'Monitors connection pool exhaustion and timeout warnings.',
       logsource: {
-        product: 'database',
-        category: 'database',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -278,8 +266,7 @@ const databaseHealthPack: DetectionPack = {
       name: 'Database Deadlock Detection',
       description: 'Alerts on database deadlock occurrences.',
       logsource: {
-        product: 'database',
-        category: 'database',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -296,8 +283,7 @@ const databaseHealthPack: DetectionPack = {
       name: 'Replication Issues',
       description: 'Monitors database replication lag and sync issues.',
       logsource: {
-        product: 'database',
-        category: 'database',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -314,8 +300,7 @@ const databaseHealthPack: DetectionPack = {
       name: 'SQL Injection Attempt',
       description: 'Detects potential SQL injection attack patterns.',
       logsource: {
-        product: 'database',
-        category: 'database',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -350,8 +335,7 @@ const paymentBillingPack: DetectionPack = {
       name: 'Payment Failure Detection',
       description: 'Monitors payment processing failures and transaction errors.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -368,8 +352,7 @@ const paymentBillingPack: DetectionPack = {
       name: 'Payment Webhook Failure',
       description: 'Detects failed webhook deliveries from payment providers.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -386,8 +369,7 @@ const paymentBillingPack: DetectionPack = {
       name: 'Fraud Indicator Detection',
       description: 'Detects potential fraudulent transaction patterns.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -405,8 +387,7 @@ const paymentBillingPack: DetectionPack = {
       name: 'Chargeback/Refund Activity',
       description: 'Monitors chargebacks and refund requests.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
@@ -423,8 +404,7 @@ const paymentBillingPack: DetectionPack = {
       name: 'Payment Gateway Errors',
       description: 'Detects payment gateway connectivity and processing errors.',
       logsource: {
-        product: 'application',
-        category: 'application',
+        product: 'any',
       },
       detection: {
         condition: 'selection',
