@@ -28,6 +28,7 @@ import { onboardingRoutes } from './modules/onboarding/index.js';
 import { exceptionsRoutes } from './modules/exceptions/index.js';
 import { settingsRoutes, publicSettingsRoutes, settingsService } from './modules/settings/index.js';
 import { retentionRoutes } from './modules/retention/index.js';
+import { correlationRoutes, patternRoutes } from './modules/correlation/index.js';
 import { bootstrapService } from './modules/bootstrap/index.js';
 import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
@@ -164,6 +165,12 @@ export async function build(opts = {}) {
   // Register log management routes (require API key)
   await fastify.register(ingestionRoutes);
   await fastify.register(queryRoutes);
+
+  // Register event correlation routes (require API key)
+  await fastify.register(correlationRoutes, { prefix: '/api' });
+
+  // Register identifier pattern management routes (require session auth)
+  await fastify.register(patternRoutes, { prefix: '/api' });
 
   // Register OTLP routes (OpenTelemetry Protocol - require API key)
   await fastify.register(otlpRoutes);

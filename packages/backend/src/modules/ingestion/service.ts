@@ -4,6 +4,7 @@ import { createQueue } from '../../queue/connection.js';
 import type { LogEntry } from '../sigma/detection-engine.js';
 import { CacheManager } from '../../utils/cache.js';
 import { notificationPublisher } from '../streaming/index.js';
+import { correlationService, type IdentifierMatch } from '../correlation/service.js';
 
 export class IngestionService {
   /**
@@ -12,6 +13,31 @@ export class IngestionService {
   async ingestLogs(logs: LogInput[], projectId: string): Promise<number> {
     if (logs.length === 0) {
       return 0;
+    }
+
+    // Get project to find organization_id for custom patterns
+    const project = await db
+      .selectFrom('projects')
+      .select(['organization_id'])
+      .where('id', '=', projectId)
+      .executeTakeFirst();
+
+    const organizationId = project?.organization_id;
+
+    // Extract identifiers from logs before insertion (using org-specific patterns)
+    const identifiersByLog = new Map<number, IdentifierMatch[]>();
+    for (let i = 0; i < logs.length; i++) {
+      try {
+        const identifiers = organizationId
+          ? await correlationService.extractIdentifiersAsync(logs[i], organizationId)
+          : correlationService.extractIdentifiers(logs[i]);
+        if (identifiers.length > 0) {
+          identifiersByLog.set(i, identifiers);
+        }
+      } catch (err) {
+        // Don't fail ingestion if identifier extraction fails
+        console.warn('[Ingestion] Failed to extract identifiers from log:', err);
+      }
     }
 
     // Convert logs to database format
@@ -32,6 +58,13 @@ export class IngestionService {
       .values(dbLogs)
       .returningAll()
       .execute();
+
+    // Store extracted identifiers (async, non-blocking)
+    if (identifiersByLog.size > 0) {
+      this.storeIdentifiers(insertedLogs, identifiersByLog, projectId).catch((err) => {
+        console.error('[Ingestion] Failed to store identifiers:', err);
+      });
+    }
 
     // Trigger Sigma detection (async, non-blocking) with log IDs
     this.triggerSigmaDetection(logs, insertedLogs, projectId).catch((err) => {
@@ -56,6 +89,47 @@ export class IngestionService {
     });
 
     return logs.length;
+  }
+
+  /**
+   * Store extracted identifiers for logs
+   */
+  private async storeIdentifiers(
+    insertedLogs: any[],
+    identifiersByLog: Map<number, IdentifierMatch[]>,
+    projectId: string
+  ): Promise<void> {
+    try {
+      // Get project to find organization_id
+      const project = await db
+        .selectFrom('projects')
+        .select(['organization_id'])
+        .where('id', '=', projectId)
+        .executeTakeFirst();
+
+      if (!project) {
+        console.warn(`[Ingestion] Project not found for storing identifiers: ${projectId}`);
+        return;
+      }
+
+      const logsWithContext = insertedLogs.map((log) => ({
+        id: log.id,
+        time: log.time,
+        projectId: projectId,
+        organizationId: project.organization_id,
+      }));
+
+      await correlationService.storeIdentifiers(logsWithContext, identifiersByLog);
+
+      const totalIdentifiers = Array.from(identifiersByLog.values()).reduce(
+        (sum, ids) => sum + ids.length,
+        0
+      );
+      console.log(`[Ingestion] Stored ${totalIdentifiers} identifiers for ${identifiersByLog.size} logs`);
+    } catch (error) {
+      console.error('[Ingestion] Error storing identifiers:', error);
+      // Don't throw - ingestion should succeed even if identifier storage fails
+    }
   }
 
   /**

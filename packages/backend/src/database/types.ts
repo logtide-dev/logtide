@@ -476,6 +476,36 @@ export interface DetectionPackActivationsTable {
   updated_at: Generated<Timestamp>;
 }
 
+// ============================================================================
+// LOG IDENTIFIERS TABLE (Event Correlation)
+// ============================================================================
+
+export interface LogIdentifiersTable {
+  id: Generated<string>;
+  log_id: string;
+  log_time: Timestamp;
+  project_id: string;
+  organization_id: string;
+  identifier_type: string;
+  identifier_value: string;
+  source_field: string;
+  created_at: Generated<Timestamp>;
+}
+
+export interface IdentifierPatternsTable {
+  id: Generated<string>;
+  organization_id: string;
+  name: string;
+  display_name: string;
+  description: string | null;
+  pattern: string;
+  field_names: string[];
+  enabled: Generated<boolean>;
+  priority: Generated<number>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -513,4 +543,7 @@ export interface Database {
   system_settings: SystemSettingsTable;
   // Detection packs
   detection_pack_activations: DetectionPackActivationsTable;
+  // Event correlation
+  log_identifiers: LogIdentifiersTable;
+  identifier_patterns: IdentifierPatternsTable;
 }
