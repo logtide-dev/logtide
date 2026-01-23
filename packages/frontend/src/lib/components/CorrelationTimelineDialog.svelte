@@ -209,9 +209,12 @@
 
     <Dialog.Footer class="border-t pt-4">
       <div class="flex items-center justify-between w-full">
-        <span class="text-xs text-muted-foreground">
-          Click any event to view its full context
-        </span>
+        <a
+          href="/dashboard/settings/patterns"
+          class="text-sm text-primary hover:underline"
+        >
+          Configure custom patterns
+        </a>
         <Button variant="outline" onclick={onClose}>Close</Button>
       </div>
     </Dialog.Footer>

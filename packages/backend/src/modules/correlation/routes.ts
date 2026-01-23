@@ -34,10 +34,10 @@ interface BatchIdentifiersBody {
 /**
  * Verify that the requesting user has access to the project
  * For API key auth: projectId is already validated by auth plugin
- * For session auth: verify org membership
+ * For session auth: verify org membership via user_id
  */
 async function verifyProjectAccess(
-  request: { projectId?: string; organizationId?: string },
+  request: { projectId?: string; user?: { id: string } },
   projectId: string
 ): Promise<boolean> {
   // If request already has projectId from API key auth, it's pre-validated
@@ -45,15 +45,17 @@ async function verifyProjectAccess(
     return true;
   }
 
-  // For session-based auth, verify the project belongs to user's org
-  if (request.organizationId) {
-    const project = await db
+  // For session-based auth, verify the user is a member of the project's org
+  if (request.user?.id) {
+    const result = await db
       .selectFrom('projects')
-      .select(['organization_id'])
-      .where('id', '=', projectId)
+      .innerJoin('organization_members', 'projects.organization_id', 'organization_members.organization_id')
+      .select(['projects.id'])
+      .where('projects.id', '=', projectId)
+      .where('organization_members.user_id', '=', request.user.id)
       .executeTakeFirst();
 
-    return project?.organization_id === request.organizationId;
+    return !!result;
   }
 
   return false;

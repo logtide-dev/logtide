@@ -26,25 +26,25 @@
   function getTypeColor(type: string): string {
     switch (type) {
       case 'request_id':
-        return 'bg-blue-100 text-blue-800 hover:bg-blue-200';
+        return 'bg-blue-500/20 text-blue-700 dark:text-blue-300 hover:bg-blue-500/30 border border-blue-500/30';
       case 'user_id':
-        return 'bg-green-100 text-green-800 hover:bg-green-200';
+        return 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/30';
       case 'session_id':
-        return 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200';
+        return 'bg-amber-500/20 text-amber-700 dark:text-amber-300 hover:bg-amber-500/30 border border-amber-500/30';
       case 'transaction_id':
-        return 'bg-orange-100 text-orange-800 hover:bg-orange-200';
+        return 'bg-orange-500/20 text-orange-700 dark:text-orange-300 hover:bg-orange-500/30 border border-orange-500/30';
       case 'order_id':
-        return 'bg-pink-100 text-pink-800 hover:bg-pink-200';
+        return 'bg-rose-500/20 text-rose-700 dark:text-rose-300 hover:bg-rose-500/30 border border-rose-500/30';
       case 'correlation_id':
-        return 'bg-purple-100 text-purple-800 hover:bg-purple-200';
+        return 'bg-violet-500/20 text-violet-700 dark:text-violet-300 hover:bg-violet-500/30 border border-violet-500/30';
       case 'trace_id':
-        return 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200';
+        return 'bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30';
       case 'span_id':
-        return 'bg-cyan-100 text-cyan-800 hover:bg-cyan-200';
+        return 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/30 border border-cyan-500/30';
       case 'uuid':
-        return 'bg-gray-100 text-gray-800 hover:bg-gray-200';
+        return 'bg-slate-500/20 text-slate-700 dark:text-slate-300 hover:bg-slate-500/30 border border-slate-500/30';
       default:
-        return 'bg-slate-100 text-slate-800 hover:bg-slate-200';
+        return 'bg-zinc-500/20 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-500/30 border border-zinc-500/30';
     }
   }
 </script>

@@ -45,6 +45,7 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import SearchIcon from "@lucide/svelte/icons/search";
   import Radio from "@lucide/svelte/icons/radio";
+  import Settings2 from "@lucide/svelte/icons/settings-2";
 
   interface LogEntry {
     id?: string;
@@ -550,33 +551,51 @@
     selectedIdentifierValue = "";
   }
 
+  // Track which log IDs are currently being loaded to prevent duplicate requests
+  let loadingLogIds = new Set<string>();
+
   async function loadIdentifiersForLogs(logIds: string[]) {
     if (logIds.length === 0) return;
 
-    // Filter out already loaded identifiers
-    const toLoad = logIds.filter((id) => !logIdentifiers.has(id));
+    // Filter out already loaded AND currently loading identifiers
+    const toLoad = logIds.filter((id) => !logIdentifiers.has(id) && !loadingLogIds.has(id));
     if (toLoad.length === 0) return;
 
+    // Mark as loading
+    toLoad.forEach(id => loadingLogIds.add(id));
+
+    console.log("[Correlation] Loading identifiers for", toLoad.length, "logs");
     loadingIdentifiers = true;
     try {
       const result = await correlationAPI.getLogIdentifiersBatch(toLoad);
+      console.log("[Correlation] Got result:", Object.keys(result).length, "logs with identifiers");
       const newMap = new Map(logIdentifiers);
       for (const [logId, identifiers] of Object.entries(result)) {
         newMap.set(logId, identifiers);
       }
+      // Also mark logs with no identifiers as loaded (empty array)
+      for (const id of toLoad) {
+        if (!newMap.has(id)) {
+          newMap.set(id, []);
+        }
+      }
       logIdentifiers = newMap;
     } catch (e) {
-      console.error("Failed to load identifiers:", e);
+      console.error("[Correlation] Failed to load identifiers:", e);
     } finally {
+      // Remove from loading set
+      toLoad.forEach(id => loadingLogIds.delete(id));
       loadingIdentifiers = false;
     }
   }
 
-  // Load identifiers when logs change
+  // Load identifiers when logs change - use untrack to prevent infinite loop
   $effect(() => {
-    if (logs.length > 0) {
-      const logIds = logs.map((log) => log.id).filter((id): id is string => !!id);
-      loadIdentifiersForLogs(logIds);
+    const currentLogs = logs; // Track only logs
+    if (currentLogs.length > 0) {
+      const logIds = currentLogs.map((log) => log.id).filter((id): id is string => !!id);
+      // Use setTimeout to break out of reactive context
+      setTimeout(() => loadIdentifiersForLogs(logIds), 0);
     }
   });
 
@@ -1192,7 +1211,7 @@
                             {#if log.id && logIdentifiers.has(log.id) && (logIdentifiers.get(log.id)?.length ?? 0) > 0}
                               <div>
                                 <span class="font-semibold">Identifiers:</span>
-                                <div class="flex flex-wrap gap-2 mt-2">
+                                <div class="flex flex-wrap items-center gap-2 mt-2">
                                   {#each logIdentifiers.get(log.id) ?? [] as identifier}
                                     <IdentifierBadge
                                       type={identifier.type}
@@ -1200,6 +1219,13 @@
                                       onclick={() => openCorrelationDialog(log, identifier.type, identifier.value)}
                                     />
                                   {/each}
+                                  <a
+                                    href="/dashboard/settings/patterns"
+                                    class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-dashed border-muted-foreground/50 text-muted-foreground hover:text-foreground hover:border-foreground/50 transition-colors"
+                                  >
+                                    <Settings2 class="w-3 h-3" />
+                                    <span>Configure</span>
+                                  </a>
                                 </div>
                               </div>
                             {/if}
