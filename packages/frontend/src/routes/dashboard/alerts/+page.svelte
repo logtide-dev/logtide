@@ -41,9 +41,11 @@
 	import SigmaRulesList from "$lib/components/SigmaRulesList.svelte";
 	import SigmaRuleDetailsDialog from "$lib/components/SigmaRuleDetailsDialog.svelte";
 	import SigmaSyncDialog from "$lib/components/SigmaSyncDialog.svelte";
+	import DetectionPacksGalleryDialog from "$lib/components/DetectionPacksGalleryDialog.svelte";
 	import Spinner from "$lib/components/Spinner.svelte";
 	import Bell from "@lucide/svelte/icons/bell";
 	import Plus from "@lucide/svelte/icons/plus";
+	import Package from "@lucide/svelte/icons/package";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
 	import Clock from "@lucide/svelte/icons/clock";
 	import Mail from "@lucide/svelte/icons/mail";
@@ -68,6 +70,7 @@
 	let showSigmaDetails = $state(false);
 	let showSyncDialog = $state(false);
 	let showDeleteDialog = $state(false);
+	let showPacksDialog = $state(false);
 	let alertToDelete = $state<string | null>(null);
 	let expandedHistoryLogs = $state<Map<string, any[]>>(new Map());
 	let loadingHistoryLogs = $state<Set<string>>(new Set());
@@ -305,14 +308,25 @@
 						notification history
 					</p>
 				</div>
-				<Button
-					onclick={() => (showCreateDialog = true)}
-					size="lg"
-					class="gap-2"
-				>
-					<Plus class="w-5 h-5" />
-					Create Alert Rule
-				</Button>
+				<div class="flex gap-2">
+					<Button
+						onclick={() => (showPacksDialog = true)}
+						size="lg"
+						variant="outline"
+						class="gap-2"
+					>
+						<Package class="w-5 h-5" />
+						Detection Packs
+					</Button>
+					<Button
+						onclick={() => (showCreateDialog = true)}
+						size="lg"
+						class="gap-2"
+					>
+						<Plus class="w-5 h-5" />
+						Create Alert Rule
+					</Button>
+				</div>
 			</div>
 
 			<Tabs value="rules" class="space-y-4">
@@ -1001,6 +1015,14 @@
 
 			<SigmaSyncDialog
 				bind:open={showSyncDialog}
+				organizationId={$currentOrganization.id}
+				onSuccess={() => {
+					loadAlertRules();
+				}}
+			/>
+
+			<DetectionPacksGalleryDialog
+				bind:open={showPacksDialog}
 				organizationId={$currentOrganization.id}
 				onSuccess={() => {
 					loadAlertRules();

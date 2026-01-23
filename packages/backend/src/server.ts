@@ -9,6 +9,7 @@ import authPlugin from './modules/auth/plugin.js';
 import { ingestionRoutes } from './modules/ingestion/index.js';
 import { queryRoutes } from './modules/query/index.js';
 import { alertsRoutes } from './modules/alerts/index.js';
+import { detectionPacksRoutes } from './modules/detection-packs/index.js';
 import { usersRoutes } from './modules/users/routes.js';
 import { projectsRoutes } from './modules/projects/routes.js';
 import { organizationsRoutes } from './modules/organizations/routes.js';
@@ -126,6 +127,9 @@ export async function build(opts = {}) {
 
   // Alerts routes (session-based auth)
   await fastify.register(alertsRoutes, { prefix: '/api/v1/alerts' });
+
+  // Detection packs routes (session-based auth)
+  await fastify.register(detectionPacksRoutes, { prefix: '/api/v1/detection-packs' });
 
   // Sigma rules routes (session-based auth)
   await fastify.register(sigmaRoutes);

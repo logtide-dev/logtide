@@ -457,6 +457,25 @@ export interface SystemSettingsTable {
   updated_by: string | null;
 }
 
+// ============================================================================
+// DETECTION PACKS TABLE
+// ============================================================================
+
+// Type for custom thresholds in detection packs (Sigma-based)
+type SigmaLevelOverride = 'informational' | 'low' | 'medium' | 'high' | 'critical';
+type PackThresholdOverride = { level?: SigmaLevelOverride; emailEnabled?: boolean; webhookEnabled?: boolean };
+type PackThresholdMap = Record<string, PackThresholdOverride> | null;
+
+export interface DetectionPackActivationsTable {
+  id: Generated<string>;
+  organization_id: string;
+  pack_id: string;
+  enabled: Generated<boolean>;
+  custom_thresholds: ColumnType<PackThresholdMap, PackThresholdMap, PackThresholdMap>;
+  activated_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -492,4 +511,6 @@ export interface Database {
   oidc_states: OidcStatesTable;
   // System settings
   system_settings: SystemSettingsTable;
+  // Detection packs
+  detection_pack_activations: DetectionPackActivationsTable;
 }
