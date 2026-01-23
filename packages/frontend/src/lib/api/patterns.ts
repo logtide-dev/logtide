@@ -60,7 +60,16 @@ export interface PatternTestResult {
 
 class PatternsAPI {
   private getToken(): string | null {
-    return sessionStorage.getItem('logtide_token');
+    try {
+      const stored = localStorage.getItem('logtide_auth');
+      if (stored) {
+        const data = JSON.parse(stored);
+        return data.token || null;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   }
 
   private async fetch<T>(url: string, options: RequestInit = {}): Promise<T> {
