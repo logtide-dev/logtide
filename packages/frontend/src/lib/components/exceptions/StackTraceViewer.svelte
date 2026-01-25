@@ -4,6 +4,7 @@
 	import StackFrameCard from './StackFrameCard.svelte';
 	import LanguageBadge from './shared/LanguageBadge.svelte';
 	import type { ExceptionWithFrames } from '$lib/api/exceptions';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import Layers from '@lucide/svelte/icons/layers';
 	import Copy from '@lucide/svelte/icons/copy';
@@ -44,12 +45,10 @@
 	const appCodeCount = $derived(exception.frames.filter((f) => f.isAppCode).length);
 
 	async function copyStackTrace() {
-		try {
-			await navigator.clipboard.writeText(exception.exception.rawStackTrace);
+		const success = await copyToClipboard(exception.exception.rawStackTrace);
+		if (success) {
 			copied = true;
 			setTimeout(() => (copied = false), 2000);
-		} catch (err) {
-			console.error('Failed to copy:', err);
 		}
 	}
 </script>

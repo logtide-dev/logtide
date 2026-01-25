@@ -15,6 +15,7 @@
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
   import { getApiUrl } from '$lib/config';
   import { onMount } from 'svelte';
+  import { copyToClipboard } from '$lib/utils/clipboard';
 
   let isLoading = $state(false);
   let apiUrlValue = $state('http://localhost:8080');
@@ -64,21 +65,21 @@
   async function copyApiKey() {
     if (!apiKey) return;
 
-    try {
-      await navigator.clipboard.writeText(apiKey);
+    const success = await copyToClipboard(apiKey);
+    if (success) {
       copied = true;
       setTimeout(() => copied = false, 2000);
-    } catch (e) {
-      console.error('Failed to copy:', e);
+    } else {
+      toastStore.error('Could not copy. Please select and copy manually.');
     }
   }
 
   async function copyCode(code: string) {
-    try {
-      await navigator.clipboard.writeText(code);
+    const success = await copyToClipboard(code);
+    if (success) {
       toastStore.success('Code copied!');
-    } catch (e) {
-      console.error('Failed to copy:', e);
+    } else {
+      toastStore.error('Could not copy. Please select and copy manually.');
     }
   }
 

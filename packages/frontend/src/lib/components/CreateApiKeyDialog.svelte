@@ -9,6 +9,7 @@
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import { checklistStore } from '$lib/stores/checklist';
+  import { copyToClipboard } from '$lib/utils/clipboard';
 
   interface Props {
     onSubmit: (data: { name: string }) => Promise<{ apiKey: string; message: string }>;
@@ -46,14 +47,15 @@
   async function handleCopy() {
     if (!generatedApiKey) return;
 
-    try {
-      await navigator.clipboard.writeText(generatedApiKey);
+    const success = await copyToClipboard(generatedApiKey);
+
+    if (success) {
       copied = true;
       setTimeout(() => {
         copied = false;
       }, 2000);
-    } catch (e) {
-      console.error('Failed to copy:', e);
+    } else {
+      error = 'Could not copy to clipboard. Please select the key and copy manually (Ctrl+C / Cmd+C).';
     }
   }
 

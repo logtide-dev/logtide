@@ -4,6 +4,7 @@
 	import * as AlertDialog from '$lib/components/ui/alert-dialog';
 	import { deleteIncident, type Incident } from '$lib/api/siem';
 	import { toastStore } from '$lib/stores/toast';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { goto } from '$app/navigation';
 	import MoreVertical from '@lucide/svelte/icons/more-vertical';
 	import FileDown from '@lucide/svelte/icons/file-down';
@@ -38,9 +39,13 @@
 		}
 	}
 
-	function copyIncidentId() {
-		navigator.clipboard.writeText(incident.id);
-		toastStore.success('Incident ID copied to clipboard');
+	async function copyIncidentId() {
+		const success = await copyToClipboard(incident.id);
+		if (success) {
+			toastStore.success('Incident ID copied to clipboard');
+		} else {
+			toastStore.error('Could not copy. Please select and copy manually.');
+		}
 	}
 
 	function viewInLogs() {

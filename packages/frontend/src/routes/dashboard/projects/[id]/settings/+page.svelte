@@ -6,6 +6,7 @@
 	import { projectsAPI } from '$lib/api/projects';
 	import { apiKeysAPI, type ApiKey } from '$lib/api/api-keys';
 	import { toastStore } from '$lib/stores/toast';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import Card from '$lib/components/ui/card/card.svelte';
 	import CardHeader from '$lib/components/ui/card/card-header.svelte';
 	import CardTitle from '$lib/components/ui/card/card-title.svelte';
@@ -242,9 +243,13 @@
 						<Input value={project.id} readonly class="font-mono text-sm" />
 						<Button
 							variant="outline"
-							onclick={() => {
-								navigator.clipboard.writeText(project.id);
-								toastStore.success('Project ID copied to clipboard');
+							onclick={async () => {
+								const success = await copyToClipboard(project.id);
+								if (success) {
+									toastStore.success('Project ID copied to clipboard');
+								} else {
+									toastStore.error('Could not copy. Please select and copy manually.');
+								}
 							}}
 						>
 							Copy

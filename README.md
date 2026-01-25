@@ -16,7 +16,7 @@
   <a href="https://codecov.io/gh/logtide-dev/logtide"><img src="https://codecov.io/gh/logtide-dev/logtide/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://hub.docker.com/r/logtide/backend"><img src="https://img.shields.io/docker/v/logtide/backend?label=docker&logo=docker" alt="Docker"></a>
   <a href="https://artifacthub.io/packages/helm/logtide/logtide"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logtide" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-0.4.1-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.4.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Status">
   <img src="https://img.shields.io/badge/cloud-free_during_alpha-success.svg" alt="Free Cloud">
@@ -136,7 +136,7 @@ Total control over your data. **No build required** - uses pre-built images from
 
 **Docker Images:** [Docker Hub](https://hub.docker.com/r/logtide/backend) | [GitHub Container Registry](https://github.com/logtide-dev/logtide/pkgs/container/logtide-backend)
 
-> **Production:** Pin versions with `LOGTIDE_BACKEND_IMAGE=logtide/backend:0.4.1` in your `.env` file.
+> **Production:** Pin versions with `LOGTIDE_BACKEND_IMAGE=logtide/backend:0.4.2` in your `.env` file.
 
 > **ARM64 / Raspberry Pi:** LogTide images support `linux/amd64` and `linux/arm64`. For Fluent Bit on ARM64, set `FLUENT_BIT_IMAGE=cr.fluentbit.io/fluent/fluent-bit:4.2.2` in your `.env` file.
 

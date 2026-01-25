@@ -4,6 +4,7 @@
   import * as Tabs from '$lib/components/ui/tabs';
   import { getApiUrl } from '$lib/config';
   import { toastStore } from '$lib/stores/toast';
+  import { copyToClipboard } from '$lib/utils/clipboard';
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import Key from '@lucide/svelte/icons/key';
   import Book from '@lucide/svelte/icons/book';
@@ -78,11 +79,11 @@ otel.SetTracerProvider(tp)`
   });
 
   async function copyCode(code: string) {
-    try {
-      await navigator.clipboard.writeText(code);
+    const success = await copyToClipboard(code);
+    if (success) {
       toastStore.success('Code copied!');
-    } catch (e) {
-      console.error('Failed to copy:', e);
+    } else {
+      toastStore.error('Could not copy. Please select and copy manually.');
     }
   }
 </script>

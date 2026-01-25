@@ -16,6 +16,7 @@
 		type ExceptionWithFrames,
 	} from '$lib/api/exceptions';
 	import { toastStore } from '$lib/stores/toast';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
@@ -136,12 +137,12 @@
 
 	async function copyFingerprint() {
 		if (!group) return;
-		try {
-			await navigator.clipboard.writeText(group.fingerprint);
+		const success = await copyToClipboard(group.fingerprint);
+		if (success) {
 			copied = true;
 			setTimeout(() => (copied = false), 2000);
-		} catch (e) {
-			toastStore.error('Failed to copy');
+		} else {
+			toastStore.error('Could not copy. Please select and copy manually.');
 		}
 	}
 

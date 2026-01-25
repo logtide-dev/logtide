@@ -1,6 +1,21 @@
 # LogTide Docker Compose Configuration
-# Basic usage: docker compose up -d
-# With Docker log collection: docker compose --profile logging up -d
+#
+# Quick Start (basic):
+#   docker compose up -d
+#
+# With Docker log collection (requires additional config files):
+#   # Download fluent-bit config files first:
+#   curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/fluent-bit.conf
+#   curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/parsers.conf
+#   curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/extract_container_id.lua
+#   curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/map_syslog_level.lua
+#   curl -O https://raw.githubusercontent.com/logtide-dev/logtide/main/docker/wrap_logs.lua
+#   # Then start with logging profile:
+#   docker compose --profile logging up -d
+#
+# IMPORTANT: Check .env configuration before starting!
+# - API_KEY_SECRET must be at least 32 characters
+# - DB_PASSWORD, REDIS_PASSWORD should be secure values
 
 services:
   postgres:

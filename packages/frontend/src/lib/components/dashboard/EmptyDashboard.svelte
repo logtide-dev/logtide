@@ -3,6 +3,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import * as Tabs from '$lib/components/ui/tabs';
   import { getApiUrl } from '$lib/config';
+  import { copyToClipboard } from '$lib/utils/clipboard';
   import Rocket from '@lucide/svelte/icons/rocket';
   import Key from '@lucide/svelte/icons/key';
   import Book from '@lucide/svelte/icons/book';
@@ -60,11 +61,11 @@ const exporter = new OTLPLogExporter({
   });
 
   async function copyCode(code: string) {
-    try {
-      await navigator.clipboard.writeText(code);
+    const success = await copyToClipboard(code);
+    if (success) {
       toastStore.success('Code copied!');
-    } catch (e) {
-      console.error('Failed to copy:', e);
+    } else {
+      toastStore.error('Could not copy. Please select and copy manually.');
     }
   }
 

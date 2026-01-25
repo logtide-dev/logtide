@@ -3,6 +3,7 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { tracesAPI, type TraceRecord, type SpanRecord } from "$lib/api/traces";
+  import { copyToClipboard } from "$lib/utils/clipboard";
   import Button from "$lib/components/ui/button/button.svelte";
   import {
     Card,
@@ -188,10 +189,12 @@
     return Math.max((span.duration_ms / traceDuration) * 100, 0.5);
   }
 
-  function copyTraceId() {
-    navigator.clipboard.writeText(traceId);
-    copiedTraceId = true;
-    setTimeout(() => copiedTraceId = false, 2000);
+  async function copyTraceId() {
+    const success = await copyToClipboard(traceId);
+    if (success) {
+      copiedTraceId = true;
+      setTimeout(() => copiedTraceId = false, 2000);
+    }
   }
 
   function getKindLabel(kind: string | null): string {
