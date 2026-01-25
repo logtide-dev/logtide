@@ -30,20 +30,20 @@
 	function getSuggestionStyle(severity: PreviewSuggestion["severity"]) {
 		switch (severity) {
 			case "warning":
-				return "bg-orange-50 border-orange-200 text-orange-800";
+				return "bg-orange-50 border-orange-200 text-orange-800 dark:bg-orange-950 dark:border-orange-800 dark:text-orange-200";
 			case "info":
 			default:
-				return "bg-blue-50 border-blue-200 text-blue-800";
+				return "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950 dark:border-blue-800 dark:text-blue-200";
 		}
 	}
 
 	function getIconStyle(severity: PreviewSuggestion["severity"]) {
 		switch (severity) {
 			case "warning":
-				return "text-orange-500";
+				return "text-orange-500 dark:text-orange-400";
 			case "info":
 			default:
-				return "text-blue-500";
+				return "text-blue-500 dark:text-blue-400";
 		}
 	}
 </script>
