@@ -45,7 +45,6 @@ export class NotificationsAPI {
       throw new Error(error.error || `HTTP ${response.status}`);
     }
 
-    // Handle 204 No Content responses
     if (response.status === 204) {
       return undefined as T;
     }
@@ -53,9 +52,6 @@ export class NotificationsAPI {
     return response.json();
   }
 
-  /**
-   * Get all notifications for current user
-   */
   async getNotifications(options?: {
     unreadOnly?: boolean;
     limit?: number;
@@ -70,9 +66,6 @@ export class NotificationsAPI {
     return this.request(`/notifications${queryString ? `?${queryString}` : ''}`);
   }
 
-  /**
-   * Mark notification as read
-   */
   async markAsRead(notificationId: string): Promise<void> {
     await this.request(`/notifications/${notificationId}/read`, {
       method: 'PUT',
@@ -80,9 +73,6 @@ export class NotificationsAPI {
     });
   }
 
-  /**
-   * Mark all notifications as read
-   */
   async markAllAsRead(): Promise<void> {
     await this.request('/notifications/read-all', {
       method: 'PUT',
@@ -90,18 +80,12 @@ export class NotificationsAPI {
     });
   }
 
-  /**
-   * Delete a notification
-   */
   async deleteNotification(notificationId: string): Promise<void> {
     await this.request(`/notifications/${notificationId}`, {
       method: 'DELETE',
     });
   }
 
-  /**
-   * Delete all notifications
-   */
   async deleteAllNotifications(): Promise<void> {
     await this.request('/notifications/all', {
       method: 'DELETE',

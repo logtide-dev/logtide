@@ -1,4 +1,5 @@
 import { getApiUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export interface AlertRule {
   id: string;
@@ -234,18 +235,4 @@ export class AlertsAPI {
   }
 }
 
-// Singleton instance
-export const alertsAPI = new AlertsAPI(() => {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token;
-      }
-    } catch (e) {
-      console.error('Failed to get token:', e);
-    }
-  }
-  return null;
-});
+export const alertsAPI = new AlertsAPI(getAuthToken);

@@ -1,5 +1,6 @@
 import type { Organization, OrganizationWithRole, OrganizationMemberWithUser, OrgRole } from '@logtide/shared';
 import { getApiBaseUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export interface CreateOrganizationInput {
   name: string;
@@ -34,7 +35,6 @@ export class OrganizationsAPI {
       throw new Error(error.error || `HTTP ${response.status}`);
     }
 
-    // Handle 204 No Content responses (like DELETE)
     if (response.status === 204) {
       return undefined as T;
     }
@@ -42,30 +42,18 @@ export class OrganizationsAPI {
     return response.json();
   }
 
-  /**
-   * Get all organizations for the current user
-   */
   async getOrganizations(): Promise<{ organizations: OrganizationWithRole[] }> {
     return this.request('/organizations');
   }
 
-  /**
-   * Get an organization by ID
-   */
   async getOrganization(id: string): Promise<{ organization: OrganizationWithRole }> {
     return this.request(`/organizations/${id}`);
   }
 
-  /**
-   * Get an organization by slug
-   */
   async getOrganizationBySlug(slug: string): Promise<{ organization: OrganizationWithRole }> {
     return this.request(`/organizations/slug/${slug}`);
   }
 
-  /**
-   * Create a new organization
-   */
   async createOrganization(input: CreateOrganizationInput): Promise<{ organization: Organization }> {
     return this.request('/organizations', {
       method: 'POST',
@@ -73,9 +61,6 @@ export class OrganizationsAPI {
     });
   }
 
-  /**
-   * Update an organization
-   */
   async updateOrganization(
     id: string,
     input: UpdateOrganizationInput
@@ -86,9 +71,6 @@ export class OrganizationsAPI {
     });
   }
 
-  /**
-   * Get organization members with user details
-   */
   async getOrganizationMembers(id: string): Promise<{ members: OrganizationMemberWithUser[] }> {
     const result = await this.request<{ members: any[] }>(`/organizations/${id}/members`);
     return {
@@ -99,9 +81,6 @@ export class OrganizationsAPI {
     };
   }
 
-  /**
-   * Update a member's role
-   */
   async updateMemberRole(
     organizationId: string,
     memberId: string,
@@ -113,27 +92,18 @@ export class OrganizationsAPI {
     });
   }
 
-  /**
-   * Remove a member from the organization
-   */
   async removeMember(organizationId: string, memberId: string): Promise<void> {
     await this.request(`/organizations/${organizationId}/members/${memberId}`, {
       method: 'DELETE',
     });
   }
 
-  /**
-   * Leave an organization (self-removal)
-   */
   async leaveOrganization(organizationId: string): Promise<void> {
     await this.request(`/organizations/${organizationId}/leave`, {
       method: 'POST',
     });
   }
 
-  /**
-   * Delete an organization
-   */
   async deleteOrganization(id: string): Promise<void> {
     await this.request(`/organizations/${id}`, {
       method: 'DELETE',
@@ -141,18 +111,4 @@ export class OrganizationsAPI {
   }
 }
 
-// Singleton instance
-export const organizationsAPI = new OrganizationsAPI(() => {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token;
-      }
-    } catch (e) {
-      console.error('Failed to get token:', e);
-    }
-  }
-  return null;
-});
+export const organizationsAPI = new OrganizationsAPI(getAuthToken);

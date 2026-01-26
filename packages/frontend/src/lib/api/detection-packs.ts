@@ -1,4 +1,5 @@
 import { getApiUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export type SigmaLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
 export type SigmaStatus = 'experimental' | 'test' | 'stable' | 'deprecated' | 'unsupported';
@@ -96,16 +97,10 @@ export class DetectionPacksAPI {
     return response.json();
   }
 
-  /**
-   * List all available detection packs with status for organization
-   */
   async listPacks(organizationId: string): Promise<{ packs: DetectionPackWithStatus[] }> {
     return this.request(`/api/v1/detection-packs?organizationId=${organizationId}`);
   }
 
-  /**
-   * Get single pack details with status
-   */
   async getPack(
     packId: string,
     organizationId: string
@@ -113,9 +108,6 @@ export class DetectionPacksAPI {
     return this.request(`/api/v1/detection-packs/${packId}?organizationId=${organizationId}`);
   }
 
-  /**
-   * Enable a detection pack
-   */
   async enablePack(
     packId: string,
     input: EnablePackInput
@@ -126,9 +118,6 @@ export class DetectionPacksAPI {
     });
   }
 
-  /**
-   * Disable a detection pack
-   */
   async disablePack(packId: string, organizationId: string): Promise<void> {
     return this.request(
       `/api/v1/detection-packs/${packId}/disable?organizationId=${organizationId}`,
@@ -136,9 +125,6 @@ export class DetectionPacksAPI {
     );
   }
 
-  /**
-   * Update thresholds for an enabled pack
-   */
   async updateThresholds(
     packId: string,
     input: UpdateThresholdsInput
@@ -150,18 +136,4 @@ export class DetectionPacksAPI {
   }
 }
 
-// Singleton instance
-export const detectionPacksAPI = new DetectionPacksAPI(() => {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token;
-      }
-    } catch (e) {
-      console.error('Failed to get token:', e);
-    }
-  }
-  return null;
-});
+export const detectionPacksAPI = new DetectionPacksAPI(getAuthToken);

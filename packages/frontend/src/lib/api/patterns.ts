@@ -1,10 +1,5 @@
-/**
- * Identifier Patterns API Client
- *
- * Handles pattern management API calls for custom identifier patterns
- */
-
 import { getApiBaseUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export interface IdentifierPattern {
   id?: string;
@@ -59,21 +54,8 @@ export interface PatternTestResult {
 }
 
 class PatternsAPI {
-  private getToken(): string | null {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token || null;
-      }
-    } catch {
-      // ignore
-    }
-    return null;
-  }
-
   private async fetch<T>(url: string, options: RequestInit = {}): Promise<T> {
-    const token = this.getToken();
+    const token = getAuthToken();
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -93,27 +75,18 @@ class PatternsAPI {
     return response.json();
   }
 
-  /**
-   * Get all patterns for the organization (custom + defaults)
-   */
   async listPatterns(): Promise<PatternListResponse> {
     const url = `${getApiBaseUrl()}/patterns`;
     const response = await this.fetch<{ success: boolean; data: PatternListResponse }>(url);
     return response.data;
   }
 
-  /**
-   * Get default patterns only
-   */
   async getDefaultPatterns(): Promise<DefaultPattern[]> {
     const url = `${getApiBaseUrl()}/patterns/defaults`;
     const response = await this.fetch<{ success: boolean; data: DefaultPattern[] }>(url);
     return response.data;
   }
 
-  /**
-   * Create a new custom pattern
-   */
   async createPattern(input: CreatePatternInput): Promise<IdentifierPattern> {
     const url = `${getApiBaseUrl()}/patterns`;
     const response = await this.fetch<{ success: boolean; data: IdentifierPattern }>(url, {
@@ -123,9 +96,6 @@ class PatternsAPI {
     return response.data;
   }
 
-  /**
-   * Update a pattern
-   */
   async updatePattern(id: string, input: UpdatePatternInput): Promise<IdentifierPattern> {
     const url = `${getApiBaseUrl()}/patterns/${id}`;
     const response = await this.fetch<{ success: boolean; data: IdentifierPattern }>(url, {
@@ -135,9 +105,6 @@ class PatternsAPI {
     return response.data;
   }
 
-  /**
-   * Delete a pattern
-   */
   async deletePattern(id: string): Promise<void> {
     const url = `${getApiBaseUrl()}/patterns/${id}`;
     await this.fetch<{ success: boolean }>(url, {
@@ -145,9 +112,6 @@ class PatternsAPI {
     });
   }
 
-  /**
-   * Test a pattern against sample text
-   */
   async testPattern(pattern: string, text: string): Promise<PatternTestResult> {
     const url = `${getApiBaseUrl()}/patterns/test`;
     const response = await this.fetch<{ success: boolean; data: PatternTestResult }>(url, {

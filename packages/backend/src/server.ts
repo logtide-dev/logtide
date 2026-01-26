@@ -42,23 +42,16 @@ const HOST = config.HOST;
 export async function build(opts = {}) {
   const fastify = Fastify({
     logger: true,
-    bodyLimit: 10 * 1024 * 1024, // 10MB for large OTLP batches
-    // Trust proxy headers when behind reverse proxy (Traefik, nginx, etc.)
-    // This ensures rate limiting uses real client IP, not proxy IP
+    bodyLimit: 10 * 1024 * 1024,
     trustProxy: config.TRUST_PROXY,
     ...opts,
   });
 
-  // CORS configuration
-  // Allow all origins to support browser-based SDK usage
-  // Security is provided by API key authentication for ingestion routes
-  // and session authentication for dashboard/UI routes
   await fastify.register(cors, {
-    origin: true, // Allow all origins (API key + session auth provide security)
-    credentials: true, // Allow cookies/credentials for SSE
+    origin: true,
+    credentials: true,
   });
 
-  // Security headers
   await fastify.register(helmet, {
     contentSecurityPolicy: {
       directives: {
@@ -68,11 +61,9 @@ export async function build(opts = {}) {
         imgSrc: ["'self'", "data:", "https:"],
       }
     },
-    crossOriginEmbedderPolicy: false, // Allow embedding for SSE
+    crossOriginEmbedderPolicy: false,
   });
 
-  // Rate limiting
-  // Uses Redis for horizontal scaling when available, otherwise in-memory
   if (isRedisConfigured() && connection) {
     await fastify.register(rateLimit, {
       max: config.RATE_LIMIT_MAX,
@@ -90,10 +81,8 @@ export async function build(opts = {}) {
     console.log('[RateLimit] Using in-memory store (single instance only)');
   }
 
-  // Internal logging plugin (logs all requests except ingestion endpoints)
   await fastify.register(internalLoggingPlugin);
 
-  // Health check (no auth required)
   fastify.get('/health', async () => {
     return {
       status: 'ok',
@@ -102,84 +91,36 @@ export async function build(opts = {}) {
     };
   });
 
-  // User authentication routes (no API key required)
   await fastify.register(usersRoutes, { prefix: '/api/v1/auth' });
-
-  // External authentication routes (OIDC, LDAP)
   await fastify.register(publicAuthRoutes, { prefix: '/api/v1/auth' });
-  await fastify.register(publicSettingsRoutes, { prefix: '/api/v1/auth' }); // Public auth config endpoint
+  await fastify.register(publicSettingsRoutes, { prefix: '/api/v1/auth' });
   await fastify.register(authenticatedAuthRoutes, { prefix: '/api/v1/auth' });
   await fastify.register(adminAuthRoutes, { prefix: '/api/v1/admin/auth' });
-
-  // Organizations routes (session-based auth)
   await fastify.register(organizationsRoutes, { prefix: '/api/v1/organizations' });
-
-  // Invitations routes (session-based auth, some public endpoints)
   await fastify.register(invitationsRoutes, { prefix: '/api/v1/invitations' });
-
-  // Projects routes (session-based auth)
   await fastify.register(projectsRoutes, { prefix: '/api/v1/projects' });
-
-  // Notifications routes (session-based auth)
   await fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
-
-  // Onboarding routes (session-based auth)
   await fastify.register(onboardingRoutes, { prefix: '/api/v1/onboarding' });
-
-  // Alerts routes (session-based auth)
   await fastify.register(alertsRoutes, { prefix: '/api/v1/alerts' });
-
-  // Detection packs routes (session-based auth)
   await fastify.register(detectionPacksRoutes, { prefix: '/api/v1/detection-packs' });
-
-  // Sigma rules routes (session-based auth)
   await fastify.register(sigmaRoutes);
-
-  // SIEM routes (session-based auth)
   await fastify.register(siemRoutes);
-
-  // SIEM SSE routes for real-time updates (session-based auth)
   await fastify.register(registerSiemSseRoutes);
-
-  // Exception tracking routes (session-based auth)
   await fastify.register(exceptionsRoutes);
-
-  // API keys management routes (session-based auth)
   await fastify.register(apiKeysRoutes, { prefix: '/api/v1/projects' });
-
-  // Dashboard routes (session-based auth)
   await fastify.register(dashboardRoutes);
-
-  // Admin routes (session-based auth + admin middleware)
   await fastify.register(adminRoutes, { prefix: '/api/v1/admin' });
-
-  // Admin settings routes (session-based auth + admin middleware)
   await fastify.register(settingsRoutes, { prefix: '/api/v1/admin/settings' });
-
-  // Retention routes (session-based auth + admin middleware)
   await fastify.register(retentionRoutes, { prefix: '/api/v1/admin' });
 
-  // Register API key auth plugin (applies to log ingestion/query routes below)
   await fastify.register(authPlugin);
-
-  // Register log management routes (require API key)
   await fastify.register(ingestionRoutes);
   await fastify.register(queryRoutes);
-
-  // Register event correlation routes (require API key)
   await fastify.register(correlationRoutes, { prefix: '/api' });
-
-  // Register identifier pattern management routes (require session auth)
   await fastify.register(patternRoutes, { prefix: '/api' });
-
-  // Register OTLP routes (OpenTelemetry Protocol - require API key)
   await fastify.register(otlpRoutes);
   await fastify.register(otlpTraceRoutes);
-
-  // Register traces API routes (require API key or session auth)
   await fastify.register(tracesRoutes);
-
-  // Register WebSocket support
   await fastify.register(websocketPlugin);
   await fastify.register(websocketRoutes);
 
@@ -187,21 +128,11 @@ export async function build(opts = {}) {
 }
 
 async function start() {
-
-  // Run initial bootstrap first (creates initial admin from env vars if no users exist)
-  // This must run before internal logging so the admin can be owner of internal org
   await bootstrapService.runInitialBootstrap();
-
-  // Initialize internal logging (uses existing admin or creates system user)
   await initializeInternalLogging();
-
-  // Initialize enrichment services (GeoLite2 database, etc.)
   await enrichmentService.initialize();
-
-  // Initialize notification manager for live tail (PostgreSQL LISTEN/NOTIFY)
   await notificationManager.initialize(config.DATABASE_URL);
 
-  // Check auth mode and bootstrap if auth-free mode is enabled
   const authMode = await settingsService.getAuthMode();
   if (authMode === 'none') {
     console.log('[Auth] Auth-free mode detected, ensuring default setup...');
@@ -210,7 +141,6 @@ async function start() {
 
   const app = await build();
 
-  // Graceful shutdown handlers
   const shutdown = async () => {
     console.log('[Server] Shutting down gracefully...');
     await notificationManager.shutdown();

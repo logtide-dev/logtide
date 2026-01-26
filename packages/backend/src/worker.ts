@@ -69,7 +69,7 @@ alertWorker.on('completed', (job) => {
 });
 
 alertWorker.on('failed', (job, err) => {
-  console.error(`❌ Job ${job?.id} failed:`, err);
+  console.error(`Job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -93,7 +93,7 @@ sigmaWorker.on('completed', (job) => {
 });
 
 sigmaWorker.on('failed', (job, err) => {
-  console.error(`❌ Sigma detection job ${job?.id} failed:`, err);
+  console.error(`Sigma detection job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -115,7 +115,7 @@ autoGroupWorker.on('completed', (job) => {
 });
 
 autoGroupWorker.on('failed', (job, err) => {
-  console.error(`❌ Incident auto-grouping job ${job?.id} failed:`, err);
+  console.error(`Incident auto-grouping job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -137,7 +137,7 @@ invitationWorker.on('completed', (job) => {
 });
 
 invitationWorker.on('failed', (job, err) => {
-  console.error(`❌ Invitation email job ${job?.id} failed:`, err);
+  console.error(`Invitation email job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -160,7 +160,7 @@ incidentNotificationWorker.on('completed', (job) => {
 });
 
 incidentNotificationWorker.on('failed', (job, err) => {
-  console.error(`❌ Incident notification job ${job?.id} failed:`, err);
+  console.error(`Incident notification job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -183,7 +183,7 @@ exceptionWorker.on('completed', (job) => {
 });
 
 exceptionWorker.on('failed', (job, err) => {
-  console.error(`❌ Exception parsing job ${job?.id} failed:`, err);
+  console.error(`Exception parsing job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -207,7 +207,7 @@ errorNotificationWorker.on('completed', (job) => {
 });
 
 errorNotificationWorker.on('failed', (job, err) => {
-  console.error(`❌ Error notification job ${job?.id} failed:`, err);
+  console.error(`Error notification job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -226,7 +226,7 @@ let isCheckingAlerts = false;
 async function checkAlerts() {
   // CRITICAL: Skip if already checking (prevent race condition)
   if (isCheckingAlerts) {
-    console.warn('⚠️  Alert check already in progress, skipping...');
+    console.warn('Alert check already in progress, skipping...');
     return;
   }
 
@@ -302,7 +302,7 @@ let isAutoGrouping = false;
 async function runAutoGrouping() {
   // Skip if already running
   if (isAutoGrouping) {
-    console.warn('⚠️  Auto-grouping already in progress, skipping...');
+    console.warn('Auto-grouping already in progress, skipping...');
     return;
   }
 
@@ -348,14 +348,14 @@ async function updateEnrichmentDatabases() {
     const results = await enrichmentService.updateDatabasesIfNeeded();
 
     if (results.geoLite2) {
-      console.log('✅ GeoLite2 database updated');
+      console.log('[Worker] GeoLite2 database updated');
       if (logger) {
         logger.info('worker-geolite2-updated', 'GeoLite2 database updated successfully');
       }
     }
 
     if (results.ipsum) {
-      console.log('✅ IPsum database updated');
+      console.log('[Worker] IPsum database updated');
       if (logger) {
         logger.info('worker-ipsum-updated', 'IPsum database updated successfully');
       }
@@ -385,7 +385,7 @@ let isRunningRetentionCleanup = false;
 async function runRetentionCleanup() {
   // Skip if already running
   if (isRunningRetentionCleanup) {
-    console.warn('⚠️  Retention cleanup already in progress, skipping...');
+    console.warn('Retention cleanup already in progress, skipping...');
     return;
   }
 
@@ -394,11 +394,11 @@ async function runRetentionCleanup() {
   const startTime = Date.now();
 
   try {
-    console.log('🗑️  Starting retention cleanup...');
+    console.log('[Worker] Starting retention cleanup...');
     const summary = await retentionService.executeRetentionForAllOrganizations();
     const duration = Date.now() - startTime;
 
-    console.log(`✅ Retention cleanup completed: ${summary.totalLogsDeleted} logs deleted from ${summary.successfulOrganizations}/${summary.totalOrganizations} orgs in ${duration}ms`);
+    console.log(`[Worker] Retention cleanup completed: ${summary.totalLogsDeleted} logs deleted from ${summary.successfulOrganizations}/${summary.totalOrganizations} orgs in ${duration}ms`);
 
     if (logger) {
       logger.info('worker-retention-completed', 'Retention cleanup completed', {
@@ -412,7 +412,7 @@ async function runRetentionCleanup() {
 
     // Log any failures
     for (const result of summary.results.filter(r => r.error)) {
-      console.error(`❌ Retention failed for org ${result.organizationName}: ${result.error}`);
+      console.error(`Retention failed for org ${result.organizationName}: ${result.error}`);
       if (logger) {
         logger.error('worker-retention-org-failed', `Retention failed for org ${result.organizationName}`, {
           organizationId: result.organizationId,
@@ -422,7 +422,7 @@ async function runRetentionCleanup() {
       }
     }
   } catch (error) {
-    console.error('❌ Retention cleanup failed:', error);
+    console.error('Retention cleanup failed:', error);
 
     if (logger) {
       logger.error('worker-retention-failed', `Retention cleanup failed: ${(error as Error).message}`, {
@@ -453,7 +453,7 @@ function scheduleNextRetentionCleanup() {
   const msUntilNext = getMillisecondsUntil2AM();
   const nextRunTime = new Date(Date.now() + msUntilNext);
 
-  console.log(`📅 Next retention cleanup scheduled for ${nextRunTime.toLocaleString()}`);
+  console.log(`[Worker] Next retention cleanup scheduled for ${nextRunTime.toLocaleString()}`);
 
   setTimeout(() => {
     runRetentionCleanup();
@@ -470,7 +470,7 @@ setTimeout(runRetentionCleanup, 2 * 60 * 1000);
 
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {
-  console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
+  console.log(`Received ${signal}, shutting down gracefully...`);
 
   try {
     // Stop accepting new jobs
@@ -481,24 +481,24 @@ async function gracefulShutdown(signal: string) {
     await incidentNotificationWorker.close();
     await exceptionWorker.close();
     await errorNotificationWorker.close();
-    console.log('✅ Workers closed');
+    console.log('[Worker] Workers closed');
 
     // Close queue system (Redis/PostgreSQL connections)
     await shutdownQueueSystem();
-    console.log('✅ Queue system closed');
+    console.log('[Worker] Queue system closed');
 
     // Close internal logging
     await shutdownInternalLogging();
-    console.log('✅ Internal logging closed');
+    console.log('[Worker] Internal logging closed');
 
     // Close database pool - CRITICAL: prevents connection leaks
     const { closeDatabase } = await import('./database/connection.js');
     await closeDatabase();
-    console.log('✅ Database pool closed');
+    console.log('[Worker] Database pool closed');
 
     process.exit(0);
   } catch (error) {
-    console.error('❌ Error during shutdown:', error);
+    console.error('Error during shutdown:', error);
     process.exit(1);
   }
 }

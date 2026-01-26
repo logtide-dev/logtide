@@ -1,10 +1,5 @@
-/**
- * Correlation API Client
- *
- * Handles event correlation API calls for the correlation feature
- */
-
 import { getApiBaseUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export interface IdentifierMatch {
   type: string;
@@ -45,21 +40,8 @@ export interface CorrelationParams {
 }
 
 class CorrelationAPI {
-  private getToken(): string | null {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token || null;
-      }
-    } catch {
-      // ignore
-    }
-    return null;
-  }
-
   private async fetch<T>(url: string, options: RequestInit = {}): Promise<T> {
-    const token = this.getToken();
+    const token = getAuthToken();
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -79,9 +61,6 @@ class CorrelationAPI {
     return response.json();
   }
 
-  /**
-   * Get correlated logs by identifier value
-   */
   async getCorrelatedLogs(params: CorrelationParams): Promise<CorrelationResult> {
     const queryParams = new URLSearchParams({
       projectId: params.projectId,
@@ -103,18 +82,12 @@ class CorrelationAPI {
     return response.data;
   }
 
-  /**
-   * Get identifiers for a specific log
-   */
   async getLogIdentifiers(logId: string): Promise<IdentifierMatch[]> {
     const url = `${getApiBaseUrl()}/logs/${logId}/identifiers`;
     const response = await this.fetch<{ success: boolean; data: { identifiers: IdentifierMatch[] } }>(url);
     return response.data.identifiers;
   }
 
-  /**
-   * Get identifiers for multiple logs (batch)
-   */
   async getLogIdentifiersBatch(logIds: string[]): Promise<Record<string, IdentifierMatch[]>> {
     if (logIds.length === 0) {
       return {};

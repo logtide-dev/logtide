@@ -1,8 +1,5 @@
 import { getApiUrl } from '$lib/config';
-
-// ============================================================================
-// TYPES
-// ============================================================================
+import { getAuthToken } from '$lib/utils/auth';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'informational';
 export type IncidentStatus = 'open' | 'investigating' | 'resolved' | 'false_positive';
@@ -178,37 +175,13 @@ export interface GeoIpData {
     source: 'MaxMind' | 'manual';
 }
 
-// ============================================================================
-// API CLIENT
-// ============================================================================
-
-/**
- * Get auth token from localStorage
- */
-function getToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    try {
-        const stored = localStorage.getItem('logtide_auth');
-        if (stored) {
-            const data = JSON.parse(stored);
-            return data.token;
-        }
-    } catch (e) {
-        console.error('Failed to get token:', e);
-    }
-    return null;
-}
-
-/**
- * Get SIEM dashboard statistics
- */
 export async function getDashboardStats(params: {
     organizationId: string;
     projectId?: string;
     timeRange: '24h' | '7d' | '30d';
     severity?: Severity[];
 }): Promise<DashboardStats> {
-    const token = getToken();
+    const token = getAuthToken();
     const searchParams = new URLSearchParams({
         organizationId: params.organizationId,
         timeRange: params.timeRange,
@@ -236,11 +209,8 @@ export async function getDashboardStats(params: {
     return response.json();
 }
 
-/**
- * Create a new incident
- */
 export async function createIncident(params: CreateIncidentParams): Promise<Incident> {
-    const token = getToken();
+    const token = getAuthToken();
 
     const response = await fetch(`${getApiUrl()}/api/v1/siem/incidents`, {
         method: 'POST',
@@ -259,11 +229,8 @@ export async function createIncident(params: CreateIncidentParams): Promise<Inci
     return response.json();
 }
 
-/**
- * List incidents
- */
 export async function listIncidents(filters: IncidentFilters): Promise<{ incidents: Incident[] }> {
-    const token = getToken();
+    const token = getAuthToken();
     const searchParams = new URLSearchParams({
         organizationId: filters.organizationId,
     });
@@ -314,9 +281,6 @@ export async function listIncidents(filters: IncidentFilters): Promise<{ inciden
     return response.json();
 }
 
-/**
- * Get incident by ID (with detections, comments, history)
- */
 export async function getIncident(
     incidentId: string,
     organizationId: string
@@ -326,7 +290,7 @@ export async function getIncident(
     comments: IncidentComment[];
     history: IncidentHistoryEntry[];
 }> {
-    const token = getToken();
+    const token = getAuthToken();
     const searchParams = new URLSearchParams({ organizationId });
 
     const response = await fetch(
@@ -346,14 +310,11 @@ export async function getIncident(
     return response.json();
 }
 
-/**
- * Update an incident
- */
 export async function updateIncident(
     incidentId: string,
     params: UpdateIncidentParams
 ): Promise<Incident> {
-    const token = getToken();
+    const token = getAuthToken();
 
     const response = await fetch(`${getApiUrl()}/api/v1/siem/incidents/${incidentId}`, {
         method: 'PATCH',
@@ -372,11 +333,8 @@ export async function updateIncident(
     return response.json();
 }
 
-/**
- * Delete an incident
- */
 export async function deleteIncident(incidentId: string, organizationId: string): Promise<void> {
-    const token = getToken();
+    const token = getAuthToken();
     const searchParams = new URLSearchParams({ organizationId });
 
     const response = await fetch(
@@ -395,15 +353,12 @@ export async function deleteIncident(incidentId: string, organizationId: string)
     }
 }
 
-/**
- * Add a comment to an incident
- */
 export async function addIncidentComment(
     incidentId: string,
     organizationId: string,
     comment: string
 ): Promise<IncidentComment> {
-    const token = getToken();
+    const token = getAuthToken();
 
     const response = await fetch(`${getApiUrl()}/api/v1/siem/incidents/${incidentId}/comments`, {
         method: 'POST',
@@ -422,11 +377,8 @@ export async function addIncidentComment(
     return response.json();
 }
 
-/**
- * Check IP reputation
- */
 export async function checkIpReputation(ip: string): Promise<IpReputationData> {
-    const token = getToken();
+    const token = getAuthToken();
 
     const response = await fetch(`${getApiUrl()}/api/v1/siem/enrichment/ip-reputation`, {
         method: 'POST',
@@ -445,11 +397,8 @@ export async function checkIpReputation(ip: string): Promise<IpReputationData> {
     return response.json();
 }
 
-/**
- * Get GeoIP data
- */
 export async function getGeoIpData(ip: string): Promise<GeoIpData> {
-    const token = getToken();
+    const token = getAuthToken();
 
     const response = await fetch(`${getApiUrl()}/api/v1/siem/enrichment/geoip`, {
         method: 'POST',
@@ -468,14 +417,11 @@ export async function getGeoIpData(ip: string): Promise<GeoIpData> {
     return response.json();
 }
 
-/**
- * Check enrichment services status
- */
 export async function getEnrichmentStatus(): Promise<{
     ipReputation: boolean;
     geoIp: boolean;
 }> {
-    const token = getToken();
+    const token = getAuthToken();
 
     const response = await fetch(`${getApiUrl()}/api/v1/siem/enrichment/status`, {
         headers: {
@@ -491,16 +437,13 @@ export async function getEnrichmentStatus(): Promise<{
     return response.json();
 }
 
-/**
- * Get recent detection events
- */
 export async function getRecentDetections(params: {
     organizationId: string;
     projectId?: string;
     limit?: number;
     offset?: number;
 }): Promise<{ detections: DetectionEvent[] }> {
-    const token = getToken();
+    const token = getAuthToken();
     const searchParams = new URLSearchParams({
         organizationId: params.organizationId,
     });

@@ -1,5 +1,6 @@
 import type { PendingInvitation, OrgRole } from '@logtide/shared';
 import { getApiBaseUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export interface InviteUserInput {
   email: string;
@@ -60,9 +61,6 @@ export class InvitationsAPI {
     return response.json();
   }
 
-  /**
-   * Get invitation preview by token (public, no auth required)
-   */
   async getInvitationByToken(token: string): Promise<InvitationPreview> {
     const result = await this.request<any>(`/invitations/token/${token}`);
     return {
@@ -71,9 +69,6 @@ export class InvitationsAPI {
     };
   }
 
-  /**
-   * Accept an invitation (requires auth)
-   */
   async acceptInvitation(token: string): Promise<AcceptInvitationResult> {
     return this.request('/invitations/accept', {
       method: 'POST',
@@ -81,9 +76,6 @@ export class InvitationsAPI {
     });
   }
 
-  /**
-   * Invite a user to an organization
-   */
   async inviteUser(organizationId: string, input: InviteUserInput): Promise<InviteResult> {
     return this.request(`/invitations/${organizationId}/invite`, {
       method: 'POST',
@@ -91,9 +83,6 @@ export class InvitationsAPI {
     });
   }
 
-  /**
-   * Get pending invitations for an organization
-   */
   async getPendingInvitations(organizationId: string): Promise<{ invitations: PendingInvitation[] }> {
     const result = await this.request<{ invitations: any[] }>(`/invitations/${organizationId}/invitations`);
     return {
@@ -105,18 +94,12 @@ export class InvitationsAPI {
     };
   }
 
-  /**
-   * Revoke a pending invitation
-   */
   async revokeInvitation(organizationId: string, invitationId: string): Promise<void> {
     await this.request(`/invitations/${organizationId}/invitations/${invitationId}`, {
       method: 'DELETE',
     });
   }
 
-  /**
-   * Resend an invitation email
-   */
   async resendInvitation(organizationId: string, invitationId: string): Promise<{ success: boolean; message: string }> {
     return this.request(`/invitations/${organizationId}/invitations/${invitationId}/resend`, {
       method: 'POST',
@@ -124,18 +107,4 @@ export class InvitationsAPI {
   }
 }
 
-// Singleton instance
-export const invitationsAPI = new InvitationsAPI(() => {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token;
-      }
-    } catch (e) {
-      console.error('Failed to get token:', e);
-    }
-  }
-  return null;
-});
+export const invitationsAPI = new InvitationsAPI(getAuthToken);
