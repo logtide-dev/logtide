@@ -38,6 +38,7 @@
   import ExportLogsDialog from "$lib/components/ExportLogsDialog.svelte";
   import { correlationAPI, type IdentifierMatch, type CorrelatedLog } from "$lib/api/correlation";
   import EmptyLogs from "$lib/components/EmptyLogs.svelte";
+  import TerminalLogView from "$lib/components/TerminalLogView.svelte";
   import TimeRangePicker, { type TimeRangeType } from "$lib/components/TimeRangePicker.svelte";
   import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
   import Download from "@lucide/svelte/icons/download";
@@ -47,6 +48,8 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import Radio from "@lucide/svelte/icons/radio";
   import Settings2 from "@lucide/svelte/icons/settings-2";
+  import SquareTerminal from "@lucide/svelte/icons/square-terminal";
+  import Table2 from "@lucide/svelte/icons/table-2";
 
   interface LogEntry {
     id?: string;
@@ -75,6 +78,7 @@
   let selectedLevels = $state<string[]>([]);
   let liveTail = $state(false);
   let liveTailConnectionKey = $state<string | null>(null);
+  let viewMode = $state<"table" | "terminal">("table");
 
   let projectsAPI = $derived(new ProjectsAPI(() => token));
 
@@ -152,6 +156,12 @@
     const savedSearchMode = sessionStorage.getItem("logtide_search_mode");
     if (savedSearchMode === "fulltext" || savedSearchMode === "substring") {
       searchMode = savedSearchMode;
+    }
+
+    // Restore view mode preference from session storage
+    const savedViewMode = sessionStorage.getItem("logtide_view_mode");
+    if (savedViewMode === "table" || savedViewMode === "terminal") {
+      viewMode = savedViewMode;
     }
 
     if ($currentOrganization) {
@@ -1097,14 +1107,54 @@
                 No logs
               {/if}
             </CardTitle>
-            {#if liveTail}
-              <Badge variant="default">Live</Badge>
-            {/if}
+            <div class="flex items-center gap-2">
+              <div class="inline-flex rounded-md border border-input bg-background" role="group" aria-label="View mode">
+                <Button
+                  variant={viewMode === "table" ? "secondary" : "ghost"}
+                  size="sm"
+                  onclick={() => {
+                    viewMode = "table";
+                    sessionStorage.setItem("logtide_view_mode", "table");
+                  }}
+                  class="rounded-r-none border-r gap-1.5"
+                  title="Table view"
+                  aria-label="Table view"
+                  aria-pressed={viewMode === "table"}
+                >
+                  <Table2 class="w-4 h-4" />
+                  <span class="hidden sm:inline">Table</span>
+                </Button>
+                <Button
+                  variant={viewMode === "terminal" ? "secondary" : "ghost"}
+                  size="sm"
+                  onclick={() => {
+                    viewMode = "terminal";
+                    sessionStorage.setItem("logtide_view_mode", "terminal");
+                  }}
+                  class="rounded-l-none gap-1.5"
+                  title="Terminal view"
+                  aria-label="Terminal view"
+                  aria-pressed={viewMode === "terminal"}
+                >
+                  <SquareTerminal class="w-4 h-4" />
+                  <span class="hidden sm:inline">Terminal</span>
+                </Button>
+              </div>
+              {#if liveTail}
+                <Badge variant="default">Live</Badge>
+              {/if}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           {#if paginatedLogs.length === 0}
             <EmptyLogs />
+          {:else if viewMode === "terminal"}
+            <TerminalLogView
+              logs={paginatedLogs}
+              isLiveTail={liveTail}
+              maxHeight="600px"
+            />
           {:else}
             <div class="rounded-md border overflow-x-auto">
               <Table class="w-full">

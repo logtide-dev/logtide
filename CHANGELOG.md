@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Terminal Log View**: Alternative terminal-style visualization for logs
+  - Toggle between Table and Terminal views in the search page
+  - Monospace font with ANSI-style color coding by log level
+  - Format: `[timestamp] [LEVEL] [service] message`
+  - Full light/dark mode support
+  - Auto-scroll with Live Tail integration
+  - Text selectable for easy copy/paste
+  - View preference persisted in session storage
+  - Accessible with ARIA attributes for screen readers
+
 - **Detection Packs**: Pre-configured Sigma rule bundles for common use cases (#88)
   - Gallery dialog to browse and enable detection packs
   - One-click deployment of curated security rules

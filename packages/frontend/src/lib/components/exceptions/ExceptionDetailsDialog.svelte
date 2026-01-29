@@ -9,7 +9,7 @@
 	import Copy from '@lucide/svelte/icons/copy';
 	import Check from '@lucide/svelte/icons/check';
 	import { goto } from '$app/navigation';
-	import { copyToClipboard } from '$lib/utils';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 
 	interface Props {
 		open: boolean;
