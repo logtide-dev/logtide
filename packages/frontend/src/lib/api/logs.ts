@@ -1,10 +1,11 @@
 import { getApiBaseUrl, getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import type { LogLevel } from '@logtide/shared';
 
 interface LogEntry {
   time: string;
   service: string;
-  level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  level: LogLevel;
   message: string;
   metadata?: Record<string, any>;
   traceId?: string;

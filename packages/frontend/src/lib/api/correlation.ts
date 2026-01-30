@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import type { LogLevel } from '@logtide/shared';
 
 export interface IdentifierMatch {
   type: string;
@@ -11,7 +12,7 @@ export interface CorrelatedLog {
   id: string;
   time: string;
   service: string;
-  level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  level: LogLevel;
   message: string;
   metadata: Record<string, unknown> | null;
   traceId: string | null;

@@ -1,5 +1,6 @@
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import type { LogLevel } from '@logtide/shared';
 
 export interface AlertRule {
   id: string;
@@ -8,7 +9,7 @@ export interface AlertRule {
   name: string;
   enabled: boolean;
   service: string | null;
-  level: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level: LogLevel[];
   threshold: number;
   timeWindow: number;
   emailRecipients: string[];
@@ -23,7 +24,7 @@ export interface CreateAlertRuleInput {
   name: string;
   enabled?: boolean;
   service?: string | null;
-  level: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level: LogLevel[];
   threshold: number;
   timeWindow: number;
   emailRecipients: string[];
@@ -34,7 +35,7 @@ export interface UpdateAlertRuleInput {
   name?: string;
   enabled?: boolean;
   service?: string | null;
-  level?: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level?: LogLevel[];
   threshold?: number;
   timeWindow?: number;
   emailRecipients?: string[];
@@ -60,7 +61,7 @@ export interface AlertHistory {
   threshold: number;
   timeWindow: number;
   service: string | null;
-  level: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level: LogLevel[];
 }
 
 export interface GetHistoryOptions {
@@ -76,7 +77,7 @@ export interface PreviewAlertRuleInput {
   organizationId: string;
   projectId?: string | null;
   service?: string | null;
-  level: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level: LogLevel[];
   threshold: number;
   timeWindow: number;
   previewRange: PreviewRange;

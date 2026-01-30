@@ -1,4 +1,32 @@
 import type { ColumnType } from 'kysely';
+import type {
+  LogLevel,
+  OrgRole,
+  SpanKind,
+  SpanStatusCode,
+  AuthProviderType,
+  NotificationType,
+  SigmaLevel,
+  Severity,
+  IncidentStatus,
+  ExceptionLanguage,
+  ErrorGroupStatus,
+} from '@logtide/shared';
+
+// Re-export types for backward compatibility (modules importing from database/types)
+export type {
+  LogLevel,
+  OrgRole,
+  SpanKind,
+  SpanStatusCode,
+  AuthProviderType,
+  NotificationType,
+  SigmaLevel,
+  Severity,
+  IncidentStatus,
+  ExceptionLanguage,
+  ErrorGroupStatus,
+} from '@logtide/shared';
 
 export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
   ? ColumnType<S, I | undefined, U>
@@ -11,9 +39,13 @@ export interface LogsTable {
   time: Timestamp;
   project_id: string | null;
   service: string;
-  level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  level: LogLevel;
   message: string;
-  metadata: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  metadata: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null,
+    Record<string, unknown> | null
+  >;
   trace_id: string | null;
   span_id: string | null;
   created_at: Generated<Timestamp>;
@@ -54,7 +86,7 @@ export interface OrganizationMembersTable {
   id: Generated<string>;
   organization_id: string;
   user_id: string;
-  role: 'owner' | 'admin' | 'member';
+  role: OrgRole;
   created_at: Generated<Timestamp>;
 }
 
@@ -62,7 +94,7 @@ export interface OrganizationInvitationsTable {
   id: Generated<string>;
   organization_id: string;
   email: string;
-  role: 'owner' | 'admin' | 'member';
+  role: OrgRole;
   token: string;
   invited_by: string;
   expires_at: Timestamp;
@@ -97,12 +129,16 @@ export interface AlertRulesTable {
   name: string;
   enabled: Generated<boolean>;
   service: string | null;
-  level: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level: LogLevel[];
   threshold: number;
   time_window: number;
   email_recipients: string[];
   webhook_url: string | null;
-  metadata: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  metadata: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null,
+    Record<string, unknown> | null
+  >;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -119,13 +155,17 @@ export interface AlertHistoryTable {
 export interface NotificationsTable {
   id: Generated<string>;
   user_id: string;
-  type: 'alert' | 'system' | 'organization_invite' | 'project_update';
+  type: NotificationType;
   title: string;
   message: string;
   read: Generated<boolean>;
   organization_id: string | null;
   project_id: string | null;
-  metadata: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
+  metadata: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null,
+    Record<string, unknown> | null
+  >;
   created_at: Generated<Timestamp>;
 }
 
@@ -159,8 +199,7 @@ export interface SigmaRulesTable {
   updated_at: Generated<Timestamp>;
 }
 
-export type SpanKind = 'INTERNAL' | 'SERVER' | 'CLIENT' | 'PRODUCER' | 'CONSUMER';
-export type SpanStatusCode = 'UNSET' | 'OK' | 'ERROR';
+// SpanKind and SpanStatusCode are imported from @logtide/shared
 
 export interface TracesTable {
   trace_id: string;
@@ -207,7 +246,7 @@ export interface SpansTable {
 export interface LogsHourlyStatsTable {
   bucket: Timestamp;
   project_id: string | null;
-  level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  level: LogLevel;
   service: string;
   log_count: number;
 }
@@ -215,7 +254,7 @@ export interface LogsHourlyStatsTable {
 export interface LogsDailyStatsTable {
   bucket: Timestamp;
   project_id: string | null;
-  level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  level: LogLevel;
   service: string;
   log_count: number;
 }
@@ -240,8 +279,7 @@ export interface UserOnboardingTable {
 // SIEM TABLES (Security Incident & Event Management)
 // ============================================================================
 
-export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'informational';
-export type IncidentStatus = 'open' | 'investigating' | 'resolved' | 'false_positive';
+// Severity and IncidentStatus are imported from @logtide/shared
 
 export interface DetectionEventsTable {
   time: Timestamp;
@@ -320,8 +358,7 @@ export interface IncidentHistoryTable {
 // EXCEPTION TRACKING TABLES
 // ============================================================================
 
-export type ExceptionLanguage = 'nodejs' | 'python' | 'java' | 'go' | 'php' | 'unknown';
-export type ErrorGroupStatus = 'open' | 'resolved' | 'ignored';
+// ExceptionLanguage and ErrorGroupStatus are imported from @logtide/shared
 
 export interface ExceptionsTable {
   id: Generated<string>;
@@ -408,7 +445,7 @@ export interface SystemSettingsTable {
 // EXTERNAL AUTHENTICATION TABLES (LDAP/OIDC)
 // ============================================================================
 
-export type AuthProviderType = 'local' | 'oidc' | 'ldap';
+// AuthProviderType is imported from @logtide/shared
 
 export interface AuthProvidersTable {
   id: Generated<string>;
@@ -462,8 +499,7 @@ export interface SystemSettingsTable {
 // ============================================================================
 
 // Type for custom thresholds in detection packs (Sigma-based)
-type SigmaLevelOverride = 'informational' | 'low' | 'medium' | 'high' | 'critical';
-type PackThresholdOverride = { level?: SigmaLevelOverride; emailEnabled?: boolean; webhookEnabled?: boolean };
+type PackThresholdOverride = { level?: SigmaLevel; emailEnabled?: boolean; webhookEnabled?: boolean };
 type PackThresholdMap = Record<string, PackThresholdOverride> | null;
 
 export interface DetectionPackActivationsTable {

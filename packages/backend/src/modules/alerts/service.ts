@@ -1,8 +1,9 @@
 import { db } from '../../database/connection.js';
 import { sql } from 'kysely';
+import type { LogLevel } from '@logtide/shared';
 
 // Preview types
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'critical';
+export type { LogLevel } from '@logtide/shared';
 export type PreviewRange = '1d' | '7d' | '14d' | '30d';
 
 export interface PreviewAlertRuleInput {

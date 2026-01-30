@@ -7,7 +7,7 @@
  */
 
 import { db } from '../../database/connection.js';
-import { ParserFactory } from '../../modules/exceptions/parsers/parser-factory.js';
+import { ExceptionDetectionService } from '../../modules/exceptions/detection.js';
 import { FingerprintService } from '../../modules/exceptions/fingerprint-service.js';
 import { ExceptionService } from '../../modules/exceptions/service.js';
 import { errorNotificationQueue, type ErrorNotificationJobData } from './error-notification.js';
@@ -51,7 +51,8 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
         continue;
       }
 
-      const parsed = ParserFactory.parse(log.message);
+      // Use detection service: tries structured metadata.exception first, then text parsing
+      const parsed = ExceptionDetectionService.detectException(log.message, log.metadata);
       if (!parsed) {
         stats.skipped++;
         continue;

@@ -35,6 +35,10 @@ const languageLabels: Record<ExceptionLanguage, string> = {
   java: 'Java',
   go: 'Go',
   php: 'PHP',
+  kotlin: 'Kotlin',
+  csharp: 'C#',
+  rust: 'Rust',
+  ruby: 'Ruby',
   unknown: 'Unknown',
 };
 

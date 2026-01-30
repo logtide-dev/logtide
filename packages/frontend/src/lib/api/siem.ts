@@ -1,8 +1,9 @@
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 
-export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'informational';
-export type IncidentStatus = 'open' | 'investigating' | 'resolved' | 'false_positive';
+// Re-export from shared
+export type { Severity, IncidentStatus } from '@logtide/shared';
+import type { Severity, IncidentStatus } from '@logtide/shared';
 
 export interface DashboardStats {
     topThreats: TopThreat[];

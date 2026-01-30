@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { LOG_LEVELS } from '@logtide/shared';
 import { alertsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 
 const organizationsService = new OrganizationsService();
 
-const levelEnum = z.enum(['debug', 'info', 'warn', 'error', 'critical']);
+const levelEnum = z.enum(LOG_LEVELS);
 
 const createAlertRuleSchema = z.object({
   organizationId: z.string().uuid(),

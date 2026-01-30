@@ -1,6 +1,6 @@
-// Sigma types for detection packs
-export type SigmaLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
-export type SigmaStatus = 'experimental' | 'test' | 'stable' | 'deprecated' | 'unsupported';
+// Re-export from shared for convenience
+export type { SigmaLevel, SigmaStatus, PackCategory } from '@logtide/shared';
+import type { SigmaLevel, SigmaStatus, PackCategory } from '@logtide/shared';
 
 export interface SigmaLogsource {
   product?: string;
@@ -13,7 +13,6 @@ export interface SigmaDetection {
   [key: string]: unknown;
 }
 
-export type PackCategory = 'reliability' | 'security' | 'database' | 'business';
 
 /**
  * Sigma-based detection pack rule

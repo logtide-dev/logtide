@@ -4,7 +4,8 @@
  * Types for stack trace parsing, fingerprinting, and error grouping.
  */
 
-export type ExceptionLanguage = 'nodejs' | 'python' | 'java' | 'go' | 'php' | 'unknown';
+// Re-export from shared for convenience
+export type { ExceptionLanguage, ErrorGroupStatus } from '@logtide/shared';
 
 export interface StackFrame {
   frameIndex: number;
@@ -57,7 +58,7 @@ export interface StackFrameRecord {
   createdAt: Date;
 }
 
-export type ErrorGroupStatus = 'open' | 'resolved' | 'ignored';
+import type { ExceptionLanguage, ErrorGroupStatus } from '@logtide/shared';
 
 export interface ErrorGroup {
   id: string;

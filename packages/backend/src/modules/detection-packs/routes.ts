@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { SIGMA_LEVELS } from '@logtide/shared';
 import { detectionPacksService } from './service.js';
 import { getPackById } from './pack-definitions.js';
 import { authenticate } from '../auth/middleware.js';
@@ -8,7 +9,7 @@ import { OrganizationsService } from '../organizations/service.js';
 const organizationsService = new OrganizationsService();
 
 const thresholdOverrideSchema = z.object({
-  level: z.enum(['informational', 'low', 'medium', 'high', 'critical']).optional(),
+  level: z.enum(SIGMA_LEVELS).optional(),
   emailEnabled: z.boolean().optional(),
   webhookEnabled: z.boolean().optional(),
 });

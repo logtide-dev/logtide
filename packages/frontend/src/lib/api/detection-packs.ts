@@ -1,9 +1,9 @@
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 
-export type SigmaLevel = 'informational' | 'low' | 'medium' | 'high' | 'critical';
-export type SigmaStatus = 'experimental' | 'test' | 'stable' | 'deprecated' | 'unsupported';
-export type PackCategory = 'reliability' | 'security' | 'database' | 'business';
+// Re-export from shared
+export type { SigmaLevel, SigmaStatus, PackCategory } from '@logtide/shared';
+import type { SigmaLevel, SigmaStatus, PackCategory } from '@logtide/shared';
 
 export interface SigmaLogsource {
   product?: string;

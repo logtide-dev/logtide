@@ -1,8 +1,9 @@
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 
-export type ExceptionLanguage = 'nodejs' | 'python' | 'java' | 'go' | 'php' | 'unknown';
-export type ErrorGroupStatus = 'open' | 'resolved' | 'ignored';
+// Re-export from shared
+export type { ExceptionLanguage, ErrorGroupStatus } from '@logtide/shared';
+import type { ExceptionLanguage, ErrorGroupStatus } from '@logtide/shared';
 
 export interface StackFrame {
     id: string;
