@@ -1,11 +1,18 @@
-/**
- * Exception Tracking Types
- *
- * Types for stack trace parsing, fingerprinting, and error grouping.
- */
+export type {
+  ExceptionLanguage,
+  ErrorGroupStatus,
+  StructuredStackFrame,
+  StructuredException,
+  StackFrameRecord,
+  ExceptionRecord,
+  ErrorGroup,
+  ExceptionWithFrames,
+  ErrorGroupWithRecentLogs,
+  ErrorGroupFilters,
+  ErrorGroupTrendBucket,
+} from '@logtide/shared';
 
-// Re-export from shared for convenience
-export type { ExceptionLanguage, ErrorGroupStatus } from '@logtide/shared';
+export { isStructuredException } from '@logtide/shared';
 
 export interface StackFrame {
   frameIndex: number;
@@ -25,88 +32,9 @@ export interface StackFrame {
 export interface ParsedException {
   exceptionType: string;
   exceptionMessage: string;
-  language: ExceptionLanguage;
+  language: import('@logtide/shared').ExceptionLanguage;
   rawStackTrace: string;
   frames: StackFrame[];
-}
-
-export interface ExceptionRecord {
-  id: string;
-  organizationId: string;
-  projectId: string | null;
-  logId: string;
-  exceptionType: string;
-  exceptionMessage: string | null;
-  language: ExceptionLanguage;
-  fingerprint: string;
-  rawStackTrace: string;
-  frameCount: number;
-  createdAt: Date;
-}
-
-export interface StackFrameRecord {
-  id: string;
-  exceptionId: string;
-  frameIndex: number;
-  filePath: string;
-  functionName: string | null;
-  lineNumber: number | null;
-  columnNumber: number | null;
-  isAppCode: boolean;
-  codeContext: Record<string, unknown> | null;
-  metadata: Record<string, unknown> | null;
-  createdAt: Date;
-}
-
-import type { ExceptionLanguage, ErrorGroupStatus } from '@logtide/shared';
-
-export interface ErrorGroup {
-  id: string;
-  organizationId: string;
-  projectId: string | null;
-  fingerprint: string;
-  exceptionType: string;
-  exceptionMessage: string | null;
-  language: ExceptionLanguage;
-  occurrenceCount: number;
-  firstSeen: Date;
-  lastSeen: Date;
-  status: ErrorGroupStatus;
-  resolvedAt: Date | null;
-  resolvedBy: string | null;
-  affectedServices: string[];
-  sampleLogId: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface ExceptionWithFrames {
-  exception: ExceptionRecord;
-  frames: StackFrameRecord[];
-}
-
-export interface ErrorGroupWithStats extends ErrorGroup {
-  recentLogs?: Array<{
-    id: string;
-    time: Date;
-    service: string;
-    message: string;
-  }>;
-}
-
-export interface ErrorGroupFilters {
-  organizationId: string;
-  projectId?: string;
-  status?: ErrorGroupStatus;
-  language?: ExceptionLanguage;
-  search?: string;
-  limit?: number;
-  offset?: number;
-}
-
-export interface ErrorGroupTrendBucket {
-  timestamp: Date;
-  count: number;
 }
 
 export interface CreateExceptionParams {

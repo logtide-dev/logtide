@@ -7,3 +7,8 @@ export function formatTimestamp(date: Date): string {
 export function isValidLogLevel(level: string): level is LogLevel {
   return (LOG_LEVELS as readonly string[]).includes(level);
 }
+
+// Re-export utility modules
+export * from './datetime.js';
+export * from './mitre.js';
+export * from './severity.js';

@@ -130,8 +130,9 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
             if (newDetections.length > 0) {
               // Update last detection time
               const latestDetection = newDetections[0];
-              if (latestDetection.time > lastDetectionTime) {
-                lastDetectionTime = latestDetection.time;
+              const latestTime = new Date(latestDetection.time);
+              if (latestTime > lastDetectionTime) {
+                lastDetectionTime = latestTime;
               }
 
               // Send detection events

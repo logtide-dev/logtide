@@ -1,70 +1,22 @@
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 
-// Re-export from shared
-export type { SigmaLevel, SigmaStatus, PackCategory } from '@logtide/shared';
-import type { SigmaLevel, SigmaStatus, PackCategory } from '@logtide/shared';
+export type {
+  SigmaLevel,
+  SigmaStatus,
+  PackCategory,
+  SigmaLogsource,
+  SigmaDetection,
+  DetectionPackRule,
+  DetectionPack,
+  ThresholdOverride,
+  ThresholdMap,
+  DetectionPackWithStatus,
+  EnablePackInput,
+  UpdateThresholdsInput,
+} from '@logtide/shared';
 
-export interface SigmaLogsource {
-  product?: string;
-  service?: string;
-  category?: string;
-}
-
-export interface SigmaDetection {
-  condition: string;
-  [key: string]: unknown;
-}
-
-export interface DetectionPackRule {
-  id: string;
-  name: string;
-  description: string;
-  logsource: SigmaLogsource;
-  detection: SigmaDetection;
-  level: SigmaLevel;
-  status: SigmaStatus;
-  tags?: string[];
-  references?: string[];
-}
-
-export interface DetectionPack {
-  id: string;
-  name: string;
-  description: string;
-  category: PackCategory;
-  icon: string;
-  rules: DetectionPackRule[];
-  author?: string;
-  version?: string;
-}
-
-export interface ThresholdOverride {
-  level?: SigmaLevel;
-  emailEnabled?: boolean;
-  webhookEnabled?: boolean;
-}
-
-export type ThresholdMap = Record<string, ThresholdOverride>;
-
-export interface DetectionPackWithStatus extends DetectionPack {
-  enabled: boolean;
-  activatedAt: string | null;
-  customThresholds: ThresholdMap | null;
-  generatedRulesCount: number;
-}
-
-export interface EnablePackInput {
-  organizationId: string;
-  customThresholds?: ThresholdMap;
-  emailRecipients?: string[];
-  webhookUrl?: string | null;
-}
-
-export interface UpdateThresholdsInput {
-  organizationId: string;
-  customThresholds: ThresholdMap;
-}
+import type { DetectionPackWithStatus, EnablePackInput, UpdateThresholdsInput } from '@logtide/shared';
 
 export class DetectionPacksAPI {
   private getToken: () => string | null;
@@ -101,17 +53,11 @@ export class DetectionPacksAPI {
     return this.request(`/api/v1/detection-packs?organizationId=${organizationId}`);
   }
 
-  async getPack(
-    packId: string,
-    organizationId: string
-  ): Promise<{ pack: DetectionPackWithStatus }> {
+  async getPack(packId: string, organizationId: string): Promise<{ pack: DetectionPackWithStatus }> {
     return this.request(`/api/v1/detection-packs/${packId}?organizationId=${organizationId}`);
   }
 
-  async enablePack(
-    packId: string,
-    input: EnablePackInput
-  ): Promise<{ pack: DetectionPackWithStatus }> {
+  async enablePack(packId: string, input: EnablePackInput): Promise<{ pack: DetectionPackWithStatus }> {
     return this.request(`/api/v1/detection-packs/${packId}/enable`, {
       method: 'POST',
       body: JSON.stringify(input),

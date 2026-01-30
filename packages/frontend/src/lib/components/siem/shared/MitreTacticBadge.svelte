@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Badge } from '$lib/components/ui/badge';
-	import { getTacticName, getMitreTacticUrl } from '$lib/utils/mitre';
+	import { getTacticName, getMitreTacticUrl } from '@logtide/shared';
 
 	interface Props {
 		tactic: string;

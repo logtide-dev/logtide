@@ -4,7 +4,7 @@
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import type { MitreHeatmapCell } from '$lib/api/siem';
 	import Grid3x3 from '@lucide/svelte/icons/grid-3x3';
-	import { getTacticName, getTechniqueName } from '$lib/utils/mitre';
+	import { getTacticName, getTechniqueName } from '@logtide/shared';
 	import { themeStore } from '$lib/stores/theme';
 	import { getEChartsTheme, getTooltipStyle } from '$lib/utils/echarts-theme';
 

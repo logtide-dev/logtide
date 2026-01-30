@@ -4,6 +4,12 @@ export * from '../constants/index.js';
 // Re-export exception types
 export * from './exception.js';
 
+// Re-export SIEM types
+export * from './siem.js';
+
+// Re-export detection pack types
+export * from './detection-pack.js';
+
 // Re-export schema types
 export type { LogInput, IngestRequest, AlertRuleInput } from '../schemas/index.js';
 
