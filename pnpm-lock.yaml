@@ -10,6 +10,7 @@ overrides:
   express: '>=5.2.0'
   qs: '>=6.14.1'
   devalue: '>=5.6.2'
+  fast-xml-parser: '>=5.3.4'
 
 importers:
 
@@ -89,6 +90,9 @@ importers:
       protobufjs:
         specifier: ^7.5.4
         version: 7.5.4
+      safe-regex2:
+        specifier: ^5.0.0
+        version: 5.0.0
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -1875,8 +1879,8 @@ packages:
   fast-uri@3.1.0:
     resolution: {integrity: sha512-iPeeDKJSWf4IEOasVVrknXpaBV0IApz/gp7S2bb7Z4Lljbl2MGJRqInZiUrQwV16cpzw/D3S5j5Julj/gT52AA==}
 
-  fast-xml-parser@5.2.5:
-    resolution: {integrity: sha512-pfX9uG9Ki0yekDHx2SiuRIyFdyAr1kMIMitPvb0YBo8SUfKvia7w7FIyd/l6av85pFYRhZscS75MwMnbvY+hcQ==}
+  fast-xml-parser@5.3.4:
+    resolution: {integrity: sha512-EFd6afGmXlCx8H8WTZHhAoDaWaGyuIBoZJ2mknrNxug+aZKjkp0a0dlars9Izl+jF+7Gu1/5f/2h68cQpe0IiA==}
     hasBin: true
 
   fastify-plugin@4.5.1:
@@ -2599,6 +2603,10 @@ packages:
     resolution: {integrity: sha512-0f4Memo5QP7WQyUEAYUO3esD/XjOc3Zjjg5CPsAq1p8sIu0XPeMbHJemKA0BO7tV0X7+A0FoEpbmHXWxPyD3wQ==}
     engines: {node: '>=10'}
 
+  ret@0.5.0:
+    resolution: {integrity: sha512-I1XxrZSQ+oErkRR4jYbAyEEu2I0avBvvMM5JN+6EBprOGRCs63ENqZ3vjavq8fBw2+62G5LF5XelKwuJpcvcxw==}
+    engines: {node: '>=10'}
+
   reusify@1.1.0:
     resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
     engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
@@ -2633,6 +2641,9 @@ packages:
 
   safe-regex2@3.1.0:
     resolution: {integrity: sha512-RAAZAGbap2kBfbVhvmnTFv73NWLMvDGOITFYTZBAaY8eR+Ir4ef7Up/e7amo+y1+AH+3PtLkrt9mvcTsG9LXug==}
+
+  safe-regex2@5.0.0:
+    resolution: {integrity: sha512-YwJwe5a51WlK7KbOJREPdjNrpViQBI3p4T50lfwPuDhZnE3XGVTlGvi+aolc5+RvxDD6bnUmjVsU9n1eboLUYw==}
 
   safe-stable-stringify@2.5.0:
     resolution: {integrity: sha512-b3rppTKm9T+PsVCBEOUR46GWI7fdOs00VKZ1+9c1EWDaDMvjQc6tUwuFyIprgGgTcWoVHSKrU8H31ZHA2e0RHA==}
@@ -3472,7 +3483,7 @@ snapshots:
   '@aws-sdk/xml-builder@3.930.0':
     dependencies:
       '@smithy/types': 4.9.0
-      fast-xml-parser: 5.2.5
+      fast-xml-parser: 5.3.4
       tslib: 2.8.1
 
   '@aws/lambda-invoke-store@0.2.1': {}
@@ -4956,7 +4967,7 @@ snapshots:
 
   fast-uri@3.1.0: {}
 
-  fast-xml-parser@5.2.5:
+  fast-xml-parser@5.3.4:
     dependencies:
       strnum: 2.1.1
 
@@ -5688,6 +5699,8 @@ snapshots:
 
   ret@0.4.3: {}
 
+  ret@0.5.0: {}
+
   reusify@1.1.0: {}
 
   rfdc@1.4.1: {}
@@ -5743,6 +5756,10 @@ snapshots:
   safe-regex2@3.1.0:
     dependencies:
       ret: 0.4.3
+
+  safe-regex2@5.0.0:
+    dependencies:
+      ret: 0.5.0
 
   safe-stable-stringify@2.5.0: {}
 

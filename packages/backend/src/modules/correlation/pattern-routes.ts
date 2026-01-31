@@ -14,6 +14,7 @@ import { db } from '../../database/index.js';
 import { patternRegistry } from './pattern-registry.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
+import isSafeRegex from 'safe-regex2';
 
 const organizationsService = new OrganizationsService();
 
@@ -41,15 +42,21 @@ interface UpdatePatternBody {
 }
 
 /**
- * Validate regex pattern
+ * Validate regex pattern for syntax and ReDoS safety
  */
-function isValidRegex(pattern: string): boolean {
+function isValidRegex(pattern: string): { valid: boolean; error?: string } {
   try {
     new RegExp(pattern);
-    return true;
   } catch {
-    return false;
+    return { valid: false, error: 'Invalid regex syntax' };
   }
+
+  // Check for ReDoS vulnerabilities (catastrophic backtracking)
+  if (!isSafeRegex(pattern)) {
+    return { valid: false, error: 'Regex pattern is vulnerable to ReDoS attacks' };
+  }
+
+  return { valid: true };
 }
 
 /**
@@ -220,10 +227,11 @@ export default async function patternRoutes(fastify: FastifyInstance) {
         request.body;
 
       // Validate regex pattern
-      if (!isValidRegex(pattern)) {
+      const regexValidation = isValidRegex(pattern);
+      if (!regexValidation.valid) {
         return reply.status(400).send({
           success: false,
-          error: 'Invalid regex pattern',
+          error: regexValidation.error || 'Invalid regex pattern',
         });
       }
 
@@ -352,11 +360,14 @@ export default async function patternRoutes(fastify: FastifyInstance) {
       const { displayName, description, pattern, fieldNames, enabled, priority } = request.body;
 
       // Validate regex pattern if provided
-      if (pattern && !isValidRegex(pattern)) {
-        return reply.status(400).send({
-          success: false,
-          error: 'Invalid regex pattern',
-        });
+      if (pattern) {
+        const regexValidation = isValidRegex(pattern);
+        if (!regexValidation.valid) {
+          return reply.status(400).send({
+            success: false,
+            error: regexValidation.error || 'Invalid regex pattern',
+          });
+        }
       }
 
       try {
@@ -503,10 +514,11 @@ export default async function patternRoutes(fastify: FastifyInstance) {
       const { pattern, text } = request.body;
 
       // Validate regex pattern
-      if (!isValidRegex(pattern)) {
+      const regexValidation = isValidRegex(pattern);
+      if (!regexValidation.valid) {
         return reply.status(400).send({
           success: false,
-          error: 'Invalid regex pattern',
+          error: regexValidation.error || 'Invalid regex pattern',
         });
       }
 

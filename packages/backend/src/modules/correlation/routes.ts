@@ -69,6 +69,12 @@ export default async function correlationRoutes(fastify: FastifyInstance) {
   }>(
     '/v1/correlation/:identifierValue',
     {
+      config: {
+        rateLimit: {
+          max: 100,
+          timeWindow: '1 minute',
+        },
+      },
       schema: {
         params: {
           type: 'object',
@@ -132,6 +138,12 @@ export default async function correlationRoutes(fastify: FastifyInstance) {
   }>(
     '/v1/logs/:logId/identifiers',
     {
+      config: {
+        rateLimit: {
+          max: 100,
+          timeWindow: '1 minute',
+        },
+      },
       schema: {
         params: {
           type: 'object',
@@ -199,6 +211,12 @@ export default async function correlationRoutes(fastify: FastifyInstance) {
   }>(
     '/v1/logs/identifiers/batch',
     {
+      config: {
+        rateLimit: {
+          max: 50,
+          timeWindow: '1 minute',
+        },
+      },
       schema: {
         body: {
           type: 'object',

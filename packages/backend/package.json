@@ -52,13 +52,14 @@
     "graphile-worker": "^0.16.6",
     "ioredis": "^5.8.2",
     "js-yaml": "^4.1.1",
-    "ldapts": "^7.2.1",
-    "openid-client": "^6.4.1",
     "kysely": "^0.27.6",
+    "ldapts": "^7.2.1",
     "maxmind": "^5.0.1",
     "nodemailer": "^7.0.11",
+    "openid-client": "^6.4.1",
     "pg": "^8.16.3",
     "protobufjs": "^7.5.4",
+    "safe-regex2": "^5.0.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
