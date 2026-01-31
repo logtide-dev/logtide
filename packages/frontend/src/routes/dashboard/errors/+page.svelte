@@ -24,9 +24,26 @@
 	import Search from '@lucide/svelte/icons/search';
 	import Filter from '@lucide/svelte/icons/filter';
 	import X from '@lucide/svelte/icons/x';
+	import { layoutStore } from '$lib/stores/layout';
 
 	// State
 	let groups = $state<ErrorGroup[]>([]);
+	let maxWidthClass = $state("max-w-7xl");
+	let containerPadding = $state("px-6 py-8");
+
+	$effect(() => {
+		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+			maxWidthClass = value;
+		});
+		return unsubscribe;
+	});
+
+	$effect(() => {
+		const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+			containerPadding = value;
+		});
+		return unsubscribe;
+	});
 	let total = $state(0);
 	let loading = $state(false);
 	let error = $state('');
@@ -182,7 +199,7 @@
 	<title>Error Groups - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
 	<!-- Header -->
 	<div class="flex items-center justify-between mb-6">
 		<div>

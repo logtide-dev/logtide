@@ -9,6 +9,7 @@
 	import CardContent from '$lib/components/ui/card/card-content.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import * as Tabs from '$lib/components/ui/tabs';
+	import { layoutStore } from '$lib/stores/layout';
 
 	interface Props {
 		children: import('svelte').Snippet;
@@ -20,6 +21,22 @@
 	let loading = $state(false);
 	let error = $state('');
 	let lastLoadedKey = $state<string | null>(null);
+	let maxWidthClass = $state("max-w-7xl");
+	let containerPadding = $state("px-6 py-8");
+
+	$effect(() => {
+		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+			maxWidthClass = value;
+		});
+		return unsubscribe;
+	});
+
+	$effect(() => {
+		const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+			containerPadding = value;
+		});
+		return unsubscribe;
+	});
 
 	const projectId = $derived($page.params.id);
 
@@ -79,7 +96,7 @@
 	}
 </script>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl space-y-6">
+<div class="container mx-auto {containerPadding} {maxWidthClass} space-y-6">
 	{#if error}
 		<Card>
 			<CardContent class="py-12 text-center">

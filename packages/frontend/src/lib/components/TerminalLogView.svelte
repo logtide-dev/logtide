@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { layoutStore } from '$lib/stores/layout';
+
 	interface LogEntry {
 		id?: string;
 		time: string;
@@ -18,6 +20,15 @@
 	}
 
 	let { logs, isLiveTail = false, maxHeight = '600px', class: className = '' }: Props = $props();
+
+	let wrapEnabled = $state(true);
+
+	$effect(() => {
+		const unsubscribe = layoutStore.subscribe((state) => {
+			wrapEnabled = state.terminalWrapEnabled;
+		});
+		return unsubscribe;
+	});
 
 	let containerRef = $state<HTMLDivElement | null>(null);
 	let shouldAutoScroll = $state(true);
@@ -56,9 +67,9 @@
 
 	function handleScroll() {
 		if (!containerRef) return;
-		const { scrollTop, scrollHeight, clientHeight } = containerRef;
-		const isAtBottom = scrollHeight - scrollTop - clientHeight < 20;
-		shouldAutoScroll = isAtBottom;
+		// New logs are prepended at the top, so check if user is near top
+		const isAtTop = containerRef.scrollTop < 50;
+		shouldAutoScroll = isAtTop;
 	}
 
 	$effect(() => {
@@ -71,7 +82,7 @@
 <div
 	bind:this={containerRef}
 	onscroll={handleScroll}
-	class="terminal-container {className}"
+	class="terminal-container {wrapEnabled ? 'wrap-enabled' : 'no-wrap'} {className}"
 	style="max-height: {maxHeight};"
 	role="log"
 	aria-live={isLiveTail ? 'polite' : 'off'}
@@ -123,9 +134,22 @@
 	}
 
 	.terminal-container .terminal-line {
+		padding: 0.125rem 0;
+	}
+
+	/* Wrap mode (default) */
+	.terminal-container.wrap-enabled .terminal-line {
 		white-space: pre-wrap;
 		word-break: break-word;
-		padding: 0.125rem 0;
+	}
+
+	/* No-wrap mode */
+	.terminal-container.no-wrap {
+		overflow-x: auto;
+	}
+
+	.terminal-container.no-wrap .terminal-line {
+		white-space: pre;
 	}
 
 	.terminal-container .terminal-line:hover {

@@ -48,6 +48,7 @@
 	import GeoIpCard from '$lib/components/siem/enrichment/GeoIpCard.svelte';
 	import GeoIpMap from '$lib/components/siem/enrichment/GeoIpMap.svelte';
 	import { exportIncidentToPdf } from '$lib/utils/siem';
+	import { layoutStore } from '$lib/stores/layout';
 
 	// State
 	let incident = $state<Incident | null>(null);
@@ -59,6 +60,22 @@
 	let error = $state('');
 	let activeTab = $state('detections');
 	let updatingAssignee = $state(false);
+	let maxWidthClass = $state("max-w-7xl");
+	let containerPadding = $state("px-6 py-8");
+
+	$effect(() => {
+		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+			maxWidthClass = value;
+		});
+		return unsubscribe;
+	});
+
+	$effect(() => {
+		const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+			containerPadding = value;
+		});
+		return unsubscribe;
+	});
 
 	// SSE connection
 	let eventSource = $state<EventSource | null>(null);
@@ -226,7 +243,7 @@
 	<title>{incident?.title || 'Incident'} - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
 	{#if loading}
 		<div class="flex items-center justify-center py-24">
 			<Spinner />

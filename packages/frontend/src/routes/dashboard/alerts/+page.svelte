@@ -56,8 +56,25 @@
 	import ChevronUp from "@lucide/svelte/icons/chevron-up";
 	import HelpTooltip from "$lib/components/HelpTooltip.svelte";
 	import { checklistStore } from "$lib/stores/checklist";
+	import { layoutStore } from "$lib/stores/layout";
 
 	let alertRules = $state<AlertRule[]>([]);
+	let maxWidthClass = $state("max-w-7xl");
+	let containerPadding = $state("px-6 py-8");
+
+	$effect(() => {
+		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+			maxWidthClass = value;
+		});
+		return unsubscribe;
+	});
+
+	$effect(() => {
+		const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+			containerPadding = value;
+		});
+		return unsubscribe;
+	});
 	let alertHistory = $state<AlertHistory[]>([]);
 	let sigmaRules = $state<SigmaRule[]>([]);
 	let loading = $state(false);
@@ -294,7 +311,7 @@
 	<title>Alerts - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
 			<div class="flex items-start justify-between mb-6">
 				<div>
 					<div class="flex items-center gap-3 mb-2">

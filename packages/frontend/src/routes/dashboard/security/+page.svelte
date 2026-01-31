@@ -18,8 +18,25 @@
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Radio from '@lucide/svelte/icons/radio';
 	import { onDestroy } from 'svelte';
+	import { layoutStore } from '$lib/stores/layout';
 
 	let lastLoadedOrg = $state<string | null>(null);
+	let maxWidthClass = $state("max-w-7xl");
+	let containerPadding = $state("px-4 py-6");
+
+	$effect(() => {
+		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+			maxWidthClass = value;
+		});
+		return unsubscribe;
+	});
+
+	$effect(() => {
+		const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+			containerPadding = value;
+		});
+		return unsubscribe;
+	});
 	let timeRange = $state<'24h' | '7d' | '30d'>('24h');
 	let refreshing = $state(false);
 	let recentEvents = $state<DetectionEvent[]>([]);
@@ -132,7 +149,7 @@
 	<title>Security Dashboard - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-4 py-6 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
 	<!-- Header -->
 	<div class="flex items-center justify-between mb-4">
 		<div class="flex items-center gap-3">

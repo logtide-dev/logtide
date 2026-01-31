@@ -37,8 +37,25 @@
   import Network from "@lucide/svelte/icons/network";
   import EmptyTraces from "$lib/components/EmptyTraces.svelte";
   import TimeRangePicker, { type TimeRangeType } from "$lib/components/TimeRangePicker.svelte";
+  import { layoutStore } from "$lib/stores/layout";
 
   let token = $state<string | null>(null);
+  let maxWidthClass = $state("max-w-7xl");
+  let containerPadding = $state("px-6 py-8");
+
+  $effect(() => {
+    const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+      maxWidthClass = value;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+      containerPadding = value;
+    });
+    return unsubscribe;
+  });
   let projects = $state<Project[]>([]);
   let traces = $state<TraceRecord[]>([]);
   let stats = $state<TraceStats | null>(null);
@@ -272,7 +289,7 @@
   <title>Traces - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
       <div class="mb-6">
         <div class="flex items-center gap-3 mb-2">
           <GitBranch class="w-8 h-8 text-primary" />

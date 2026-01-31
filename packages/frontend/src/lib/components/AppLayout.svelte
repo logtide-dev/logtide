@@ -6,6 +6,7 @@
   import { currentOrganization } from "$lib/stores/organization";
   import { toastStore } from "$lib/stores/toast";
   import { NotificationsAPI, type Notification } from "$lib/api/notifications";
+  import { layoutStore, type ContentDensity } from "$lib/stores/layout";
   import Button from "$lib/components/ui/button/button.svelte";
   import { Separator } from "$lib/components/ui/separator";
   import { DropdownMenu as DropdownMenuPrimitive, Tooltip as TooltipPrimitive } from "bits-ui";
@@ -35,6 +36,10 @@
   import Book from "@lucide/svelte/icons/book";
   import Github from "@lucide/svelte/icons/github";
   import X from "@lucide/svelte/icons/x";
+  import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
+  import PanelLeft from "@lucide/svelte/icons/panel-left";
+  import LayoutGrid from "@lucide/svelte/icons/layout-grid";
+  import Check from "@lucide/svelte/icons/check";
   import { formatTimeAgo } from "$lib/utils/datetime";
   import Footer from "$lib/components/Footer.svelte";
   import OnboardingChecklist from "$lib/components/OnboardingChecklist.svelte";
@@ -57,6 +62,16 @@
   let lastLoadedToken = $state<string | null>(null);
   let currentTime = $state(new Date());
   let mobileMenuOpen = $state(false);
+  let sidebarVisible = $state(true);
+  let contentDensity = $state<ContentDensity>('compact');
+
+  $effect(() => {
+    const unsubscribe = layoutStore.subscribe((state) => {
+      sidebarVisible = state.sidebarVisible;
+      contentDensity = state.contentDensity;
+    });
+    return unsubscribe;
+  });
 
   $effect(() => {
     if (!browser) return;
@@ -252,6 +267,7 @@
 
 <TooltipPrimitive.Provider>
 <div class="min-h-screen bg-background">
+  {#if sidebarVisible}
   <aside
     class="hidden lg:flex fixed left-0 top-0 h-screen w-64 flex-col border-r border-border bg-card z-40"
   >
@@ -331,6 +347,7 @@
       <OnboardingChecklist />
     </div>
   </aside>
+  {/if}
 
   <!-- Mobile Menu Overlay -->
   {#if mobileMenuOpen}
@@ -427,7 +444,7 @@
     </div>
   </aside>
 
-  <div class="flex flex-col min-h-screen lg:ml-64">
+  <div class="flex flex-col min-h-screen transition-[margin] duration-200 {sidebarVisible ? 'lg:ml-64' : 'lg:ml-0'}">
     <header
       class="h-16 border-b border-border bg-card px-6 flex items-center justify-between"
     >
@@ -447,6 +464,78 @@
       </div>
 
       <div class="flex items-center gap-2">
+        <!-- Layout Controls -->
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:bg-accent hover:text-accent-foreground h-10 w-10"
+            title="Layout settings"
+          >
+            <LayoutGrid class="w-5 h-5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-56">
+            <DropdownMenuLabel>Layout Settings</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel class="text-xs font-normal text-muted-foreground py-1">Content Width</DropdownMenuLabel>
+            <DropdownMenuItem
+              onclick={() => layoutStore.setContentDensity('compact')}
+              class="cursor-pointer"
+            >
+              <div class="flex items-center gap-2 w-full">
+                {#if contentDensity === 'compact'}
+                  <Check class="w-4 h-4" />
+                {:else}
+                  <div class="w-4 h-4"></div>
+                {/if}
+                <span>Compact</span>
+                <span class="ml-auto text-xs text-muted-foreground">1280px</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onclick={() => layoutStore.setContentDensity('normal')}
+              class="cursor-pointer"
+            >
+              <div class="flex items-center gap-2 w-full">
+                {#if contentDensity === 'normal'}
+                  <Check class="w-4 h-4" />
+                {:else}
+                  <div class="w-4 h-4"></div>
+                {/if}
+                <span>Normal</span>
+                <span class="ml-auto text-xs text-muted-foreground">1536px</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onclick={() => layoutStore.setContentDensity('wide')}
+              class="cursor-pointer"
+            >
+              <div class="flex items-center gap-2 w-full">
+                {#if contentDensity === 'wide'}
+                  <Check class="w-4 h-4" />
+                {:else}
+                  <div class="w-4 h-4"></div>
+                {/if}
+                <span>Wide</span>
+                <span class="ml-auto text-xs text-muted-foreground">Full</span>
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onclick={() => layoutStore.toggleSidebar()}
+              class="cursor-pointer"
+            >
+              <div class="flex items-center gap-2 w-full">
+                {#if sidebarVisible}
+                  <PanelLeftClose class="w-4 h-4" />
+                  <span>Hide Sidebar</span>
+                {:else}
+                  <PanelLeft class="w-4 h-4" />
+                  <span>Show Sidebar</span>
+                {/if}
+              </div>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <ThemeToggle />
 
         <DropdownMenu>

@@ -60,8 +60,25 @@
   import { Tabs, TabsContent, TabsList, TabsTrigger } from '$lib/components/ui/tabs';
   import InviteMemberDialog from '$lib/components/InviteMemberDialog.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { layoutStore } from '$lib/stores/layout';
 
   let user: any = null;
+  let maxWidthClass = $state("max-w-7xl");
+  let containerPadding = $state("px-6 py-8");
+
+  $effect(() => {
+    const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+      maxWidthClass = value;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+      containerPadding = value;
+    });
+    return unsubscribe;
+  });
   let token: string | null = null;
   let currentOrg = $state<OrganizationWithRole | null>(null);
   let saving = $state(false);
@@ -334,7 +351,7 @@
   <title>Organization Settings - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto space-y-6 p-6">
+<div class="container mx-auto space-y-6 {containerPadding} {maxWidthClass}">
   <div>
     <h1 class="text-3xl font-bold tracking-tight">Organization Settings</h1>
     <div class="flex items-center gap-2 mt-2">

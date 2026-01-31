@@ -37,8 +37,25 @@
   import Plus from "@lucide/svelte/icons/plus";
   import SearchIcon from "@lucide/svelte/icons/search";
   import Trash2 from "@lucide/svelte/icons/trash-2";
+  import { layoutStore } from "$lib/stores/layout";
 
   let projects = $state<Project[]>([]);
+  let maxWidthClass = $state("max-w-7xl");
+  let containerPadding = $state("px-6 py-8");
+
+  $effect(() => {
+    const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+      maxWidthClass = value;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+      containerPadding = value;
+    });
+    return unsubscribe;
+  });
   let filteredProjects = $state<Project[]>([]);
   let loading = $state(false);
   let error = $state("");
@@ -182,7 +199,7 @@
   <title>Dashboard - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
   <div class="space-y-6">
     <div class="flex items-start justify-between">
       <div>

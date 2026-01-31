@@ -25,6 +25,7 @@
   import Copy from "@lucide/svelte/icons/copy";
   import Check from "@lucide/svelte/icons/check";
   import FileText from "@lucide/svelte/icons/file-text";
+  import { layoutStore } from "$lib/stores/layout";
 
   interface SpanNode extends SpanRecord {
     children: SpanNode[];
@@ -41,6 +42,22 @@
   let selectedSpan = $state<SpanRecord | null>(null);
   let expandedSpans = $state<Set<string>>(new Set());
   let copiedTraceId = $state(false);
+  let maxWidthClass = $state("max-w-7xl");
+  let containerPadding = $state("px-6 py-8");
+
+  $effect(() => {
+    const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+      maxWidthClass = value;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+      containerPadding = value;
+    });
+    return unsubscribe;
+  });
 
   let traceStartTime = $derived(trace ? new Date(trace.start_time).getTime() : 0);
   let traceEndTime = $derived(trace ? new Date(trace.end_time).getTime() : 0);
@@ -220,7 +237,7 @@
   <title>Trace {traceId.substring(0, 8)}... - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
   <div class="mb-6">
     <Button
       variant="ghost"

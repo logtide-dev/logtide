@@ -33,6 +33,7 @@
 	import BarChart from '@lucide/svelte/icons/bar-chart-2';
 	import Copy from '@lucide/svelte/icons/copy';
 	import Check from '@lucide/svelte/icons/check';
+	import { layoutStore } from '$lib/stores/layout';
 
 	// Get group ID from URL
 	const groupId = $derived($page.params.id);
@@ -47,6 +48,22 @@
 	let error = $state('');
 	let updating = $state(false);
 	let copied = $state(false);
+	let maxWidthClass = $state("max-w-7xl");
+	let containerPadding = $state("px-6 py-8");
+
+	$effect(() => {
+		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+			maxWidthClass = value;
+		});
+		return unsubscribe;
+	});
+
+	$effect(() => {
+		const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+			containerPadding = value;
+		});
+		return unsubscribe;
+	});
 
 	// Pagination for logs
 	let logsPage = $state(1);
@@ -181,7 +198,7 @@
 	<title>{group?.exceptionType || 'Error Group'} - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
 	<!-- Back button -->
 	<Button variant="ghost" onclick={() => goto('/dashboard/errors')} class="mb-4">
 		<ArrowLeft class="w-4 h-4 mr-2" />

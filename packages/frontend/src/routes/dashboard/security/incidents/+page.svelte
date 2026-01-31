@@ -19,6 +19,7 @@
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Radio from '@lucide/svelte/icons/radio';
+	import { layoutStore } from '$lib/stores/layout';
 
 	// Cleanup SSE connection on component destroy
 	onDestroy(() => {
@@ -31,6 +32,22 @@
 	let error = $state('');
 	let lastLoadedOrg = $state<string | null>(null);
 	let refreshing = $state(false);
+	let maxWidthClass = $state("max-w-7xl");
+	let containerPadding = $state("px-6 py-8");
+
+	$effect(() => {
+		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+			maxWidthClass = value;
+		});
+		return unsubscribe;
+	});
+
+	$effect(() => {
+		const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+			containerPadding = value;
+		});
+		return unsubscribe;
+	});
 
 	// Filters
 	let statusFilter = $state<IncidentStatus[]>([]);
@@ -214,7 +231,7 @@
 	<title>Security Incidents - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
 	<!-- Header -->
 	<div class="flex items-start justify-between mb-6">
 		<div>

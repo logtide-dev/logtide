@@ -40,6 +40,7 @@
   import EmptyLogs from "$lib/components/EmptyLogs.svelte";
   import TerminalLogView from "$lib/components/TerminalLogView.svelte";
   import TimeRangePicker, { type TimeRangeType } from "$lib/components/TimeRangePicker.svelte";
+  import { layoutStore } from "$lib/stores/layout";
   import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
   import Download from "@lucide/svelte/icons/download";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
@@ -50,6 +51,7 @@
   import Settings2 from "@lucide/svelte/icons/settings-2";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import Table2 from "@lucide/svelte/icons/table-2";
+  import WrapText from "@lucide/svelte/icons/wrap-text";
 
   interface LogEntry {
     id?: string;
@@ -78,7 +80,32 @@
   let selectedLevels = $state<string[]>([]);
   let liveTail = $state(false);
   let liveTailConnectionKey = $state<string | null>(null);
+  let liveTailLimit = $state(100);
   let viewMode = $state<"table" | "terminal">("table");
+  let terminalWrapEnabled = $state(true);
+  let maxWidthClass = $state("max-w-7xl");
+  let containerPadding = $state("px-6 py-8");
+
+  $effect(() => {
+    const unsubscribe = layoutStore.subscribe((state) => {
+      terminalWrapEnabled = state.terminalWrapEnabled;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+      maxWidthClass = value;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+      containerPadding = value;
+    });
+    return unsubscribe;
+  });
 
   let projectsAPI = $derived(new ProjectsAPI(() => token));
 
@@ -162,6 +189,15 @@
     const savedViewMode = sessionStorage.getItem("logtide_view_mode");
     if (savedViewMode === "table" || savedViewMode === "terminal") {
       viewMode = savedViewMode;
+    }
+
+    // Restore live tail limit preference
+    const savedLiveTailLimit = localStorage.getItem("logtide_livetail_limit");
+    if (savedLiveTailLimit) {
+      const parsed = parseInt(savedLiveTailLimit, 10);
+      if (!isNaN(parsed) && parsed >= 50 && parsed <= 1000) {
+        liveTailLimit = parsed;
+      }
     }
 
     if ($currentOrganization) {
@@ -486,15 +522,7 @@
           const data = JSON.parse(event.data);
           if (data.type === "logs") {
             const newLogs = data.logs;
-
-            logs = [...newLogs, ...logs].slice(0, 100);
-
-            if (logsContainer) {
-              setTimeout(
-                () => logsContainer?.scrollTo({ top: 0, behavior: "smooth" }),
-                100,
-              );
-            }
+            logs = [...newLogs, ...logs].slice(0, liveTailLimit);
           }
         } catch (e) {
           console.error("[LiveTail] Error parsing WS message:", e);
@@ -695,7 +723,7 @@
   <title>Search Logs - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto px-6 py-8 max-w-7xl">
+<div class="container mx-auto {containerPadding} {maxWidthClass}">
       <div class="mb-6">
         <div class="flex items-center gap-3 mb-2">
           <SearchIcon class="w-8 h-8 text-primary" />
@@ -1048,18 +1076,45 @@
               </Popover.Root>
             </div>
 
-            <div class="flex items-end space-x-2 pb-2">
-              <Switch id="live-tail" bind:checked={liveTail} />
-              <Label for="live-tail">
-                <div class="flex items-center gap-2">
-                  <Radio
-                    class="w-4 h-4 {liveTail
-                      ? 'text-green-500 animate-pulse'
-                      : ''}"
-                  />
-                  Live Tail
-                </div>
+            <div class="space-y-2">
+              <Label for="live-tail" class="flex items-center gap-1.5">
+                Live Tail
+                <Radio
+                  class="w-3.5 h-3.5 {liveTail
+                    ? 'text-green-500 animate-pulse'
+                    : 'text-muted-foreground'}"
+                />
               </Label>
+              <div class="flex items-center gap-3 h-9">
+                <Switch id="live-tail" bind:checked={liveTail} />
+                {#if liveTail}
+                  <Select.Root
+                    type="single"
+                    value={{ value: String(liveTailLimit), label: `${liveTailLimit}` }}
+                    onValueChange={(v) => {
+                      if (v) {
+                        const val = typeof v === 'string' ? v : v.value;
+                        liveTailLimit = parseInt(val, 10);
+                        localStorage.setItem("logtide_livetail_limit", String(liveTailLimit));
+                        if (logs.length > liveTailLimit) {
+                          logs = logs.slice(0, liveTailLimit);
+                        }
+                      }
+                    }}
+                  >
+                    <Select.Trigger class="w-[110px] h-9 whitespace-nowrap">
+                      {liveTailLimit} logs
+                    </Select.Trigger>
+                    <Select.Content>
+                      <Select.Item value="50">50 logs</Select.Item>
+                      <Select.Item value="100">100 logs</Select.Item>
+                      <Select.Item value="200">200 logs</Select.Item>
+                      <Select.Item value="500">500 logs</Select.Item>
+                      <Select.Item value="1000">1000 logs</Select.Item>
+                    </Select.Content>
+                  </Select.Root>
+                {/if}
+              </div>
             </div>
           </div>
 
@@ -1100,7 +1155,7 @@
                 {effectiveTotalLogs === 1 ? "log" : "logs"}
                 {#if liveTail}
                   <span class="text-sm font-normal text-muted-foreground"
-                    >(last 100)</span
+                    >(last {liveTailLimit})</span
                   >
                 {/if}
               {:else}
@@ -1140,8 +1195,24 @@
                   <span class="hidden sm:inline">Terminal</span>
                 </Button>
               </div>
+              {#if viewMode === "terminal"}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onclick={() => layoutStore.toggleTerminalWrap()}
+                  title={terminalWrapEnabled ? "Disable text wrapping (horizontal scroll)" : "Enable text wrapping"}
+                  aria-label={terminalWrapEnabled ? "Disable wrapping" : "Enable wrapping"}
+                  class="gap-1.5"
+                >
+                  <WrapText class="w-4 h-4 {terminalWrapEnabled ? 'text-primary' : 'text-muted-foreground'}" />
+                  <span class="hidden sm:inline">{terminalWrapEnabled ? "Wrap" : "No wrap"}</span>
+                </Button>
+              {/if}
               {#if liveTail}
-                <Badge variant="default">Live</Badge>
+                <Badge variant="default" class="gap-1.5 animate-pulse">
+                  <Radio class="w-3 h-3" />
+                  Live
+                </Badge>
               {/if}
             </div>
           </div>

@@ -10,6 +10,7 @@
   import RecentErrorsWidget from '$lib/components/dashboard/RecentErrorsWidget.svelte';
   import EmptyDashboard from '$lib/components/dashboard/EmptyDashboard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { layoutStore } from '$lib/stores/layout';
 
   import Activity from '@lucide/svelte/icons/activity';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
@@ -24,6 +25,22 @@
   let loading = $state(true);
   let error = $state('');
   let lastLoadedOrg = $state<string | null>(null);
+  let maxWidthClass = $state("max-w-7xl");
+  let containerPadding = $state("px-6 py-8");
+
+  $effect(() => {
+    const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
+      maxWidthClass = value;
+    });
+    return unsubscribe;
+  });
+
+  $effect(() => {
+    const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
+      containerPadding = value;
+    });
+    return unsubscribe;
+  });
 
   async function loadDashboard() {
     if (!$currentOrganization) {
@@ -171,7 +188,7 @@
   }
 </script>
 
-<div class="container mx-auto space-y-6 p-6">
+<div class="container mx-auto space-y-6 {containerPadding} {maxWidthClass}">
       <div>
         <h1 class="text-3xl font-bold tracking-tight">Dashboard</h1>
         <div class="flex items-center gap-2 mt-2">
