@@ -503,10 +503,8 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      // Set CORS headers (required when using reply.raw, bypasses Fastify CORS plugin)
-      const origin = request.headers.origin || 'http://localhost:3000';
-      reply.raw.setHeader('Access-Control-Allow-Origin', origin);
-      reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+      reply.raw.setHeader('Access-Control-Allow-Origin', '*');
+      reply.raw.setHeader('Access-Control-Allow-Credentials', 'false');
 
       // Set headers for SSE
       reply.raw.setHeader('Content-Type', 'text/event-stream');

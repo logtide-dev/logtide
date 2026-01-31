@@ -90,6 +90,7 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
    * Accepts both JSON and Protobuf content types.
    */
   fastify.post('/v1/otlp/traces', {
+    bodyLimit: 50 * 1024 * 1024, // 50MB for OTLP batches
     config: {
       rateLimit: {
         max: config.RATE_LIMIT_MAX,

@@ -15,7 +15,10 @@
  * @see https://opentelemetry.io/docs/specs/otel/logs/data-model/#field-severitynumber
  */
 
-export type LogTideLevel = 'debug' | 'info' | 'warn' | 'error' | 'critical';
+import type { LogLevel } from '@logtide/shared';
+
+// Alias for backward compatibility
+export type LogTideLevel = LogLevel;
 
 /**
  * Maps OpenTelemetry SeverityNumber to LogTide level.

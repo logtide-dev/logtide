@@ -51,16 +51,10 @@ export class UsersAPI {
     return response.json();
   }
 
-  /**
-   * Get current user profile
-   */
   async getCurrentUser(): Promise<{ user: UserProfile }> {
     return this.request('/auth/me');
   }
 
-  /**
-   * Update current user profile
-   */
   async updateCurrentUser(input: UpdateUserInput): Promise<{ user: UserProfile }> {
     return this.request('/auth/me', {
       method: 'PUT',
@@ -68,9 +62,6 @@ export class UsersAPI {
     });
   }
 
-  /**
-   * Delete current user account
-   */
   async deleteCurrentUser(input: DeleteUserInput): Promise<void> {
     await this.request('/auth/me', {
       method: 'DELETE',

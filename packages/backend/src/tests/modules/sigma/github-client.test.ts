@@ -1,12 +1,20 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { SigmaHQClient } from '../../../modules/sigma/github-client.js';
 
+// Create mock functions using vi.hoisted() so they're available when vi.mock() runs
+const { mockGet, mockSetex, mockIsRedisAvailable } = vi.hoisted(() => ({
+    mockGet: vi.fn(),
+    mockSetex: vi.fn(),
+    mockIsRedisAvailable: vi.fn(),
+}));
+
 // Mock Redis connection
 vi.mock('../../../queue/connection.js', () => ({
     connection: {
-        get: vi.fn().mockResolvedValue(null),
-        setex: vi.fn().mockResolvedValue('OK'),
+        get: mockGet,
+        setex: mockSetex,
     },
+    isRedisAvailable: mockIsRedisAvailable,
 }));
 
 // Mock fetch
@@ -18,8 +26,16 @@ describe('SigmaHQClient', () => {
 
     beforeEach(() => {
         client = new SigmaHQClient();
-        vi.clearAllMocks();
+        // Reset all mocks
+        mockGet.mockReset();
+        mockSetex.mockReset();
+        mockIsRedisAvailable.mockReset();
         mockFetch.mockReset();
+
+        // Set default mock implementations
+        mockGet.mockResolvedValue(null);
+        mockSetex.mockResolvedValue('OK');
+        mockIsRedisAvailable.mockReturnValue(true);
     });
 
     afterEach(() => {
@@ -69,8 +85,7 @@ describe('SigmaHQClient', () => {
         });
 
         it('should use cached commit if available', async () => {
-            const { connection } = await import('../../../queue/connection.js');
-            (connection.get as any).mockResolvedValueOnce('cached-commit-sha');
+            mockGet.mockResolvedValueOnce('cached-commit-sha');
 
             const commit = await client.getLatestCommit();
 
@@ -118,11 +133,10 @@ describe('SigmaHQClient', () => {
         });
 
         it('should use cached categories if available', async () => {
-            const { connection } = await import('../../../queue/connection.js');
             const cachedCategories = [
                 { name: 'cached', path: 'rules/cached', ruleCount: 10 },
             ];
-            (connection.get as any).mockResolvedValueOnce(JSON.stringify(cachedCategories));
+            mockGet.mockResolvedValueOnce(JSON.stringify(cachedCategories));
 
             const categories = await client.getCategories();
 
@@ -204,15 +218,15 @@ describe('SigmaHQClient', () => {
         });
 
         it('should use cached rules if available', async () => {
-            const { connection } = await import('../../../queue/connection.js');
             const cachedRules = [
                 { path: 'rules/cached/rule.yml', name: 'rule.yml', category: 'cached', downloadUrl: 'url', sha: 'sha' },
             ];
-            (connection.get as any).mockResolvedValueOnce(JSON.stringify(cachedRules));
+            mockGet.mockResolvedValueOnce(JSON.stringify(cachedRules));
 
             const rules = await client.fetchRulesByCategory('cached');
 
             expect(rules).toEqual(cachedRules);
+            expect(mockFetch).not.toHaveBeenCalled();
         });
     });
 
@@ -276,22 +290,20 @@ describe('SigmaHQClient', () => {
         });
 
         it('should use cached all rules if available', async () => {
-            const { connection } = await import('../../../queue/connection.js');
             const cachedRules = [{ path: 'rules/cached/rule.yml', name: 'rule.yml' }];
-            (connection.get as any).mockResolvedValueOnce(JSON.stringify(cachedRules));
+            mockGet.mockResolvedValueOnce(JSON.stringify(cachedRules));
 
             const rules = await client.fetchAllRules();
 
             expect(rules).toEqual(cachedRules);
+            expect(mockFetch).not.toHaveBeenCalled();
         });
     });
 
     describe('buildCategoryTree', () => {
         it('should build hierarchical category tree', async () => {
-            const { connection } = await import('../../../queue/connection.js');
-
-            // No cache
-            (connection.get as any).mockResolvedValueOnce(null);
+            // No cache - explicitly return null
+            mockGet.mockResolvedValueOnce(null);
 
             // Mock getCategories
             mockFetch
@@ -316,13 +328,13 @@ describe('SigmaHQClient', () => {
         });
 
         it('should use cached tree if available', async () => {
-            const { connection } = await import('../../../queue/connection.js');
             const cachedTree = [{ name: 'cached', path: 'rules/cached', type: 'category', ruleCount: 5 }];
-            (connection.get as any).mockResolvedValueOnce(JSON.stringify(cachedTree));
+            mockGet.mockResolvedValueOnce(JSON.stringify(cachedTree));
 
             const tree = await client.buildCategoryTree();
 
             expect(tree).toEqual(cachedTree);
+            expect(mockFetch).not.toHaveBeenCalled();
         });
     });
 
@@ -385,10 +397,10 @@ describe('SigmaHQClient', () => {
 
     describe('searchRules', () => {
         it('should search rules by query', async () => {
-            const { connection } = await import('../../../queue/connection.js');
-            (connection.get as any)
-                .mockResolvedValueOnce(null) // No cache for search
-                .mockResolvedValueOnce(null); // No cache for fetchAllRules
+            // No cache for search, no cache for fetchAllRules
+            mockGet
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(null);
 
             // Mock fetchAllRules chain
             mockFetch
@@ -420,15 +432,15 @@ describe('SigmaHQClient', () => {
         });
 
         it('should use cached search results if available', async () => {
-            const { connection } = await import('../../../queue/connection.js');
             const cachedResults = [
                 { path: 'rules/windows/cached.yml', name: 'cached.yml', title: 'Cached Rule' },
             ];
-            (connection.get as any).mockResolvedValueOnce(JSON.stringify(cachedResults));
+            mockGet.mockResolvedValueOnce(JSON.stringify(cachedResults));
 
             const rules = await client.searchRules('test');
 
             expect(rules).toEqual(cachedResults);
+            expect(mockFetch).not.toHaveBeenCalled();
         });
     });
 

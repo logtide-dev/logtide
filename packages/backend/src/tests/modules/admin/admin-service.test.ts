@@ -464,4 +464,45 @@ describe('AdminService', () => {
             await expect(adminService.invalidateProjectCache(project.id)).resolves.not.toThrow();
         });
     });
+
+    describe('updateUserRole', () => {
+        it('should update user to admin', async () => {
+            const user = await createTestUser();
+
+            const result = await adminService.updateUserRole(user.id, true);
+
+            expect(result.is_admin).toBe(true);
+        });
+
+        it('should remove admin role from user', async () => {
+            const user = await createTestUser();
+            await db.updateTable('users').set({ is_admin: true }).where('id', '=', user.id).execute();
+
+            const result = await adminService.updateUserRole(user.id, false);
+
+            expect(result.is_admin).toBe(false);
+        });
+
+        it('should throw error for non-existent user', async () => {
+            await expect(
+                adminService.updateUserRole('00000000-0000-0000-0000-000000000000', true)
+            ).rejects.toThrow('User not found');
+        });
+    });
+
+    describe('updateUserStatus edge cases', () => {
+        it('should throw error for non-existent user', async () => {
+            await expect(
+                adminService.updateUserStatus('00000000-0000-0000-0000-000000000000', true)
+            ).rejects.toThrow('User not found');
+        });
+    });
+
+    describe('resetUserPassword edge cases', () => {
+        it('should throw error for non-existent user', async () => {
+            await expect(
+                adminService.resetUserPassword('00000000-0000-0000-0000-000000000000', 'newpass')
+            ).rejects.toThrow('User not found');
+        });
+    });
 });

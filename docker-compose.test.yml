@@ -85,8 +85,8 @@ services:
       API_KEY_SECRET: test_secret_key_32_chars_long!!!
       SMTP_HOST: mailhog-test
       SMTP_PORT: 1025
-      SMTP_USER: ""
-      SMTP_PASS: ""
+      SMTP_USER: test
+      SMTP_PASS: test
       SMTP_FROM: test@logtide.dev
       # Higher rate limits for load testing (100 req/s = 6000/min, use 100000 for safety)
       RATE_LIMIT_MAX: 100000

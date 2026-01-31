@@ -76,7 +76,7 @@ test.describe('Search Journey', () => {
     await page.waitForTimeout(3000);
 
     // Verify logs are displayed
-    const logsTable = page.locator('table, [class*="table"]');
+    const logsTable = page.locator('table.caption-bottom');
     await expect(logsTable).toBeVisible();
   });
 

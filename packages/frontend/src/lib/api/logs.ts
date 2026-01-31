@@ -1,10 +1,11 @@
-// LogsAPI Client for backend integration
 import { getApiBaseUrl, getApiUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
+import type { LogLevel } from '@logtide/shared';
 
 interface LogEntry {
   time: string;
   service: string;
-  level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  level: LogLevel;
   message: string;
   metadata?: Record<string, any>;
   traceId?: string;
@@ -19,18 +20,17 @@ interface LogsResponse {
   nextCursor?: string;
 }
 
-/** Supported search modes */
 export type SearchMode = 'fulltext' | 'substring';
 
 interface LogFilters {
-  projectId?: string | string[]; // Support single or multiple projects
-  service?: string | string[]; // Support single or multiple services
-  level?: string | string[]; // Support single or multiple levels
-  traceId?: string; // Filter by trace ID
+  projectId?: string | string[];
+  service?: string | string[];
+  level?: string | string[];
+  traceId?: string;
   from?: string;
   to?: string;
-  q?: string; // Search query
-  searchMode?: SearchMode; // Search mode: 'fulltext' (default) or 'substring'
+  q?: string;
+  searchMode?: SearchMode;
   limit?: number;
   offset?: number;
   cursor?: string;
@@ -76,13 +76,9 @@ export class LogsAPI {
     return headers;
   }
 
-  /**
-   * Get logs with filters
-   */
   async getLogs(filters: LogFilters = {}): Promise<LogsResponse> {
     const params = new URLSearchParams();
 
-    // Handle projectId as single value or array
     if (filters.projectId) {
       if (Array.isArray(filters.projectId)) {
         filters.projectId.forEach((id) => params.append('projectId', id));
@@ -91,7 +87,6 @@ export class LogsAPI {
       }
     }
 
-    // Handle service as single value or array
     if (filters.service) {
       if (Array.isArray(filters.service)) {
         filters.service.forEach((svc) => params.append('service', svc));
@@ -100,7 +95,6 @@ export class LogsAPI {
       }
     }
 
-    // Handle level as single value or array
     if (filters.level) {
       if (Array.isArray(filters.level)) {
         filters.level.forEach((level) => params.append('level', level));
@@ -120,25 +114,18 @@ export class LogsAPI {
 
     const url = `${getApiBaseUrl()}/logs?${params.toString()}`;
 
-    console.log('Fetching logs from:', url);
-
     const response = await fetch(url, {
       method: 'GET',
       headers: this.getHeaders(),
     });
 
     if (!response.ok) {
-      const errorBody = await response.text();
-      console.error('Backend error response:', errorBody);
       throw new Error(`Failed to fetch logs: ${response.statusText}`);
     }
 
     return response.json();
   }
 
-  /**
-   * Get aggregated stats
-   */
   async getStats(filters: StatsFilters = {}): Promise<StatsResponse> {
     const params = new URLSearchParams();
 
@@ -161,39 +148,28 @@ export class LogsAPI {
     return response.json();
   }
 
-  /**
-   * Create WebSocket for live tail
-   */
   createLogsWebSocket(filters: { service?: string; level?: string; projectId: string }): WebSocket {
     const params = new URLSearchParams();
     params.append('projectId', filters.projectId);
     if (filters.service) params.append('service', filters.service);
     if (filters.level) params.append('level', filters.level);
 
-    // Add authentication token
     const token = this.getToken();
     if (token) {
       params.append('token', token);
     }
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Use runtime API URL but replace protocol
     const apiUrl = new URL(getApiUrl());
     const wsUrl = `${wsProtocol}//${apiUrl.host}/api/v1/logs/ws?${params.toString()}`;
 
     return new WebSocket(wsUrl);
   }
 
-  /**
-   * Close WebSocket stream
-   */
   closeLogsWebSocket(ws: WebSocket) {
     ws.close();
   }
 
-  /**
-   * Get log context (logs before and after a specific time)
-   */
   async getLogContext(params: {
     projectId: string;
     time: string;
@@ -224,9 +200,6 @@ export class LogsAPI {
     return response.json();
   }
 
-  /**
-   * Get all distinct services for filter dropdowns
-   */
   async getServices(params: {
     projectId: string | string[];
     from?: string;
@@ -234,7 +207,6 @@ export class LogsAPI {
   }): Promise<string[]> {
     const queryParams = new URLSearchParams();
 
-    // Handle projectId as single value or array
     if (Array.isArray(params.projectId)) {
       params.projectId.forEach((id) => queryParams.append('projectId', id));
     } else {
@@ -282,18 +254,4 @@ export class LogsAPI {
   }
 }
 
-// Singleton instance
-export const logsAPI = new LogsAPI(() => {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token;
-      }
-    } catch (e) {
-      console.error('Failed to get token:', e);
-    }
-  }
-  return null;
-});
+export const logsAPI = new LogsAPI(getAuthToken);

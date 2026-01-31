@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { LOG_LEVELS } from '@logtide/shared';
 import { alertsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 
 const organizationsService = new OrganizationsService();
 
-const levelEnum = z.enum(['debug', 'info', 'warn', 'error', 'critical']);
+const levelEnum = z.enum(LOG_LEVELS);
 
 const createAlertRuleSchema = z.object({
   organizationId: z.string().uuid(),
@@ -54,6 +55,16 @@ const getHistoryQuerySchema = z.object({
     .string()
     .optional()
     .transform((val) => (val ? parseInt(val, 10) : 0)),
+});
+
+const previewAlertRuleSchema = z.object({
+  organizationId: z.string().uuid(),
+  projectId: z.string().uuid().optional().nullable(),
+  service: z.string().max(100).optional().nullable(),
+  level: z.array(levelEnum).min(1),
+  threshold: z.number().int().min(1),
+  timeWindow: z.number().int().min(1).max(1440), // Max 24 hours
+  previewRange: z.enum(['1d', '7d', '14d', '30d']),
 });
 
 /**
@@ -125,6 +136,73 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       });
 
       return reply.send({ alertRules });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          error: 'Validation error',
+          details: error.errors,
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  // Get alert history (must be before /:id to avoid route conflict)
+  fastify.get('/history', async (request: any, reply) => {
+    try {
+      const query = getHistoryQuerySchema.parse(request.query);
+      const organizationId = request.query.organizationId as string;
+
+      if (!organizationId) {
+        return reply.status(400).send({
+          error: 'organizationId query parameter is required',
+        });
+      }
+
+      // Check if user is member of organization
+      const isMember = await checkOrganizationMembership(request.user.id, organizationId);
+      if (!isMember) {
+        return reply.status(403).send({
+          error: 'You are not a member of this organization',
+        });
+      }
+
+      const history = await alertsService.getAlertHistory(organizationId, {
+        projectId: query.projectId,
+        limit: query.limit,
+        offset: query.offset,
+      });
+
+      return reply.send(history);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          error: 'Validation error',
+          details: error.errors,
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  // Preview alert rule (must be before /:id to avoid route conflict)
+  fastify.post('/preview', async (request: any, reply) => {
+    try {
+      const body = previewAlertRuleSchema.parse(request.body);
+
+      // Check if user is member of organization
+      const isMember = await checkOrganizationMembership(request.user.id, body.organizationId);
+      if (!isMember) {
+        return reply.status(403).send({
+          error: 'You are not a member of this organization',
+        });
+      }
+
+      const preview = await alertsService.previewAlertRule(body);
+
+      return reply.send({ preview });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
@@ -252,45 +330,6 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Invalid alert rule ID format',
-        });
-      }
-
-      throw error;
-    }
-  });
-
-  // Get alert history
-  fastify.get('/history', async (request: any, reply) => {
-    try {
-      const query = getHistoryQuerySchema.parse(request.query);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
-
-      // Check if user is member of organization
-      const isMember = await checkOrganizationMembership(request.user.id, organizationId);
-      if (!isMember) {
-        return reply.status(403).send({
-          error: 'You are not a member of this organization',
-        });
-      }
-
-      const history = await alertsService.getAlertHistory(organizationId, {
-        projectId: query.projectId,
-        limit: query.limit,
-        offset: query.offset,
-      });
-
-      return reply.send(history);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({
-          error: 'Validation error',
-          details: error.errors,
         });
       }
 

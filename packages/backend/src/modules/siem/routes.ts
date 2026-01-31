@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { SEVERITIES, INCIDENT_STATUSES } from '@logtide/shared';
 import { SiemService } from './service.js';
 import { SiemDashboardService } from './dashboard-service.js';
 import { enrichmentService } from './enrichment-service.js';
@@ -58,7 +59,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
               type: 'array',
               items: {
                 type: 'string',
-                enum: ['critical', 'high', 'medium', 'low', 'informational'],
+                enum: [...SEVERITIES],
               },
             },
           },
@@ -71,11 +72,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
           organizationId: z.string().uuid(),
           projectId: z.string().uuid().optional(),
           timeRange: z.enum(['24h', '7d', '30d']),
-          severity: z
-            .array(
-              z.enum(['critical', 'high', 'medium', 'low', 'informational'])
-            )
-            .optional(),
+          severity: z.array(z.enum(SEVERITIES)).optional(),
         });
 
         const query = schema.parse(request.query);
@@ -205,11 +202,11 @@ export async function siemRoutes(fastify: FastifyInstance) {
             description: { type: 'string' },
             severity: {
               type: 'string',
-              enum: ['critical', 'high', 'medium', 'low', 'informational'],
+              enum: [...SEVERITIES],
             },
             status: {
               type: 'string',
-              enum: ['open', 'investigating', 'resolved', 'false_positive'],
+              enum: [...INCIDENT_STATUSES],
             },
             assigneeId: { type: 'string', format: 'uuid' },
             traceId: { type: 'string', format: 'uuid' },
@@ -228,10 +225,8 @@ export async function siemRoutes(fastify: FastifyInstance) {
           projectId: z.string().uuid().optional(),
           title: z.string().min(1).max(500),
           description: z.string().optional(),
-          severity: z.enum(['critical', 'high', 'medium', 'low', 'informational']),
-          status: z
-            .enum(['open', 'investigating', 'resolved', 'false_positive'])
-            .optional(),
+          severity: z.enum(SEVERITIES),
+          status: z.enum(INCIDENT_STATUSES).optional(),
           assigneeId: z.string().uuid().optional(),
           traceId: z.string().uuid().optional(),
           detectionEventIds: z.array(z.string().uuid()).optional(),
@@ -309,14 +304,14 @@ export async function siemRoutes(fastify: FastifyInstance) {
               type: 'array',
               items: {
                 type: 'string',
-                enum: ['open', 'investigating', 'resolved', 'false_positive'],
+                enum: [...INCIDENT_STATUSES],
               },
             },
             severity: {
               type: 'array',
               items: {
                 type: 'string',
-                enum: ['critical', 'high', 'medium', 'low', 'informational'],
+                enum: [...SEVERITIES],
               },
             },
             assigneeId: { type: 'string', format: 'uuid' },
@@ -333,16 +328,8 @@ export async function siemRoutes(fastify: FastifyInstance) {
         const schema = z.object({
           organizationId: z.string().uuid(),
           projectId: z.string().uuid().optional(),
-          status: z
-            .array(
-              z.enum(['open', 'investigating', 'resolved', 'false_positive'])
-            )
-            .optional(),
-          severity: z
-            .array(
-              z.enum(['critical', 'high', 'medium', 'low', 'informational'])
-            )
-            .optional(),
+          status: z.array(z.enum(INCIDENT_STATUSES)).optional(),
+          severity: z.array(z.enum(SEVERITIES)).optional(),
           assigneeId: z.string().uuid().optional(),
           service: z.string().optional(),
           technique: z.string().optional(),
@@ -506,11 +493,11 @@ export async function siemRoutes(fastify: FastifyInstance) {
             description: { type: 'string' },
             severity: {
               type: 'string',
-              enum: ['critical', 'high', 'medium', 'low', 'informational'],
+              enum: [...SEVERITIES],
             },
             status: {
               type: 'string',
-              enum: ['open', 'investigating', 'resolved', 'false_positive'],
+              enum: [...INCIDENT_STATUSES],
             },
             assigneeId: { type: 'string', format: 'uuid' },
           },

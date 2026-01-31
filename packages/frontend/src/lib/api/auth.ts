@@ -119,10 +119,6 @@ export class AuthAPI {
     return response.json();
   }
 
-  /**
-   * Get current user in auth-free mode (no token required)
-   * Returns the default user configured for auth-free mode
-   */
   async getCurrentUserAuthFree(): Promise<{ user: any; authMode: 'none' } | null> {
     try {
       const response = await fetch(`${getApiBaseUrl()}/auth/me`);

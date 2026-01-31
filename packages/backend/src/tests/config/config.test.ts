@@ -48,7 +48,8 @@ describe('Config Validation', () => {
         expect(result.data.PORT).toBe(8080);
         expect(result.data.HOST).toBe('0.0.0.0');
         expect(result.data.NODE_ENV).toBe('development');
-        expect(result.data.REDIS_URL).toBe('redis://localhost:6379');
+        // REDIS_URL is optional without default - when not provided, system uses PostgreSQL-based queue
+        expect(result.data.REDIS_URL).toBeUndefined();
       }
     });
 

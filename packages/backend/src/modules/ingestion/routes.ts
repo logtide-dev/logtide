@@ -276,6 +276,7 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
 
   // POST /api/v1/ingest - Ingest logs
   fastify.post('/api/v1/ingest', {
+    bodyLimit: 50 * 1024 * 1024, // 50MB for large batches
     config: {
       rateLimit: {
         max: config.RATE_LIMIT_MAX, // configurable via RATE_LIMIT_MAX env var

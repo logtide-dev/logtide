@@ -10,6 +10,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { ERROR_GROUP_STATUSES, EXCEPTION_LANGUAGES } from '@logtide/shared';
 import { ExceptionService } from './service.js';
 import { usersService } from '../users/service.js';
 import { OrganizationsService } from '../organizations/service.js';
@@ -249,8 +250,8 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
           properties: {
             organizationId: { type: 'string', format: 'uuid' },
             projectId: { type: 'string', format: 'uuid' },
-            status: { type: 'string', enum: ['open', 'resolved', 'ignored'] },
-            language: { type: 'string', enum: ['nodejs', 'python', 'java', 'go', 'php', 'unknown'] },
+            status: { type: 'string', enum: [...ERROR_GROUP_STATUSES] },
+            language: { type: 'string', enum: [...EXCEPTION_LANGUAGES] },
             search: { type: 'string' },
             limit: { type: 'integer', minimum: 1, maximum: 100 },
             offset: { type: 'integer', minimum: 0 },
@@ -263,8 +264,8 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         const schema = z.object({
           organizationId: z.string().uuid(),
           projectId: z.string().uuid().optional(),
-          status: z.enum(['open', 'resolved', 'ignored']).optional(),
-          language: z.enum(['nodejs', 'python', 'java', 'go', 'php', 'unknown']).optional(),
+          status: z.enum(ERROR_GROUP_STATUSES).optional(),
+          language: z.enum(EXCEPTION_LANGUAGES).optional(),
           search: z.string().optional(),
           limit: z.coerce.number().min(1).max(100).optional().default(20),
           offset: z.coerce.number().min(0).optional().default(0),
@@ -476,7 +477,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
           required: ['organizationId', 'status'],
           properties: {
             organizationId: { type: 'string', format: 'uuid' },
-            status: { type: 'string', enum: ['open', 'resolved', 'ignored'] },
+            status: { type: 'string', enum: [...ERROR_GROUP_STATUSES] },
           },
         },
       },
@@ -489,7 +490,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
 
         const bodySchema = z.object({
           organizationId: z.string().uuid(),
-          status: z.enum(['open', 'resolved', 'ignored']),
+          status: z.enum(ERROR_GROUP_STATUSES),
         });
 
         const params = paramsSchema.parse(request.params);

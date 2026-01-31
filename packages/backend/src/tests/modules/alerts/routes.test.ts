@@ -403,4 +403,188 @@ describe('Alerts Routes', () => {
             expect(response.statusCode).toBe(200);
         });
     });
+
+    describe('POST /api/v1/alerts/preview', () => {
+        it('should preview alert rule', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    projectId: testProject.id,
+                    level: ['error'],
+                    threshold: 10,
+                    timeWindow: 5,
+                    previewRange: '1d',
+                },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.payload);
+            expect(body.preview).toBeDefined();
+            expect(body.preview.summary).toBeDefined();
+            expect(body.preview.incidents).toBeDefined();
+            expect(body.preview.statistics).toBeDefined();
+            expect(body.preview.suggestions).toBeDefined();
+        });
+
+        it('should return 400 for invalid payload', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    // Missing required fields
+                },
+            });
+
+            expect(response.statusCode).toBe(400);
+        });
+
+        it('should return 403 for non-member organization', async () => {
+            const otherUser = await createTestUser({ email: 'other-preview@test.com' });
+            const otherSession = await createTestSession(otherUser.id);
+
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                headers: {
+                    Authorization: `Bearer ${otherSession.token}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    level: ['error'],
+                    threshold: 10,
+                    timeWindow: 5,
+                    previewRange: '1d',
+                },
+            });
+
+            expect(response.statusCode).toBe(403);
+        });
+
+        it('should return 401 without auth', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                payload: {
+                    organizationId: testOrganization.id,
+                    level: ['error'],
+                    threshold: 10,
+                    timeWindow: 5,
+                    previewRange: '1d',
+                },
+            });
+
+            expect(response.statusCode).toBe(401);
+        });
+
+        it('should accept different preview ranges', async () => {
+            const ranges = ['1d', '7d', '14d', '30d'];
+
+            for (const range of ranges) {
+                const response = await app.inject({
+                    method: 'POST',
+                    url: '/api/v1/alerts/preview',
+                    headers: {
+                        Authorization: `Bearer ${authToken}`,
+                    },
+                    payload: {
+                        organizationId: testOrganization.id,
+                        level: ['error'],
+                        threshold: 10,
+                        timeWindow: 5,
+                        previewRange: range,
+                    },
+                });
+
+                expect(response.statusCode).toBe(200);
+            }
+        });
+
+        it('should accept service filter', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    projectId: testProject.id,
+                    service: 'api-service',
+                    level: ['error', 'critical'],
+                    threshold: 5,
+                    timeWindow: 10,
+                    previewRange: '7d',
+                },
+            });
+
+            expect(response.statusCode).toBe(200);
+        });
+
+        it('should return 400 for invalid time window', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    level: ['error'],
+                    threshold: 10,
+                    timeWindow: 2000, // Exceeds max of 1440
+                    previewRange: '1d',
+                },
+            });
+
+            expect(response.statusCode).toBe(400);
+        });
+
+        it('should return 400 for invalid level', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    level: ['invalid-level'],
+                    threshold: 10,
+                    timeWindow: 5,
+                    previewRange: '1d',
+                },
+            });
+
+            expect(response.statusCode).toBe(400);
+        });
+
+        it('should preview for org-wide alert (null projectId)', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    projectId: null,
+                    level: ['error'],
+                    threshold: 10,
+                    timeWindow: 5,
+                    previewRange: '1d',
+                },
+            });
+
+            expect(response.statusCode).toBe(200);
+        });
+    });
 });

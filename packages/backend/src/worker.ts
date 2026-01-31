@@ -1,11 +1,11 @@
-import { createWorker } from './queue/connection.js';
-import { processAlertNotification } from './queue/jobs/alert-notification.js';
-import { processSigmaDetection } from './queue/jobs/sigma-detection.js';
+import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
+import { processAlertNotification, type AlertNotificationData } from './queue/jobs/alert-notification.js';
+import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
 import { processIncidentAutoGrouping } from './queue/jobs/incident-autogrouping.js';
-import { processInvitationEmail } from './queue/jobs/invitation-email.js';
-import { processIncidentNotification } from './queue/jobs/incident-notification.js';
-import { processExceptionParsing } from './queue/jobs/exception-parsing.js';
-import { processErrorNotification } from './queue/jobs/error-notification.js';
+import { processInvitationEmail, type InvitationEmailData } from './queue/jobs/invitation-email.js';
+import { processIncidentNotification, type IncidentNotificationJob } from './queue/jobs/incident-notification.js';
+import { processExceptionParsing, type ExceptionParsingJobData } from './queue/jobs/exception-parsing.js';
+import { processErrorNotification, type ErrorNotificationJobData } from './queue/jobs/error-notification.js';
 import { alertsService } from './modules/alerts/index.js';
 import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { retentionService } from './modules/retention/index.js';
@@ -18,12 +18,12 @@ await initializeInternalLogging();
 await enrichmentService.initialize();
 
 // Create worker for alert notifications
-const alertWorker = createWorker('alert-notifications', async (job) => {
+const alertWorker = createWorker<AlertNotificationData>('alert-notifications', async (job) => {
   await processAlertNotification(job);
 });
 
 // Create worker for Sigma detection
-const sigmaWorker = createWorker('sigma-detection', async (job) => {
+const sigmaWorker = createWorker<SigmaDetectionData>('sigma-detection', async (job) => {
   await processSigmaDetection(job);
 });
 
@@ -33,46 +33,50 @@ const autoGroupWorker = createWorker('incident-autogrouping', async (job) => {
 });
 
 // Create worker for invitation emails
-const invitationWorker = createWorker('invitation-email', async (job) => {
+const invitationWorker = createWorker<InvitationEmailData>('invitation-email', async (job) => {
   await processInvitationEmail(job);
 });
 
 // Create worker for incident notifications
-const incidentNotificationWorker = createWorker('incident-notifications', async (job) => {
+const incidentNotificationWorker = createWorker<IncidentNotificationJob>('incident-notifications', async (job) => {
   await processIncidentNotification(job);
 });
 
 // Create worker for exception parsing
-const exceptionWorker = createWorker('exception-parsing', async (job) => {
+const exceptionWorker = createWorker<ExceptionParsingJobData>('exception-parsing', async (job) => {
   await processExceptionParsing(job);
 });
 
 // Create worker for error notifications
-const errorNotificationWorker = createWorker('error-notifications', async (job) => {
+const errorNotificationWorker = createWorker<ErrorNotificationJobData>('error-notifications', async (job) => {
   await processErrorNotification(job);
 });
 
-alertWorker.on('completed', (job) => {
+// Start workers (required for graphile-worker backend, no-op for BullMQ)
+console.log(`[Worker] Using queue backend: ${getQueueBackend()}`);
+await startQueueWorkers();
+console.log('[Worker] All workers started');
 
+alertWorker.on('completed', (job) => {
   const logger = getInternalLogger();
   if (logger) {
     logger.info('worker-job-completed', `Alert notification job completed`, {
       jobId: job.id,
-      alertRuleId: job.data?.alertRuleId,
-      logCount: job.data?.logCount,
+      alertRuleId: job.data?.rule_id,
+      logCount: job.data?.log_count,
     });
   }
 });
 
 alertWorker.on('failed', (job, err) => {
-  console.error(`❌ Job ${job?.id} failed:`, err);
+  console.error(`Job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
     logger.error('worker-job-failed', `Alert notification job failed: ${err.message}`, {
       error: err,
       jobId: job?.id,
-      alertRuleId: job?.data?.alertRuleId,
+      alertRuleId: job?.data?.rule_id,
     });
   }
 });
@@ -89,7 +93,7 @@ sigmaWorker.on('completed', (job) => {
 });
 
 sigmaWorker.on('failed', (job, err) => {
-  console.error(`❌ Sigma detection job ${job?.id} failed:`, err);
+  console.error(`Sigma detection job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -111,7 +115,7 @@ autoGroupWorker.on('completed', (job) => {
 });
 
 autoGroupWorker.on('failed', (job, err) => {
-  console.error(`❌ Incident auto-grouping job ${job?.id} failed:`, err);
+  console.error(`Incident auto-grouping job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -133,7 +137,7 @@ invitationWorker.on('completed', (job) => {
 });
 
 invitationWorker.on('failed', (job, err) => {
-  console.error(`❌ Invitation email job ${job?.id} failed:`, err);
+  console.error(`Invitation email job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -156,7 +160,7 @@ incidentNotificationWorker.on('completed', (job) => {
 });
 
 incidentNotificationWorker.on('failed', (job, err) => {
-  console.error(`❌ Incident notification job ${job?.id} failed:`, err);
+  console.error(`Incident notification job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -179,7 +183,7 @@ exceptionWorker.on('completed', (job) => {
 });
 
 exceptionWorker.on('failed', (job, err) => {
-  console.error(`❌ Exception parsing job ${job?.id} failed:`, err);
+  console.error(`Exception parsing job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -203,7 +207,7 @@ errorNotificationWorker.on('completed', (job) => {
 });
 
 errorNotificationWorker.on('failed', (job, err) => {
-  console.error(`❌ Error notification job ${job?.id} failed:`, err);
+  console.error(`Error notification job ${job?.id} failed:`, err);
 
   const logger = getInternalLogger();
   if (logger) {
@@ -222,7 +226,7 @@ let isCheckingAlerts = false;
 async function checkAlerts() {
   // CRITICAL: Skip if already checking (prevent race condition)
   if (isCheckingAlerts) {
-    console.warn('⚠️  Alert check already in progress, skipping...');
+    console.warn('Alert check already in progress, skipping...');
     return;
   }
 
@@ -298,7 +302,7 @@ let isAutoGrouping = false;
 async function runAutoGrouping() {
   // Skip if already running
   if (isAutoGrouping) {
-    console.warn('⚠️  Auto-grouping already in progress, skipping...');
+    console.warn('Auto-grouping already in progress, skipping...');
     return;
   }
 
@@ -344,14 +348,14 @@ async function updateEnrichmentDatabases() {
     const results = await enrichmentService.updateDatabasesIfNeeded();
 
     if (results.geoLite2) {
-      console.log('✅ GeoLite2 database updated');
+      console.log('[Worker] GeoLite2 database updated');
       if (logger) {
         logger.info('worker-geolite2-updated', 'GeoLite2 database updated successfully');
       }
     }
 
     if (results.ipsum) {
-      console.log('✅ IPsum database updated');
+      console.log('[Worker] IPsum database updated');
       if (logger) {
         logger.info('worker-ipsum-updated', 'IPsum database updated successfully');
       }
@@ -381,7 +385,7 @@ let isRunningRetentionCleanup = false;
 async function runRetentionCleanup() {
   // Skip if already running
   if (isRunningRetentionCleanup) {
-    console.warn('⚠️  Retention cleanup already in progress, skipping...');
+    console.warn('Retention cleanup already in progress, skipping...');
     return;
   }
 
@@ -390,11 +394,11 @@ async function runRetentionCleanup() {
   const startTime = Date.now();
 
   try {
-    console.log('🗑️  Starting retention cleanup...');
+    console.log('[Worker] Starting retention cleanup...');
     const summary = await retentionService.executeRetentionForAllOrganizations();
     const duration = Date.now() - startTime;
 
-    console.log(`✅ Retention cleanup completed: ${summary.totalLogsDeleted} logs deleted from ${summary.successfulOrganizations}/${summary.totalOrganizations} orgs in ${duration}ms`);
+    console.log(`[Worker] Retention cleanup completed: ${summary.totalLogsDeleted} logs deleted from ${summary.successfulOrganizations}/${summary.totalOrganizations} orgs in ${duration}ms`);
 
     if (logger) {
       logger.info('worker-retention-completed', 'Retention cleanup completed', {
@@ -408,7 +412,7 @@ async function runRetentionCleanup() {
 
     // Log any failures
     for (const result of summary.results.filter(r => r.error)) {
-      console.error(`❌ Retention failed for org ${result.organizationName}: ${result.error}`);
+      console.error(`Retention failed for org ${result.organizationName}: ${result.error}`);
       if (logger) {
         logger.error('worker-retention-org-failed', `Retention failed for org ${result.organizationName}`, {
           organizationId: result.organizationId,
@@ -418,7 +422,7 @@ async function runRetentionCleanup() {
       }
     }
   } catch (error) {
-    console.error('❌ Retention cleanup failed:', error);
+    console.error('Retention cleanup failed:', error);
 
     if (logger) {
       logger.error('worker-retention-failed', `Retention cleanup failed: ${(error as Error).message}`, {
@@ -449,7 +453,7 @@ function scheduleNextRetentionCleanup() {
   const msUntilNext = getMillisecondsUntil2AM();
   const nextRunTime = new Date(Date.now() + msUntilNext);
 
-  console.log(`📅 Next retention cleanup scheduled for ${nextRunTime.toLocaleString()}`);
+  console.log(`[Worker] Next retention cleanup scheduled for ${nextRunTime.toLocaleString()}`);
 
   setTimeout(() => {
     runRetentionCleanup();
@@ -466,7 +470,7 @@ setTimeout(runRetentionCleanup, 2 * 60 * 1000);
 
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {
-  console.log(`\n🛑 Received ${signal}, shutting down gracefully...`);
+  console.log(`Received ${signal}, shutting down gracefully...`);
 
   try {
     // Stop accepting new jobs
@@ -477,20 +481,24 @@ async function gracefulShutdown(signal: string) {
     await incidentNotificationWorker.close();
     await exceptionWorker.close();
     await errorNotificationWorker.close();
-    console.log('✅ Workers closed');
+    console.log('[Worker] Workers closed');
+
+    // Close queue system (Redis/PostgreSQL connections)
+    await shutdownQueueSystem();
+    console.log('[Worker] Queue system closed');
 
     // Close internal logging
     await shutdownInternalLogging();
-    console.log('✅ Internal logging closed');
+    console.log('[Worker] Internal logging closed');
 
     // Close database pool - CRITICAL: prevents connection leaks
     const { closeDatabase } = await import('./database/connection.js');
     await closeDatabase();
-    console.log('✅ Database pool closed');
+    console.log('[Worker] Database pool closed');
 
     process.exit(0);
   } catch (error) {
-    console.error('❌ Error during shutdown:', error);
+    console.error('Error during shutdown:', error);
     process.exit(1);
   }
 }

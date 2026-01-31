@@ -66,6 +66,7 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       request.authenticated = true;
+      (request as any).user = user; // Set user for session-based routes
       // Note: projectId will be extracted from query params in the route handler
       return;
     }
@@ -103,8 +104,9 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
-      // Session is valid - projectId should come from query params
+      // Session is valid - set user and projectId comes from query params
       request.authenticated = true;
+      (request as any).user = user; // Set user for session-based routes
       // Note: projectId will be extracted from query params in the route handler
       return;
     }

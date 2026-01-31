@@ -16,7 +16,7 @@
   <a href="https://codecov.io/gh/logtide-dev/logtide"><img src="https://codecov.io/gh/logtide-dev/logtide/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://hub.docker.com/r/logtide/backend"><img src="https://img.shields.io/docker/v/logtide/backend?label=docker&logo=docker" alt="Docker"></a>
   <a href="https://artifacthub.io/packages/helm/logtide/logtide"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logtide" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-0.4.2-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.5.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Status">
   <img src="https://img.shields.io/badge/cloud-free_during_alpha-success.svg" alt="Free Cloud">
@@ -102,7 +102,7 @@ Total control over your data. **No build required** - uses pre-built images from
     Required variables:
     ```bash
     DB_PASSWORD=your_secure_db_password
-    REDIS_PASSWORD=your_secure_redis_password
+    REDIS_PASSWORD=your_secure_redis_password  # optional since v0.5.0
     API_KEY_SECRET=your_32_character_secret_key_here
     ```
 
@@ -136,7 +136,7 @@ Total control over your data. **No build required** - uses pre-built images from
 
 **Docker Images:** [Docker Hub](https://hub.docker.com/r/logtide/backend) | [GitHub Container Registry](https://github.com/logtide-dev/logtide/pkgs/container/logtide-backend)
 
-> **Production:** Pin versions with `LOGTIDE_BACKEND_IMAGE=logtide/backend:0.4.2` in your `.env` file.
+> **Production:** Pin versions with `LOGTIDE_BACKEND_IMAGE=logtide/backend:0.5.0` in your `.env` file.
 
 > **ARM64 / Raspberry Pi:** LogTide images support `linux/amd64` and `linux/arm64`. For Fluent Bit on ARM64, set `FLUENT_BIT_IMAGE=cr.fluentbit.io/fluent/fluent-bit:4.2.2` in your `.env` file.
 
@@ -204,6 +204,10 @@ We have ready-to-use SDKs for the most popular languages.
 * ✅ **SIEM Dashboard:** Security dashboard with incident management, MITRE ATT&CK mapping, and PDF report export. *(New in 0.3.0)*
 * ✅ **OpenTelemetry Support:** Native OTLP ingestion for logs and traces (protobuf + JSON).
 * ✅ **Distributed Tracing:** Trace viewer with span timeline, service dependencies graph, and trace-to-logs correlation.
+* ✅ **Redis Optional:** Run without Redis using PostgreSQL-based alternatives for simpler deployments. *(New in 0.5.0)*
+* ✅ **Detection Packs:** Pre-configured Sigma rule bundles for common security use cases. *(New in 0.5.0)*
+* ✅ **Event Correlation:** Link related logs by `request_id`, `trace_id`, `user_id`, or custom fields. *(New in 0.5.0)*
+* ✅ **Alert Preview:** Test alert rules against historical data before enabling them. *(New in 0.5.0)*
 
 ---
 
@@ -263,7 +267,7 @@ We use modern, type-safe tools to ensure performance and maintainability.
 | **Frontend** | SvelteKit 5 (Runes) + TailwindCSS + shadcn-svelte |
 | **Backend** | Fastify + TypeScript + Kysely ORM |
 | **Database** | PostgreSQL 16 + TimescaleDB (Time-series optimization) |
-| **Queue** | Redis 7 + BullMQ |
+| **Queue** | Redis 7 + BullMQ (or PostgreSQL + graphile-worker) |
 | **Deployment** | Docker + Docker Compose |
 
 ---

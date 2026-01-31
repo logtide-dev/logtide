@@ -44,16 +44,10 @@ export class OnboardingAPI {
     return response.json();
   }
 
-  /**
-   * Get current onboarding state
-   */
   async getState(): Promise<OnboardingState> {
     return this.request('/onboarding');
   }
 
-  /**
-   * Update onboarding state
-   */
   async updateState(updates: UpdateOnboardingRequest): Promise<OnboardingState> {
     return this.request('/onboarding', {
       method: 'PUT',
@@ -61,9 +55,6 @@ export class OnboardingAPI {
     });
   }
 
-  /**
-   * Complete a checklist item
-   */
   async completeChecklistItem(itemId: string): Promise<OnboardingState> {
     return this.request('/onboarding/checklist/complete', {
       method: 'POST',
@@ -71,9 +62,6 @@ export class OnboardingAPI {
     });
   }
 
-  /**
-   * Reset onboarding state (restart tutorial)
-   */
   async reset(): Promise<OnboardingState> {
     return this.request('/onboarding/reset', {
       method: 'POST',

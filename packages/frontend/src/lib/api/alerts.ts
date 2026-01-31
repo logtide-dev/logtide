@@ -1,4 +1,6 @@
 import { getApiUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
+import type { LogLevel } from '@logtide/shared';
 
 export interface AlertRule {
   id: string;
@@ -7,7 +9,7 @@ export interface AlertRule {
   name: string;
   enabled: boolean;
   service: string | null;
-  level: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level: LogLevel[];
   threshold: number;
   timeWindow: number;
   emailRecipients: string[];
@@ -22,7 +24,7 @@ export interface CreateAlertRuleInput {
   name: string;
   enabled?: boolean;
   service?: string | null;
-  level: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level: LogLevel[];
   threshold: number;
   timeWindow: number;
   emailRecipients: string[];
@@ -33,7 +35,7 @@ export interface UpdateAlertRuleInput {
   name?: string;
   enabled?: boolean;
   service?: string | null;
-  level?: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level?: LogLevel[];
   threshold?: number;
   timeWindow?: number;
   emailRecipients?: string[];
@@ -59,13 +61,84 @@ export interface AlertHistory {
   threshold: number;
   timeWindow: number;
   service: string | null;
-  level: ('debug' | 'info' | 'warn' | 'error' | 'critical')[];
+  level: LogLevel[];
 }
 
 export interface GetHistoryOptions {
   projectId?: string;
   limit?: number;
   offset?: number;
+}
+
+// Preview types
+export type PreviewRange = '1d' | '7d' | '14d' | '30d';
+
+export interface PreviewAlertRuleInput {
+  organizationId: string;
+  projectId?: string | null;
+  service?: string | null;
+  level: LogLevel[];
+  threshold: number;
+  timeWindow: number;
+  previewRange: PreviewRange;
+}
+
+export interface PreviewIncident {
+  id: string;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+  triggerCount: number;
+  peakValue: number;
+  averageValue: number;
+  sampleLogs: Array<{
+    time: string;
+    service: string;
+    level: string;
+    message: string;
+    traceId?: string;
+  }>;
+}
+
+export interface PreviewStatistics {
+  incidents: {
+    averageDuration: number;
+    maxDuration: number;
+    minDuration: number;
+  };
+  temporalPatterns: {
+    byDayOfWeek: Array<{ day: string; count: number }>;
+    byHourOfDay: Array<{ hour: number; count: number }>;
+  };
+  thresholdAnalysis: {
+    percentAboveThreshold: number;
+    p50Value: number;
+    p95Value: number;
+    p99Value: number;
+  };
+}
+
+export interface PreviewSuggestion {
+  type: 'threshold_too_low' | 'threshold_too_high' | 'time_based_pattern' | 'no_data';
+  severity: 'info' | 'warning';
+  message: string;
+  detail?: string;
+  recommendedValue?: number;
+}
+
+export interface PreviewAlertRuleOutput {
+  summary: {
+    totalTriggers: number;
+    totalIncidents: number;
+    affectedServices: string[];
+    timeRange: {
+      from: string;
+      to: string;
+    };
+  };
+  incidents: PreviewIncident[];
+  statistics: PreviewStatistics;
+  suggestions: PreviewSuggestion[];
 }
 
 export class AlertsAPI {
@@ -152,20 +225,15 @@ export class AlertsAPI {
 
     return this.request(`/api/v1/alerts/history?${params.toString()}`);
   }
+
+  async previewAlertRule(
+    input: PreviewAlertRuleInput
+  ): Promise<{ preview: PreviewAlertRuleOutput }> {
+    return this.request('/api/v1/alerts/preview', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
 }
 
-// Singleton instance
-export const alertsAPI = new AlertsAPI(() => {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token;
-      }
-    } catch (e) {
-      console.error('Failed to get token:', e);
-    }
-  }
-  return null;
-});
+export const alertsAPI = new AlertsAPI(getAuthToken);

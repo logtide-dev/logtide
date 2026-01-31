@@ -58,23 +58,16 @@ export class SigmaDetectionEngine {
 
     for (const rule of rules) {
       try {
-        // Check if logsource matches
         const logsourceMatched = this.matchLogsource(rule.logsource, logEntry);
-        console.log(`[DEBUG] Rule "${rule.title}": logsource matched = ${logsourceMatched}`);
         if (!logsourceMatched) {
           continue;
         }
 
-        // Evaluate detection logic
-        console.log(`[DEBUG] Evaluating detection for rule "${rule.title}"`);
-        console.log(`[DEBUG] Detection:`, JSON.stringify(rule.detection).substring(0, 200));
-        console.log(`[DEBUG] Flattened log:`, JSON.stringify(flattenedLog).substring(0, 200));
         const matched = SigmaConditionEvaluator.evaluateDetection(
           rule.detection,
           flattenedLog,
-          false // Case-insensitive by default
+          false
         );
-        console.log(`[DEBUG] Detection result: ${matched}`);
 
         if (matched) {
           // Extract matched fields from detection patterns
@@ -299,19 +292,15 @@ export class SigmaDetectionEngine {
       for (const rule of rules) {
         try {
           const logsourceMatched = this.matchLogsource(rule.logsource, logEntry);
-          console.log(`[DEBUG BATCH] Rule "${rule.title}": logsource matched = ${logsourceMatched}`);
           if (!logsourceMatched) {
             continue;
           }
 
-          console.log(`[DEBUG BATCH] Evaluating detection for rule "${rule.title}"`);
-          console.log(`[DEBUG BATCH] Detection:`, JSON.stringify(rule.detection).substring(0, 200));
           const matched = SigmaConditionEvaluator.evaluateDetection(
             rule.detection,
             flattenedLog,
             false
           );
-          console.log(`[DEBUG BATCH] Detection result: ${matched}`);
 
           if (matched) {
             // Extract matched fields from detection patterns

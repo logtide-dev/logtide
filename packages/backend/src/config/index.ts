@@ -29,8 +29,8 @@ const configSchema = z.object({
   // Database
   DATABASE_URL: z.string().url(),
 
-  // Redis
-  REDIS_URL: z.string().url().default('redis://localhost:6379'),
+  // Redis (optional - if not set, uses PostgreSQL-based job queue)
+  REDIS_URL: z.string().url().optional(),
 
   // API
   API_KEY_SECRET: z.string().min(32),
@@ -128,4 +128,8 @@ export function isTest(): boolean {
 
 export function isSmtpConfigured(): boolean {
   return !!(config.SMTP_HOST && config.SMTP_USER && config.SMTP_PASS);
+}
+
+export function isRedisConfigured(): boolean {
+  return !!config.REDIS_URL;
 }

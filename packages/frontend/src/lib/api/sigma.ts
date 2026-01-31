@@ -1,4 +1,5 @@
 import { getApiUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export interface ImportSigmaRuleParams {
     yaml: string;
@@ -250,17 +251,4 @@ export class SigmaAPI {
     }
 }
 
-export const sigmaAPI = new SigmaAPI(() => {
-    if (typeof window !== 'undefined') {
-        try {
-            const stored = localStorage.getItem('logtide_auth');
-            if (stored) {
-                const data = JSON.parse(stored);
-                return data.token;
-            }
-        } catch (e) {
-            console.error('Failed to get token:', e);
-        }
-    }
-    return null;
-});
+export const sigmaAPI = new SigmaAPI(getAuthToken);

@@ -1,5 +1,5 @@
-// Dashboard API Client
 import { getApiUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export interface DashboardStats {
   totalLogsToday: {
@@ -61,9 +61,6 @@ export class DashboardAPI {
     return headers;
   }
 
-  /**
-   * Get dashboard statistics
-   */
   async getStats(organizationId: string): Promise<DashboardStats> {
     const params = new URLSearchParams();
     params.append('organizationId', organizationId);
@@ -82,9 +79,6 @@ export class DashboardAPI {
     return response.json();
   }
 
-  /**
-   * Get timeseries data for chart
-   */
   async getTimeseries(organizationId: string): Promise<TimeseriesDataPoint[]> {
     const params = new URLSearchParams();
     params.append('organizationId', organizationId);
@@ -104,9 +98,6 @@ export class DashboardAPI {
     return data.timeseries;
   }
 
-  /**
-   * Get top services
-   */
   async getTopServices(organizationId: string): Promise<TopService[]> {
     const params = new URLSearchParams();
     params.append('organizationId', organizationId);
@@ -126,9 +117,6 @@ export class DashboardAPI {
     return data.services;
   }
 
-  /**
-   * Get recent errors
-   */
   async getRecentErrors(organizationId: string): Promise<RecentError[]> {
     const params = new URLSearchParams();
     params.append('organizationId', organizationId);
@@ -149,18 +137,4 @@ export class DashboardAPI {
   }
 }
 
-// Singleton instance
-export const dashboardAPI = new DashboardAPI(() => {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token;
-      }
-    } catch (e) {
-      console.error('Failed to get token:', e);
-    }
-  }
-  return null;
-});
+export const dashboardAPI = new DashboardAPI(getAuthToken);

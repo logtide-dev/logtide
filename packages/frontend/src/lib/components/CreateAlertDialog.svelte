@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { alertsAPI, type CreateAlertRuleInput } from "$lib/api/alerts";
+	import { alertsAPI, type CreateAlertRuleInput, type PreviewSuggestion } from "$lib/api/alerts";
 	import { sigmaAPI } from "$lib/api/sigma";
 	import { toastStore } from "$lib/stores/toast";
 	import { checklistStore } from "$lib/stores/checklist";
@@ -16,6 +16,8 @@
 		TabsTrigger,
 	} from "$lib/components/ui/tabs";
 	import Spinner from "$lib/components/Spinner.svelte";
+	import AlertPreview from "$lib/components/alerts/AlertPreview.svelte";
+	import Eye from "@lucide/svelte/icons/eye";
 
 	interface Props {
 		open: boolean;
@@ -48,6 +50,7 @@
 	let sigmaWebhookUrl = $state("");
 
 	let submitting = $state(false);
+	let showPreview = $state(false);
 
 	const availableLevels = [
 		"debug",
@@ -82,6 +85,27 @@
 		sigmaWebhookUrl = "";
 
 		submitting = false;
+		showPreview = false;
+	}
+
+	function isFormValidForPreview(): boolean {
+		return selectedLevels.size > 0 && threshold >= 1 && timeWindow >= 1;
+	}
+
+	function handleShowPreview() {
+		if (!isFormValidForPreview()) {
+			toastStore.warning("Please set log levels, threshold, and time window to preview");
+			return;
+		}
+		showPreview = true;
+	}
+
+	function handleSuggestionApply(suggestion: PreviewSuggestion) {
+		if (suggestion.recommendedValue !== undefined) {
+			threshold = suggestion.recommendedValue;
+			toastStore.success(`Threshold updated to ${suggestion.recommendedValue}`);
+		}
+		showPreview = false;
 	}
 
 	async function handleSubmit() {
@@ -390,6 +414,38 @@
 						<p class="text-xs text-muted-foreground">
 							HTTP POST webhook to call when alert triggers
 						</p>
+					</div>
+
+					<!-- Preview Section -->
+					<div class="border-t pt-4 mt-2">
+						{#if !showPreview}
+							<div class="flex justify-center">
+								<Button
+									type="button"
+									variant="outline"
+									onclick={handleShowPreview}
+									disabled={submitting || !isFormValidForPreview()}
+									class="gap-2"
+								>
+									<Eye class="h-4 w-4" />
+									Preview Alert Behavior
+								</Button>
+							</div>
+							<p class="text-xs text-center text-muted-foreground mt-2">
+								See how this alert would have performed on historical data
+							</p>
+						{/if}
+
+						<AlertPreview
+							{organizationId}
+							{projectId}
+							service={service.trim() || null}
+							levels={Array.from(selectedLevels) as any}
+							{threshold}
+							{timeWindow}
+							bind:visible={showPreview}
+							onSuggestionApply={handleSuggestionApply}
+						/>
 					</div>
 				</form>
 			</TabsContent>

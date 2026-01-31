@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from '$lib/config';
+import { getAuthToken } from '$lib/utils/auth';
 
 export interface TraceRecord {
   trace_id: string;
@@ -108,8 +109,6 @@ export class TracesAPI {
     });
 
     if (!response.ok) {
-      const errorBody = await response.text();
-      console.error('Backend error response:', errorBody);
       throw new Error(`Failed to fetch traces: ${response.statusText}`);
     }
 
@@ -213,17 +212,4 @@ export class TracesAPI {
   }
 }
 
-export const tracesAPI = new TracesAPI(() => {
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem('logtide_auth');
-      if (stored) {
-        const data = JSON.parse(stored);
-        return data.token;
-      }
-    } catch (e) {
-      console.error('Failed to get token:', e);
-    }
-  }
-  return null;
-});
+export const tracesAPI = new TracesAPI(getAuthToken);

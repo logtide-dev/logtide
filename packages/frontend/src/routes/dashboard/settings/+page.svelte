@@ -29,6 +29,8 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import X from '@lucide/svelte/icons/x';
   import LogOut from '@lucide/svelte/icons/log-out';
+  import Fingerprint from '@lucide/svelte/icons/fingerprint';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import {
     Table,
     TableBody,
@@ -425,6 +427,27 @@
           Contact your admin if you need to change this setting.
         </p>
       </div>
+    </CardContent>
+  </Card>
+
+  <Card class="hover:bg-accent/50 transition-colors cursor-pointer" onclick={() => goto('/dashboard/settings/patterns')}>
+    <CardHeader>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <Fingerprint class="w-5 h-5 text-primary" />
+          <div>
+            <CardTitle>Identifier Patterns</CardTitle>
+            <CardDescription>Configure patterns for extracting identifiers from logs</CardDescription>
+          </div>
+        </div>
+        <ChevronRight class="w-5 h-5 text-muted-foreground" />
+      </div>
+    </CardHeader>
+    <CardContent>
+      <p class="text-sm text-muted-foreground">
+        Define custom regex patterns to automatically extract identifiers like order IDs, customer IDs,
+        or any application-specific values from your logs for correlation.
+      </p>
     </CardContent>
   </Card>
 
