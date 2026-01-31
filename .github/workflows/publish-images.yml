@@ -130,34 +130,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Create and push backend manifests
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           IS_STABLE="${{ needs.prepare.outputs.is_stable }}"
 
           # Docker Hub
-          docker manifest create logtide/backend:${VERSION} \
+          docker buildx imagetools create -t logtide/backend:${VERSION} \
             logtide/backend:${VERSION}-amd64 \
             logtide/backend:${VERSION}-arm64
-          docker manifest push logtide/backend:${VERSION}
 
           # GHCR
-          docker manifest create ghcr.io/${{ github.repository_owner }}/logtide-backend:${VERSION} \
+          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/logtide-backend:${VERSION} \
             ghcr.io/${{ github.repository_owner }}/logtide-backend:${VERSION}-amd64 \
             ghcr.io/${{ github.repository_owner }}/logtide-backend:${VERSION}-arm64
-          docker manifest push ghcr.io/${{ github.repository_owner }}/logtide-backend:${VERSION}
 
           # Latest tag for stable releases
           if [ "$IS_STABLE" = "true" ]; then
-            docker manifest create logtide/backend:latest \
+            docker buildx imagetools create -t logtide/backend:latest \
               logtide/backend:${VERSION}-amd64 \
               logtide/backend:${VERSION}-arm64
-            docker manifest push logtide/backend:latest
 
-            docker manifest create ghcr.io/${{ github.repository_owner }}/logtide-backend:latest \
+            docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/logtide-backend:latest \
               ghcr.io/${{ github.repository_owner }}/logtide-backend:${VERSION}-amd64 \
               ghcr.io/${{ github.repository_owner }}/logtide-backend:${VERSION}-arm64
-            docker manifest push ghcr.io/${{ github.repository_owner }}/logtide-backend:latest
           fi
 
       - name: Create and push frontend manifests
@@ -166,28 +165,24 @@ jobs:
           IS_STABLE="${{ needs.prepare.outputs.is_stable }}"
 
           # Docker Hub
-          docker manifest create logtide/frontend:${VERSION} \
+          docker buildx imagetools create -t logtide/frontend:${VERSION} \
             logtide/frontend:${VERSION}-amd64 \
             logtide/frontend:${VERSION}-arm64
-          docker manifest push logtide/frontend:${VERSION}
 
           # GHCR
-          docker manifest create ghcr.io/${{ github.repository_owner }}/logtide-frontend:${VERSION} \
+          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/logtide-frontend:${VERSION} \
             ghcr.io/${{ github.repository_owner }}/logtide-frontend:${VERSION}-amd64 \
             ghcr.io/${{ github.repository_owner }}/logtide-frontend:${VERSION}-arm64
-          docker manifest push ghcr.io/${{ github.repository_owner }}/logtide-frontend:${VERSION}
 
           # Latest tag for stable releases
           if [ "$IS_STABLE" = "true" ]; then
-            docker manifest create logtide/frontend:latest \
+            docker buildx imagetools create -t logtide/frontend:latest \
               logtide/frontend:${VERSION}-amd64 \
               logtide/frontend:${VERSION}-arm64
-            docker manifest push logtide/frontend:latest
 
-            docker manifest create ghcr.io/${{ github.repository_owner }}/logtide-frontend:latest \
+            docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/logtide-frontend:latest \
               ghcr.io/${{ github.repository_owner }}/logtide-frontend:${VERSION}-amd64 \
               ghcr.io/${{ github.repository_owner }}/logtide-frontend:${VERSION}-arm64
-            docker manifest push ghcr.io/${{ github.repository_owner }}/logtide-frontend:latest
           fi
 
       - name: Create release summary
