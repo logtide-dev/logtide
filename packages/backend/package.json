@@ -57,7 +57,7 @@
     "graphile-worker": "^0.16.6",
     "ioredis": "^5.8.2",
     "js-yaml": "^4.1.1",
-    "kysely": "^0.27.6",
+    "kysely": "^0.28.11",
     "ldapts": "^7.2.1",
     "maxmind": "^5.0.1",
     "nodemailer": "^7.0.11",
