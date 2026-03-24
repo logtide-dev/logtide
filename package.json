@@ -1,6 +1,6 @@
 {
   "name": "logtide",
-  "version": "0.8.4",
+  "version": "0.9.0-beta.1",
   "private": true,
   "description": "LogTide - Self-hosted log management platform",
   "author": "LogTide Team",
