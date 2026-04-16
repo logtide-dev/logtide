@@ -480,37 +480,6 @@ class AdminAPI {
         return this.fetch<UserDetails>(`/users/${userId}`);
     }
 
-    async createUser(input: {
-        email: string;
-        name: string;
-        password: string;
-        is_admin?: boolean;
-    }): Promise<{ message: string; user: UserBasic }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/users`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(input),
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || 'Failed to create user');
-        }
-
-        return response.json();
-    }
-
     async updateUserStatus(userId: string, disabled: boolean): Promise<{ message: string; user: UserBasic }> {
         const auth = get(authStore);
         const token = auth.token;

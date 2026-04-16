@@ -909,48 +909,4 @@ describe('OrganizationsService', () => {
             ).rejects.toThrow('Cannot leave as owner');
         });
     });
-
-    describe('updateOrganization slug', () => {
-        it('updates slug when valid and unique globally', async () => {
-            const user = await createTestUser();
-            const org = await createTestOrganization({ ownerId: user.id });
-
-            const updated = await orgService.updateOrganization(org.id, user.id, {
-                slug: 'my-custom-org',
-            });
-
-            expect(updated.slug).toBe('my-custom-org');
-        });
-
-        it('rejects invalid slug format', async () => {
-            const user = await createTestUser();
-            const org = await createTestOrganization({ ownerId: user.id });
-
-            await expect(
-                orgService.updateOrganization(org.id, user.id, { slug: 'BAD' })
-            ).rejects.toThrow(/lowercase/);
-        });
-
-        it('rejects reserved slug', async () => {
-            const user = await createTestUser();
-            const org = await createTestOrganization({ ownerId: user.id });
-
-            await expect(
-                orgService.updateOrganization(org.id, user.id, { slug: 'admin' })
-            ).rejects.toThrow(/reserved/);
-        });
-
-        it('rejects conflict with another org', async () => {
-            const userA = await createTestUser({ email: 'a@test.com' });
-            const orgA = await createTestOrganization({ ownerId: userA.id });
-            const userB = await createTestUser({ email: 'b@test.com' });
-            const orgB = await createTestOrganization({ ownerId: userB.id });
-
-            await orgService.updateOrganization(orgA.id, userA.id, { slug: 'unique-one' });
-
-            await expect(
-                orgService.updateOrganization(orgB.id, userB.id, { slug: 'unique-one' })
-            ).rejects.toThrow(/already exists/);
-        });
-    });
 });

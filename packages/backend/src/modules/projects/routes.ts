@@ -16,7 +16,6 @@ const createProjectSchema = z.object({
 const updateProjectSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().nullable().optional(),
-  slug: z.string().min(2).max(50).optional(),
   statusPageVisibility: z.enum(['disabled', 'public', 'password', 'members_only']).optional(),
   statusPagePassword: z.string().min(1).max(128).optional(),
 });
@@ -265,11 +264,6 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         if (error.message.includes('already exists')) {
           return reply.status(409).send({
             error: error.message,
-          });
-        }
-        if (error.message.includes('idx_projects_org_slug_unique')) {
-          return reply.status(409).send({
-            error: 'A project with this slug already exists in this organization',
           });
         }
       }

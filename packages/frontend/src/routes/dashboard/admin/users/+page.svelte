@@ -4,10 +4,7 @@
     import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
     import { Button, buttonVariants } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
-    import { Label } from "$lib/components/ui/label";
-    import { Switch } from "$lib/components/ui/switch";
     import { Badge } from "$lib/components/ui/badge";
-    import * as Dialog from "$lib/components/ui/dialog";
     import {
         Card,
         CardContent,
@@ -27,11 +24,9 @@
         Search,
         UserCheck,
         UserX,
-        UserPlus,
         ChevronLeft,
         ChevronRight,
     } from "@lucide/svelte";
-    import { toastStore } from "$lib/stores/toast";
     import { authStore } from "$lib/stores/auth";
     import { goto } from "$app/navigation";
     import { browser } from "$app/environment";
@@ -47,72 +42,6 @@
     let totalPages = $state(1);
     let total = $state(0);
     const limit = 50;
-
-    let showCreateDialog = $state(false);
-    let creating = $state(false);
-    let createForm = $state({
-        email: "",
-        name: "",
-        password: "",
-        confirmPassword: "",
-        is_admin: false,
-    });
-    let createError = $state("");
-
-    function resetCreateForm() {
-        createForm = {
-            email: "",
-            name: "",
-            password: "",
-            confirmPassword: "",
-            is_admin: false,
-        };
-        createError = "";
-    }
-
-    async function createUser(event?: Event) {
-        event?.preventDefault();
-        createError = "";
-
-        const email = createForm.email.trim();
-        const name = createForm.name.trim();
-
-        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-            createError = "Please enter a valid email address";
-            return;
-        }
-        if (!name) {
-            createError = "Name is required";
-            return;
-        }
-        if (createForm.password.length < 8) {
-            createError = "Password must be at least 8 characters long";
-            return;
-        }
-        if (createForm.password !== createForm.confirmPassword) {
-            createError = "Passwords do not match";
-            return;
-        }
-
-        creating = true;
-        try {
-            await adminAPI.createUser({
-                email,
-                name,
-                password: createForm.password,
-                is_admin: createForm.is_admin,
-            });
-            toastStore.success(`User ${email} created successfully`);
-            showCreateDialog = false;
-            resetCreateForm();
-            page = 1;
-            await loadUsers();
-        } catch (err: any) {
-            createError = err?.message || "Failed to create user";
-        } finally {
-            creating = false;
-        }
-    }
 
     const usersAPI = new UsersAPI(() => get(authStore).token);
 
@@ -193,15 +122,6 @@
             <h1 class="text-3xl font-bold">User Management</h1>
             <p class="text-muted-foreground">Manage all users in the system</p>
         </div>
-        <Button
-            onclick={() => {
-                resetCreateForm();
-                showCreateDialog = true;
-            }}
-        >
-            <UserPlus class="h-4 w-4 mr-2" />
-            Create User
-        </Button>
     </div>
 
     <Card>
@@ -345,95 +265,3 @@
         </CardContent>
     </Card>
 </div>
-
-<Dialog.Root bind:open={showCreateDialog}>
-    <Dialog.Content class="max-w-lg">
-        <Dialog.Header>
-            <Dialog.Title>Create User</Dialog.Title>
-            <Dialog.Description>
-                Provision a new user account. Share the credentials with the
-                user to let them sign in.
-            </Dialog.Description>
-        </Dialog.Header>
-        <form onsubmit={createUser}>
-            <div class="space-y-4 py-4">
-                <div class="space-y-2">
-                    <Label for="create-user-email">Email</Label>
-                    <Input
-                        id="create-user-email"
-                        type="email"
-                        placeholder="user@example.com"
-                        bind:value={createForm.email}
-                        disabled={creating}
-                        autocomplete="off"
-                    />
-                </div>
-                <div class="space-y-2">
-                    <Label for="create-user-name">Name</Label>
-                    <Input
-                        id="create-user-name"
-                        type="text"
-                        placeholder="Full name"
-                        bind:value={createForm.name}
-                        disabled={creating}
-                        autocomplete="off"
-                    />
-                </div>
-                <div class="space-y-2">
-                    <Label for="create-user-password">Password</Label>
-                    <Input
-                        id="create-user-password"
-                        type="password"
-                        placeholder="Minimum 8 characters"
-                        bind:value={createForm.password}
-                        disabled={creating}
-                        autocomplete="new-password"
-                    />
-                </div>
-                <div class="space-y-2">
-                    <Label for="create-user-confirm">Confirm password</Label>
-                    <Input
-                        id="create-user-confirm"
-                        type="password"
-                        placeholder="Re-enter password"
-                        bind:value={createForm.confirmPassword}
-                        disabled={creating}
-                        autocomplete="new-password"
-                    />
-                </div>
-                <div class="flex items-center justify-between">
-                    <div>
-                        <Label for="create-user-admin">Admin access</Label>
-                        <p class="text-xs text-muted-foreground">
-                            Grants full access to admin settings.
-                        </p>
-                    </div>
-                    <Switch
-                        id="create-user-admin"
-                        bind:checked={createForm.is_admin}
-                        disabled={creating}
-                    />
-                </div>
-                {#if createError}
-                    <p class="text-sm text-destructive">{createError}</p>
-                {/if}
-            </div>
-            <Dialog.Footer>
-                <Button
-                    type="button"
-                    variant="outline"
-                    disabled={creating}
-                    onclick={() => {
-                        showCreateDialog = false;
-                        resetCreateForm();
-                    }}
-                >
-                    Cancel
-                </Button>
-                <Button type="submit" disabled={creating}>
-                    {creating ? "Creating..." : "Create User"}
-                </Button>
-            </Dialog.Footer>
-        </form>
-    </Dialog.Content>
-</Dialog.Root>

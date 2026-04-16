@@ -5,8 +5,8 @@
  * They align with @logtide/shared types but are designed to be storage-agnostic.
  */
 
-import type { LogLevel, SpanKind, SpanStatusCode, MetadataFilter } from '@logtide/shared';
-export type { LogLevel, SpanKind, SpanStatusCode, MetadataFilter };
+import type { LogLevel, SpanKind, SpanStatusCode } from '@logtide/shared';
+export type { LogLevel, SpanKind, SpanStatusCode };
 
 export type EngineType = 'timescale' | 'clickhouse' | 'mongodb';
 
@@ -72,7 +72,6 @@ export interface QueryParams {
   search?: string;
   searchMode?: SearchMode;
   filters?: Filter[];
-  metadataFilters?: MetadataFilter[];
   limit?: number;
   offset?: number;
   cursor?: string;
@@ -204,7 +203,6 @@ export interface CountParams {
   search?: string;
   searchMode?: SearchMode;
   filters?: Filter[];
-  metadataFilters?: MetadataFilter[];
 }
 
 /** Result of a count query */

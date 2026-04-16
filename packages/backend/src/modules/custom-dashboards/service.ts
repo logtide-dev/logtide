@@ -188,55 +188,6 @@ export class CustomDashboardsService {
     return this.mapRow(row as unknown as DashboardRow);
   }
 
-  /**
-   * Promote an org-wide dashboard to be the default. Atomically unsets the
-   * current org-wide default and sets the target. Personal or project-scoped
-   * dashboards cannot be promoted - the partial unique index only covers
-   * (organization_id) WHERE is_default AND project_id IS NULL, and a personal
-   * dashboard as org-wide default would be visible only to its creator.
-   */
-  async setAsDefault(id: string, organizationId: string): Promise<CustomDashboard> {
-    const target = await db
-      .selectFrom('custom_dashboards')
-      .selectAll()
-      .where('id', '=', id)
-      .where('organization_id', '=', organizationId)
-      .executeTakeFirst();
-
-    if (!target) {
-      throw new Error('Dashboard not found');
-    }
-    if (target.is_personal) {
-      throw new Error('Personal dashboards cannot be set as default');
-    }
-    if (target.project_id !== null) {
-      throw new Error('Project-scoped dashboards cannot be set as default');
-    }
-    if (target.is_default) {
-      return this.mapRow(target as unknown as DashboardRow);
-    }
-
-    const updated = await db.transaction().execute(async (trx) => {
-      await trx
-        .updateTable('custom_dashboards')
-        .set({ is_default: false, updated_at: new Date() })
-        .where('organization_id', '=', organizationId)
-        .where('is_default', '=', true)
-        .where('project_id', 'is', null)
-        .execute();
-
-      return trx
-        .updateTable('custom_dashboards')
-        .set({ is_default: true, updated_at: new Date() })
-        .where('id', '=', id)
-        .where('organization_id', '=', organizationId)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-    });
-
-    return this.mapRow(updated as unknown as DashboardRow);
-  }
-
   async delete(id: string, organizationId: string): Promise<void> {
     // Refuse to delete the default dashboard - the UI would have nothing to fall back to.
     const existing = await db

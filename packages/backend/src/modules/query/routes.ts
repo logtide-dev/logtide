@@ -1,7 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { queryService, type SearchMode } from './service.js';
-import type { LogLevel, MetadataFilter } from '@logtide/shared';
-import { metadataFiltersSchema } from '@logtide/shared';
+import type { LogLevel } from '@logtide/shared';
 import { db } from '../../database/index.js';
 import { requireFullAccess } from '../auth/guards.js';
 import { auditLogService } from '../audit-log/service.js';
@@ -64,14 +63,13 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
           limit: { type: 'number', minimum: 1, maximum: 1000, default: 100 },
           offset: { type: 'number', minimum: 0, default: 0 },
           cursor: { type: 'string' },
-          metadata_filters: { type: 'string' },
         },
       },
     },
     handler: async (request: any, reply) => {
       if (!await requireFullAccess(request, reply)) return;
 
-      const { service, level, hostname, traceId, sessionId, from, to, q, searchMode, limit, offset, cursor, metadata_filters: rawMetadataFilters, projectId: queryProjectId } = request.query as {
+      const { service, level, hostname, traceId, sessionId, from, to, q, searchMode, limit, offset, cursor, projectId: queryProjectId } = request.query as {
         service?: string | string[];
         level?: LogLevel | LogLevel[];
         hostname?: string | string[];
@@ -84,25 +82,8 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         limit?: number;
         offset?: number;
         cursor?: string;
-        metadata_filters?: string;
         projectId?: string | string[];
       };
-
-      // Parse and validate metadata_filters if provided
-      let metadata_filters: MetadataFilter[] | undefined;
-      if (rawMetadataFilters) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(rawMetadataFilters);
-        } catch {
-          return reply.code(400).send({ error: 'metadata_filters must be valid JSON' });
-        }
-        const result = metadataFiltersSchema.safeParse(parsed);
-        if (!result.success) {
-          return reply.code(400).send({ error: 'invalid metadata_filters', details: result.error.issues });
-        }
-        metadata_filters = result.data;
-      }
 
       // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
       const projectId = queryProjectId || request.projectId;
@@ -136,7 +117,6 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to: to ? new Date(to) : undefined,
         q,
         searchMode,
-        metadata_filters,
         limit: limit || 100,
         offset: offset || 0,
         cursor,

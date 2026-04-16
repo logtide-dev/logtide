@@ -16,7 +16,7 @@
   <a href="https://codecov.io/gh/logtide-dev/logtide"><img src="https://codecov.io/gh/logtide-dev/logtide/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://hub.docker.com/r/logtide/backend"><img src="https://img.shields.io/docker/v/logtide/backend?label=docker&logo=docker" alt="Docker"></a>
   <a href="https://artifacthub.io/packages/helm/logtide/logtide"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logtide" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-0.9.2-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.1-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-stable_alpha-success.svg" alt="Status">
 </div>
@@ -124,7 +124,7 @@ We host it for you. Perfect for testing. [**Sign up at logtide.dev**](https://lo
 
 ---
 
-## ✨ Core Features (v0.9.2)
+## ✨ Core Features (v0.9.1)
 
 ### 🆕 New in 0.9.1
 * 🩺 **Uptime Monitoring & Status Pages:** HTTP/TCP/heartbeat monitors with configurable thresholds, auto-created SIEM incidents on failure, scheduled maintenances, and public Uptime-Kuma-style status pages per project.

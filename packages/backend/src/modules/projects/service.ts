@@ -2,7 +2,6 @@ import { db } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
 import type { Project, StatusPageVisibility } from '@logtide/shared';
 import bcrypt from 'bcrypt';
-import { validateSlug } from '../../utils/slug.js';
 
 function generateProjectSlug(name: string): string {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -19,7 +18,6 @@ export interface CreateProjectInput {
 export interface UpdateProjectInput {
   name?: string;
   description?: string | null;
-  slug?: string;
   statusPageVisibility?: StatusPageVisibility;
   statusPagePassword?: string;
 }
@@ -60,7 +58,7 @@ export class ProjectsService {
       throw new Error('A project with this name already exists in this organization');
     }
 
-    // Generate a unique slug within the organization
+    // Generate a globally unique slug
     const baseSlug = generateProjectSlug(input.name);
     let slug = baseSlug;
     let suffix = 2;
@@ -68,7 +66,6 @@ export class ProjectsService {
       const conflict = await db
         .selectFrom('projects')
         .select('id')
-        .where('organization_id', '=', input.organizationId)
         .where('slug', '=', slug)
         .executeTakeFirst();
       if (!conflict) break;
@@ -182,27 +179,9 @@ export class ProjectsService {
       }
     }
 
-    if (input.slug !== undefined && input.slug !== existing.slug) {
-      const validationError = validateSlug(input.slug);
-      if (validationError) {
-        throw new Error(validationError);
-      }
-      const slugConflict = await db
-        .selectFrom('projects')
-        .select('id')
-        .where('organization_id', '=', existing.organizationId)
-        .where('slug', '=', input.slug)
-        .where('id', '!=', projectId)
-        .executeTakeFirst();
-      if (slugConflict) {
-        throw new Error('A project with this slug already exists in this organization');
-      }
-    }
-
     // Build update set
     const updateSet: Record<string, unknown> = { updated_at: new Date() };
     if (input.name) updateSet.name = input.name;
-    if (input.slug !== undefined) updateSet.slug = input.slug;
     if (input.description !== undefined) updateSet.description = input.description || null;
     if (input.statusPageVisibility !== undefined) {
       updateSet.status_page_visibility = input.statusPageVisibility;

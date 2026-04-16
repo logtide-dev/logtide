@@ -1,5 +1,4 @@
 import { Kysely, sql } from 'kysely';
-import { MITRE_TECHNIQUES } from '@logtide/shared';
 import type { Database } from '../../database/types';
 import type {
   DashboardStats,
@@ -10,14 +9,6 @@ import type {
   SeverityDistribution,
   MitreHeatmapCell,
 } from './types';
-
-function resolveTacticForTechnique(technique: string): string | null {
-  const direct = (MITRE_TECHNIQUES as Record<string, { tactic: string }>)[technique];
-  if (direct) return direct.tactic;
-  const base = technique.split('.')[0];
-  const parent = (MITRE_TECHNIQUES as Record<string, { tactic: string }>)[base];
-  return parent ? parent.tactic : null;
-}
 
 export class SiemDashboardService {
   constructor(private db: Kysely<Database>) {}
@@ -238,13 +229,15 @@ export class SiemDashboardService {
       .selectFrom('detection_events')
       .select([
         sql<string>`unnest(mitre_techniques)`.as('technique'),
+        sql<string>`unnest(mitre_tactics)`.as('tactic'),
         sql<number>`count(*)::int`.as('count'),
       ])
       .where('organization_id', '=', filters.organizationId)
       .where('category', '=', 'security')
       .where('time', '>=', startTime)
       .where('time', '<=', endTime)
-      .where('mitre_techniques', 'is not', null);
+      .where('mitre_techniques', 'is not', null)
+      .where('mitre_tactics', 'is not', null);
 
     if (filters.projectId) {
       query = query.where('project_id', '=', filters.projectId);
@@ -254,30 +247,17 @@ export class SiemDashboardService {
       query = query.where('severity', 'in', filters.severity);
     }
 
-    const results = await query.groupBy('technique').execute();
+    const results = await query
+      .groupBy(['technique', 'tactic'])
+      .orderBy('count', 'desc')
+      .limit(50) // Top 50 technique-tactic combinations
+      .execute();
 
-    // Pair each technique with its canonical MITRE tactic. Previously we did
-    // two parallel unnest() calls on mitre_techniques and mitre_tactics in the
-    // same SELECT, which PostgreSQL evaluates in lockstep: when the two arrays
-    // had different lengths the shorter one got NULL-padded, producing cells
-    // with null tactic/technique that crashed the frontend (issue #200).
-    const cells = new Map<string, MitreHeatmapCell>();
-    for (const row of results) {
-      if (!row.technique) continue;
-      const tactic = resolveTacticForTechnique(row.technique);
-      if (!tactic) continue;
-      const key = `${row.technique}|${tactic}`;
-      const existing = cells.get(key);
-      if (existing) {
-        existing.count += row.count;
-      } else {
-        cells.set(key, { technique: row.technique, tactic, count: row.count });
-      }
-    }
-
-    return Array.from(cells.values())
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 50);
+    return results.map((row) => ({
+      technique: row.technique,
+      tactic: row.tactic,
+      count: row.count,
+    }));
   }
 
   private async getTotalStats(

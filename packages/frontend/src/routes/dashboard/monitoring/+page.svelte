@@ -266,32 +266,6 @@
     }
   }
 
-  let slugInput = $state('');
-  let slugError = $state<string | null>(null);
-  let savingSlug = $state(false);
-
-  $effect(() => {
-    if (selectedProject) {
-      slugInput = selectedProject.slug ?? '';
-      slugError = null;
-    }
-  });
-
-  async function saveProjectSlug() {
-    if (!org || !projectId || !slugInput) return;
-    slugError = null;
-    savingSlug = true;
-    try {
-      const res = await projectsAPI.updateProject(org.id, projectId, { slug: slugInput });
-      projects = projects.map((p) => p.id === projectId ? { ...p, slug: res.project.slug } : p);
-      toastStore.success('Slug updated');
-    } catch (err) {
-      slugError = err instanceof Error ? err.message : 'Failed to update slug';
-    } finally {
-      savingSlug = false;
-    }
-  }
-
   interface StatusIncident {
     id: string;
     organizationId: string;
@@ -524,9 +498,9 @@
             </Badge>
           {/if}
         </div>
-        {#if selectedProject.statusPageVisibility !== 'disabled' && selectedProject.slug && org?.slug}
+        {#if selectedProject.statusPageVisibility !== 'disabled' && selectedProject.slug}
           <a
-            href="/status/{org.slug}/{selectedProject.slug}"
+            href="/status/{selectedProject.slug}"
             target="_blank"
             class="flex items-center gap-1.5 text-xs text-primary hover:underline"
           >
@@ -549,34 +523,6 @@
         </div>
       {/if}
 
-      {#if selectedProject.statusPageVisibility !== 'disabled'}
-        <div class="flex flex-col gap-1 pt-1">
-          <label for="project-slug-input" class="text-sm font-medium">Public URL slug</label>
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-muted-foreground whitespace-nowrap">
-              /status/{org?.slug}/
-            </span>
-            <input
-              id="project-slug-input"
-              type="text"
-              bind:value={slugInput}
-              placeholder="project-slug"
-              class="h-8 w-48 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-            <Button
-              size="sm"
-              disabled={!slugInput || slugInput === selectedProject.slug || savingSlug}
-              onclick={saveProjectSlug}
-            >
-              Save
-            </Button>
-          </div>
-          {#if slugError}
-            <p class="text-xs text-destructive">{slugError}</p>
-          {/if}
-        </div>
-      {/if}
-
       {#if selectedProject.statusPageVisibility === 'public' && selectedProject.slug}
         <div class="border-t pt-2 mt-1">
           <Collapsible.Root>
@@ -588,7 +534,7 @@
               <ChevronDown class="h-4 w-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
             </Collapsible.Trigger>
             <Collapsible.Content class="pt-3">
-              <StatusBadgeEmbed orgSlug={org?.slug ?? ''} projectSlug={selectedProject.slug} />
+              <StatusBadgeEmbed projectSlug={selectedProject.slug} />
             </Collapsible.Content>
           </Collapsible.Root>
         </div>

@@ -10,11 +10,10 @@
   type BadgeStyle = 'flat' | 'flat-square' | 'plastic' | 'for-the-badge' | 'minimal';
 
   interface Props {
-    orgSlug: string;
     projectSlug: string;
   }
 
-  let { orgSlug, projectSlug }: Props = $props();
+  let { projectSlug }: Props = $props();
 
   let style = $state<BadgeStyle>('flat');
 
@@ -44,12 +43,12 @@
   const styleQuery = $derived(style === 'flat' ? '' : `?style=${style}`);
 
   const previewSvgUrl = $derived(
-    `${apiBase}/api/v1/status/${orgSlug}/${projectSlug}/badge.svg${styleQuery}`
+    `${apiBase}/api/v1/status/project/${projectSlug}/badge.svg${styleQuery}`
   );
   const svgUrl = previewSvgUrl;
-  const jsonUrl = $derived(`${apiBase}/api/v1/status/${orgSlug}/${projectSlug}/badge.json`);
+  const jsonUrl = $derived(`${apiBase}/api/v1/status/project/${projectSlug}/badge.json`);
   const statusPageUrl = $derived(
-    `${apiBase || (typeof window !== 'undefined' ? window.location.origin : '')}/status/${orgSlug}/${projectSlug}`
+    `${apiBase || (typeof window !== 'undefined' ? window.location.origin : '')}/status/${projectSlug}`
   );
 
   const htmlSnippet = $derived(

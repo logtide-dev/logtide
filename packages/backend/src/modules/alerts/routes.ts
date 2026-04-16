@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { LOG_LEVELS, metadataFiltersSchema } from '@logtide/shared';
+import { LOG_LEVELS } from '@logtide/shared';
 import { alertsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
@@ -31,7 +31,6 @@ const createAlertRuleSchema = z.object({
   emailRecipients: z.array(z.string().email()).optional(),
   webhookUrl: z.string().url().optional().nullable(),
   channelIds: z.array(z.string().uuid()).optional(),
-  metadataFilters: metadataFiltersSchema,
 }).refine(
   (data) => (data.emailRecipients && data.emailRecipients.length > 0) || (data.channelIds && data.channelIds.length > 0),
   { message: 'At least one email recipient or notification channel is required' }
@@ -61,7 +60,6 @@ const updateAlertRuleSchema = z.object({
   emailRecipients: z.array(z.string().email()).optional(),
   webhookUrl: z.string().url().optional().nullable(),
   channelIds: z.array(z.string().uuid()).optional(),
-  metadataFilters: metadataFiltersSchema.optional(),
 }).refine(
   (data) => {
     if (data.alertType === 'rate_of_change') {
@@ -163,7 +161,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...alertData } = body;
+      const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, ...alertData } = body;
       const alertRule = await alertsService.createAlertRule({
         ...alertData,
         alertType: alertType || 'threshold',
@@ -173,7 +171,6 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         cooldownMinutes: cooldownMinutes ?? null,
         sustainedMinutes: sustainedMinutes ?? null,
         emailRecipients: alertData.emailRecipients || [],
-        metadataFilters: metadataFilters ?? [],
       });
 
       // Associate channels with the alert rule
@@ -377,7 +374,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...updateData } = body;
+      const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, ...updateData } = body;
       const rateOfChangeFields: Record<string, unknown> = {};
       if (alertType !== undefined) rateOfChangeFields.alertType = alertType;
       if (baselineType !== undefined) rateOfChangeFields.baselineType = baselineType;
@@ -385,7 +382,6 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (minBaselineValue !== undefined) rateOfChangeFields.minBaselineValue = minBaselineValue;
       if (cooldownMinutes !== undefined) rateOfChangeFields.cooldownMinutes = cooldownMinutes;
       if (sustainedMinutes !== undefined) rateOfChangeFields.sustainedMinutes = sustainedMinutes;
-      if (metadataFilters !== undefined) rateOfChangeFields.metadataFilters = metadataFilters;
 
       const alertRule = await alertsService.updateAlertRule(id, organizationId, {
         ...updateData,

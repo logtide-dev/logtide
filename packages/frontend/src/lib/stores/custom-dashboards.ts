@@ -377,47 +377,6 @@ function createDashboardStore() {
       }
     },
 
-    async setAsDefault(id: string, organizationId: string): Promise<void> {
-      try {
-        const updated = await customDashboardsAPI.setAsDefault(id, organizationId);
-        update((s) => ({
-          ...s,
-          dashboards: s.dashboards.map((d) => {
-            if (d.id === updated.id) return updated;
-            if (
-              d.isDefault &&
-              d.projectId === null &&
-              !d.isPersonal &&
-              d.id !== updated.id
-            ) {
-              return { ...d, isDefault: false };
-            }
-            return d;
-          }),
-          activeDashboard: (() => {
-            const current = s.activeDashboard;
-            if (!current) return current;
-            if (current.id === updated.id) return updated;
-            if (
-              current.isDefault &&
-              current.projectId === null &&
-              !current.isPersonal
-            ) {
-              return { ...current, isDefault: false };
-            }
-            return current;
-          })(),
-        }));
-      } catch (e) {
-        update((s) => ({
-          ...s,
-          listError:
-            e instanceof Error ? e.message : 'Failed to set default dashboard',
-        }));
-        throw e;
-      }
-    },
-
     async deleteDashboard(id: string, organizationId: string): Promise<void> {
       try {
         await customDashboardsAPI.delete(id, organizationId);

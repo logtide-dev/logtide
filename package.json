@@ -1,6 +1,6 @@
 {
   "name": "logtide",
-  "version": "0.9.2",
+  "version": "0.9.1",
   "private": true,
   "description": "LogTide - Self-hosted log management platform",
   "author": "LogTide Team",
@@ -19,7 +19,7 @@
       "ajv": ">=8.18.0",
       "rollup": ">=4.59.0",
       "svelte": ">=5.53.5",
-      "@sveltejs/kit": ">=2.57.1",
+      "@sveltejs/kit": ">=2.53.3",
       "@logtide/types": "0.7.0",
       "@logtide/browser": "0.7.0",
       "@logtide/core": "0.7.0"

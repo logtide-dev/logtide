@@ -63,20 +63,19 @@
 
   function getStoredPassword(): string | null {
     try {
-      return sessionStorage.getItem(`status-pw-${$page.params.orgSlug}-${$page.params.projectSlug}`);
+      return sessionStorage.getItem(`status-pw-${$page.params.projectSlug}`);
     } catch { return null; }
   }
 
   function storePassword(pw: string) {
-    try { sessionStorage.setItem(`status-pw-${$page.params.orgSlug}-${$page.params.projectSlug}`, pw); } catch {}
+    try { sessionStorage.setItem(`status-pw-${$page.params.projectSlug}`, pw); } catch {}
   }
 
   let pendingPassword = $state<string | null>(null);
 
   async function load() {
-    const orgSlug = $page.params.orgSlug;
-    const projectSlug = $page.params.projectSlug;
-    if (!orgSlug || !projectSlug) return;
+    const slug = $page.params.projectSlug;
+    if (!slug) return;
     loading = true;
     fetchError = null;
     notFound = false;
@@ -88,7 +87,7 @@
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
     try {
-      const res = await fetch(`${getApiUrl()}/api/v1/status/${orgSlug}/${projectSlug}`, { headers });
+      const res = await fetch(`${getApiUrl()}/api/v1/status/project/${slug}`, { headers });
       if (res.status === 404) {
         notFound = true;
         return;
@@ -101,7 +100,7 @@
           if (pw) {
             passwordError = 'Invalid password';
             pendingPassword = null;
-            try { sessionStorage.removeItem(`status-pw-${orgSlug}-${projectSlug}`); } catch {}
+            try { sessionStorage.removeItem(`status-pw-${slug}`); } catch {}
           }
           return;
         }

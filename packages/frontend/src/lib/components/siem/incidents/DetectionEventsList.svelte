@@ -59,8 +59,8 @@
 		return JSON.stringify(fields, null, 2);
 	}
 
-	function getLogLevelClass(level: string | null | undefined): string {
-		switch (level?.toLowerCase()) {
+	function getLogLevelClass(level: string): string {
+		switch (level.toLowerCase()) {
 			case 'critical':
 				return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 border-purple-300 dark:border-purple-700';
 			case 'error':

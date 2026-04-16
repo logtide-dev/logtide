@@ -109,19 +109,6 @@
     URL.revokeObjectURL(url);
   }
 
-  async function handleSetDefault(dashboard: CustomDashboard) {
-    if (!$currentOrganization) return;
-    try {
-      await customDashboardsStore.setAsDefault(
-        dashboard.id,
-        $currentOrganization.id
-      );
-      toastStore.success(`"${dashboard.name}" is now the default dashboard`);
-    } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Failed to set default');
-    }
-  }
-
   async function handleDelete() {
     if (!$activeDashboard || !$currentOrganization) return;
     if (!confirm(`Delete dashboard "${$activeDashboard.name}"? This cannot be undone.`)) {
@@ -271,7 +258,6 @@
           onImport={handleImport}
           onExport={handleExport}
           onDelete={handleDelete}
-          onSetDefault={handleSetDefault}
         />
       </div>
       {#if $currentOrganization}

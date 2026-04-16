@@ -182,34 +182,6 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // ─── Set as default ─────────────────────────────────────────────────────
-  fastify.post('/:id/set-default', async (request: any, reply) => {
-    const { organizationId } = request.query as { organizationId?: string };
-    if (!organizationId) {
-      return reply.status(400).send({ error: 'organizationId required' });
-    }
-    if (!(await checkMembership(request.user.id, organizationId))) {
-      return reply.status(403).send({ error: 'Forbidden' });
-    }
-    try {
-      const dashboard = await customDashboardsService.setAsDefault(
-        (request.params as { id: string }).id,
-        organizationId
-      );
-      return reply.send({ dashboard });
-    } catch (e) {
-      if (e instanceof Error) {
-        if (e.message === 'Dashboard not found') {
-          return reply.status(404).send({ error: e.message });
-        }
-        if (e.message.includes('cannot be set as default')) {
-          return reply.status(400).send({ error: e.message });
-        }
-      }
-      throw e;
-    }
-  });
-
   // ─── Delete ─────────────────────────────────────────────────────────────
   fastify.delete('/:id', async (request: any, reply) => {
     const { organizationId } = request.query as { organizationId?: string };

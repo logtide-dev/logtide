@@ -3,8 +3,6 @@
 	import { sigmaAPI } from "$lib/api/sigma";
 	import { toastStore } from "$lib/stores/toast";
 	import { checklistStore } from "$lib/stores/checklist";
-	import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
-	import type { MetadataFilterInput } from "@logtide/shared";
 	import * as Dialog from "$lib/components/ui/dialog";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import Input from "$lib/components/ui/input/input.svelte";
@@ -63,8 +61,6 @@
 	let sustainedMinutes = $state(5);
 	let showAdvancedRoc = $state(false);
 
-	let metadataFilters = $state<MetadataFilterInput[]>([]);
-
 	let submitting = $state(false);
 	let showPreview = $state(false);
 
@@ -109,7 +105,6 @@
 		cooldownMinutes = 60;
 		sustainedMinutes = 5;
 		showAdvancedRoc = false;
-		metadataFilters = [];
 
 		sigmaYaml = "";
 		sigmaSelectedChannelIds = [];
@@ -195,7 +190,6 @@
 				timeWindow: alertType === "rate_of_change" ? 60 : timeWindow,
 				alertType,
 				channelIds: selectedChannelIds,
-				metadataFilters: metadataFilters.filter((f) => f.key.trim().length > 0),
 			};
 
 			if (alertType === "rate_of_change") {
@@ -390,15 +384,6 @@
 						</div>
 						<p class="text-xs text-muted-foreground">
 							Select which log levels should trigger this alert
-						</p>
-					</div>
-
-					<!-- Metadata Filters -->
-					<div class="space-y-2">
-						<Label>Metadata Filters</Label>
-						<MetadataFilterBuilder bind:filters={metadataFilters} disabled={submitting} />
-						<p class="text-xs text-muted-foreground">
-							Only alert on logs matching these metadata conditions. Optional.
 						</p>
 					</div>
 

@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { alertsAPI, type AlertRule, type AlertType, type BaselineType } from "$lib/api/alerts";
 	import { toastStore } from "$lib/stores/toast";
-	import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
-	import type { MetadataFilterInput } from "@logtide/shared";
 	import * as Dialog from "$lib/components/ui/dialog";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import Input from "$lib/components/ui/input/input.svelte";
@@ -36,7 +34,6 @@
 	let threshold = $state(10);
 	let timeWindow = $state(5);
 	let selectedChannelIds = $state<string[]>([]);
-	let metadataFilters = $state<MetadataFilterInput[]>([]);
 	let submitting = $state(false);
 
 	// Rate-of-change state
@@ -90,7 +87,6 @@
 		cooldownMinutes = alert.cooldownMinutes ?? 60;
 		sustainedMinutes = alert.sustainedMinutes ?? 5;
 		showAdvancedRoc = false;
-		metadataFilters = alert.metadataFilters ?? [];
 	}
 
 	$effect(() => {
@@ -144,7 +140,6 @@
 				level: Array.from(selectedLevels),
 				channelIds: selectedChannelIds,
 				alertType,
-				metadataFilters: metadataFilters.filter((f) => f.key.trim().length > 0),
 			};
 
 			if (alertType === "threshold") {
@@ -281,15 +276,6 @@
 				</div>
 				<p class="text-xs text-muted-foreground">
 					Select which log levels should trigger this alert
-				</p>
-			</div>
-
-			<!-- Metadata Filters -->
-			<div class="space-y-2">
-				<Label>Metadata Filters</Label>
-				<MetadataFilterBuilder bind:filters={metadataFilters} disabled={submitting} />
-				<p class="text-xs text-muted-foreground">
-					Only alert on logs matching these metadata conditions. Optional.
 				</p>
 			</div>
 

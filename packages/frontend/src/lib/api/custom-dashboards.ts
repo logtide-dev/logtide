@@ -119,15 +119,6 @@ class CustomDashboardsAPI {
     return result.dashboard;
   }
 
-  async setAsDefault(id: string, organizationId: string): Promise<CustomDashboard> {
-    const params = new URLSearchParams({ organizationId });
-    const result = await this.request<{ dashboard: CustomDashboard }>(
-      `/${id}/set-default?${params.toString()}`,
-      { method: 'POST', body: '{}' }
-    );
-    return result.dashboard;
-  }
-
   async delete(id: string, organizationId: string): Promise<void> {
     const params = new URLSearchParams({ organizationId });
     await this.request<void>(`/${id}?${params.toString()}`, {

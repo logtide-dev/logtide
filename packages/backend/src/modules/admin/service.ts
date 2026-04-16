@@ -1370,39 +1370,6 @@ export class AdminService {
     }
 
     /**
-     * Create a new user (admin action).
-     * Used when signup is disabled and admins need to provision accounts manually.
-     */
-    async createUser(input: { email: string; name: string; password: string; is_admin?: boolean }) {
-        const bcrypt = await import('bcrypt');
-
-        const existing = await db
-            .selectFrom('users')
-            .select('id')
-            .where('email', '=', input.email)
-            .executeTakeFirst();
-
-        if (existing) {
-            throw new Error('User with this email already exists');
-        }
-
-        const passwordHash = await bcrypt.hash(input.password, 10);
-
-        const user = await db
-            .insertInto('users')
-            .values({
-                email: input.email,
-                name: input.name,
-                password_hash: passwordHash,
-                is_admin: input.is_admin === true,
-            })
-            .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
-            .executeTakeFirstOrThrow();
-
-        return user;
-    }
-
-    /**
      * Reset user password (admin action)
      */
     async resetUserPassword(userId: string, newPassword: string) {

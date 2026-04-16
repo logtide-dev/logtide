@@ -326,11 +326,11 @@ describe('POST /api/v1/heartbeat/:id/heartbeat', () => {
 
 });
 
-describe('GET /status/:orgSlug/:projectSlug', () => {
+describe('GET /status/project/:slug', () => {
   it('returns 404 for unknown slug', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/nonexistent-slug`,
+      url: '/status/project/nonexistent-slug',
     });
     expect(res.statusCode).toBe(404);
   });
@@ -345,7 +345,7 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}`,
+      url: `/status/project/${ctx.project.slug}`,
     });
     expect(res.statusCode).toBe(404);
   });
@@ -359,7 +359,7 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}`,
+      url: `/status/project/${ctx.project.slug}`,
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);
@@ -376,7 +376,7 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}`,
+      url: `/status/project/${ctx.project.slug}`,
     });
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.payload).requiresPassword).toBe(true);
@@ -391,7 +391,7 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}`,
+      url: `/status/project/${ctx.project.slug}`,
       headers: { 'x-status-password': 'wrongpassword' },
     });
     expect(res.statusCode).toBe(401);
@@ -407,7 +407,7 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}`,
+      url: `/status/project/${ctx.project.slug}`,
     });
     expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.payload).requiresAuth).toBe(true);
@@ -422,7 +422,7 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}`,
+      url: `/status/project/${ctx.project.slug}`,
       headers: { Authorization: 'Bearer invalid-token-xyz' },
     });
     expect(res.statusCode).toBe(401);
@@ -442,7 +442,7 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}`,
+      url: `/status/project/${ctx.project.slug}`,
       headers: { Authorization: `Bearer ${strangerSession.token}` },
     });
     expect(res.statusCode).toBe(403);
@@ -457,7 +457,7 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}`,
+      url: `/status/project/${ctx.project.slug}`,
       headers: authHeaders(authToken),
     });
     expect(res.statusCode).toBe(200);
@@ -465,11 +465,11 @@ describe('GET /status/:orgSlug/:projectSlug', () => {
   });
 });
 
-describe('GET /status/:orgSlug/:projectSlug/badge.json', () => {
+describe('GET /status/project/:slug/badge.json', () => {
   it('returns 404 for non-public project', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}/badge.json`,
+      url: `/status/project/${ctx.project.slug}/badge.json`,
     });
     expect(res.statusCode).toBe(404);
   });
@@ -483,7 +483,7 @@ describe('GET /status/:orgSlug/:projectSlug/badge.json', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}/badge.json`,
+      url: `/status/project/${ctx.project.slug}/badge.json`,
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);
@@ -493,11 +493,11 @@ describe('GET /status/:orgSlug/:projectSlug/badge.json', () => {
   });
 });
 
-describe('GET /status/:orgSlug/:projectSlug/badge.svg', () => {
+describe('GET /status/project/:slug/badge.svg', () => {
   it('returns unknown badge SVG for non-public project', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}/badge.svg`,
+      url: `/status/project/${ctx.project.slug}/badge.svg`,
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('image/svg+xml');
@@ -513,7 +513,7 @@ describe('GET /status/:orgSlug/:projectSlug/badge.svg', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}/badge.svg`,
+      url: `/status/project/${ctx.project.slug}/badge.svg`,
     });
     expect(res.statusCode).toBe(200);
     expect(res.payload).toContain('operational');
@@ -528,7 +528,7 @@ describe('GET /status/:orgSlug/:projectSlug/badge.svg', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}/badge.svg?style=flat-square`,
+      url: `/status/project/${ctx.project.slug}/badge.svg?style=flat-square`,
     });
     expect(res.statusCode).toBe(200);
     expect(res.payload).toContain('<svg');
@@ -543,7 +543,7 @@ describe('GET /status/:orgSlug/:projectSlug/badge.svg', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}/badge.svg?style=for-the-badge`,
+      url: `/status/project/${ctx.project.slug}/badge.svg?style=for-the-badge`,
     });
     expect(res.statusCode).toBe(200);
     expect(res.payload).toContain('STATUS');
@@ -558,7 +558,7 @@ describe('GET /status/:orgSlug/:projectSlug/badge.svg', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}/badge.svg?style=minimal`,
+      url: `/status/project/${ctx.project.slug}/badge.svg?style=minimal`,
     });
     expect(res.statusCode).toBe(200);
     expect(res.payload).toContain('<svg');
@@ -573,7 +573,7 @@ describe('GET /status/:orgSlug/:projectSlug/badge.svg', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: `/status/${ctx.organization.slug}/${ctx.project.slug}/badge.svg?style=plastic`,
+      url: `/status/project/${ctx.project.slug}/badge.svg?style=plastic`,
     });
     expect(res.statusCode).toBe(200);
     expect(res.payload).toContain('<svg');

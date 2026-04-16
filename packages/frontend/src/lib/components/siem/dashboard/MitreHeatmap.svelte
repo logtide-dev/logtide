@@ -92,24 +92,20 @@
 		const theme = getEChartsTheme();
 		const tooltipStyle = getTooltipStyle();
 
-		// Drop cells with null/empty tactic or technique to avoid downstream crashes
-		const validCells = cells.filter((c) => c.tactic && c.technique);
-		if (validCells.length === 0) return;
-
 		// Extract unique tactics and techniques
-		const tactics = [...new Set(validCells.map((c) => c.tactic))].sort();
-		const techniques = [...new Set(validCells.map((c) => c.technique))].sort();
+		const tactics = [...new Set(cells.map((c) => c.tactic))].sort();
+		const techniques = [...new Set(cells.map((c) => c.technique))].sort();
 
 		// Limit to top 10 techniques if more
 		const topTechniques = techniques.slice(0, 10);
 
 		// Build data matrix
 		const data: [number, number, number][] = [];
-		const maxCount = Math.max(...validCells.map((c) => c.count), 1);
+		const maxCount = Math.max(...cells.map((c) => c.count), 1);
 
 		topTechniques.forEach((technique, techIndex) => {
 			tactics.forEach((tactic, tacticIndex) => {
-				const cell = validCells.find((c) => c.technique === technique && c.tactic === tactic);
+				const cell = cells.find((c) => c.technique === technique && c.tactic === tactic);
 				if (cell) {
 					data.push([tacticIndex, techIndex, cell.count]);
 				}

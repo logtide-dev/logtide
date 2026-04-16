@@ -1,7 +1,7 @@
 import { db } from '../../database/connection.js';
 import { sql } from 'kysely';
 import { reservoir } from '../../database/reservoir.js';
-import type { LogLevel, MetadataFilter } from '@logtide/shared';
+import type { LogLevel } from '@logtide/shared';
 import type { LogLevel as ReservoirLogLevel } from '@logtide/reservoir';
 import type { BaselineType } from '../../database/types.js';
 
@@ -44,7 +44,6 @@ export class BaselineCalculatorService {
     projectIds: string[],
     levels: LogLevel[],
     service: string | null,
-    metadataFilters?: MetadataFilter[],
   ): Promise<number> {
     if (projectIds.length === 0) return 0;
 
@@ -57,7 +56,6 @@ export class BaselineCalculatorService {
       to: new Date(),
       level: levels as ReservoirLogLevel[],
       ...(service ? { service: [service, 'unknown'] } : {}),
-      ...(metadataFilters && metadataFilters.length > 0 ? { metadataFilters } : {}),
     });
 
     return result.count;

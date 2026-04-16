@@ -341,6 +341,19 @@ describe('MonitorService.getUptimeHistory', () => {
   });
 });
 
+describe('MonitorService.getProjectBySlug', () => {
+  it('returns project when found', async () => {
+    const project = await service.getProjectBySlug(ctx.project.slug);
+    expect(project).not.toBeNull();
+    expect(project!.id).toBe(ctx.project.id);
+  });
+
+  it('returns null/undefined for unknown slug', async () => {
+    const project = await service.getProjectBySlug('not-a-real-slug-xyz');
+    expect(project ?? null).toBeNull();
+  });
+});
+
 describe('MonitorService.runCheck', () => {
   it('runs HTTP check and records result', async () => {
     const m = await service.createMonitor({

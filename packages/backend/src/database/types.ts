@@ -17,7 +17,6 @@ import type {
   PackCategory,
   ApiKeyType,
   PanelInstance,
-  MetadataFilter,
 } from '@logtide/shared';
 
 // Re-export types for backward compatibility (modules importing from database/types)
@@ -175,11 +174,6 @@ export interface AlertRulesTable {
     Record<string, unknown> | null,
     Record<string, unknown> | null,
     Record<string, unknown> | null
-  >;
-  metadata_filters: ColumnType<
-    MetadataFilter[],
-    MetadataFilter[] | null,
-    MetadataFilter[] | null
   >;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;

@@ -337,7 +337,7 @@ describe('SIEM Dashboard Service', () => {
                 logsource: JSON.stringify({}),
                 detection: JSON.stringify({}),
                 mitre_tactics: ['execution', 'persistence'],
-                mitre_techniques: ['T1059', 'T1547'],
+                mitre_techniques: ['T1059', 'T1053'],
             })
             .returningAll()
             .executeTakeFirstOrThrow();
@@ -385,7 +385,7 @@ describe('SIEM Dashboard Service', () => {
                 severity: 'high',
                 ruleTitle: 'MITRE Test',
                 mitreTactics: ['persistence'],
-                mitreTechniques: ['T1547'],
+                mitreTechniques: ['T1053'],
                 service: 'test',
                 logLevel: 'error',
                 logMessage: 'Event 3',
@@ -406,11 +406,11 @@ describe('SIEM Dashboard Service', () => {
         expect(executionT1059).toBeDefined();
         expect(executionT1059?.count).toBe(2);
 
-        const persistenceT1547 = stats.mitreHeatmap.find(
-            h => h.tactic === 'persistence' && h.technique === 'T1547'
+        const persistenceT1053 = stats.mitreHeatmap.find(
+            h => h.tactic === 'persistence' && h.technique === 'T1053'
         );
-        expect(persistenceT1547).toBeDefined();
-        expect(persistenceT1547?.count).toBe(1);
+        expect(persistenceT1053).toBeDefined();
+        expect(persistenceT1053?.count).toBe(1);
     });
 
     it('should filter by time range', async () => {

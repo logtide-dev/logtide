@@ -262,20 +262,11 @@ export class MonitorService {
   // PUBLIC STATUS PAGE (no auth - scrubbed data)
   // ============================================================================
 
-  async getProjectByOrgAndSlug(orgSlug: string, projectSlug: string) {
+  async getProjectBySlug(slug: string) {
     return this.db
       .selectFrom('projects')
-      .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
-      .select([
-        'projects.id',
-        'projects.name',
-        'projects.slug',
-        'projects.organization_id',
-        'projects.status_page_visibility',
-        'projects.status_page_password_hash',
-      ])
-      .where('organizations.slug', '=', orgSlug)
-      .where('projects.slug', '=', projectSlug)
+      .select(['id', 'name', 'slug', 'organization_id', 'status_page_visibility', 'status_page_password_hash'])
+      .where('slug', '=', slug)
       .executeTakeFirst() ?? null;
   }
 

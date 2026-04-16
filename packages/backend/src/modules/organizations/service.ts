@@ -1,6 +1,5 @@
 import { db } from '../../database/connection.js';
 import { notificationsService } from '../notifications/service.js';
-import { validateSlug } from '../../utils/slug.js';
 import type { Organization, OrganizationMember, OrganizationMemberWithUser, OrganizationWithRole, OrgRole } from '@logtide/shared';
 
 export interface CreateOrganizationInput {
@@ -11,7 +10,6 @@ export interface CreateOrganizationInput {
 
 export interface UpdateOrganizationInput {
   name?: string;
-  slug?: string;
   description?: string;
 }
 
@@ -242,25 +240,7 @@ export class OrganizationsService {
     // Wrap slug generation + update in a transaction to prevent duplicate slugs under concurrent requests
     const updated = await db.transaction().execute(async (trx) => {
       let newSlug: string | undefined;
-
-      if (input.slug !== undefined) {
-        // Explicit slug from user: validate + global uniqueness check
-        const validationError = validateSlug(input.slug);
-        if (validationError) {
-          throw new Error(validationError);
-        }
-        const conflict = await trx
-          .selectFrom('organizations')
-          .select('id')
-          .where('slug', '=', input.slug)
-          .where('id', '!=', organizationId)
-          .executeTakeFirst();
-        if (conflict) {
-          throw new Error('An organization with this slug already exists');
-        }
-        newSlug = input.slug;
-      } else if (input.name) {
-        // Auto-regenerate from name (existing behavior, excluding self from conflict)
+      if (input.name) {
         const baseSlug = this.generateSlugFromName(input.name);
         let slug = baseSlug;
         let counter = 1;
@@ -269,7 +249,6 @@ export class OrganizationsService {
             .selectFrom('organizations')
             .select('id')
             .where('slug', '=', slug)
-            .where('id', '!=', organizationId)
             .executeTakeFirst();
           if (!existing) break;
           slug = `${baseSlug}-${counter++}`;

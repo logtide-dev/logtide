@@ -6,27 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.9.2] - 2026-04-16
-
-### Added
-- **Generic metadata filters in log search and alert rules**: the search page and alert rule dialogs now expose a "Metadata filters" section backed by a new `MetadataFilterBuilder` component. Supported operators: `equals`, `not_equals`, `in`, `not_in`, `exists`, `not_exists`, `contains`. Filters are applied server-side via a GIN-indexed JSONB query builder in reservoir; alert evaluation also runs the same matcher in-process so rules can fire only when a specific metadata field matches
-- **Configurable metadata columns in log table view**: users can add arbitrary `metadata.*` keys as extra columns in the search results table via a "Columns" picker. The selected column set is persisted per project in localStorage so it survives page reloads
-- **Create user from admin panel** (issue #198): admins can now provision new accounts directly from `Admin → User Management` via a "Create User" button, without having to temporarily re-enable public signup. Opens a dialog to set email, name, password and optional admin role. Backed by a new `POST /api/v1/admin/users` endpoint that bypasses the `auth.signup_enabled` gate and logs a `create_user` entry to the audit log
-- **Set a custom dashboard as default from the UI**: the dashboard switcher now shows a clickable star next to each org-wide, non-personal dashboard; clicking it promotes that dashboard to be the org's default. Backed by a new `POST /api/v1/custom-dashboards/:id/set-default` endpoint that atomically unsets the previous default and sets the new one in a single transaction, respecting the existing partial unique index. Personal and project-scoped dashboards are rejected with a 400
-- **Editable project slug from monitoring page**: the status-page settings card in `/dashboard/monitoring` now exposes a "Public URL slug" input that lets the user rename a project's slug, with inline validation against a shared format check (lowercase alphanumeric + hyphens, 2-50 chars), reserved-word list (`api`, `admin`, `dashboard`, `status`, `auth`, `login`, `signup`, `logout`, `_app`, `health`), and per-org uniqueness. Conflicts surface as 409 with a friendly inline error; race conditions are caught at the DB layer via the new composite unique index
-- **Editable organization slug from settings**: `/dashboard/settings/general` slug field is no longer read-only; owners can rename the org slug with the same validation rules and global uniqueness, with a warning that any existing status-page links and embed badges will break
-
-### Changed
-- **Public status page URL is now scoped under the organization** (BREAKING): page and badge URLs changed from `/status/:projectSlug` to `/status/:orgSlug/:projectSlug`. Affects the public web page, `/api/v1/status/:orgSlug/:projectSlug/badge.svg`, and `/api/v1/status/:orgSlug/:projectSlug/badge.json`. No redirect from the old URLs. Anyone embedding the badge SVG/JSON or sharing a status-page link must update the URL to include the org slug. Migration `040` simultaneously moves project-slug uniqueness from global back to per-org, so two different organizations can now both have a project named `frontend` without auto-suffixing
-
-### Fixed
-- **Security dashboard crashed with "Cannot read properties of null (reading 'toLowerCase')"** (issue #200): root cause was two parallel `unnest(mitre_techniques)` / `unnest(mitre_tactics)` calls in the same SELECT list of `SiemDashboardService.getMitreHeatmap`. PostgreSQL evaluates sibling set-returning functions in lockstep and NULL-pads the shorter array, so any detection event whose tactic and technique arrays had different lengths produced heatmap rows with a null tactic, which then crashed `MitreHeatmap.abbreviateTactic` on the frontend. The heatmap query now unnests techniques only and resolves each one to its canonical tactic via the shared `MITRE_TECHNIQUES` map (with sub-technique to parent fallback), eliminating the malformed pairs at the source. Frontend `MitreHeatmap` also filters cells with null tactic/technique and `DetectionEventsList.getLogLevelClass` defensively handles a null `level` as belt-and-suspenders
-
-### Security
-- **Bump `fastify` to 5.8.5** (GHSA-247c-9743-5963, CVE-2026-33806, HIGH): body schema validation could be bypassed by prepending a single space to the `Content-Type` header. Parser and validator disagreed on how to trim the header, so the body was still parsed but the schema lookup returned no validator and validation was skipped entirely. Upgraded from `^5.8.3` to `^5.8.5`
-- **Bump `@sveltejs/kit` to 2.57.1** (GHSA-2crg-3p73-43xp, CVE-2026-40073, HIGH): `BODY_SIZE_LIMIT` could be bypassed under certain conditions in `adapter-node`. Tightened the pnpm override from `>=2.53.3` to `>=2.57.1`
-- **Bump `@sveltejs/kit` to 2.57.1** (GHSA-3f6h-2hrp-w5wx, CVE-2026-40074, MEDIUM): calling `redirect` inside the `handle` hook with a location containing characters invalid for an HTTP header threw an unhandled `TypeError`, enabling DoS if the location included unsanitized user input
-
 ## [0.9.1] - 2026-04-14
 
 ### Fixed
