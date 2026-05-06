@@ -29,6 +29,7 @@ import { onboardingRoutes } from './modules/onboarding/index.js';
 import { exceptionsRoutes } from './modules/exceptions/index.js';
 import { settingsRoutes, publicSettingsRoutes, settingsService } from './modules/settings/index.js';
 import { retentionRoutes } from './modules/retention/index.js';
+import { capabilitiesRoutes } from './modules/capabilities/index.js';
 import { correlationRoutes, patternRoutes } from './modules/correlation/index.js';
 import { piiMaskingRoutes } from './modules/pii-masking/index.js';
 import { pipelineRoutes } from './modules/log-pipeline/index.js';
@@ -180,6 +181,7 @@ export async function build(opts = {}) {
   await fastify.register(settingsRoutes, { prefix: '/api/v1/admin/settings' });
   await fastify.register(auditLogRoutes, { prefix: '/api/v1/audit-log' });
   await fastify.register(retentionRoutes, { prefix: '/api/v1/admin' });
+  await fastify.register(capabilitiesRoutes, { prefix: '/api/v1/capabilities' });
 
   await fastify.register(authPlugin);
   await fastify.register(ingestionRoutes);
