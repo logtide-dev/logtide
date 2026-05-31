@@ -424,7 +424,7 @@ describe('AuthenticationService', () => {
                 authService.handleOidcCallback('code123', 'query-state', {
                     code: 'code123',
                     state: 'query-state',
-                    iss: 'https://auth.mdarhri.eu',
+                    iss: 'https://auth.example.eu',
                     scope: 'openid email profile',
                 })
             ).rejects.toThrow('Forced callback failure for forwarding test');
@@ -438,7 +438,7 @@ describe('AuthenticationService', () => {
                     callbackQuery: expect.objectContaining({
                         code: 'code123',
                         state: 'query-state',
-                        iss: 'https://auth.mdarhri.eu',
+                        iss: 'https://auth.example.eu',
                         scope: 'openid email profile',
                     }),
                 }),

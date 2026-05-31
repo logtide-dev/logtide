@@ -240,7 +240,7 @@ describe('OidcProvider', () => {
                     callbackQuery: {
                         code: 'auth-code',
                         state: 'test-state',
-                        iss: 'https://auth.mdarhri.eu',
+                        iss: 'https://auth.example.eu',
                         scope: 'openid email profile',
                     },
                 },
@@ -252,7 +252,7 @@ describe('OidcProvider', () => {
 
             expect(callbackUrl.searchParams.get('code')).toBe('auth-code');
             expect(callbackUrl.searchParams.get('state')).toBe('test-state');
-            expect(callbackUrl.searchParams.get('iss')).toBe('https://auth.mdarhri.eu');
+            expect(callbackUrl.searchParams.get('iss')).toBe('https://auth.example.eu');
             expect(callbackUrl.searchParams.get('scope')).toBe('openid email profile');
         });
 
