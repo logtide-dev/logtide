@@ -112,6 +112,7 @@ export interface OidcCallbackData {
   state: string;
   codeVerifier: string; // PKCE code verifier from stored state
   redirectUri: string; // Original redirect URI for token exchange
+  callbackQuery?: Record<string, string | string[] | undefined>; // Full callback query params from provider
 }
 
 /**

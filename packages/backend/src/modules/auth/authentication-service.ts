@@ -130,13 +130,14 @@ export class AuthenticationService {
    *
    * @param code - Authorization code
    * @param state - State parameter for CSRF validation
+   * @param callbackQuery - Full callback query parameters from provider redirect
    * @returns User profile and session
    */
   async handleOidcCallback(
     code: string,
-    state: string
+    state: string,
+    callbackQuery?: Record<string, string | string[] | undefined>
   ): Promise<AuthenticateResult> {
-    // Look up state from cache first, then database
     let stateData = await CacheManager.get<OidcStateData>(`oidc:state:${state}`);
 
     if (!stateData) {
@@ -186,12 +187,20 @@ export class AuthenticationService {
     }
 
     // Handle callback with provider (including PKCE data)
+    const fullCallbackQuery = {
+      ...callbackQuery,
+      // Ensure required parameters are always present for compatibility.
+      code,
+      state,
+    };
+
     const result = await provider.handleCallback(
       {
         code,
         state,
         codeVerifier: stateData.codeVerifier,
         redirectUri: stateData.redirectUri,
+        callbackQuery: fullCallbackQuery,
       },
       stateData.nonce
     );

@@ -145,10 +145,24 @@ export class OidcProvider implements AuthProvider {
       const config = await this.discoverIssuer();
       const oidcConfig = this.getOidcConfig();
 
-      // Build the callback URL with the authorization code
+      // Build callback URL from the original redirect URI and provider response params.
       const callbackUrl = new URL(data.redirectUri);
-      callbackUrl.searchParams.set('code', data.code);
-      callbackUrl.searchParams.set('state', data.state);
+      const callbackQuery = data.callbackQuery ?? { code: data.code, state: data.state };
+
+      for (const [key, value] of Object.entries(callbackQuery)) {
+        if (value === undefined) {
+          continue;
+        }
+
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            callbackUrl.searchParams.append(key, String(item));
+          }
+          continue;
+        }
+
+        callbackUrl.searchParams.set(key, String(value));
+      }
 
       // Exchange code for tokens with PKCE code_verifier
       const tokens = await oidc.authorizationCodeGrant(config, callbackUrl, {

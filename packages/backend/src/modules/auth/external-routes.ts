@@ -119,7 +119,13 @@ export async function publicAuthRoutes(fastify: FastifyInstance) {
   // OIDC: Handle callback
   fastify.get<{
     Params: { slug: string };
-    Querystring: { code?: string; state?: string; error?: string; error_description?: string };
+    Querystring: {
+      code?: string;
+      state?: string;
+      error?: string;
+      error_description?: string;
+      [key: string]: string | string[] | undefined;
+    };
   }>('/providers/:slug/callback', async (request, reply) => {
     // Frontend URL for redirects (defaults to localhost:3000 in development)
     const frontendUrl = config.FRONTEND_URL || (config.NODE_ENV === 'production' ? '' : 'http://localhost:3000');
@@ -138,7 +144,7 @@ export async function publicAuthRoutes(fastify: FastifyInstance) {
         return reply.redirect(`${frontendUrl}/login?error=Invalid%20callback%20parameters`);
       }
 
-      const result = await authenticationService.handleOidcCallback(code, state);
+      const result = await authenticationService.handleOidcCallback(code, state, request.query);
 
       auditLogService.log({
         organizationId: null,

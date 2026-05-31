@@ -202,12 +202,22 @@ describe('External Auth Routes', () => {
 
                 const response = await app.inject({
                     method: 'GET',
-                    url: '/api/v1/auth/providers/google/callback?code=auth-code&state=state-123',
+                    url: '/api/v1/auth/providers/google/callback?code=auth-code&state=state-123&iss=https%3A%2F%2Fauth.example.com&scope=openid+email+profile',
                 });
 
                 expect(response.statusCode).toBe(302);
                 expect(response.headers.location).toContain('token=session-token-123');
                 expect(response.headers.location).toContain('new_user=false');
+                expect(handleCallbackSpy).toHaveBeenCalledWith(
+                    'auth-code',
+                    'state-123',
+                    expect.objectContaining({
+                        code: 'auth-code',
+                        state: 'state-123',
+                        iss: 'https://auth.example.com',
+                        scope: 'openid email profile',
+                    })
+                );
 
                 handleCallbackSpy.mockRestore();
             });

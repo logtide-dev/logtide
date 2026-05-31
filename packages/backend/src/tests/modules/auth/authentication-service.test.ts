@@ -379,6 +379,74 @@ describe('AuthenticationService', () => {
 
             getProviderByIdSpy.mockRestore();
         });
+
+        it('should forward full callback query to provider callback handler', async () => {
+            const providerId = crypto.randomUUID();
+
+            await db.insertInto('auth_providers').values({
+                id: providerId,
+                type: 'oidc',
+                name: 'OIDC Query Provider',
+                slug: 'oidc-query-provider',
+                enabled: true,
+                config: {},
+            }).execute();
+
+            await db.insertInto('oidc_states').values({
+                state: 'query-state',
+                nonce: 'query-nonce',
+                provider_id: providerId,
+                redirect_uri: 'http://localhost/callback',
+                code_verifier: 'query-verifier',
+            }).execute();
+
+            const handleCallback = vi.fn().mockResolvedValue({
+                success: false,
+                error: 'Forced callback failure for forwarding test',
+            });
+
+            const mockProvider = {
+                config: {
+                    id: providerId,
+                    type: 'oidc',
+                    name: 'OIDC Query Provider',
+                    slug: 'oidc-query-provider',
+                    enabled: true,
+                    config: {},
+                },
+                handleCallback,
+            };
+
+            const getProviderByIdSpy = vi.spyOn(providerRegistryModule.providerRegistry, 'getProviderById')
+                .mockResolvedValue(mockProvider as any);
+
+            await expect(
+                authService.handleOidcCallback('code123', 'query-state', {
+                    code: 'code123',
+                    state: 'query-state',
+                    iss: 'https://auth.mdarhri.eu',
+                    scope: 'openid email profile',
+                })
+            ).rejects.toThrow('Forced callback failure for forwarding test');
+
+            expect(handleCallback).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    code: 'code123',
+                    state: 'query-state',
+                    codeVerifier: 'query-verifier',
+                    redirectUri: 'http://localhost/callback',
+                    callbackQuery: expect.objectContaining({
+                        code: 'code123',
+                        state: 'query-state',
+                        iss: 'https://auth.mdarhri.eu',
+                        scope: 'openid email profile',
+                    }),
+                }),
+                'query-nonce'
+            );
+
+            getProviderByIdSpy.mockRestore();
+        });
     });
 
     describe('getUserIdentities', () => {
