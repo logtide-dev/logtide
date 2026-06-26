@@ -3,6 +3,8 @@ import {
   transformOtlpToLogTide,
   transformLogRecord,
   extractServiceName,
+  sanitizeServiceName,
+  MAX_SERVICE_NAME_LENGTH,
   nanosToIso,
   normalizeTraceId,
   extractMessage,
@@ -463,6 +465,60 @@ describe('OTLP Transformer', () => {
       ];
 
       expect(extractServiceName(attrs)).toBe('unknown');
+    });
+
+    it('strips control characters from service.name (defense-in-depth)', () => {
+      const attrs: OtlpKeyValue[] = [
+        { key: 'service.name', value: { stringValue: 'api\x00-svc\x07\x1bx' } },
+      ];
+
+      expect(extractServiceName(attrs)).toBe('api-svcx');
+    });
+
+    it('caps an over-long service.name', () => {
+      const attrs: OtlpKeyValue[] = [
+        { key: 'service.name', value: { stringValue: 'a'.repeat(1000) } },
+      ];
+
+      expect(extractServiceName(attrs)).toHaveLength(MAX_SERVICE_NAME_LENGTH);
+    });
+
+    it('preserves legitimate punctuation (escaping happens at the sink)', () => {
+      const attrs: OtlpKeyValue[] = [
+        { key: 'service.name', value: { stringValue: '<img src=x>' } },
+      ];
+
+      // Not stripped here: the value stays raw and is HTML-escaped at render time.
+      expect(extractServiceName(attrs)).toBe('<img src=x>');
+    });
+
+    it('falls back to "unknown" when only control characters remain', () => {
+      const attrs: OtlpKeyValue[] = [
+        { key: 'service.name', value: { stringValue: '\x00\x01\x02' } },
+      ];
+
+      expect(extractServiceName(attrs)).toBe('unknown');
+    });
+  });
+
+  describe('sanitizeServiceName', () => {
+    it('passes through a normal name', () => {
+      expect(sanitizeServiceName('payment-service')).toBe('payment-service');
+    });
+
+    it('removes null bytes and other control characters', () => {
+      expect(sanitizeServiceName('a\x00b\x1fc\x7fd')).toBe('abcd');
+    });
+
+    it('caps length at MAX_SERVICE_NAME_LENGTH', () => {
+      expect(sanitizeServiceName('x'.repeat(MAX_SERVICE_NAME_LENGTH + 50))).toHaveLength(
+        MAX_SERVICE_NAME_LENGTH,
+      );
+    });
+
+    it('returns "unknown" when empty after cleaning', () => {
+      expect(sanitizeServiceName('\x00\x01')).toBe('unknown');
+      expect(sanitizeServiceName('')).toBe('unknown');
     });
   });
 

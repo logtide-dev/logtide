@@ -53,6 +53,21 @@ export interface TimelineEvent {
   detectionsBySeverity: { critical: number; high: number; medium: number; low: number };
 }
 
+export interface ActivityOverviewData {
+  series: Array<{
+    time: string;
+    logs: number;
+    log_errors: number;
+    spans: number;
+    span_errors: number;
+    detections: number;
+    alerts: number;
+  }>;
+  timeRange: string;
+  bucket: 'hour' | 'day';
+  enabled: string[];
+}
+
 export class DashboardAPI {
   constructor(private getToken: () => string | null) {}
 
@@ -106,6 +121,30 @@ export class DashboardAPI {
 
     const data = await response.json();
     return data.timeseries;
+  }
+
+  async getActivityOverview(
+    organizationId: string,
+    projectId?: string,
+    timeRange: '24h' | '7d' | '30d' = '24h'
+  ): Promise<ActivityOverviewData> {
+    const params = new URLSearchParams();
+    params.append('organizationId', organizationId);
+    if (projectId) params.append('projectId', projectId);
+    params.append('timeRange', timeRange);
+
+    const url = `${getApiUrl()}/api/v1/dashboard/activity-overview?${params.toString()}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch activity overview: ${response.statusText}`);
+    }
+
+    return (await response.json()) as ActivityOverviewData;
   }
 
   async getTopServices(organizationId: string, projectId?: string): Promise<TopService[]> {

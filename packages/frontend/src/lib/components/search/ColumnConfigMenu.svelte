@@ -58,13 +58,13 @@
     <div class="space-y-3">
       <div>
         <p class="text-sm font-medium mb-1">Metadata columns</p>
-        <p class="text-xs text-muted-foreground">Add metadata keys to show as extra columns in the table.</p>
+        <p class="text-xs text-muted-foreground">Add metadata keys to show as extra columns in the table. Use dot notation to reach nested values (e.g. sdk.name).</p>
       </div>
 
       <div class="flex gap-1.5">
         <Input
           type="text"
-          placeholder="e.g. environment"
+          placeholder="e.g. sdk.name"
           bind:value={newKey}
           onkeydown={handleKeydown}
           class="h-8 text-sm"

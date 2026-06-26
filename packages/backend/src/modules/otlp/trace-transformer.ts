@@ -7,7 +7,7 @@
  */
 
 import type { SpanKind, SpanStatusCode } from '../../database/types.js';
-import { attributesToRecord, sanitizeForPostgres, type OtlpKeyValue } from './transformer.js';
+import { attributesToRecord, sanitizeForPostgres, sanitizeServiceName, type OtlpKeyValue } from './transformer.js';
 import { isGzipCompressed, decompressGzip } from './parser.js';
 import { createRequire } from 'module';
 
@@ -332,7 +332,7 @@ export function extractServiceName(attributes?: OtlpKeyValue[]): string {
 
   const serviceAttr = attributes.find((attr) => attr.key === 'service.name');
   if (serviceAttr?.value?.stringValue) {
-    return sanitizeForPostgres(serviceAttr.value.stringValue);
+    return sanitizeServiceName(serviceAttr.value.stringValue);
   }
 
   return 'unknown';

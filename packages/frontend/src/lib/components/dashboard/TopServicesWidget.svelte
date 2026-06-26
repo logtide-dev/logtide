@@ -38,7 +38,7 @@
             </div>
             <div>
               <p class="text-sm font-medium">{service.name}</p>
-              <p class="text-xs text-muted-foreground">{service.count.toLocaleString()} logs</p>
+              <p class="text-xs text-muted-foreground">{service.count.toLocaleString('en-US')} logs</p>
             </div>
           </div>
           <Badge variant="secondary">{service.percentage.toFixed(2)}%</Badge>

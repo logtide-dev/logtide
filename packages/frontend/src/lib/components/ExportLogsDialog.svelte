@@ -74,7 +74,7 @@
 		const toDate = to ? new Date(to) : null;
 
 		const formatDate = (d: Date) => {
-			return d.toLocaleString(undefined, {
+			return d.toLocaleString('en-US', {
 				month: "short",
 				day: "numeric",
 				hour: "2-digit",
@@ -124,7 +124,7 @@
 
 	async function handleExport() {
 		if (exportLimit < 1 || exportLimit > maxExportable) {
-			toastStore.error(`Please enter a number between 1 and ${maxExportable.toLocaleString()}`);
+			toastStore.error(`Please enter a number between 1 and ${maxExportable.toLocaleString('en-US')}`);
 			return;
 		}
 
@@ -179,7 +179,7 @@
 				downloadFile(csv, filename, "text/csv");
 			}
 
-			toastStore.success(`Exported ${allLogs.length.toLocaleString()} logs successfully`);
+			toastStore.success(`Exported ${allLogs.length.toLocaleString('en-US')} logs successfully`);
 			open = false;
 		} catch (error) {
 			console.error("Export failed:", error);
@@ -246,7 +246,7 @@
 					{/if}
 					<div class="flex justify-between font-medium pt-1 border-t mt-2">
 						<span>Total Matching:</span>
-						<span>{totalLogs.toLocaleString()} logs</span>
+						<span>{totalLogs.toLocaleString('en-US')} logs</span>
 					</div>
 				</div>
 			</div>
@@ -265,12 +265,12 @@
 						class="w-32"
 					/>
 					<span class="text-sm text-muted-foreground">
-						/ {maxExportable.toLocaleString()} max
+						/ {maxExportable.toLocaleString('en-US')} max
 					</span>
 				</div>
 				{#if totalLogs > MAX_EXPORT_LOGS}
 					<p class="text-xs text-amber-600">
-						Maximum export limit is {MAX_EXPORT_LOGS.toLocaleString()} logs.
+						Maximum export limit is {MAX_EXPORT_LOGS.toLocaleString('en-US')} logs.
 						Use time filters to narrow down your results.
 					</p>
 				{/if}
@@ -341,7 +341,7 @@
 					<div class="flex justify-between text-sm">
 						<span>Exporting...</span>
 						<span>
-							{exportProgress.current.toLocaleString()} / {exportProgress.total.toLocaleString()}
+							{exportProgress.current.toLocaleString('en-US')} / {exportProgress.total.toLocaleString('en-US')}
 						</span>
 					</div>
 					<Progress value={exportProgress.current} max={exportProgress.total} />
@@ -364,7 +364,7 @@
 					Exporting...
 				{:else}
 					<Download class="w-4 h-4 mr-2" />
-					Export {exportLimit.toLocaleString()} Logs
+					Export {exportLimit.toLocaleString('en-US')} Logs
 				{/if}
 			</Button>
 		</Dialog.Footer>

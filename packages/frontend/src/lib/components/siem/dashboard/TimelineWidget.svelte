@@ -21,18 +21,18 @@
 		const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
 
 		if (timeRange === '24h') {
-			return date.toLocaleTimeString(undefined, {
+			return date.toLocaleTimeString('en-US', {
 				hour: '2-digit',
 				minute: '2-digit',
 				hour12: false,
 			});
 		} else if (timeRange === '7d') {
-			return date.toLocaleDateString(undefined, {
+			return date.toLocaleDateString('en-US', {
 				weekday: 'short',
 				day: 'numeric',
 			});
 		} else {
-			return date.toLocaleDateString(undefined, {
+			return date.toLocaleDateString('en-US', {
 				month: 'short',
 				day: 'numeric',
 			});
@@ -50,7 +50,7 @@
 					const p = params as echarts.DefaultLabelFormatterCallbackParams[];
 					if (p && p.length > 0) {
 						const date = new Date(data?.[p[0].dataIndex]?.timestamp || '');
-						return `${date.toLocaleString(undefined)}<br/><strong>${p[0].value}</strong> detections`;
+						return `${date.toLocaleString('en-US')}<br/><strong>${p[0].value}</strong> detections`;
 					}
 					return '';
 				},
@@ -77,7 +77,7 @@
 					...axisStyle.axisLabel,
 					formatter: (value: number) => {
 						if (value % 1 !== 0) return '';
-						return value.toLocaleString();
+						return value.toLocaleString('en-US');
 					}
 				}
 			},			series: [

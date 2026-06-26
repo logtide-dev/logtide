@@ -1,6 +1,6 @@
 {
   "name": "@logtide/backend",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "LogTide Backend API",
   "type": "module",
@@ -70,6 +70,7 @@
     "safe-regex2": "^5.0.0",
     "source-map": "^0.7.6",
     "tsx": "^4.21.0",
+    "undici": "^7.28.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -75,7 +75,7 @@
     const tooltipStyle = getTooltipStyle();
     const buckets = timeseries.timeseries.map(p => {
       const d = typeof p.bucket === 'string' ? new Date(p.bucket) : p.bucket;
-      return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
     });
     const values = timeseries.timeseries.map(p => p.value);
 

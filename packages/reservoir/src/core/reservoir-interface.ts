@@ -28,6 +28,9 @@ import type {
   TraceQueryResult,
   IngestSpansResult,
   ServiceDependencyResult,
+  ServiceHealthStat,
+  SpanTimeseriesParams,
+  SpanTimeseriesBucket,
   DeleteSpansByTimeRangeParams,
   MetricRecord,
   MetricQueryParams,
@@ -85,6 +88,10 @@ export interface IReservoir {
   ): Promise<ServiceDependencyResult>;
   /** Distinct service names that appear in traces within the time range. */
   getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]>;
+  /** Per-service health stats (calls, errors, avg + true window p95) from raw spans. */
+  getServiceHealthStats(projectId: string, from?: Date, to?: Date): Promise<ServiceHealthStat[]>;
+  /** Time-bucketed span volume + latency percentiles from raw spans (all engines). */
+  getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]>;
   deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult>;
 
   // Metrics

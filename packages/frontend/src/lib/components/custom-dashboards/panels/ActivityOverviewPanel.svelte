@@ -56,9 +56,9 @@
   function formatTimeLabel(time: string, bucket: 'hour' | 'day'): string {
     const d = new Date(time);
     if (bucket === 'day') {
-      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     }
-    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
   function buildOption(): echarts.EChartsOption {

@@ -217,7 +217,7 @@
 	}
 
 	function formatDate(iso: string) {
-		return new Date(iso).toLocaleString();
+		return new Date(iso).toLocaleString('en-US');
 	}
 
 	function formatAction(action: string) {
@@ -507,7 +507,7 @@
 													<div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-sm">
 														<div>
 															<span class="text-xs font-medium text-muted-foreground">Time</span>
-															<p>{new Date(entry.time).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'long' })}</p>
+															<p>{new Date(entry.time).toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long' })}</p>
 														</div>
 														<div>
 															<span class="text-xs font-medium text-muted-foreground">User</span>

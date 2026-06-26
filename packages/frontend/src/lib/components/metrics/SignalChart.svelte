@@ -117,7 +117,7 @@
         boundaryGap: false,
         data: allBuckets.map(b => {
           const d = new Date(b);
-          return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
         }),
         ...axisStyle,
       },

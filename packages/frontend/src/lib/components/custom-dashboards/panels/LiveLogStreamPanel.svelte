@@ -26,7 +26,7 @@
   const typed = $derived(data as LiveLogStreamSnapshot | null);
 
   function formatTime(time: string): string {
-    return new Date(time).toLocaleTimeString(undefined, {
+    return new Date(time).toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',

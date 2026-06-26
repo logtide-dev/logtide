@@ -4,9 +4,11 @@
   import { browser } from '$app/environment';
   import { currentOrganization } from '$lib/stores/organization';
   import { dashboardAPI } from '$lib/api/dashboard';
-  import type { DashboardStats, TimeseriesDataPoint, TopService, RecentError, TimelineEvent } from '$lib/api/dashboard';
+  import type { DashboardStats, TopService, RecentError, ActivityOverviewData } from '$lib/api/dashboard';
+  import type { ActivityOverviewConfig } from '@logtide/shared';
   import StatsCard from '$lib/components/dashboard/StatsCard.svelte';
-  import LogsChart from '$lib/components/dashboard/LogsChart.svelte';
+  import ActivityOverviewPanel from '$lib/components/custom-dashboards/panels/ActivityOverviewPanel.svelte';
+  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import TopServicesWidget from '$lib/components/dashboard/TopServicesWidget.svelte';
   import RecentErrorsWidget from '$lib/components/dashboard/RecentErrorsWidget.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -19,13 +21,21 @@
   const projectId = $derived(page.params.id);
 
   let stats = $state<DashboardStats | null>(null);
-  let chartData = $state<TimeseriesDataPoint[]>([]);
+  let activity = $state<ActivityOverviewData | null>(null);
   let topServices = $state<TopService[]>([]);
   let recentErrors = $state<RecentError[]>([]);
-  let timelineEvents = $state<TimelineEvent[]>([]);
   let loading = $state(true);
   let error = $state('');
   let lastLoadedKey = $state<string | null>(null);
+
+  const activityConfig = $derived<ActivityOverviewConfig>({
+    type: 'activity_overview',
+    title: 'Activity Overview',
+    source: 'mixed',
+    projectId: projectId ?? null,
+    timeRange: '24h',
+    series: ['logs', 'log_errors', 'spans', 'span_errors', 'detections', 'alerts'],
+  });
 
   async function loadDashboard() {
     if (!$currentOrganization || !projectId) return;
@@ -35,29 +45,26 @@
 
     try {
       const orgId = $currentOrganization.id;
-      const [statsData, timeseriesData, servicesData, errorsData, eventsData] = await Promise.all([
+      const [statsData, activityData, servicesData, errorsData] = await Promise.all([
         dashboardAPI.getStats(orgId, projectId),
-        dashboardAPI.getTimeseries(orgId, projectId),
+        dashboardAPI.getActivityOverview(orgId, projectId),
         dashboardAPI.getTopServices(orgId, projectId),
         dashboardAPI.getRecentErrors(orgId, projectId),
-        dashboardAPI.getTimelineEvents(orgId, projectId).catch(() => []),
       ]);
 
       stats = statsData;
-      chartData = timeseriesData;
+      activity = activityData;
       topServices = servicesData;
       recentErrors = errorsData;
-      timelineEvents = eventsData;
 
       lastLoadedKey = `${orgId}-${projectId}`;
     } catch (e) {
       console.error('Failed to load project dashboard:', e);
       error = e instanceof Error ? e.message : 'Failed to load project dashboard';
       stats = null;
-      chartData = [];
+      activity = null;
       topServices = [];
       recentErrors = [];
-      timelineEvents = [];
     } finally {
       loading = false;
     }
@@ -66,10 +73,9 @@
   $effect(() => {
     if (!browser || !$currentOrganization || !projectId) {
       stats = null;
-      chartData = [];
+      activity = null;
       topServices = [];
       recentErrors = [];
-      timelineEvents = [];
       lastLoadedKey = null;
       return;
     }
@@ -91,11 +97,23 @@
     return throughput.toFixed(1) + '/s';
   }
 
+  const hasActivity = $derived(
+    (activity?.series ?? []).some(
+      (p) =>
+        p.logs > 0 ||
+        p.log_errors > 0 ||
+        p.spans > 0 ||
+        p.span_errors > 0 ||
+        p.detections > 0 ||
+        p.alerts > 0
+    )
+  );
+
   let isEmpty = $derived(
     stats !== null &&
     stats.totalLogsToday.value === 0 &&
     stats.activeServices.value === 0 &&
-    chartData.length === 0
+    !hasActivity
   );
 
   function getLast24HoursParams(): string {
@@ -118,21 +136,6 @@
 
   function handleThroughputClick() {
     goto(`/dashboard/search?${getLast24HoursParams()}`);
-  }
-
-  function handleChartClick(params: { seriesName: string; time: string; value: number }) {
-    const levelMap: Record<string, string> = {
-      'Errors': 'error',
-      'Warnings': 'warn',
-      'Info': 'info'
-    };
-    const level = levelMap[params.seriesName];
-    const clickedTime = new Date(params.time);
-    const from = new Date(clickedTime.getTime() - 30 * 60 * 1000);
-    const to = new Date(clickedTime.getTime() + 30 * 60 * 1000);
-    const timeParams = `from=${from.toISOString()}&to=${to.toISOString()}`;
-    const levelParam = level ? `&level=${level}` : '';
-    goto(`/dashboard/search?${timeParams}${levelParam}&project=${projectId}`);
   }
 
   function handleServiceClick(service: TopService) {
@@ -229,13 +232,22 @@
       />
     </div>
 
-    {#if chartData.length > 0}
-      <LogsChart data={chartData} events={timelineEvents} onDataPointClick={handleChartClick} />
-    {:else}
-      <div class="text-center py-12 text-muted-foreground">
-        No log data available for the last 24 hours
-      </div>
-    {/if}
+    <Card>
+      <CardHeader>
+        <CardTitle>Activity Overview (Last 24 Hours)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {#if hasActivity}
+          <div class="h-72">
+            <ActivityOverviewPanel config={activityConfig} data={activity} loading={false} error={null} />
+          </div>
+        {:else}
+          <div class="text-center py-12 text-muted-foreground">
+            No activity in the last 24 hours
+          </div>
+        {/if}
+      </CardContent>
+    </Card>
 
     <div class="grid gap-4 md:grid-cols-2">
       <TopServicesWidget services={topServices} onServiceClick={handleServiceClick} />

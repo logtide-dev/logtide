@@ -6,7 +6,7 @@ import { apiKeysService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { projectsService } from '../projects/service.js';
 import { auditLogService } from '../audit-log/index.js';
-import { assertWithinLimit } from '../../capabilities/index.js';
+import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 
 const createApiKeySchema = z.object({
@@ -72,18 +72,20 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
         });
       }
 
-      await context.runAsSystem('apikeys:create-limit-check', async () => {
-        await context.with({ organizationId: project.organizationId }, async () => {
-          const count = await apiKeysService.countKeysForOrg(project.organizationId);
-          await assertWithinLimit('apikeys.max', count);
+      const result = await withLimitLock(project.organizationId, 'apikeys.max', async () => {
+        await context.runAsSystem('apikeys:create-limit-check', async () => {
+          await context.with({ organizationId: project.organizationId }, async () => {
+            const count = await apiKeysService.countKeysForOrg(project.organizationId);
+            await assertWithinLimit('apikeys.max', count);
+          });
         });
-      });
 
-      const result = await apiKeysService.createApiKey({
-        projectId,
-        name: body.name,
-        type: body.type,
-        allowedOrigins: body.allowedOrigins ?? null,
+        return apiKeysService.createApiKey({
+          projectId,
+          name: body.name,
+          type: body.type,
+          allowedOrigins: body.allowedOrigins ?? null,
+        });
       });
 
       await auditLogService.record({

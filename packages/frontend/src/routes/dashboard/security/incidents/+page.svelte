@@ -300,7 +300,7 @@
 		/>
 		{#if incidents.length > 0}
 			<p class="text-sm text-muted-foreground">
-				Showing {((currentPage - 1) * pageSize + 1).toLocaleString()} to {Math.min(currentPage * pageSize, totalIncidents).toLocaleString()} of {totalIncidents.toLocaleString()} incident{totalIncidents !== 1 ? 's' : ''}
+				Showing {((currentPage - 1) * pageSize + 1).toLocaleString('en-US')} to {Math.min(currentPage * pageSize, totalIncidents).toLocaleString('en-US')} of {totalIncidents.toLocaleString('en-US')} incident{totalIncidents !== 1 ? 's' : ''}
 				{#if activeFiltersCount > 0}
 					(filtered)
 				{/if}
@@ -339,7 +339,7 @@
 		<!-- Pagination -->
 		<div class="mt-6 flex items-center justify-between">
 			<div class="text-sm text-muted-foreground">
-				Page {currentPage}{totalPages > 0 ? ` of ${totalPages.toLocaleString()}` : ""}
+				Page {currentPage}{totalPages > 0 ? ` of ${totalPages.toLocaleString('en-US')}` : ""}
 			</div>
 			<div class="flex items-center gap-2">
 				<Button

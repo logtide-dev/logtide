@@ -8,7 +8,7 @@ import { OrganizationsService } from '../organizations/service.js';
 import { projectsService } from '../projects/service.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { auditLogService } from '../audit-log/index.js';
-import { assertWithinLimit } from '../../capabilities/index.js';
+import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -184,26 +184,27 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       // Session-auth requests don't populate request.organizationId in the ALS
       // context, so we establish a scoped system context with the org from the
       // validated body. Same pattern as otlp/trace-routes.ts.
-      // Note: count -> insert is not atomic; a concurrent create can briefly
-      // exceed the cap by one. Acceptable for user-initiated rule creation.
-      await context.runAsSystem('alerts:create-limit-check', async () => {
-        await context.with({ organizationId: body.organizationId }, async () => {
-          const currentRuleCount = await alertsService.countAlertRules(body.organizationId);
-          await assertWithinLimit('alerts.max_rules', currentRuleCount);
-        });
-      });
-
+      // The count -> insert is serialized per org via withLimitLock so concurrent
+      // creates can't race past the cap.
       const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...alertData } = body;
-      const alertRule = await alertsService.createAlertRule({
-        ...alertData,
-        alertType: alertType || 'threshold',
-        baselineType: baselineType || null,
-        deviationMultiplier: deviationMultiplier ?? null,
-        minBaselineValue: minBaselineValue ?? null,
-        cooldownMinutes: cooldownMinutes ?? null,
-        sustainedMinutes: sustainedMinutes ?? null,
-        emailRecipients: alertData.emailRecipients || [],
-        metadataFilters: metadataFilters ?? [],
+      const alertRule = await withLimitLock(body.organizationId, 'alerts.max_rules', async () => {
+        await context.runAsSystem('alerts:create-limit-check', async () => {
+          await context.with({ organizationId: body.organizationId }, async () => {
+            const currentRuleCount = await alertsService.countAlertRules(body.organizationId);
+            await assertWithinLimit('alerts.max_rules', currentRuleCount);
+          });
+        });
+        return alertsService.createAlertRule({
+          ...alertData,
+          alertType: alertType || 'threshold',
+          baselineType: baselineType || null,
+          deviationMultiplier: deviationMultiplier ?? null,
+          minBaselineValue: minBaselineValue ?? null,
+          cooldownMinutes: cooldownMinutes ?? null,
+          sustainedMinutes: sustainedMinutes ?? null,
+          emailRecipients: alertData.emailRecipients || [],
+          metadataFilters: metadataFilters ?? [],
+        });
       });
 
       // Associate channels with the alert rule

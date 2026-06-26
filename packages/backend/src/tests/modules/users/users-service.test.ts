@@ -130,6 +130,33 @@ describe('UsersService', () => {
             expect(second.is_admin).toBe(false);
         });
 
+        it('promotes at most one admin under concurrent first-time registrations (race)', async () => {
+            // Fire several registrations at once against an empty (zero-admin)
+            // users table. Without serialization each would observe "no admin
+            // yet" and all be promoted to admin.
+            const N = 5;
+            const users = await Promise.all(
+                Array.from({ length: N }, (_, i) =>
+                    usersService.createUser({
+                        email: `race-${i}@example.com`,
+                        password: 'password123',
+                        name: `Race User ${i}`,
+                    })
+                )
+            );
+
+            const admins = users.filter((u) => u.is_admin);
+            expect(admins).toHaveLength(1);
+
+            // Confirm at the storage layer too.
+            const adminCount = await db
+                .selectFrom('users')
+                .select((eb) => eb.fn.countAll().as('c'))
+                .where('is_admin', '=', true)
+                .executeTakeFirstOrThrow();
+            expect(Number(adminCount.c)).toBe(1);
+        });
+
         it('should throw error for duplicate email', async () => {
             await usersService.createUser({
                 email: 'duplicate@example.com',

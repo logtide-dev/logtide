@@ -31,7 +31,7 @@
   const typed = $derived(data as MetricChartData | null);
 
   function fmtTime(t: string): string {
-    return new Date(t).toLocaleTimeString(undefined, {
+    return new Date(t).toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,

@@ -32,3 +32,4 @@ export {
 
 export { quotaFlagCache } from './quota-cache.js';
 export { QuotaEvaluator } from './quota-evaluator.js';
+export { withLimitLock } from './limit-lock.js';

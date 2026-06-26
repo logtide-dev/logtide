@@ -71,7 +71,7 @@
     }
 
     function formatDate(date: string) {
-        return new Date(date).toLocaleString(undefined, {
+        return new Date(date).toLocaleString('en-US', {
             month: "short",
             day: "numeric",
             hour: "2-digit",

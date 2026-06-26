@@ -18,6 +18,22 @@ import {
 } from './built-in-rules.js';
 import isSafeRegex from 'safe-regex2';
 
+// Span attribute keys that carry full request/response payloads. Their values
+// are opaque (often a stringified JSON body) so field-name rules can't see the
+// `password`/`token` keys inside. We deep-mask them: parse the JSON and run the
+// rules over the parsed object, falling back to full redaction when the value
+// is not parseable JSON.
+const BODY_ATTRIBUTE_KEYS = new Set([
+  'http.request_body',
+  'http.response_body',
+  'http.request.body',
+  'http.response.body',
+  'request_body',
+  'response_body',
+]);
+
+const BODY_REDACTION_LABEL = '[REDACTED]';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -46,6 +62,17 @@ interface CompiledRuleSet {
 interface CacheEntry {
   ruleSet: CompiledRuleSet;
   expiresAt: number;
+}
+
+/**
+ * Minimal span shape masked in place by maskSpanBatch. Structurally compatible
+ * with the reservoir span record (we only touch the attribute bags).
+ */
+export interface SpanMaskInput {
+  attributes?: Record<string, unknown>;
+  resourceAttributes?: Record<string, unknown>;
+  events?: Array<Record<string, unknown>>;
+  links?: Array<Record<string, unknown>>;
 }
 
 export interface PiiRuleInput {
@@ -375,6 +402,104 @@ export class PiiMaskingService {
       }
     }
     return failed;
+  }
+
+  /**
+   * Mask a batch of spans in place (attributes, resource attributes, and the
+   * attributes on each event/link). Mirrors maskLogBatch: returns the indices
+   * of spans whose masking FAILED so the caller can drop them (fail-closed).
+   * If rule compilation fails, every index is returned.
+   */
+  async maskSpanBatch(
+    spans: SpanMaskInput[],
+    organizationId: string,
+    projectId: string
+  ): Promise<number[]> {
+    let ruleSet: CompiledRuleSet;
+    try {
+      ruleSet = await this.getCompiledRules(organizationId, projectId);
+    } catch (err) {
+      console.error('[PII] Failed to compile masking rules, failing span batch closed:', err);
+      return spans.map((_, i) => i);
+    }
+
+    // Fast path: no enabled rules
+    if (ruleSet.contentRules.length === 0 && ruleSet.fieldRules.length === 0) {
+      return [];
+    }
+
+    const failed: number[] = [];
+    for (let i = 0; i < spans.length; i++) {
+      const span = spans[i];
+      try {
+        if (span.attributes && typeof span.attributes === 'object') {
+          this.maskSpanAttributes(span.attributes, ruleSet);
+        }
+        if (span.resourceAttributes && typeof span.resourceAttributes === 'object') {
+          this.maskSpanAttributes(span.resourceAttributes, ruleSet);
+        }
+        for (const entry of [...(span.events ?? []), ...(span.links ?? [])]) {
+          const attrs = entry && typeof entry === 'object' ? entry.attributes : undefined;
+          if (attrs && typeof attrs === 'object') {
+            this.maskSpanAttributes(attrs as Record<string, unknown>, ruleSet);
+          }
+        }
+      } catch {
+        failed.push(i);
+      }
+    }
+    return failed;
+  }
+
+  /**
+   * Mask a flat span-attributes object in place. Runs the standard field-name +
+   * content rules, but first deep-masks any value that is a stringified JSON
+   * object/array (so credentials/tokens nested inside request/response bodies
+   * are caught), redacting known body attributes wholesale when not parseable.
+   */
+  private maskSpanAttributes(attrs: Record<string, unknown>, ruleSet: CompiledRuleSet): void {
+    for (const key of Object.keys(attrs)) {
+      const value = attrs[key];
+      if (typeof value !== 'string') continue;
+
+      const deep = this.maskJsonStringValue(value, ruleSet);
+      if (deep.handled) {
+        attrs[key] = deep.value;
+      } else if (BODY_ATTRIBUTE_KEYS.has(key.toLowerCase())) {
+        // A body attribute that isn't parseable JSON: redact it entirely rather
+        // than risk leaking credentials the content rules can't see.
+        attrs[key] = BODY_REDACTION_LABEL;
+      }
+      // Other plain strings are left for the content rules in maskObject below.
+    }
+
+    // Field-name redaction + content masking over the whole attributes object.
+    this.maskObject(attrs, ruleSet, '', false);
+  }
+
+  /**
+   * If `value` is a stringified JSON object/array, parse it, mask the parsed
+   * structure (field-name + content rules), and return the re-stringified
+   * result. Returns handled=false for non-JSON strings.
+   */
+  private maskJsonStringValue(
+    value: string,
+    ruleSet: CompiledRuleSet
+  ): { handled: boolean; value: string } {
+    const trimmed = value.trim();
+    if (trimmed.length < 2 || (trimmed[0] !== '{' && trimmed[0] !== '[')) {
+      return { handled: false, value };
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object') {
+        this.maskObject(parsed as Record<string, unknown>, ruleSet, '', false);
+        return { handled: true, value: JSON.stringify(parsed) };
+      }
+    } catch {
+      // not valid JSON
+    }
+    return { handled: false, value };
   }
 
   /**

@@ -998,17 +998,30 @@ describe('TracesService', () => {
       expect(result.edges).toBeDefined();
     });
 
-    it('should set default values when health stats are empty', async () => {
+    it('should compute a true window p95 and avg latency from raw spans', async () => {
       const traceId = crypto.randomBytes(16).toString('hex');
       const now = new Date();
 
+      // Parent in svc-health (duration 100), plus a second svc-health span
+      // (duration 300) so avg/p95 are computed over the window, not defaulted.
       const parentSpan = await createTestSpan({
         projectId: context.project.id,
         organizationId: context.organization.id,
         traceId,
         spanId: 'health-parent',
-        serviceName: 'svc-no-health',
+        serviceName: 'svc-health',
         startTime: now,
+        durationMs: 100,
+      });
+
+      await createTestSpan({
+        projectId: context.project.id,
+        organizationId: context.organization.id,
+        traceId,
+        spanId: 'health-extra',
+        serviceName: 'svc-health',
+        startTime: new Date(now.getTime() + 5),
+        durationMs: 300,
       });
 
       await createTestSpan({
@@ -1016,7 +1029,7 @@ describe('TracesService', () => {
         organizationId: context.organization.id,
         traceId,
         parentSpanId: parentSpan.span_id,
-        serviceName: 'svc-no-health-child',
+        serviceName: 'svc-health-child',
         startTime: new Date(now.getTime() + 10),
       });
 
@@ -1026,13 +1039,12 @@ describe('TracesService', () => {
         new Date(now.getTime() + 5000),
       );
 
-      // Health stats won't be populated (continuous aggregates not refreshed in tests)
-      // So defaults should be applied
-      for (const node of result.nodes) {
-        expect(node.errorRate).toBe(0);
-        expect(node.avgLatencyMs).toBe(0);
-        expect(node.p95LatencyMs).toBeNull();
-      }
+      const node = result.nodes.find((n) => n.name === 'svc-health');
+      expect(node).toBeDefined();
+      // avg of 100 and 300 is 200; p95 is a true window percentile, not null.
+      expect(node!.avgLatencyMs).toBeGreaterThan(0);
+      expect(node!.p95LatencyMs).not.toBeNull();
+      expect(node!.p95LatencyMs!).toBeGreaterThanOrEqual(100);
     });
 
     it('should handle multiple independent trace dependencies', async () => {
@@ -1123,10 +1135,13 @@ describe('TracesService', () => {
       expect(nodeA).toBeDefined();
       expect(nodeA?.callCount).toBe(0);
       expect(nodeA?.totalCalls).toBe(0);
+      // No spans for log-only services, so health stats default to null p95.
+      expect(nodeA?.p95LatencyMs).toBeNull();
 
       expect(nodeB).toBeDefined();
       expect(nodeB?.callCount).toBe(0);
       expect(nodeB?.totalCalls).toBe(0);
+      expect(nodeB?.p95LatencyMs).toBeNull();
     });
 
     it('should not add log edges below threshold (< 2 co-occurrences)', async () => {

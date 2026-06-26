@@ -39,7 +39,7 @@
 
 	function formatTime(dateStr: string | Date): string {
 		const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-		return date.toLocaleTimeString(undefined, {
+		return date.toLocaleTimeString('en-US', {
 			hour: '2-digit',
 			minute: '2-digit',
 			second: '2-digit',
@@ -48,7 +48,7 @@
 
 	function formatDate(dateStr: string | Date): string {
 		const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-		return date.toLocaleDateString(undefined, {
+		return date.toLocaleDateString('en-US', {
 			month: 'short',
 			day: 'numeric',
 		});
@@ -83,7 +83,7 @@
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<AlertTriangle class="w-4 h-4 text-destructive" />
 			Detection Events
-			<span class="text-muted-foreground font-normal">({detections.length.toLocaleString()})</span>
+			<span class="text-muted-foreground font-normal">({detections.length.toLocaleString('en-US')})</span>
 		</CardTitle>
 	</CardHeader>
 	<CardContent>

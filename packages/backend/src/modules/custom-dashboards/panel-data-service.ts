@@ -540,51 +540,34 @@ const traceLatencyFetcher: PanelDataSource<TraceLatencyConfig, TraceLatencyData>
       ? [config.projectId]
       : await resolveProjectIdsForOrg(ctx.organizationId);
 
-    if (projectIds.length === 0 || reservoir.getEngineType() !== 'timescale') {
+    if (projectIds.length === 0) {
       return { series: [], serviceName: config.serviceName };
     }
 
     const now = new Date();
     const rangeMs = timeRangeToMs(config.timeRange);
     const from = new Date(now.getTime() - rangeMs);
-    // Use hourly aggregate for ranges <= 48h, daily otherwise.
-    const useHourly = rangeMs <= 48 * 60 * 60 * 1000;
-    const table = useHourly ? 'spans_hourly_stats' : 'spans_daily_stats';
+    const bucket: 'hour' | 'day' = rangeMs <= 48 * 60 * 60 * 1000 ? 'hour' : 'day';
 
-    let query = db
-      .selectFrom(table)
-      .select([
-        'bucket',
-        sql<string>`SUM(span_count)`.as('span_count'),
-        sql<string>`MAX(duration_p50_ms)`.as('p50'),
-        sql<string>`MAX(duration_p95_ms)`.as('p95'),
-        sql<string>`MAX(duration_p99_ms)`.as('p99'),
-        sql<string>`CASE WHEN SUM(span_count) > 0
-          THEN SUM(COALESCE(error_count, 0))::float / SUM(span_count)
-          ELSE 0 END`.as('error_rate'),
-      ])
-      .where('project_id', 'in', projectIds)
-      .where('bucket', '>=', from)
-      .where('bucket', '<=', now);
-
-    if (config.serviceName) {
-      query = query.where('service_name', '=', config.serviceName);
-    }
-
-    const rows = await query
-      .groupBy('bucket')
-      .orderBy('bucket', 'asc')
-      .execute();
+    // Multi-engine: true window percentiles from raw spans on every storage
+    // engine (Timescale percentile_cont / ClickHouse quantile / Mongo $percentile).
+    const rows = await reservoir.getSpanTimeseries({
+      projectIds,
+      from,
+      to: now,
+      bucket,
+      serviceName: config.serviceName ?? undefined,
+    });
 
     return {
       serviceName: config.serviceName,
       series: rows.map((r) => ({
-        time: new Date(r.bucket as unknown as string).toISOString(),
-        p50: r.p50 != null ? Number(r.p50) : null,
-        p95: r.p95 != null ? Number(r.p95) : null,
-        p99: r.p99 != null ? Number(r.p99) : null,
-        spanCount: Number(r.span_count ?? 0),
-        errorRate: Number(r.error_rate ?? 0),
+        time: r.time.toISOString(),
+        p50: r.p50,
+        p95: r.p95,
+        p99: r.p99,
+        spanCount: r.spanCount,
+        errorRate: r.spanCount > 0 ? r.errorCount / r.spanCount : 0,
       })),
     };
   },
@@ -600,7 +583,7 @@ const traceVolumeFetcher: PanelDataSource<TraceVolumeConfig, TraceVolumePanelDat
     const bucket: 'hour' | 'day' =
       timeRangeToMs(config.timeRange) <= 48 * 60 * 60 * 1000 ? 'hour' : 'day';
 
-    if (projectIds.length === 0 || reservoir.getEngineType() !== 'timescale') {
+    if (projectIds.length === 0) {
       return {
         series: [],
         serviceName: config.serviceName,
@@ -611,79 +594,22 @@ const traceVolumeFetcher: PanelDataSource<TraceVolumeConfig, TraceVolumePanelDat
 
     const now = new Date();
     const from = new Date(now.getTime() - timeRangeToMs(config.timeRange));
-    const caggTable = bucket === 'hour' ? 'spans_hourly_stats' : 'spans_daily_stats';
 
-    // Try continuous aggregate first - cheap. Fall back to raw `spans` only if
-    // the cagg returns nothing, because its refresh policy lags by `end_offset`
-    // and can leave freshly-ingested windows empty.
-    let caggQuery = db
-      .selectFrom(caggTable)
-      .select([
-        'bucket',
-        sql<string>`SUM(span_count)`.as('span_count'),
-        sql<string>`SUM(COALESCE(error_count, 0))`.as('error_count'),
-      ])
-      .where('project_id', 'in', projectIds)
-      .where('bucket', '>=', from)
-      .where('bucket', '<=', now);
-    if (config.serviceName) {
-      caggQuery = caggQuery.where('service_name', '=', config.serviceName);
-    }
-    const caggRows = await caggQuery
-      .groupBy('bucket')
-      .orderBy('bucket', 'asc')
-      .execute()
-      .catch(
-        () =>
-          [] as Array<{
-            bucket: unknown;
-            span_count: string;
-            error_count: string;
-          }>,
-      );
-
-    let rows: Array<{ bucket: unknown; span_count: string; error_count: string }> =
-      caggRows;
-    if (rows.length === 0) {
-      const rawTrunc =
-        bucket === 'hour'
-          ? sql<Date>`date_trunc('hour', start_time)`
-          : sql<Date>`date_trunc('day', start_time)`;
-
-      let rawQuery = db
-        .selectFrom('spans')
-        .select([
-          rawTrunc.as('bucket'),
-          sql<string>`COUNT(*)`.as('span_count'),
-          sql<string>`SUM(CASE WHEN status_code = 'ERROR' THEN 1 ELSE 0 END)`.as(
-            'error_count',
-          ),
-        ])
-        .where('project_id', 'in', projectIds)
-        .where('start_time', '>=', from)
-        .where('start_time', '<=', now);
-      if (config.serviceName) {
-        rawQuery = rawQuery.where('service_name', '=', config.serviceName);
-      }
-      rows = await rawQuery
-        .groupBy(rawTrunc)
-        .orderBy(rawTrunc, 'asc')
-        .execute()
-        .catch(
-          () =>
-            [] as Array<{
-              bucket: unknown;
-              span_count: string;
-              error_count: string;
-            }>,
-        );
-    }
+    // Multi-engine span volume straight from raw spans via the reservoir
+    // abstraction (works on Timescale, ClickHouse and MongoDB alike).
+    const rows = await reservoir.getSpanTimeseries({
+      projectIds,
+      from,
+      to: now,
+      bucket,
+      serviceName: config.serviceName ?? undefined,
+    });
 
     return {
       series: rows.map((r) => ({
-        time: new Date(r.bucket as unknown as string).toISOString(),
-        total: Number(r.span_count ?? 0),
-        errors: Number(r.error_count ?? 0),
+        time: r.time.toISOString(),
+        total: r.spanCount,
+        errors: r.errorCount,
       })),
       serviceName: config.serviceName,
       timeRange: config.timeRange,

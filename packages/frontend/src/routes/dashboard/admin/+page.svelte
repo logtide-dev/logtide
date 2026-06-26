@@ -223,7 +223,7 @@
         </div>
         <div class="flex items-center gap-3">
             <span class="text-xs text-muted-foreground">
-                {lastRefreshed.toLocaleTimeString()}
+                {lastRefreshed.toLocaleTimeString('en-US')}
             </span>
             <Button
                 variant="outline"
@@ -294,7 +294,7 @@
                                     </div>
                                     <p class="text-xs text-muted-foreground mt-0.5">
                                         Channel: <span class="font-medium">{versionCheck.channel}</span>
-                                        &middot; Checked {new Date(versionCheck.checkedAt).toLocaleTimeString()}
+                                        &middot; Checked {new Date(versionCheck.checkedAt).toLocaleTimeString('en-US')}
                                     </p>
                                 </div>
                             {/if}

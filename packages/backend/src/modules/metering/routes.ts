@@ -32,13 +32,24 @@ async function checkMembership(userId: string, orgId: string): Promise<boolean> 
   return orgs.some((o) => o.id === orgId);
 }
 
+// Usage data is org-scoped, but platform admins (the admin usage page) need to
+// read any org's metering, so they bypass the membership check. The underlying
+// queries stay filtered by the requested organizationId.
+async function canAccessOrg(
+  user: { id: string; is_admin?: boolean },
+  orgId: string,
+): Promise<boolean> {
+  if (user.is_admin) return true;
+  return checkMembership(user.id, orgId);
+}
+
 export async function usageRoutes(fastify: FastifyInstance) {
   fastify.addHook('onRequest', authenticate);
 
   fastify.get('/', async (request: any, reply) => {
     try {
       const q = usageQuerySchema.parse(request.query);
-      if (!(await checkMembership(request.user.id, q.organizationId))) {
+      if (!(await canAccessOrg(request.user, q.organizationId))) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
@@ -64,7 +75,7 @@ export async function usageRoutes(fastify: FastifyInstance) {
   fastify.get('/breakdown', async (request: any, reply) => {
     try {
       const q = breakdownQuerySchema.parse(request.query);
-      if (!(await checkMembership(request.user.id, q.organizationId))) {
+      if (!(await canAccessOrg(request.user, q.organizationId))) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
@@ -89,7 +100,7 @@ export async function usageRoutes(fastify: FastifyInstance) {
   fastify.get('/storage', async (request: any, reply) => {
     try {
       const q = breakdownQuerySchema.parse(request.query);
-      if (!(await checkMembership(request.user.id, q.organizationId))) {
+      if (!(await canAccessOrg(request.user, q.organizationId))) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
@@ -114,7 +125,7 @@ export async function usageRoutes(fastify: FastifyInstance) {
   fastify.get('/capabilities', async (request: any, reply) => {
     try {
       const q = orgOnlyQuerySchema.parse(request.query);
-      if (!(await checkMembership(request.user.id, q.organizationId))) {
+      if (!(await canAccessOrg(request.user, q.organizationId))) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 

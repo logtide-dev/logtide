@@ -26,6 +26,7 @@
 	import { StackTraceViewer, LanguageBadge, ErrorGroupStatusBadge } from '$lib/components/exceptions';
 	import Bug from '@lucide/svelte/icons/bug';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
+	import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Hash from '@lucide/svelte/icons/hash';
 	import TrendingUp from '@lucide/svelte/icons/trending-up';
@@ -187,7 +188,7 @@
 
 	function formatDate(dateStr: string | Date): string {
 		const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-		return date.toLocaleDateString(undefined, {
+		return date.toLocaleDateString('en-US', {
 			month: 'short',
 			day: 'numeric',
 			year: 'numeric',
@@ -297,7 +298,7 @@
 			<div class="flex items-center gap-6 text-sm flex-wrap">
 				<div class="flex items-center gap-2">
 					<Hash class="w-4 h-4 text-muted-foreground" />
-					<span class="font-bold">{group.occurrenceCount.toLocaleString()}</span>
+					<span class="font-bold">{group.occurrenceCount.toLocaleString('en-US')}</span>
 					<span class="text-muted-foreground">occurrences</span>
 				</div>
 				<div class="flex items-center gap-2" title={formatDate(group.lastSeen)}>
@@ -340,7 +341,7 @@
 			<Tabs.List>
 				<Tabs.Trigger value="stacktrace">Stack Trace</Tabs.Trigger>
 				<Tabs.Trigger value="trend">Trend</Tabs.Trigger>
-				<Tabs.Trigger value="logs">Logs ({logsTotal.toLocaleString()})</Tabs.Trigger>
+				<Tabs.Trigger value="logs">Logs ({logsTotal.toLocaleString('en-US')})</Tabs.Trigger>
 			</Tabs.List>
 
 			<!-- Stack Trace Tab -->
@@ -380,14 +381,16 @@
 								{#each trend as bucket}
 									{@const maxCount = Math.max(...trend.map((t) => t.count), 1)}
 									{@const height = (bucket.count / maxCount) * 100}
-									<div class="flex-1 flex flex-col items-center gap-1">
-										<div
-											class="w-full bg-red-500 rounded-t transition-all hover:bg-red-600"
-											style="height: {height}%"
-											title="{bucket.count} occurrences on {new Date(bucket.timestamp).toLocaleDateString()}"
-										></div>
+									<div class="flex-1 h-full flex flex-col items-center gap-1">
+										<div class="flex-1 w-full flex items-end">
+											<div
+												class="w-full bg-red-500 rounded-t transition-all hover:bg-red-600 {bucket.count > 0 ? 'min-h-0.5' : ''}"
+												style="height: {height}%"
+												title="{bucket.count} occurrences on {new Date(bucket.timestamp).toLocaleDateString('en-US')}"
+											></div>
+										</div>
 										<span class="text-xs text-muted-foreground">
-											{new Date(bucket.timestamp).toLocaleDateString(undefined, { weekday: 'short' })}
+											{new Date(bucket.timestamp).toLocaleDateString('en-US', { weekday: 'short' })}
 										</span>
 									</div>
 								{/each}
@@ -432,13 +435,27 @@
 													</Badge>
 												{/if}
 											</div>
-											<Button
-												variant="ghost"
-												size="sm"
-												onclick={() => goto(`/dashboard/search?logId=${log.id}&projectId=${group.projectId}`)}
-											>
-												View Log
-											</Button>
+											<div class="flex items-center gap-1 flex-shrink-0">
+												{#if log.traceId}
+													<Button
+														variant="ghost"
+														size="sm"
+														class="gap-1 text-primary hover:text-primary"
+														onclick={() => goto(`/dashboard/traces/${log.traceId}?projectId=${group.projectId}`)}
+														title="Open trace timeline"
+													>
+														View Trace
+														<ArrowUpRight class="w-3 h-3" />
+													</Button>
+												{/if}
+												<Button
+													variant="ghost"
+													size="sm"
+													onclick={() => goto(`/dashboard/search?logId=${log.id}&projectId=${group.projectId}`)}
+												>
+													View Log
+												</Button>
+											</div>
 										</div>
 										<p class="text-sm mt-2 font-mono line-clamp-2">{log.message}</p>
 									</div>
@@ -452,7 +469,7 @@
 											<Spinner class="w-4 h-4 mr-2" />
 											Loading...
 										{:else}
-											Load More ({(logsTotal - logs.length).toLocaleString()} remaining)
+											Load More ({(logsTotal - logs.length).toLocaleString('en-US')} remaining)
 										{/if}
 									</Button>
 								</div>

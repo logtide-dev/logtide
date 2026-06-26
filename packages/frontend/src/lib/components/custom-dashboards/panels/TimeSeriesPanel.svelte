@@ -37,7 +37,7 @@
   const typedData = $derived(data as TimeSeriesPanelData | null);
 
   function formatTimeLabel(time: string): string {
-    return new Date(time).toLocaleTimeString(undefined, {
+    return new Date(time).toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       hour12: false,

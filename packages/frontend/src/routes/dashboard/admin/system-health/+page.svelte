@@ -183,7 +183,7 @@
         </div>
         <div class="flex items-center gap-3">
             <span class="text-xs text-muted-foreground">
-                {lastRefreshed.toLocaleTimeString()}
+                {lastRefreshed.toLocaleTimeString('en-US')}
             </span>
             <Button variant="outline" size="sm" onclick={loadData} disabled={loading}>
                 <RefreshCw class="mr-1.5 h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />

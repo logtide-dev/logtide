@@ -26,6 +26,7 @@ export interface ErrorGroupLog {
   time: string | Date;
   service: string;
   message: string;
+  traceId?: string;
   metadata?: Record<string, any>;
 }
 

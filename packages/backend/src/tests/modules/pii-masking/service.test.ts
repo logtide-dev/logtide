@@ -1054,4 +1054,116 @@ describe('PiiMaskingService', () => {
             expect(logs[0].message).toBe('test message here');
         });
     });
+
+    // =========================================================================
+    // maskSpanBatch (trace span attributes)
+    // =========================================================================
+
+    describe('maskSpanBatch', () => {
+        async function enableBodyMaskingRules() {
+            await service.createRule(organizationId, {
+                name: 'email',
+                displayName: 'Email',
+                patternType: 'builtin',
+                action: 'mask',
+                enabled: true,
+            });
+            await service.createRule(organizationId, {
+                name: 'sensitive_fields',
+                displayName: 'Sensitive Fields',
+                patternType: 'builtin',
+                action: 'redact',
+                enabled: true,
+            });
+        }
+
+        it('does nothing when no rules are enabled', async () => {
+            const spans = [{ attributes: { 'http.request_body': '{"password":"secret123"}' } }];
+            const failed = await service.maskSpanBatch(spans, organizationId, projectId);
+            expect(failed).toEqual([]);
+            expect(spans[0].attributes['http.request_body']).toBe('{"password":"secret123"}');
+        });
+
+        it('deep-masks credentials inside a stringified JSON request body', async () => {
+            await enableBodyMaskingRules();
+
+            const spans = [
+                {
+                    attributes: {
+                        'http.method': 'POST',
+                        'http.request_body':
+                            '{"email":"giuseppe@solture.it","password":"Polliog80!"}',
+                    },
+                },
+            ];
+
+            const failed = await service.maskSpanBatch(spans, organizationId, projectId);
+            expect(failed).toEqual([]);
+
+            const body = spans[0].attributes['http.request_body'] as string;
+            // Credentials gone
+            expect(body).not.toContain('Polliog80!');
+            expect(body).not.toContain('giuseppe@solture.it');
+            // password redacted by field rule, structure preserved (still valid JSON)
+            const parsed = JSON.parse(body);
+            expect(parsed.password).toBe('[REDACTED]');
+            expect(parsed.email).not.toContain('giuseppe@solture.it');
+            // untouched attribute survives
+            expect(spans[0].attributes['http.method']).toBe('POST');
+        });
+
+        it('redacts a body attribute that is not parseable JSON', async () => {
+            await enableBodyMaskingRules();
+
+            const spans = [{ attributes: { 'http.response_body': 'token=abc.def.ghi raw text' } }];
+            await service.maskSpanBatch(spans, organizationId, projectId);
+            expect(spans[0].attributes['http.response_body']).toBe('[REDACTED]');
+        });
+
+        it('masks IPs and emails in plain attributes via content rules', async () => {
+            await service.createRule(organizationId, {
+                name: 'ip_address',
+                displayName: 'IP',
+                patternType: 'builtin',
+                action: 'redact',
+                enabled: true,
+            });
+            await service.createRule(organizationId, {
+                name: 'email',
+                displayName: 'Email',
+                patternType: 'builtin',
+                action: 'mask',
+                enabled: true,
+            });
+
+            const spans = [
+                { attributes: { 'net.peer.ip': '10.0.1.16', 'enduser.id': 'a@b.com' } },
+            ];
+            await service.maskSpanBatch(spans, organizationId, projectId);
+            expect(spans[0].attributes['net.peer.ip']).not.toBe('10.0.1.16');
+            expect(spans[0].attributes['enduser.id']).not.toBe('a@b.com');
+        });
+
+        it('masks event and link attributes too', async () => {
+            await enableBodyMaskingRules();
+
+            const spans = [
+                {
+                    attributes: {},
+                    events: [{ name: 'login', attributes: { password: 'hunter2' } }],
+                    links: [{ attributes: { 'http.request_body': '{"token":"xyz"}' } }],
+                },
+            ];
+            await service.maskSpanBatch(spans, organizationId, projectId);
+            expect(spans[0].events[0].attributes.password).toBe('[REDACTED]');
+            expect(spans[0].links[0].attributes['http.request_body'] as string).not.toContain('xyz');
+        });
+
+        it('masks resource attributes', async () => {
+            await enableBodyMaskingRules();
+            const spans = [{ resourceAttributes: { password: 'p' } }];
+            await service.maskSpanBatch(spans, organizationId, projectId);
+            expect(spans[0].resourceAttributes.password).toBe('[REDACTED]');
+        });
+    });
 });

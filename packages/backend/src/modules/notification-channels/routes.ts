@@ -9,7 +9,7 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import type { NotificationEventType } from '@logtide/shared';
 import { context } from '@logtide/shared/context';
-import { assertWithinLimit } from '../../capabilities/index.js';
+import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { auditLogService } from '../audit-log/service.js';
 
@@ -173,18 +173,20 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Only admins can create notification channels' });
       }
 
-      await context.runAsSystem('channels:create-limit-check', async () => {
-        await context.with({ organizationId }, async () => {
-          const count = await notificationChannelsService.countChannels(organizationId);
-          await assertWithinLimit('notifications.max_channels', count);
+      const channel = await withLimitLock(organizationId, 'notifications.max_channels', async () => {
+        await context.runAsSystem('channels:create-limit-check', async () => {
+          await context.with({ organizationId }, async () => {
+            const count = await notificationChannelsService.countChannels(organizationId);
+            await assertWithinLimit('notifications.max_channels', count);
+          });
         });
-      });
 
-      const channel = await notificationChannelsService.createChannel(
-        organizationId,
-        body,
-        request.user.id
-      );
+        return notificationChannelsService.createChannel(
+          organizationId,
+          body,
+          request.user.id
+        );
+      });
 
       await auditLogService.record({
         action: 'channel.created',

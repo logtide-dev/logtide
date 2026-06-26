@@ -1,7 +1,7 @@
 <script lang="ts">
   import Github from "@lucide/svelte/icons/github";
 
-  const version = "Beta v1.0.2";
+  const version = "Beta v1.0.3";
   const currentYear = new Date().getFullYear();
   const githubUrl = "https://github.com/logtide-dev/logtide";
 </script>

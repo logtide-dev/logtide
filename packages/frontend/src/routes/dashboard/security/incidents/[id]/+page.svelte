@@ -179,7 +179,7 @@
 
 	function formatDate(dateStr: string | Date): string {
 		const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-		return date.toLocaleDateString(undefined, {
+		return date.toLocaleDateString('en-US', {
 			year: 'numeric',
 			month: 'long',
 			day: 'numeric',
@@ -302,7 +302,7 @@
 						<TabsTrigger value="detections" class="gap-2">
 							<AlertTriangle class="w-4 h-4" />
 							Detections
-							<Badge variant="secondary" class="ml-1">{detections.length.toLocaleString()}</Badge>
+							<Badge variant="secondary" class="ml-1">{detections.length.toLocaleString('en-US')}</Badge>
 						</TabsTrigger>
 						<TabsTrigger value="comments" class="gap-2">
 							<MessageSquare class="w-4 h-4" />

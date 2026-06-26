@@ -38,7 +38,7 @@
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium truncate" title={row.key}>{row.key}</p>
               <p class="text-xs text-muted-foreground">
-                {row.count.toLocaleString()}
+                {row.count.toLocaleString('en-US')}
                 {config.dimension === 'service' ? 'logs' : 'occurrences'}
               </p>
             </div>

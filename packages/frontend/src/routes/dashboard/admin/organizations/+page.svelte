@@ -109,7 +109,7 @@
 
     function formatDate(dateString: string | Date) {
         const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
-        return date.toLocaleString();
+        return date.toLocaleString('en-US');
     }
 
     onMount(() => {

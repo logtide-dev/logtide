@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import dashboardRoutes from '../../../modules/dashboard/routes.js';
-import { createTestContext, createTestLog } from '../../helpers/factories.js';
+import {
+    createTestContext,
+    createTestLog,
+    createTestUser,
+    createTestOrganization,
+    createTestProject,
+    createTestApiKey,
+} from '../../helpers/factories.js';
 import crypto from 'crypto';
 
 async function createTestSession(userId: string) {
@@ -34,6 +41,25 @@ describe('Dashboard Routes', () => {
         // but rely on request.user being set. We register the routes and
         // add a mock auth hook that sets request.user from the session.
         app.addHook('onRequest', async (request: any) => {
+            // API-key auth: mirror the real auth plugin - bind project/org from the
+            // key, do NOT set request.user.
+            const apiKey = request.headers['x-api-key'];
+            if (apiKey) {
+                const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
+                const row = await db
+                    .selectFrom('api_keys')
+                    .innerJoin('projects', 'projects.id', 'api_keys.project_id')
+                    .select(['api_keys.project_id', 'api_keys.type', 'projects.organization_id'])
+                    .where('api_keys.key_hash', '=', keyHash)
+                    .executeTakeFirst();
+                if (row) {
+                    request.projectId = row.project_id;
+                    request.organizationId = row.organization_id;
+                    request.apiKeyType = row.type;
+                }
+                return;
+            }
+
             const authHeader = request.headers.authorization;
             if (!authHeader) return;
 
@@ -489,6 +515,105 @@ describe('Dashboard Routes', () => {
                 headers: authHeaders(),
             });
             expect(res.statusCode).toBe(404);
+        });
+    });
+
+    // =========================================================================
+    // API-key tenant isolation (regression for cross-tenant dashboard access)
+    //
+    // A full-access API key is PROJECT-scoped. It must only read its own org's
+    // (and project's) dashboard data, never another organization's, regardless
+    // of the organizationId/projectId passed in the query string.
+    // =========================================================================
+    describe('API-key tenant isolation', () => {
+        const ENDPOINTS = [
+            '/api/v1/dashboard/stats',
+            '/api/v1/dashboard/timeseries',
+            '/api/v1/dashboard/top-services',
+            '/api/v1/dashboard/timeline-events',
+            '/api/v1/dashboard/recent-errors',
+            '/api/v1/dashboard/activity-overview',
+        ];
+
+        async function buildOtherOrg() {
+            const owner = await createTestUser();
+            const org = await createTestOrganization({ ownerId: owner.id });
+            const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+            const apiKey = await createTestApiKey({ projectId: project.id });
+            return { org, project, apiKey };
+        }
+
+        it('rejects a key bound to org A reading org B with 403 on every endpoint', async () => {
+            // testOrganization is org A; its key:
+            const orgAKey = await createTestApiKey({ projectId: testProject.id });
+            const other = await buildOtherOrg(); // org B
+
+            for (const url of ENDPOINTS) {
+                const res = await app.inject({
+                    method: 'GET',
+                    url: `${url}?organizationId=${other.org.id}`,
+                    headers: { 'x-api-key': orgAKey.plainKey },
+                });
+                expect(res.statusCode, `${url} should be 403`).toBe(403);
+            }
+        });
+
+        it('rejects a key reading another org even when its own projectId is passed', async () => {
+            const orgAKey = await createTestApiKey({ projectId: testProject.id });
+            const other = await buildOtherOrg();
+
+            const res = await app.inject({
+                method: 'GET',
+                url: `/api/v1/dashboard/stats?organizationId=${other.org.id}&projectId=${testProject.id}`,
+                headers: { 'x-api-key': orgAKey.plainKey },
+            });
+            expect(res.statusCode).toBe(403);
+        });
+
+        it('rejects a key passing a foreign projectId within its own org with 403', async () => {
+            const orgAKey = await createTestApiKey({ projectId: testProject.id });
+            const other = await buildOtherOrg();
+
+            const res = await app.inject({
+                method: 'GET',
+                url: `/api/v1/dashboard/stats?organizationId=${testOrganization.id}&projectId=${other.project.id}`,
+                headers: { 'x-api-key': orgAKey.plainKey },
+            });
+            expect(res.statusCode).toBe(403);
+        });
+
+        it('allows a key to read its own organization', async () => {
+            const orgAKey = await createTestApiKey({ projectId: testProject.id });
+
+            const res = await app.inject({
+                method: 'GET',
+                url: `/api/v1/dashboard/stats?organizationId=${testOrganization.id}`,
+                headers: { 'x-api-key': orgAKey.plainKey },
+            });
+            expect(res.statusCode).toBe(200);
+        });
+
+        it('scopes a key to its own project: only its project data is counted', async () => {
+            // Second project in the same org with its own logs.
+            const otherProject = await createTestProject({
+                organizationId: testOrganization.id,
+                userId: testUser.id,
+            });
+            await createTestLog({ projectId: otherProject.id, level: 'info' });
+            await createTestLog({ projectId: testProject.id, level: 'info' });
+
+            const orgAKey = await createTestApiKey({ projectId: testProject.id });
+
+            // No projectId in query: must default to the key's bound project,
+            // so only the single log in testProject is counted (not both).
+            const res = await app.inject({
+                method: 'GET',
+                url: `/api/v1/dashboard/stats?organizationId=${testOrganization.id}`,
+                headers: { 'x-api-key': orgAKey.plainKey },
+            });
+            expect(res.statusCode).toBe(200);
+            const body = JSON.parse(res.payload);
+            expect(body.totalLogsToday.value).toBe(1);
         });
     });
 });

@@ -107,7 +107,7 @@
 	}
 
 	function formatDate(iso: string) {
-		return new Date(iso).toLocaleString();
+		return new Date(iso).toLocaleString('en-US');
 	}
 
 	function truncateUrl(url: string, max = 48): string {

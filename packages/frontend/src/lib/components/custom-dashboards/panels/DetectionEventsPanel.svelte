@@ -29,7 +29,7 @@
   const typed = $derived(data as DetectionEventsData | null);
 
   function fmtTime(t: string): string {
-    return new Date(t).toLocaleString(undefined, {
+    return new Date(t).toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',

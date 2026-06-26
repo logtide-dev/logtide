@@ -675,7 +675,7 @@
             onclick={() => (monitorStatusFilter = 'all')}
           >
             <p class="text-xs font-medium text-muted-foreground">Total</p>
-            <p class="text-2xl font-bold">{monitorSummary.total.toLocaleString()}</p>
+            <p class="text-2xl font-bold">{monitorSummary.total.toLocaleString('en-US')}</p>
           </button>
           <button
             type="button"
@@ -683,7 +683,7 @@
             onclick={() => (monitorStatusFilter = 'up')}
           >
             <p class="text-xs font-medium text-green-600 dark:text-green-500">Up</p>
-            <p class="text-2xl font-bold">{monitorSummary.up.toLocaleString()}</p>
+            <p class="text-2xl font-bold">{monitorSummary.up.toLocaleString('en-US')}</p>
           </button>
           <button
             type="button"
@@ -691,7 +691,7 @@
             onclick={() => (monitorStatusFilter = 'down')}
           >
             <p class="text-xs font-medium text-red-600 dark:text-red-500">Down</p>
-            <p class="text-2xl font-bold">{monitorSummary.down.toLocaleString()}</p>
+            <p class="text-2xl font-bold">{monitorSummary.down.toLocaleString('en-US')}</p>
           </button>
           <button
             type="button"
@@ -699,7 +699,7 @@
             onclick={() => (monitorStatusFilter = 'paused')}
           >
             <p class="text-xs font-medium text-muted-foreground">Paused</p>
-            <p class="text-2xl font-bold">{monitorSummary.paused.toLocaleString()}</p>
+            <p class="text-2xl font-bold">{monitorSummary.paused.toLocaleString('en-US')}</p>
           </button>
         </div>
 
@@ -980,7 +980,7 @@
                   </td>
                   <td class="px-4 py-3 hidden lg:table-cell text-muted-foreground text-xs">
                     {monitor.status?.lastCheckedAt
-                      ? new Date(monitor.status.lastCheckedAt).toLocaleString()
+                      ? new Date(monitor.status.lastCheckedAt).toLocaleString('en-US')
                       : '-'}
                   </td>
                   <td class="px-4 py-3 text-right">
@@ -1116,7 +1116,7 @@
                   </Button>
                 </div>
               </div>
-              <p class="text-xs text-muted-foreground mt-1">{new Date(incident.createdAt).toLocaleString()}</p>
+              <p class="text-xs text-muted-foreground mt-1">{new Date(incident.createdAt).toLocaleString('en-US')}</p>
             </div>
           {/each}
         </div>
@@ -1236,7 +1236,7 @@
                 <p class="text-xs text-muted-foreground mt-1">{m.description}</p>
               {/if}
               <p class="text-xs text-muted-foreground mt-1">
-                {new Date(m.scheduledStart).toLocaleString()} - {new Date(m.scheduledEnd).toLocaleString()}
+                {new Date(m.scheduledStart).toLocaleString('en-US')} - {new Date(m.scheduledEnd).toLocaleString('en-US')}
               </p>
               {#if m.autoUpdateStatus}
                 <p class="text-xs text-muted-foreground mt-0.5">Monitor alerts suppressed</p>

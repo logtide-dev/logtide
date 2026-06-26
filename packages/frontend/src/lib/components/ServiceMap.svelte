@@ -4,6 +4,7 @@
   import type { ServiceDependencies, EnrichedServiceDependencies } from "$lib/api/traces";
   import { themeStore } from "$lib/stores/theme";
   import { getEChartsTheme, getTooltipStyle } from "$lib/utils/echarts-theme";
+  import { escapeHtml } from "$lib/utils/html";
 
   interface Props {
     dependencies: ServiceDependencies | EnrichedServiceDependencies;
@@ -138,7 +139,7 @@
         formatter: (params: any) => {
           if (params.dataType === "node") {
             const node = dependencies.nodes.find((n) => n.name === params.name);
-            let html = `<strong>${params.name}</strong><br/>Calls: ${params.value}`;
+            let html = `<strong>${escapeHtml(params.name)}</strong><br/>Calls: ${params.value}`;
             if (node && isEnrichedNode(node)) {
               html += `<br/>Error rate: ${(node.errorRate * 100).toFixed(1)}%`;
               html += `<br/>Avg latency: ${formatLatency(node.avgLatencyMs)}`;
@@ -148,7 +149,7 @@
             const edge = dependencies.edges.find(
               (e) => e.source === params.data.source && e.target === params.data.target
             );
-            let html = `${params.data.source} → ${params.data.target}<br/>Calls: ${params.data.value}`;
+            let html = `${escapeHtml(params.data.source)} → ${escapeHtml(params.data.target)}<br/>Calls: ${params.data.value}`;
             if (edge && isEnrichedEdge(edge) && edge.type === 'log_correlation') {
               html += `<br/><em>(log correlation)</em>`;
             }

@@ -75,7 +75,7 @@
 			<div class="flex items-center gap-2">
 				{#if totalIncidents > 0}
 					<span class="text-2xl font-bold text-foreground">
-						{totalIncidents.toLocaleString()}
+						{totalIncidents.toLocaleString('en-US')}
 					</span>
 					<span class="text-sm text-muted-foreground">
 						incident{totalIncidents !== 1 ? "s" : ""} in the last {rangeDays} day{rangeDays !== 1 ? "s" : ""}

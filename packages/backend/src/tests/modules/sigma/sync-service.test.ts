@@ -413,5 +413,38 @@ describe('SigmaSyncService - extra methods', () => {
 
       expect(result.imported).toBe(1);
     });
+
+    it('does NOT create an alert rule when autoCreateAlerts=false (sigma rules are independent)', async () => {
+      const { sigmahqClient } = await import('../../../modules/sigma/github-client.js');
+      (sigmahqClient.fetchRulesByCategory as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+        { path: 'rules/linux/noalert.yml', name: 'noalert.yml', category: 'linux', downloadUrl: 'http://x', sha: 'sha1' },
+      ]);
+      (sigmahqClient.fetchRule as ReturnType<typeof vi.fn>).mockResolvedValue(VALID_YAML);
+
+      const result = await service.syncFromSigmaHQ({
+        organizationId: orgId,
+        selection: { categories: ['linux'] },
+        autoCreateAlerts: false,
+      });
+
+      expect(result.imported).toBe(1);
+
+      // No alert_rules row should be created for this org (the cron path that
+      // passed autoCreateAlerts:true used to spawn an alert rule per sigma rule).
+      const alerts = await db
+        .selectFrom('alert_rules')
+        .select('id')
+        .where('organization_id', '=', orgId)
+        .execute();
+      expect(alerts).toHaveLength(0);
+
+      // ...and the imported sigma rule must not be linked to one.
+      const rule = await db
+        .selectFrom('sigma_rules')
+        .select('alert_rule_id')
+        .where('sigmahq_path', '=', 'rules/linux/noalert.yml')
+        .executeTakeFirst();
+      expect(rule?.alert_rule_id).toBeNull();
+    });
   });
 });

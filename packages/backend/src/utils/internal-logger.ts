@@ -58,7 +58,7 @@ export async function initializeInternalLogging(): Promise<string | null> {
       dsn,
       service: process.env.SERVICE_NAME || 'logtide-backend',
       environment: process.env.NODE_ENV || 'development',
-      release: process.env.npm_package_version || '1.0.2',
+      release: process.env.npm_package_version || '1.0.3',
       batchSize: 5, // Smaller batch for internal logs to see them faster
       flushInterval: 5000,
       maxBufferSize: 1000,

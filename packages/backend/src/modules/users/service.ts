@@ -1,10 +1,16 @@
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
+import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 
 const SALT_ROUNDS = 10;
 const SESSION_DURATION_DAYS = 30;
+
+// Constant key for the Postgres transaction-scoped advisory lock that
+// serializes the first-admin promotion decision across concurrent
+// registrations (see createUser).
+const FIRST_ADMIN_ADVISORY_LOCK = 947163001;
 
 export interface CreateUserInput {
   email: string;
@@ -98,26 +104,39 @@ export class UsersService {
       throw new Error('User with this email already exists');
     }
 
-    // Hash the password
+    // Hash the password (outside the lock below - bcrypt is intentionally slow)
     const passwordHash = await this.hashPassword(input.password);
 
-    // Promote first user to admin if no admin exists yet
-    const shouldBeAdmin = !(await this.hasAnyAdmin());
-    if (shouldBeAdmin) {
-      console.log(`[Users] No admin exists yet. Promoting ${email} to admin on registration.`);
-    }
+    // Decide first-admin promotion and insert atomically. Without serialization,
+    // two concurrent registrations in the zero-admin bootstrap window could each
+    // observe "no admin yet" and both be promoted. A transaction-scoped advisory
+    // lock makes the check-then-insert atomic, so at most one registration wins
+    // the promotion. The lock is released automatically on commit/rollback.
+    const user = await db.transaction().execute(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(${FIRST_ADMIN_ADVISORY_LOCK})`.execute(trx);
 
-    // Insert the user
-    const user = await db
-      .insertInto('users')
-      .values({
-        email,
-        password_hash: passwordHash,
-        name: input.name,
-        is_admin: shouldBeAdmin,
-      })
-      .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
-      .executeTakeFirstOrThrow();
+      const adminRow = await trx
+        .selectFrom('users')
+        .select('id')
+        .where('is_admin', '=', true)
+        .executeTakeFirst();
+
+      const shouldBeAdmin = !adminRow;
+      if (shouldBeAdmin) {
+        console.log(`[Users] No admin exists yet. Promoting ${email} to admin on registration.`);
+      }
+
+      return trx
+        .insertInto('users')
+        .values({
+          email,
+          password_hash: passwordHash,
+          name: input.name,
+          is_admin: shouldBeAdmin,
+        })
+        .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
+        .executeTakeFirstOrThrow();
+    });
 
     return {
       id: user.id,

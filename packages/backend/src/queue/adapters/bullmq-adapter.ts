@@ -32,6 +32,36 @@ const DEFAULT_JOB_OPTIONS = {
 };
 
 /**
+ * Build the per-job options passed to BullMQ's queue.add().
+ *
+ * CRITICAL: only include `removeOnComplete` / `removeOnFail` when the caller
+ * explicitly provides them. BullMQ merges per-job options OVER the queue's
+ * `defaultJobOptions` with Object.assign, which copies keys whose value is
+ * `undefined`. So passing `removeOnComplete: undefined` would clobber the
+ * DEFAULT_JOB_OPTIONS cleanup config, leaving BullMQ to keep every completed
+ * and failed job hash in Redis forever (the memory-leak root cause).
+ */
+export function buildBullJobOptions(options?: IJobOptions): Record<string, unknown> {
+  const jobOptions: Record<string, unknown> = {
+    delay: options?.delay,
+    // Default to 3 attempts to match the graphile adapter. Without this BullMQ
+    // would default to 1 (no retries), so the same job retried differently
+    // depending on the configured queue backend.
+    attempts: options?.maxAttempts ?? 3,
+    priority: options?.priority,
+    jobId: options?.jobKey,
+    repeat: options?.repeat,
+  };
+  if (options?.removeOnComplete !== undefined) {
+    jobOptions.removeOnComplete = options.removeOnComplete;
+  }
+  if (options?.removeOnFail !== undefined) {
+    jobOptions.removeOnFail = options.removeOnFail;
+  }
+  return jobOptions;
+}
+
+/**
  * Convert BullMQ Job to unified IJob interface
  */
 function adaptBullJob<T>(bullJob: BullJob<T>): IJob<T> {
@@ -62,18 +92,7 @@ export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T>, ICronR
 
   async add(jobName: string, data: T, options?: IJobOptions): Promise<IJob<T>> {
     const payload = attachContextToPayload(data);
-    const bullJob = await (this.queue as any).add(jobName, payload, {
-      delay: options?.delay,
-      // Default to 3 attempts to match the graphile adapter. Without this BullMQ
-      // would default to 1 (no retries), so the same job retried differently
-      // depending on the configured queue backend.
-      attempts: options?.maxAttempts ?? 3,
-      priority: options?.priority,
-      jobId: options?.jobKey,
-      repeat: options?.repeat,
-      removeOnComplete: options?.removeOnComplete,
-      removeOnFail: options?.removeOnFail,
-    });
+    const bullJob = await (this.queue as any).add(jobName, payload, buildBullJobOptions(options));
 
     return {
       id: bullJob.id || '',

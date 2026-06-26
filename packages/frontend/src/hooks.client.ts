@@ -9,7 +9,7 @@ if (dsn) {
     dsn,
     service: 'logtide-frontend-client',
     environment: env.PUBLIC_NODE_ENV || 'production',
-    release: env.PUBLIC_APP_VERSION || '1.0.2',
+    release: env.PUBLIC_APP_VERSION || '1.0.3',
     debug: env.PUBLIC_NODE_ENV === 'development',
     browser: {
       // Core Web Vitals (LCP, INP, CLS, TTFB)

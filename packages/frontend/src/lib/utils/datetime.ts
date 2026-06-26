@@ -30,7 +30,7 @@ export function formatDateTimeLong(date: Date | string): string {
     return 'Invalid date';
   }
 
-  return dateObj.toLocaleString(undefined, {
+  return dateObj.toLocaleString('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

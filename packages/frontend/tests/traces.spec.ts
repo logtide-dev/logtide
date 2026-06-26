@@ -307,7 +307,7 @@ test.describe('Traces Journey', () => {
     expect(pageContent.toLowerCase()).toContain('traced log');
   });
 
-  test('6. A log\'s "View Trace" link navigates back to the trace detail', async ({ page }) => {
+  test('6. A log\'s trace id link navigates back to the trace detail', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/search?traceId=${checkoutTraceId}&project=${projectId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2500);
@@ -317,8 +317,8 @@ test.describe('Traces Journey', () => {
     await expect(detailsButton).toBeVisible({ timeout: 15000 });
     await detailsButton.click();
 
-    // Follow the View Trace link
-    const viewTraceLink = page.locator('a:has-text("View Trace")').first();
+    // Follow the trace link (the trace id renders as a link to the trace timeline)
+    const viewTraceLink = page.locator(`a[href*="/dashboard/traces/${checkoutTraceId}"]`).first();
     await expect(viewTraceLink).toBeVisible();
     await viewTraceLink.click();
 

@@ -221,7 +221,7 @@
           <div class="bg-background rounded-lg p-4 space-y-2 text-sm font-mono">
             <div class="flex items-center gap-2">
               <span class="text-muted-foreground">Time:</span>
-              <span>{new Date(receivedLog.time).toLocaleString()}</span>
+              <span>{new Date(receivedLog.time).toLocaleString('en-US')}</span>
             </div>
             <div class="flex items-center gap-2">
               <span class="text-muted-foreground">Level:</span>

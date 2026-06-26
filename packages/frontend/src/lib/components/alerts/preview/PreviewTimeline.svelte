@@ -78,7 +78,7 @@
 
 		// Format times for x-axis
 		const times = dataPoints.map((d) =>
-			d.time.toLocaleString(undefined, {
+			d.time.toLocaleString('en-US', {
 				month: "short",
 				day: "numeric",
 				hour: "2-digit",
@@ -139,7 +139,7 @@
 					...axisStyle.axisLabel,
 					formatter: (val: number) => {
 						if (val % 1 !== 0) return '';
-						return val.toLocaleString();
+						return val.toLocaleString('en-US');
 					}
 				},
 			},
@@ -229,8 +229,8 @@
 			class="h-[200px] md:h-[250px] w-full"
 		></div>
 		<p class="text-xs text-center text-muted-foreground mt-2">
-			{incidents.length.toLocaleString()} incident{incidents.length !== 1 ? "s" : ""} detected
-			- dashed line shows threshold ({threshold.toLocaleString()} logs)
+			{incidents.length.toLocaleString('en-US')} incident{incidents.length !== 1 ? "s" : ""} detected
+			- dashed line shows threshold ({threshold.toLocaleString('en-US')} logs)
 		</p>
 	{/if}
 </div>

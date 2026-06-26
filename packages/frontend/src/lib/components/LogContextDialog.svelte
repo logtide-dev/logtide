@@ -5,8 +5,11 @@
 	import Spinner from '$lib/components/Spinner.svelte';
 	import { ExceptionDetailsDialog } from '$lib/components/exceptions';
 	import BreadcrumbTimeline from '$lib/components/BreadcrumbTimeline.svelte';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import ListTree from '@lucide/svelte/icons/list-tree';
+	import Copy from '@lucide/svelte/icons/copy';
+	import Check from '@lucide/svelte/icons/check';
 
 	interface LogEntry {
 		id?: string;
@@ -49,6 +52,18 @@
 
 	function isErrorLevel(level: string): boolean {
 		return level === 'error' || level === 'critical';
+	}
+
+	// Copy-to-clipboard feedback, keyed per metadata block
+	let copiedKey = $state<string | null>(null);
+	async function copyMetadata(key: string, metadata: Record<string, unknown>) {
+		const ok = await copyToClipboard(JSON.stringify(metadata, null, 2));
+		if (ok) {
+			copiedKey = key;
+			setTimeout(() => {
+				if (copiedKey === key) copiedKey = null;
+			}, 2000);
+		}
 	}
 
 	function openExceptionDialog() {
@@ -100,7 +115,7 @@
 	}
 
 	function formatTime(timestamp: string): string {
-		return new Date(timestamp).toLocaleString();
+		return new Date(timestamp).toLocaleString('en-US');
 	}
 
 	function getLevelColor(level: string): string {
@@ -121,6 +136,30 @@
 	}
 </script>
 
+{#snippet metadataBlock(metadata: Record<string, any>, key: string)}
+	<details class="text-xs mt-2 min-w-0">
+		<summary class="cursor-pointer text-muted-foreground hover:text-foreground">
+			View metadata
+		</summary>
+		<div class="relative mt-2 min-w-0">
+			<Button
+				variant="ghost"
+				size="icon"
+				class="absolute right-1 top-1 z-10 h-6 w-6 bg-muted/80 backdrop-blur hover:bg-muted"
+				title="Copy metadata"
+				onclick={() => copyMetadata(key, metadata)}
+			>
+				{#if copiedKey === key}
+					<Check class="h-3 w-3 text-green-500" />
+				{:else}
+					<Copy class="h-3 w-3" />
+				{/if}
+			</Button>
+			<pre class="p-2 pr-9 bg-muted rounded overflow-x-auto max-w-full">{JSON.stringify(metadata, null, 2)}</pre>
+		</div>
+	</details>
+{/snippet}
+
 <Dialog.Root {open} onOpenChange={(isOpen) => !isOpen && onClose()}>
 	<Dialog.Content class="max-w-4xl max-h-[80vh] overflow-y-auto">
 		<Dialog.Header>
@@ -140,7 +179,7 @@
 				{error}
 			</div>
 		{:else if contextLogs}
-			<div class="space-y-2 py-4">
+			<div class="space-y-2 py-4 min-w-0">
 				{#if contextLogs.before.length > 0}
 					<div class="text-xs text-muted-foreground mb-2">
 						← {contextLogs.before.length} log(s) before
@@ -163,12 +202,7 @@
 							</div>
 							<p class="text-xs mb-2">{log.message}</p>
 							{#if log.metadata && Object.keys(log.metadata).length > 0}
-								<details class="text-xs">
-									<summary class="cursor-pointer text-muted-foreground hover:text-foreground">
-										View metadata
-									</summary>
-									<pre class="mt-2 p-2 bg-muted rounded overflow-x-auto max-w-full">{JSON.stringify(log.metadata, null, 2)}</pre>
-								</details>
+								{@render metadataBlock(log.metadata, `before-${log.id ?? log.time}`)}
 							{/if}
 						</div>
 					{/each}
@@ -195,12 +229,7 @@
 						</div>
 						<p class="text-sm font-medium">{selectedLog.message}</p>
 						{#if selectedLog.metadata && Object.keys(selectedLog.metadata).length > 0}
-							<details class="text-xs mt-2">
-								<summary class="cursor-pointer text-muted-foreground hover:text-foreground">
-									View metadata
-								</summary>
-								<pre class="mt-2 p-2 bg-muted rounded overflow-x-auto max-w-full">{JSON.stringify(selectedLog.metadata, null, 2)}</pre>
-							</details>
+							{@render metadataBlock(selectedLog.metadata, 'selected')}
 						{/if}
 						{#if isErrorLevel(selectedLog.level) && selectedLog.id && organizationId}
 							<div class="mt-3 pt-2 border-t">
@@ -227,7 +256,7 @@
 									<span class="text-xs ml-auto">{breadcrumbsOpen ? '▾' : '▸'}</span>
 								</button>
 								{#if breadcrumbsOpen}
-									<div class="mt-2 max-h-64 overflow-y-auto">
+									<div class="mt-2 max-h-64 overflow-auto">
 										<BreadcrumbTimeline
 											{breadcrumbs}
 											eventTime={selectedLog.time}
@@ -261,12 +290,7 @@
 							</div>
 							<p class="text-xs mb-2">{log.message}</p>
 							{#if log.metadata && Object.keys(log.metadata).length > 0}
-								<details class="text-xs">
-									<summary class="cursor-pointer text-muted-foreground hover:text-foreground">
-										View metadata
-									</summary>
-									<pre class="mt-2 p-2 bg-muted rounded overflow-x-auto max-w-full">{JSON.stringify(log.metadata, null, 2)}</pre>
-								</details>
+								{@render metadataBlock(log.metadata, `after-${log.id ?? log.time}`)}
 							{/if}
 						</div>
 					{/each}

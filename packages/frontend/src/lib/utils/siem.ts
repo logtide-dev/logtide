@@ -6,6 +6,7 @@ import {
   formatMitreTactic,
   formatMitreTechnique,
 } from '@logtide/shared';
+import { escapeHtml } from './html';
 
 export { getSeverityColor, getSeverityLabel };
 
@@ -205,15 +206,6 @@ export async function exportIncidentToPdf(data: PdfExportData): Promise<void> {
   printWindow.onload = () => {
     printWindow.print();
   };
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 function formatHistoryAction(entry: IncidentHistoryEntry): string {

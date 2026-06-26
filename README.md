@@ -16,14 +16,14 @@
   <a href="https://codecov.io/gh/logtide-dev/logtide"><img src="https://codecov.io/gh/logtide-dev/logtide/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://hub.docker.com/r/logtide/backend"><img src="https://img.shields.io/docker/v/logtide/backend?label=docker&logo=docker" alt="Docker"></a>
   <a href="https://artifacthub.io/packages/helm/logtide/logtide"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logtide" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-1.0.2-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.3-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-beta-success.svg" alt="Status">
 </div>
 
 <br />
 
-> **🌊 LogTide 1.0.2 (public beta):** unified **Logs, Traces & Metrics** with a built-in **SIEM**, multi-engine storage (TimescaleDB / ClickHouse / MongoDB), uptime monitoring, parsing pipelines, and custom dashboards.
+> **🌊 LogTide 1.0.3 (public beta):** unified **Logs, Traces & Metrics** with a built-in **SIEM**, multi-engine storage (TimescaleDB / ClickHouse / MongoDB), uptime monitoring, parsing pipelines, and custom dashboards.
 
 ---
 
@@ -124,7 +124,7 @@ We host it for you. Perfect for testing. [**Sign up at logtide.dev**](https://lo
 
 ---
 
-## ✨ Core Features (v1.0.2)
+## ✨ Core Features (v1.0.3)
 
 ### Monitoring, Pipelines & Dashboards
 * 🩺 **Uptime Monitoring & Status Pages:** HTTP/TCP/heartbeat monitors with configurable thresholds, auto-created SIEM incidents on failure, scheduled maintenances, and public Uptime-Kuma-style status pages per project.

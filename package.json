@@ -1,13 +1,13 @@
 {
   "name": "logtide",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "LogTide - Self-hosted log management platform",
   "author": "LogTide Team",
   "license": "AGPL-3.0",
   "pnpm": {
     "overrides": {
-      "esbuild": ">=0.28.1",
+      "esbuild": ">=0.25.0 <0.26.0",
       "shell-quote": ">=1.8.4",
       "form-data": ">=4.0.6",
       "vite": ">=6.4.3",

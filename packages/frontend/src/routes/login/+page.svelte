@@ -17,6 +17,7 @@
   import ProviderSelector from '$lib/components/auth/ProviderSelector.svelte';
   import LdapLoginForm from '$lib/components/auth/LdapLoginForm.svelte';
   import { smallLogoPath } from '$lib/utils/theme';
+  import { isSafeInternalPath, safeRedirect } from '$lib/utils/redirect';
 
   // Get redirect URL and error from query params
   let redirectUrl = $derived(page.url.searchParams.get('redirect'));
@@ -53,8 +54,9 @@
     try {
       const config = await authAPI.getAuthConfig();
       if (config.authMode === 'none') {
-        // Auth-free mode: redirect to dashboard directly
-        goto(redirectUrl || '/dashboard');
+        // Auth-free mode: redirect to dashboard directly (validate the
+        // user-supplied redirect to prevent open redirect)
+        goto(safeRedirect(redirectUrl));
         return;
       }
     } catch (e) {
@@ -129,8 +131,8 @@
     }
 
     // If there's a redirect URL (e.g., invitation), go there
-    // Validate: must be a relative path starting with / and not // (prevent open redirect)
-    if (redirectUrl && redirectUrl.startsWith('/') && !redirectUrl.startsWith('//')) {
+    // Validate to prevent open redirect (see isSafeInternalPath)
+    if (isSafeInternalPath(redirectUrl)) {
       goto(redirectUrl);
     } else if (orgs.length === 0) {
       // No organizations -> redirect to onboarding tutorial

@@ -641,9 +641,29 @@ async function syncSigmaRules() {
 
       for (const org of orgs) {
         try {
+          // Only re-sync the rules this org already imported, to refresh their
+          // detection content/commit from upstream. Do NOT fetch the whole
+          // SigmaHQ catalog (that path imports and enables thousands of new
+          // rules), and do NOT auto-create alert rules: Sigma rules are
+          // independent from alert rules.
+          const existingRules = await db
+            .selectFrom('sigma_rules')
+            .select('sigmahq_path')
+            .where('organization_id', '=', org.organization_id)
+            .where('sigmahq_path', 'is not', null)
+            .execute();
+          const rulePaths = existingRules
+            .map((r) => r.sigmahq_path)
+            .filter((p): p is string => Boolean(p));
+
+          if (rulePaths.length === 0) {
+            continue;
+          }
+
           const result = await sigmaSyncService.syncFromSigmaHQ({
             organizationId: org.organization_id,
-            autoCreateAlerts: true,
+            selection: { rules: rulePaths },
+            autoCreateAlerts: false,
             onLimitExceeded: 'skip-new',
           });
 

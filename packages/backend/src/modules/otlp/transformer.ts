@@ -219,6 +219,27 @@ export function sanitizeForPostgres(str: string): string {
 }
 
 /**
+ * Maximum stored length for an OTLP service name. Service names are short
+ * identifiers; anything longer is almost certainly abuse or a bug.
+ */
+export const MAX_SERVICE_NAME_LENGTH = 255;
+
+/**
+ * Defense-in-depth sanitization for OTLP service.name before it is stored and
+ * later rendered (dashboards, service map). Strips control characters (C0, DEL,
+ * C1) including null bytes, and caps the length. It deliberately does NOT strip
+ * otherwise legitimate characters (such as < > " '): those are neutralized by
+ * output-encoding at each sink, and stripping them here would corrupt the value
+ * for the JSON API and other consumers. Returns 'unknown' if nothing usable
+ * remains.
+ */
+export function sanitizeServiceName(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = raw.replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, MAX_SERVICE_NAME_LENGTH);
+  return cleaned.trim().length > 0 ? cleaned : 'unknown';
+}
+
+/**
  * Extract service name from resource attributes.
  * Falls back to 'unknown' if not found.
  */
@@ -227,7 +248,7 @@ export function extractServiceName(attributes?: OtlpKeyValue[]): string {
 
   const serviceAttr = attributes.find((attr) => attr.key === 'service.name');
   if (serviceAttr?.value?.stringValue) {
-    return sanitizeForPostgres(serviceAttr.value.stringValue);
+    return sanitizeServiceName(serviceAttr.value.stringValue);
   }
 
   return 'unknown';

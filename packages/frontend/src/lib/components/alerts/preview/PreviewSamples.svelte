@@ -44,7 +44,7 @@
 
 	function formatTime(dateStr: string): string {
 		const d = new Date(dateStr);
-		return d.toLocaleString(undefined, {
+		return d.toLocaleString('en-US', {
 			month: "short",
 			day: "numeric",
 			hour: "2-digit",
@@ -55,7 +55,7 @@
 
 	function formatLogTime(dateStr: string): string {
 		const d = new Date(dateStr);
-		return d.toLocaleTimeString(undefined, {
+		return d.toLocaleTimeString('en-US', {
 			hour: "2-digit",
 			minute: "2-digit",
 			second: "2-digit",
@@ -141,7 +141,7 @@
 
 		{#if incidents.length > 5}
 			<p class="text-xs text-center text-muted-foreground pt-2">
-				Showing 5 of {incidents.length.toLocaleString()} incidents
+				Showing 5 of {incidents.length.toLocaleString('en-US')} incidents
 			</p>
 		{/if}
 	{/if}

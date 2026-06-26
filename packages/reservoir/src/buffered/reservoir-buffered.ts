@@ -121,6 +121,8 @@ export class ReservoirBuffered implements IReservoir {
   getTraceById(...args: Parameters<Reservoir['getTraceById']>): ReturnType<Reservoir['getTraceById']> { return this.inner.getTraceById(...args); }
   getServiceDependencies(...args: Parameters<Reservoir['getServiceDependencies']>): ReturnType<Reservoir['getServiceDependencies']> { return this.inner.getServiceDependencies(...args); }
   getTraceServices(...args: Parameters<Reservoir['getTraceServices']>): ReturnType<Reservoir['getTraceServices']> { return this.inner.getTraceServices(...args); }
+  getServiceHealthStats(...args: Parameters<Reservoir['getServiceHealthStats']>): ReturnType<Reservoir['getServiceHealthStats']> { return this.inner.getServiceHealthStats(...args); }
+  getSpanTimeseries(...args: Parameters<Reservoir['getSpanTimeseries']>): ReturnType<Reservoir['getSpanTimeseries']> { return this.inner.getSpanTimeseries(...args); }
   deleteSpansByTimeRange(...args: Parameters<Reservoir['deleteSpansByTimeRange']>): ReturnType<Reservoir['deleteSpansByTimeRange']> { return this.inner.deleteSpansByTimeRange(...args); }
   queryMetrics(...args: Parameters<Reservoir['queryMetrics']>): ReturnType<Reservoir['queryMetrics']> { return this.inner.queryMetrics(...args); }
   aggregateMetrics(...args: Parameters<Reservoir['aggregateMetrics']>): ReturnType<Reservoir['aggregateMetrics']> { return this.inner.aggregateMetrics(...args); }

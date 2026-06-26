@@ -8,7 +8,7 @@ import { OrganizationsService } from '../organizations/service.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { auditLogService } from '../audit-log/service.js';
 import { context } from '@logtide/shared/context';
-import { assertWithinLimit } from '../../capabilities/index.js';
+import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 
 const sigmaService = new SigmaService();
@@ -93,15 +93,18 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Cap on enabled sigma rules (#214 follow-up, WS2)
-        await context.runAsSystem('sigma:import-limit-check', async () => {
-          await context.with({ organizationId: body.organizationId }, async () => {
-            const activeCount = await sigmaService.countActiveRules(body.organizationId);
-            await assertWithinLimit('sigma.max_active_rules', activeCount);
+        // Cap on enabled sigma rules (#214 follow-up, WS2). Serialize the
+        // count + import per org so concurrent imports can't race past the cap.
+        const result = await withLimitLock(body.organizationId, 'sigma.max_active_rules', async () => {
+          await context.runAsSystem('sigma:import-limit-check', async () => {
+            await context.with({ organizationId: body.organizationId }, async () => {
+              const activeCount = await sigmaService.countActiveRules(body.organizationId);
+              await assertWithinLimit('sigma.max_active_rules', activeCount);
+            });
           });
-        });
 
-        const result = await sigmaService.importSigmaRule(importData);
+          return sigmaService.importSigmaRule(importData);
+        });
 
         // Associate channels with the sigma rule if import was successful
         if (result.sigmaRule && channelIds && channelIds.length > 0) {
@@ -321,22 +324,31 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
           if (!existingRule) {
             return reply.code(404).send({ error: 'Sigma rule not found' });
           }
-          // Cap on enabled sigma rules - only check when actually transitioning disabled -> enabled
+          // Cap on enabled sigma rules - only check when actually transitioning
+          // disabled -> enabled. Serialize the count + enable per org so two
+          // concurrent enables can't race past the cap.
           if (!existingRule.enabled) {
-            await context.runAsSystem('sigma:enable-limit-check', async () => {
-              await context.with({ organizationId: body.organizationId }, async () => {
-                const activeCount = await sigmaService.countActiveRules(body.organizationId);
-                await assertWithinLimit('sigma.max_active_rules', activeCount);
+            rule = await withLimitLock(body.organizationId, 'sigma.max_active_rules', async () => {
+              await context.runAsSystem('sigma:enable-limit-check', async () => {
+                await context.with({ organizationId: body.organizationId }, async () => {
+                  const activeCount = await sigmaService.countActiveRules(body.organizationId);
+                  await assertWithinLimit('sigma.max_active_rules', activeCount);
+                });
               });
+              // Inside the `body.enabled === true` branch: enable explicitly.
+              return sigmaService.toggleSigmaRule(params.id, body.organizationId, true);
             });
           }
         }
 
-        rule = await sigmaService.toggleSigmaRule(
-          params.id,
-          body.organizationId,
-          body.enabled
-        );
+        // For non-enable-transition cases (disable, or already enabled) toggle now.
+        if (!rule) {
+          rule = await sigmaService.toggleSigmaRule(
+            params.id,
+            body.organizationId,
+            body.enabled
+          );
+        }
 
         if (!rule) {
           return reply.code(404).send({ error: 'Sigma rule not found' });

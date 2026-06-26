@@ -6,7 +6,7 @@ import { customDashboardsService } from './service.js';
 import { panelInstanceSchema } from './panel-registry.js';
 import { fetchPanelData } from './panel-data-service.js';
 import { context } from '@logtide/shared/context';
-import { assertWithinLimit } from '../../capabilities/index.js';
+import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { auditLogService } from '../audit-log/service.js';
 
@@ -92,24 +92,26 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      await context.runAsSystem('dashboards:create-limit-check', async () => {
-        await context.with({ organizationId: body.organizationId }, async () => {
-          const count = await customDashboardsService.countForOrg(body.organizationId);
-          await assertWithinLimit('dashboards.max_custom', count);
+      const dashboard = await withLimitLock(body.organizationId, 'dashboards.max_custom', async () => {
+        await context.runAsSystem('dashboards:create-limit-check', async () => {
+          await context.with({ organizationId: body.organizationId }, async () => {
+            const count = await customDashboardsService.countForOrg(body.organizationId);
+            await assertWithinLimit('dashboards.max_custom', count);
+          });
         });
-      });
 
-      const dashboard = await customDashboardsService.create(
-        {
-          organizationId: body.organizationId,
-          projectId: body.projectId ?? null,
-          name: body.name,
-          description: body.description ?? null,
-          isPersonal: body.isPersonal,
-          panels: body.panels,
-        },
-        request.user.id
-      );
+        return customDashboardsService.create(
+          {
+            organizationId: body.organizationId,
+            projectId: body.projectId ?? null,
+            name: body.name,
+            description: body.description ?? null,
+            isPersonal: body.isPersonal,
+            panels: body.panels,
+          },
+          request.user.id
+        );
+      });
 
       await auditLogService.record({
         action: 'dashboard.created',
@@ -140,18 +142,20 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      await context.runAsSystem('dashboards:create-limit-check', async () => {
-        await context.with({ organizationId: body.organizationId }, async () => {
-          const count = await customDashboardsService.countForOrg(body.organizationId);
-          await assertWithinLimit('dashboards.max_custom', count);
+      const dashboard = await withLimitLock(body.organizationId, 'dashboards.max_custom', async () => {
+        await context.runAsSystem('dashboards:create-limit-check', async () => {
+          await context.with({ organizationId: body.organizationId }, async () => {
+            const count = await customDashboardsService.countForOrg(body.organizationId);
+            await assertWithinLimit('dashboards.max_custom', count);
+          });
         });
-      });
 
-      const dashboard = await customDashboardsService.importYaml(
-        body.yaml,
-        body.organizationId,
-        request.user.id
-      );
+        return customDashboardsService.importYaml(
+          body.yaml,
+          body.organizationId,
+          request.user.id
+        );
+      });
 
       await auditLogService.record({
         action: 'dashboard.imported',

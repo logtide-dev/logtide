@@ -506,7 +506,7 @@ export class ExceptionService {
     occurrenceCount: number;
     limit?: number;
     offset?: number;
-  }): Promise<{ logs: Array<{ id: string; time: Date; service: string; message: string; metadata?: Record<string, unknown> }>; total: number }> {
+  }): Promise<{ logs: Array<{ id: string; time: Date; service: string; message: string; traceId?: string; metadata?: Record<string, unknown> }>; total: number }> {
     const limit = params.limit || 10;
     const offset = params.offset || 0;
 
@@ -553,15 +553,16 @@ export class ExceptionService {
     ).flat();
 
     // Build lookup map and return in the same order
-    const logMap = new Map(storedLogs.map((l: { id: string; time: Date; service: string; message: string; metadata?: any }) => [l.id, l]));
+    const logMap = new Map(storedLogs.map((l: { id: string; time: Date; service: string; message: string; traceId?: string; metadata?: any }) => [l.id, l]));
     const logs = logIds
       .map(id => logMap.get(id))
-      .filter((l): l is { id: string; time: Date; service: string; message: string; metadata?: any } => Boolean(l))
+      .filter((l): l is { id: string; time: Date; service: string; message: string; traceId?: string; metadata?: any } => Boolean(l))
       .map(l => ({
         id: l.id,
         time: l.time,
         service: l.service,
         message: l.message,
+        traceId: l.traceId,
         metadata: l.metadata,
       }));
 

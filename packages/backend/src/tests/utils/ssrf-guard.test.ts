@@ -4,6 +4,8 @@ import {
   resolveAndValidateHost,
   assertHttpTargetAllowed,
   safeFetch,
+  createPinnedLookup,
+  __setSafeFetchImpl,
   SsrfBlockedError,
 } from '../../utils/ssrf-guard.js';
 
@@ -92,8 +94,31 @@ describe('assertHttpTargetAllowed', () => {
   });
 });
 
+describe('createPinnedLookup (DNS rebinding protection)', () => {
+  it('always returns the pinned address regardless of the hostname asked', () => {
+    const lookup = createPinnedLookup('93.184.216.34');
+    let got: { address: string; family?: number } | undefined;
+    lookup('evil.example.com', {}, (_err, address, family) => {
+      got = { address: address as string, family };
+    });
+    expect(got).toEqual({ address: '93.184.216.34', family: 4 });
+  });
+
+  it('supports the { all: true } array form with the correct family', () => {
+    const lookup = createPinnedLookup('2606:4700:4700::1111');
+    let got: unknown;
+    lookup('evil.example.com', { all: true }, (_err, list) => {
+      got = list;
+    });
+    expect(got).toEqual([{ address: '2606:4700:4700::1111', family: 6 }]);
+  });
+});
+
 describe('safeFetch redirect revalidation', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __setSafeFetchImpl(null);
+  });
 
   function res(status: number, location?: string) {
     return {
@@ -108,16 +133,26 @@ describe('safeFetch redirect revalidation', () => {
       .fn()
       .mockResolvedValueOnce(res(302, 'http://1.1.1.1/next'))
       .mockResolvedValueOnce(res(200));
-    global.fetch = fetchMock as any;
+    __setSafeFetchImpl(fetchMock as any);
 
     const result = await safeFetch('http://8.8.8.8/start', {}, { allowPrivate: false });
     expect(result.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('passes a pinning dispatcher to the underlying fetch', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(res(200));
+    __setSafeFetchImpl(fetchMock as any);
+
+    await safeFetch('http://8.8.8.8/start', {}, { allowPrivate: false });
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.dispatcher).toBeDefined();
+    expect(init.redirect).toBe('manual');
+  });
+
   it('blocks a redirect that points at an internal address', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(res(302, 'http://169.254.169.254/latest/meta-data'));
-    global.fetch = fetchMock as any;
+    __setSafeFetchImpl(fetchMock as any);
 
     await expect(safeFetch('http://8.8.8.8/start', {}, { allowPrivate: false })).rejects.toBeInstanceOf(
       SsrfBlockedError
@@ -126,7 +161,7 @@ describe('safeFetch redirect revalidation', () => {
 
   it('stops after too many redirects', async () => {
     const fetchMock = vi.fn().mockResolvedValue(res(302, 'http://1.1.1.1/loop'));
-    global.fetch = fetchMock as any;
+    __setSafeFetchImpl(fetchMock as any);
 
     await expect(safeFetch('http://8.8.8.8/start', {}, { allowPrivate: false, maxRedirects: 2 })).rejects.toBeInstanceOf(
       SsrfBlockedError

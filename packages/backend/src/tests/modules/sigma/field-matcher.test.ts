@@ -135,23 +135,129 @@ describe('Sigma Field Matcher', () => {
         });
     });
 
-    describe('Modifier: base64', () => {
-        it('should match base64-encoded content', () => {
-            const base64 = Buffer.from('malicious code').toString('base64');
-            expect(SigmaFieldMatcher.match(base64, 'malicious', { modifier: 'base64' })).toBe(true);
-            expect(SigmaFieldMatcher.match(base64, 'benign', { modifier: 'base64' })).toBe(false);
+    describe('Modifier: base64 (SigmaHQ encode-pattern semantics)', () => {
+        // SigmaHQ: the pattern is base64-encoded and that encoding is matched
+        // against the field value (NOT: decode the field). A lone base64 modifier
+        // implies a substring (contains) match, as it is always used in practice.
+        it('should match when the field contains base64(pattern)', () => {
+            const enc = Buffer.from('malicious').toString('base64');
+            expect(SigmaFieldMatcher.match(`prefix ${enc} suffix`, 'malicious', { modifier: 'base64' })).toBe(true);
+            expect(SigmaFieldMatcher.match('plain text no encoding', 'malicious', { modifier: 'base64' })).toBe(false);
         });
 
-        it('should handle invalid base64 gracefully', () => {
-            expect(SigmaFieldMatcher.match('not-base64!!!', 'test', { modifier: 'base64' })).toBe(false);
+        it('should support base64|contains chains via matchSelection', () => {
+            const enc = Buffer.from('whoami').toString('base64'); // d2hvYW1p
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: `powershell ${enc} extra` }, { 'cmd|base64|contains': 'whoami' }),
+            ).toBe(true);
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: 'powershell whoami extra' }, { 'cmd|base64|contains': 'whoami' }),
+            ).toBe(false);
         });
     });
 
-    describe('Modifier: all (all words)', () => {
-        it('should match if all words present in any order', () => {
-            expect(SigmaFieldMatcher.match('hello world test', 'hello test', { modifier: 'all' })).toBe(true);
-            expect(SigmaFieldMatcher.match('test hello world', 'hello test', { modifier: 'all' })).toBe(true);
-            expect(SigmaFieldMatcher.match('hello world', 'hello test', { modifier: 'all' })).toBe(false);
+    describe('Modifier: all (SigmaHQ list quantifier)', () => {
+        // SigmaHQ: |all flips the default OR over a value list into AND.
+        it('should require every list element to match (AND) with |all', () => {
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: 'foo bar baz' }, { 'cmd|contains|all': ['foo', 'baz'] }),
+            ).toBe(true);
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: 'foo bar' }, { 'cmd|contains|all': ['foo', 'baz'] }),
+            ).toBe(false);
+        });
+
+        it('should keep OR semantics over a list without |all', () => {
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: 'foo only' }, { 'cmd|contains': ['foo', 'baz'] }),
+            ).toBe(true);
+        });
+    });
+
+    describe('Compound modifiers (SigmaHQ spec)', () => {
+        it('should match base64offset|contains regardless of byte alignment', () => {
+            // A real base64 blob in a field; the secret must be found at any of
+            // the 3 base64 alignment offsets.
+            const blob = Buffer.from('powershell -enc whoami extra payload').toString('base64');
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: blob }, { 'cmd|base64offset|contains': 'whoami' }),
+            ).toBe(true);
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: blob }, { 'cmd|base64offset|contains': 'notthere' }),
+            ).toBe(false);
+        });
+
+        it('should match utf16le|base64offset|contains (PowerShell -enc style)', () => {
+            const enc = Buffer.from('whoami', 'utf16le').toString('base64');
+            expect(
+                SigmaFieldMatcher.matchSelection(
+                    { cmd: `powershell -enc ${enc}` },
+                    { 'cmd|utf16le|base64offset|contains': 'whoami' },
+                ),
+            ).toBe(true);
+        });
+
+        it('should treat wide as an alias of utf16le', () => {
+            const enc = Buffer.from('whoami', 'utf16le').toString('base64');
+            expect(
+                SigmaFieldMatcher.matchSelection(
+                    { cmd: `x ${enc} y` },
+                    { 'cmd|wide|base64offset|contains': 'whoami' },
+                ),
+            ).toBe(true);
+        });
+
+        it('should expand windash dash variants', () => {
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: 'program /e /s' }, { 'cmd|windash|contains': '-e' }),
+            ).toBe(true);
+            // without windash the literal dash is required and not present
+            expect(
+                SigmaFieldMatcher.matchSelection({ cmd: 'program /e /s' }, { 'cmd|contains': '-e' }),
+            ).toBe(false);
+        });
+
+        it('should match IPv4 cidr ranges', () => {
+            expect(SigmaFieldMatcher.matchSelection({ src: '192.168.1.50' }, { 'src|cidr': '192.168.1.0/24' })).toBe(true);
+            expect(SigmaFieldMatcher.matchSelection({ src: '192.168.2.50' }, { 'src|cidr': '192.168.1.0/24' })).toBe(false);
+            expect(SigmaFieldMatcher.matchSelection({ src: '10.0.0.5' }, { 'src|cidr': '10.0.0.0/8' })).toBe(true);
+        });
+
+        it('should support numeric comparators gt/gte/lt/lte', () => {
+            expect(SigmaFieldMatcher.matchSelection({ n: 10 }, { 'n|gt': 5 })).toBe(true);
+            expect(SigmaFieldMatcher.matchSelection({ n: 10 }, { 'n|gt': 10 })).toBe(false);
+            expect(SigmaFieldMatcher.matchSelection({ n: 10 }, { 'n|gte': 10 })).toBe(true);
+            expect(SigmaFieldMatcher.matchSelection({ n: 10 }, { 'n|lt': 20 })).toBe(true);
+            expect(SigmaFieldMatcher.matchSelection({ n: 10 }, { 'n|lte': 10 })).toBe(true);
+            expect(SigmaFieldMatcher.matchSelection({ n: 'notnum' }, { 'n|gt': 5 })).toBe(false);
+        });
+
+        it('should not drop the comparator in a transform+comparator chain', () => {
+            const enc = Buffer.from('cmd.exe').toString('base64');
+            // endswith comparator must be honored after the base64 transform
+            expect(
+                SigmaFieldMatcher.matchSelection({ p: `junk${enc}` }, { 'p|base64|endswith': 'cmd.exe' }),
+            ).toBe(true);
+            expect(
+                SigmaFieldMatcher.matchSelection({ p: `${enc}junk` }, { 'p|base64|endswith': 'cmd.exe' }),
+            ).toBe(false);
+        });
+
+        it('should combine |all with a transform+comparator chain', () => {
+            const a = Buffer.from('alpha').toString('base64');
+            const b = Buffer.from('omega').toString('base64');
+            expect(
+                SigmaFieldMatcher.matchSelection(
+                    { cmd: `x ${a} y ${b} z` },
+                    { 'cmd|base64|contains|all': ['alpha', 'omega'] },
+                ),
+            ).toBe(true);
+            expect(
+                SigmaFieldMatcher.matchSelection(
+                    { cmd: `x ${a} y z` },
+                    { 'cmd|base64|contains|all': ['alpha', 'omega'] },
+                ),
+            ).toBe(false);
         });
     });
 

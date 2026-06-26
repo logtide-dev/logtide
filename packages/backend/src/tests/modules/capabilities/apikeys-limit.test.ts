@@ -137,6 +137,43 @@ describe('apikeys.max enforcement', () => {
     expect(res.statusCode).toBe(201);
   });
 
+  // Case 5: concurrent creates must not race past a finite limit
+  it('serializes concurrent creates so the limit is never exceeded (race)', async () => {
+    // createTestContext already inserted 1 key; limit 2 leaves room for exactly 1 more.
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'apikeys.max', enabled: null, limit_value: 2 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    const attempts = 6;
+    const results = await Promise.all(
+      Array.from({ length: attempts }, (_, i) =>
+        app.inject({
+          method: 'POST',
+          url: `/api/v1/projects/${projectId}/api-keys`,
+          headers: { Authorization: `Bearer ${token}` },
+          payload: { name: `Race Key ${i}` },
+        })
+      )
+    );
+
+    const created = results.filter((r) => r.statusCode === 201).length;
+    const blocked = results.filter((r) => r.statusCode === 403).length;
+
+    expect(created).toBe(1);
+    expect(blocked).toBe(attempts - 1);
+
+    // Hard invariant: the org never ends up over its configured limit.
+    const total = await db
+      .selectFrom('api_keys')
+      .innerJoin('projects', 'projects.id', 'api_keys.project_id')
+      .select((eb) => eb.fn.countAll().as('c'))
+      .where('projects.organization_id', '=', orgId)
+      .executeTakeFirstOrThrow();
+    expect(Number(total.c)).toBe(2);
+  });
+
   // Case 4: org isolation => org A at limit does not block org B
   it('does not block org B when org A is at the limit', async () => {
     await db

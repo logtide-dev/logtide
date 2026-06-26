@@ -3,6 +3,7 @@ import { pool } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
 import { recordSpanIngestion } from '../metering/index.js';
+import { piiMaskingService } from '../pii-masking/service.js';
 import type { TransformedSpan, AggregatedTrace } from '../otlp/trace-transformer.js';
 import type {
   SpanRecord as ReservoirSpanRecord,
@@ -124,7 +125,24 @@ export class TracesService {
       resourceAttributes: span.resource_attributes || undefined,
     }));
 
-    const result = await reservoir.ingestSpans(reservoirSpans);
+    // PII masking (fail-closed): mask span attributes in place and drop any
+    // span whose masking fails, so unmasked attributes (request/response bodies,
+    // tokens, IPs) never reach storage. Mirrors the log ingestion path.
+    const failedIdx = await piiMaskingService.maskSpanBatch(
+      reservoirSpans,
+      organizationId,
+      projectId
+    );
+    let spansToStore = reservoirSpans;
+    if (failedIdx.length > 0) {
+      const failedSet = new Set(failedIdx);
+      spansToStore = reservoirSpans.filter((_, i) => !failedSet.has(i));
+      console.warn(
+        `[Traces] PII masking failed for ${failedIdx.length} span(s); dropped pre-storage`
+      );
+    }
+
+    const result = await reservoir.ingestSpans(spansToStore);
 
     // Metering: record ingested span count (fire-and-forget; activates
     // the tracing.max_spans_monthly quota in the capability system).
@@ -213,7 +231,7 @@ export class TracesService {
 
     const results = await Promise.allSettled([
       reservoir.getServiceDependencies(projectId, effectiveFrom, effectiveTo),
-      this.getServiceHealthStats(projectId, effectiveFrom, effectiveTo, rangeHours),
+      this.getServiceHealthStats(projectId, effectiveFrom, effectiveTo),
       includeLogCorrelation
         ? this.getLogCoOccurrenceEdges(projectId, effectiveFrom, effectiveTo)
         : Promise.resolve([]),
@@ -298,48 +316,19 @@ export class TracesService {
     projectId: string,
     from: Date,
     to: Date,
-    rangeHours: number,
   ): Promise<ServiceHealthStats[]> {
-    if (reservoir.getEngineType() !== 'timescale') {
-      return [];
-    }
+    // True window p95 computed directly from raw spans by the storage engine
+    // (percentile_cont / quantile / $percentile), not a max of per-bucket p95s
+    // from a continuous aggregate. Works across every reservoir engine.
+    const stats = await reservoir.getServiceHealthStats(projectId, from, to);
 
-    const { sql } = await import('kysely');
-    const table = rangeHours <= 48 ? 'spans_hourly_stats' as const : 'spans_daily_stats' as const;
-
-    const result = await db
-      .selectFrom(table)
-      .select([
-        'service_name',
-      ])
-      .select([
-        db.fn.sum<number>('span_count').as('total_calls'),
-        db.fn.sum<number>('error_count').as('total_errors'),
-        // Weighted average: SUM(avg * count) / SUM(count)
-        sql<number>`CASE WHEN SUM(span_count) > 0
-          THEN SUM(COALESCE(duration_avg_ms, 0) * span_count) / SUM(span_count)
-          ELSE 0 END`.as('avg_latency_ms'),
-        // APPROXIMATION: this is the max of the per-bucket p95s, not a true window
-        // p95 (the hourly/daily aggregate stores only a per-bucket p95, which is
-        // not mergeable). It is an upper-bound estimate; a true p95 would require a
-        // mergeable quantile sketch (t-digest) in the continuous aggregate.
-        db.fn.max<number>('duration_p95_ms').as('p95_latency_ms'),
-      ])
-      .where('project_id', '=', projectId)
-      .where('bucket', '>=', from)
-      .where('bucket', '<=', to)
-      .groupBy('service_name')
-      .execute();
-
-    return result.map((r) => ({
-      service_name: r.service_name,
-      total_calls: Number(r.total_calls ?? 0),
-      total_errors: Number(r.total_errors ?? 0),
-      error_rate: Number(r.total_calls) > 0
-        ? Number(r.total_errors) / Number(r.total_calls)
-        : 0,
-      avg_latency_ms: Number(r.avg_latency_ms ?? 0),
-      p95_latency_ms: r.p95_latency_ms != null ? Number(r.p95_latency_ms) : null,
+    return stats.map((s) => ({
+      service_name: s.serviceName,
+      total_calls: s.totalCalls,
+      total_errors: s.totalErrors,
+      error_rate: s.totalCalls > 0 ? s.totalErrors / s.totalCalls : 0,
+      avg_latency_ms: s.avgLatencyMs,
+      p95_latency_ms: s.p95LatencyMs,
     }));
   }
 

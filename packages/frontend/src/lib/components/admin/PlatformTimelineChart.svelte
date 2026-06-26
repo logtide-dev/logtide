@@ -35,13 +35,13 @@
                     const item = timeline[idx];
                     if (!item) return '';
                     const d = new Date(item.bucket);
-                    const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-                    const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+                    const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
                     let html = `<div style="font-weight:600;margin-bottom:4px">${dateStr} ${timeStr}</div>`;
                     for (const p of params) {
                         html += `<div style="display:flex;justify-content:space-between;gap:16px">`;
                         html += `<span>${p.marker} ${p.seriesName}</span>`;
-                        html += `<span style="font-weight:600">${Number(p.value).toLocaleString()}</span>`;
+                        html += `<span style="font-weight:600">${Number(p.value).toLocaleString('en-US')}</span>`;
                         html += `</div>`;
                     }
                     return html;
@@ -75,7 +75,7 @@
                         if (val % 1 !== 0) return '';
                         if (val >= 1000000) return `${(val / 1000000).toFixed(1)}M`;
                         if (val >= 1000) return `${(val / 1000).toFixed(0)}k`;
-                        return val.toLocaleString();
+                        return val.toLocaleString('en-US');
                     },
                 },
             },

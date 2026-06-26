@@ -29,6 +29,9 @@ import type {
   TraceQueryResult,
   IngestSpansResult,
   ServiceDependencyResult,
+  ServiceHealthStat,
+  SpanTimeseriesParams,
+  SpanTimeseriesBucket,
   DeleteSpansByTimeRangeParams,
   MetricRecord,
   MetricQueryParams,
@@ -143,6 +146,18 @@ export abstract class StorageEngine {
 
   /** Distinct service names appearing in traces within the time range */
   abstract getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]>;
+
+  /** Per-service health stats (calls, errors, avg + true window p95) from raw spans */
+  abstract getServiceHealthStats(
+    projectId: string,
+    from?: Date,
+    to?: Date,
+  ): Promise<ServiceHealthStat[]>;
+
+  /** Time-bucketed span volume + latency percentiles from raw spans (all engines) */
+  abstract getSpanTimeseries(
+    params: SpanTimeseriesParams,
+  ): Promise<SpanTimeseriesBucket[]>;
 
   /** Delete spans by time range */
   abstract deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult>;

@@ -141,7 +141,7 @@
   {#if totalSelected > 0}
     <div class="flex items-center justify-between">
       <Badge variant="secondary">
-        {totalSelected.toLocaleString()} item{totalSelected === 1 ? '' : 's'} selected
+        {totalSelected.toLocaleString('en-US')} item{totalSelected === 1 ? '' : 's'} selected
       </Badge>
       <button
         type="button"

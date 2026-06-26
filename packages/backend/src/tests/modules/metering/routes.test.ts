@@ -70,6 +70,28 @@ describe('GET /api/v1/usage', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it('allows a platform admin to read another org usage', async () => {
+    // Admin belongs to a different org and is NOT a member of `orgId`.
+    const adminCtx = await createTestContext();
+    await db
+      .updateTable('users')
+      .set({ is_admin: true })
+      .where('id', '=', adminCtx.user.id)
+      .execute();
+    const adminToken = await createTestSession(adminCtx.user.id);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/usage?organizationId=${orgId}&from=2026-06-01T00:00:00Z&to=2026-06-02T00:00:00Z&groupBy=type`,
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    const byType = Object.fromEntries(body.usage.map((r: any) => [r.type, r.quantity]));
+    expect(byType['logs.ingested.events']).toBe(10);
+  });
+
   it('returns 400 on a missing required param', async () => {
     const res = await app.inject({
       method: 'GET',

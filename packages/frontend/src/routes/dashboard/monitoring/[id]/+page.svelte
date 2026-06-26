@@ -81,7 +81,7 @@
 
   function formatDate(d: string | null | undefined) {
     if (!d) return '-';
-    return new Date(d).toLocaleString();
+    return new Date(d).toLocaleString('en-US');
   }
 
   function formatResponseTime(ms: number | null | undefined) {
@@ -185,7 +185,7 @@
         <div class="mb-3 flex items-center justify-between">
           <p class="text-sm font-medium">30-day uptime</p>
           <span class="text-xs text-muted-foreground">
-            {recentUptime[0]?.bucket ? new Date(recentUptime[0].bucket).toLocaleDateString() : ''} – today
+            {recentUptime[0]?.bucket ? new Date(recentUptime[0].bucket).toLocaleDateString('en-US') : ''} – today
           </span>
         </div>
         <div class="flex items-end gap-0.5 h-12">
@@ -193,7 +193,7 @@
             <div
               class="flex-1 rounded-sm {uptimeColor(Number(bucket.uptimePct))} transition-all"
               style="height: {Math.max(8, (Number(bucket.uptimePct) / 100) * 48)}px; min-height: 4px"
-              title="{new Date(bucket.bucket).toLocaleDateString()} - {Number(bucket.uptimePct).toFixed(1)}%"
+              title="{new Date(bucket.bucket).toLocaleDateString('en-US')} - {Number(bucket.uptimePct).toFixed(1)}%"
             ></div>
           {/each}
         </div>
@@ -309,7 +309,7 @@
                   <XCircle class="h-3.5 w-3.5 text-red-500 shrink-0" />
                 {/if}
                 <span class="text-muted-foreground w-36 shrink-0">
-                  {new Date(result.time).toLocaleString()}
+                  {new Date(result.time).toLocaleString('en-US')}
                 </span>
                 <span class="{result.status === 'up' ? 'text-green-600' : 'text-red-600'} font-medium w-10 shrink-0">
                   {result.status === 'up' ? 'Up' : 'Down'}

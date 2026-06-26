@@ -979,6 +979,54 @@ describe('MongoDBEngine (integration)', () => {
     });
   });
 
+  describe('getServiceHealthStats', () => {
+    beforeEach(async () => {
+      const db = directClient.db(TEST_CONFIG.database);
+      await db.collection('spans').deleteMany({});
+      const spans = [];
+      for (let i = 1; i <= 100; i++) {
+        spans.push(
+          makeSpan({
+            spanId: `health-${i}`,
+            traceId: 'trace-health',
+            serviceName: 'api',
+            startTime: new Date('2025-03-01T10:00:00Z'),
+            durationMs: i,
+            statusCode: i <= 10 ? 'ERROR' : 'OK',
+          }),
+        );
+      }
+      await engine.ingestSpans(spans);
+    });
+
+    it('computes a true window p95 from raw spans', async () => {
+      const stats = await engine.getServiceHealthStats(
+        'proj-1',
+        new Date('2025-03-01T00:00:00Z'),
+        new Date('2025-03-02T00:00:00Z'),
+      );
+
+      const api = stats.find((s) => s.serviceName === 'api');
+      expect(api).toBeDefined();
+      expect(api!.totalCalls).toBe(100);
+      expect(api!.totalErrors).toBe(10);
+      expect(api!.avgLatencyMs).toBeGreaterThan(45);
+      expect(api!.avgLatencyMs).toBeLessThan(56);
+      // Approximate but a true window p95 over durations 1..100 (~95), not MAX.
+      expect(api!.p95LatencyMs!).toBeGreaterThanOrEqual(88);
+      expect(api!.p95LatencyMs!).toBeLessThanOrEqual(100);
+    });
+
+    it('returns no rows outside the window', async () => {
+      const stats = await engine.getServiceHealthStats(
+        'proj-1',
+        new Date('2030-01-01T00:00:00Z'),
+        new Date('2030-01-02T00:00:00Z'),
+      );
+      expect(stats).toHaveLength(0);
+    });
+  });
+
   describe('deleteSpansByTimeRange', () => {
     beforeEach(async () => {
       await engine.ingestSpans([

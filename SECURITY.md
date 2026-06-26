@@ -37,6 +37,7 @@ We thank the following researchers for responsibly disclosing security issues:
 
 - **Bertie** — cross-tenant authorization gaps in project-scoped routes (alert preview/creation, monitor creation, source map list/delete) and SSRF / internal port-scanning via HTTP/TCP monitors and webhook delivery. Fixed in 0.9.6.
 - **tonghuaroot** — SSRF in the alert/Sigma webhook delivery path, which still used the bypassable inline filter instead of the centralized `safeFetch` guard (incomplete-fix sibling-gap of the 0.9.6 hardening). Fixed in 0.9.7. (GHSA-7v53-pw6r-99vj)
+- **KIberblick.de** ([kiberblick.de](https://kiberblick.de)) — cross-tenant read on the dashboard API endpoints (organization taken from the attacker-supplied query string under API-key auth) and stored XSS via OTLP `service.name` in the service map; plus an open redirect on the auth-free login/register path, a DNS-rebinding gap in the SSRF guard's HTTP path, a first-admin bootstrap promotion race, and a capability-limit check-then-act race. Fixed in 1.0.3.
 
 ## Supported Versions
 

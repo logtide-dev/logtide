@@ -15,6 +15,7 @@
 
 import { lookup } from 'dns/promises';
 import { isIP } from 'net';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 export class SsrfBlockedError extends Error {
   constructor(message: string) {
@@ -140,13 +141,48 @@ interface SafeFetchOptions {
 }
 
 /**
+ * Build a DNS lookup function that always resolves to the already-validated
+ * `address`, regardless of the hostname asked. Handed to an undici Agent so the
+ * socket connects to the exact IP we checked, closing the resolve-then-connect
+ * (DNS rebinding) window. TLS SNI and certificate validation still use the
+ * original hostname; only the destination IP is pinned.
+ */
+export function createPinnedLookup(address: string) {
+  const family = isIP(address); // 4 or 6 (0 is rejected upstream as not-an-IP)
+  return (
+    _hostname: string,
+    options: { all?: boolean } | undefined,
+    callback: (
+      err: NodeJS.ErrnoException | null,
+      address: string | Array<{ address: string; family: number }>,
+      family?: number,
+    ) => void,
+  ): void => {
+    if (options && options.all) {
+      callback(null, [{ address, family }]);
+    } else {
+      callback(null, address, family);
+    }
+  };
+}
+
+// Fetch implementation seam. Defaults to undici's fetch so we can attach a
+// per-request dispatcher; overridable in tests via __setSafeFetchImpl.
+type FetchImpl = (url: string | URL, init: Record<string, unknown>) => Promise<Response>;
+let fetchImpl: FetchImpl = undiciFetch as unknown as FetchImpl;
+
+/** @internal Test hook to stub the underlying fetch. Pass null to reset. */
+export function __setSafeFetchImpl(fn: FetchImpl | null): void {
+  fetchImpl = fn ?? (undiciFetch as unknown as FetchImpl);
+}
+
+/**
  * fetch() wrapper that validates the target before connecting and revalidates
  * every redirect hop instead of blindly following them. Each hop is resolved
- * and checked, which closes redirect-to-internal bypasses.
- *
- * Note: there is a small resolve-then-connect window (DNS rebinding) that this
- * does not fully pin for HTTPS without a custom dispatcher; the validation here
- * addresses the reported direct-target and redirect bypasses.
+ * and checked, and the connection is PINNED to the validated IP via a custom
+ * undici dispatcher, which closes the resolve-then-connect (DNS rebinding)
+ * window for both HTTP and HTTPS. TLS still uses the original hostname for SNI
+ * and certificate validation.
  */
 export async function safeFetch(
   rawUrl: string,
@@ -166,9 +202,22 @@ export async function safeFetch(
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       throw new SsrfBlockedError('Only http and https targets are allowed');
     }
-    await resolveAndValidateHost(url.hostname, options.allowPrivate);
+    const addresses = await resolveAndValidateHost(url.hostname, options.allowPrivate);
 
-    const response = await fetch(url, { ...init, redirect: 'manual' });
+    // Pin the socket to the validated address so a hostname that re-resolves to
+    // an internal IP between validation and connect cannot be reached.
+    const dispatcher = new Agent({ connect: { lookup: createPinnedLookup(addresses[0]) } });
+
+    let response: Response;
+    try {
+      response = await fetchImpl(url, { ...init, redirect: 'manual', dispatcher });
+    } catch (err) {
+      void dispatcher.close().catch(() => {});
+      throw err;
+    }
+    // Gracefully close the per-hop dispatcher once the request completes; this
+    // does not abort the body the caller is about to read.
+    void dispatcher.close().catch(() => {});
 
     const isRedirect = response.status >= 300 && response.status < 400;
     const location = isRedirect ? response.headers?.get('location') ?? null : null;
