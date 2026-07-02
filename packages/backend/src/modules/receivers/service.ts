@@ -268,6 +268,7 @@ export class ReceiversService {
   }
 
   async touchLastReceived(receiverId: string): Promise<void> {
+    // tenant-scope-ok: receiverId comes from a token-authenticated ingest request or a receiver row already loaded with its project join
     await db
       .updateTable('receivers')
       .set({ last_received_at: new Date() })
