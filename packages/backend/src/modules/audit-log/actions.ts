@@ -23,6 +23,9 @@ export const AUDIT_ACTIONS = {
   // api keys
   'apikey.created': 'config_change',
   'apikey.revoked': 'config_change',
+  // inbound webhook receivers (#155)
+  'receiver.created': 'config_change',
+  'receiver.deleted': 'config_change',
   // users and membership
   'user.registered': 'user_management',
   'user.created': 'user_management',
