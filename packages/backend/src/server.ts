@@ -17,6 +17,8 @@ import { organizationsRoutes } from './modules/organizations/routes.js';
 import { invitationsRoutes } from './modules/invitations/routes.js';
 import { notificationsRoutes } from './modules/notifications/routes.js';
 import { apiKeysRoutes } from './modules/api-keys/routes.js';
+import { receiversRoutes } from './modules/receivers/routes.js';
+import { receiversIngestRoutes } from './modules/receivers/ingest-routes.js';
 import dashboardRoutes from './modules/dashboard/routes.js';
 import { sigmaRoutes } from './modules/sigma/routes.js';
 import { siemRoutes } from './modules/siem/routes.js';
@@ -189,6 +191,8 @@ export async function build(opts = {}) {
   await fastify.register(registerSiemSseRoutes);
   await fastify.register(exceptionsRoutes);
   await fastify.register(apiKeysRoutes, { prefix: '/api/v1/projects' });
+  await fastify.register(receiversRoutes, { prefix: '/api/v1/projects' });
+  await fastify.register(receiversIngestRoutes, { prefix: '/api/v1/receivers' });
   await fastify.register(dashboardRoutes);
   await fastify.register(adminRoutes, { prefix: '/api/v1/admin' });
   await fastify.register(settingsRoutes, { prefix: '/api/v1/admin/settings' });

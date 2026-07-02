@@ -87,7 +87,10 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       request.url.startsWith('/api/v1/invitations') ||
       request.url.startsWith('/api/v1/status') ||
       request.url.startsWith('/api/v1/status-incidents') ||
-      request.url.startsWith('/api/v1/maintenances')
+      request.url.startsWith('/api/v1/maintenances') ||
+      // Inbound webhook receivers (#155): the URL token is the credential,
+      // verified by the route itself.
+      request.url.startsWith('/api/v1/receivers')
     ) {
       return;
     }
