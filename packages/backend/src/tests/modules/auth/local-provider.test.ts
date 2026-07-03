@@ -171,6 +171,7 @@ describe('LocalProvider', () => {
             expect(result.success).toBe(true);
             expect(result.providerUserId).toBe('valid@example.com');
             expect(result.email).toBe('valid@example.com');
+            expect(result.emailVerified).toBe(true);
             expect(result.name).toBe('Valid User');
             expect(result.metadata?.userId).toBe(user.id);
         });

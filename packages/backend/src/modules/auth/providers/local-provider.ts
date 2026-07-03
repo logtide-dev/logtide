@@ -84,6 +84,7 @@ export class LocalProvider implements AuthProvider {
       success: true,
       providerUserId: user.email, // For local, we use email as the provider user ID
       email: user.email,
+      emailVerified: true, // Password verification implies ownership of the account
       name: user.name,
       metadata: {
         userId: user.id,

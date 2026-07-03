@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { usersService } from './service.js';
+import { authenticationService } from '../auth/authentication-service.js';
 import { config } from '../../config/index.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
@@ -52,8 +53,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
         const user = await usersService.createUser(body);
 
-        // Automatically log in the new user
-        const session = await usersService.login({
+        // Automatically log in the new user through the provider registry
+        // This also creates the user_identities link for the local provider
+        const { session } = await authenticationService.authenticateWithProvider('local', {
           email: body.email,
           password: body.password,
         });
@@ -111,14 +113,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
       try {
         parsedBody = loginSchema.parse(request.body);
 
-        const session = await usersService.login(parsedBody);
-        const user = await usersService.getUserById(session.userId);
-
-        if (!user) {
-          return reply.status(500).send({
-            error: 'Internal server error',
-          });
-        }
+        const { user, session } = await authenticationService.authenticateWithProvider('local', parsedBody);
 
         await auditLogService.record({
           action: 'auth.login_succeeded',
@@ -148,15 +143,22 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
 
         if (error instanceof Error) {
-          if (error.message.includes('Invalid')) {
-            // parsedBody is defined here (zod succeeded before the service threw)
-            await auditLogService.record({
-              action: 'auth.login_failed',
-              outcome: 'failure',
-              organizationId: null,
-              actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
-              metadata: { method: 'local' },
-            });
+          const isCredentialError = error.message === 'Invalid email or password';
+          const isAuthError = isCredentialError ||
+            error.message === 'Please log in using your organization SSO' ||
+            error.message === 'This account has been disabled';
+
+          if (isAuthError) {
+            if (isCredentialError) {
+              // parsedBody is defined here (zod succeeded before the service threw)
+              await auditLogService.record({
+                action: 'auth.login_failed',
+                outcome: 'failure',
+                organizationId: null,
+                actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
+                metadata: { method: 'local' },
+              });
+            }
             return reply.status(401).send({
               error: error.message,
             });
