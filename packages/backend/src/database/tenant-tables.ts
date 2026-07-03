@@ -14,6 +14,7 @@ export const TENANT_TABLES = new Set<string>([
   'pii_masking_rules', 'organization_pii_salts', 'audit_log', 'metrics_hourly_stats',
   'metrics_daily_stats', 'metrics', 'metric_exemplars', 'custom_dashboards',
   'log_pipelines', 'digest_configs', 'digest_recipients', 'projects',
+  'receivers',
 ]);
 
 /**
@@ -23,7 +24,7 @@ export const CHILD_TABLES = new Set<string>([
   'monitor_status', 'status_incident_updates', 'incident_alerts',
   'incident_comments', 'incident_history', 'stack_frames',
   'alert_rule_channels', 'sigma_rule_channels', 'monitor_channels',
-  'incident_channels', 'error_group_channels',
+  'incident_channels', 'error_group_channels', 'receiver_events',
 ]);
 
 /** Intentionally global tables (no tenant scope). */

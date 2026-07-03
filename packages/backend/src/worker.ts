@@ -17,6 +17,7 @@ import { processDigestGeneration } from './queue/jobs/digest-generation.js';
 import type { DigestJobPayload } from './modules/digests/scheduler.js';
 import { processWebhookDelivery } from './queue/jobs/webhook-delivery.js';
 import type { WebhookDeliveryJobData } from './modules/webhooks/types.js';
+import { processReceiverEvent, type ReceiverEventJobData } from './queue/jobs/receiver-event.js';
 import { alertsService } from './modules/alerts/index.js';
 import { monitorService } from './modules/monitoring/index.js';
 import { maintenanceService } from './modules/maintenances/service.js';
@@ -101,6 +102,11 @@ const digestWorker = createWorker<DigestJobPayload>('digest-generation', async (
 // Create worker for outbound webhook delivery (#218)
 const webhookDeliveryWorker = createWorker<WebhookDeliveryJobData>('webhook-delivery', async (job) => {
   await processWebhookDelivery(job);
+});
+
+// Create worker for inbound receiver events (#155)
+const receiverEventsWorker = createWorker<ReceiverEventJobData>('receiver-events', async (job) => {
+  await processReceiverEvent(job);
 });
 
 // Start workers (required for graphile-worker backend, no-op for BullMQ)
@@ -336,6 +342,17 @@ webhookDeliveryWorker.on('failed', (job, err) => {
       error: { name: err.name, message: err.message, stack: err.stack },
       jobId: job?.id,
       deliveryId: job?.data?.deliveryId,
+    });
+  }
+});
+
+receiverEventsWorker.on('failed', (job, err) => {
+  console.error(`Receiver event job ${job?.id} failed:`, err);
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('error', `Receiver event job failed: ${err.message}`, {
+      error: { name: err.name, message: err.message, stack: err.stack },
+      jobId: job?.id,
+      eventId: job?.data?.eventId,
     });
   }
 });
@@ -896,6 +913,7 @@ async function gracefulShutdown(signal: string) {
     await pipelineWorker.close();
     await digestWorker.close();
     await webhookDeliveryWorker.close();
+    await receiverEventsWorker.close();
     console.log('[Worker] Workers closed');
 
     // Close queue system (Redis/PostgreSQL connections)
