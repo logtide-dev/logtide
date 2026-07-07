@@ -484,20 +484,19 @@ export class QueryService {
    * Hostnames are extracted from metadata.hostname field.
    * Cached for performance - used for filter dropdowns.
    *
-   * PERFORMANCE: Window is capped at 6 hours regardless of what the caller passes.
-   * JSONB extraction is expensive on large datasets - 6h ≈ 350ms, 24h+ ≈ 8s+.
-   * For a filter dropdown this is an acceptable trade-off: hostnames are stable.
-   * With 5-minute cache, most requests are served from cache after the first hit.
+   * The window honors what the caller passes (default 24h, matching the log query
+   * default) so the dropdown lists every host that has logs in the same range the
+   * logs view shows. Previously it was clamped to 6h, which silently dropped hosts
+   * that only logged 6-24h ago even though their logs were still visible. JSONB
+   * distinct is O(rows), but hostnames are stable and the 5-minute cache means the
+   * cost is paid at most once per window per cache period.
    */
   async getDistinctHostnames(
     projectId: string | string[],
     from?: Date,
     to?: Date
   ): Promise<string[]> {
-    // PERFORMANCE: Cap window to 6h max. If the caller requests a longer window
-    // (e.g. 24h), silently clamp it - JSONB distinct over large ranges is O(rows).
-    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
-    const effectiveFrom = !from || from < sixHoursAgo ? sixHoursAgo : from;
+    const effectiveFrom = from ?? new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     // Try cache first
     const cacheKey = CacheManager.statsKey(
