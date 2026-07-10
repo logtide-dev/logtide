@@ -26,7 +26,7 @@
     "@lucide/svelte": "^0.482.0",
     "@tanstack/svelte-table": "^8.21.3",
     "canvas-confetti": "^1.9.4",
-    "echarts": "^6.0.0",
+    "echarts": "^6.1.0",
     "leaflet": "^1.9.4",
     "shiki": "^3.18.0",
     "svelte-dnd-action": "^0.9.69",
