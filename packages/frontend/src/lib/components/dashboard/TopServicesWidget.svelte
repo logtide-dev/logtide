@@ -18,7 +18,7 @@
 
 <Card>
   <CardHeader>
-    <CardTitle>Top Services by Volume</CardTitle>
+    <CardTitle>Top Services by Volume (Last 7 Days)</CardTitle>
   </CardHeader>
   <CardContent>
     <div class="space-y-4">
