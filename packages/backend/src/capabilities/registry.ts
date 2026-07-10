@@ -94,6 +94,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum custom dashboards per organization',
   },
+  'receivers.max': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum inbound webhook receivers per organization',
+  },
 
   // Consumption quotas (OSS-permissive: null = unlimited). signal maps to #212 metering types.
   'ingestion.max_bytes_monthly': {

@@ -108,6 +108,7 @@ export interface Project {
   statusPageVisibility: StatusPageVisibility;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt?: Date | null;
 }
 
 // Log types

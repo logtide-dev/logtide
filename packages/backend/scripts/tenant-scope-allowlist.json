@@ -254,12 +254,6 @@
   {
     "file": "packages/backend/src/modules/projects/service.ts",
     "table": "projects",
-    "snippet": ".deleteFrom('projects')",
-    "reason": "safe-by-PK: DELETE by projectId; caller verifies project ownership via getProjectById first"
-  },
-  {
-    "file": "packages/backend/src/modules/projects/service.ts",
-    "table": "projects",
     "snippet": ".selectFrom('projects')",
     "reason": "safe-by-PK: lookup by projectId for public status page password check; project id is from route param"
   },
@@ -298,12 +292,6 @@
     "table": "detection_events",
     "snippet": ".selectFrom('detection_events')",
     "reason": "scoped-indirect: SELECT by id IN eventIds where eventIds came from prior org-scoped query"
-  },
-  {
-    "file": "packages/backend/src/queue/jobs/log-pipeline.ts",
-    "table": "logs",
-    "snippet": ".updateTable('logs')",
-    "reason": "safe-by-PK: UPDATE by log id from job payload; log IDs were just ingested in the same project/org context"
   },
   {
     "file": "packages/backend/src/scripts/seed-massive-data.ts",

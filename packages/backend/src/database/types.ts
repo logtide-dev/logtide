@@ -159,6 +159,7 @@ export interface ProjectsTable {
   has_logs_at: Timestamp | null;
   has_traces_at: Timestamp | null;
   has_metrics_at: Timestamp | null;
+  deleted_at: Generated<Timestamp | null>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -924,6 +925,40 @@ export interface WebhookDeliveryAttemptsTable {
 }
 
 // ============================================================================
+// INBOUND WEBHOOK RECEIVERS (#155)
+// ============================================================================
+
+export interface ReceiversTable {
+  id: Generated<string>;
+  project_id: string;
+  name: string;
+  adapter_type: string; // 'github' | 'uptime' | 'generic'
+  token_hash: string;
+  field_mapping: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null,
+    Record<string, unknown> | null
+  >;
+  enabled: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  last_received_at: ColumnType<Date | null, Date | null, Date | null>;
+}
+
+export interface ReceiverEventsTable {
+  id: Generated<string>;
+  receiver_id: string;
+  status: string; // 'pending' | 'processed' | 'skipped' | 'failed'
+  raw_payload: ColumnType<
+    Record<string, unknown>,
+    Record<string, unknown>,
+    Record<string, unknown>
+  >;
+  normalized: ColumnType<unknown | null, unknown | null, unknown | null>;
+  error: string | null;
+  received_at: Generated<Timestamp>;
+}
+
+// ============================================================================
 // PII MASKING TABLES
 // ============================================================================
 
@@ -1208,4 +1243,7 @@ export interface Database {
   // Outbound webhook delivery (#218)
   webhook_deliveries: WebhookDeliveriesTable;
   webhook_delivery_attempts: WebhookDeliveryAttemptsTable;
+  // Inbound webhook receivers (#155)
+  receivers: ReceiversTable;
+  receiver_events: ReceiverEventsTable;
 }

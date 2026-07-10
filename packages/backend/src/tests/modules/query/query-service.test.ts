@@ -512,6 +512,26 @@ describe('QueryService', () => {
             expect(result).toContain('server1.example.com');
             expect(result).toContain('server2.example.com');
         });
+
+        it('should include hosts that only logged 6-24h ago (not clamped to 6h)', async () => {
+            // Regression for #273: the lookup window was clamped to 6h, so a host that
+            // last logged 10h ago was missing from the dropdown while its logs stayed
+            // visible in the (24h) logs view.
+            const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+
+            await db.insertInto('logs').values({
+                project_id: projectId,
+                service: 'api',
+                level: 'info',
+                message: 'Test',
+                time: tenHoursAgo,
+                metadata: { hostname: 'old-host.example.com' },
+            }).execute();
+
+            const result = await queryService.getDistinctHostnames(projectId);
+
+            expect(result).toContain('old-host.example.com');
+        });
     });
 
     describe('getTopErrors', () => {

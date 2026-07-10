@@ -17,6 +17,7 @@ import { processDigestGeneration } from './queue/jobs/digest-generation.js';
 import type { DigestJobPayload } from './modules/digests/scheduler.js';
 import { processWebhookDelivery } from './queue/jobs/webhook-delivery.js';
 import type { WebhookDeliveryJobData } from './modules/webhooks/types.js';
+import { processReceiverEvent, type ReceiverEventJobData } from './queue/jobs/receiver-event.js';
 import { alertsService } from './modules/alerts/index.js';
 import { monitorService } from './modules/monitoring/index.js';
 import { maintenanceService } from './modules/maintenances/service.js';
@@ -28,7 +29,7 @@ import { sigmaSyncService } from './modules/sigma/sync-service.js';
 // import { digestScheduler } from './modules/digests/scheduler.js';
 import { initializeWorkerLogging, shutdownInternalLogging, isInternalLoggingEnabled } from './utils/internal-logger.js';
 import { hub } from '@logtide/core';
-import { reservoirReady } from './database/reservoir.js';
+import { reservoir, reservoirReady } from './database/reservoir.js';
 import { db } from './database/connection.js';
 
 // Initialize internal logging via @logtide/core hub
@@ -101,6 +102,11 @@ const digestWorker = createWorker<DigestJobPayload>('digest-generation', async (
 // Create worker for outbound webhook delivery (#218)
 const webhookDeliveryWorker = createWorker<WebhookDeliveryJobData>('webhook-delivery', async (job) => {
   await processWebhookDelivery(job);
+});
+
+// Create worker for inbound receiver events (#155)
+const receiverEventsWorker = createWorker<ReceiverEventJobData>('receiver-events', async (job) => {
+  await processReceiverEvent(job);
 });
 
 // Start workers (required for graphile-worker backend, no-op for BullMQ)
@@ -336,6 +342,17 @@ webhookDeliveryWorker.on('failed', (job, err) => {
       error: { name: err.name, message: err.message, stack: err.stack },
       jobId: job?.id,
       deliveryId: job?.data?.deliveryId,
+    });
+  }
+});
+
+receiverEventsWorker.on('failed', (job, err) => {
+  console.error(`Receiver event job ${job?.id} failed:`, err);
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('error', `Receiver event job failed: ${err.message}`, {
+      error: { name: err.name, message: err.message, stack: err.stack },
+      jobId: job?.id,
+      eventId: job?.data?.eventId,
     });
   }
 });
@@ -718,6 +735,115 @@ function scheduleNextSigmaSync() {
 scheduleNextSigmaSync();
 
 // ============================================================================
+// Soft-Delete Purge Worker (Daily at 3 AM - 30 min after SigmaHQ sync)
+// Hard-deletes projects whose deleted_at is older than the grace window
+// (default 30 days). Calls reservoir.purgeProject() to remove logs/spans/metrics
+// from every storage backend before removing the projects row from Postgres.
+// ============================================================================
+
+const PROJECT_HARD_DELETE_GRACE_DAYS = 30;
+let isRunningProjectPurge = false;
+
+async function runProjectHardDeletePurge() {
+  await context.runAsSystem('cron:project-purge', async () => {
+    if (isRunningProjectPurge) {
+      console.warn('[Worker] Project purge already in progress, skipping...');
+      return;
+    }
+
+    isRunningProjectPurge = true;
+    const startTime = Date.now();
+
+    try {
+      const cutoff = new Date(Date.now() - PROJECT_HARD_DELETE_GRACE_DAYS * 24 * 60 * 60 * 1000);
+
+      const projects = await db
+        .selectFrom('projects')
+        .select(['id', 'name', 'organization_id'])
+        .where('deleted_at', '<', cutoff)
+        .execute();
+
+      if (projects.length === 0) {
+        console.log('[Worker] Project purge: no projects past grace window, skipping.');
+        return;
+      }
+
+      console.log(`[Worker] Project purge: hard-deleting ${projects.length} project(s) past ${PROJECT_HARD_DELETE_GRACE_DAYS}-day grace window...`);
+
+      let succeeded = 0;
+      let failed = 0;
+
+      for (const project of projects) {
+        try {
+          // Purge reservoir data (logs, spans, metrics) from all storage backends
+          const purgeResult = await reservoir.purgeProject(project.id);
+          console.log(`[Worker] Project purge: reservoir purged ${purgeResult.deleted} records for project ${project.id} (${project.name})`);
+
+          // Hard-delete the projects row; ON DELETE CASCADE handles remaining
+          // relational tables (api_keys, alert_rules, etc.)
+          // tenant-scope-ok: purge worker iterates pre-resolved project IDs from the deleted_at query above; system cron, no per-user scope needed
+          await db.deleteFrom('projects').where('id', '=', project.id).execute();
+
+          await auditLogService.record({
+            action: 'project.hard_delete',
+            target: { type: 'project', id: project.id },
+            organizationId: project.organization_id,
+            metadata: { name: project.name, reservoirRecordsDeleted: purgeResult.deleted },
+          });
+
+          succeeded++;
+        } catch (err) {
+          failed++;
+          console.error(`[Worker] Project purge: failed to hard-delete project ${project.id} (${project.name}):`, err);
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('error', `Project hard-delete failed for ${project.name}`, {
+              projectId: project.id,
+              error: err instanceof Error ? { name: err.name, message: err.message } : { message: String(err) },
+            });
+          }
+        }
+      }
+
+      const duration = Date.now() - startTime;
+      console.log(`[Worker] Project purge complete: ${succeeded} deleted, ${failed} failed in ${duration}ms`);
+
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('info', 'Project hard-delete purge completed', {
+          total: projects.length, succeeded, failed, duration_ms: duration,
+        });
+      }
+    } catch (error) {
+      console.error('[Worker] Project purge failed:', error);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', `Project purge failed: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
+      }
+    } finally {
+      isRunningProjectPurge = false;
+    }
+  });
+}
+
+// Schedule daily at 3 AM (1h after retention cleanup, 30 min after SigmaHQ sync)
+function scheduleNextProjectPurge() {
+  const now = new Date();
+  const next3AM = new Date(now);
+  next3AM.setHours(3, 0, 0, 0);
+  if (now.getTime() > next3AM.getTime()) {
+    next3AM.setDate(next3AM.getDate() + 1);
+  }
+  const msUntilNext = next3AM.getTime() - now.getTime();
+  console.log(`[Worker] Next project purge scheduled for ${next3AM.toLocaleString()}`);
+  setTimeout(() => {
+    runProjectHardDeletePurge();
+    scheduleNextProjectPurge();
+  }, msUntilNext);
+}
+
+scheduleNextProjectPurge();
+
+// ============================================================================
 // Service Health Monitor Checks (every 30 seconds)
 // ============================================================================
 
@@ -787,6 +913,7 @@ async function gracefulShutdown(signal: string) {
     await pipelineWorker.close();
     await digestWorker.close();
     await webhookDeliveryWorker.close();
+    await receiverEventsWorker.close();
     console.log('[Worker] Workers closed');
 
     // Close queue system (Redis/PostgreSQL connections)

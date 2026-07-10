@@ -655,10 +655,16 @@ const activityOverviewFetcher: PanelDataSource<
     const needsLogs = enabled.has('logs') || enabled.has('log_errors');
     const needsSpans = enabled.has('spans') || enabled.has('span_errors');
 
-    // Strategy: read from continuous aggregates first (cheap). If an aggregate
-    // returns zero rows for the window we fall back to the raw hypertable so
-    // freshly-ingested data isn't hidden by the `end_offset=1 hour` lag on the
-    // caggs' refresh policy. Alerts have no cagg so they always hit raw.
+    // Continuous aggregates lag real time: their refresh policy has
+    // `end_offset = 1 bucket` and only runs every bucket, so the most recent 1-2
+    // buckets are never materialized while the raw tables are already live. Reading
+    // the cagg for the whole window therefore leaves the chart's latest buckets stuck
+    // at zero even though logs are still arriving (#274). Strategy: read the cagg only
+    // up to `caggCutoff` and backfill the recent tail [caggCutoff, now] from the raw
+    // tables. The cutoff is bucket-aligned and set two buckets back from the current
+    // one, comfortably past the cagg's materialization edge, so the two reads are
+    // disjoint (no double counting). Alerts have no cagg so they always hit raw.
+    const { caggCutoff, tailEnd } = computeCaggBackfillWindow(now, bucket);
     const logsRawTrunc =
       bucket === 'hour'
         ? sql<Date>`date_trunc('hour', time)`
@@ -681,6 +687,21 @@ const activityOverviewFetcher: PanelDataSource<
     if (needsLogs && projectIds.length > 0) {
       if (isTimescale) {
         const logsTable = bucket === 'hour' ? 'logs_hourly_stats' : 'logs_daily_stats';
+        // Raw log counts grouped by bucket over a half-open [fromD, toD) window.
+        const rawLogs = (fromD: Date, toD: Date) =>
+          db
+            .selectFrom('logs')
+            .select([
+              logsRawTrunc.as('bucket'),
+              'level',
+              sql<string>`COUNT(*)`.as('count'),
+            ])
+            .where('project_id', 'in', projectIds)
+            .where('time', '>=', fromD)
+            .where('time', '<', toD)
+            .groupBy([logsRawTrunc, 'level'])
+            .execute()
+            .catch(() => [] as Array<{ bucket: unknown; level: string; count: string }>);
         tasks.push(
           (async () => {
             const caggRows = await db
@@ -692,28 +713,17 @@ const activityOverviewFetcher: PanelDataSource<
               ])
               .where('project_id', 'in', projectIds)
               .where('bucket', '>=', from)
-              .where('bucket', '<=', now)
+              .where('bucket', '<', caggCutoff)
               .groupBy(['bucket', 'level'])
               .execute()
               .catch(() => [] as Array<{ bucket: unknown; level: string; count: string }>);
 
-            const rows = caggRows.length > 0
-              ? caggRows
-              : await db
-                  .selectFrom('logs')
-                  .select([
-                    logsRawTrunc.as('bucket'),
-                    'level',
-                    sql<string>`COUNT(*)`.as('count'),
-                  ])
-                  .where('project_id', 'in', projectIds)
-                  .where('time', '>=', from)
-                  .where('time', '<=', now)
-                  .groupBy([logsRawTrunc, 'level'])
-                  .execute()
-                  .catch(() => [] as Array<{ bucket: unknown; level: string; count: string }>);
+            // Older part from the cagg (raw fallback when the cagg is still empty,
+            // e.g. a fresh install) plus the recent tail always read live from raw.
+            const olderRows = caggRows.length > 0 ? caggRows : await rawLogs(from, caggCutoff);
+            const tailRows = await rawLogs(caggCutoff, tailEnd);
 
-            for (const r of rows) {
+            for (const r of [...olderRows, ...tailRows]) {
               const key = new Date(r.bucket as unknown as string).toISOString();
               const i = index.get(key);
               if (i === undefined) continue;
@@ -760,6 +770,23 @@ const activityOverviewFetcher: PanelDataSource<
       // interface has no aggregateSpans() primitive, so we follow the same
       // convention as trace_latency / trace_volume.
       const spansTable = bucket === 'hour' ? 'spans_hourly_stats' : 'spans_daily_stats';
+      // Raw span counts grouped by bucket over a half-open [fromD, toD) window.
+      const rawSpans = (fromD: Date, toD: Date) =>
+        db
+          .selectFrom('spans')
+          .select([
+            spansRawTrunc.as('bucket'),
+            sql<string>`COUNT(*)`.as('total'),
+            sql<string>`SUM(CASE WHEN status_code = 'ERROR' THEN 1 ELSE 0 END)`.as(
+              'errors',
+            ),
+          ])
+          .where('project_id', 'in', projectIds)
+          .where('start_time', '>=', fromD)
+          .where('start_time', '<', toD)
+          .groupBy(spansRawTrunc)
+          .execute()
+          .catch(() => [] as Array<{ bucket: unknown; total: string; errors: string }>);
       tasks.push(
         (async () => {
           const caggRows = await db
@@ -771,30 +798,15 @@ const activityOverviewFetcher: PanelDataSource<
             ])
             .where('project_id', 'in', projectIds)
             .where('bucket', '>=', from)
-            .where('bucket', '<=', now)
+            .where('bucket', '<', caggCutoff)
             .groupBy('bucket')
             .execute()
             .catch(() => [] as Array<{ bucket: unknown; total: string; errors: string }>);
 
-          const rows = caggRows.length > 0
-            ? caggRows
-            : await db
-                .selectFrom('spans')
-                .select([
-                  spansRawTrunc.as('bucket'),
-                  sql<string>`COUNT(*)`.as('total'),
-                  sql<string>`SUM(CASE WHEN status_code = 'ERROR' THEN 1 ELSE 0 END)`.as(
-                    'errors',
-                  ),
-                ])
-                .where('project_id', 'in', projectIds)
-                .where('start_time', '>=', from)
-                .where('start_time', '<=', now)
-                .groupBy(spansRawTrunc)
-                .execute()
-                .catch(() => [] as Array<{ bucket: unknown; total: string; errors: string }>);
+          const olderRows = caggRows.length > 0 ? caggRows : await rawSpans(from, caggCutoff);
+          const tailRows = await rawSpans(caggCutoff, tailEnd);
 
-          for (const r of rows) {
+          for (const r of [...olderRows, ...tailRows]) {
             const key = new Date(r.bucket as unknown as string).toISOString();
             const i = index.get(key);
             if (i === undefined) continue;
@@ -810,6 +822,25 @@ const activityOverviewFetcher: PanelDataSource<
         bucket === 'hour'
           ? 'detection_events_hourly_stats'
           : 'detection_events_daily_stats';
+      // Raw detection counts grouped by bucket over a half-open [fromD, toD) window.
+      const rawDetections = (fromD: Date, toD: Date) => {
+        let rawQuery = db
+          .selectFrom('detection_events')
+          .select([
+            detectionsRawTrunc.as('bucket'),
+            sql<string>`COUNT(*)`.as('count'),
+          ])
+          .where('organization_id', '=', ctx.organizationId)
+          .where('time', '>=', fromD)
+          .where('time', '<', toD);
+        if (config.projectId) {
+          rawQuery = rawQuery.where('project_id', '=', config.projectId);
+        }
+        return rawQuery
+          .groupBy(detectionsRawTrunc)
+          .execute()
+          .catch(() => [] as Array<{ bucket: unknown; count: string }>);
+      };
       tasks.push(
         (async () => {
           let caggQuery = db
@@ -820,7 +851,7 @@ const activityOverviewFetcher: PanelDataSource<
             ])
             .where('organization_id', '=', ctx.organizationId)
             .where('bucket', '>=', from)
-            .where('bucket', '<=', now);
+            .where('bucket', '<', caggCutoff);
           if (config.projectId) {
             caggQuery = caggQuery.where('project_id', '=', config.projectId);
           }
@@ -829,27 +860,10 @@ const activityOverviewFetcher: PanelDataSource<
             .execute()
             .catch(() => [] as Array<{ bucket: unknown; count: string }>);
 
-          let rows: Array<{ bucket: unknown; count: string }> = caggRows;
-          if (rows.length === 0) {
-            let rawQuery = db
-              .selectFrom('detection_events')
-              .select([
-                detectionsRawTrunc.as('bucket'),
-                sql<string>`COUNT(*)`.as('count'),
-              ])
-              .where('organization_id', '=', ctx.organizationId)
-              .where('time', '>=', from)
-              .where('time', '<=', now);
-            if (config.projectId) {
-              rawQuery = rawQuery.where('project_id', '=', config.projectId);
-            }
-            rows = await rawQuery
-              .groupBy(detectionsRawTrunc)
-              .execute()
-              .catch(() => [] as Array<{ bucket: unknown; count: string }>);
-          }
+          const olderRows = caggRows.length > 0 ? caggRows : await rawDetections(from, caggCutoff);
+          const tailRows = await rawDetections(caggCutoff, tailEnd);
 
-          for (const r of rows) {
+          for (const r of [...olderRows, ...tailRows]) {
             const key = new Date(r.bucket as unknown as string).toISOString();
             const i = index.get(key);
             if (i === undefined) continue;
@@ -1052,6 +1066,35 @@ async function ensureProjectInOrg(
   if (!row) {
     throw new Error('Panel projectId does not belong to the requesting organization');
   }
+}
+
+/**
+ * Window split for the Activity Overview cagg backfill (#274).
+ *
+ * Continuous aggregates lag real time (refresh policy `end_offset = 1 bucket`,
+ * running once per bucket), so the most recent 1-2 buckets are never materialized.
+ * `caggCutoff` is the bucket-aligned boundary two buckets back from the current
+ * (partial) bucket: read the cagg strictly before it and backfill [caggCutoff, now]
+ * live from the raw tables. Two buckets back sits comfortably past the cagg's
+ * materialization edge, so the cagg and raw reads never overlap (no double counting).
+ * `tailEnd` is an exclusive upper bound one millisecond past `now` so a `time < tailEnd`
+ * predicate still includes rows stamped exactly at `now`.
+ */
+export function computeCaggBackfillWindow(
+  now: Date,
+  bucket: 'hour' | 'day',
+): { caggCutoff: Date; tailEnd: Date } {
+  const stepMs = bucket === 'hour' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  const nowBucketStart = new Date(now);
+  if (bucket === 'hour') {
+    nowBucketStart.setUTCMinutes(0, 0, 0);
+  } else {
+    nowBucketStart.setUTCHours(0, 0, 0, 0);
+  }
+  return {
+    caggCutoff: new Date(nowBucketStart.getTime() - 2 * stepMs),
+    tailEnd: new Date(now.getTime() + 1),
+  };
 }
 
 function buildBucketTimes(

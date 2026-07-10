@@ -314,6 +314,16 @@ describe('ProjectsService', () => {
             expect(updated?.name).toBe(project.name);
         });
 
+        it('should throw when attempting to update a soft-deleted project', async () => {
+            const { project, user } = await createTestContext();
+
+            await projectsService.deleteProject(project.id, user.id);
+
+            await expect(
+                projectsService.updateProject(project.id, user.id, { name: 'New Name' })
+            ).rejects.toThrow('Cannot update a deleted project');
+        });
+
         it('should update updated_at timestamp', async () => {
             const { user, organization } = await createTestContext();
 
@@ -367,6 +377,16 @@ describe('ProjectsService', () => {
             expect(deleted).toBe(false);
         });
 
+        it('should return false for an already soft-deleted project', async () => {
+            const { project, user } = await createTestContext();
+
+            await projectsService.deleteProject(project.id, user.id);
+
+            // Calling delete again should return false
+            const secondDelete = await projectsService.deleteProject(project.id, user.id);
+            expect(secondDelete).toBe(false);
+        });
+
         it('should not affect other projects', async () => {
             const { user, organization } = await createTestContext();
 
@@ -387,6 +407,127 @@ describe('ProjectsService', () => {
             const result = await projectsService.getProjectById(project2.id, user.id);
             expect(result).not.toBeNull();
             expect(result?.name).toBe('Project 2');
+        });
+    });
+
+    describe('restoreProject', () => {
+        it('should restore a soft-deleted project', async () => {
+            const { project, user } = await createTestContext();
+
+            await projectsService.deleteProject(project.id, user.id);
+
+            const restored = await projectsService.restoreProject(project.id, user.id);
+            expect(restored).toBe(true);
+
+            const found = await projectsService.getProjectById(project.id, user.id);
+            expect(found).not.toBeNull();
+            expect(found?.deletedAt).toBeNull();
+        });
+
+        it('should return false for a non-existent project', async () => {
+            const user = await createTestUser();
+
+            const restored = await projectsService.restoreProject(
+                '00000000-0000-0000-0000-000000000000',
+                user.id
+            );
+
+            expect(restored).toBe(false);
+        });
+
+        it('should return false for a project that is not deleted', async () => {
+            const { project, user } = await createTestContext();
+
+            const restored = await projectsService.restoreProject(project.id, user.id);
+            expect(restored).toBe(false);
+        });
+
+        it('should return false if user does not have access', async () => {
+            const { project, user } = await createTestContext();
+            const outsider = await createTestUser({ email: 'outsider-restore@test.com' });
+
+            await projectsService.deleteProject(project.id, user.id);
+
+            const restored = await projectsService.restoreProject(project.id, outsider.id);
+            expect(restored).toBe(false);
+        });
+
+        it('should throw when an active project has reused the name or slug', async () => {
+            const { project, user, organization } = await createTestContext();
+
+            await projectsService.deleteProject(project.id, user.id);
+
+            // A new active project takes the freed name (and slug).
+            await projectsService.createProject({
+                organizationId: organization.id,
+                userId: user.id,
+                name: project.name,
+            });
+
+            await expect(
+                projectsService.restoreProject(project.id, user.id)
+            ).rejects.toThrow('already exists');
+
+            // The conflicting project stays soft-deleted.
+            const stillDeleted = await projectsService.getProjectById(project.id, user.id);
+            expect(stillDeleted?.deletedAt).not.toBeNull();
+        });
+    });
+
+    describe('getOrganizationProjectsIncludingDeleted', () => {
+        it('should return both active and soft-deleted projects', async () => {
+            const { user, organization } = await createTestContext();
+
+            const p1 = await projectsService.createProject({
+                organizationId: organization.id,
+                userId: user.id,
+                name: 'Active Project',
+            });
+            const p2 = await projectsService.createProject({
+                organizationId: organization.id,
+                userId: user.id,
+                name: 'Deleted Project',
+            });
+
+            await projectsService.deleteProject(p2.id, user.id);
+
+            const all = await projectsService.getOrganizationProjectsIncludingDeleted(organization.id, user.id);
+
+            const ids = all.map((p) => p.id);
+            expect(ids).toContain(p1.id);
+            expect(ids).toContain(p2.id);
+        });
+
+        it('should not include projects from other organizations', async () => {
+            const { user, organization } = await createTestContext();
+            const other = await createTestContext();
+
+            const all = await projectsService.getOrganizationProjectsIncludingDeleted(organization.id, user.id);
+
+            const ids = all.map((p) => p.id);
+            expect(ids).not.toContain(other.project.id);
+        });
+
+        it('should throw when user is not a member of the organization', async () => {
+            const { organization } = await createTestContext();
+            const outsider = await createTestUser({ email: 'outsider-incl@test.com' });
+
+            await expect(
+                projectsService.getOrganizationProjectsIncludingDeleted(organization.id, outsider.id)
+            ).rejects.toThrow('do not have access');
+        });
+
+        it('should mark deleted projects with a non-null deletedAt', async () => {
+            const { project, user, organization } = await createTestContext();
+
+            await projectsService.deleteProject(project.id, user.id);
+
+            const all = await projectsService.getOrganizationProjectsIncludingDeleted(organization.id, user.id);
+            const deleted = all.find((p) => p.id === project.id);
+
+            expect(deleted).toBeDefined();
+            expect(deleted?.deletedAt).not.toBeNull();
+            expect(deleted?.deletedAt).toBeInstanceOf(Date);
         });
     });
 

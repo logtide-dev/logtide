@@ -369,6 +369,42 @@ describe('TimescaleEngine', () => {
     });
   });
 
+  describe('countEstimate', () => {
+    const countParams = {
+      projectId: 'proj-1',
+      from: new Date('2024-01-01'),
+      to: new Date('2024-01-02'),
+    };
+
+    it('returns an exact COUNT when the planner estimate is small', async () => {
+      // EXPLAIN reports a small estimate, so we fall back to an exact count.
+      mockQuery.mockResolvedValueOnce({ rows: [{ 'QUERY PLAN': [{ Plan: { 'Plan Rows': 3 } }] }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: '42' }] });
+      await engine.connect();
+
+      const result = await engine.countEstimate(countParams);
+
+      expect(result.count).toBe(42);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      const explainSql = mockQuery.mock.calls[0][0] as string;
+      const countSql = mockQuery.mock.calls[1][0] as string;
+      expect(explainSql).toContain('EXPLAIN (FORMAT JSON)');
+      expect(countSql).toContain('COUNT(*)');
+      expect(countSql).not.toContain('EXPLAIN');
+    });
+
+    it('keeps the fast planner estimate for large datasets', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ 'QUERY PLAN': [{ Plan: { 'Plan Rows': 1_000_000 } }] }] });
+      await engine.connect();
+
+      const result = await engine.countEstimate(countParams);
+
+      expect(result.count).toBe(1_000_000);
+      // Only the EXPLAIN runs; no exact count.
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('aggregate', () => {
     it('groups results by time bucket and level', async () => {
       const bucket1 = new Date('2024-01-01T00:00:00Z');

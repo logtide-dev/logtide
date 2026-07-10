@@ -8,8 +8,12 @@
 	import Card from '$lib/components/ui/card/card.svelte';
 	import CardContent from '$lib/components/ui/card/card-content.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import Button from '$lib/components/ui/button/button.svelte';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import * as Tabs from '$lib/components/ui/tabs';
 	import { layoutStore } from '$lib/stores/layout';
+
+	const HARD_DELETE_GRACE_DAYS = 30;
 
 	interface Props {
 		children: import('svelte').Snippet;
@@ -20,6 +24,7 @@
 	let project = $state<any>(null);
 	let capabilities = $state<{ hasWebVitals: boolean; hasSessions: boolean }>({ hasWebVitals: false, hasSessions: false });
 	let loading = $state(false);
+	let restoring = $state(false);
 	let error = $state('');
 	let lastLoadedKey = $state<string | null>(null);
 	let maxWidthClass = $state("max-w-7xl");
@@ -65,7 +70,10 @@
 			tabs.push({ value: 'sessions', label: 'Sessions' });
 		}
 		tabs.push({ value: 'alerts', label: 'Alerts' });
-		tabs.push({ value: 'settings', label: 'Settings' });
+		// A soft-deleted project is read-only; its settings cannot be edited.
+		if (!project?.deletedAt) {
+			tabs.push({ value: 'settings', label: 'Settings' });
+		}
 		return tabs;
 	});
 
@@ -75,7 +83,9 @@
 
 		try {
 			const [response, caps] = await Promise.all([
-				projectsAPI.getProjects(orgId),
+				// includeDeleted so a soft-deleted project stays viewable (read-only)
+				// during the grace window — its logs/traces/metrics are still around.
+				projectsAPI.getProjects(orgId, { includeDeleted: true }),
 				projectsAPI.getProjectCapabilities(projId).catch(() => ({ hasWebVitals: false, hasSessions: false })),
 			]);
 
@@ -117,6 +127,29 @@
 		const basePath = `/dashboard/projects/${projectId}`;
 		goto(`${basePath}/${tab}`);
 	}
+
+	// Date (en-US, project convention) the project is permanently purged.
+	const purgeDate = $derived.by(() => {
+		if (!project?.deletedAt) return null;
+		const d = new Date(project.deletedAt);
+		d.setDate(d.getDate() + HARD_DELETE_GRACE_DAYS);
+		return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+	});
+
+	async function restoreProject() {
+		if (!$currentOrganization || !projectId) return;
+		restoring = true;
+		try {
+			await projectsAPI.restoreProject($currentOrganization.id, projectId);
+			toastStore.success('Project restored successfully.');
+			lastLoadedKey = null; // force the loader to refetch
+			await loadProject($currentOrganization.id, projectId);
+		} catch (e) {
+			toastStore.error(e instanceof Error ? e.message : 'Failed to restore project');
+		} finally {
+			restoring = false;
+		}
+	}
 </script>
 
 <div class="container mx-auto {containerPadding} {maxWidthClass} space-y-6">
@@ -127,6 +160,26 @@
 			</CardContent>
 		</Card>
 	{:else if project}
+		{#if project.deletedAt}
+			<div class="flex flex-col gap-3 rounded-lg border border-dashed bg-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+				<div class="text-sm">
+					<p class="font-medium">This project is deleted (read-only)</p>
+					<p class="text-muted-foreground">
+						Its logs, traces and metrics stay available
+						{#if purgeDate}until they are permanently deleted on {purgeDate}{:else}for 30 days{/if}.
+						Restore the project to make it active again.
+					</p>
+				</div>
+				<Button variant="outline" size="sm" class="gap-2 shrink-0" disabled={restoring} onclick={restoreProject}>
+					{#if restoring}
+						<Spinner size="sm" />
+					{:else}
+						<RotateCcw class="w-4 h-4" />
+					{/if}
+					Restore
+				</Button>
+			</div>
+		{/if}
 		<div>
 			<h1 class="text-3xl font-bold tracking-tight">{project.name}</h1>
 			{#if project.description}

@@ -160,6 +160,44 @@ describe('Projects Routes', () => {
 
             expect(response.statusCode).toBe(400);
         });
+
+        it('should exclude soft-deleted projects by default', async () => {
+            // Soft-delete the test project
+            await db.updateTable('projects')
+                .set({ deleted_at: new Date() })
+                .where('id', '=', testProject.id)
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects?organizationId=${testOrganization.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.payload);
+            const ids = body.projects.map((p: any) => p.id);
+            expect(ids).not.toContain(testProject.id);
+        });
+
+        it('should include soft-deleted projects when includeDeleted=true', async () => {
+            // Soft-delete the test project
+            await db.updateTable('projects')
+                .set({ deleted_at: new Date() })
+                .where('id', '=', testProject.id)
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects?organizationId=${testOrganization.id}&includeDeleted=true`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.payload);
+            const ids = body.projects.map((p: any) => p.id);
+            expect(ids).toContain(testProject.id);
+        });
     });
 
     describe('GET /api/v1/projects/:id', () => {
@@ -184,6 +222,21 @@ describe('Projects Routes', () => {
                 headers: {
                     Authorization: `Bearer ${authToken}`,
                 },
+            });
+
+            expect(response.statusCode).toBe(404);
+        });
+
+        it('should return 404 for a soft-deleted project', async () => {
+            await db.updateTable('projects')
+                .set({ deleted_at: new Date() })
+                .where('id', '=', testProject.id)
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
             });
 
             expect(response.statusCode).toBe(404);
@@ -238,6 +291,24 @@ describe('Projects Routes', () => {
 
             expect(response.statusCode).toBe(404);
         });
+
+        it('should return 409 when updating a soft-deleted project', async () => {
+            await db.updateTable('projects')
+                .set({ deleted_at: new Date() })
+                .where('id', '=', testProject.id)
+                .execute();
+
+            const response = await app.inject({
+                method: 'PUT',
+                url: `/api/v1/projects/${testProject.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { name: 'New Name' },
+            });
+
+            expect(response.statusCode).toBe(409);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toContain('deleted');
+        });
     });
 
     describe('DELETE /api/v1/projects/:id', () => {
@@ -280,6 +351,122 @@ describe('Projects Routes', () => {
             });
 
             expect(response.statusCode).toBe(404);
+        });
+
+        it('should return 409 when project is already soft-deleted', async () => {
+            await db.updateTable('projects')
+                .set({ deleted_at: new Date() })
+                .where('id', '=', testProject.id)
+                .execute();
+
+            const response = await app.inject({
+                method: 'DELETE',
+                url: `/api/v1/projects/${testProject.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(409);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toContain('already deleted');
+        });
+
+        it('should return 400 for invalid project ID format', async () => {
+            const response = await app.inject({
+                method: 'DELETE',
+                url: '/api/v1/projects/not-a-uuid',
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(400);
+        });
+    });
+
+    describe('POST /api/v1/projects/:id/restore', () => {
+        it('should restore a soft-deleted project', async () => {
+            await db.updateTable('projects')
+                .set({ deleted_at: new Date() })
+                .where('id', '=', testProject.id)
+                .execute();
+
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/projects/${testProject.id}/restore`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.payload);
+            expect(body.project.id).toBe(testProject.id);
+            expect(body.project.deletedAt).toBeNull();
+        });
+
+        it('should return 409 when project is not deleted', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/projects/${testProject.id}/restore`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(409);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toContain('not deleted');
+        });
+
+        it('should return 409 when an active project has reused the name', async () => {
+            // Soft-delete the test project, freeing its name and slug.
+            await db.updateTable('projects')
+                .set({ deleted_at: new Date() })
+                .where('id', '=', testProject.id)
+                .execute();
+
+            // A new active project takes the freed name.
+            await db.insertInto('projects')
+                .values({
+                    organization_id: testOrganization.id,
+                    user_id: testUser.id,
+                    name: testProject.name,
+                    slug: `${testProject.slug}-new`,
+                })
+                .execute();
+
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/projects/${testProject.id}/restore`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(409);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toContain('already exists');
+        });
+
+        it('should return 404 for non-existent project', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/projects/00000000-0000-0000-0000-000000000000/restore',
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(404);
+        });
+
+        it('should return 400 for invalid project ID format', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/projects/not-a-uuid/restore',
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(400);
+        });
+
+        it('should return 401 without auth token', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/projects/${testProject.id}/restore`,
+            });
+
+            expect(response.statusCode).toBe(401);
         });
     });
 });

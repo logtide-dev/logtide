@@ -66,6 +66,11 @@ import { TimescaleQueryTranslator } from './query-translator.js';
 
 const { Pool } = pg;
 
+// Below this planner estimate we run an exact COUNT instead of trusting the estimate.
+// At small scale an exact count is cheap and the planner estimate is unreliable; above
+// it we keep the fast estimate so huge datasets stay performant.
+const EXACT_COUNT_THRESHOLD = 50_000;
+
 function sanitizeNull(value: string): string {
   return value.includes('\0') ? value.replace(/\0/g, '') : value;
 }
@@ -379,6 +384,16 @@ export class TimescaleEngine extends StorageEngine {
     );
     const plan = (result.rows[0] as Record<string, unknown>)['QUERY PLAN'] as Array<{ Plan: { 'Plan Rows': number } }>;
     const estimate = Math.round(plan[0]?.Plan?.['Plan Rows'] ?? 0);
+
+    // The planner estimate is unreliable at small scale (stale ANALYZE stats, few rows
+    // per chunk): it can be wrong in both directions, which users notice as a displayed
+    // total that disagrees with the visible logs. Below a threshold an exact COUNT is
+    // cheap, so return it; above it keep the fast estimate for large datasets.
+    if (estimate < EXACT_COUNT_THRESHOLD) {
+      const exact = await this.count(params);
+      return { count: exact.count, executionTimeMs: Date.now() - start };
+    }
+
     return {
       count: estimate,
       executionTimeMs: Date.now() - start,

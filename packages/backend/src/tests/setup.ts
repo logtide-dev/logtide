@@ -97,6 +97,8 @@ beforeEach(async () => {
     // Delete all data from tables in reverse dependency order
     try {
         await db.deleteFrom('logs').execute();
+        await db.deleteFrom('spans').execute();
+        await db.deleteFrom('metrics').execute();
         await db.deleteFrom('alert_history').execute();
         // Digest tables (must delete recipients before configs)
         await db.deleteFrom('digest_recipients').execute();

@@ -51,6 +51,7 @@ import type {
   SystemStatusConfig,
   ActivityOverviewConfig,
 } from '@logtide/shared';
+import { uuid } from '$lib/utils/uuid';
 
 import TimeSeriesPanel from './panels/TimeSeriesPanel.svelte';
 import SingleStatPanel from './panels/SingleStatPanel.svelte';
@@ -385,7 +386,7 @@ export function getAllPanelDefinitions(): FrontendPanelDefinition[] {
 export function createPanelInstance(type: PanelType): PanelInstance {
   const def = getPanelDefinition(type);
   return {
-    id: `panel-${crypto.randomUUID()}`,
+    id: `panel-${uuid()}`,
     layout: { ...def.defaultLayout },
     config: { ...def.defaultConfig },
   };

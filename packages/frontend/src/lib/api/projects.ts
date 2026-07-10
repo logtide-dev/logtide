@@ -40,8 +40,13 @@ export class ProjectsAPI {
     return response;
   }
 
-  async getProjects(organizationId: string): Promise<{ projects: Project[] }> {
-    const response = await this.request(`/projects?organizationId=${organizationId}`);
+  async getProjects(
+    organizationId: string,
+    options: { includeDeleted?: boolean } = {},
+  ): Promise<{ projects: Project[] }> {
+    const params = new URLSearchParams({ organizationId });
+    if (options.includeDeleted) params.set('includeDeleted', 'true');
+    const response = await this.request(`/projects?${params}`);
 
     if (!response.ok) {
       throw new Error('Failed to fetch projects');
@@ -128,6 +133,19 @@ export class ProjectsAPI {
     if (!response.ok) {
       throw new Error('Failed to delete project');
     }
+  }
+
+  async restoreProject(organizationId: string, id: string): Promise<{ project: Project }> {
+    const response = await this.request(`/projects/${id}/restore?organizationId=${organizationId}`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error((error as { error?: string }).error || 'Failed to restore project');
+    }
+
+    return response.json();
   }
 }
 

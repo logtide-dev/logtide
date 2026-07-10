@@ -104,6 +104,14 @@ export interface IReservoir {
   deleteMetricsByTimeRange(params: DeleteMetricsByTimeRangeParams): Promise<DeleteResult>;
   getMetricsOverview(params: MetricsOverviewParams): Promise<MetricsOverviewResult>;
 
+  /**
+   * Hard-purge all logs, spans, and metrics for a project across every
+   * storage engine. Called by the background hard-delete worker after the
+   * soft-delete grace window expires, before the projects row is removed from
+   * Postgres.
+   */
+  purgeProject(projectId: string): Promise<DeleteResult>;
+
   // Lifecycle & introspection
   getEngineType(): EngineType;
   close(): Promise<void>;

@@ -127,6 +127,7 @@ export class ApiKeysService {
       ])
       .where('api_keys.key_hash', '=', keyHash)
       .where('api_keys.revoked', '=', false)
+      .where('projects.deleted_at', 'is', null)
       .executeTakeFirst();
 
     if (!result) {

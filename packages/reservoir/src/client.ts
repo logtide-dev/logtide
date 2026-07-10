@@ -277,6 +277,23 @@ export class Reservoir implements IReservoir {
     return this.engine.getMetricsOverview(params);
   }
 
+  /**
+   * Hard-purge all logs, spans, and metrics for a project.
+   * Implements IReservoir.purgeProject by calling the three time-range delete
+   * methods with the full time span so nothing is left behind.
+   */
+  async purgeProject(projectId: string): Promise<DeleteResult> {
+    this.ensureInitialized();
+    const from = new Date(0);
+    const to = new Date('2100-01-01T00:00:00Z');
+    const [logs, spans, metrics] = await Promise.all([
+      this.engine.deleteByTimeRange({ projectId, from, to }),
+      this.engine.deleteSpansByTimeRange({ projectId, from, to }),
+      this.engine.deleteMetricsByTimeRange({ projectId, from, to }),
+    ]);
+    return { deleted: logs.deleted + spans.deleted + metrics.deleted };
+  }
+
   getEngineType(): EngineType {
     return this.engine.getCapabilities().engine;
   }

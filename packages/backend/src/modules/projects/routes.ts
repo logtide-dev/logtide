@@ -29,6 +29,11 @@ const orgQuerySchema = z.object({
   organizationId: z.string().uuid('organizationId must be a valid uuid'),
 });
 
+const orgQueryWithDeletedSchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+  includeDeleted: z.enum(['true', 'false']).optional(),
+});
+
 export async function projectsRoutes(fastify: FastifyInstance) {
   // All routes require authentication
   fastify.addHook('onRequest', authenticate);
@@ -36,8 +41,11 @@ export async function projectsRoutes(fastify: FastifyInstance) {
   // Get all projects for an organization
   fastify.get('/', async (request: any, reply) => {
     let organizationId: string;
+    let includeDeleted = false;
     try {
-      ({ organizationId } = orgQuerySchema.parse(request.query));
+      const parsed = orgQueryWithDeletedSchema.parse(request.query);
+      organizationId = parsed.organizationId;
+      includeDeleted = parsed.includeDeleted === 'true';
     } catch {
       return reply.status(400).send({
         error: 'organizationId query parameter is required',
@@ -45,7 +53,9 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     }
 
     try {
-      const projects = await projectsService.getOrganizationProjects(organizationId, request.user.id);
+      const projects = includeDeleted
+        ? await projectsService.getOrganizationProjectsIncludingDeleted(organizationId, request.user.id)
+        : await projectsService.getOrganizationProjects(organizationId, request.user.id);
       return reply.send({ projects });
     } catch (error) {
       if (error instanceof Error && error.message.includes('do not have access')) {
@@ -119,7 +129,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
           searchMode: 'substring',
           limit: 1,
         }).catch(() => ({ logs: [] })),
-        
+
         // Efficient check for existence of a session_id
         db.selectFrom('logs')
           .select('id')
@@ -148,6 +158,50 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Restore a soft-deleted project
+  fastify.post('/:id/restore', async (request: any, reply) => {
+    try {
+      const { id } = projectIdSchema.parse(request.params);
+
+      const project = await projectsService.getProjectById(id, request.user.id);
+      if (!project) {
+        return reply.status(404).send({ error: 'Project not found' });
+      }
+      if (!project.deletedAt) {
+        return reply.status(409).send({ error: 'Project is not deleted' });
+      }
+
+      const restored = await projectsService.restoreProject(id, request.user.id);
+      if (!restored) {
+        return reply.status(404).send({ error: 'Project not found' });
+      }
+
+      await auditLogService.record({
+        action: 'project.restored',
+        target: { type: 'project', id },
+        organizationId: project.organizationId,
+      });
+
+      const updated = await projectsService.getProjectById(id, request.user.id);
+      return reply.send({ project: updated });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Invalid project ID format' });
+      }
+      if (error instanceof Error && error.message.includes('already exists')) {
+        return reply.status(409).send({ error: error.message });
+      }
+      // Safety net for a concurrent name/slug reuse that slips past the
+      // pre-check and trips the partial unique index (Postgres 23505).
+      if ((error as { code?: string })?.code === '23505') {
+        return reply.status(409).send({
+          error: 'A project with this name or slug already exists in this organization',
+        });
+      }
+      throw error;
+    }
+  });
+
   // Get a single project
   fastify.get('/:id', async (request: any, reply) => {
     try {
@@ -155,7 +209,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
 
       const project = await projectsService.getProjectById(id, request.user.id);
 
-      if (!project) {
+      if (!project || project.deletedAt) {
         return reply.status(404).send({
           error: 'Project not found',
         });
@@ -266,13 +320,18 @@ export async function projectsRoutes(fastify: FastifyInstance) {
             error: 'A project with this slug already exists in this organization',
           });
         }
+        if (error.message.includes('Cannot update a deleted project')) {
+          return reply.status(409).send({
+            error: error.message,
+          });
+        }
       }
 
       throw error;
     }
   });
 
-  // Delete a project
+  // Soft-delete a project
   fastify.delete('/:id', async (request: any, reply) => {
     try {
       const { id } = projectIdSchema.parse(request.params);
@@ -281,6 +340,11 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       if (!project) {
         return reply.status(404).send({
           error: 'Project not found',
+        });
+      }
+      if (project.deletedAt) {
+        return reply.status(409).send({
+          error: 'Project is already deleted',
         });
       }
 
@@ -293,9 +357,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       }
 
       await auditLogService.record({
-        action: 'project.deleted',
+        action: 'project.soft_delete',
         target: { type: 'project', id },
         organizationId: project.organizationId,
+        metadata: { name: project.name },
       });
 
       return reply.status(204).send();

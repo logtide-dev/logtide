@@ -18,7 +18,10 @@
 	import Spinner from '$lib/components/Spinner.svelte';
 	import * as AlertDialog from '$lib/components/ui/alert-dialog';
 	import CreateApiKeyDialog from '$lib/components/CreateApiKeyDialog.svelte';
-	import { Trash2, Plus } from '@lucide/svelte/icons';
+	import { CreateReceiverDialog, ReceiverEventsDialog } from '$lib/components/receivers';
+	import Switch from '$lib/components/ui/switch/switch.svelte';
+	import { receiversAPI, type Receiver, type ReceiverAdapterType, type ReceiverFieldMapping } from '$lib/api/receivers';
+	import { Trash2, Plus, ScrollText } from '@lucide/svelte/icons';
 
 	let project = $state<any>(null);
 	let loading = $state(false);
@@ -35,6 +38,14 @@
 	let showCreateApiKeyDialog = $state(false);
 	let apiKeyToDelete = $state<ApiKey | null>(null);
 	let lastLoadedApiKeysKey = $state<string | null>(null);
+
+	let receivers = $state<Receiver[]>([]);
+	let loadingReceivers = $state(false);
+	let showCreateReceiverDialog = $state(false);
+	let receiverToDelete = $state<Receiver | null>(null);
+	let eventsReceiver = $state<Receiver | null>(null);
+	let showEventsDialog = $state(false);
+	let lastLoadedReceiversKey = $state<string | null>(null);
 
 	const projectId = $derived(page.params.id);
 
@@ -90,6 +101,18 @@
 		if (projectId === lastLoadedApiKeysKey) return;
 
 		loadApiKeys();
+	});
+
+	$effect(() => {
+		if (!browser || !projectId) {
+			receivers = [];
+			lastLoadedReceiversKey = null;
+			return;
+		}
+
+		if (projectId === lastLoadedReceiversKey) return;
+
+		loadReceivers();
 	});
 
 	async function handleSave() {
@@ -167,6 +190,73 @@
 		} finally {
 			apiKeyToDelete = null;
 		}
+	}
+
+	async function loadReceivers() {
+		if (!projectId) return;
+
+		loadingReceivers = true;
+
+		try {
+			const response = await receiversAPI.list(projectId);
+			receivers = response.receivers;
+			lastLoadedReceiversKey = projectId;
+		} catch (e) {
+			toastStore.error(e instanceof Error ? e.message : 'Failed to load receivers');
+		} finally {
+			loadingReceivers = false;
+		}
+	}
+
+	async function handleCreateReceiver(data: {
+		name: string;
+		adapterType: ReceiverAdapterType;
+		fieldMapping?: ReceiverFieldMapping | null;
+	}) {
+		if (!projectId) throw new Error('No project ID');
+
+		const response = await receiversAPI.create(projectId, data);
+		toastStore.success('Receiver created successfully');
+		await loadReceivers();
+		return response;
+	}
+
+	async function handleToggleReceiver(receiver: Receiver, enabled: boolean) {
+		if (!projectId) return;
+
+		try {
+			await receiversAPI.update(projectId, receiver.id, { enabled });
+			toastStore.success(enabled ? 'Receiver enabled' : 'Receiver disabled');
+			await loadReceivers();
+		} catch (e) {
+			toastStore.error(e instanceof Error ? e.message : 'Failed to update receiver');
+			await loadReceivers();
+		}
+	}
+
+	async function handleDeleteReceiver() {
+		if (!projectId || !receiverToDelete) return;
+
+		try {
+			await receiversAPI.delete(projectId, receiverToDelete.id);
+			toastStore.success('Receiver deleted successfully');
+			await loadReceivers();
+		} catch (e) {
+			toastStore.error(e instanceof Error ? e.message : 'Failed to delete receiver');
+		} finally {
+			receiverToDelete = null;
+		}
+	}
+
+	function openReceiverEvents(receiver: Receiver) {
+		eventsReceiver = receiver;
+		showEventsDialog = true;
+	}
+
+	function adapterLabel(type: ReceiverAdapterType): string {
+		if (type === 'github') return 'GitHub';
+		if (type === 'uptime') return 'Uptime';
+		return 'Generic JSON';
 	}
 
 	function formatDate(date: string | null): string {
@@ -360,6 +450,91 @@
 			</CardContent>
 		</Card>
 
+		<Card>
+			<CardHeader>
+				<div class="flex items-center justify-between">
+					<div>
+						<CardTitle>Webhook Receivers</CardTitle>
+						<CardDescription>
+							Receive events from external systems (CI/CD, uptime monitors) as log entries
+						</CardDescription>
+					</div>
+					<Button onclick={() => (showCreateReceiverDialog = true)} class="gap-2">
+						<Plus class="w-4 h-4" />
+						Create Receiver
+					</Button>
+				</div>
+			</CardHeader>
+			<CardContent>
+				{#if loadingReceivers}
+					<div class="flex items-center justify-center py-8">
+						<Spinner />
+						<span class="ml-3 text-muted-foreground">Loading receivers...</span>
+					</div>
+				{:else if receivers.length === 0}
+					<div class="text-center py-8 text-muted-foreground">
+						<p>No receivers yet</p>
+						<p class="text-sm">Create a receiver to ingest events from external tools</p>
+					</div>
+				{:else}
+					<div class="overflow-x-auto">
+						<table class="w-full">
+							<thead>
+								<tr class="border-b">
+									<th class="text-left py-3 px-4 font-medium">Name</th>
+									<th class="text-left py-3 px-4 font-medium">Source</th>
+									<th class="text-left py-3 px-4 font-medium">Enabled</th>
+									<th class="text-left py-3 px-4 font-medium">Last Received</th>
+									<th class="text-right py-3 px-4 font-medium">Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each receivers as receiver (receiver.id)}
+									<tr class="border-b hover:bg-muted/50">
+										<td class="py-3 px-4 font-medium">{receiver.name}</td>
+										<td class="py-3 px-4">
+											<span class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold border-transparent bg-secondary text-secondary-foreground">
+												{adapterLabel(receiver.adapterType)}
+											</span>
+										</td>
+										<td class="py-3 px-4">
+											<Switch
+												checked={receiver.enabled}
+												onCheckedChange={(checked) => handleToggleReceiver(receiver, checked)}
+											/>
+										</td>
+										<td class="py-3 px-4 text-sm text-muted-foreground">
+											{formatDate(receiver.lastReceivedAt)}
+										</td>
+										<td class="py-3 px-4 text-right">
+											<Button
+												variant="ghost"
+												size="sm"
+												onclick={() => openReceiverEvents(receiver)}
+												class="gap-2"
+											>
+												<ScrollText class="w-4 h-4" />
+												Events
+											</Button>
+											<Button
+												variant="ghost"
+												size="sm"
+												onclick={() => (receiverToDelete = receiver)}
+												class="gap-2 text-destructive hover:text-destructive"
+											>
+												<Trash2 class="w-4 h-4" />
+												Delete
+											</Button>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			</CardContent>
+		</Card>
+
 		<Card class="border-destructive">
 			<CardHeader>
 				<CardTitle class="text-destructive">Danger Zone</CardTitle>
@@ -383,6 +558,30 @@
 </div>
 
 <CreateApiKeyDialog bind:open={showCreateApiKeyDialog} onSubmit={handleCreateApiKey} />
+
+<CreateReceiverDialog bind:open={showCreateReceiverDialog} onSubmit={handleCreateReceiver} />
+
+<ReceiverEventsDialog bind:open={showEventsDialog} projectId={projectId ?? ''} receiver={eventsReceiver} />
+
+<AlertDialog.Root
+	open={receiverToDelete !== null}
+	onOpenChange={(open) => !open && (receiverToDelete = null)}
+>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>Delete Receiver</AlertDialog.Title>
+			<AlertDialog.Description>
+				Are you sure you want to delete the receiver <strong>{receiverToDelete?.name}</strong>?
+				Its webhook URL will stop working immediately and cannot be restored. This action cannot
+				be undone.
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+			<AlertDialog.Action onclick={handleDeleteReceiver}>Delete Receiver</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>
 
 <AlertDialog.Root
 	open={apiKeyToDelete !== null}

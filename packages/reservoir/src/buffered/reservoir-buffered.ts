@@ -131,6 +131,7 @@ export class ReservoirBuffered implements IReservoir {
   getMetricLabelValues(...args: Parameters<Reservoir['getMetricLabelValues']>): ReturnType<Reservoir['getMetricLabelValues']> { return this.inner.getMetricLabelValues(...args); }
   deleteMetricsByTimeRange(...args: Parameters<Reservoir['deleteMetricsByTimeRange']>): ReturnType<Reservoir['deleteMetricsByTimeRange']> { return this.inner.deleteMetricsByTimeRange(...args); }
   getMetricsOverview(...args: Parameters<Reservoir['getMetricsOverview']>): ReturnType<Reservoir['getMetricsOverview']> { return this.inner.getMetricsOverview(...args); }
+  purgeProject(...args: Parameters<Reservoir['purgeProject']>): ReturnType<Reservoir['purgeProject']> { return this.inner.purgeProject(...args); }
   getEngineType(): ReturnType<Reservoir['getEngineType']> { return this.inner.getEngineType(); }
   getEngine(): StorageEngine { return this.inner.getEngine(); }
   async close(): Promise<void> { await this.stop(); await this.inner.close(); }
