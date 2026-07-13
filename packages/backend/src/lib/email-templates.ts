@@ -97,10 +97,13 @@ const colors = {
 
 interface BaseEmailOptions {
   preheader?: string; // Preview text shown in email clients
+  // When set, the footer swaps the channel-settings link for a one-click
+  // unsubscribe link (used by digest emails, where recipients may have no account)
+  unsubscribeUrl?: string;
 }
 
 function baseTemplate(content: string, options: BaseEmailOptions = {}): string {
-  const { preheader } = options;
+  const { preheader, unsubscribeUrl } = options;
   const frontendUrl = getFrontendUrl();
   const logoUrl = getLogoUrl();
 
@@ -143,7 +146,9 @@ function baseTemplate(content: string, options: BaseEmailOptions = {}): string {
                 Sent by <a href="${frontendUrl}" style="color: ${colors.textMuted}; text-decoration: none;">LogTide</a>
               </p>
               <p style="margin: 0; font-size: 11px; color: ${colors.textLight};">
-                <a href="${frontendUrl}/dashboard/settings/channels" style="color: ${colors.textMuted}; text-decoration: underline;">Manage notification settings</a>
+                ${unsubscribeUrl
+                  ? `<a href="${unsubscribeUrl}" style="color: ${colors.textMuted}; text-decoration: underline;">Unsubscribe from these reports</a>`
+                  : `<a href="${frontendUrl}/dashboard/settings/channels" style="color: ${colors.textMuted}; text-decoration: underline;">Manage notification settings</a>`}
               </p>
             </td>
           </tr>
@@ -833,3 +838,254 @@ Manage notifications: ${frontendUrl}/dashboard/settings/channels
 
   return { html, text };
 }
+
+// ============================================================================
+// DIGEST REPORT EMAIL (#154)
+// ============================================================================
+
+export interface DigestEmailData {
+  organizationName: string;
+  frequency: 'daily' | 'weekly';
+  periodLabel: string;
+  logVolume: {
+    current: number;
+    previous: number;
+    trend: string;
+  };
+  topErrorServices: Array<{
+    service: string;
+    errorCount: number;
+    previousCount: number;
+    delta: number;
+  }>;
+  newErrorGroups: Array<{
+    exceptionType: string;
+    exceptionMessage: string;
+    occurrenceCount: number;
+    language: string;
+  }>;
+  security: {
+    totalDetections: number;
+    topRules: Array<{ ruleTitle: string; severity: string; count: number }>;
+    openIncidents: number;
+  };
+  uptime: {
+    monitorCount: number;
+    overallUptimePct: number;
+    worstMonitors: Array<{ name: string; uptimePct: number }>;
+  } | null;
+  unsubscribeUrl: string;
+  dashboardUrl: string;
+}
+
+function digestSectionTitle(title: string): string {
+  return `<tr>
+    <td style="padding: 20px 24px 4px;">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: ${colors.text}; text-transform: uppercase; letter-spacing: 0.5px;">
+        ${escapeHtml(title)}
+      </h2>
+    </td>
+  </tr>`;
+}
+
+function digestEmptyLine(message: string): string {
+  return `<tr>
+    <td style="padding: 4px 24px 8px;">
+      <p style="margin: 0; font-size: 13px; color: ${colors.textMuted};">${escapeHtml(message)}</p>
+    </td>
+  </tr>`;
+}
+
+function digestTable(headers: string[], rows: string[][]): string {
+  const headerCells = headers
+    .map(
+      (h, i) =>
+        `<th align="${i === 0 ? 'left' : 'right'}" style="padding: 6px 8px; font-size: 11px; color: ${colors.textMuted}; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid ${colors.border};">${escapeHtml(h)}</th>`
+    )
+    .join('');
+  const bodyRows = rows
+    .map(
+      (cells) =>
+        `<tr>${cells
+          .map(
+            (c, i) =>
+              `<td align="${i === 0 ? 'left' : 'right'}" style="padding: 6px 8px; font-size: 13px; color: ${colors.text}; border-bottom: 1px solid ${colors.border};">${escapeHtml(c)}</td>`
+          )
+          .join('')}</tr>`
+    )
+    .join('');
+
+  return `<tr>
+    <td style="padding: 4px 24px 8px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>${headerCells}</tr>
+        ${bodyRows}
+      </table>
+    </td>
+  </tr>`;
+}
+
+function formatDelta(delta: number): string {
+  if (delta > 0) return `+${delta.toLocaleString('en-US')}`;
+  return delta.toLocaleString('en-US');
+}
+
+export function generateDigestEmail(data: DigestEmailData): { html: string; text: string } {
+  const frequencyLabel = data.frequency === 'daily' ? 'Daily' : 'Weekly';
+  const title = `${frequencyLabel} Digest`;
+  const quiet = data.logVolume.current === 0 && data.logVolume.previous === 0;
+
+  const logVolumeSection = quiet
+    ? alertBox('No activity during this period. Your systems have been quiet.', 'info')
+    : infoBox([
+        { label: 'Total Logs', value: data.logVolume.current.toLocaleString('en-US') },
+        { label: 'Trend', value: data.logVolume.trend },
+        { label: 'Previous Period', value: data.logVolume.previous.toLocaleString('en-US') },
+      ]);
+
+  const topServicesSection =
+    data.topErrorServices.length > 0
+      ? digestTable(
+          ['Service', 'Errors', 'Previous', 'Delta'],
+          data.topErrorServices.map((s) => [
+            s.service,
+            s.errorCount.toLocaleString('en-US'),
+            s.previousCount.toLocaleString('en-US'),
+            formatDelta(s.delta),
+          ])
+        )
+      : digestEmptyLine('No errors recorded in this period.');
+
+  const errorGroupsSection =
+    data.newErrorGroups.length > 0
+      ? digestTable(
+          ['Error', 'Language', 'Occurrences'],
+          data.newErrorGroups.map((g) => [
+            `${g.exceptionType}${g.exceptionMessage ? ': ' + truncate(g.exceptionMessage, 60) : ''}`,
+            g.language,
+            g.occurrenceCount.toLocaleString('en-US'),
+          ])
+        )
+      : digestEmptyLine('No new error groups appeared in this period.');
+
+  const securityRows = [
+    { label: 'Detections', value: data.security.totalDetections.toLocaleString('en-US') },
+    { label: 'Open Incidents', value: data.security.openIncidents.toLocaleString('en-US') },
+  ];
+  const securitySection =
+    data.security.topRules.length > 0
+      ? infoBox(securityRows) +
+        digestTable(
+          ['Rule', 'Severity', 'Detections'],
+          data.security.topRules.map((r) => [r.ruleTitle, r.severity, r.count.toLocaleString('en-US')])
+        )
+      : infoBox(securityRows);
+
+  const uptimeSection = data.uptime
+    ? digestSectionTitle('Uptime') +
+      infoBox([
+        { label: 'Overall', value: `${data.uptime.overallUptimePct.toLocaleString('en-US')}%` },
+        { label: 'Monitors', value: data.uptime.monitorCount.toLocaleString('en-US') },
+      ]) +
+      (data.uptime.worstMonitors.length > 0
+        ? digestTable(
+            ['Monitor', 'Uptime'],
+            data.uptime.worstMonitors.map((m) => [m.name, `${m.uptimePct.toLocaleString('en-US')}%`])
+          )
+        : '')
+    : '';
+
+  const html = baseTemplate(
+    card(`
+      ${header(title, { text: data.frequency, color: colors.info })}
+      ${divider()}
+      ${subtitle(`${data.organizationName} - ${data.periodLabel}`)}
+      ${timestamp()}
+      ${digestSectionTitle('Log Volume')}
+      ${logVolumeSection}
+      ${digestSectionTitle('Top Services by Errors')}
+      ${topServicesSection}
+      ${digestSectionTitle('New Error Groups')}
+      ${errorGroupsSection}
+      ${digestSectionTitle('Security')}
+      ${securitySection}
+      ${uptimeSection}
+      ${cta('View Dashboard', data.dashboardUrl)}
+    `),
+    {
+      preheader: quiet
+        ? `Quiet period for ${data.organizationName}`
+        : `${data.logVolume.current.toLocaleString('en-US')} logs, ${data.security.totalDetections.toLocaleString('en-US')} detections for ${data.organizationName}`,
+      unsubscribeUrl: data.unsubscribeUrl,
+    }
+  );
+
+  const lines: string[] = [];
+  lines.push(`LogTide ${frequencyLabel} Digest`);
+  lines.push(`Organization: ${data.organizationName}`);
+  lines.push(`Period: ${data.periodLabel}`);
+  lines.push('');
+  lines.push('='.repeat(50));
+  lines.push('');
+  lines.push('LOG VOLUME');
+  lines.push('-'.repeat(10));
+  if (quiet) {
+    lines.push('No activity during this period.');
+    lines.push('Your systems have been quiet.');
+  } else {
+    lines.push(`Total logs: ${data.logVolume.current.toLocaleString('en-US')}`);
+    lines.push(`Trend: ${data.logVolume.trend}`);
+    lines.push(`Previous period: ${data.logVolume.previous.toLocaleString('en-US')}`);
+  }
+  lines.push('');
+  lines.push('TOP SERVICES BY ERRORS');
+  lines.push('-'.repeat(22));
+  if (data.topErrorServices.length > 0) {
+    for (const s of data.topErrorServices) {
+      lines.push(
+        `${s.service}: ${s.errorCount.toLocaleString('en-US')} errors (previous: ${s.previousCount.toLocaleString('en-US')}, delta: ${formatDelta(s.delta)})`
+      );
+    }
+  } else {
+    lines.push('No errors recorded in this period.');
+  }
+  lines.push('');
+  lines.push('NEW ERROR GROUPS');
+  lines.push('-'.repeat(16));
+  if (data.newErrorGroups.length > 0) {
+    for (const g of data.newErrorGroups) {
+      const message = g.exceptionMessage ? `: ${truncate(g.exceptionMessage, 80)}` : '';
+      lines.push(`${g.exceptionType}${message} (${g.language}, ${g.occurrenceCount.toLocaleString('en-US')} occurrences)`);
+    }
+  } else {
+    lines.push('No new error groups appeared in this period.');
+  }
+  lines.push('');
+  lines.push('SECURITY');
+  lines.push('-'.repeat(8));
+  lines.push(`Detections: ${data.security.totalDetections.toLocaleString('en-US')}`);
+  lines.push(`Open incidents: ${data.security.openIncidents.toLocaleString('en-US')}`);
+  for (const r of data.security.topRules) {
+    lines.push(`${r.ruleTitle} [${r.severity}]: ${r.count.toLocaleString('en-US')} detections`);
+  }
+  if (data.uptime) {
+    lines.push('');
+    lines.push('UPTIME');
+    lines.push('-'.repeat(6));
+    lines.push(`Overall: ${data.uptime.overallUptimePct.toLocaleString('en-US')}% across ${data.uptime.monitorCount.toLocaleString('en-US')} monitor(s)`);
+    for (const m of data.uptime.worstMonitors) {
+      lines.push(`${m.name}: ${m.uptimePct.toLocaleString('en-US')}%`);
+    }
+  }
+  lines.push('');
+  lines.push(`View your dashboard: ${data.dashboardUrl}`);
+  lines.push('');
+  lines.push('To unsubscribe from these reports, click:');
+  lines.push(data.unsubscribeUrl);
+  lines.push('');
+  lines.push('--');
+  lines.push('Sent by LogTide');
+
+  return { html, text: lines.join('\n') };
+}
+

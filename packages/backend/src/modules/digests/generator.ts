@@ -11,6 +11,7 @@ import { db } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
 import { hub } from '@logtide/core';
 import { config } from '../../config/index.js';
+import { generateDigestEmail } from '../../lib/email-templates.js';
 import type { DigestJobPayload } from './scheduler.js';
 
 export interface DigestReportData {
@@ -435,15 +436,21 @@ export class DigestGeneratorService {
     }
 
     const subject = `[LogTide Digest] ${report.frequency === 'daily' ? 'Daily' : 'Weekly'} Report - ${report.organizationName}`;
+    const frontendUrl = this.getFrontendUrl();
 
     const emailPromises = recipients.map(async (recipient) => {
-      const text = this.generatePlaintextEmail(report, recipient.unsubscribe_token);
+      const { html, text } = generateDigestEmail({
+        ...report,
+        unsubscribeUrl: `${frontendUrl}/unsubscribe?token=${recipient.unsubscribe_token}`,
+        dashboardUrl: `${frontendUrl}/dashboard`,
+      });
 
       await transporter.sendMail({
         from: `"LogTide" <${config.SMTP_FROM || config.SMTP_USER}>`,
         to: recipient.email,
         subject,
         text,
+        html,
       });
 
       hub.captureLog('info', `[DigestGenerator] Email sent to ${recipient.email}`);
@@ -458,45 +465,6 @@ export class DigestGeneratorService {
         `[DigestGenerator] ${failures.length}/${recipients.length} digest emails failed to send`
       );
     }
-  }
-
-  private generatePlaintextEmail(report: DigestReportData, unsubscribeToken: string): string {
-    const frontendUrl = this.getFrontendUrl();
-    const unsubscribeUrl = `${frontendUrl}/unsubscribe?token=${unsubscribeToken}`;
-
-    let content = `LogTide ${report.frequency === 'daily' ? 'Daily' : 'Weekly'} Digest\n`;
-    content += `Organization: ${report.organizationName}\n`;
-    content += `Period: ${report.periodLabel}\n`;
-    content += `\n`;
-    content += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    content += `\n`;
-
-    if (report.logVolume.current === 0 && report.logVolume.previous === 0) {
-      content += ` Log Volume\n`;
-      content += `\n`;
-      content += `No activity during this period.\n`;
-      content += `Your systems have been quiet.\n`;
-    } else {
-      content += ` Log Volume\n`;
-      content += `\n`;
-      // Fixed locale: digest content must not depend on the server's locale
-      content += `Total logs: ${report.logVolume.current.toLocaleString('en-US')}\n`;
-      content += `Trend: ${report.logVolume.trend}\n`;
-      content += `Previous period: ${report.logVolume.previous.toLocaleString('en-US')}\n`;
-    }
-
-    content += `\n`;
-    content += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    content += `\n`;
-    content += `View your dashboard: ${frontendUrl}\n`;
-    content += `\n`;
-    content += `To unsubscribe from these reports, click:\n`;
-    content += `${unsubscribeUrl}\n`;
-    content += `\n`;
-    content += `--\n`;
-    content += `LogTide - observability for your infrastructure\n`;
-
-    return content;
   }
 
   private getFrontendUrl(): string {
