@@ -50,6 +50,8 @@ import { auditLogRoutes, auditLogService } from './modules/audit-log/index.js';
 import { bootstrapService } from './modules/bootstrap/index.js';
 import { runDataAvailabilityBackfill } from './modules/projects/data-availability-backfill.js';
 import { notificationChannelsRoutes } from './modules/notification-channels/index.js';
+import { digestsRoutes } from './modules/digests/routes.js';
+import { digestsPublicRoutes } from './modules/digests/public-routes.js';
 import { webhookDeliveriesRoutes } from './modules/webhooks/routes.js';
 import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
@@ -182,6 +184,9 @@ export async function build(opts = {}) {
   await fastify.register(projectsRoutes, { prefix: '/api/v1/projects' });
   await fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   await fastify.register(notificationChannelsRoutes, { prefix: '/api/v1/notification-channels' });
+  await fastify.register(digestsRoutes, { prefix: '/api/v1/digests' });
+  // Public one-click unsubscribe: the URL token is the credential, no auth (#154)
+  await fastify.register(digestsPublicRoutes, { prefix: '/api/v1/digests' });
   await fastify.register(webhookDeliveriesRoutes, { prefix: '/api/v1/webhooks' });
   await fastify.register(onboardingRoutes, { prefix: '/api/v1/onboarding' });
   await fastify.register(alertsRoutes, { prefix: '/api/v1/alerts' });
