@@ -53,12 +53,21 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
         const user = await usersService.createUser(body);
 
-        // Automatically log in the new user through the provider registry
-        // This also creates the user_identities link for the local provider
-        const { session } = await authenticationService.authenticateWithProvider('local', {
-          email: body.email,
-          password: body.password,
-        });
+        // Automatically log in the new user through the provider registry.
+        // This also creates the user_identities link for the local provider.
+        // If this fails for a transient reason the user row is already committed,
+        // so we return 201 with no session instead of propagating a 500. The
+        // account is fully recoverable via a subsequent /login.
+        let session: { token: string; expiresAt: Date } | null = null;
+        try {
+          const result = await authenticationService.authenticateWithProvider('local', {
+            email: body.email,
+            password: body.password,
+          });
+          session = result.session;
+        } catch {
+          // transient auto-login failure – user was created, session was not
+        }
 
         await auditLogService.record({
           action: 'user.registered',
@@ -74,10 +83,12 @@ export async function usersRoutes(fastify: FastifyInstance) {
             name: user.name,
             is_admin: user.is_admin,
           },
-          session: {
-            token: session.token,
-            expiresAt: session.expiresAt,
-          },
+          ...(session ? {
+            session: {
+              token: session.token,
+              expiresAt: session.expiresAt,
+            },
+          } : {}),
         });
       } catch (error) {
         if (error instanceof z.ZodError) {
