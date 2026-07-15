@@ -5,6 +5,7 @@ import type { DigestJobPayload } from '../../../modules/digests/scheduler.js';
 vi.mock('../../../database/reservoir.js', () => ({
   reservoir: {
     count: vi.fn(),
+    topValues: vi.fn(),
   },
 }));
 
@@ -19,6 +20,9 @@ vi.mock('../../../database/connection.js', () => ({
       selectFrom: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
+      groupBy: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
       execute: vi.fn(),
       executeTakeFirst: vi.fn(),
     }
@@ -60,9 +64,11 @@ describe('DigestGeneratorService', () => {
     const { db } = await import('../../../database/connection.js');
     mockDb = db;
 
-    mockDb.execute.mockReset();
-    mockDb.executeTakeFirst.mockReset();
-    mockReservoir.count.mockReset();
+    // Defaults keep the section queries harmless; tests override with *Once.
+    mockDb.execute.mockReset().mockResolvedValue([]);
+    mockDb.executeTakeFirst.mockReset().mockResolvedValue({ count: 0 });
+    mockReservoir.count.mockReset().mockResolvedValue({ count: 0 });
+    mockReservoir.topValues.mockReset().mockResolvedValue({ values: [] });
     mockSendMail.mockReset().mockResolvedValue({ messageId: 'test-message-id' });
 
     generator = new DigestGeneratorService();
@@ -73,6 +79,11 @@ describe('DigestGeneratorService', () => {
   });
 
   describe('generateAndSendDigest', () => {
+    /**
+     * Call order with the shared fluent mock:
+     * executeTakeFirst: org lookup, then per-section counts (default {count: 0})
+     * execute: recipients, projects, then per-section lists (default [])
+     */
     it('should generate and send daily digest with log volume', async () => {
       const payload: DigestJobPayload = {
         organizationId: 'org_1',
@@ -80,7 +91,6 @@ describe('DigestGeneratorService', () => {
         frequency: 'daily',
       };
 
-      //  organization lookup
       mockDb.executeTakeFirst.mockResolvedValueOnce({
         name: 'Test Organization',
       });
@@ -97,25 +107,16 @@ describe('DigestGeneratorService', () => {
         },
       ]);
 
-      // Mock projects query
+      // projects query
       mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
 
-      const { reservoir } = await import('../../../database/reservoir.js');
-      
-      (reservoir.count as any).mockResolvedValueOnce({
-        count: 15000,
-      });
-
-      (reservoir.count as any).mockResolvedValueOnce({
-        count: 12000,
-      });
+      mockReservoir.count.mockResolvedValueOnce({ count: 15000 });
+      mockReservoir.count.mockResolvedValueOnce({ count: 12000 });
 
       await generator.generateAndSendDigest(payload);
 
-      // Verify emails were sent
       expect(mockSendMail).toHaveBeenCalledTimes(2);
 
-      // Check first email
       const firstCall = mockSendMail.mock.calls[0][0];
       expect(firstCall.to).toBe('user1@test.com');
       expect(firstCall.subject).toContain('Daily Report');
@@ -124,7 +125,6 @@ describe('DigestGeneratorService', () => {
       expect(firstCall.text).toContain('+3000 (+25.0%)');
       expect(firstCall.text).toContain('token_1');
 
-      // Check second email
       const secondCall = mockSendMail.mock.calls[1][0];
       expect(secondCall.to).toBe('user2@test.com');
       expect(secondCall.text).toContain('token_2');
@@ -148,18 +148,10 @@ describe('DigestGeneratorService', () => {
         },
       ]);
 
-      // Mock projects query
       mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
 
-      const { reservoir } = await import('../../../database/reservoir.js');
-      
-      (reservoir.count as any).mockResolvedValueOnce({
-        count: 100000,
-      });
-
-      (reservoir.count as any).mockResolvedValueOnce({
-        count: 95000,
-      });
+      mockReservoir.count.mockResolvedValueOnce({ count: 100000 });
+      mockReservoir.count.mockResolvedValueOnce({ count: 95000 });
 
       await generator.generateAndSendDigest(payload);
 
@@ -188,12 +180,7 @@ describe('DigestGeneratorService', () => {
         },
       ]);
 
-      // Mock projects query
       mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
-
-      const { reservoir } = await import('../../../database/reservoir.js');
-      (reservoir.count as any).mockResolvedValueOnce({ count: 0 });
-      (reservoir.count as any).mockResolvedValueOnce({ count: 0 });
 
       await generator.generateAndSendDigest(payload);
 
@@ -221,12 +208,10 @@ describe('DigestGeneratorService', () => {
         },
       ]);
 
-      // Mock projects query
       mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
 
-      const { reservoir } = await import('../../../database/reservoir.js');
-      (reservoir.count as any).mockResolvedValueOnce({ count: 8000 });
-      (reservoir.count as any).mockResolvedValueOnce({ count: 10000 });
+      mockReservoir.count.mockResolvedValueOnce({ count: 8000 });
+      mockReservoir.count.mockResolvedValueOnce({ count: 10000 });
 
       await generator.generateAndSendDigest(payload);
 
@@ -254,12 +239,10 @@ describe('DigestGeneratorService', () => {
         },
       ]);
 
-      // Mock projects query
       mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
 
-      const { reservoir } = await import('../../../database/reservoir.js');
-      (reservoir.count as any).mockResolvedValueOnce({ count: 5000 });
-      (reservoir.count as any).mockResolvedValueOnce({ count: 0 });
+      mockReservoir.count.mockResolvedValueOnce({ count: 5000 });
+      mockReservoir.count.mockResolvedValueOnce({ count: 0 });
 
       await generator.generateAndSendDigest(payload);
 
@@ -285,7 +268,6 @@ describe('DigestGeneratorService', () => {
 
       await generator.generateAndSendDigest(payload);
 
-      // Should not send any emails
       expect(mockSendMail).not.toHaveBeenCalled();
     });
 
@@ -313,6 +295,9 @@ describe('DigestGeneratorService', () => {
       expect(mockSendMail).toHaveBeenCalledTimes(1);
       const emailCall = mockSendMail.mock.calls[0][0];
       expect(emailCall.text).toContain('No activity during this period');
+      // No projects: the reservoir must never be queried
+      expect(mockReservoir.count).not.toHaveBeenCalled();
+      expect(mockReservoir.topValues).not.toHaveBeenCalled();
     });
 
     it('should throw error if organization not found', async () => {
@@ -322,7 +307,6 @@ describe('DigestGeneratorService', () => {
         frequency: 'daily',
       };
 
-      // Organization not found
       mockDb.executeTakeFirst.mockResolvedValueOnce(undefined);
 
       await expect(generator.generateAndSendDigest(payload)).rejects.toThrow(
@@ -351,9 +335,8 @@ describe('DigestGeneratorService', () => {
       ]);
       mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
 
-      const { reservoir } = await import('../../../database/reservoir.js');
-      (reservoir.count as any).mockResolvedValueOnce({ count: 1000 });
-      (reservoir.count as any).mockResolvedValueOnce({ count: 900 });
+      mockReservoir.count.mockResolvedValueOnce({ count: 1000 });
+      mockReservoir.count.mockResolvedValueOnce({ count: 900 });
 
       await generator.generateAndSendDigest(payload);
 
@@ -362,6 +345,153 @@ describe('DigestGeneratorService', () => {
       expect(emailCall.text).toContain('unsubscribe');
       expect(emailCall.text).toContain('secure_token_abc123');
       expect(emailCall.text).toContain('https://app.logtide.com/unsubscribe?token=secure_token_abc123');
+    });
+  });
+
+  describe('buildReportData', () => {
+    /**
+     * Call order inside buildReportData with the shared fluent mock:
+     * execute: projects, error_groups, top rules, monitors, uptime rows
+     * executeTakeFirst: detection total, open incidents
+     * reservoir: count x2, topValues x2 (previous period skipped when current is empty)
+     */
+    it('computes top error services with delta vs previous period', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      mockReservoir.topValues.mockResolvedValueOnce({
+        values: [
+          { value: 'api', count: 50 },
+          { value: 'web', count: 10 },
+        ],
+      });
+      mockReservoir.topValues.mockResolvedValueOnce({
+        values: [{ value: 'api', count: 20 }],
+      });
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.topErrorServices).toEqual([
+        { service: 'api', errorCount: 50, previousCount: 20, delta: 30 },
+        { service: 'web', errorCount: 10, previousCount: 0, delta: 10 },
+      ]);
+
+      // error+critical levels, top 5 for current period
+      const firstCall = mockReservoir.topValues.mock.calls[0][0];
+      expect(firstCall.field).toBe('service');
+      expect(firstCall.level).toEqual(['error', 'critical']);
+      expect(firstCall.limit).toBe(5);
+    });
+
+    it('skips the previous-period query when there are no current errors', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.topErrorServices).toEqual([]);
+      expect(mockReservoir.topValues).toHaveBeenCalledTimes(1);
+    });
+
+    it('collects new error groups first seen in the period', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+      mockDb.execute.mockResolvedValueOnce([
+        {
+          exception_type: 'TypeError',
+          exception_message: 'Cannot read properties of undefined',
+          occurrence_count: 42,
+          language: 'nodejs',
+        },
+        {
+          exception_type: 'ValueError',
+          exception_message: null,
+          occurrence_count: 3,
+          language: 'python',
+        },
+      ]); // error_groups
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.newErrorGroups).toEqual([
+        {
+          exceptionType: 'TypeError',
+          exceptionMessage: 'Cannot read properties of undefined',
+          occurrenceCount: 42,
+          language: 'nodejs',
+        },
+        {
+          exceptionType: 'ValueError',
+          exceptionMessage: '',
+          occurrenceCount: 3,
+          language: 'python',
+        },
+      ]);
+    });
+
+    it('computes the security summary', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+      mockDb.execute.mockResolvedValueOnce([]); // error_groups
+      mockDb.execute.mockResolvedValueOnce([
+        { rule_title: 'Suspicious Login', severity: 'high', count: 7 },
+        { rule_title: 'Port Scan', severity: 'medium', count: 4 },
+      ]); // top rules
+
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 11 }); // detections total
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 2 }); // open incidents
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'weekly');
+
+      expect(report.security).toEqual({
+        totalDetections: 11,
+        topRules: [
+          { ruleTitle: 'Suspicious Login', severity: 'high', count: 7 },
+          { ruleTitle: 'Port Scan', severity: 'medium', count: 4 },
+        ],
+        openIncidents: 2,
+      });
+    });
+
+    it('computes uptime summary from monitor daily buckets', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+      mockDb.execute.mockResolvedValueOnce([]); // error_groups
+      mockDb.execute.mockResolvedValueOnce([]); // top rules
+      mockDb.execute.mockResolvedValueOnce([
+        { id: 'mon_1', name: 'API Health' },
+        { id: 'mon_2', name: 'Landing Page' },
+      ]); // monitors
+      mockDb.execute.mockResolvedValueOnce([
+        { monitor_id: 'mon_1', successful: 95, total: 100 },
+        { monitor_id: 'mon_2', successful: 100, total: 100 },
+      ]); // uptime rows
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.uptime).toEqual({
+        monitorCount: 2,
+        overallUptimePct: 97.5,
+        worstMonitors: [
+          { name: 'API Health', uptimePct: 95 },
+          { name: 'Landing Page', uptimePct: 100 },
+        ],
+      });
+    });
+
+    it('returns null uptime when the org has no enabled monitors', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+      // error_groups, top rules, monitors all fall through to the [] default
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.uptime).toBeNull();
+    });
+
+    it('labels the period by frequency', async () => {
+      mockDb.execute.mockResolvedValueOnce([]); // projects (none)
+
+      const daily = await generator.buildReportData('org_1', 'Test Org', 'daily');
+      expect(daily.periodLabel).toBe('last 24 hours');
+
+      mockDb.execute.mockResolvedValueOnce([]);
+      const weekly = await generator.buildReportData('org_1', 'Test Org', 'weekly');
+      expect(weekly.periodLabel).toBe('last 7 days');
     });
   });
 });

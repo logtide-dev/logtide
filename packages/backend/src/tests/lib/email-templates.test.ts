@@ -18,6 +18,8 @@ import {
   generateIncidentEmail,
   generateSigmaDetectionEmail,
   generateInvitationEmail,
+  generateDigestEmail,
+  type DigestEmailData,
 } from '../../lib/email-templates.js';
 
 describe('Email Templates - Helpers', () => {
@@ -750,5 +752,122 @@ describe('Email Templates - Common Elements', () => {
     expect(result.html).toContain('</html>');
     expect(result.html).toContain('<body');
     expect(result.html).toContain('</body>');
+  });
+});
+
+describe('Email Templates - Digest', () => {
+  const baseData: DigestEmailData = {
+    organizationName: 'Acme Corp',
+    frequency: 'daily',
+    periodLabel: 'last 24 hours',
+    logVolume: { current: 15000, previous: 12000, trend: '+3000 (+25.0%)' },
+    topErrorServices: [
+      { service: 'api-<gateway>', errorCount: 50, previousCount: 20, delta: 30 },
+      { service: 'web', errorCount: 10, previousCount: 15, delta: -5 },
+    ],
+    newErrorGroups: [
+      {
+        exceptionType: 'TypeError',
+        exceptionMessage: 'Cannot read properties of <undefined>',
+        occurrenceCount: 42,
+        language: 'nodejs',
+      },
+    ],
+    security: {
+      totalDetections: 11,
+      topRules: [{ ruleTitle: 'Suspicious <Login>', severity: 'high', count: 7 }],
+      openIncidents: 2,
+    },
+    uptime: {
+      monitorCount: 3,
+      overallUptimePct: 99.5,
+      worstMonitors: [{ name: 'API Health', uptimePct: 98.5 }],
+    },
+    unsubscribeUrl: 'https://app.logtide.dev/unsubscribe?token=tok_123',
+    dashboardUrl: 'https://app.logtide.dev/dashboard',
+  };
+
+  it('renders every section in the HTML body', () => {
+    const result = generateDigestEmail(baseData);
+
+    expect(result.html).toContain('<!DOCTYPE html>');
+    expect(result.html).toContain('Acme Corp');
+    expect(result.html).toContain('15,000');
+    expect(result.html).toContain('+3000 (+25.0%)');
+    expect(result.html).toContain('TypeError');
+    expect(result.html).toContain('42');
+    expect(result.html).toContain('Suspicious');
+    expect(result.html).toContain('99.5');
+    expect(result.html).toContain('98.5');
+    expect(result.html).toContain('last 24 hours');
+  });
+
+  it('escapes user-controlled values in HTML', () => {
+    const result = generateDigestEmail(baseData);
+
+    expect(result.html).not.toContain('api-<gateway>');
+    expect(result.html).toContain('api-&lt;gateway&gt;');
+    expect(result.html).not.toContain('Suspicious <Login>');
+    expect(result.html).toContain('Suspicious &lt;Login&gt;');
+    expect(result.html).not.toContain('Cannot read properties of <undefined>');
+  });
+
+  it('uses the unsubscribe link in the footer instead of channel settings', () => {
+    const result = generateDigestEmail(baseData);
+
+    expect(result.html).toContain('https://app.logtide.dev/unsubscribe?token=tok_123');
+    expect(result.html).toContain('Unsubscribe');
+    expect(result.html).not.toContain('/dashboard/settings/channels');
+  });
+
+  it('carries all sections in the plaintext fallback', () => {
+    const result = generateDigestEmail(baseData);
+
+    expect(result.text).toContain('Acme Corp');
+    expect(result.text).toContain('Total logs: 15,000');
+    expect(result.text).toContain('Trend: +3000 (+25.0%)');
+    expect(result.text).toContain('Previous period: 12,000');
+    expect(result.text).toContain('api-<gateway>');
+    expect(result.text).toContain('TypeError');
+    expect(result.text).toContain('Suspicious <Login>');
+    expect(result.text).toContain('Open incidents: 2');
+    expect(result.text).toContain('99.5');
+    expect(result.text).toContain('https://app.logtide.dev/unsubscribe?token=tok_123');
+  });
+
+  it('shows the quiet-period message when there was no log activity', () => {
+    const quiet: DigestEmailData = {
+      ...baseData,
+      logVolume: { current: 0, previous: 0, trend: 'no change' },
+      topErrorServices: [],
+      newErrorGroups: [],
+      security: { totalDetections: 0, topRules: [], openIncidents: 0 },
+      uptime: null,
+    };
+
+    const result = generateDigestEmail(quiet);
+
+    expect(result.html).toContain('No activity during this period');
+    expect(result.text).toContain('No activity during this period');
+    expect(result.text).toContain('quiet');
+  });
+
+  it('omits the uptime section when uptime is null', () => {
+    const noUptime: DigestEmailData = { ...baseData, uptime: null };
+
+    const result = generateDigestEmail(noUptime);
+
+    expect(result.html).not.toContain('Uptime');
+    expect(result.text).not.toContain('Uptime');
+  });
+
+  it('labels weekly digests as weekly', () => {
+    const weekly: DigestEmailData = { ...baseData, frequency: 'weekly', periodLabel: 'last 7 days' };
+
+    const result = generateDigestEmail(weekly);
+
+    expect(result.html).toContain('Weekly Digest');
+    expect(result.text).toContain('Weekly Digest');
+    expect(result.text).toContain('last 7 days');
   });
 });

@@ -25,8 +25,8 @@ import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { retentionService } from './modules/retention/index.js';
 import { auditLogService } from './modules/audit-log/index.js';
 import { sigmaSyncService } from './modules/sigma/sync-service.js';
-// Email digest feature is incomplete and disabled for 1.0.0-beta (see #154 below).
-// import { digestScheduler } from './modules/digests/scheduler.js';
+import { digestScheduler } from './modules/digests/scheduler.js';
+import { processDigestDispatch } from './queue/jobs/digest-dispatch.js';
 import { initializeWorkerLogging, shutdownInternalLogging, isInternalLoggingEnabled } from './utils/internal-logger.js';
 import { hub } from '@logtide/core';
 import { reservoir, reservoirReady } from './database/reservoir.js';
@@ -92,12 +92,13 @@ const pipelineWorker = createWorker<LogPipelineJobData>('log-pipeline', async (j
 const digestWorker = createWorker<DigestJobPayload>('digest-generation', async (job) => {
   await processDigestGeneration(job);
 });
-// The email digest reports feature (#154) is incomplete: it only summarizes log
-// volume (no error groups, security or uptime sections, no HTML layout) and has no
-// UI to configure it. The scheduler is intentionally left unregistered so no partial
-// digests are ever sent in the 1.0.0-beta release. The worker, service, database
-// schema and tests stay in place so the remaining scope can be finished under #154.
-// await digestScheduler.registerAllDigests();
+// Hourly dispatch cron scans digest configs and enqueues due digests (#154).
+// A single static cron (instead of one per org) keeps config CRUD live on both
+// queue backends: graphile-worker cron items cannot change while the runner is up.
+const digestDispatchWorker = createWorker<Record<string, never>>('digest-dispatch', async (job) => {
+  await processDigestDispatch(job);
+});
+await digestScheduler.registerDispatchCron();
 
 // Create worker for outbound webhook delivery (#218)
 const webhookDeliveryWorker = createWorker<WebhookDeliveryJobData>('webhook-delivery', async (job) => {
@@ -331,6 +332,15 @@ digestWorker.on('failed', (job, err) => {
       jobId: job?.id,
       organizationId: job?.data?.organizationId,
       frequency: job?.data?.frequency,
+    });
+  }
+});
+
+digestDispatchWorker.on('failed', (job, err) => {
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('error', `Digest dispatch job failed: ${err.message}`, {
+      error: { name: err.name, message: err.message, stack: err.stack },
+      jobId: job?.id,
     });
   }
 });
@@ -912,6 +922,7 @@ async function gracefulShutdown(signal: string) {
     await monitorNotificationWorker.close();
     await pipelineWorker.close();
     await digestWorker.close();
+    await digestDispatchWorker.close();
     await webhookDeliveryWorker.close();
     await receiverEventsWorker.close();
     console.log('[Worker] Workers closed');
