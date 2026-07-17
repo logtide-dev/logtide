@@ -17,6 +17,7 @@ import { hooks, HookExecutionError } from '../../hooks/index.js';
 import type { BeforeIngestContext } from '../../hooks/index.js';
 import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
+import { createSkewTracker } from './skew.js';
 
 export interface IngestRejection {
   /** Index of the record in the submitted batch. */
@@ -156,10 +157,13 @@ export class IngestionService {
 
     // Convert logs to reservoir LogRecord format
     // Note: reservoir handles null byte sanitization internally
+    // Clock skew (#279): observed inside the existing map so a large batch costs
+    // one extra subtraction per record and one Date.now() per batch.
+    const skewTracker = createSkewTracker(Date.now());
     let records: BeforeIngestContext['records'] = logs.map((log) => {
       // Extract hostname if not already set in metadata
       const hostname = log.metadata?.hostname || extractHostname(log);
-      
+
       const metadata = {
         ...log.metadata,
         ...(hostname && { hostname }),
@@ -167,8 +171,11 @@ export class IngestionService {
 
       const hasMetadata = Object.keys(metadata).length > 0;
 
+      const time = typeof log.time === 'string' ? new Date(log.time) : log.time;
+      skewTracker.observe(time);
+
       return {
-        time: typeof log.time === 'string' ? new Date(log.time) : log.time,
+        time,
         projectId,
         service: sanitizeForPostgres(log.service),
         level: log.level as ReservoirLogLevel,
@@ -179,6 +186,20 @@ export class IngestionService {
         sessionId: sanitizeForPostgres((log as { session_id?: string }).session_id) || undefined,
       };
     });
+
+    // Clock skew signal (#279). Fire-and-forget, never rejects: the records above
+    // are written unchanged. Guarded on organizationId like the other ingestion
+    // health counters, since anonymous ingestion has no org to attribute to.
+    const skew = skewTracker.summary();
+    if (skew && organizationId) {
+      metering.record({
+        type: 'ingestion.timestamp_skew',
+        quantity: skew.count,
+        organizationId,
+        projectId,
+        metadata: { maxPastMs: skew.maxPastMs, maxFutureMs: skew.maxFutureMs },
+      });
+    }
 
     // Lifecycle hook (#216): last interception point before the reservoir
     // write. Hooks may reject (throw) or mutate/replace `records`.
