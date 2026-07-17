@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { usersService } from './service.js';
+import { authenticationService } from '../auth/authentication-service.js';
 import { config } from '../../config/index.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
@@ -52,11 +53,21 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
         const user = await usersService.createUser(body);
 
-        // Automatically log in the new user
-        const session = await usersService.login({
-          email: body.email,
-          password: body.password,
-        });
+        // Automatically log in the new user through the provider registry.
+        // This also creates the user_identities link for the local provider.
+        // If this fails for a transient reason the user row is already committed,
+        // so we return 201 with no session instead of propagating a 500. The
+        // account is fully recoverable via a subsequent /login.
+        let session: { token: string; expiresAt: Date } | null = null;
+        try {
+          const result = await authenticationService.authenticateWithProvider('local', {
+            email: body.email,
+            password: body.password,
+          });
+          session = result.session;
+        } catch {
+          // transient auto-login failure – user was created, session was not
+        }
 
         await auditLogService.record({
           action: 'user.registered',
@@ -72,10 +83,12 @@ export async function usersRoutes(fastify: FastifyInstance) {
             name: user.name,
             is_admin: user.is_admin,
           },
-          session: {
-            token: session.token,
-            expiresAt: session.expiresAt,
-          },
+          ...(session ? {
+            session: {
+              token: session.token,
+              expiresAt: session.expiresAt,
+            },
+          } : {}),
         });
       } catch (error) {
         if (error instanceof z.ZodError) {
@@ -111,14 +124,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
       try {
         parsedBody = loginSchema.parse(request.body);
 
-        const session = await usersService.login(parsedBody);
-        const user = await usersService.getUserById(session.userId);
-
-        if (!user) {
-          return reply.status(500).send({
-            error: 'Internal server error',
-          });
-        }
+        const { user, session } = await authenticationService.authenticateWithProvider('local', parsedBody);
 
         await auditLogService.record({
           action: 'auth.login_succeeded',
@@ -148,15 +154,22 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
 
         if (error instanceof Error) {
-          if (error.message.includes('Invalid')) {
-            // parsedBody is defined here (zod succeeded before the service threw)
-            await auditLogService.record({
-              action: 'auth.login_failed',
-              outcome: 'failure',
-              organizationId: null,
-              actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
-              metadata: { method: 'local' },
-            });
+          const isCredentialError = error.message === 'Invalid email or password';
+          const isAuthError = isCredentialError ||
+            error.message === 'Please log in using your organization SSO' ||
+            error.message === 'This account has been disabled';
+
+          if (isAuthError) {
+            if (isCredentialError) {
+              // parsedBody is defined here (zod succeeded before the service threw)
+              await auditLogService.record({
+                action: 'auth.login_failed',
+                outcome: 'failure',
+                organizationId: null,
+                actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
+                metadata: { method: 'local' },
+              });
+            }
             return reply.status(401).send({
               error: error.message,
             });

@@ -61,16 +61,9 @@ export class LocalProvider implements AuthProvider {
       };
     }
 
-    // Check if user is disabled
-    if (user.disabled) {
-      return {
-        success: false,
-        error: 'This account has been disabled',
-        errorCode: AuthErrorCode.USER_DISABLED,
-      };
-    }
-
-    // Verify password
+    // Verify password before any other checks to prevent user enumeration:
+    // a wrong password must always return the same generic error regardless of
+    // whether the account is disabled or not.
     const isValid = await bcrypt.compare(password, user.password_hash);
     if (!isValid) {
       return {
@@ -80,10 +73,20 @@ export class LocalProvider implements AuthProvider {
       };
     }
 
+    // Check if user is disabled (only after the password is confirmed correct)
+    if (user.disabled) {
+      return {
+        success: false,
+        error: 'This account has been disabled',
+        errorCode: AuthErrorCode.USER_DISABLED,
+      };
+    }
+
     return {
       success: true,
       providerUserId: user.email, // For local, we use email as the provider user ID
       email: user.email,
+      emailVerified: true, // Password verification implies ownership of the account
       name: user.name,
       metadata: {
         userId: user.id,

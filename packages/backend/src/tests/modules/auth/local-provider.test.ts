@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import bcrypt from 'bcrypt';
 import { db } from '../../../database/index.js';
 import { LocalProvider } from '../../../modules/auth/providers/local-provider.js';
-import { createTestUser } from '../../helpers/factories.js';
 import { AuthErrorCode } from '../../../modules/auth/providers/types.js';
 
 describe('LocalProvider', () => {
@@ -111,7 +110,7 @@ describe('LocalProvider', () => {
             expect(result.errorCode).toBe(AuthErrorCode.INVALID_CREDENTIALS);
         });
 
-        it('should return error when user is disabled', async () => {
+        it('should return error when user is disabled (correct password)', async () => {
             const passwordHash = await bcrypt.hash('password123', 10);
             await db.insertInto('users').values({
                 email: 'disabled@example.com',
@@ -129,6 +128,26 @@ describe('LocalProvider', () => {
             expect(result.success).toBe(false);
             expect(result.error).toBe('This account has been disabled');
             expect(result.errorCode).toBe(AuthErrorCode.USER_DISABLED);
+        });
+
+        it('should return generic error when user is disabled and password is wrong (no enumeration)', async () => {
+            const passwordHash = await bcrypt.hash('password123', 10);
+            await db.insertInto('users').values({
+                email: 'disabled-wrong-pw@example.com',
+                name: 'Disabled User',
+                password_hash: passwordHash,
+                is_admin: false,
+                disabled: true,
+            }).execute();
+
+            const result = await localProvider.authenticate({
+                email: 'disabled-wrong-pw@example.com',
+                password: 'wrongpassword',
+            });
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe('Invalid email or password');
+            expect(result.errorCode).toBe(AuthErrorCode.INVALID_CREDENTIALS);
         });
 
         it('should return error when password is incorrect', async () => {
@@ -171,6 +190,7 @@ describe('LocalProvider', () => {
             expect(result.success).toBe(true);
             expect(result.providerUserId).toBe('valid@example.com');
             expect(result.email).toBe('valid@example.com');
+            expect(result.emailVerified).toBe(true);
             expect(result.name).toBe('Valid User');
             expect(result.metadata?.userId).toBe(user.id);
         });
@@ -179,13 +199,13 @@ describe('LocalProvider', () => {
             const password = 'password123';
             const passwordHash = await bcrypt.hash(password, 10);
 
-            const user = await db.insertInto('users').values({
+            await db.insertInto('users').values({
                 email: 'uppercase@example.com',
                 name: 'Test User',
                 password_hash: passwordHash,
                 is_admin: false,
                 disabled: false,
-            }).returningAll().executeTakeFirstOrThrow();
+            }).execute();
 
             const result = await localProvider.authenticate({
                 email: 'UPPERCASE@EXAMPLE.COM',
