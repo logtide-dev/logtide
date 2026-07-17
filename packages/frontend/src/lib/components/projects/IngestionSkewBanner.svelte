@@ -82,8 +82,8 @@
         <p>
           In the last 24 hours, {skew.count24h.toLocaleString('en-US')}
           {noun} ended with a timestamp up to {direction}.
-          They are stored, but trace views only show spans that ended inside their time window,
-          so these spans will not appear in trace views for that period.
+          They are stored, but they fall outside the time windows trace views use, so these
+          spans will not appear there for that period.
         </p>
         <p class="mt-2">
           This usually means a clock or exporter timestamp problem on the sending host.

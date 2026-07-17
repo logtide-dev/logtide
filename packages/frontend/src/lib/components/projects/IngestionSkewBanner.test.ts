@@ -107,7 +107,7 @@ describe('IngestionSkewBanner', () => {
       const { container } = render(IngestionSkewBanner, { props: { skew, signal: 'spans' } });
 
       expect(screen.getByText('Spans are arriving with an out-of-range timestamp')).toBeInTheDocument();
-      expect(screen.getByText(/will not appear in trace views/)).toBeInTheDocument();
+      expect(screen.getByText(/fall outside the time windows trace views use/)).toBeInTheDocument();
       expect(screen.getByText(/clock or exporter timestamp problem/)).toBeInTheDocument();
       expect(container.textContent).not.toMatch(/cannot trigger an alert/);
       expect(container.textContent).not.toMatch(/Omitting the field entirely/);
