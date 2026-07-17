@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { db } from '../../../database/index.js';
+import { config } from '../../../config/index.js';
 import { MeteringRecorder } from '../../../modules/metering/recorder.js';
 import { createTestContext } from '../../helpers/factories.js';
 
@@ -61,5 +62,35 @@ describe('MeteringRecorder', () => {
     const rows = await db.selectFrom('metering_events').selectAll().where('organization_id', '=', orgId).execute();
     expect(rows).toHaveLength(1);
     expect(Number(rows[0].quantity)).toBe(99);
+  });
+
+  describe('METERING_ENABLED gate', () => {
+    const original = config.METERING_ENABLED;
+
+    afterEach(() => {
+      config.METERING_ENABLED = original;
+    });
+
+    it('still buffers an ingestion.* health counter when metering is disabled', () => {
+      config.METERING_ENABLED = false;
+      const rec = new MeteringRecorder({ maxBuffer: 1000 });
+      rec.record({ type: 'ingestion.timestamp_skew', quantity: 1, organizationId: orgId, projectId });
+      expect(rec.bufferSize).toBe(1);
+    });
+
+    it('does not buffer a usage event when metering is disabled', () => {
+      config.METERING_ENABLED = false;
+      const rec = new MeteringRecorder({ maxBuffer: 1000 });
+      rec.record({ type: 'logs.ingested.events', quantity: 1, organizationId: orgId, projectId });
+      expect(rec.bufferSize).toBe(0);
+    });
+
+    it('buffers both ingestion.* and usage events when metering is enabled', () => {
+      config.METERING_ENABLED = true;
+      const rec = new MeteringRecorder({ maxBuffer: 1000 });
+      rec.record({ type: 'ingestion.timestamp_skew', quantity: 1, organizationId: orgId, projectId });
+      rec.record({ type: 'logs.ingested.events', quantity: 1, organizationId: orgId, projectId });
+      expect(rec.bufferSize).toBe(2);
+    });
   });
 });
