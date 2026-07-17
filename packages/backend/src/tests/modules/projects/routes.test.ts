@@ -4,6 +4,9 @@ import { db } from '../../../database/index.js';
 import { projectsRoutes } from '../../../modules/projects/routes.js';
 import { ingestionService } from '../../../modules/ingestion/service.js';
 import { meteringRecorder } from '../../../modules/metering/index.js';
+import { tracesService } from '../../../modules/traces/index.js';
+import { metricsService } from '../../../modules/metrics/index.js';
+import type { TransformedSpan } from '../../../modules/otlp/trace-transformer.js';
 import { createTestContext, createTestUser, createTestProject, createTestOrganization } from '../../helpers/factories.js';
 import crypto from 'crypto';
 
@@ -482,7 +485,7 @@ describe('Projects Routes', () => {
             otherOrgProjectId = otherProject.id;
         });
 
-        it('returns null skew when nothing was recorded', async () => {
+        it('returns null skew for every signal when nothing was recorded', async () => {
             const response = await app.inject({
                 method: 'GET',
                 url: `/api/v1/projects/${testProject.id}/ingestion-health`,
@@ -490,7 +493,7 @@ describe('Projects Routes', () => {
             });
 
             expect(response.statusCode).toBe(200);
-            expect(response.json()).toEqual({ skew: null });
+            expect(response.json()).toEqual({ skew: { logs: null, spans: null, metrics: null } });
         });
 
         it('aggregates skew events from the last 24h', async () => {
@@ -527,14 +530,61 @@ describe('Projects Routes', () => {
 
             expect(response.statusCode).toBe(200);
             const { skew } = response.json();
-            expect(skew.count24h).toBe(10);
-            expect(skew.maxPastMs).toBe(97200000); // worst across events, not last
-            expect(skew.maxFutureMs).toBe(600000);
+            expect(skew.logs.count24h).toBe(10);
+            expect(skew.logs.maxPastMs).toBe(97200000); // worst across events, not last
+            expect(skew.logs.maxFutureMs).toBe(600000);
             // Pins lastSeenAt to the newest fixture row's time (not "now"), with a
             // small tolerance for DB round-tripping.
-            expect(Math.abs(new Date(skew.lastSeenAt).getTime() - newestEventTime.getTime())).toBeLessThan(
+            expect(Math.abs(new Date(skew.logs.lastSeenAt).getTime() - newestEventTime.getTime())).toBeLessThan(
                 5000,
             );
+            // Only logs had events; the other two signals stay null independently.
+            expect(skew.spans).toBeNull();
+            expect(skew.metrics).toBeNull();
+        });
+
+        it('aggregates each signal independently, not into a shared counter', async () => {
+            await db
+                .insertInto('metering_events')
+                .values([
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 4,
+                        metadata: { maxPastMs: 97200000, maxFutureMs: 0 },
+                    },
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.span_timestamp_skew',
+                        quantity: 2,
+                        metadata: { maxPastMs: 88000000, maxFutureMs: 0 },
+                    },
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.metric_timestamp_skew',
+                        quantity: 1,
+                        metadata: { maxPastMs: 0, maxFutureMs: 500000 },
+                    },
+                ])
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.logs.count24h).toBe(4);
+            expect(skew.logs.maxPastMs).toBe(97200000);
+            expect(skew.spans.count24h).toBe(2);
+            expect(skew.spans.maxPastMs).toBe(88000000);
+            expect(skew.metrics.count24h).toBe(1);
+            expect(skew.metrics.maxFutureMs).toBe(500000);
         });
 
         it('ignores skew events older than 24h', async () => {
@@ -556,7 +606,7 @@ describe('Projects Routes', () => {
                 headers: { Authorization: `Bearer ${authToken}` },
             });
 
-            expect(response.json()).toEqual({ skew: null });
+            expect(response.json()).toEqual({ skew: { logs: null, spans: null, metrics: null } });
         });
 
         it('does not leak skew from another organization', async () => {
@@ -570,7 +620,7 @@ describe('Projects Routes', () => {
             expect(response.statusCode).toBe(404);
         });
 
-        it('reads the exact keys a real ingest writes (writer/reader contract)', async () => {
+        it('reads the exact keys a real ingest writes (writer/reader contract, logs)', async () => {
             // #279 repro: a log ~27h in the past, past the 24h skew threshold.
             const skewedTime = new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString();
             const ingestResult = await ingestionService.ingestLogs(
@@ -592,8 +642,8 @@ describe('Projects Routes', () => {
 
             expect(response.statusCode).toBe(200);
             const { skew } = response.json();
-            expect(skew.count24h).toBe(1);
-            expect(skew.maxPastMs).toBeGreaterThan(24 * 60 * 60 * 1000);
+            expect(skew.logs.count24h).toBe(1);
+            expect(skew.logs.maxPastMs).toBeGreaterThan(24 * 60 * 60 * 1000);
 
             // Required invariant: a skewed log is stored, never rejected.
             const storedLog = await db
@@ -603,6 +653,82 @@ describe('Projects Routes', () => {
                 .where('message', '=', 'skewed log')
                 .executeTakeFirst();
             expect(storedLog).toBeDefined();
+        });
+
+        it('reads the exact keys a real ingest writes (writer/reader contract, spans)', async () => {
+            // span-metric-skew: spans are observed on end_time, not start_time.
+            const skewedEnd = new Date(Date.now() - 27 * 60 * 60 * 1000);
+            const spans: TransformedSpan[] = [
+                {
+                    trace_id: crypto.randomBytes(16).toString('hex'),
+                    span_id: crypto.randomBytes(8).toString('hex'),
+                    service_name: 'skewed-service',
+                    operation_name: 'skewed-op',
+                    start_time: new Date(skewedEnd.getTime() - 50).toISOString(),
+                    end_time: skewedEnd.toISOString(),
+                    duration_ms: 50,
+                },
+            ];
+
+            const ingested = await tracesService.ingestSpans(
+                spans,
+                new Map(),
+                testProject.id,
+                testOrganization.id,
+            );
+            expect(ingested).toBe(1);
+
+            await meteringRecorder.flush();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.spans.count24h).toBe(1);
+            expect(skew.spans.maxPastMs).toBeGreaterThan(24 * 60 * 60 * 1000);
+
+            const storedSpan = await db
+                .selectFrom('spans')
+                .selectAll()
+                .where('span_id', '=', spans[0].span_id)
+                .executeTakeFirst();
+            expect(storedSpan).toBeDefined();
+        });
+
+        it('reads the exact keys a real ingest writes (writer/reader contract, metrics)', async () => {
+            const skewedTime = new Date(Date.now() - 27 * 60 * 60 * 1000);
+
+            const ingested = await metricsService.ingestMetrics(
+                [
+                    {
+                        time: skewedTime,
+                        metricName: 'skewed.metric',
+                        metricType: 'gauge',
+                        value: 42,
+                        serviceName: 'skewed-service',
+                    },
+                ],
+                testProject.id,
+                testOrganization.id,
+            );
+            expect(ingested).toBe(1);
+
+            await meteringRecorder.flush();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.metrics.count24h).toBe(1);
+            expect(skew.metrics.maxPastMs).toBeGreaterThan(24 * 60 * 60 * 1000);
         });
 
         it('takes the numeric max of maxPastMs, not the lexicographic (text) max', async () => {
@@ -639,7 +765,7 @@ describe('Projects Routes', () => {
 
             expect(response.statusCode).toBe(200);
             const { skew } = response.json();
-            expect(skew.maxPastMs).toBe(10000000);
+            expect(skew.logs.maxPastMs).toBe(10000000);
         });
     });
 });
