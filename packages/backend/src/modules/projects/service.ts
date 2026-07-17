@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import type { Project, StatusPageVisibility } from '@logtide/shared';
 import bcrypt from 'bcrypt';
@@ -244,10 +245,12 @@ export class ProjectsService {
 
   /**
    * Per-project ingestion health (#279). Reads the clock skew counter written by
-   * ingestLogs. Filters on (organization_id, type, time) plus project_id, so the
-   * planner favors idx_metering_org_type_time: type is highly selective while
-   * (org, project, 24h) alone matches every metering row for the project. Volume
-   * is one row per skewed batch, so the aggregation is done here rather than in SQL.
+   * ingestLogs, aggregated in SQL so the query returns exactly one row rather than
+   * pulling every skew row into JS. Filters on (organization_id, type, time) plus
+   * project_id, so the planner favors idx_metering_org_type_time: type is highly
+   * selective while (org, project, 24h) alone matches every metering row for the
+   * project. metadata->>'x' yields text, so each field is cast to float8 before
+   * MAX to avoid a lexicographic (string) max.
    */
   async getIngestionHealth(
     organizationId: string,
@@ -255,34 +258,44 @@ export class ProjectsService {
   ): Promise<{ skew: ProjectSkewHealth | null }> {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const rows = await db
-      .selectFrom('metering_events')
-      .select(['quantity', 'metadata', 'time'])
-      .where('organization_id', '=', organizationId)
-      .where('project_id', '=', projectId)
-      .where('type', '=', 'ingestion.timestamp_skew')
-      .where('time', '>=', since)
-      .execute();
+    const query = sql<{
+      count24h: number | string | null;
+      max_past_ms: number | string | null;
+      max_future_ms: number | string | null;
+      last_seen_at: Date | string | null;
+    }>`
+      SELECT
+        COALESCE(SUM(quantity), 0)::float8 AS count24h,
+        COALESCE(MAX((metadata->>'maxPastMs')::float8), 0) AS max_past_ms,
+        COALESCE(MAX((metadata->>'maxFutureMs')::float8), 0) AS max_future_ms,
+        MAX(time) AS last_seen_at
+      FROM metering_events
+      WHERE organization_id = ${organizationId}
+        AND project_id = ${projectId}
+        AND type = 'ingestion.timestamp_skew'
+        AND time >= ${since}
+    `;
+    const result = await query.execute(db);
+    const row = result.rows[0];
 
-    if (rows.length === 0) {
+    // An aggregate over zero matching rows still returns one row, but every
+    // aggregate column is NULL except the COALESCE'd ones; last_seen_at (MAX(time))
+    // has no COALESCE, so it is the reliable "no rows" signal.
+    if (!row || row.last_seen_at === null) {
       return { skew: null };
     }
 
-    let count24h = 0;
-    let maxPastMs = 0;
-    let maxFutureMs = 0;
-    let lastSeenAt = rows[0].time;
-
-    for (const row of rows) {
-      count24h += Number(row.quantity);
-      const meta = (row.metadata ?? {}) as { maxPastMs?: number; maxFutureMs?: number };
-      if ((meta.maxPastMs ?? 0) > maxPastMs) maxPastMs = meta.maxPastMs ?? 0;
-      if ((meta.maxFutureMs ?? 0) > maxFutureMs) maxFutureMs = meta.maxFutureMs ?? 0;
-      if (row.time > lastSeenAt) lastSeenAt = row.time;
-    }
+    const toNumber = (value: number | string | null): number =>
+      typeof value === 'number' ? value : parseFloat(value ?? '0');
+    const lastSeenAt = row.last_seen_at instanceof Date ? row.last_seen_at : new Date(row.last_seen_at);
 
     return {
-      skew: { count24h, maxPastMs, maxFutureMs, lastSeenAt: lastSeenAt.toISOString() },
+      skew: {
+        count24h: toNumber(row.count24h),
+        maxPastMs: toNumber(row.max_past_ms),
+        maxFutureMs: toNumber(row.max_future_ms),
+        lastSeenAt: lastSeenAt.toISOString(),
+      },
     };
   }
 

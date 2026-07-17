@@ -597,5 +597,42 @@ describe('Projects Routes', () => {
                 .executeTakeFirst();
             expect(storedLog).toBeDefined();
         });
+
+        it('takes the numeric max of maxPastMs, not the lexicographic (text) max', async () => {
+            // "9500000" > "10000000" as text (compares '9' vs '1' first), but
+            // 10000000 is the larger number. A MAX() over uncasted metadata->>'x'
+            // text would wrongly report 9500000 here.
+            await db
+                .insertInto('metering_events')
+                .values([
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 1,
+                        metadata: { maxPastMs: 9500000, maxFutureMs: 0 },
+                        time: new Date(Date.now() - 60 * 60 * 1000),
+                    },
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 1,
+                        metadata: { maxPastMs: 10000000, maxFutureMs: 0 },
+                        time: new Date(Date.now() - 30 * 60 * 1000),
+                    },
+                ])
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.maxPastMs).toBe(10000000);
+        });
     });
 });
