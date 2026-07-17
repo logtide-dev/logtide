@@ -23,6 +23,13 @@ export interface AuthResponse {
   };
 }
 
+// Registration can succeed (201) without a session when the backend's
+// auto-login fails transiently; the account is then recoverable via /login.
+export interface RegisterResponse {
+  user: AuthResponse['user'];
+  session?: AuthResponse['session'];
+}
+
 export interface ErrorResponse {
   error: string;
   details?: any;
@@ -53,7 +60,7 @@ export interface AuthConfig {
 }
 
 export class AuthAPI {
-  async register(input: RegisterInput): Promise<AuthResponse> {
+  async register(input: RegisterInput): Promise<RegisterResponse> {
     const response = await fetch(`${getApiBaseUrl()}/auth/register`, {
       method: 'POST',
       headers: {
