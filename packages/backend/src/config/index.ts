@@ -70,7 +70,9 @@ const configSchema = z.object({
   // server clock is stored as sent but can never be seen by a threshold alert
   // rule, whose largest window is 24h. Detected and counted, never rejected:
   // backfilling historical logs is legitimate. Set either to 0 to disable that
-  // direction.
+  // direction. Counters are written via the metering recorder, so they require
+  // METERING_ENABLED=true; with metering off, detection still runs but nothing
+  // is ever recorded and both read surfaces stay empty.
   INGESTION_SKEW_PAST_MS: z.string().default('86400000').transform(Number), // 24h: the max alert time_window
   INGESTION_SKEW_FUTURE_MS: z.string().default('300000').transform(Number), // 5m: room for NTP jitter
 
