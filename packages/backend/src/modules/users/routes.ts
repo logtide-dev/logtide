@@ -66,7 +66,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
           });
           session = result.session;
         } catch {
-          // transient auto-login failure – user was created, session was not
+          // transient auto-login failure: user was created, session was not
         }
 
         await auditLogService.record({
