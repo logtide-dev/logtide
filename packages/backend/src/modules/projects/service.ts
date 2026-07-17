@@ -38,6 +38,16 @@ export interface UpdateProjectInput {
   statusPagePassword?: string;
 }
 
+export interface ProjectSkewHealth {
+  /** Total skewed records seen in the last 24h. */
+  count24h: number;
+  /** Worst past delta across the window, in ms. */
+  maxPastMs: number;
+  /** Worst future delta across the window, in ms. */
+  maxFutureMs: number;
+  lastSeenAt: string;
+}
+
 // All columns returned on every Project fetch
 const PROJECT_COLUMNS = [
   'id',
@@ -230,6 +240,49 @@ export class ProjectsService {
     }
 
     return mapProject(project);
+  }
+
+  /**
+   * Per-project ingestion health (#279). Reads the clock skew counter written by
+   * ingestLogs. Scoped by (organization_id, project_id, time) so it rides
+   * idx_metering_org_project_time. Volume is one row per skewed batch, so the
+   * aggregation is done here rather than in SQL.
+   */
+  async getIngestionHealth(
+    organizationId: string,
+    projectId: string,
+  ): Promise<{ skew: ProjectSkewHealth | null }> {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const rows = await db
+      .selectFrom('metering_events')
+      .select(['quantity', 'metadata', 'time'])
+      .where('organization_id', '=', organizationId)
+      .where('project_id', '=', projectId)
+      .where('type', '=', 'ingestion.timestamp_skew')
+      .where('time', '>=', since)
+      .execute();
+
+    if (rows.length === 0) {
+      return { skew: null };
+    }
+
+    let count24h = 0;
+    let maxPastMs = 0;
+    let maxFutureMs = 0;
+    let lastSeenAt = rows[0].time;
+
+    for (const row of rows) {
+      count24h += Number(row.quantity);
+      const meta = (row.metadata ?? {}) as { maxPastMs?: number; maxFutureMs?: number };
+      if ((meta.maxPastMs ?? 0) > maxPastMs) maxPastMs = meta.maxPastMs ?? 0;
+      if ((meta.maxFutureMs ?? 0) > maxFutureMs) maxFutureMs = meta.maxFutureMs ?? 0;
+      if (row.time > lastSeenAt) lastSeenAt = row.time;
+    }
+
+    return {
+      skew: { count24h, maxPastMs, maxFutureMs, lastSeenAt: lastSeenAt.toISOString() },
+    };
   }
 
   /**

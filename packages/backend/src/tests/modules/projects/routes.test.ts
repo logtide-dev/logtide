@@ -469,4 +469,96 @@ describe('Projects Routes', () => {
             expect(response.statusCode).toBe(401);
         });
     });
+
+    describe('GET /:id/ingestion-health', () => {
+        let otherOrgProjectId: string;
+
+        beforeEach(async () => {
+            // Second organization the test user is not a member of.
+            const otherOrg = await createTestOrganization();
+            const otherProject = await createTestProject({ organizationId: otherOrg.id });
+            otherOrgProjectId = otherProject.id;
+        });
+
+        it('returns null skew when nothing was recorded', async () => {
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ skew: null });
+        });
+
+        it('aggregates skew events from the last 24h', async () => {
+            await db
+                .insertInto('metering_events')
+                .values([
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 4,
+                        metadata: { maxPastMs: 97200000, maxFutureMs: 0 },
+                        time: new Date(Date.now() - 60 * 60 * 1000),
+                    },
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 6,
+                        metadata: { maxPastMs: 90000000, maxFutureMs: 600000 },
+                        time: new Date(Date.now() - 30 * 60 * 1000),
+                    },
+                ])
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.count24h).toBe(10);
+            expect(skew.maxPastMs).toBe(97200000); // worst across events, not last
+            expect(skew.maxFutureMs).toBe(600000);
+            expect(new Date(skew.lastSeenAt).getTime()).toBeGreaterThan(Date.now() - 31 * 60 * 1000);
+        });
+
+        it('ignores skew events older than 24h', async () => {
+            await db
+                .insertInto('metering_events')
+                .values({
+                    organization_id: testOrganization.id,
+                    project_id: testProject.id,
+                    type: 'ingestion.timestamp_skew',
+                    quantity: 99,
+                    metadata: { maxPastMs: 97200000, maxFutureMs: 0 },
+                    time: new Date(Date.now() - 25 * 60 * 60 * 1000),
+                })
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.json()).toEqual({ skew: null });
+        });
+
+        it('does not leak skew from another organization', async () => {
+            // otherOrgProjectId belongs to an org the test user is not a member of.
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${otherOrgProjectId}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(404);
+        });
+    });
 });
