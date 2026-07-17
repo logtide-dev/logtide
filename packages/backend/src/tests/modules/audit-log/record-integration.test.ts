@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
-import bcrypt from 'bcrypt';
 import request from 'supertest';
 import type { FastifyInstance } from 'fastify';
 import { build } from '../../../server.js';
@@ -76,14 +75,7 @@ describe('auth audit records', () => {
   });
 
   it('disabled-account login with correct password produces auth.login_failed row', async () => {
-    const passwordHash = await bcrypt.hash('password123', 10);
-    await db.insertInto('users').values({
-      email: 'disabled-audit@example.com',
-      name: 'Disabled User',
-      password_hash: passwordHash,
-      is_admin: false,
-      disabled: true,
-    }).execute();
+    await createTestUser({ email: 'disabled-audit@example.com', password: 'password123', disabled: true });
 
     await request(app.server)
       .post('/api/v1/auth/login')
@@ -106,13 +98,7 @@ describe('auth audit records', () => {
   });
 
   it('local login against an SSO-only account produces auth.login_failed row', async () => {
-    await db.insertInto('users').values({
-      email: 'sso-audit@example.com',
-      name: 'SSO User',
-      password_hash: null,
-      is_admin: false,
-      disabled: false,
-    }).execute();
+    await createTestUser({ email: 'sso-audit@example.com', password: null });
 
     await request(app.server)
       .post('/api/v1/auth/login')
