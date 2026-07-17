@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // The tracker reads thresholds from config at construction, so config is mocked
 // per test rather than importing the real .env.test values.

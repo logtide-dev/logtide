@@ -64,6 +64,20 @@ describe('Config Validation', () => {
       }
     });
 
+    it('should default ingestion clock skew thresholds to 24h past / 5m future', () => {
+      const result = configSchema.safeParse({
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
+        API_KEY_SECRET: 'a'.repeat(32),
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // 24h: the largest alert time_window, the whole reason a log past it
+        // can never be evaluated by a threshold rule.
+        expect(result.data.INGESTION_SKEW_PAST_MS).toBe(86400000);
+        expect(result.data.INGESTION_SKEW_FUTURE_MS).toBe(300000);
+      }
+    });
+
     it('should accept custom PORT and HOST', () => {
       const result = configSchema.safeParse({
         DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',

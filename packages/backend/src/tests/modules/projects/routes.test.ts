@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { projectsRoutes } from '../../../modules/projects/routes.js';
+import { ingestionService } from '../../../modules/ingestion/service.js';
+import { meteringRecorder } from '../../../modules/metering/index.js';
 import { createTestContext, createTestUser, createTestProject, createTestOrganization } from '../../helpers/factories.js';
 import crypto from 'crypto';
 
@@ -559,6 +561,41 @@ describe('Projects Routes', () => {
             });
 
             expect(response.statusCode).toBe(404);
+        });
+
+        it('reads the exact keys a real ingest writes (writer/reader contract)', async () => {
+            // #279 repro: a log ~27h in the past, past the 24h skew threshold.
+            const skewedTime = new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString();
+            const ingestResult = await ingestionService.ingestLogs(
+                [{ time: skewedTime, service: 'ubuntu', level: 'critical', message: 'skewed log' }],
+                testProject.id,
+            );
+            expect(ingestResult.received).toBe(1);
+            expect(ingestResult.rejected).toEqual([]);
+
+            // Force the buffered metering event through to the DB rather than
+            // waiting for the recorder's interval flush.
+            await meteringRecorder.flush();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.count24h).toBe(1);
+            expect(skew.maxPastMs).toBeGreaterThan(24 * 60 * 60 * 1000);
+
+            // Required invariant: a skewed log is stored, never rejected.
+            const storedLog = await db
+                .selectFrom('logs')
+                .selectAll()
+                .where('project_id', '=', testProject.id)
+                .where('message', '=', 'skewed log')
+                .executeTakeFirst();
+            expect(storedLog).toBeDefined();
         });
     });
 });
