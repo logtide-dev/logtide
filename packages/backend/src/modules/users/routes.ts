@@ -154,22 +154,24 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
 
         if (error instanceof Error) {
-          const isCredentialError = error.message === 'Invalid email or password';
-          const isAuthError = isCredentialError ||
-            error.message === 'Please log in using your organization SSO' ||
-            error.message === 'This account has been disabled';
+          const authFailureReasons: Record<string, string> = {
+            'Invalid email or password': 'invalid_credentials',
+            'Please log in using your organization SSO': 'sso_required',
+            'This account has been disabled': 'account_disabled',
+          };
+          const reason = authFailureReasons[error.message];
 
-          if (isAuthError) {
-            if (isCredentialError) {
-              // parsedBody is defined here (zod succeeded before the service threw)
-              await auditLogService.record({
-                action: 'auth.login_failed',
-                outcome: 'failure',
-                organizationId: null,
-                actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
-                metadata: { method: 'local' },
-              });
-            }
+          if (reason) {
+            // parsedBody is defined here (zod succeeded before the service threw).
+            // The reason lands only in the audit log, never in the HTTP response,
+            // so recording it does not weaken the anti-enumeration behavior.
+            await auditLogService.record({
+              action: 'auth.login_failed',
+              outcome: 'failure',
+              organizationId: null,
+              actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
+              metadata: { method: 'local', reason },
+            });
             return reply.status(401).send({
               error: error.message,
             });

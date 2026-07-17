@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import bcrypt from 'bcrypt';
 import request from 'supertest';
 import type { FastifyInstance } from 'fastify';
 import { build } from '../../../server.js';
@@ -71,6 +72,66 @@ describe('auth audit records', () => {
     expect(row.actor_id).toBeNull();
     expect(row.user_email).toBe('fail-audit@example.com');
     expect((row.metadata as any)?.method).toBe('local');
+    expect((row.metadata as any)?.reason).toBe('invalid_credentials');
+  });
+
+  it('disabled-account login with correct password produces auth.login_failed row', async () => {
+    const passwordHash = await bcrypt.hash('password123', 10);
+    await db.insertInto('users').values({
+      email: 'disabled-audit@example.com',
+      name: 'Disabled User',
+      password_hash: passwordHash,
+      is_admin: false,
+      disabled: true,
+    }).execute();
+
+    await request(app.server)
+      .post('/api/v1/auth/login')
+      .send({ email: 'disabled-audit@example.com', password: 'password123' })
+      .expect(401);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'auth.login_failed')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.outcome).toBe('failure');
+    expect(row.actor_id).toBeNull();
+    expect(row.user_email).toBe('disabled-audit@example.com');
+    expect((row.metadata as any)?.method).toBe('local');
+    expect((row.metadata as any)?.reason).toBe('account_disabled');
+  });
+
+  it('local login against an SSO-only account produces auth.login_failed row', async () => {
+    await db.insertInto('users').values({
+      email: 'sso-audit@example.com',
+      name: 'SSO User',
+      password_hash: null,
+      is_admin: false,
+      disabled: false,
+    }).execute();
+
+    await request(app.server)
+      .post('/api/v1/auth/login')
+      .send({ email: 'sso-audit@example.com', password: 'anypassword' })
+      .expect(401);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'auth.login_failed')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.outcome).toBe('failure');
+    expect(row.actor_id).toBeNull();
+    expect(row.user_email).toBe('sso-audit@example.com');
+    expect((row.metadata as any)?.method).toBe('local');
+    expect((row.metadata as any)?.reason).toBe('sso_required');
   });
 
   it('zod-invalid login payload produces NO auth.login_failed row', async () => {
