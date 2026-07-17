@@ -14,7 +14,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import IngestionSkewBanner from '$lib/components/projects/IngestionSkewBanner.svelte';
   import { projectsAPI } from '$lib/api/projects';
-  import type { ProjectSkewHealth } from '$lib/api/projects';
+  import type { ProjectSkewHealthMap } from '$lib/api/projects';
 
   import Activity from '@lucide/svelte/icons/activity';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
@@ -27,7 +27,7 @@
   let activity = $state<ActivityOverviewData | null>(null);
   let topServices = $state<TopService[]>([]);
   let recentErrors = $state<RecentError[]>([]);
-  let skew = $state<ProjectSkewHealth | null>(null);
+  let skew = $state<ProjectSkewHealthMap | null>(null);
   let loading = $state(true);
   let error = $state('');
   let lastLoadedKey = $state<string | null>(null);
@@ -170,7 +170,9 @@
 
 <div class="space-y-6">
   {#if !loading && !error}
-    <IngestionSkewBanner {skew} />
+    <IngestionSkewBanner skew={skew?.logs ?? null} signal="logs" />
+    <IngestionSkewBanner skew={skew?.spans ?? null} signal="spans" />
+    <IngestionSkewBanner skew={skew?.metrics ?? null} signal="metrics" />
   {/if}
 
   {#if loading}
