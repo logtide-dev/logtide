@@ -169,6 +169,10 @@
 </svelte:head>
 
 <div class="space-y-6">
+  {#if !loading && !error}
+    <IngestionSkewBanner {skew} />
+  {/if}
+
   {#if loading}
     <div class="flex items-center justify-center py-24">
       <Spinner />
@@ -192,8 +196,6 @@
       </p>
     </div>
   {:else if stats}
-    <IngestionSkewBanner {skew} />
-
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <StatsCard
         title="Total Logs Today"
