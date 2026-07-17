@@ -244,9 +244,10 @@ export class ProjectsService {
 
   /**
    * Per-project ingestion health (#279). Reads the clock skew counter written by
-   * ingestLogs. Scoped by (organization_id, project_id, time) so it rides
-   * idx_metering_org_project_time. Volume is one row per skewed batch, so the
-   * aggregation is done here rather than in SQL.
+   * ingestLogs. Filters on (organization_id, type, time) plus project_id, so the
+   * planner favors idx_metering_org_type_time: type is highly selective while
+   * (org, project, 24h) alone matches every metering row for the project. Volume
+   * is one row per skewed batch, so the aggregation is done here rather than in SQL.
    */
   async getIngestionHealth(
     organizationId: string,
