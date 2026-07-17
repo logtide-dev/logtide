@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { projectsRoutes } from '../../../modules/projects/routes.js';
+import { ingestionService } from '../../../modules/ingestion/service.js';
+import { meteringRecorder } from '../../../modules/metering/index.js';
 import { createTestContext, createTestUser, createTestProject, createTestOrganization } from '../../helpers/factories.js';
 import crypto from 'crypto';
 
@@ -467,6 +469,177 @@ describe('Projects Routes', () => {
             });
 
             expect(response.statusCode).toBe(401);
+        });
+    });
+
+    describe('GET /:id/ingestion-health', () => {
+        let otherOrgProjectId: string;
+
+        beforeEach(async () => {
+            // Second organization the test user is not a member of.
+            const otherOrg = await createTestOrganization();
+            const otherProject = await createTestProject({ organizationId: otherOrg.id });
+            otherOrgProjectId = otherProject.id;
+        });
+
+        it('returns null skew when nothing was recorded', async () => {
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ skew: null });
+        });
+
+        it('aggregates skew events from the last 24h', async () => {
+            const olderEventTime = new Date(Date.now() - 60 * 60 * 1000);
+            const newestEventTime = new Date(Date.now() - 30 * 60 * 1000);
+
+            await db
+                .insertInto('metering_events')
+                .values([
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 4,
+                        metadata: { maxPastMs: 97200000, maxFutureMs: 0 },
+                        time: olderEventTime,
+                    },
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 6,
+                        metadata: { maxPastMs: 90000000, maxFutureMs: 600000 },
+                        time: newestEventTime,
+                    },
+                ])
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.count24h).toBe(10);
+            expect(skew.maxPastMs).toBe(97200000); // worst across events, not last
+            expect(skew.maxFutureMs).toBe(600000);
+            // Pins lastSeenAt to the newest fixture row's time (not "now"), with a
+            // small tolerance for DB round-tripping.
+            expect(Math.abs(new Date(skew.lastSeenAt).getTime() - newestEventTime.getTime())).toBeLessThan(
+                5000,
+            );
+        });
+
+        it('ignores skew events older than 24h', async () => {
+            await db
+                .insertInto('metering_events')
+                .values({
+                    organization_id: testOrganization.id,
+                    project_id: testProject.id,
+                    type: 'ingestion.timestamp_skew',
+                    quantity: 99,
+                    metadata: { maxPastMs: 97200000, maxFutureMs: 0 },
+                    time: new Date(Date.now() - 25 * 60 * 60 * 1000),
+                })
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.json()).toEqual({ skew: null });
+        });
+
+        it('does not leak skew from another organization', async () => {
+            // otherOrgProjectId belongs to an org the test user is not a member of.
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${otherOrgProjectId}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(404);
+        });
+
+        it('reads the exact keys a real ingest writes (writer/reader contract)', async () => {
+            // #279 repro: a log ~27h in the past, past the 24h skew threshold.
+            const skewedTime = new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString();
+            const ingestResult = await ingestionService.ingestLogs(
+                [{ time: skewedTime, service: 'ubuntu', level: 'critical', message: 'skewed log' }],
+                testProject.id,
+            );
+            expect(ingestResult.received).toBe(1);
+            expect(ingestResult.rejected).toEqual([]);
+
+            // Force the buffered metering event through to the DB rather than
+            // waiting for the recorder's interval flush.
+            await meteringRecorder.flush();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.count24h).toBe(1);
+            expect(skew.maxPastMs).toBeGreaterThan(24 * 60 * 60 * 1000);
+
+            // Required invariant: a skewed log is stored, never rejected.
+            const storedLog = await db
+                .selectFrom('logs')
+                .selectAll()
+                .where('project_id', '=', testProject.id)
+                .where('message', '=', 'skewed log')
+                .executeTakeFirst();
+            expect(storedLog).toBeDefined();
+        });
+
+        it('takes the numeric max of maxPastMs, not the lexicographic (text) max', async () => {
+            // "9500000" > "10000000" as text (compares '9' vs '1' first), but
+            // 10000000 is the larger number. A MAX() over uncasted metadata->>'x'
+            // text would wrongly report 9500000 here.
+            await db
+                .insertInto('metering_events')
+                .values([
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 1,
+                        metadata: { maxPastMs: 9500000, maxFutureMs: 0 },
+                        time: new Date(Date.now() - 60 * 60 * 1000),
+                    },
+                    {
+                        organization_id: testOrganization.id,
+                        project_id: testProject.id,
+                        type: 'ingestion.timestamp_skew',
+                        quantity: 1,
+                        metadata: { maxPastMs: 10000000, maxFutureMs: 0 },
+                        time: new Date(Date.now() - 30 * 60 * 1000),
+                    },
+                ])
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/projects/${testProject.id}/ingestion-health`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const { skew } = response.json();
+            expect(skew.maxPastMs).toBe(10000000);
         });
     });
 });

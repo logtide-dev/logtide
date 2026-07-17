@@ -844,6 +844,28 @@ describe('Admin Routes', () => {
             expect(body.counters24h.identifierFailed).toBe(0);
             expect(body.enrichment).toBeDefined();
         });
+
+        it('reports the timestamp skew counter', async () => {
+            await db
+                .insertInto('metering_events')
+                .values({
+                    organization_id: testOrg.id,
+                    project_id: testProject.id,
+                    type: 'ingestion.timestamp_skew',
+                    quantity: 7,
+                    metadata: { maxPastMs: 97200000, maxFutureMs: 0 },
+                })
+                .execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: '/api/v1/admin/stats/ingestion-health',
+                headers: { authorization: `Bearer ${adminToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            expect(response.json().counters24h.timestampSkew).toBe(7);
+        });
     });
 
     describe('PATCH /api/v1/admin/users/:id/role', () => {

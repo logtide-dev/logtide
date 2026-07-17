@@ -12,6 +12,9 @@
   import TopServicesWidget from '$lib/components/dashboard/TopServicesWidget.svelte';
   import RecentErrorsWidget from '$lib/components/dashboard/RecentErrorsWidget.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import IngestionSkewBanner from '$lib/components/projects/IngestionSkewBanner.svelte';
+  import { projectsAPI } from '$lib/api/projects';
+  import type { ProjectSkewHealth } from '$lib/api/projects';
 
   import Activity from '@lucide/svelte/icons/activity';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
@@ -24,6 +27,7 @@
   let activity = $state<ActivityOverviewData | null>(null);
   let topServices = $state<TopService[]>([]);
   let recentErrors = $state<RecentError[]>([]);
+  let skew = $state<ProjectSkewHealth | null>(null);
   let loading = $state(true);
   let error = $state('');
   let lastLoadedKey = $state<string | null>(null);
@@ -45,17 +49,19 @@
 
     try {
       const orgId = $currentOrganization.id;
-      const [statsData, activityData, servicesData, errorsData] = await Promise.all([
+      const [statsData, activityData, servicesData, errorsData, healthData] = await Promise.all([
         dashboardAPI.getStats(orgId, projectId),
         dashboardAPI.getActivityOverview(orgId, projectId),
         dashboardAPI.getTopServices(orgId, projectId),
         dashboardAPI.getRecentErrors(orgId, projectId),
+        projectsAPI.getIngestionHealth(projectId).catch(() => ({ skew: null })),
       ]);
 
       stats = statsData;
       activity = activityData;
       topServices = servicesData;
       recentErrors = errorsData;
+      skew = healthData.skew;
 
       lastLoadedKey = `${orgId}-${projectId}`;
     } catch (e) {
@@ -76,6 +82,7 @@
       activity = null;
       topServices = [];
       recentErrors = [];
+      skew = null;
       lastLoadedKey = null;
       return;
     }
@@ -162,6 +169,10 @@
 </svelte:head>
 
 <div class="space-y-6">
+  {#if !loading && !error}
+    <IngestionSkewBanner {skew} />
+  {/if}
+
   {#if loading}
     <div class="flex items-center justify-center py-24">
       <Spinner />

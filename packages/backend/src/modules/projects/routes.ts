@@ -158,6 +158,28 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Get project ingestion health (#279: clock skew warning surface)
+  fastify.get('/:id/ingestion-health', async (request: any, reply) => {
+    try {
+      const { id } = projectIdSchema.parse(request.params);
+
+      // Access control + org scoping: getProjectById joins organization_members
+      // on the caller, so a project outside the caller's orgs reads as 404.
+      const project = await projectsService.getProjectById(id, request.user.id);
+      if (!project) {
+        return reply.status(404).send({ error: 'Project not found' });
+      }
+
+      const health = await projectsService.getIngestionHealth(project.organizationId, id);
+      return reply.send(health);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Invalid project ID' });
+      }
+      throw error;
+    }
+  });
+
   // Restore a soft-deleted project
   fastify.post('/:id/restore', async (request: any, reply) => {
     try {

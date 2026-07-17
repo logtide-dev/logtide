@@ -16,6 +16,13 @@ export interface UpdateProjectInput {
   statusPagePassword?: string;
 }
 
+export interface ProjectSkewHealth {
+  count24h: number;
+  maxPastMs: number;
+  maxFutureMs: number;
+  lastSeenAt: string;
+}
+
 export class ProjectsAPI {
   constructor(private getToken: () => string | null) {}
 
@@ -76,6 +83,16 @@ export class ProjectsAPI {
 
     if (!response.ok) {
       throw new Error('Failed to fetch project capabilities');
+    }
+
+    return response.json();
+  }
+
+  async getIngestionHealth(id: string): Promise<{ skew: ProjectSkewHealth | null }> {
+    const response = await this.request(`/projects/${id}/ingestion-health`);
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch project ingestion health');
     }
 
     return response.json();

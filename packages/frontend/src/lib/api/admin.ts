@@ -390,6 +390,7 @@ export interface IngestionHealthStats {
         detectionEnqueueFailed: number;
         exceptionEnqueueFailed: number;
         identifierFailed: number;
+        timestampSkew: number;
     };
     enrichment: {
         ipReputation: EnrichmentSourceStatus & { totalIps: number };
