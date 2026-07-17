@@ -3,7 +3,9 @@
   import Clock from '@lucide/svelte/icons/clock';
   import type { ProjectSkewHealth } from '$lib/api/projects';
 
-  let { skew }: { skew: ProjectSkewHealth | null } = $props();
+  export type SkewSignal = 'logs' | 'spans' | 'metrics';
+
+  let { skew, signal }: { skew: ProjectSkewHealth | null; signal: SkewSignal } = $props();
 
   const show = $derived(!!skew && skew.count24h > 0);
 
@@ -26,9 +28,10 @@
         : `${humanize(skew.maxFutureMs)} ahead of the server clock`,
   );
 
-  // How long ago the most recent skewed log arrived. Relative phrasing avoids a
-  // locale-dependent absolute timestamp and tells the user whether this is still
-  // happening or they already fixed it and are looking at the tail of the window.
+  // How long ago the most recent skewed record arrived. Relative phrasing avoids
+  // a locale-dependent absolute timestamp and tells the user whether this is
+  // still happening or they already fixed it and are looking at the tail of the
+  // window.
   function timeAgo(iso: string): string {
     const diffMs = Date.now() - new Date(iso).getTime();
     const minutes = Math.floor(diffMs / 60000);
@@ -43,24 +46,59 @@
   }
 
   const lastSeen = $derived(!skew ? '' : timeAgo(skew.lastSeenAt));
+
+  const NOUN: Record<SkewSignal, { singular: string; plural: string }> = {
+    logs: { singular: 'log', plural: 'logs' },
+    spans: { singular: 'span', plural: 'spans' },
+    metrics: { singular: 'metric', plural: 'metrics' },
+  };
+  const noun = $derived(!skew ? '' : skew.count24h === 1 ? NOUN[signal].singular : NOUN[signal].plural);
+
+  const TITLE: Record<SkewSignal, string> = {
+    logs: 'Logs are arriving with an out-of-range timestamp',
+    spans: 'Spans are arriving with an out-of-range timestamp',
+    metrics: 'Metrics are arriving with an out-of-range timestamp',
+  };
 </script>
 
 {#if show && skew}
   <Alert class="border-amber-500/50 text-amber-700 dark:text-amber-400 [&>svg]:text-amber-600">
     <Clock class="h-4 w-4" />
-    <AlertTitle>Logs are arriving with an out-of-range timestamp</AlertTitle>
+    <AlertTitle>{TITLE[signal]}</AlertTitle>
     <AlertDescription>
-      <p>
-        In the last 24 hours, {skew.count24h.toLocaleString('en-US')}
-        {skew.count24h === 1 ? 'log' : 'logs'} arrived with a timestamp up to {direction}.
-        They are stored and searchable, but threshold alert rules only count logs inside their
-        time window, so these logs cannot trigger an alert.
-      </p>
-      <p class="mt-2">
-        This usually means the shipper is sending a <code>time</code> field that does not match
-        the current instant. Omitting the field entirely makes LogTide use the server ingestion
-        time instead.
-      </p>
+      {#if signal === 'logs'}
+        <p>
+          In the last 24 hours, {skew.count24h.toLocaleString('en-US')}
+          {noun} arrived with a timestamp up to {direction}.
+          They are stored and searchable, but threshold alert rules only count logs inside their
+          time window, so these logs cannot trigger an alert.
+        </p>
+        <p class="mt-2">
+          This usually means the shipper is sending a <code>time</code> field that does not match
+          the current instant. Omitting the field entirely makes LogTide use the server ingestion
+          time instead.
+        </p>
+      {:else if signal === 'spans'}
+        <p>
+          In the last 24 hours, {skew.count24h.toLocaleString('en-US')}
+          {noun} ended with a timestamp up to {direction}.
+          They are stored, but they fall outside the time windows trace views use, so these
+          spans will not appear there for that period.
+        </p>
+        <p class="mt-2">
+          This usually means a clock or exporter timestamp problem on the sending host.
+        </p>
+      {:else}
+        <p>
+          In the last 24 hours, {skew.count24h.toLocaleString('en-US')}
+          {noun} arrived with a timestamp up to {direction}.
+          They are stored, but dashboards only show data points inside their time window, so
+          these metrics will not appear in dashboards for that period.
+        </p>
+        <p class="mt-2">
+          This usually means a clock or exporter timestamp problem on the sending host.
+        </p>
+      {/if}
       <p class="mt-2 text-xs text-muted-foreground">
         Most recent at {lastSeen}.
       </p>

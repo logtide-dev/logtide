@@ -23,6 +23,12 @@ export interface ProjectSkewHealth {
   lastSeenAt: string;
 }
 
+export interface ProjectSkewHealthMap {
+  logs: ProjectSkewHealth | null;
+  spans: ProjectSkewHealth | null;
+  metrics: ProjectSkewHealth | null;
+}
+
 export class ProjectsAPI {
   constructor(private getToken: () => string | null) {}
 
@@ -88,7 +94,7 @@ export class ProjectsAPI {
     return response.json();
   }
 
-  async getIngestionHealth(id: string): Promise<{ skew: ProjectSkewHealth | null }> {
+  async getIngestionHealth(id: string): Promise<{ skew: ProjectSkewHealthMap }> {
     const response = await this.request(`/projects/${id}/ingestion-health`);
 
     if (!response.ok) {
