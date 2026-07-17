@@ -494,6 +494,9 @@ describe('Projects Routes', () => {
         });
 
         it('aggregates skew events from the last 24h', async () => {
+            const olderEventTime = new Date(Date.now() - 60 * 60 * 1000);
+            const newestEventTime = new Date(Date.now() - 30 * 60 * 1000);
+
             await db
                 .insertInto('metering_events')
                 .values([
@@ -503,7 +506,7 @@ describe('Projects Routes', () => {
                         type: 'ingestion.timestamp_skew',
                         quantity: 4,
                         metadata: { maxPastMs: 97200000, maxFutureMs: 0 },
-                        time: new Date(Date.now() - 60 * 60 * 1000),
+                        time: olderEventTime,
                     },
                     {
                         organization_id: testOrganization.id,
@@ -511,7 +514,7 @@ describe('Projects Routes', () => {
                         type: 'ingestion.timestamp_skew',
                         quantity: 6,
                         metadata: { maxPastMs: 90000000, maxFutureMs: 600000 },
-                        time: new Date(Date.now() - 30 * 60 * 1000),
+                        time: newestEventTime,
                     },
                 ])
                 .execute();
@@ -527,7 +530,11 @@ describe('Projects Routes', () => {
             expect(skew.count24h).toBe(10);
             expect(skew.maxPastMs).toBe(97200000); // worst across events, not last
             expect(skew.maxFutureMs).toBe(600000);
-            expect(new Date(skew.lastSeenAt).getTime()).toBeGreaterThan(Date.now() - 31 * 60 * 1000);
+            // Pins lastSeenAt to the newest fixture row's time (not "now"), with a
+            // small tolerance for DB round-tripping.
+            expect(Math.abs(new Date(skew.lastSeenAt).getTime() - newestEventTime.getTime())).toBeLessThan(
+                5000,
+            );
         });
 
         it('ignores skew events older than 24h', async () => {
