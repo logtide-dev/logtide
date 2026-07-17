@@ -155,11 +155,19 @@ export class TracesService {
     // maximum alert time_window, so past it no rule can ever match. No alert rules
     // run over spans, so there is no equivalent statement; the harm is weaker
     // (invisible in trace view default time windows). Reused for consistency.
+    //
+    // Accepted limitation: a collector draining a multi-day persistent queue, or an
+    // offline edge agent, produces genuinely old end_time with a correct clock and
+    // will be flagged the same as real skew. Same accepted equivalence class as log
+    // backfill; we warn rather than reject because we cannot tell them apart.
     const spanSkewTracker = createSkewTracker(Date.now());
     for (const span of spansToStore) {
       spanSkewTracker.observe(span.endTime);
     }
     const spanSkew = spanSkewTracker.summary();
+
+    const result = await reservoir.ingestSpans(spansToStore);
+
     if (spanSkew && organizationId) {
       metering.record({
         type: 'ingestion.span_timestamp_skew',
@@ -169,8 +177,6 @@ export class TracesService {
         metadata: { maxPastMs: spanSkew.maxPastMs, maxFutureMs: spanSkew.maxFutureMs },
       });
     }
-
-    const result = await reservoir.ingestSpans(spansToStore);
 
     // Metering: record ingested span count (fire-and-forget; activates
     // the tracing.max_spans_monthly quota in the capability system).

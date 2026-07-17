@@ -316,6 +316,43 @@ describe('TracesService', () => {
       expect(storedSpan).toBeDefined();
     });
 
+    it('counts a span whose end_time is far in the future', async () => {
+      const recordSpy = vi.spyOn(metering, 'record');
+
+      const traceId = crypto.randomBytes(16).toString('hex');
+      const futureEnd = new Date(Date.now() + 60 * 60 * 1000);
+
+      const spans: TransformedSpan[] = [
+        {
+          trace_id: traceId,
+          span_id: crypto.randomBytes(8).toString('hex'),
+          service_name: 'future-service',
+          operation_name: 'future-op',
+          start_time: new Date(futureEnd.getTime() - 50).toISOString(),
+          end_time: futureEnd.toISOString(),
+          duration_ms: 50,
+        },
+      ];
+
+      const result = await service.ingestSpans(
+        spans,
+        new Map(),
+        context.project.id,
+        context.organization.id,
+      );
+
+      expect(result).toBe(1);
+
+      const skewCall = recordSpy.mock.calls.find(
+        ([e]) => e.type === 'ingestion.span_timestamp_skew',
+      );
+      expect(skewCall).toBeDefined();
+      expect(skewCall![0].quantity).toBe(1);
+      expect((skewCall![0].metadata as { maxFutureMs: number }).maxFutureMs).toBeGreaterThan(
+        5 * 60 * 1000,
+      );
+    });
+
     it('does not count a long-running span (old start_time, fresh end_time)', async () => {
       const recordSpy = vi.spyOn(metering, 'record');
 
