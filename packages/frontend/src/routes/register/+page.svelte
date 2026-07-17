@@ -120,7 +120,14 @@
 
     try {
       const response = await authAPI.register({ name, email, password });
-      await handleAuthSuccess(response, true);
+      if (!response.session) {
+        // 201 without a session: the account exists but auto-login failed
+        // transiently, so send the user to the login page instead of crashing.
+        toastStore.success('Your account has been created. Please sign in.');
+        goto(`/login${redirectUrl ? `?redirect=${encodeURIComponent(redirectUrl)}` : ''}`);
+        return;
+      }
+      await handleAuthSuccess({ ...response, session: response.session }, true);
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Registration failed';
       error = errorMsg;

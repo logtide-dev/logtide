@@ -71,6 +71,53 @@ describe('auth audit records', () => {
     expect(row.actor_id).toBeNull();
     expect(row.user_email).toBe('fail-audit@example.com');
     expect((row.metadata as any)?.method).toBe('local');
+    expect((row.metadata as any)?.reason).toBe('invalid_credentials');
+  });
+
+  it('disabled-account login with correct password produces auth.login_failed row', async () => {
+    await createTestUser({ email: 'disabled-audit@example.com', password: 'password123', disabled: true });
+
+    await request(app.server)
+      .post('/api/v1/auth/login')
+      .send({ email: 'disabled-audit@example.com', password: 'password123' })
+      .expect(401);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'auth.login_failed')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.outcome).toBe('failure');
+    expect(row.actor_id).toBeNull();
+    expect(row.user_email).toBe('disabled-audit@example.com');
+    expect((row.metadata as any)?.method).toBe('local');
+    expect((row.metadata as any)?.reason).toBe('account_disabled');
+  });
+
+  it('local login against an SSO-only account produces auth.login_failed row', async () => {
+    await createTestUser({ email: 'sso-audit@example.com', password: null });
+
+    await request(app.server)
+      .post('/api/v1/auth/login')
+      .send({ email: 'sso-audit@example.com', password: 'anypassword' })
+      .expect(401);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'auth.login_failed')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.outcome).toBe('failure');
+    expect(row.actor_id).toBeNull();
+    expect(row.user_email).toBe('sso-audit@example.com');
+    expect((row.metadata as any)?.method).toBe('local');
+    expect((row.metadata as any)?.reason).toBe('sso_required');
   });
 
   it('zod-invalid login payload produces NO auth.login_failed row', async () => {

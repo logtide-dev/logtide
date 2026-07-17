@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 import { usersService } from './service.js';
 import { authenticationService } from '../auth/authentication-service.js';
 import { config } from '../../config/index.js';
@@ -65,8 +67,16 @@ export async function usersRoutes(fastify: FastifyInstance) {
             password: body.password,
           });
           session = result.session;
-        } catch {
-          // transient auto-login failure – user was created, session was not
+        } catch (autoLoginError) {
+          // The user row is already committed, so this stays a 201 without a
+          // session (recoverable via /login), but the cause must be visible to
+          // operators: a persistent failure here silently degrades every signup.
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('error', '[Auth] Post-registration auto-login failed', {
+              userId: user.id,
+              error: autoLoginError instanceof Error ? autoLoginError.message : String(autoLoginError),
+            });
+          }
         }
 
         await auditLogService.record({
@@ -154,22 +164,28 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
 
         if (error instanceof Error) {
-          const isCredentialError = error.message === 'Invalid email or password';
-          const isAuthError = isCredentialError ||
-            error.message === 'Please log in using your organization SSO' ||
-            error.message === 'This account has been disabled';
+          const authFailureReasons: Record<string, string> = {
+            'Invalid email or password': 'invalid_credentials',
+            'Please log in using your organization SSO': 'sso_required',
+            'This account has been disabled': 'account_disabled',
+          };
+          // hasOwn guard: a plain-object lookup would also match inherited
+          // Object.prototype keys (e.g. an error whose message is 'toString')
+          const reason = Object.hasOwn(authFailureReasons, error.message)
+            ? authFailureReasons[error.message]
+            : undefined;
 
-          if (isAuthError) {
-            if (isCredentialError) {
-              // parsedBody is defined here (zod succeeded before the service threw)
-              await auditLogService.record({
-                action: 'auth.login_failed',
-                outcome: 'failure',
-                organizationId: null,
-                actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
-                metadata: { method: 'local' },
-              });
-            }
+          if (reason) {
+            // parsedBody is defined here (zod succeeded before the service threw).
+            // The reason lands only in the audit log, never in the HTTP response,
+            // so recording it does not weaken the anti-enumeration behavior.
+            await auditLogService.record({
+              action: 'auth.login_failed',
+              outcome: 'failure',
+              organizationId: null,
+              actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
+              metadata: { method: 'local', reason },
+            });
             return reply.status(401).send({
               error: error.message,
             });

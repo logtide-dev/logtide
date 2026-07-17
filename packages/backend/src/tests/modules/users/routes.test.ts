@@ -1,9 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { hub } from '@logtide/core';
 import { db } from '../../../database/index.js';
 import { usersRoutes } from '../../../modules/users/routes.js';
 import { usersService } from '../../../modules/users/service.js';
 import { settingsService } from '../../../modules/settings/service.js';
+import { authenticationService } from '../../../modules/auth/authentication-service.js';
+
+// Mock internal observability so the auto-login failure path is fully
+// exercised (isInternalLoggingEnabled is env-driven and off in tests)
+vi.mock('@logtide/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@logtide/core')>()),
+  hub: { captureLog: vi.fn() },
+}));
+vi.mock('../../../utils/internal-logger.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/internal-logger.js')>()),
+  isInternalLoggingEnabled: () => true,
+}));
 
 // Mock settingsService
 vi.mock('../../../modules/settings/service.js', () => ({
@@ -71,6 +84,42 @@ describe('Users Routes', () => {
       expect(body.user.email).toBe('newuser@example.com');
       expect(body.user.name).toBe('New User');
       expect(body.session.token).toBeDefined();
+    });
+
+    it('returns 201 without a session and logs when auto-login fails', async () => {
+      const authSpy = vi.spyOn(authenticationService, 'authenticateWithProvider')
+        .mockRejectedValueOnce(new Error('session backend unavailable'));
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/register',
+        payload: {
+          email: 'no-session@example.com',
+          password: 'password123',
+          name: 'No Session',
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      const body = JSON.parse(response.body);
+      expect(body.user.email).toBe('no-session@example.com');
+      expect(body.session).toBeUndefined();
+
+      // The user row must exist and be able to log in normally afterwards
+      const session = await usersService.login({
+        email: 'no-session@example.com',
+        password: 'password123',
+      });
+      expect(session.token).toBeDefined();
+
+      // The swallowed failure must be visible to operators
+      expect(hub.captureLog).toHaveBeenCalledWith(
+        'error',
+        '[Auth] Post-registration auto-login failed',
+        expect.objectContaining({ error: 'session backend unavailable' })
+      );
+
+      authSpy.mockRestore();
     });
 
     it('should return 400 for invalid email', async () => {
