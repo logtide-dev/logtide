@@ -28,7 +28,10 @@ describe('AuthenticationService', () => {
         await db.deleteFrom('projects').execute();
         await db.deleteFrom('organizations').execute();
         await db.deleteFrom('users').execute();
-        await db.deleteFrom('auth_providers').execute();
+        // Keep the migration-seeded 'local' provider: POST /auth/login and
+        // /auth/register resolve it through the provider registry, so wiping
+        // it breaks every login-based test file that runs after this one.
+        await db.deleteFrom('auth_providers').where('slug', '!=', 'local').execute();
     });
 
     afterAll(async () => {
@@ -41,7 +44,7 @@ describe('AuthenticationService', () => {
         await db.deleteFrom('projects').execute();
         await db.deleteFrom('organizations').execute();
         await db.deleteFrom('users').execute();
-        await db.deleteFrom('auth_providers').execute();
+        await db.deleteFrom('auth_providers').where('slug', '!=', 'local').execute();
     });
 
     describe('authenticateWithProvider', () => {
@@ -520,18 +523,19 @@ describe('AuthenticationService', () => {
 
         it('should throw error when identity not found', async () => {
             const user = await createTestUser();
+            const providerAId = crypto.randomUUID();
+            const providerBId = crypto.randomUUID();
 
             // Create two identities so we can try to unlink
+            // (slugs must not collide with the migration-seeded 'local' provider)
             await db.insertInto('auth_providers').values([
-                { id: crypto.randomUUID(), type: 'local', name: 'Local', slug: 'local', enabled: true, config: {} },
-                { id: crypto.randomUUID(), type: 'oidc', name: 'OIDC', slug: 'oidc', enabled: true, config: {} },
+                { id: providerAId, type: 'local', name: 'Local', slug: 'local-notfound', enabled: true, config: {} },
+                { id: providerBId, type: 'oidc', name: 'OIDC', slug: 'oidc-notfound', enabled: true, config: {} },
             ]).execute();
 
-            const providers = await db.selectFrom('auth_providers').selectAll().execute();
-
             await db.insertInto('user_identities').values([
-                { user_id: user.id, provider_id: providers[0].id, provider_user_id: user.id, metadata: {} },
-                { user_id: user.id, provider_id: providers[1].id, provider_user_id: 'ext-id', metadata: {} },
+                { user_id: user.id, provider_id: providerAId, provider_user_id: user.id, metadata: {} },
+                { user_id: user.id, provider_id: providerBId, provider_user_id: 'ext-id', metadata: {} },
             ]).execute();
 
             // Use a valid UUID format that doesn't exist

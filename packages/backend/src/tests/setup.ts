@@ -25,7 +25,25 @@ beforeAll(async () => {
         console.log('Running database migrations...');
         await migrateToLatest();
         console.log('Database migrations completed');
-        
+
+        // Re-seed the 'local' auth provider (migration 010 seeds it, but tracked
+        // migrations never re-run, so a test file that deletes the row would
+        // otherwise leave the whole database without local login forever).
+        await db
+            .insertInto('auth_providers')
+            .values({
+                type: 'local',
+                name: 'Email & Password',
+                slug: 'local',
+                enabled: true,
+                is_default: true,
+                display_order: 0,
+                icon: 'mail',
+                config: {},
+            })
+            .onConflict((oc) => oc.column('slug').doNothing())
+            .execute();
+
         try {
             const dbUrl = process.env.DATABASE_URL;
             if (dbUrl) {

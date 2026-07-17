@@ -58,7 +58,10 @@ describe('External Auth Routes', () => {
         await db.deleteFrom('projects').execute();
         await db.deleteFrom('organizations').execute();
         await db.deleteFrom('users').execute();
-        await db.deleteFrom('auth_providers').execute();
+        // Keep the migration-seeded 'local' provider: POST /auth/login and
+        // /auth/register resolve it through the provider registry, so wiping
+        // it breaks every login-based test file that runs after this one.
+        await db.deleteFrom('auth_providers').where('slug', '!=', 'local').execute();
     });
 
     afterAll(async () => {
