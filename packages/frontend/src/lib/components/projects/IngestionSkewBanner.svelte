@@ -25,6 +25,24 @@
         ? `${humanize(skew.maxPastMs)} in the past`
         : `${humanize(skew.maxFutureMs)} ahead of the server clock`,
   );
+
+  // How long ago the most recent skewed log arrived. Relative phrasing avoids a
+  // locale-dependent absolute timestamp and tells the user whether this is still
+  // happening or they already fixed it and are looking at the tail of the window.
+  function timeAgo(iso: string): string {
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes < 1) {
+      return 'just now';
+    }
+    if (minutes < 60) {
+      return `${minutes.toLocaleString('en-US')} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+    }
+    const hours = Math.floor(diffMs / 3600000);
+    return `${hours.toLocaleString('en-US')} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  }
+
+  const lastSeen = $derived(!skew ? '' : timeAgo(skew.lastSeenAt));
 </script>
 
 {#if show && skew}
@@ -42,6 +60,9 @@
         This usually means the shipper is sending a <code>time</code> field that does not match
         the current instant. Omitting the field entirely makes LogTide use the server ingestion
         time instead.
+      </p>
+      <p class="mt-2 text-xs text-muted-foreground">
+        Most recent at {lastSeen}.
       </p>
     </AlertDescription>
   </Alert>
