@@ -54,7 +54,9 @@
         dashboardAPI.getActivityOverview(orgId, projectId),
         dashboardAPI.getTopServices(orgId, projectId),
         dashboardAPI.getRecentErrors(orgId, projectId),
-        projectsAPI.getIngestionHealth(projectId).catch(() => ({ skew: null })),
+        projectsAPI
+          .getIngestionHealth(projectId)
+          .catch(() => ({ skew: { logs: null, spans: null, metrics: null } })),
       ]);
 
       stats = statsData;
