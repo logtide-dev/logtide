@@ -1,5 +1,7 @@
 import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
+import { metering } from '../metering/index.js';
+import { createSkewTracker } from '../ingestion/skew.js';
 import type {
   MetricRecord,
   AggregationInterval,
@@ -14,13 +16,33 @@ export class MetricsService {
   ): Promise<number> {
     if (records.length === 0) return 0;
 
-    const enriched = records.map((r) => ({
-      ...r,
-      projectId,
-      organizationId,
-    }));
+    // Clock skew (span-metric-skew): observed on the data point timestamp
+    // (r.time), inside the same map as the enrichment above. No PII masking
+    // exists on this path, so there is nothing to order against. 24h is a
+    // judgement call (see traces/service.ts ingestSpans for the full rationale),
+    // not a derivation: the harm here is a metric invisible in dashboard windows.
+    const metricSkewTracker = createSkewTracker(Date.now());
+    const enriched = records.map((r) => {
+      metricSkewTracker.observe(r.time);
+      return {
+        ...r,
+        projectId,
+        organizationId,
+      };
+    });
 
     const result = await reservoir.ingestMetrics(enriched);
+
+    const metricSkew = metricSkewTracker.summary();
+    if (metricSkew && organizationId) {
+      metering.record({
+        type: 'ingestion.metric_timestamp_skew',
+        quantity: metricSkew.count,
+        organizationId,
+        projectId,
+        metadata: { maxPastMs: metricSkew.maxPastMs, maxFutureMs: metricSkew.maxFutureMs },
+      });
+    }
 
     // Mark the project as having metrics (debounced, fire-and-forget)
     projectsService.markHasData(projectId, 'metrics').catch(() => {});

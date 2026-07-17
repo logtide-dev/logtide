@@ -20,6 +20,14 @@ vi.mock('../../../database/reservoir.js', () => ({
   },
 }));
 
+const mockMeteringRecord = vi.fn();
+
+vi.mock('../../../modules/metering/index.js', () => ({
+  metering: {
+    record: (...args: unknown[]) => mockMeteringRecord(...args),
+  },
+}));
+
 import { MetricsService } from '../../../modules/metrics/service.js';
 
 describe('MetricsService', () => {
@@ -99,6 +107,90 @@ describe('MetricsService', () => {
       const result = await service.ingestMetrics(records, 'proj-1', 'org-1');
 
       expect(result).toBe(5);
+    });
+
+    describe('clock skew detection (span-metric-skew)', () => {
+      it('counts a metric with a past-skewed time', async () => {
+        mockIngestMetrics.mockResolvedValueOnce({ ingested: 1 });
+
+        const skewedTime = new Date(Date.now() - 27 * 60 * 60 * 1000);
+        const records = [
+          {
+            time: skewedTime,
+            metricName: 'old_metric',
+            metricType: 'gauge' as const,
+            value: 1,
+            serviceName: 'svc',
+            organizationId: '',
+            projectId: '',
+          },
+        ];
+
+        const result = await service.ingestMetrics(records, 'proj-1', 'org-1');
+
+        // The skewed metric is still written, not rejected.
+        expect(result).toBe(1);
+        expect(mockIngestMetrics).toHaveBeenCalledOnce();
+
+        const skewCall = mockMeteringRecord.mock.calls.find(
+          ([e]) => e.type === 'ingestion.metric_timestamp_skew',
+        );
+        expect(skewCall).toBeDefined();
+        expect(skewCall![0].quantity).toBe(1);
+        expect(skewCall![0].organizationId).toBe('org-1');
+        expect(skewCall![0].projectId).toBe('proj-1');
+        expect((skewCall![0].metadata as { maxPastMs: number }).maxPastMs).toBeGreaterThan(
+          24 * 60 * 60 * 1000,
+        );
+      });
+
+      it('counts a metric with a future-skewed time', async () => {
+        mockIngestMetrics.mockResolvedValueOnce({ ingested: 1 });
+
+        const futureTime = new Date(Date.now() + 10 * 60 * 1000);
+        const records = [
+          {
+            time: futureTime,
+            metricName: 'future_metric',
+            metricType: 'gauge' as const,
+            value: 1,
+            serviceName: 'svc',
+            organizationId: '',
+            projectId: '',
+          },
+        ];
+
+        await service.ingestMetrics(records, 'proj-1', 'org-1');
+
+        const skewCall = mockMeteringRecord.mock.calls.find(
+          ([e]) => e.type === 'ingestion.metric_timestamp_skew',
+        );
+        expect(skewCall).toBeDefined();
+        expect(skewCall![0].quantity).toBe(1);
+        expect((skewCall![0].metadata as { maxFutureMs: number }).maxFutureMs).toBeGreaterThan(0);
+      });
+
+      it('does not count a fresh metric', async () => {
+        mockIngestMetrics.mockResolvedValueOnce({ ingested: 1 });
+
+        const records = [
+          {
+            time: new Date(),
+            metricName: 'fresh_metric',
+            metricType: 'gauge' as const,
+            value: 1,
+            serviceName: 'svc',
+            organizationId: '',
+            projectId: '',
+          },
+        ];
+
+        await service.ingestMetrics(records, 'proj-1', 'org-1');
+
+        expect(
+          mockMeteringRecord.mock.calls.find(([e]) => e.type === 'ingestion.metric_timestamp_skew'),
+        ).toBeUndefined();
+      });
     });
   });
 
