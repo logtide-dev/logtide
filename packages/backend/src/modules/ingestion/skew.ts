@@ -4,12 +4,22 @@
  * A log whose client-supplied `time` sits far from the server clock is stored
  * and is visible in the UI, but threshold alert rules count logs in
  * [now - time_window, now] and so can never see it. The largest configurable
- * window is 24h (alerts/routes.ts), which is where the past default comes from:
- * past that point, no threshold rule in the product can match the log.
+ * window is 24h (alerts/routes.ts), which is where the past threshold comes
+ * from: past that point, no threshold rule in the product can match the log.
  *
  * Observation only. Skewed records are written unchanged.
+ *
+ * Always on: these thresholds are load-bearing product invariants, not
+ * tunable knobs, so they are hardcoded rather than read from config. There is
+ * no "disable" state.
  */
-import { config } from '../../config/index.js';
+
+/** 24h: the largest alert `time_window` (alerts/routes.ts). Past this point,
+ * no threshold rule in the product can ever count the log. Derived, not guessed. */
+const PAST_THRESHOLD_MS = 86400000;
+
+/** 5m: room for NTP jitter. */
+const FUTURE_THRESHOLD_MS = 300000;
 
 export interface SkewSummary {
   /** Number of skewed records in the batch. */
@@ -30,9 +40,6 @@ export interface SkewTracker {
  * large batch is measured against one instant, not a drifting one.
  */
 export function createSkewTracker(now: number): SkewTracker {
-  const pastMs = config.INGESTION_SKEW_PAST_MS;
-  const futureMs = config.INGESTION_SKEW_FUTURE_MS;
-
   let count = 0;
   let maxPastMs = 0;
   let maxFutureMs = 0;
@@ -46,13 +53,13 @@ export function createSkewTracker(now: number): SkewTracker {
       // problem and counting it here would make this signal dishonest.
       const delta = now - time.getTime();
 
-      if (pastMs > 0 && delta > pastMs) {
+      if (delta > PAST_THRESHOLD_MS) {
         count++;
         if (delta > maxPastMs) maxPastMs = delta;
         return;
       }
 
-      if (futureMs > 0 && delta < -futureMs) {
+      if (delta < -FUTURE_THRESHOLD_MS) {
         count++;
         const ahead = -delta;
         if (ahead > maxFutureMs) maxFutureMs = ahead;

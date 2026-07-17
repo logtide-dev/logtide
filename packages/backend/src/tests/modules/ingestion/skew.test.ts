@@ -1,21 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// The tracker reads thresholds from config at construction, so config is mocked
-// per test rather than importing the real .env.test values.
-const mockConfig = { INGESTION_SKEW_PAST_MS: 86400000, INGESTION_SKEW_FUTURE_MS: 300000 };
-vi.mock('../../../config/index.js', () => ({ config: mockConfig }));
-
-const { createSkewTracker } = await import('../../../modules/ingestion/skew.js');
+import { describe, it, expect } from 'vitest';
+import { createSkewTracker } from '../../../modules/ingestion/skew.js';
 
 const NOW = new Date('2026-07-17T12:00:00.000Z').getTime();
 const ago = (ms: number) => new Date(NOW - ms);
 
 describe('createSkewTracker', () => {
-  beforeEach(() => {
-    mockConfig.INGESTION_SKEW_PAST_MS = 86400000;
-    mockConfig.INGESTION_SKEW_FUTURE_MS = 300000;
-  });
-
   it('returns null when nothing is skewed', () => {
     const t = createSkewTracker(NOW);
     t.observe(ago(0));
@@ -54,20 +43,6 @@ describe('createSkewTracker', () => {
   it('does not count a missing time', () => {
     const t = createSkewTracker(NOW);
     t.observe(undefined);
-    expect(t.summary()).toBeNull();
-  });
-
-  it('disables past detection when the threshold is 0', () => {
-    mockConfig.INGESTION_SKEW_PAST_MS = 0;
-    const t = createSkewTracker(NOW);
-    t.observe(ago(97_200_000));
-    expect(t.summary()).toBeNull();
-  });
-
-  it('disables future detection when the threshold is 0', () => {
-    mockConfig.INGESTION_SKEW_FUTURE_MS = 0;
-    const t = createSkewTracker(NOW);
-    t.observe(ago(-600_000));
     expect(t.summary()).toBeNull();
   });
 });
