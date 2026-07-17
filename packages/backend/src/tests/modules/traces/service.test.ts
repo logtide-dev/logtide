@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { TracesService } from '../../../modules/traces/service.js';
 import { createTestContext, createTestTrace, createTestSpan, createTestLog } from '../../helpers/index.js';
 import { db } from '../../../database/index.js';
+import { metering } from '../../../modules/metering/index.js';
+import { piiMaskingService } from '../../../modules/pii-masking/service.js';
 import type { TransformedSpan, AggregatedTrace } from '../../../modules/otlp/trace-transformer.js';
 import crypto from 'crypto';
 
@@ -256,6 +258,129 @@ describe('TracesService', () => {
       expect(storedTrace?.error).toBe(true);
       // Duration should be from earliest start to latest end
       expect(storedTrace?.duration_ms).toBe(150);
+    });
+  });
+
+  // ==========================================================================
+  // ingestSpans - clock skew detection (span-metric-skew)
+  // ==========================================================================
+  describe('ingestSpans clock skew detection', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('counts a span whose end_time is far in the past', async () => {
+      const recordSpy = vi.spyOn(metering, 'record');
+
+      const traceId = crypto.randomBytes(16).toString('hex');
+      const skewedEnd = new Date(Date.now() - 27 * 60 * 60 * 1000);
+
+      const spans: TransformedSpan[] = [
+        {
+          trace_id: traceId,
+          span_id: crypto.randomBytes(8).toString('hex'),
+          service_name: 'skewed-service',
+          operation_name: 'skewed-op',
+          start_time: new Date(skewedEnd.getTime() - 50).toISOString(),
+          end_time: skewedEnd.toISOString(),
+          duration_ms: 50,
+        },
+      ];
+
+      const result = await service.ingestSpans(
+        spans,
+        new Map(),
+        context.project.id,
+        context.organization.id,
+      );
+
+      expect(result).toBe(1);
+
+      const skewCall = recordSpy.mock.calls.find(
+        ([e]) => e.type === 'ingestion.span_timestamp_skew',
+      );
+      expect(skewCall).toBeDefined();
+      expect(skewCall![0].quantity).toBe(1);
+      expect(skewCall![0].organizationId).toBe(context.organization.id);
+      expect(skewCall![0].projectId).toBe(context.project.id);
+      expect((skewCall![0].metadata as { maxPastMs: number }).maxPastMs).toBeGreaterThan(
+        24 * 60 * 60 * 1000,
+      );
+
+      // The skewed span is still written, not rejected.
+      const storedSpan = await db
+        .selectFrom('spans')
+        .selectAll()
+        .where('span_id', '=', spans[0].span_id)
+        .executeTakeFirst();
+      expect(storedSpan).toBeDefined();
+    });
+
+    it('does not count a long-running span (old start_time, fresh end_time)', async () => {
+      const recordSpy = vi.spyOn(metering, 'record');
+
+      const traceId = crypto.randomBytes(16).toString('hex');
+      const now = new Date();
+      const oldStart = new Date(now.getTime() - 27 * 60 * 60 * 1000);
+
+      const spans: TransformedSpan[] = [
+        {
+          trace_id: traceId,
+          span_id: crypto.randomBytes(8).toString('hex'),
+          service_name: 'batch-job',
+          operation_name: 'long-running-op',
+          start_time: oldStart.toISOString(),
+          end_time: now.toISOString(),
+          duration_ms: now.getTime() - oldStart.getTime(),
+        },
+      ];
+
+      const result = await service.ingestSpans(
+        spans,
+        new Map(),
+        context.project.id,
+        context.organization.id,
+      );
+
+      expect(result).toBe(1);
+
+      expect(
+        recordSpy.mock.calls.find(([e]) => e.type === 'ingestion.span_timestamp_skew'),
+      ).toBeUndefined();
+    });
+
+    it('does not count a span dropped by PII masking', async () => {
+      vi.spyOn(piiMaskingService, 'maskSpanBatch').mockResolvedValue([0]);
+      const recordSpy = vi.spyOn(metering, 'record');
+
+      const traceId = crypto.randomBytes(16).toString('hex');
+      const skewedEnd = new Date(Date.now() - 27 * 60 * 60 * 1000);
+
+      const spans: TransformedSpan[] = [
+        {
+          trace_id: traceId,
+          span_id: crypto.randomBytes(8).toString('hex'),
+          service_name: 'masked-out-service',
+          operation_name: 'masked-op',
+          start_time: new Date(skewedEnd.getTime() - 50).toISOString(),
+          end_time: skewedEnd.toISOString(),
+          duration_ms: 50,
+        },
+      ];
+
+      const result = await service.ingestSpans(
+        spans,
+        new Map(),
+        context.project.id,
+        context.organization.id,
+      );
+
+      // The masked-out span is dropped pre-storage, so nothing is ingested
+      // and it must not be counted as skew either.
+      expect(result).toBe(0);
+      expect(
+        recordSpy.mock.calls.find(([e]) => e.type === 'ingestion.span_timestamp_skew'),
+      ).toBeUndefined();
     });
   });
 
