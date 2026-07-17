@@ -66,6 +66,14 @@ const configSchema = z.object({
   METERING_FLUSH_INTERVAL_MS: z.string().default('5000').transform(Number),
   METERING_FLUSH_MAX_BUFFER: z.string().default('500').transform(Number),
 
+  // Ingestion clock skew detection (#279). A client-supplied `time` far from the
+  // server clock is stored as sent but can never be seen by a threshold alert
+  // rule, whose largest window is 24h. Detected and counted, never rejected:
+  // backfilling historical logs is legitimate. Set either to 0 to disable that
+  // direction.
+  INGESTION_SKEW_PAST_MS: z.string().default('86400000').transform(Number), // 24h: the max alert time_window
+  INGESTION_SKEW_FUTURE_MS: z.string().default('300000').transform(Number), // 5m: room for NTP jitter
+
   // Capability usage-quota evaluator (#214). Periodic job that flags over-quota orgs.
   QUOTA_EVALUATOR_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   QUOTA_EVALUATOR_INTERVAL_MS: z.string().default('60000').transform(Number),
