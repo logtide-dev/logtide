@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
+import { AuthError, AuthErrorCode } from '../auth/providers/types.js';
 import { usersService } from './service.js';
 import { authenticationService } from '../auth/authentication-service.js';
 import { config } from '../../config/index.js';
@@ -163,19 +164,19 @@ export async function usersRoutes(fastify: FastifyInstance) {
           });
         }
 
-        if (error instanceof Error) {
-          const authFailureReasons: Record<string, string> = {
-            'Invalid email or password': 'invalid_credentials',
-            'Please log in using your organization SSO': 'sso_required',
-            'This account has been disabled': 'account_disabled',
+        if (error instanceof AuthError) {
+          // Classify by the provider's typed code, not the message string, so a
+          // reword of a user-facing message can never silently turn a login
+          // failure into a 500 or drop its audit row.
+          const mapping: Partial<Record<AuthErrorCode, { status: number; reason: string }>> = {
+            [AuthErrorCode.INVALID_CREDENTIALS]: { status: 401, reason: 'invalid_credentials' },
+            [AuthErrorCode.SSO_REQUIRED]: { status: 401, reason: 'sso_required' },
+            [AuthErrorCode.USER_DISABLED]: { status: 401, reason: 'account_disabled' },
+            [AuthErrorCode.PROVIDER_UNAVAILABLE]: { status: 503, reason: 'provider_unavailable' },
           };
-          // hasOwn guard: a plain-object lookup would also match inherited
-          // Object.prototype keys (e.g. an error whose message is 'toString')
-          const reason = Object.hasOwn(authFailureReasons, error.message)
-            ? authFailureReasons[error.message]
-            : undefined;
+          const mapped = mapping[error.code];
 
-          if (reason) {
+          if (mapped) {
             // parsedBody is defined here (zod succeeded before the service threw).
             // The reason lands only in the audit log, never in the HTTP response,
             // so recording it does not weaken the anti-enumeration behavior.
@@ -184,9 +185,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
               outcome: 'failure',
               organizationId: null,
               actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
-              metadata: { method: 'local', reason },
+              metadata: { method: 'local', reason: mapped.reason },
             });
-            return reply.status(401).send({
+            return reply.status(mapped.status).send({
               error: error.message,
             });
           }

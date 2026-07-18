@@ -5,6 +5,7 @@ import { build } from '../../../server.js';
 import { truncateAllTables } from '../../helpers/index.js';
 import { createTestUser, createTestOrganization, createTestProject } from '../../helpers/factories.js';
 import { createTestSession } from '../../helpers/auth.js';
+import { providerRegistry } from '../../../modules/auth/providers/registry.js';
 import { db } from '../../../database/index.js';
 
 describe('auth audit records', () => {
@@ -134,6 +135,34 @@ describe('auth audit records', () => {
       .execute();
 
     expect(rows).toHaveLength(0);
+  });
+
+  it('login with the local provider unavailable produces 503 and a provider_unavailable row', async () => {
+    await createTestUser({ email: 'provider-down@example.com', password: 'password123' });
+
+    // Simulate the local provider being disabled/removed
+    const getProviderSpy = vi.spyOn(providerRegistry, 'getProvider').mockResolvedValueOnce(null);
+
+    await request(app.server)
+      .post('/api/v1/auth/login')
+      .send({ email: 'provider-down@example.com', password: 'password123' })
+      .expect(503);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'auth.login_failed')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.outcome).toBe('failure');
+    expect(row.actor_id).toBeNull();
+    expect(row.user_email).toBe('provider-down@example.com');
+    expect((row.metadata as any)?.method).toBe('local');
+    expect((row.metadata as any)?.reason).toBe('provider_unavailable');
+
+    getProviderSpy.mockRestore();
   });
 });
 
