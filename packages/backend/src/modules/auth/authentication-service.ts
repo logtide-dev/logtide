@@ -16,6 +16,8 @@ import type { UserProfile, SessionInfo } from '../users/service.js';
 import { settingsService } from '../settings/service.js';
 import {
   providerRegistry,
+  AuthError,
+  AuthErrorCode,
   type AuthProvider,
   type AuthenticationResult,
   type UserIdentity,
@@ -51,14 +53,20 @@ export class AuthenticationService {
     // Get provider
     const provider = await providerRegistry.getProvider(providerSlug);
     if (!provider) {
-      throw new Error(`Authentication provider '${providerSlug}' not found or disabled`);
+      throw new AuthError(
+        `Authentication provider '${providerSlug}' not found or disabled`,
+        AuthErrorCode.PROVIDER_UNAVAILABLE
+      );
     }
 
     // Authenticate with provider
     const result = await provider.authenticate(credentials);
 
     if (!result.success) {
-      throw new Error(result.error || 'Authentication failed');
+      throw new AuthError(
+        result.error || 'Authentication failed',
+        result.errorCode ?? AuthErrorCode.PROVIDER_ERROR
+      );
     }
 
     // Find or create user
@@ -171,7 +179,7 @@ export class AuthenticationService {
     // Get provider
     const provider = await providerRegistry.getProviderById(stateData.providerId);
     if (!provider) {
-      throw new Error('Authentication provider not found or disabled');
+      throw new AuthError('Authentication provider not found or disabled', AuthErrorCode.PROVIDER_UNAVAILABLE);
     }
 
     if (!provider.handleCallback) {
@@ -210,7 +218,10 @@ export class AuthenticationService {
     await CacheManager.delete(`oidc:state:${state}`);
 
     if (!result.success) {
-      throw new Error(result.error || 'Authentication failed');
+      throw new AuthError(
+        result.error || 'Authentication failed',
+        result.errorCode ?? AuthErrorCode.PROVIDER_ERROR
+      );
     }
 
     // Find or create user
@@ -257,7 +268,7 @@ export class AuthenticationService {
     if (existingIdentity) {
       // Check if user is disabled
       if (existingIdentity.disabled) {
-        throw new Error('This account has been disabled');
+        throw new AuthError('This account has been disabled', AuthErrorCode.USER_DISABLED);
       }
 
       // Update user's last login
@@ -291,7 +302,7 @@ export class AuthenticationService {
     if (existingUser) {
       // Check if user is disabled
       if (existingUser.disabled) {
-        throw new Error('This account has been disabled');
+        throw new AuthError('This account has been disabled', AuthErrorCode.USER_DISABLED);
       }
 
       // Only auto-link to a pre-existing account when the provider asserts the

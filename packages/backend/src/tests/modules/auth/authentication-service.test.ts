@@ -5,6 +5,7 @@ import { AuthenticationService } from '../../../modules/auth/authentication-serv
 import { CacheManager } from '../../../utils/cache.js';
 import { settingsService } from '../../../modules/settings/service.js';
 import * as providerRegistryModule from '../../../modules/auth/providers/registry.js';
+import { AuthErrorCode } from '../../../modules/auth/providers/types.js';
 import crypto from 'crypto';
 
 describe('AuthenticationService', () => {
@@ -48,18 +49,26 @@ describe('AuthenticationService', () => {
     });
 
     describe('authenticateWithProvider', () => {
-        it('should throw error when provider not found', async () => {
+        it('should throw AuthError with PROVIDER_UNAVAILABLE when provider not found', async () => {
             await expect(
                 authService.authenticateWithProvider('nonexistent', { email: 'test@test.com', password: 'test' })
             ).rejects.toThrow("Authentication provider 'nonexistent' not found or disabled");
+
+            await expect(
+                authService.authenticateWithProvider('nonexistent', { email: 'test@test.com', password: 'test' })
+            ).rejects.toMatchObject({ name: 'AuthError', code: AuthErrorCode.PROVIDER_UNAVAILABLE });
         });
 
-        it('should throw error when authentication fails', async () => {
+        it('should throw AuthError carrying the provider errorCode when authentication fails', async () => {
             const mockProviderId = crypto.randomUUID();
             // Create a mock provider
             const mockProvider = {
                 config: { id: mockProviderId, type: 'local', name: 'Local', slug: 'local', enabled: true, config: {} },
-                authenticate: vi.fn().mockResolvedValue({ success: false, error: 'Invalid credentials' }),
+                authenticate: vi.fn().mockResolvedValue({
+                    success: false,
+                    error: 'Invalid credentials',
+                    errorCode: AuthErrorCode.INVALID_CREDENTIALS,
+                }),
                 supportsRedirect: () => false,
             };
 
@@ -68,7 +77,7 @@ describe('AuthenticationService', () => {
 
             await expect(
                 authService.authenticateWithProvider('local', { email: 'test@test.com', password: 'wrong' })
-            ).rejects.toThrow('Invalid credentials');
+            ).rejects.toMatchObject({ name: 'AuthError', code: AuthErrorCode.INVALID_CREDENTIALS });
 
             getProviderSpy.mockRestore();
         });

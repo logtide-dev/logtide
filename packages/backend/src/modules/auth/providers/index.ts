@@ -19,7 +19,7 @@ export type {
   UserIdentity,
 } from './types.js';
 
-export { type AuthProviderType, AuthErrorCode } from './types.js';
+export { type AuthProviderType, AuthErrorCode, AuthError } from './types.js';
 
 // Providers
 export { LocalProvider } from './local-provider.js';

@@ -107,7 +107,7 @@ describe('LocalProvider', () => {
 
             expect(result.success).toBe(false);
             expect(result.error).toBe('Please log in using your organization SSO');
-            expect(result.errorCode).toBe(AuthErrorCode.INVALID_CREDENTIALS);
+            expect(result.errorCode).toBe(AuthErrorCode.SSO_REQUIRED);
         });
 
         it('should return error when user is disabled (correct password)', async () => {

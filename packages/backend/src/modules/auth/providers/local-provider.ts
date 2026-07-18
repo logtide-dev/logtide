@@ -57,7 +57,7 @@ export class LocalProvider implements AuthProvider {
       return {
         success: false,
         error: 'Please log in using your organization SSO',
-        errorCode: AuthErrorCode.INVALID_CREDENTIALS,
+        errorCode: AuthErrorCode.SSO_REQUIRED,
       };
     }
 
