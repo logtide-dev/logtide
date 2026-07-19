@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as Select from "$lib/components/ui/select";
-  import Button from "$lib/components/ui/button/button.svelte";
+  import TimeRangeButtons from "$lib/components/TimeRangeButtons.svelte";
 
   interface Props {
     services: string[];
@@ -37,16 +37,5 @@
     </Select.Content>
   </Select.Root>
 
-  <div class="flex items-center rounded-md border bg-muted p-0.5">
-    {#each timeRanges as tr}
-      <Button
-        variant={timeRange === tr.value ? 'default' : 'ghost'}
-        size="sm"
-        class="h-7 px-2 text-xs"
-        onclick={() => onTimeRangeChange(tr.value)}
-      >
-        {tr.label}
-      </Button>
-    {/each}
-  </div>
+  <TimeRangeButtons options={timeRanges} value={timeRange} onChange={onTimeRangeChange} />
 </div>

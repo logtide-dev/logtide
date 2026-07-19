@@ -19,6 +19,7 @@
     TableRow,
   } from '$lib/components/ui/table';
   import { Button } from '$lib/components/ui/button';
+  import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import type { OrganizationWithRole } from '@logtide/shared';
   import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
@@ -208,19 +209,11 @@
 <div class="space-y-6">
   <!-- Header row with range selector -->
   <div class="flex items-center justify-between flex-wrap gap-3">
-    <div class="flex items-center gap-1 rounded-md border p-1 bg-muted/50">
-      {#each RANGES as range}
-        <button
-          type="button"
-          onclick={() => { selectedDays = range.days; }}
-          class="px-3 py-1 rounded text-sm font-medium transition-colors {selectedDays === range.days
-            ? 'bg-background shadow-sm text-foreground'
-            : 'text-muted-foreground hover:text-foreground'}"
-        >
-          {range.label}
-        </button>
-      {/each}
-    </div>
+    <TimeRangeButtons
+      options={RANGES.map((r) => ({ value: String(r.days), label: r.label }))}
+      value={String(selectedDays)}
+      onChange={(v) => { selectedDays = parseInt(v, 10) as RangeDays; }}
+    />
     <Button variant="outline" size="sm" onclick={() => load()} disabled={loading}>
       <RotateCcw class="h-4 w-4 mr-1.5 {loading ? 'animate-spin' : ''}" />
       Refresh
