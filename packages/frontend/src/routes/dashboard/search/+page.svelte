@@ -117,6 +117,25 @@
     rowDensity = rowDensity === "comfortable" ? "compact" : "comfortable";
     if (browser) localStorage.setItem("logtide_row_density", rowDensity);
   }
+
+  // Recent searches (persisted in localStorage)
+  const RECENT_SEARCHES_KEY = "logtide_recent_searches";
+  let recentSearches = $state<string[]>([]);
+  function addRecentSearch(q: string) {
+    const term = q.trim();
+    if (!term) return;
+    const next = [term, ...recentSearches.filter((s) => s !== term)].slice(0, 8);
+    recentSearches = next;
+    if (browser) localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next));
+  }
+  function applyRecentSearch(term: string) {
+    searchQuery = term;
+    applyFilters();
+  }
+  function clearRecentSearches() {
+    recentSearches = [];
+    if (browser) localStorage.removeItem(RECENT_SEARCHES_KEY);
+  }
   // Cache stores per projectId so that any selectedProjects mutation does not
   // recreate the store (and re-read localStorage) on every dependency change.
   const columnStoreCache = new Map<
@@ -315,6 +334,19 @@
     const savedDensity = localStorage.getItem("logtide_row_density");
     if (savedDensity === "compact" || savedDensity === "comfortable") {
       rowDensity = savedDensity;
+    }
+
+    // Restore recent searches
+    try {
+      const savedRecent = localStorage.getItem(RECENT_SEARCHES_KEY);
+      if (savedRecent) {
+        const parsed = JSON.parse(savedRecent);
+        if (Array.isArray(parsed)) {
+          recentSearches = parsed.filter((s) => typeof s === "string").slice(0, 8);
+        }
+      }
+    } catch {
+      // ignore malformed storage
     }
 
     // Restore live tail limit preference
@@ -1045,6 +1077,7 @@
 
   function applyFilters() {
     currentPage = 1;
+    addRecentSearch(searchQuery);
     updateUrl();
     loadLogs();
   }
@@ -1323,6 +1356,29 @@
             <span class="hidden sm:inline">Export</span>
           </Button>
         </div>
+
+        {#if recentSearches.length > 0 && !searchQuery.trim()}
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-xs text-muted-foreground">Recent:</span>
+            {#each recentSearches as term (term)}
+              <button
+                type="button"
+                onclick={() => applyRecentSearch(term)}
+                class="inline-flex items-center rounded-full border bg-background px-2.5 py-0.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors max-w-[200px] truncate"
+                title={term}
+              >
+                {term}
+              </button>
+            {/each}
+            <button
+              type="button"
+              onclick={clearRecentSearches}
+              class="text-xs text-muted-foreground hover:text-foreground underline"
+            >
+              Clear
+            </button>
+          </div>
+        {/if}
 
         <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t border-dashed">
           <Popover.Root>
