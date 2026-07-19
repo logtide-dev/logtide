@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { currentOrganization } from '$lib/stores/organization';
+  import { currentProjectStore } from '$lib/stores/current-project';
   import { monitoringStore, monitors, monitorsLoading, monitorsError } from '$lib/stores/monitoring';
   import { toastStore } from '$lib/stores/toast';
   import { layoutStore } from '$lib/stores/layout';
@@ -104,7 +105,10 @@
     projectsAPI.getProjects(orgId).then((res) => {
       projects = res.projects;
       if (!untrack(() => projectId) && res.projects.length > 0) {
-        projectId = res.projects[0].id;
+        const remembered = currentProjectStore.get();
+        projectId = res.projects.some((p) => p.id === remembered)
+          ? (remembered as string)
+          : res.projects[0].id;
       }
     }).catch((err) => {
       toastStore.error(err instanceof Error ? err.message : 'Failed to load projects');
@@ -620,7 +624,7 @@
     </div>
     <div class="flex items-center gap-2">
       {#if projects.length > 1}
-        <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) projectId = v; }}>
+        <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) { projectId = v; currentProjectStore.set(v); } }}>
           <Select.Trigger class="h-8 w-[180px]">
             {projects.find((p) => p.id === projectId)?.name ?? 'Select project'}
           </Select.Trigger>
@@ -786,7 +790,7 @@
             {#if !editingMonitor}
               <div>
                 <label class="mb-1 block text-sm font-medium">Project</label>
-                <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) projectId = v; }}>
+                <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) { projectId = v; currentProjectStore.set(v); } }}>
                   <Select.Trigger class="w-full">
                     {projects.find((p) => p.id === projectId)?.name ?? 'Select project'}
                   </Select.Trigger>

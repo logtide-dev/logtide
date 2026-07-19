@@ -9,6 +9,7 @@
     getLegendStyle,
   } from "$lib/utils/echarts-theme";
   import { themeStore } from "$lib/stores/theme";
+  import { currentProjectStore } from "$lib/stores/current-project";
   import { metricsStore } from "$lib/stores/metrics";
   import { metricsAPI } from "$lib/api/metrics";
   import type { MetricAggregateResult } from "$lib/api/metrics";
@@ -92,7 +93,10 @@
         ? res.projects.filter((p) => metricsProjectIds.includes(p.id))
         : res.projects;
       if (projects.length > 0 && !selectedProject) {
-        selectedProject = projects[0].id;
+        const remembered = currentProjectStore.get();
+        selectedProject = projects.some((p) => p.id === remembered)
+          ? remembered
+          : projects[0].id;
       }
     } catch (e) {
       console.error("Failed to load projects:", e);
@@ -650,7 +654,7 @@
         <Select.Root
           type="single"
           value={selectedProject || ""}
-          onValueChange={(v) => { selectedProject = v || null; }}
+          onValueChange={(v) => { selectedProject = v || null; currentProjectStore.set(selectedProject); }}
         >
           <Select.Trigger class="w-[180px]">
             {projects.find(p => p.id === selectedProject)?.name || "Select project"}

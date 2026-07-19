@@ -4,6 +4,7 @@
   import { goto } from "$app/navigation";
   import { currentOrganization } from "$lib/stores/organization";
   import { authStore } from "$lib/stores/auth";
+  import { currentProjectStore } from "$lib/stores/current-project";
   import { ProjectsAPI } from "$lib/api/projects";
   import type { Project } from "@logtide/shared";
   import {
@@ -145,7 +146,10 @@
         ? res.projects.filter((p) => tracesProjectIds.includes(p.id))
         : res.projects;
       if (projects.length > 0 && !selectedProject) {
-        selectedProject = projects[0].id;
+        const remembered = currentProjectStore.get();
+        selectedProject = projects.some((p) => p.id === remembered)
+          ? remembered
+          : projects[0].id;
       }
     } catch (e) {
       console.error("Failed to load projects:", e);
@@ -1009,7 +1013,7 @@
                       name="trace-project"
                       value={project.id}
                       checked={selectedProject === project.id}
-                      onchange={() => { selectedProject = project.id; applyFilters(); }}
+                      onchange={() => { selectedProject = project.id; currentProjectStore.set(selectedProject); applyFilters(); }}
                       class="h-4 w-4"
                     />
                     <span class="text-sm flex-1">{project.name}</span>
