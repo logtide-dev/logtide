@@ -10,6 +10,7 @@
   import { ProjectsAPI } from "$lib/api/projects";
   import { logsAPI, type SearchMode } from "$lib/api/logs";
   import { toastStore } from "$lib/stores/toast";
+  import { formatTimeAgo } from "$lib/utils/datetime";
   import type { Project, MetadataFilterInput } from "@logtide/shared";
   import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
@@ -975,6 +976,29 @@
     }
   }
 
+  function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // Split text into segments, marking the parts that match the full-text query.
+  // Rendered as plain text segments (no {@html}), so it never injects markup.
+  function highlightSegments(
+    text: string,
+    query: string,
+  ): Array<{ text: string; match: boolean }> {
+    const value = text ?? "";
+    if (!value || !query || searchMode !== "fulltext")
+      return [{ text: value, match: false }];
+    const terms = query.trim().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return [{ text: value, match: false }];
+    const re = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+    const lower = new Set(terms.map((t) => t.toLowerCase()));
+    return value
+      .split(re)
+      .filter((part) => part !== "")
+      .map((part) => ({ text: part, match: lower.has(part.toLowerCase()) }));
+  }
+
   function applyFilters() {
     currentPage = 1;
     loadLogs();
@@ -1824,7 +1848,7 @@
                     {@const globalIndex = i}
                     <TableRow data-log-row class={selectedLogIndex === globalIndex ? 'bg-accent/50 ring-1 ring-primary/30' : ''}>
                       <TableCell class="font-mono text-xs">
-                        {formatDateTime(log.time)}
+                        <span title={formatTimeAgo(log.time)}>{formatDateTime(log.time)}</span>
                       </TableCell>
                       <TableCell>
                         <a
@@ -1885,9 +1909,14 @@
                           {log.level}
                         </button>
                       </TableCell>
-                      <TableCell class="max-w-md truncate"
-                        >{log.message}</TableCell
-                      >
+                      <TableCell class="max-w-md truncate">
+                        {#each highlightSegments(log.message, searchQuery) as seg}
+                          {#if seg.match}<mark
+                              class="rounded-sm bg-yellow-200 text-inherit dark:bg-yellow-500/40"
+                              >{seg.text}</mark
+                            >{:else}{seg.text}{/if}
+                        {/each}
+                      </TableCell>
                       {#each customColumns as col (col)}
                         {@const cellValue = resolveMetadataPath(log.metadata, col)}
                         <TableCell
