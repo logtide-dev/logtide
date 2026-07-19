@@ -47,4 +47,10 @@ export interface CreateExceptionParams {
   logId: string;
   parsedData: ParsedException;
   fingerprint: string;
+  /**
+   * Service that emitted the error log. Carried on the exception row so the
+   * error-group trigger can attribute the service on every storage engine,
+   * not just TimescaleDB (where logs live in Postgres).
+   */
+  service?: string | null;
 }

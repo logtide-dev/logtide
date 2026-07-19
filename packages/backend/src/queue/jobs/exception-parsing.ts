@@ -89,6 +89,7 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
         logId: log.id,
         parsedData: parsed,
         fingerprint,
+        service: log.service,
       });
 
       stats.parsed++;

@@ -641,6 +641,7 @@ export interface ExceptionsTable {
   fingerprint: string;
   raw_stack_trace: string;
   frame_count: number;
+  service: string | null;
   created_at: Generated<Timestamp>;
 }
 

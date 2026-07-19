@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { ExceptionService } from '../../../modules/exceptions/service.js';
 import { db } from '../../../database/index.js';
 import {
@@ -90,6 +91,81 @@ describe('ExceptionService', () => {
 
       const exception = await service.getExceptionById(exceptionId, ctx.organization.id);
       expect(exception!.frames).toHaveLength(0);
+    });
+  });
+
+  describe('error group service attribution', () => {
+    const parsedData = {
+      exceptionType: 'TypeError',
+      exceptionMessage: "Cannot read properties of undefined (reading 'x')",
+      language: 'nodejs' as const,
+      rawStackTrace: 'TypeError: x\n    at h (/app/h.js:1:1)',
+      frames: [],
+    };
+
+    async function affectedServices(orgId: string, fingerprint: string): Promise<string[]> {
+      const group = await db
+        .selectFrom('error_groups')
+        .select('affected_services')
+        .where('organization_id', '=', orgId)
+        .where('fingerprint', '=', fingerprint)
+        .executeTakeFirst();
+      return (group?.affected_services as string[] | undefined) ?? [];
+    }
+
+    it('attributes the service carried on the exception, not the Postgres logs lookup', async () => {
+      // Simulate a non-TimescaleDB reservoir (ClickHouse / MongoDB): the log is
+      // NOT in the Postgres logs table, so the trigger's logs lookup finds
+      // nothing. The service must still come through from the exception row.
+      const ctx = await createTestContext();
+      const fingerprint = `svc-carry-${randomUUID().slice(0, 8)}`;
+
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        logId: randomUUID(), // no matching row in `logs`
+        fingerprint,
+        service: 'checkout-api',
+        parsedData,
+      });
+
+      expect(await affectedServices(ctx.organization.id, fingerprint)).toEqual(['checkout-api']);
+    });
+
+    it('falls back to the logs table when no service is carried (TimescaleDB path)', async () => {
+      const ctx = await createTestContext();
+      const log = await createTestLog({
+        projectId: ctx.project.id,
+        level: 'error',
+        service: 'billing-worker',
+      });
+      const fingerprint = `svc-fallback-${randomUUID().slice(0, 8)}`;
+
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        logId: log.id,
+        fingerprint,
+        parsedData,
+      });
+
+      expect(await affectedServices(ctx.organization.id, fingerprint)).toEqual(['billing-worker']);
+    });
+
+    it('never leaves a group as unknown when the service is known at ingestion', async () => {
+      const ctx = await createTestContext();
+      const fingerprint = `svc-known-${randomUUID().slice(0, 8)}`;
+
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        logId: randomUUID(),
+        fingerprint,
+        service: 'api',
+        parsedData,
+      });
+
+      expect(await affectedServices(ctx.organization.id, fingerprint)).not.toContain('unknown');
     });
   });
 

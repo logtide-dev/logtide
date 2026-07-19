@@ -26,7 +26,7 @@ export class ExceptionService {
    * The trigger will automatically update/create the error group
    */
   async createException(params: CreateExceptionParams): Promise<string> {
-    const { organizationId, projectId, logId, parsedData, fingerprint } = params;
+    const { organizationId, projectId, logId, parsedData, fingerprint, service } = params;
 
     return await this.db.transaction().execute(async (trx) => {
       const exception = await trx
@@ -41,6 +41,7 @@ export class ExceptionService {
           fingerprint,
           raw_stack_trace: parsedData.rawStackTrace,
           frame_count: parsedData.frames.length,
+          service: service ?? null,
         })
         .returning('id')
         .executeTakeFirstOrThrow();
