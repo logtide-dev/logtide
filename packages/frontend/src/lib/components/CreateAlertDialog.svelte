@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { alertsAPI, type CreateAlertRuleInput, type PreviewSuggestion, type AlertType, type BaselineType } from "$lib/api/alerts";
+	import { alertsAPI, type CreateAlertRuleInput, type PreviewSuggestion, type AlertType, type BaselineType, type AlertBuilderPrefill } from "$lib/api/alerts";
 	import { sigmaAPI } from "$lib/api/sigma";
 	import { toastStore } from "$lib/stores/toast";
 	import { checklistStore } from "$lib/stores/checklist";
@@ -32,10 +32,8 @@
 		projectId?: string | null;
 		onSuccess?: () => void;
 		onOpenChange?: (open: boolean) => void;
-		/** Optional values used to prefill the builder when the dialog opens (e.g. "create alert from this error"). */
-		initialName?: string;
-		initialService?: string;
-		initialLevels?: string[];
+		/** Values used to prefill the builder when the dialog opens (create-from-error, duplicate). */
+		initialValues?: AlertBuilderPrefill;
 	}
 
 	let {
@@ -44,9 +42,7 @@
 		projectId = null,
 		onSuccess,
 		onOpenChange,
-		initialName,
-		initialService,
-		initialLevels,
+		initialValues,
 	}: Props = $props();
 
 	let activeTab = $state("builder");
@@ -279,11 +275,22 @@
 	let wasOpen = false;
 	$effect(() => {
 		if (open && !wasOpen) {
-			// Just opened: apply any prefill from the caller (e.g. from an error page).
-			if (initialName) name = initialName;
-			if (initialService) service = initialService;
-			if (initialLevels && initialLevels.length > 0) {
-				selectedLevels = new Set(initialLevels);
+			// Just opened: apply any prefill from the caller (create-from-error, duplicate).
+			const v = initialValues;
+			if (v) {
+				if (v.name != null) name = v.name;
+				if (v.service != null) service = v.service ?? "";
+				if (v.levels && v.levels.length > 0) selectedLevels = new Set(v.levels);
+				if (v.threshold != null) threshold = v.threshold;
+				if (v.timeWindow != null) timeWindow = v.timeWindow;
+				if (v.alertType) alertType = v.alertType;
+				if (v.baselineType) baselineType = v.baselineType;
+				if (v.deviationMultiplier != null) deviationMultiplier = v.deviationMultiplier;
+				if (v.minBaselineValue != null) minBaselineValue = v.minBaselineValue;
+				if (v.cooldownMinutes != null) cooldownMinutes = v.cooldownMinutes;
+				if (v.sustainedMinutes != null) sustainedMinutes = v.sustainedMinutes;
+				if (v.metadataFilters) metadataFilters = [...v.metadataFilters];
+				if (v.channelIds) selectedChannelIds = [...v.channelIds];
 			}
 		} else if (!open && wasOpen) {
 			resetForm();

@@ -26,6 +26,7 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Pencil from '@lucide/svelte/icons/pencil';
+  import Copy from '@lucide/svelte/icons/copy';
   import Globe from '@lucide/svelte/icons/globe';
   import Wifi from '@lucide/svelte/icons/wifi';
   import Heart from '@lucide/svelte/icons/heart';
@@ -157,6 +158,20 @@
     formAutoResolve = monitor.autoResolve;
     formEnabled = monitor.enabled;
     editingMonitor = monitor;
+    showCreateForm = true;
+  }
+
+  function openDuplicate(monitor: Monitor) {
+    formName = `${monitor.name} (copy)`;
+    formType = monitor.type;
+    formTarget = monitor.target ?? '';
+    formInterval = monitor.intervalSeconds;
+    formTimeout = monitor.timeoutSeconds;
+    formThreshold = monitor.failureThreshold;
+    formGracePeriod = monitor.gracePeriodSeconds;
+    formAutoResolve = monitor.autoResolve;
+    formEnabled = monitor.enabled;
+    editingMonitor = null; // submit creates a new monitor
     showCreateForm = true;
   }
 
@@ -1048,6 +1063,14 @@
                           title="Edit"
                         >
                           <Pencil class="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onclick={() => openDuplicate(monitor)}
+                          title="Duplicate"
+                        >
+                          <Copy class="h-4 w-4" />
                         </Button>
                         <Button
                           variant="ghost"
