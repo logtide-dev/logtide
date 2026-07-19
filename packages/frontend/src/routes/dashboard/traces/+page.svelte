@@ -5,6 +5,7 @@
   import { currentOrganization } from "$lib/stores/organization";
   import { authStore } from "$lib/stores/auth";
   import { currentProjectStore } from "$lib/stores/current-project";
+  import { timeRangeStore } from "$lib/stores/time-range";
   import { ProjectsAPI } from "$lib/api/projects";
   import type { Project } from "@logtide/shared";
   import {
@@ -128,9 +129,18 @@
   let projects = $state<Project[]>([]);
   let selectedProject = $state<string | null>(null);
   let timeRangePicker = $state<ReturnType<typeof TimeRangePicker> | null>(null);
-  let timeRangeType = $state<'last_hour' | 'last_24h' | 'last_7d' | 'custom'>('last_24h');
-  let customFromTime = $state("");
-  let customToTime = $state("");
+  function initialTracesRange(): { type: 'last_hour' | 'last_24h' | 'last_7d' | 'custom'; from: string; to: string } {
+    const stored = timeRangeStore.get();
+    const t = stored?.type;
+    if (t === 'last_hour' || t === 'last_24h' || t === 'last_7d' || t === 'custom') {
+      return { type: t, from: stored?.from ?? '', to: stored?.to ?? '' };
+    }
+    return { type: 'last_24h', from: '', to: '' };
+  }
+  const _initialTracesRange = initialTracesRange();
+  let timeRangeType = $state<'last_hour' | 'last_24h' | 'last_7d' | 'custom'>(_initialTracesRange.type);
+  let customFromTime = $state(_initialTracesRange.type === 'custom' ? _initialTracesRange.from : "");
+  let customToTime = $state(_initialTracesRange.type === 'custom' ? _initialTracesRange.to : "");
 
   let projectsAPI = $derived(new ProjectsAPI(() => token));
 
@@ -184,6 +194,7 @@
     const custom = timeRangePicker.getCustomValues();
     customFromTime = custom.from;
     customToTime = custom.to;
+    timeRangeStore.set({ type: newType, from: customFromTime, to: customToTime });
     // Mutating `timeRangeType` re-fires the effect that reloads traces and
     // services. We only trigger an explicit load when the preset type didn't
     // change (custom range edit within the same "custom" preset).

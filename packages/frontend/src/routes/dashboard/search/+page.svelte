@@ -11,6 +11,7 @@
   import { logsAPI, type SearchMode } from "$lib/api/logs";
   import { toastStore } from "$lib/stores/toast";
   import { formatTimeAgo } from "$lib/utils/datetime";
+  import { timeRangeStore } from "$lib/stores/time-range";
   import type { Project, MetadataFilterInput } from "@logtide/shared";
   import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
@@ -194,9 +195,18 @@
 
   // Time range picker reference and state
   let timeRangePicker = $state<ReturnType<typeof TimeRangePicker> | null>(null);
-  let timeRangeType = $state<TimeRangeType>("last_24h");
-  let customFromTime = $state("");
-  let customToTime = $state("");
+  function initialTimeRange(): { type: TimeRangeType; from: string; to: string } {
+    const stored = browser ? timeRangeStore.get() : null;
+    const t = stored?.type;
+    if (t === "last_hour" || t === "last_24h" || t === "last_7d" || t === "custom") {
+      return { type: t, from: stored?.from ?? "", to: stored?.to ?? "" };
+    }
+    return { type: "last_24h", from: "", to: "" };
+  }
+  const _initialRange = initialTimeRange();
+  let timeRangeType = $state<TimeRangeType>(_initialRange.type);
+  let customFromTime = $state(_initialRange.type === "custom" ? _initialRange.from : "");
+  let customToTime = $state(_initialRange.type === "custom" ? _initialRange.to : "");
 
   // Helper to get time range from picker or fallback to local state
   function getTimeRange(): { from: Date; to: Date } {
@@ -1097,6 +1107,7 @@
       customFromTime = custom.from;
       customToTime = custom.to;
     }
+    timeRangeStore.set({ type: timeRangeType, from: customFromTime, to: customToTime });
     await Promise.all([loadServices(), loadHostnames()]);
     applyFilters();
   }
