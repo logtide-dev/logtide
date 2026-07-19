@@ -49,6 +49,20 @@ export interface TimelineEvent {
   detectionsBySeverity: { critical: number; high: number; medium: number; low: number };
 }
 
+/**
+ * Below this recent (last-hour) log volume, dashboard "today" stats are computed
+ * from raw logs instead of the hourly continuous aggregate. The aggregate only
+ * reflects data below its materialization watermark that its refresh policy has
+ * actually processed (start_offset = 3h); on instances where the policy is not
+ * keeping the aggregate warm, "today" collapses to roughly the last hour (the
+ * only part read from raw), which is what makes "Total Logs Today" and the error
+ * rate read far too low. Verified live on the hosted demo: 24h = ~1,500 logs,
+ * last hour = ~67, yet "Total Logs Today" showed ~60. A raw count over the
+ * bounded today/yesterday window is exact and cheap at low volume; higher-volume
+ * instances keep the fast aggregate path (their live ingestion keeps it warm).
+ */
+const RAW_STATS_MAX_RECENT_VOLUME = 5000;
+
 class DashboardService {
   /**
    * Resolve project IDs from org or single project.
@@ -162,6 +176,13 @@ class DashboardService {
       to: new Date() 
     });
     const recentVolume = recentTotalResult.count;
+
+    // Low-volume instances (fresh installs, backfilled/seeded data, or a stale
+    // continuous aggregate) are exactly where the aggregate undercounts "today",
+    // so count today/yesterday from raw for an exact, cheap result.
+    if (recentVolume <= RAW_STATS_MAX_RECENT_VOLUME) {
+      return this.getStatsFromRawLogs(projectIds, todayStart, yesterdayStart, lastHourStart, prevHourStart);
+    }
 
     // 2. Query aggregate for historical data and reservoir for recent data in parallel
     const [todayAggregateStats, recentTotal, recentErrors, recentServices, yesterdayAggregateStats, prevHourCount] = await Promise.all([
