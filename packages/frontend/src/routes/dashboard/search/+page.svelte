@@ -56,6 +56,7 @@
   import Radio from "@lucide/svelte/icons/radio";
   import Settings2 from "@lucide/svelte/icons/settings-2";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
+  import Rows3 from "@lucide/svelte/icons/rows-3";
   import Table2 from "@lucide/svelte/icons/table-2";
   import WrapText from "@lucide/svelte/icons/wrap-text";
   import Clock from "@lucide/svelte/icons/clock";
@@ -109,6 +110,13 @@
 
   // Custom metadata columns (persisted per project in localStorage)
   let customColumns = $state<string[]>([]);
+
+  // Table row density (persisted in localStorage)
+  let rowDensity = $state<"comfortable" | "compact">("comfortable");
+  function toggleDensity() {
+    rowDensity = rowDensity === "comfortable" ? "compact" : "comfortable";
+    if (browser) localStorage.setItem("logtide_row_density", rowDensity);
+  }
   // Cache stores per projectId so that any selectedProjects mutation does not
   // recreate the store (and re-read localStorage) on every dependency change.
   const columnStoreCache = new Map<
@@ -301,6 +309,12 @@
     const savedViewMode = sessionStorage.getItem("logtide_view_mode");
     if (savedViewMode === "table" || savedViewMode === "terminal") {
       viewMode = savedViewMode;
+    }
+
+    // Restore row density preference
+    const savedDensity = localStorage.getItem("logtide_row_density");
+    if (savedDensity === "compact" || savedDensity === "comfortable") {
+      rowDensity = savedDensity;
     }
 
     // Restore live tail limit preference
@@ -1817,6 +1831,17 @@
                 </Button>
               {/if}
               {#if viewMode === "table"}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onclick={toggleDensity}
+                  class="gap-1.5"
+                  title={rowDensity === "compact" ? "Comfortable rows" : "Compact rows"}
+                  aria-label={rowDensity === "compact" ? "Comfortable rows" : "Compact rows"}
+                >
+                  <Rows3 class="w-4 h-4 {rowDensity === 'compact' ? 'text-primary' : 'text-muted-foreground'}" />
+                  <span class="hidden sm:inline">{rowDensity === "compact" ? "Compact" : "Cozy"}</span>
+                </Button>
                 <ColumnConfigMenu
                   bind:columns={customColumns}
                   onchange={(cols) => { columnStore?.set(cols); }}
@@ -1860,7 +1885,7 @@
           {:else}
             <TableLoadingOverlay loading={isLoading}>
             <div class="rounded-md border overflow-x-auto" bind:this={logsContainer}>
-              <Table class="w-full">
+              <Table class="w-full {rowDensity === 'compact' ? '[&_td]:py-1 [&_th]:py-1' : ''}">
                 <TableHeader>
                   <TableRow>
                     <TableHead class="w-[180px]">Time</TableHead>
