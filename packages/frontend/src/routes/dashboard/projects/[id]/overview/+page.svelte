@@ -207,7 +207,8 @@
         description="Logs ingested today"
         trend={{
           value: stats.totalLogsToday.trend,
-          isPositive: stats.totalLogsToday.trend >= 0
+          isPositive: stats.totalLogsToday.trend >= 0,
+          label: 'from yesterday'
         }}
         icon={Activity}
         onclick={handleTotalLogsClick}
@@ -215,10 +216,12 @@
       <StatsCard
         title="Error Rate"
         value={stats.errorRate.value.toFixed(1) + '%'}
-        description="Error rate last 24h"
+        description="Error rate today"
         trend={{
           value: Math.abs(stats.errorRate.trend),
-          isPositive: stats.errorRate.trend <= 0
+          isPositive: stats.errorRate.trend <= 0,
+          unit: ' pp',
+          label: 'from yesterday'
         }}
         icon={AlertTriangle}
         onclick={handleErrorRateClick}
@@ -229,7 +232,9 @@
         description="Services reporting"
         trend={{
           value: Math.abs(stats.activeServices.trend),
-          isPositive: stats.activeServices.trend >= 0
+          isPositive: stats.activeServices.trend >= 0,
+          unit: '',
+          label: 'vs yesterday'
         }}
         icon={Server}
         onclick={handleActiveServicesClick}
@@ -237,10 +242,11 @@
       <StatsCard
         title="Throughput"
         value={formatThroughput(stats.avgThroughput.value)}
-        description="Current throughput"
+        description="Logs/sec, last hour"
         trend={{
           value: stats.avgThroughput.trend,
-          isPositive: stats.avgThroughput.trend >= 0
+          isPositive: stats.avgThroughput.trend >= 0,
+          label: 'from last hour'
         }}
         icon={TrendingUp}
         onclick={handleThroughputClick}
