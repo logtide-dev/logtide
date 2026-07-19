@@ -169,6 +169,124 @@ describe('ExceptionService', () => {
     });
   });
 
+  describe('mergeErrorGroups', () => {
+    const parsed = {
+      exceptionType: 'TypeError',
+      exceptionMessage: "Cannot read properties of undefined (reading 'x')",
+      language: 'nodejs' as const,
+      rawStackTrace: 'TypeError: x\n    at h (/app/h.js:1:1)',
+      frames: [],
+    };
+
+    it('folds duplicate groups into one and reassigns their exceptions', async () => {
+      const ctx = await createTestContext();
+      const fpTarget = `merge-target-${randomUUID().slice(0, 8)}`;
+      const fpSource = `merge-source-${randomUUID().slice(0, 8)}`;
+
+      // Target: 1 occurrence on service "api"
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        logId: randomUUID(),
+        fingerprint: fpTarget,
+        service: 'api',
+        parsedData: parsed,
+      });
+      // Source: 2 occurrences on service "worker", same type+message, different fingerprint
+      for (let i = 0; i < 2; i++) {
+        await service.createException({
+          organizationId: ctx.organization.id,
+          projectId: ctx.project.id,
+          logId: randomUUID(),
+          fingerprint: fpSource,
+          service: 'worker',
+          parsedData: parsed,
+        });
+      }
+
+      const groups = await db
+        .selectFrom('error_groups')
+        .select(['id', 'fingerprint'])
+        .where('organization_id', '=', ctx.organization.id)
+        .execute();
+      const target = groups.find((g) => g.fingerprint === fpTarget)!;
+      const source = groups.find((g) => g.fingerprint === fpSource)!;
+
+      // Same type+message groups surface as duplicates of each other.
+      const dups = await service.findDuplicateErrorGroups(target.id, ctx.organization.id);
+      expect(dups.map((d) => d.id)).toContain(source.id);
+
+      const merged = await service.mergeErrorGroups(target.id, [source.id], ctx.organization.id);
+      expect(merged).not.toBeNull();
+      expect(merged!.occurrenceCount).toBe(3); // 1 + 2
+      expect([...merged!.affectedServices].sort()).toEqual(['api', 'worker']);
+
+      // Source group is gone
+      const remaining = await db
+        .selectFrom('error_groups')
+        .select('id')
+        .where('id', '=', source.id)
+        .executeTakeFirst();
+      expect(remaining).toBeUndefined();
+
+      // Its exceptions now point at the target fingerprint
+      const stillSource = await db
+        .selectFrom('exceptions')
+        .select('id')
+        .where('organization_id', '=', ctx.organization.id)
+        .where('fingerprint', '=', fpSource)
+        .execute();
+      expect(stillSource.length).toBe(0);
+    });
+
+    it('does not merge groups from another organization', async () => {
+      const ctx = await createTestContext();
+      const other = await createTestContext();
+      const fpTarget = `merge-iso-t-${randomUUID().slice(0, 8)}`;
+      const fpOther = `merge-iso-o-${randomUUID().slice(0, 8)}`;
+
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        logId: randomUUID(),
+        fingerprint: fpTarget,
+        service: 'api',
+        parsedData: parsed,
+      });
+      await service.createException({
+        organizationId: other.organization.id,
+        projectId: other.project.id,
+        logId: randomUUID(),
+        fingerprint: fpOther,
+        service: 'api',
+        parsedData: parsed,
+      });
+
+      const target = await db
+        .selectFrom('error_groups')
+        .select(['id'])
+        .where('organization_id', '=', ctx.organization.id)
+        .where('fingerprint', '=', fpTarget)
+        .executeTakeFirstOrThrow();
+      const otherGroup = await db
+        .selectFrom('error_groups')
+        .select(['id'])
+        .where('organization_id', '=', other.organization.id)
+        .where('fingerprint', '=', fpOther)
+        .executeTakeFirstOrThrow();
+
+      // Attempting to merge another org's group is a no-op; it stays put.
+      const merged = await service.mergeErrorGroups(target.id, [otherGroup.id], ctx.organization.id);
+      expect(merged!.occurrenceCount).toBe(1);
+      const survives = await db
+        .selectFrom('error_groups')
+        .select('id')
+        .where('id', '=', otherGroup.id)
+        .executeTakeFirst();
+      expect(survives).not.toBeUndefined();
+    });
+  });
+
   describe('getExceptionByLogId', () => {
     it('should return exception with frames for valid log', async () => {
       const ctx = await createTestContext();

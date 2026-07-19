@@ -9,11 +9,14 @@
 		getErrorGroupLogs,
 		updateErrorGroupStatus,
 		getExceptionByLogId,
+		getDuplicateErrorGroups,
+		mergeErrorGroups,
 		type ErrorGroup,
 		type ErrorGroupStatus,
 		type ErrorGroupTrendBucket,
 		type ErrorGroupLog,
 		type ExceptionWithFrames,
+		type DuplicateErrorGroup,
 	} from '$lib/api/exceptions';
 	import { toastStore } from '$lib/stores/toast';
 	import { copyToClipboard } from '$lib/utils/clipboard';
@@ -37,6 +40,7 @@
 	import Folder from '@lucide/svelte/icons/folder';
 	import Key from '@lucide/svelte/icons/key';
 	import Bell from '@lucide/svelte/icons/bell';
+	import GitMerge from '@lucide/svelte/icons/git-merge';
 	import { layoutStore } from '$lib/stores/layout';
 	import { apiKeysAPI, type ApiKey } from '$lib/api/api-keys';
 
@@ -55,6 +59,8 @@
 	let updating = $state(false);
 	let copied = $state(false);
 	let loadingMore = $state(false);
+	let duplicates = $state<DuplicateErrorGroup[]>([]);
+	let merging = $state(false);
 	let maxWidthClass = $state("max-w-7xl");
 	let containerPadding = $state("px-6 py-8");
 
@@ -124,6 +130,14 @@
 					console.warn('Failed to load sample exception:', e);
 				}
 			}
+
+			// Same type+message groups that could be folded into this one.
+			try {
+				duplicates = await getDuplicateErrorGroups(groupId, organizationId);
+			} catch (e) {
+				console.warn('Failed to load duplicate groups:', e);
+				duplicates = [];
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load error group';
 			toastStore.error(error);
@@ -173,6 +187,28 @@
 			toastStore.error('Failed to update status');
 		} finally {
 			updating = false;
+		}
+	}
+
+	async function mergeDuplicates() {
+		if (!group || duplicates.length === 0 || merging) return;
+
+		merging = true;
+		try {
+			const merged = await mergeErrorGroups(
+				groupId,
+				duplicates.map((d) => d.id),
+				organizationId
+			);
+			group = merged;
+			const count = duplicates.length;
+			duplicates = [];
+			toastStore.success(`Merged ${count} duplicate group${count === 1 ? '' : 's'} into this one`);
+			await loadErrorGroup();
+		} catch (e) {
+			toastStore.error(e instanceof Error ? e.message : 'Failed to merge duplicate groups');
+		} finally {
+			merging = false;
 		}
 	}
 
@@ -355,6 +391,28 @@
 				</div>
 			{/if}
 		</div>
+
+		<!-- Duplicate groups (same type+message, split by fingerprint) -->
+		{#if duplicates.length > 0}
+			<div class="mb-4 flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+				<div class="flex items-start gap-2">
+					<GitMerge class="w-5 h-5 text-amber-500 mt-0.5 shrink-0" />
+					<div>
+						<p class="text-sm font-medium">
+							{duplicates.length} duplicate group{duplicates.length === 1 ? '' : 's'} found
+						</p>
+						<p class="text-xs text-muted-foreground">
+							Same exception type and message, split by stack fingerprint. Merge them into this group
+							({duplicates.reduce((n, d) => n + d.occurrenceCount, 0).toLocaleString('en-US')} extra occurrences).
+						</p>
+					</div>
+				</div>
+				<Button size="sm" onclick={mergeDuplicates} disabled={merging}>
+					<GitMerge class="w-4 h-4 mr-1.5" />
+					{merging ? 'Merging...' : `Merge ${duplicates.length}`}
+				</Button>
+			</div>
+		{/if}
 
 		<!-- Tabs -->
 		<Tabs.Root value="stacktrace" class="w-full">
