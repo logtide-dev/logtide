@@ -17,6 +17,7 @@
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as Tabs from '$lib/components/ui/tabs';
   import * as Dialog from '$lib/components/ui/dialog';
+  import * as Select from '$lib/components/ui/select';
   import StatusBadgeEmbed from '$lib/components/monitoring/StatusBadgeEmbed.svelte';
   import Activity from '@lucide/svelte/icons/activity';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -45,6 +46,31 @@
 
   let projects = $state<Project[]>([]);
   const projectsAPI = new ProjectsAPI(getAuthToken);
+
+  // Display labels for the shared Select dropdowns
+  const monitorTypeLabels: Record<string, string> = {
+    http: 'HTTP / HTTPS',
+    tcp: 'TCP',
+    heartbeat: 'Heartbeat (Push)',
+    log_heartbeat: 'Log Based',
+  };
+  const incidentSeverityLabels: Record<string, string> = {
+    minor: 'Minor',
+    major: 'Major',
+    critical: 'Critical',
+  };
+  const incidentStatusLabels: Record<string, string> = {
+    investigating: 'Investigating',
+    identified: 'Identified',
+    monitoring: 'Monitoring',
+    resolved: 'Resolved',
+  };
+  const statusPageVisibilityLabels: Record<string, string> = {
+    disabled: 'Disabled',
+    public: 'Public',
+    password: 'Password protected',
+    members_only: 'Members only',
+  };
 
   type MonitoringTab = 'monitors' | 'incidents' | 'maintenance' | 'status-page';
   let activeTab = $state<MonitoringTab>('monitors');
@@ -579,14 +605,16 @@
     </div>
     <div class="flex items-center gap-2">
       {#if projects.length > 1}
-        <select
-          bind:value={projectId}
-          class="h-8 rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-        >
-          {#each projects as p (p.id)}
-            <option value={p.id}>{p.name}</option>
-          {/each}
-        </select>
+        <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) projectId = v; }}>
+          <Select.Trigger class="h-8 w-[180px]">
+            {projects.find((p) => p.id === projectId)?.name ?? 'Select project'}
+          </Select.Trigger>
+          <Select.Content>
+            {#each projects as p (p.id)}
+              <Select.Item value={p.id}>{p.name}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
       {/if}
       <Button
         variant="outline"
@@ -743,27 +771,29 @@
             {#if !editingMonitor}
               <div>
                 <label class="mb-1 block text-sm font-medium">Project</label>
-                <select
-                  bind:value={projectId}
-                  required
-                  class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  {#each projects as p (p.id)}
-                    <option value={p.id}>{p.name}</option>
-                  {/each}
-                </select>
+                <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) projectId = v; }}>
+                  <Select.Trigger class="w-full">
+                    {projects.find((p) => p.id === projectId)?.name ?? 'Select project'}
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each projects as p (p.id)}
+                      <Select.Item value={p.id}>{p.name}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
               </div>
               <div>
                 <label class="mb-1 block text-sm font-medium">Type</label>
-                <select
-                  bind:value={formType}
-                  class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="http">HTTP / HTTPS</option>
-                  <option value="tcp">TCP</option>
-                  <option value="heartbeat">Heartbeat (Push)</option>
-                  <option value="log_heartbeat">Log Based</option>
-                </select>
+                <Select.Root type="single" value={formType} onValueChange={(v) => { if (v) formType = v as MonitorType; }}>
+                  <Select.Trigger class="w-full">
+                    {monitorTypeLabels[formType] ?? formType}
+                  </Select.Trigger>
+                  <Select.Content>
+                    {#each Object.entries(monitorTypeLabels) as [value, label]}
+                      <Select.Item {value}>{label}</Select.Item>
+                    {/each}
+                  </Select.Content>
+                </Select.Root>
               </div>
             {/if}
 
@@ -1063,11 +1093,16 @@
             </div>
             <div>
               <label class="mb-1 block text-sm font-medium">Severity</label>
-              <select bind:value={incidentSeverity} class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-                <option value="minor">Minor</option>
-                <option value="major">Major</option>
-                <option value="critical">Critical</option>
-              </select>
+              <Select.Root type="single" value={incidentSeverity} onValueChange={(v) => { if (v) incidentSeverity = v as typeof incidentSeverity; }}>
+                <Select.Trigger class="w-full">
+                  {incidentSeverityLabels[incidentSeverity] ?? incidentSeverity}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each Object.entries(incidentSeverityLabels) as [value, label]}
+                    <Select.Item {value}>{label}</Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
             </div>
             <div class="sm:col-span-2">
               <label class="mb-1 block text-sm font-medium">Initial message (optional)</label>
@@ -1133,12 +1168,16 @@
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label class="mb-1 block text-xs font-medium">Status</label>
-              <select bind:value={updateStatus} class="w-full rounded-md border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary">
-                <option value="investigating">Investigating</option>
-                <option value="identified">Identified</option>
-                <option value="monitoring">Monitoring</option>
-                <option value="resolved">Resolved</option>
-              </select>
+              <Select.Root type="single" value={updateStatus} onValueChange={(v) => { if (v) updateStatus = v as typeof updateStatus; }}>
+                <Select.Trigger class="w-full">
+                  {incidentStatusLabels[updateStatus] ?? updateStatus}
+                </Select.Trigger>
+                <Select.Content>
+                  {#each Object.entries(incidentStatusLabels) as [value, label]}
+                    <Select.Item {value}>{label}</Select.Item>
+                  {/each}
+                </Select.Content>
+              </Select.Root>
             </div>
             <div class="sm:col-span-2">
               <label class="mb-1 block text-xs font-medium">Message</label>
@@ -1256,17 +1295,21 @@
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
           <label class="text-sm font-medium">Status page</label>
-          <select
+          <Select.Root
+            type="single"
             value={selectedProject.statusPageVisibility}
-            onchange={(e) => updateVisibility((e.target as HTMLSelectElement).value)}
+            onValueChange={(v) => { if (v) updateVisibility(v); }}
             disabled={savingVisibility}
-            class="h-8 rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           >
-            <option value="disabled">Disabled</option>
-            <option value="public">Public</option>
-            <option value="password">Password protected</option>
-            <option value="members_only">Members only</option>
-          </select>
+            <Select.Trigger class="h-8 w-[190px]">
+              {statusPageVisibilityLabels[selectedProject.statusPageVisibility] ?? selectedProject.statusPageVisibility}
+            </Select.Trigger>
+            <Select.Content>
+              {#each Object.entries(statusPageVisibilityLabels) as [value, label]}
+                <Select.Item {value}>{label}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
           {#if selectedProject.statusPageVisibility !== 'disabled'}
             <Badge variant="outline" class="text-xs">
               {selectedProject.statusPageVisibility === 'public' ? 'Live' : selectedProject.statusPageVisibility === 'password' ? 'Protected' : 'Private'}
