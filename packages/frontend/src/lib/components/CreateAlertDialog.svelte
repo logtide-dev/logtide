@@ -32,6 +32,10 @@
 		projectId?: string | null;
 		onSuccess?: () => void;
 		onOpenChange?: (open: boolean) => void;
+		/** Optional values used to prefill the builder when the dialog opens (e.g. "create alert from this error"). */
+		initialName?: string;
+		initialService?: string;
+		initialLevels?: string[];
 	}
 
 	let {
@@ -40,6 +44,9 @@
 		projectId = null,
 		onSuccess,
 		onOpenChange,
+		initialName,
+		initialService,
+		initialLevels,
 	}: Props = $props();
 
 	let activeTab = $state("builder");
@@ -269,10 +276,19 @@
 		}
 	}
 
+	let wasOpen = false;
 	$effect(() => {
-		if (!open) {
+		if (open && !wasOpen) {
+			// Just opened: apply any prefill from the caller (e.g. from an error page).
+			if (initialName) name = initialName;
+			if (initialService) service = initialService;
+			if (initialLevels && initialLevels.length > 0) {
+				selectedLevels = new Set(initialLevels);
+			}
+		} else if (!open && wasOpen) {
 			resetForm();
 		}
+		wasOpen = open;
 	});
 </script>
 

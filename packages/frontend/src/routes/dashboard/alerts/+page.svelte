@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { browser } from "$app/environment";
+	import { page } from "$app/state";
+	import { goto } from "$app/navigation";
 	import { getApiUrl } from "$lib/config";
 	import { currentOrganization } from "$lib/stores/organization";
 	import {
@@ -78,6 +80,25 @@
 	let loadingHistory = $state(false);
 	let error = $state("");
 	let showCreateDialog = $state(false);
+	// Prefill for "create alert from this error" (passed via URL query params)
+	let prefillName = $state<string | undefined>(undefined);
+	let prefillService = $state<string | undefined>(undefined);
+	let prefillLevels = $state<string[] | undefined>(undefined);
+	let prefillProcessed = false;
+	$effect(() => {
+		if (!browser || prefillProcessed) return;
+		const params = page.url.searchParams;
+		if (params.get("new") === "1") {
+			prefillProcessed = true;
+			prefillName = params.get("name") ?? undefined;
+			prefillService = params.get("service") ?? undefined;
+			const levels = params.get("levels");
+			prefillLevels = levels ? levels.split(",").filter(Boolean) : undefined;
+			showCreateDialog = true;
+			// Strip the params so a refresh does not reopen the dialog.
+			goto("/dashboard/alerts", { replaceState: true, keepFocus: true, noScroll: true });
+		}
+	});
 	let deletingAlertId = $state<string | null>(null);
 	let lastLoadedOrgId = $state<string | null>(null);
 	let showDeleteDialog = $state(false);
@@ -783,6 +804,9 @@
 	<CreateAlertDialog
 		bind:open={showCreateDialog}
 		organizationId={$currentOrganization.id}
+		initialName={prefillName}
+		initialService={prefillService}
+		initialLevels={prefillLevels}
 		onSuccess={() => {
 			loadAlertRules();
 			loadAlertHistory();

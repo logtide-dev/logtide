@@ -36,6 +36,7 @@
 	import Check from '@lucide/svelte/icons/check';
 	import Folder from '@lucide/svelte/icons/folder';
 	import Key from '@lucide/svelte/icons/key';
+	import Bell from '@lucide/svelte/icons/bell';
 	import { layoutStore } from '$lib/stores/layout';
 	import { apiKeysAPI, type ApiKey } from '$lib/api/api-keys';
 
@@ -267,6 +268,25 @@
 						</p>
 					{/if}
 				</div>
+
+				<!-- Create alert from this error -->
+				<Button
+					variant="outline"
+					size="sm"
+					onclick={() => {
+						const params = new URLSearchParams({
+							new: '1',
+							name: `${group.exceptionType} errors`,
+							levels: 'error,critical',
+						});
+						const svc = group.affectedServices?.find((s) => s && s !== 'unknown');
+						if (svc) params.set('service', svc);
+						goto(`/dashboard/alerts?${params.toString()}`);
+					}}
+				>
+					<Bell class="w-4 h-4 mr-1.5" />
+					Create alert
+				</Button>
 
 				<!-- Status dropdown -->
 				<Select.Root
