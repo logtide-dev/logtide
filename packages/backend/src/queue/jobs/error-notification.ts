@@ -28,6 +28,8 @@ export interface ErrorNotificationJobData {
   language: ExceptionLanguage;
   service: string;
   isNewErrorGroup: boolean;
+  /** True when a previously resolved error group recurred (a regression). */
+  isRegression?: boolean;
 }
 
 // Create the queue
@@ -72,9 +74,9 @@ async function sendErrorWebhook(
     organizationId: data.organizationId,
     projectId: data.projectId ?? null,
     data: {
-      title: `${data.isNewErrorGroup ? 'New Error' : 'Error'}: ${data.exceptionType}`,
+      title: `${data.isRegression ? 'Regression' : data.isNewErrorGroup ? 'New Error' : 'Error'}: ${data.exceptionType}`,
       message: data.exceptionMessage || `An error occurred in ${data.service}`,
-      severity: data.isNewErrorGroup ? 'high' : 'medium',
+      severity: data.isRegression || data.isNewErrorGroup ? 'high' : 'medium',
       organization: {
         id: data.organizationId,
         name: orgName,
@@ -88,6 +90,7 @@ async function sendErrorWebhook(
       language: data.language,
       service: data.service,
       is_new: data.isNewErrorGroup,
+      is_regression: data.isRegression ?? false,
       link: `${frontendUrl}/dashboard/errors/${errorGroupId}`,
     },
   });
@@ -220,7 +223,9 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
 
   console.log(`[ErrorNotification] Notifying ${members.length} members`);
 
-  const notificationTitle = data.isNewErrorGroup
+  const notificationTitle = data.isRegression
+    ? `Regression: ${data.exceptionType}`
+    : data.isNewErrorGroup
     ? `New Error: ${data.exceptionType}`
     : `Error: ${data.exceptionType}`;
 
@@ -272,7 +277,9 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
       projectName: project.name,
       fingerprint: data.fingerprint,
     });
-    const subject = data.isNewErrorGroup
+    const subject = data.isRegression
+      ? `[Regression] ${data.exceptionType} in ${data.service}`
+      : data.isNewErrorGroup
       ? `[New Error] ${data.exceptionType} in ${data.service}`
       : `[Error] ${data.exceptionType} in ${data.service}`;
 

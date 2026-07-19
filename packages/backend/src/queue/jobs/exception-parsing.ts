@@ -82,6 +82,8 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
         .executeTakeFirst();
 
       const isNewErrorGroup = !existingGroup;
+      // A previously resolved error that recurs is a regression.
+      const isRegression = existingGroup?.status === 'resolved';
 
       const exceptionId = await exceptionService.createException({
         organizationId,
@@ -91,6 +93,16 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
         fingerprint,
         service: log.service,
       });
+
+      // Reopen a resolved group so the regression is visible and not silently
+      // folded into a "resolved" bucket.
+      if (isRegression && existingGroup) {
+        await db
+          .updateTable('error_groups')
+          .set({ status: 'open', resolved_at: null, resolved_by: null, updated_at: new Date() })
+          .where('id', '=', existingGroup.id)
+          .execute();
+      }
 
       stats.parsed++;
 
@@ -111,6 +123,7 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
           language: parsed.language,
           service: log.service,
           isNewErrorGroup,
+          isRegression,
         };
 
         await errorNotificationQueue.add('error-notification', notificationData, {

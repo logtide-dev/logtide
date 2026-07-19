@@ -409,6 +409,53 @@ ValueError: Repeated error`;
       );
     });
 
+    it('reopens a resolved error group and flags a regression when it recurs', async () => {
+      const owner = await createTestUser({ name: 'Owner User' });
+      const org = await createTestOrganization({ ownerId: owner.id, name: 'Test Org' });
+      const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+
+      const pythonStackTrace = `Traceback (most recent call last):
+  File "/app/regress.py", line 10, in <module>
+    do_something()
+ValueError: Regressed error`;
+
+      const log1 = await createTestLog({ projectId: project.id, level: 'error', message: pythonStackTrace, service: 'test-service' });
+      const log2 = await createTestLog({ projectId: project.id, level: 'error', message: pythonStackTrace, service: 'test-service' });
+
+      const mkJob = (logId: string, message: string) =>
+        ({
+          data: {
+            logs: [{ id: logId, message, level: 'error' as const, service: 'test-service' }],
+            organizationId: org.id,
+            projectId: project.id,
+          } as ExceptionParsingJobData,
+        } as Job<ExceptionParsingJobData>);
+
+      await processExceptionParsing(mkJob(log1.id, log1.message));
+
+      // Operator resolves the group
+      await db.updateTable('error_groups').set({ status: 'resolved' }).where('organization_id', '=', org.id).execute();
+
+      vi.clearAllMocks();
+      mockState.queueAdd.mockResolvedValue({ id: 'job-id' });
+
+      // The same error recurs
+      await processExceptionParsing(mkJob(log2.id, log2.message));
+
+      expect(mockState.queueAdd).toHaveBeenCalledWith(
+        'error-notification',
+        expect.objectContaining({ isRegression: true }),
+        expect.any(Object)
+      );
+
+      const group = await db
+        .selectFrom('error_groups')
+        .select('status')
+        .where('organization_id', '=', org.id)
+        .executeTakeFirstOrThrow();
+      expect(group.status).toBe('open');
+    });
+
     it('should handle empty logs array', async () => {
       const owner = await createTestUser({ name: 'Owner User' });
       const org = await createTestOrganization({ ownerId: owner.id, name: 'Test Org' });
