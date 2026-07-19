@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ExceptionDetectionService } from '../../../modules/exceptions/detection.js';
+import { FingerprintService } from '../../../modules/exceptions/fingerprint-service.js';
 
 describe('ExceptionDetectionService', () => {
     describe('detectException', () => {
@@ -530,6 +531,52 @@ describe('ExceptionDetectionService', () => {
                 expect(result?.frames[0].isAppCode).toBe(true);
                 expect(result?.frames[1].isAppCode).toBe(true);
                 expect(result?.frames[2].isAppCode).toBe(true);
+            });
+
+            it('should detect node: runtime frames as library code', () => {
+                const metadata = {
+                    exception: {
+                        type: 'Error',
+                        message: 'Test',
+                        stacktrace: [
+                            { file: 'node:internal/process/task_queues', function: 'process.processTicksAndRejections', line: 95 },
+                            { file: 'node:events', function: 'EventEmitter.emit', line: 1 },
+                        ],
+                    },
+                };
+
+                const result = ExceptionDetectionService.detectException('Error', metadata);
+
+                expect(result?.frames[0].isAppCode).toBe(false);
+                expect(result?.frames[1].isAppCode).toBe(false);
+            });
+
+            it('should not split the same error across groups when only node: internal frames differ', () => {
+                // Regression: async Node stacks include varying internal frames
+                // (node:internal/...). When those were treated as app code they
+                // entered the fingerprint, so the same logical error fingerprinted
+                // differently and split into several error groups.
+                const appFrame = { file: '/app/apps/api/dist/modules/products/routes.js', function: 'Object.<anonymous>', line: 130, column: 14 };
+
+                const occurrenceA = ExceptionDetectionService.detectException('TypeError', {
+                    exception: {
+                        type: 'TypeError',
+                        message: "Cannot read properties of undefined (reading 'selectFrom')",
+                        stacktrace: [appFrame, { file: 'node:internal/process/task_queues', function: 'process.processTicksAndRejections', line: 95 }],
+                    },
+                });
+
+                const occurrenceB = ExceptionDetectionService.detectException('TypeError', {
+                    exception: {
+                        type: 'TypeError',
+                        message: "Cannot read properties of undefined (reading 'selectFrom')",
+                        stacktrace: [appFrame, { file: 'node:internal/async_hooks', function: 'AsyncResource.runInAsyncScope', line: 206 }],
+                    },
+                });
+
+                expect(occurrenceA).not.toBeNull();
+                expect(occurrenceB).not.toBeNull();
+                expect(FingerprintService.generate(occurrenceA!)).toBe(FingerprintService.generate(occurrenceB!));
             });
         });
 
