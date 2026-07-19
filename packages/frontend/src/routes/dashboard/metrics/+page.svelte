@@ -751,51 +751,8 @@
         <CardTitle>Filters</CardTitle>
       </CardHeader>
       <CardContent>
-        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <!-- Project selector -->
-          <div class="space-y-2">
-            <span class="text-sm font-medium">Project</span>
-            <Select.Root
-              type="single"
-              value={selectedProject || ""}
-              onValueChange={(v) => {
-                selectedProject = v || null;
-              }}
-            >
-              <Select.Trigger class="w-full">
-                {projects.find(p => p.id === selectedProject)?.name || "Select project"}
-              </Select.Trigger>
-              <Select.Content>
-                {#each projects as project}
-                  <Select.Item value={project.id}>{project.name}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          </div>
-
-          <!-- Time range selector -->
-          <div class="space-y-2">
-            <span class="text-sm font-medium">Time Range</span>
-            <Select.Root
-              type="single"
-              value={timeRangeType}
-              onValueChange={(v) => {
-                if (v) timeRangeType = v as typeof timeRangeType;
-              }}
-            >
-              <Select.Trigger class="w-full">
-                {timeRangeType === 'last_hour' ? 'Last Hour' : timeRangeType === 'last_6h' ? 'Last 6 Hours' : timeRangeType === 'last_24h' ? 'Last 24 Hours' : 'Last 7 Days'}
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="last_hour">Last Hour</Select.Item>
-                <Select.Item value="last_6h">Last 6 Hours</Select.Item>
-                <Select.Item value="last_24h">Last 24 Hours</Select.Item>
-                <Select.Item value="last_7d">Last 7 Days</Select.Item>
-              </Select.Content>
-            </Select.Root>
-          </div>
-
-          <!-- Metric name selector -->
+        <div class="grid gap-4">
+          <!-- Metric name selector (project and time range are set in the page header) -->
           <div class="space-y-2">
             <span class="text-sm font-medium">Metric</span>
             <Select.Root

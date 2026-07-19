@@ -11,6 +11,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import type { OrganizationWithRole, OrganizationMemberWithUser, PendingInvitation, OrgRole } from '@logtide/shared';
   import { canManageMembers } from '@logtide/shared';
+  import { formatDateShort, formatTimeAgo } from '$lib/utils/datetime';
   import Users from '@lucide/svelte/icons/users';
   import Crown from '@lucide/svelte/icons/crown';
   import Shield from '@lucide/svelte/icons/shield';
@@ -231,18 +232,6 @@
     return Users;
   }
 
-  function formatTimeAgo(date: Date | string): string {
-    const d = date instanceof Date ? date : new Date(date);
-    const now = new Date();
-    const diff = now.getTime() - d.getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-    if (days === 0) return 'Today';
-    if (days === 1) return 'Yesterday';
-    if (days < 7) return `${days} days ago`;
-    return d.toLocaleDateString('en-US');
-  }
-
   function formatExpiresIn(date: Date | string): string {
     const d = date instanceof Date ? date : new Date(date);
     const now = new Date();
@@ -355,7 +344,7 @@
                         </div>
                       </TableCell>
                       <TableCell class="text-sm text-muted-foreground">
-                        {formatTimeAgo(member.createdAt)}
+                        <span title={formatTimeAgo(member.createdAt)}>{formatDateShort(member.createdAt)}</span>
                       </TableCell>
                       {#if canManage}
                         <TableCell>
