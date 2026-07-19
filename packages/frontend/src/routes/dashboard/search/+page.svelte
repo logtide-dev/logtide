@@ -394,6 +394,12 @@
       shouldLoadLogs = true;
     }
 
+    const qParam = params.get("q");
+    if (qParam && !searchQuery) {
+      searchQuery = qParam;
+      shouldLoadLogs = true;
+    }
+
     const fromParam = params.get("from");
     const toParam = params.get("to");
     if (fromParam && toParam && !customFromTime && !customToTime) {

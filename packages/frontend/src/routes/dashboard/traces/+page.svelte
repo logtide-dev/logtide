@@ -279,9 +279,14 @@
     const urlProjectId = page.url.searchParams.get('projectId');
     const urlFrom = page.url.searchParams.get('from');
     const urlTo = page.url.searchParams.get('to');
+    const urlTraceId = page.url.searchParams.get('traceId');
 
     if (urlService) {
       selectedServices = [urlService];
+    }
+
+    if (urlTraceId) {
+      traceIdInput = urlTraceId;
     }
 
     if (urlProjectId) {

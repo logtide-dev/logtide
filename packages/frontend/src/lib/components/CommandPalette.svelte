@@ -20,6 +20,11 @@
   import Moon from '@lucide/svelte/icons/moon';
 
   let open = $state(false);
+  let query = $state('');
+
+  let trimmedQuery = $derived(query.trim());
+  // Trace/span IDs are 16 or 32 lowercase hex characters.
+  let looksLikeTraceId = $derived(/^[0-9a-f]{16}$|^[0-9a-f]{32}$/i.test(trimmedQuery));
 
   $effect(() => {
     const unsubscribe = shortcutsStore.subscribe((s) => {
@@ -32,6 +37,7 @@
     if (newOpen) {
       shortcutsStore.openCommandPalette();
     } else {
+      query = '';
       shortcutsStore.closeCommandPalette();
     }
   }
@@ -51,6 +57,7 @@
 
   function navigate(href: string) {
     goto(href);
+    query = '';
     shortcutsStore.closeCommandPalette();
   }
 
@@ -61,9 +68,30 @@
 </script>
 
 <Command.Dialog bind:open onOpenChange={handleOpenChange}>
-  <Command.Input placeholder="Type a command or search..." />
+  <Command.Input placeholder="Type a command or search..." bind:value={query} />
   <Command.List>
     <Command.Empty>No results found.</Command.Empty>
+
+    {#if trimmedQuery}
+      <Command.Group heading="Search">
+        {#if looksLikeTraceId}
+          <Command.Item value={`open trace ${trimmedQuery}`} onSelect={() => navigate(`/dashboard/traces?traceId=${encodeURIComponent(trimmedQuery)}`)}>
+            <GitBranch class="w-4 h-4 mr-2 text-muted-foreground" />
+            <span>Open trace <span class="font-mono">{trimmedQuery}</span></span>
+          </Command.Item>
+        {/if}
+        <Command.Item value={`search logs ${trimmedQuery}`} onSelect={() => navigate(`/dashboard/search?q=${encodeURIComponent(trimmedQuery)}`)}>
+          <FileText class="w-4 h-4 mr-2 text-muted-foreground" />
+          <span>Search logs for "{trimmedQuery}"</span>
+        </Command.Item>
+        <Command.Item value={`search errors ${trimmedQuery}`} onSelect={() => navigate(`/dashboard/errors?search=${encodeURIComponent(trimmedQuery)}`)}>
+          <Bug class="w-4 h-4 mr-2 text-muted-foreground" />
+          <span>Search errors for "{trimmedQuery}"</span>
+        </Command.Item>
+      </Command.Group>
+
+      <Command.Separator />
+    {/if}
 
     <Command.Group heading="Navigation">
       {#each navItems as item}
