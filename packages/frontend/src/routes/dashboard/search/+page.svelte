@@ -1005,8 +1005,33 @@
       .map((part) => ({ text: part, match: lower.has(part.toLowerCase()) }));
   }
 
+  // Reflect the active filters in the URL so a search is shareable/bookmarkable.
+  // The read effect above is idempotent (its guards only apply a param when the
+  // matching state is still empty), so re-running it after this write is a no-op.
+  function updateUrl() {
+    if (!browser) return;
+    const params = new URLSearchParams();
+    if (searchQuery.trim()) params.set("q", searchQuery.trim());
+    if (selectedProjects.length === 1) params.set("project", selectedProjects[0]);
+    if (selectedServices.length === 1) params.set("service", selectedServices[0]);
+    if (selectedLevels.length > 0 && selectedLevels.length < 5) {
+      params.set("level", selectedLevels.join(","));
+    }
+    if (traceId.trim()) params.set("traceId", traceId.trim());
+    if (sessionId.trim()) params.set("sessionId", sessionId.trim());
+    if (timeRangeType === "custom" && customFromTime && customToTime) {
+      params.set("from", new Date(customFromTime).toISOString());
+      params.set("to", new Date(customToTime).toISOString());
+    }
+    const qs = params.toString();
+    const next = qs ? `/dashboard/search?${qs}` : "/dashboard/search";
+    if (page.url.pathname + page.url.search === next) return;
+    goto(next, { replaceState: true, keepFocus: true, noScroll: true });
+  }
+
   function applyFilters() {
     currentPage = 1;
+    updateUrl();
     loadLogs();
   }
 
