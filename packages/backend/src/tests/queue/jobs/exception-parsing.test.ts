@@ -456,6 +456,113 @@ ValueError: Regressed error`;
       expect(group.status).toBe('open');
     });
 
+    describe('auto-merge at ingestion', () => {
+      async function ingest(
+        org: string,
+        project: string,
+        frames: Array<{ file: string; function: string; line: number }>,
+        message = 'boom',
+        type = 'TypeError'
+      ) {
+        const log = await createTestLog({ projectId: project, level: 'error', message: `${type}: ${message}`, service: 'svc' });
+        const job = {
+          data: {
+            logs: [
+              {
+                id: log.id,
+                message: log.message,
+                level: 'error' as const,
+                service: 'svc',
+                metadata: { exception: { type, message, language: 'nodejs', stacktrace: frames } },
+              },
+            ],
+            organizationId: org,
+            projectId: project,
+          } as ExceptionParsingJobData,
+        } as Job<ExceptionParsingJobData>;
+        await processExceptionParsing(job);
+      }
+
+      async function groupCount(org: string): Promise<number> {
+        const rows = await db.selectFrom('error_groups').select('id').where('organization_id', '=', org).execute();
+        return rows.length;
+      }
+
+      it('folds a stack that differs only in deeper app frames into one group', async () => {
+        const owner = await createTestUser({ name: 'Owner' });
+        const org = await createTestOrganization({ ownerId: owner.id, name: 'Org' });
+        const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+
+        // Same top app frame + message, different SECOND app frame -> different
+        // fingerprint (would split) but same merge key (auto-folds).
+        await ingest(org.id, project.id, [
+          { file: '/app/src/charge.js', function: 'charge', line: 10 },
+          { file: '/app/src/handlerA.js', function: 'handleA', line: 5 },
+        ]);
+        await ingest(org.id, project.id, [
+          { file: '/app/src/charge.js', function: 'charge', line: 10 },
+          { file: '/app/src/handlerB.js', function: 'handleB', line: 7 },
+        ]);
+
+        expect(await groupCount(org.id)).toBe(1);
+      });
+
+      it('keeps errors from different throw sites in separate groups', async () => {
+        const owner = await createTestUser({ name: 'Owner' });
+        const org = await createTestOrganization({ ownerId: owner.id, name: 'Org' });
+        const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+
+        await ingest(org.id, project.id, [{ file: '/app/src/charge.js', function: 'charge', line: 10 }]);
+        await ingest(org.id, project.id, [{ file: '/app/src/refund.js', function: 'refund', line: 20 }]);
+
+        expect(await groupCount(org.id)).toBe(2);
+      });
+
+      it('folds messages that differ only by dynamic values', async () => {
+        const owner = await createTestUser({ name: 'Owner' });
+        const org = await createTestOrganization({ ownerId: owner.id, name: 'Org' });
+        const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+
+        await ingest(
+          org.id,
+          project.id,
+          [
+            { file: '/app/src/net.js', function: 'call', line: 3 },
+            { file: '/app/src/a.js', function: 'a', line: 1 },
+          ],
+          'Timeout after 5023ms'
+        );
+        await ingest(
+          org.id,
+          project.id,
+          [
+            { file: '/app/src/net.js', function: 'call', line: 3 },
+            { file: '/app/src/b.js', function: 'b', line: 2 },
+          ],
+          'Timeout after 812ms'
+        );
+
+        expect(await groupCount(org.id)).toBe(1);
+      });
+
+      it('does not compute a merge key for a library-only exception', async () => {
+        const owner = await createTestUser({ name: 'Owner' });
+        const org = await createTestOrganization({ ownerId: owner.id, name: 'Org' });
+        const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+
+        await ingest(org.id, project.id, [
+          { file: '/app/node_modules/pg/lib/client.js', function: 'query', line: 1 },
+        ]);
+
+        const group = await db
+          .selectFrom('error_groups')
+          .select('merge_key')
+          .where('organization_id', '=', org.id)
+          .executeTakeFirstOrThrow();
+        expect(group.merge_key).toBeNull();
+      });
+    });
+
     it('should handle empty logs array', async () => {
       const owner = await createTestUser({ name: 'Owner User' });
       const org = await createTestOrganization({ ownerId: owner.id, name: 'Test Org' });

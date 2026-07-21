@@ -53,4 +53,9 @@ export interface CreateExceptionParams {
    * not just TimescaleDB (where logs live in Postgres).
    */
   service?: string | null;
+  /**
+   * Raw "file:function" of the first app frame (throw site). Carried so the
+   * trigger can compute the group's coarse merge key for auto-merge.
+   */
+  topFrame?: string | null;
 }

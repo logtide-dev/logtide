@@ -6,6 +6,7 @@
  * Also queues error notifications for organization members.
  */
 
+import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { ExceptionDetectionService } from '../../modules/exceptions/detection.js';
 import { FingerprintService } from '../../modules/exceptions/fingerprint-service.js';
@@ -72,14 +73,44 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
       }
 
       const fingerprint = FingerprintService.generate(parsed);
+      const topFrame = FingerprintService.topAppFrame(parsed);
 
       // Check if this is a new error group (first occurrence with this fingerprint)
-      const existingGroup = await db
+      let existingGroup = await db
         .selectFrom('error_groups')
         .select(['id', 'occurrence_count', 'status'])
         .where('fingerprint', '=', fingerprint)
         .where('organization_id', '=', organizationId)
         .executeTakeFirst();
+
+      // No exact fingerprint match: auto-merge into an existing group that shares
+      // the coarse key (same type + normalized message + top app frame), so a
+      // stack that differs only in its deep frames does not spawn a duplicate
+      // group. The key is computed by the same Postgres function on both sides.
+      let effectiveFingerprint = fingerprint;
+      if (!existingGroup && topFrame) {
+        const mergeMatch = await db
+          .selectFrom('error_groups')
+          .select(['id', 'fingerprint', 'occurrence_count', 'status'])
+          .where('organization_id', '=', organizationId)
+          .where('project_id', '=', projectId)
+          .where(
+            'merge_key',
+            '=',
+            sql<string>`logtide_merge_key(${parsed.exceptionType}, ${parsed.exceptionMessage}, ${topFrame})`
+          )
+          .orderBy('first_seen', 'asc')
+          .executeTakeFirst();
+
+        if (mergeMatch) {
+          effectiveFingerprint = mergeMatch.fingerprint;
+          existingGroup = {
+            id: mergeMatch.id,
+            occurrence_count: mergeMatch.occurrence_count,
+            status: mergeMatch.status,
+          };
+        }
+      }
 
       const isNewErrorGroup = !existingGroup;
       // A previously resolved error that recurs is a regression.
@@ -90,8 +121,9 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
         projectId,
         logId: log.id,
         parsedData: parsed,
-        fingerprint,
+        fingerprint: effectiveFingerprint,
         service: log.service,
+        topFrame,
       });
 
       // Reopen a resolved group so the regression is visible and not silently
@@ -117,7 +149,7 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
           exceptionId,
           organizationId,
           projectId,
-          fingerprint,
+          fingerprint: effectiveFingerprint,
           exceptionType: parsed.exceptionType,
           exceptionMessage: parsed.exceptionMessage,
           language: parsed.language,
