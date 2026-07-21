@@ -38,6 +38,19 @@ function isAuthEndpoint(url: string): boolean {
   return url.includes('/auth/');
 }
 
+// Ingestion / telemetry endpoints authenticate with an API key or DSN, not the
+// session. A 401 here means a bad or expired telemetry key (e.g. the client-side
+// SDK in hooks.client.ts, or an inbound receiver), NOT an expired user session,
+// so it must never log the user out. Otherwise a misconfigured browser SDK key
+// bounces the user to /login on every page view.
+function isTelemetryEndpoint(url: string): boolean {
+  return (
+    url.includes('/api/v1/ingest') ||
+    url.includes('/v1/otlp/') ||
+    url.includes('/api/v1/receivers/')
+  );
+}
+
 function handleUnauthorized(): void {
   if (handling) return;
   handling = true;
@@ -74,7 +87,8 @@ export function installAuthFetchInterceptor(): void {
         response.status === 401 &&
         getAuthToken() &&
         isApiRequest(urlOf(input)) &&
-        !isAuthEndpoint(urlOf(input))
+        !isAuthEndpoint(urlOf(input)) &&
+        !isTelemetryEndpoint(urlOf(input))
       ) {
         handleUnauthorized();
       }
