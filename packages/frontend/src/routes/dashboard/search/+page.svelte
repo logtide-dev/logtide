@@ -1906,7 +1906,7 @@
                   title={rowDensity === "compact" ? "Comfortable rows" : "Compact rows"}
                   aria-label={rowDensity === "compact" ? "Comfortable rows" : "Compact rows"}
                 >
-                  <Rows3 class="w-4 h-4 {rowDensity === 'compact' ? 'text-primary' : 'text-muted-foreground'}" />
+                  <Rows3 class="w-4 h-4" />
                   <span class="hidden sm:inline">{rowDensity === "compact" ? "Compact" : "Cozy"}</span>
                 </Button>
                 <ColumnConfigMenu
