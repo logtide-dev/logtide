@@ -61,6 +61,7 @@ counter.add(1, {"route": "/checkout"})`,
     go: `// Go with OpenTelemetry Metrics
 import (
     "context"
+    "go.opentelemetry.io/otel"
     "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
     "go.opentelemetry.io/otel/sdk/metric"
 )
@@ -68,6 +69,7 @@ import (
 exporter, _ := otlpmetrichttp.New(context.Background(),
     otlpmetrichttp.WithEndpoint("${apiUrlValue.replace('https://', '').replace('http://', '')}"),
     otlpmetrichttp.WithURLPath("/v1/otlp/metrics"),
+    otlpmetrichttp.WithInsecure(), // remove for HTTPS
     otlpmetrichttp.WithHeaders(map[string]string{
         "X-API-Key": "YOUR_API_KEY",
     }),
