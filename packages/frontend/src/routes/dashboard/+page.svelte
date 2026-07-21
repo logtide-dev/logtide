@@ -173,11 +173,14 @@
   // Auto-refresh (global, for the active dashboard's panels)
   let autoRefreshMs = $state(0);
   const autoRefreshOptions = [
-    { value: '0', label: 'Auto-refresh off' },
-    { value: '30000', label: 'Every 30s' },
-    { value: '60000', label: 'Every 1m' },
-    { value: '300000', label: 'Every 5m' },
+    { value: '0', label: 'Auto-refresh off', short: 'Off' },
+    { value: '30000', label: 'Every 30s', short: '30s' },
+    { value: '60000', label: 'Every 1m', short: '1m' },
+    { value: '300000', label: 'Every 5m', short: '5m' },
   ];
+  const autoRefreshShort = $derived(
+    autoRefreshOptions.find((o) => o.value === String(autoRefreshMs))?.short ?? 'Off'
+  );
 
   function setAutoRefresh(v: string | undefined) {
     autoRefreshMs = v ? parseInt(v, 10) || 0 : 0;
@@ -344,9 +347,9 @@
           value={String(autoRefreshMs)}
           onValueChange={setAutoRefresh}
         >
-          <Select.Trigger class="w-[150px] gap-2">
-            <RefreshCw class="w-4 h-4 {autoRefreshMs > 0 ? 'text-primary' : 'text-muted-foreground'}" />
-            {autoRefreshOptions.find((o) => o.value === String(autoRefreshMs))?.label ?? 'Auto-refresh off'}
+          <Select.Trigger class="w-auto gap-2" title="Auto-refresh">
+            <RefreshCw class="w-4 h-4 shrink-0 {autoRefreshMs > 0 ? 'text-primary' : 'text-muted-foreground'}" />
+            <span class="whitespace-nowrap">{autoRefreshShort}</span>
           </Select.Trigger>
           <Select.Content>
             {#each autoRefreshOptions as opt}
