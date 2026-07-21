@@ -133,6 +133,7 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
           .updateTable('error_groups')
           .set({ status: 'open', resolved_at: null, resolved_by: null, updated_at: new Date() })
           .where('id', '=', existingGroup.id)
+          .where('organization_id', '=', organizationId)
           .execute();
       }
 
