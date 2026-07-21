@@ -176,6 +176,9 @@ importers:
 
   packages/frontend:
     dependencies:
+      '@internationalized/date':
+        specifier: ^3.12.2
+        version: 3.12.2
       '@logtide/core':
         specifier: 0.7.0
         version: 0.7.0
@@ -785,8 +788,8 @@ packages:
   '@graphile/logger@0.2.0':
     resolution: {integrity: sha512-jjcWBokl9eb1gVJ85QmoaQ73CQ52xAaOCF29ukRbYNl6lY+ts0ErTaDYOBlejcbUs2OpaiqYLO5uDhyLFzWw4w==}
 
-  '@internationalized/date@3.10.0':
-    resolution: {integrity: sha512-oxDR/NTEJ1k+UFVQElaNIk65E/Z83HK1z1WI3lQyhTtnNg4R5oVXaPzK3jcpKG8UHKDVuDQHzn+wsxSz8RP3aw==}
+  '@internationalized/date@3.12.2':
+    resolution: {integrity: sha512-FY1Y+H64NDs+HAF6omlnWxm3mEpfgaCSWtL5l551ZZfImA+kGjPFgrnJrGjH6lfmLL0g8Z/mBu1R3kufeCp6Jw==}
 
   '@ioredis/commands@1.4.0':
     resolution: {integrity: sha512-aFT2yemJJo+TZCmieA7qnYGQooOS7QfNmYrzGtsYd3g9j5iDP8AimYYAesf79ohjbLG12XxC4nG5DyEnC88AsQ==}
@@ -4052,7 +4055,7 @@ snapshots:
 
   '@graphile/logger@0.2.0': {}
 
-  '@internationalized/date@3.10.0':
+  '@internationalized/date@3.12.2':
     dependencies:
       '@swc/helpers': 0.5.17
 
@@ -5063,7 +5066,7 @@ snapshots:
     dependencies:
       '@floating-ui/core': 1.7.3
       '@floating-ui/dom': 1.7.4
-      '@internationalized/date': 3.10.0
+      '@internationalized/date': 3.12.2
       css.escape: 1.5.1
       esm-env: 1.2.2
       runed: 0.23.4(svelte@5.55.9)
