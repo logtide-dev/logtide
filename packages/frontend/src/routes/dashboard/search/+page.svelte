@@ -1899,7 +1899,7 @@
               {/if}
               {#if viewMode === "table"}
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
                   onclick={toggleDensity}
                   class="gap-1.5"
