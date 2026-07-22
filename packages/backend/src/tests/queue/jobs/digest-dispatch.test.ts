@@ -15,7 +15,6 @@ vi.mock('../../../queue/connection.js', () => ({
 }));
 
 const mockExecute = vi.fn();
-const mockUpdateExecute = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../database/connection.js', () => ({
   db: {
     selectFrom: vi.fn().mockReturnThis(),
