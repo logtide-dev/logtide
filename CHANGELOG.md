@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.2.0] - 2026-07-23
 
 ### Security
 - **Bumped echarts to 6.1.0** (Dependabot `GHSA-fgmj-fm8m-jvvx` / `CVE-2026-45249`). Versions before 6.1.0 render a raw HTML `series.data[i].name` through an `innerHTML` sink into the built-in tooltip of a Lines series when no custom `tooltip.formatter` is set, bypassing the automatic HTML escaping the built-in formatters otherwise apply and allowing script execution. The frontend does not use the Lines series, so LogTide was not exposed in practice, but the dependency is upgraded to clear the advisory and prevent future exposure.
