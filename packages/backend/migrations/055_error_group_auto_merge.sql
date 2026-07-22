@@ -111,7 +111,11 @@ FROM (
   SELECT
     eg.id AS group_id,
     (
-      SELECT sf.file_path || ':' || COALESCE(sf.function_name, '<anonymous>')
+      -- Prefer the source-mapped frame, matching FingerprintService.topAppFrame()
+      -- so backfilled keys line up with keys the runtime computes for new
+      -- occurrences (which carry original_file/original_function when available).
+      SELECT COALESCE(sf.original_file, sf.file_path) || ':' ||
+             COALESCE(sf.original_function, sf.function_name, '<anonymous>')
       FROM exceptions e
       JOIN stack_frames sf ON sf.exception_id = e.id
       WHERE e.log_id = eg.sample_log_id AND sf.is_app_code = TRUE

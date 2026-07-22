@@ -285,6 +285,125 @@ describe('ExceptionService', () => {
         .executeTakeFirst();
       expect(survives).not.toBeUndefined();
     });
+
+    it('does not surface duplicates from another project in the same org', async () => {
+      const ctx = await createTestContext();
+      const project2 = await createTestProject({ organizationId: ctx.organization.id });
+      const fpTarget = `dup-proj-t-${randomUUID().slice(0, 8)}`;
+      const fpOther = `dup-proj-o-${randomUUID().slice(0, 8)}`;
+
+      // Same type+message in two projects of the same org.
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        logId: randomUUID(),
+        fingerprint: fpTarget,
+        service: 'api',
+        parsedData: parsed,
+      });
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: project2.id,
+        logId: randomUUID(),
+        fingerprint: fpOther,
+        service: 'api',
+        parsedData: parsed,
+      });
+
+      const target = await db
+        .selectFrom('error_groups')
+        .select(['id'])
+        .where('organization_id', '=', ctx.organization.id)
+        .where('fingerprint', '=', fpTarget)
+        .executeTakeFirstOrThrow();
+      const otherGroup = await db
+        .selectFrom('error_groups')
+        .select(['id'])
+        .where('organization_id', '=', ctx.organization.id)
+        .where('fingerprint', '=', fpOther)
+        .executeTakeFirstOrThrow();
+
+      const dups = await service.findDuplicateErrorGroups(target.id, ctx.organization.id);
+      expect(dups.map((d) => d.id)).not.toContain(otherGroup.id);
+    });
+
+    it('does not merge or retag a sibling project sharing the same fingerprint', async () => {
+      const ctx = await createTestContext();
+      const project2 = await createTestProject({ organizationId: ctx.organization.id });
+      const fpTarget = `merge-proj-t-${randomUUID().slice(0, 8)}`;
+      // Deliberately identical fingerprint string across two projects.
+      const fpShared = `merge-proj-shared-${randomUUID().slice(0, 8)}`;
+
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        logId: randomUUID(),
+        fingerprint: fpTarget,
+        service: 'api',
+        parsedData: parsed,
+      });
+      // Source in the target's project (legitimate merge candidate).
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        logId: randomUUID(),
+        fingerprint: fpShared,
+        service: 'api',
+        parsedData: parsed,
+      });
+      // Same fingerprint string, different project: must be untouched.
+      await service.createException({
+        organizationId: ctx.organization.id,
+        projectId: project2.id,
+        logId: randomUUID(),
+        fingerprint: fpShared,
+        service: 'api',
+        parsedData: parsed,
+      });
+
+      const target = await db
+        .selectFrom('error_groups')
+        .select(['id'])
+        .where('organization_id', '=', ctx.organization.id)
+        .where('project_id', '=', ctx.project.id)
+        .where('fingerprint', '=', fpTarget)
+        .executeTakeFirstOrThrow();
+      const sameProjectSource = await db
+        .selectFrom('error_groups')
+        .select(['id'])
+        .where('organization_id', '=', ctx.organization.id)
+        .where('project_id', '=', ctx.project.id)
+        .where('fingerprint', '=', fpShared)
+        .executeTakeFirstOrThrow();
+      const siblingGroup = await db
+        .selectFrom('error_groups')
+        .select(['id'])
+        .where('organization_id', '=', ctx.organization.id)
+        .where('project_id', '=', project2.id)
+        .where('fingerprint', '=', fpShared)
+        .executeTakeFirstOrThrow();
+
+      // Merging the same-project source folds it in; the sibling project's group
+      // with the identical fingerprint stays put and its exceptions keep their
+      // fingerprint.
+      await service.mergeErrorGroups(target.id, [sameProjectSource.id], ctx.organization.id);
+
+      const siblingSurvives = await db
+        .selectFrom('error_groups')
+        .select('id')
+        .where('id', '=', siblingGroup.id)
+        .executeTakeFirst();
+      expect(siblingSurvives).not.toBeUndefined();
+
+      const siblingExceptions = await db
+        .selectFrom('exceptions')
+        .select('id')
+        .where('organization_id', '=', ctx.organization.id)
+        .where('project_id', '=', project2.id)
+        .where('fingerprint', '=', fpShared)
+        .execute();
+      expect(siblingExceptions.length).toBe(1);
+    });
   });
 
   describe('getExceptionByLogId', () => {
