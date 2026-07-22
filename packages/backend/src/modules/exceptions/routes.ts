@@ -568,6 +568,85 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
   );
 
   /**
+   * GET /api/v1/error-groups/:id/duplicates
+   * Other groups with the same exception type and message (merge candidates).
+   */
+  fastify.get(
+    '/api/v1/error-groups/:id/duplicates',
+    async (request: any, reply) => {
+      try {
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const { organizationId } = z
+          .object({ organizationId: z.string().uuid() })
+          .parse(request.query);
+
+        const isMember = await checkOrganizationMembership(request.user.id, organizationId);
+        if (!isMember) {
+          return reply.status(403).send({ error: 'You are not a member of this organization' });
+        }
+
+        const group = await exceptionService.getErrorGroupById(id);
+        if (!group || group.organizationId !== organizationId) {
+          return reply.status(404).send({ error: 'Error group not found' });
+        }
+
+        const duplicates = await exceptionService.findDuplicateErrorGroups(id, organizationId);
+        return reply.send({ duplicates });
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        }
+        console.error('Error finding duplicate error groups:', error);
+        return reply.status(500).send({ error: 'Failed to find duplicate error groups' });
+      }
+    }
+  );
+
+  /**
+   * POST /api/v1/error-groups/:id/merge
+   * Merge the given source groups into this group.
+   */
+  fastify.post(
+    '/api/v1/error-groups/:id/merge',
+    {
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+    },
+    async (request: any, reply) => {
+      try {
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const body = z
+          .object({
+            organizationId: z.string().uuid(),
+            sourceIds: z.array(z.string().uuid()).min(1).max(100),
+          })
+          .parse(request.body);
+
+        const isMember = await checkOrganizationMembership(request.user.id, body.organizationId);
+        if (!isMember) {
+          return reply.status(403).send({ error: 'You are not a member of this organization' });
+        }
+
+        const group = await exceptionService.getErrorGroupById(id);
+        if (!group || group.organizationId !== body.organizationId) {
+          return reply.status(404).send({ error: 'Error group not found' });
+        }
+
+        const merged = await exceptionService.mergeErrorGroups(id, body.sourceIds, body.organizationId);
+        if (!merged) {
+          return reply.status(404).send({ error: 'Error group not found' });
+        }
+        return reply.send(merged);
+      } catch (error: any) {
+        if (error instanceof z.ZodError) {
+          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        }
+        console.error('Error merging error groups:', error);
+        return reply.status(500).send({ error: 'Failed to merge error groups' });
+      }
+    }
+  );
+
+  /**
    * GET /api/v1/error-groups/:id/trend
    * Get error group occurrence trend (time-series)
    */

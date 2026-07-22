@@ -5,15 +5,15 @@
   import { getApiUrl } from '$lib/config';
   import { toastStore } from '$lib/stores/toast';
   import { copyToClipboard } from '$lib/utils/clipboard';
-  import GitBranch from '@lucide/svelte/icons/git-branch';
+  import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
   import Key from '@lucide/svelte/icons/key';
   import Book from '@lucide/svelte/icons/book';
   import Network from '@lucide/svelte/icons/network';
   import Copy from '@lucide/svelte/icons/copy';
   import Terminal from '@lucide/svelte/icons/terminal';
-  import Timer from '@lucide/svelte/icons/timer';
-  import Layers from '@lucide/svelte/icons/layers';
-  import AlertCircle from '@lucide/svelte/icons/alert-circle';
+  import Gauge from '@lucide/svelte/icons/gauge';
+  import Activity from '@lucide/svelte/icons/activity';
+  import TrendingUp from '@lucide/svelte/icons/trending-up';
 
   let selectedTab = $state('nodejs');
   let apiUrlValue = $state('http://localhost:8080');
@@ -23,61 +23,62 @@
   });
 
   let codeExamples: Record<string, string> = $derived({
-    nodejs: `// Node.js with OpenTelemetry
-import { NodeSDK } from '@opentelemetry/sdk-node';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+    nodejs: `// Node.js with OpenTelemetry Metrics
+import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 
-const sdk = new NodeSDK({
-  traceExporter: new OTLPTraceExporter({
-    url: '${apiUrlValue}/v1/otlp/traces',
+const reader = new PeriodicExportingMetricReader({
+  exporter: new OTLPMetricExporter({
+    url: '${apiUrlValue}/v1/otlp/metrics',
     headers: { 'X-API-Key': 'YOUR_API_KEY' }
-  }),
-  instrumentations: [getNodeAutoInstrumentations()]
+  })
 });
 
-sdk.start();`,
+const meterProvider = new MeterProvider({ readers: [reader] });
+const meter = meterProvider.getMeter('my-service');
 
-    python: `# Python with OpenTelemetry
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+const counter = meter.createCounter('requests_total');
+counter.add(1, { route: '/checkout' });`,
 
-provider = TracerProvider()
-exporter = OTLPSpanExporter(
-    endpoint="${apiUrlValue}/v1/otlp/traces",
-    headers={"X-API-Key": "YOUR_API_KEY"}
+    python: `# Python with OpenTelemetry Metrics
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+reader = PeriodicExportingMetricReader(
+    OTLPMetricExporter(
+        endpoint="${apiUrlValue}/v1/otlp/metrics",
+        headers={"X-API-Key": "YOUR_API_KEY"},
+    )
 )
-provider.add_span_processor(BatchSpanProcessor(exporter))
-trace.set_tracer_provider(provider)
+metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
 
-tracer = trace.get_tracer("my-service")
-with tracer.start_as_current_span("my-operation"):
-    # Your code here
-    pass`,
+meter = metrics.get_meter("my-service")
+counter = meter.create_counter("requests_total")
+counter.add(1, {"route": "/checkout"})`,
 
-    go: `// Go with OpenTelemetry
+    go: `// Go with OpenTelemetry Metrics
 import (
     "context"
     "go.opentelemetry.io/otel"
-    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-    "go.opentelemetry.io/otel/sdk/trace"
+    "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+    "go.opentelemetry.io/otel/sdk/metric"
 )
 
-exporter, _ := otlptracehttp.New(context.Background(),
-    otlptracehttp.WithEndpoint("${apiUrlValue.replace('https://', '').replace('http://', '')}"),
-    otlptracehttp.WithURLPath("/v1/otlp/traces"),
-    otlptracehttp.WithInsecure(), // remove for HTTPS
-    otlptracehttp.WithHeaders(map[string]string{
+exporter, _ := otlpmetrichttp.New(context.Background(),
+    otlpmetrichttp.WithEndpoint("${apiUrlValue.replace('https://', '').replace('http://', '')}"),
+    otlpmetrichttp.WithURLPath("/v1/otlp/metrics"),
+    otlpmetrichttp.WithInsecure(), // remove for HTTPS
+    otlpmetrichttp.WithHeaders(map[string]string{
         "X-API-Key": "YOUR_API_KEY",
     }),
 )
 
-tp := trace.NewTracerProvider(
-    trace.WithBatcher(exporter),
+provider := metric.NewMeterProvider(
+    metric.WithReader(metric.NewPeriodicReader(exporter)),
 )
-otel.SetTracerProvider(tp)`
+otel.SetMeterProvider(provider)`
   });
 
   async function copyCode(code: string) {
@@ -93,12 +94,12 @@ otel.SetTracerProvider(tp)`
 <div class="space-y-6 py-8">
   <!-- Empty State Hero -->
   <div class="text-center">
-    <div class="w-20 h-20 mx-auto bg-cyan-500/10 rounded-2xl flex items-center justify-center mb-4">
-      <GitBranch class="w-10 h-10 text-cyan-500" />
+    <div class="w-20 h-20 mx-auto bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
+      <BarChart3 class="w-10 h-10 text-primary" />
     </div>
-    <h2 class="text-2xl font-bold mb-2">No Traces Yet</h2>
+    <h2 class="text-2xl font-bold mb-2">No Metrics Yet</h2>
     <p class="text-muted-foreground max-w-md mx-auto">
-      Send distributed traces using OpenTelemetry to visualize request flows across your services.
+      Send OTLP metrics from your application to explore counters, gauges and histograms here.
     </p>
   </div>
 
@@ -122,7 +123,7 @@ otel.SetTracerProvider(tp)`
         </CardContent>
       </Card>
     </a>
-    <a href="https://opentelemetry.io/docs/" target="_blank" class="block">
+    <a href="https://opentelemetry.io/docs/" target="_blank" rel="noopener noreferrer" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
           <Network class="w-8 h-8 mx-auto text-blue-500 mb-2" />
@@ -138,10 +139,10 @@ otel.SetTracerProvider(tp)`
     <CardHeader>
       <div class="flex items-center gap-2">
         <Terminal class="w-5 h-5 text-muted-foreground" />
-        <CardTitle class="text-lg">Send Traces with OpenTelemetry</CardTitle>
+        <CardTitle class="text-lg">Send Metrics with OpenTelemetry</CardTitle>
       </div>
       <CardDescription>
-        Configure your application to send traces to LogTide
+        Configure your application to export OTLP metrics to LogTide
       </CardDescription>
     </CardHeader>
     <CardContent>
@@ -175,23 +176,23 @@ otel.SetTracerProvider(tp)`
   <div class="max-w-3xl mx-auto">
     <Card class="bg-muted/30">
       <CardContent class="pt-6">
-        <h3 class="font-medium mb-3">Once traces arrive, you can:</h3>
+        <h3 class="font-medium mb-3">Once metrics arrive, you can:</h3>
         <ul class="grid gap-2 sm:grid-cols-2 text-sm text-muted-foreground">
           <li class="flex items-center gap-2">
-            <GitBranch class="w-4 h-4 text-cyan-500" />
-            View trace timeline and spans
+            <BarChart3 class="w-4 h-4 text-primary" />
+            Explore metrics by name and service
           </li>
           <li class="flex items-center gap-2">
-            <Network class="w-4 h-4 text-blue-500" />
-            Visualize service dependencies
+            <Gauge class="w-4 h-4 text-blue-500" />
+            Track golden signals at a glance
           </li>
           <li class="flex items-center gap-2">
-            <Timer class="w-4 h-4 text-green-500" />
-            Analyze latency and performance
+            <Activity class="w-4 h-4 text-green-500" />
+            Visualize time series over any range
           </li>
           <li class="flex items-center gap-2">
-            <AlertCircle class="w-4 h-4 text-red-500" />
-            Identify errors and bottlenecks
+            <TrendingUp class="w-4 h-4 text-red-500" />
+            Spot trends and anomalies early
           </li>
         </ul>
       </CardContent>

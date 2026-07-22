@@ -842,4 +842,133 @@ describe('Exceptions Routes', () => {
       expect(response.statusCode).toBe(200);
     });
   });
+
+  describe('error-group duplicates and merge', () => {
+    it('GET /:id/duplicates returns same type+message groups', async () => {
+      const target = await createTestErrorGroup({
+        organizationId: testOrganization.id,
+        projectId: testProject.id,
+        fingerprint: `t-${Date.now()}`,
+        exceptionType: 'TypeError',
+        exceptionMessage: 'boom',
+      });
+      const dup = await createTestErrorGroup({
+        organizationId: testOrganization.id,
+        projectId: testProject.id,
+        fingerprint: `d-${Date.now()}`,
+        exceptionType: 'TypeError',
+        exceptionMessage: 'boom',
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/error-groups/${target.id}/duplicates`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        query: { organizationId: testOrganization.id },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().duplicates.map((d: any) => d.id)).toContain(dup.id);
+    });
+
+    it('GET /:id/duplicates returns 403 for a non-member organization', async () => {
+      const other = await createTestContext();
+      const group = await createTestErrorGroup({
+        organizationId: other.organization.id,
+        projectId: other.project.id,
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/error-groups/${group.id}/duplicates`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        query: { organizationId: other.organization.id },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('GET /:id/duplicates returns 404 for a missing group', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/error-groups/00000000-0000-0000-0000-000000000000/duplicates`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        query: { organizationId: testOrganization.id },
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+
+    it('POST /:id/merge folds source groups into the target', async () => {
+      const target = await createTestErrorGroup({
+        organizationId: testOrganization.id,
+        projectId: testProject.id,
+        fingerprint: `mt-${Date.now()}`,
+        exceptionType: 'TypeError',
+        exceptionMessage: 'boom',
+        occurrenceCount: 1,
+      });
+      const source = await createTestErrorGroup({
+        organizationId: testOrganization.id,
+        projectId: testProject.id,
+        fingerprint: `ms-${Date.now()}`,
+        exceptionType: 'TypeError',
+        exceptionMessage: 'boom',
+        occurrenceCount: 3,
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/error-groups/${target.id}/merge`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { organizationId: testOrganization.id, sourceIds: [source.id] },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().occurrenceCount).toBe(4);
+
+      const gone = await db
+        .selectFrom('error_groups')
+        .select('id')
+        .where('id', '=', source.id)
+        .executeTakeFirst();
+      expect(gone).toBeUndefined();
+    });
+
+    it('POST /:id/merge returns 400 for empty sourceIds', async () => {
+      const target = await createTestErrorGroup({
+        organizationId: testOrganization.id,
+        projectId: testProject.id,
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/error-groups/${target.id}/merge`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { organizationId: testOrganization.id, sourceIds: [] },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('POST /:id/merge returns 403 for a non-member organization', async () => {
+      const other = await createTestContext();
+      const target = await createTestErrorGroup({
+        organizationId: other.organization.id,
+        projectId: other.project.id,
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/error-groups/${target.id}/merge`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: {
+          organizationId: other.organization.id,
+          sourceIds: ['00000000-0000-0000-0000-000000000000'],
+        },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+  });
 });

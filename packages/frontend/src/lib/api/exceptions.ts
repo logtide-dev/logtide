@@ -204,6 +204,58 @@ export async function updateErrorGroupStatus(
   return response.json();
 }
 
+export interface DuplicateErrorGroup {
+  id: string;
+  occurrenceCount: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export async function getDuplicateErrorGroups(
+  groupId: string,
+  organizationId: string
+): Promise<DuplicateErrorGroup[]> {
+  const token = getAuthToken();
+  const searchParams = new URLSearchParams({ organizationId });
+
+  const response = await fetch(
+    `${getApiUrl()}/api/v1/error-groups/${groupId}/duplicates?${searchParams}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to load duplicate groups (HTTP ${response.status})`);
+  }
+
+  const data = await response.json();
+  return data.duplicates ?? [];
+}
+
+export async function mergeErrorGroups(
+  groupId: string,
+  sourceIds: string[],
+  organizationId: string
+): Promise<ErrorGroup> {
+  const token = getAuthToken();
+
+  const response = await fetch(`${getApiUrl()}/api/v1/error-groups/${groupId}/merge`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ organizationId, sourceIds }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to merge error groups (HTTP ${response.status})`);
+  }
+
+  return response.json();
+}
+
 export async function getErrorGroupTrend(params: {
   groupId: string;
   organizationId: string;

@@ -26,7 +26,7 @@ export class ExceptionService {
    * The trigger will automatically update/create the error group
    */
   async createException(params: CreateExceptionParams): Promise<string> {
-    const { organizationId, projectId, logId, parsedData, fingerprint } = params;
+    const { organizationId, projectId, logId, parsedData, fingerprint, service, topFrame } = params;
 
     return await this.db.transaction().execute(async (trx) => {
       const exception = await trx
@@ -41,6 +41,8 @@ export class ExceptionService {
           fingerprint,
           raw_stack_trace: parsedData.rawStackTrace,
           frame_count: parsedData.frames.length,
+          service: service ?? null,
+          top_frame: topFrame ?? null,
         })
         .returning('id')
         .executeTakeFirstOrThrow();
@@ -382,6 +384,125 @@ export class ExceptionService {
 
     // Fetch again with project name
     return this.getErrorGroupById(groupId);
+  }
+
+  /**
+   * Find other error groups in the same org that share this group's exception
+   * type and message (the shape a fingerprint split produces). Candidates to
+   * merge into this group.
+   */
+  async findDuplicateErrorGroups(
+    groupId: string,
+    organizationId: string
+  ): Promise<Array<{ id: string; occurrenceCount: number; firstSeen: Date; lastSeen: Date }>> {
+    const target = await this.db
+      .selectFrom('error_groups')
+      .select(['exception_type', 'exception_message'])
+      .where('id', '=', groupId)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+
+    if (!target) return [];
+
+    let query = this.db
+      .selectFrom('error_groups')
+      .select(['id', 'occurrence_count', 'first_seen', 'last_seen'])
+      .where('organization_id', '=', organizationId)
+      .where('exception_type', '=', target.exception_type)
+      .where('id', '!=', groupId);
+
+    query =
+      target.exception_message === null
+        ? query.where('exception_message', 'is', null)
+        : query.where('exception_message', '=', target.exception_message);
+
+    const rows = await query.execute();
+    return rows.map((r) => ({
+      id: r.id,
+      occurrenceCount: Number(r.occurrence_count),
+      firstSeen: r.first_seen as Date,
+      lastSeen: r.last_seen as Date,
+    }));
+  }
+
+  /**
+   * Merge source error groups into a target group: reassign their exceptions to
+   * the target fingerprint, fold their counts / services / first-last seen into
+   * the target, then delete the now-empty source groups. All org-scoped and
+   * transactional.
+   */
+  async mergeErrorGroups(
+    targetId: string,
+    sourceIds: string[],
+    organizationId: string
+  ): Promise<ErrorGroup | null> {
+    await this.db.transaction().execute(async (trx) => {
+      const target = await trx
+        .selectFrom('error_groups')
+        .select(['id', 'fingerprint', 'occurrence_count', 'affected_services', 'first_seen', 'last_seen'])
+        .where('id', '=', targetId)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+
+      if (!target) return;
+
+      const sources = await trx
+        .selectFrom('error_groups')
+        .select(['id', 'fingerprint', 'occurrence_count', 'affected_services', 'first_seen', 'last_seen'])
+        .where('organization_id', '=', organizationId)
+        .where('id', 'in', sourceIds)
+        .where('id', '!=', targetId)
+        .execute();
+
+      if (sources.length === 0) return;
+
+      const sourceFingerprints = sources.map((s) => s.fingerprint);
+
+      // Point the merged-in exceptions at the target's fingerprint so trend/logs
+      // queries for the target include them.
+      await trx
+        .updateTable('exceptions')
+        .set({ fingerprint: target.fingerprint })
+        .where('organization_id', '=', organizationId)
+        .where('fingerprint', 'in', sourceFingerprints)
+        .execute();
+
+      const addOccurrences = sources.reduce((sum, s) => sum + Number(s.occurrence_count), 0);
+      const mergedServices = Array.from(
+        new Set([
+          ...((target.affected_services as string[] | null) || []),
+          ...sources.flatMap((s) => (s.affected_services as string[] | null) || []),
+        ])
+      );
+      const times = [target, ...sources];
+      const firstSeen = times
+        .map((g) => new Date(g.first_seen as unknown as string))
+        .reduce((a, b) => (a < b ? a : b));
+      const lastSeen = times
+        .map((g) => new Date(g.last_seen as unknown as string))
+        .reduce((a, b) => (a > b ? a : b));
+
+      await trx
+        .updateTable('error_groups')
+        .set({
+          occurrence_count: Number(target.occurrence_count) + addOccurrences,
+          affected_services: mergedServices,
+          first_seen: firstSeen,
+          last_seen: lastSeen,
+          updated_at: new Date(),
+        })
+        .where('id', '=', targetId)
+        .where('organization_id', '=', organizationId)
+        .execute();
+
+      await trx
+        .deleteFrom('error_groups')
+        .where('organization_id', '=', organizationId)
+        .where('id', 'in', sources.map((s) => s.id))
+        .execute();
+    });
+
+    return this.getErrorGroupById(targetId);
   }
 
   /**

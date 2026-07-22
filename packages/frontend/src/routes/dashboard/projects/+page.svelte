@@ -231,7 +231,7 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard - LogTide</title>
+  <title>Projects - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto {containerPadding} {maxWidthClass}">

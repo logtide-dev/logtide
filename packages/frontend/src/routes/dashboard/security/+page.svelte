@@ -6,6 +6,7 @@
 	import { getRecentDetections, type DetectionEvent, type TopThreat, type AffectedService, type MitreHeatmapCell } from '$lib/api/siem';
 	import { toastStore } from '$lib/stores/toast';
 	import Button from '$lib/components/ui/button/button.svelte';
+	import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import { Skeleton, SkeletonTable } from '$lib/components/ui/skeleton';
 	import StatsBar from '$lib/components/siem/dashboard/StatsBar.svelte';
@@ -164,32 +165,15 @@
 			{/if}
 		</div>
 		<div class="flex items-center gap-2">
-			<div class="flex items-center rounded-md border bg-muted p-0.5">
-				<Button
-					variant={timeRange === '24h' ? 'default' : 'ghost'}
-					size="sm"
-					class="h-7 px-2 text-xs"
-					onclick={() => handleTimeRangeChange('24h')}
-				>
-					24h
-				</Button>
-				<Button
-					variant={timeRange === '7d' ? 'default' : 'ghost'}
-					size="sm"
-					class="h-7 px-2 text-xs"
-					onclick={() => handleTimeRangeChange('7d')}
-				>
-					7d
-				</Button>
-				<Button
-					variant={timeRange === '30d' ? 'default' : 'ghost'}
-					size="sm"
-					class="h-7 px-2 text-xs"
-					onclick={() => handleTimeRangeChange('30d')}
-				>
-					30d
-				</Button>
-			</div>
+			<TimeRangeButtons
+				options={[
+					{ value: '24h', label: '24h' },
+					{ value: '7d', label: '7d' },
+					{ value: '30d', label: '30d' },
+				]}
+				value={timeRange}
+				onChange={(v) => handleTimeRangeChange(v as typeof timeRange)}
+			/>
 			<Button variant="outline" size="sm" class="h-8" onclick={handleRefresh} disabled={refreshing || $dashboardLoading}>
 				<RefreshCw class="w-3.5 h-3.5 mr-1.5 {refreshing ? 'animate-spin' : ''}" />
 				Refresh

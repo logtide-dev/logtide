@@ -3,6 +3,9 @@
   import Input from "$lib/components/ui/input/input.svelte";
   import Label from "$lib/components/ui/label/label.svelte";
   import Clock from "@lucide/svelte/icons/clock";
+  import { RangeCalendar } from "$lib/components/ui/range-calendar";
+  import { CalendarDate, type DateValue } from "@internationalized/date";
+  import type { DateRange } from "bits-ui";
 
   export type TimeRangeType = "last_hour" | "last_24h" | "last_7d" | "custom";
 
@@ -144,12 +147,49 @@
     emitChange();
   }
 
-  function handleCustomTimeChange() {
+  function emitChange() {
+    onchange?.(getTimeRange());
+  }
+
+  // ── Custom range as calendar (date) + time input (hour) ──────────────────
+  // customFromTime / customToTime stay the source of truth ("YYYY-MM-DDTHH:mm");
+  // the calendar drives the date part and the time inputs the hour part.
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const datePart = (s: string) => (s ? s.slice(0, 10) : "");
+  const timePart = (s: string) => (s && s.length >= 16 ? s.slice(11, 16) : "00:00");
+  const combine = (d: string, t: string) => (d ? `${d}T${t || "00:00"}` : "");
+
+  function toCalendarDate(s: string): DateValue | undefined {
+    const d = datePart(s);
+    if (!d) return undefined;
+    const [y, m, day] = d.split("-").map(Number);
+    if (!y || !m || !day) return undefined;
+    return new CalendarDate(y, m, day);
+  }
+
+  function dateStr(d: DateValue): string {
+    return `${d.year}-${pad(d.month)}-${pad(d.day)}`;
+  }
+
+  let calendarValue = $derived<DateRange>({
+    start: toCalendarDate(customFromTime),
+    end: toCalendarDate(customToTime),
+  });
+
+  function handleRangeChange(range: DateRange | undefined) {
+    if (!range) return;
+    if (range.start) customFromTime = combine(dateStr(range.start), timePart(customFromTime));
+    if (range.end) customToTime = combine(dateStr(range.end), timePart(customToTime));
     emitChange();
   }
 
-  function emitChange() {
-    onchange?.(getTimeRange());
+  function handleTimeInput(which: "from" | "to", value: string) {
+    if (which === "from") {
+      customFromTime = combine(datePart(customFromTime), value);
+    } else {
+      customToTime = combine(datePart(customToTime), value);
+    }
+    emitChange();
   }
 </script>
 
@@ -190,24 +230,33 @@
   </div>
 
   {#if timeRangeType === "custom"}
-    <div class="grid gap-3 md:grid-cols-2 pt-2">
-      <div class="space-y-2">
-        <Label for="time-range-from">From</Label>
-        <Input
-          id="time-range-from"
-          type="datetime-local"
-          bind:value={customFromTime}
-          onchange={handleCustomTimeChange}
+    <div class="space-y-3 pt-2">
+      <div class="rounded-md border">
+        <RangeCalendar
+          numberOfMonths={1}
+          value={calendarValue}
+          onValueChange={handleRangeChange}
         />
       </div>
-      <div class="space-y-2">
-        <Label for="time-range-to">To</Label>
-        <Input
-          id="time-range-to"
-          type="datetime-local"
-          bind:value={customToTime}
-          onchange={handleCustomTimeChange}
-        />
+      <div class="grid grid-cols-2 gap-3">
+        <div class="space-y-1.5">
+          <Label for="time-range-from">From time</Label>
+          <Input
+            id="time-range-from"
+            type="time"
+            value={timePart(customFromTime)}
+            onchange={(e) => handleTimeInput("from", (e.currentTarget as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="space-y-1.5">
+          <Label for="time-range-to">To time</Label>
+          <Input
+            id="time-range-to"
+            type="time"
+            value={timePart(customToTime)}
+            onchange={(e) => handleTimeInput("to", (e.currentTarget as HTMLInputElement).value)}
+          />
+        </div>
       </div>
     </div>
   {/if}

@@ -76,6 +76,31 @@ describe('DashboardService', () => {
             expect(stats.errorRate.value).toBe(20); // 2/10 = 20%
         });
 
+        it('counts logs from earlier today, not just the last hour', async () => {
+            // Low-volume orgs take the raw-count path, which must count the whole
+            // day and not collapse to the last hour the way a stale continuous
+            // aggregate does (see RAW_STATS_MAX_RECENT_VOLUME). The logs below sit
+            // earlier today (older than the last hour) yet must all be counted.
+            const { organization, project } = await createTestContext();
+            const now = new Date();
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const earlierToday = new Date(
+                Math.max(todayStart.getTime() + 60_000, now.getTime() - 3 * 60 * 60 * 1000)
+            );
+
+            for (let i = 0; i < 6; i++) {
+                await createTestLog({ projectId: project.id, service: 'api', level: 'info', time: earlierToday });
+            }
+            for (let i = 0; i < 2; i++) {
+                await createTestLog({ projectId: project.id, service: 'api', level: 'error', time: earlierToday });
+            }
+
+            const stats = await dashboardService.getStats(organization.id);
+
+            expect(stats.totalLogsToday.value).toBe(8);
+            expect(stats.errorRate.value).toBeCloseTo(25, 1); // 2 errors / 8 logs
+        });
+
         it('should count distinct active services', async () => {
             const { organization, project } = await createTestContext();
 

@@ -641,6 +641,8 @@ export interface ExceptionsTable {
   fingerprint: string;
   raw_stack_trace: string;
   frame_count: number;
+  service: string | null;
+  top_frame: string | null;
   created_at: Generated<Timestamp>;
 }
 
@@ -689,6 +691,7 @@ export interface ErrorGroupsTable {
   resolved_by: string | null;
   affected_services: string[] | null;
   sample_log_id: string | null;
+  merge_key: string | null;
   last_notified_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;

@@ -8,9 +8,39 @@ interface OrganizationState {
   loading: boolean;
 }
 
+const ORG_ID_KEY = 'currentOrganizationId';
+const ORG_OBJECT_KEY = 'currentOrganization';
+
+/**
+ * Restore the last selected organization object from localStorage.
+ * Persisting the whole object (not just its id) lets a hard reload of a
+ * sub-route render the org name immediately instead of flashing
+ * "Select organization" while the org list is still being fetched.
+ */
+function loadCachedOrganization(): OrganizationWithRole | null {
+  if (!browser) return null;
+  try {
+    const raw = localStorage.getItem(ORG_OBJECT_KEY);
+    return raw ? (JSON.parse(raw) as OrganizationWithRole) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistCurrentOrganization(org: OrganizationWithRole | null): void {
+  if (!browser) return;
+  if (org) {
+    localStorage.setItem(ORG_ID_KEY, org.id);
+    localStorage.setItem(ORG_OBJECT_KEY, JSON.stringify(org));
+  } else {
+    localStorage.removeItem(ORG_ID_KEY);
+    localStorage.removeItem(ORG_OBJECT_KEY);
+  }
+}
+
 const initialState: OrganizationState = {
   organizations: [],
-  currentOrganization: null,
+  currentOrganization: loadCachedOrganization(),
   loading: false,
 };
 
@@ -25,15 +55,18 @@ function createOrganizationStore() {
       update((state) => {
         const currentOrganization = state.currentOrganization || organizations[0] || null;
 
-        const savedOrgId = browser ? localStorage.getItem('currentOrganizationId') : null;
+        const savedOrgId = browser ? localStorage.getItem(ORG_ID_KEY) : null;
         const restoredOrg = savedOrgId
           ? organizations.find((org) => org.id === savedOrgId)
           : null;
 
+        const resolved = restoredOrg || currentOrganization;
+        persistCurrentOrganization(resolved);
+
         return {
           ...state,
           organizations,
-          currentOrganization: restoredOrg || currentOrganization,
+          currentOrganization: resolved,
         };
       });
     },
@@ -49,13 +82,7 @@ function createOrganizationStore() {
           organization = organizationOrId;
         }
 
-        if (browser) {
-          if (organization) {
-            localStorage.setItem('currentOrganizationId', organization.id);
-          } else {
-            localStorage.removeItem('currentOrganizationId');
-          }
-        }
+        persistCurrentOrganization(organization);
 
         return {
           ...state,
@@ -66,11 +93,14 @@ function createOrganizationStore() {
 
 
     addOrganization: (organization: OrganizationWithRole) => {
-      update((state) => ({
-        ...state,
-        organizations: [organization, ...state.organizations],
-        currentOrganization: organization,
-      }));
+      update((state) => {
+        persistCurrentOrganization(organization);
+        return {
+          ...state,
+          organizations: [organization, ...state.organizations],
+          currentOrganization: organization,
+        };
+      });
     },
 
     updateOrganization: (id: string, updates: Partial<OrganizationWithRole>) => {
@@ -83,6 +113,11 @@ function createOrganizationStore() {
           state.currentOrganization?.id === id
             ? { ...state.currentOrganization, ...updates }
             : state.currentOrganization;
+
+        // Keep the cached object fresh so a reload does not show a stale name.
+        if (state.currentOrganization?.id === id) {
+          persistCurrentOrganization(currentOrganization);
+        }
 
         return {
           ...state,
@@ -100,6 +135,10 @@ function createOrganizationStore() {
           state.currentOrganization?.id === id
             ? organizations[0] || null
             : state.currentOrganization;
+
+        if (state.currentOrganization?.id === id) {
+          persistCurrentOrganization(currentOrganization);
+        }
 
         return {
           ...state,
@@ -122,7 +161,7 @@ function createOrganizationStore() {
         const newOrg = await apiCall();
 
         update((state) => {
-          if (browser) localStorage.setItem('currentOrganizationId', newOrg.id);
+          persistCurrentOrganization(newOrg);
 
           return {
             ...state,
@@ -147,16 +186,16 @@ function createOrganizationStore() {
         const orgs = await apiCall();
 
         update((state) => {
-          const savedOrgId = browser ? localStorage.getItem('currentOrganizationId') : null;
+          const savedOrgId = browser ? localStorage.getItem(ORG_ID_KEY) : null;
           const restoredOrg = savedOrgId
             ? orgs.find((org) => org.id === savedOrgId)
             : null;
 
           const currentOrganization = restoredOrg || orgs[0] || null;
 
-          if (browser && currentOrganization && !savedOrgId) {
-            localStorage.setItem('currentOrganizationId', currentOrganization.id);
-          }
+          // Refresh the cache with the authoritative fetched object (fresh name/role),
+          // or drop it if the previously selected org no longer exists.
+          persistCurrentOrganization(currentOrganization);
 
           return {
             ...state,
@@ -181,8 +220,8 @@ function createOrganizationStore() {
 
 
     clear: () => {
-      if (browser) localStorage.removeItem('currentOrganizationId');
-      set(initialState);
+      persistCurrentOrganization(null);
+      set({ organizations: [], currentOrganization: null, loading: false });
     },
   };
 }

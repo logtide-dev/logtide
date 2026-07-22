@@ -10,6 +10,8 @@
   import { ProjectsAPI } from "$lib/api/projects";
   import { logsAPI, type SearchMode } from "$lib/api/logs";
   import { toastStore } from "$lib/stores/toast";
+  import { formatTimeAgo } from "$lib/utils/datetime";
+  import { timeRangeStore } from "$lib/stores/time-range";
   import type { Project, MetadataFilterInput } from "@logtide/shared";
   import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
@@ -55,6 +57,7 @@
   import Radio from "@lucide/svelte/icons/radio";
   import Settings2 from "@lucide/svelte/icons/settings-2";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
+  import Rows3 from "@lucide/svelte/icons/rows-3";
   import Table2 from "@lucide/svelte/icons/table-2";
   import WrapText from "@lucide/svelte/icons/wrap-text";
   import Clock from "@lucide/svelte/icons/clock";
@@ -108,6 +111,32 @@
 
   // Custom metadata columns (persisted per project in localStorage)
   let customColumns = $state<string[]>([]);
+
+  // Table row density (persisted in localStorage)
+  let rowDensity = $state<"comfortable" | "compact">("comfortable");
+  function toggleDensity() {
+    rowDensity = rowDensity === "comfortable" ? "compact" : "comfortable";
+    if (browser) localStorage.setItem("logtide_row_density", rowDensity);
+  }
+
+  // Recent searches (persisted in localStorage)
+  const RECENT_SEARCHES_KEY = "logtide_recent_searches";
+  let recentSearches = $state<string[]>([]);
+  function addRecentSearch(q: string) {
+    const term = q.trim();
+    if (!term) return;
+    const next = [term, ...recentSearches.filter((s) => s !== term)].slice(0, 8);
+    recentSearches = next;
+    if (browser) localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next));
+  }
+  function applyRecentSearch(term: string) {
+    searchQuery = term;
+    applyFilters();
+  }
+  function clearRecentSearches() {
+    recentSearches = [];
+    if (browser) localStorage.removeItem(RECENT_SEARCHES_KEY);
+  }
   // Cache stores per projectId so that any selectedProjects mutation does not
   // recreate the store (and re-read localStorage) on every dependency change.
   const columnStoreCache = new Map<
@@ -166,9 +195,18 @@
 
   // Time range picker reference and state
   let timeRangePicker = $state<ReturnType<typeof TimeRangePicker> | null>(null);
-  let timeRangeType = $state<TimeRangeType>("last_24h");
-  let customFromTime = $state("");
-  let customToTime = $state("");
+  function initialTimeRange(): { type: TimeRangeType; from: string; to: string } {
+    const stored = browser ? timeRangeStore.get() : null;
+    const t = stored?.type;
+    if (t === "last_hour" || t === "last_24h" || t === "last_7d" || t === "custom") {
+      return { type: t, from: stored?.from ?? "", to: stored?.to ?? "" };
+    }
+    return { type: "last_24h", from: "", to: "" };
+  }
+  const _initialRange = initialTimeRange();
+  let timeRangeType = $state<TimeRangeType>(_initialRange.type);
+  let customFromTime = $state(_initialRange.type === "custom" ? _initialRange.from : "");
+  let customToTime = $state(_initialRange.type === "custom" ? _initialRange.to : "");
 
   // Helper to get time range from picker or fallback to local state
   function getTimeRange(): { from: Date; to: Date } {
@@ -302,6 +340,25 @@
       viewMode = savedViewMode;
     }
 
+    // Restore row density preference
+    const savedDensity = localStorage.getItem("logtide_row_density");
+    if (savedDensity === "compact" || savedDensity === "comfortable") {
+      rowDensity = savedDensity;
+    }
+
+    // Restore recent searches
+    try {
+      const savedRecent = localStorage.getItem(RECENT_SEARCHES_KEY);
+      if (savedRecent) {
+        const parsed = JSON.parse(savedRecent);
+        if (Array.isArray(parsed)) {
+          recentSearches = parsed.filter((s) => typeof s === "string").slice(0, 8);
+        }
+      }
+    } catch {
+      // ignore malformed storage
+    }
+
     // Restore live tail limit preference
     const savedLiveTailLimit = localStorage.getItem("logtide_livetail_limit");
     if (savedLiveTailLimit) {
@@ -390,6 +447,12 @@
     const sessionIdParam = params.get("sessionId");
     if (sessionIdParam && !sessionId) {
       sessionId = sessionIdParam;
+      shouldLoadLogs = true;
+    }
+
+    const qParam = params.get("q");
+    if (qParam && !searchQuery) {
+      searchQuery = qParam;
       shouldLoadLogs = true;
     }
 
@@ -975,8 +1038,57 @@
     }
   }
 
+  function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // Split text into segments, marking the parts that match the full-text query.
+  // Rendered as plain text segments (no {@html}), so it never injects markup.
+  function highlightSegments(
+    text: string,
+    query: string,
+  ): Array<{ text: string; match: boolean }> {
+    const value = text ?? "";
+    if (!value || !query || searchMode !== "fulltext")
+      return [{ text: value, match: false }];
+    const terms = query.trim().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return [{ text: value, match: false }];
+    const re = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+    const lower = new Set(terms.map((t) => t.toLowerCase()));
+    return value
+      .split(re)
+      .filter((part) => part !== "")
+      .map((part) => ({ text: part, match: lower.has(part.toLowerCase()) }));
+  }
+
+  // Reflect the active filters in the URL so a search is shareable/bookmarkable.
+  // The read effect above is idempotent (its guards only apply a param when the
+  // matching state is still empty), so re-running it after this write is a no-op.
+  function updateUrl() {
+    if (!browser) return;
+    const params = new URLSearchParams();
+    if (searchQuery.trim()) params.set("q", searchQuery.trim());
+    if (selectedProjects.length === 1) params.set("project", selectedProjects[0]);
+    if (selectedServices.length === 1) params.set("service", selectedServices[0]);
+    if (selectedLevels.length > 0 && selectedLevels.length < 5) {
+      params.set("level", selectedLevels.join(","));
+    }
+    if (traceId.trim()) params.set("traceId", traceId.trim());
+    if (sessionId.trim()) params.set("sessionId", sessionId.trim());
+    if (timeRangeType === "custom" && customFromTime && customToTime) {
+      params.set("from", new Date(customFromTime).toISOString());
+      params.set("to", new Date(customToTime).toISOString());
+    }
+    const qs = params.toString();
+    const next = qs ? `/dashboard/search?${qs}` : "/dashboard/search";
+    if (page.url.pathname + page.url.search === next) return;
+    goto(next, { replaceState: true, keepFocus: true, noScroll: true });
+  }
+
   function applyFilters() {
     currentPage = 1;
+    addRecentSearch(searchQuery);
+    updateUrl();
     loadLogs();
   }
 
@@ -995,6 +1107,7 @@
       customFromTime = custom.from;
       customToTime = custom.to;
     }
+    timeRangeStore.set({ type: timeRangeType, from: customFromTime, to: customToTime });
     await Promise.all([loadServices(), loadHostnames()]);
     applyFilters();
   }
@@ -1254,6 +1367,29 @@
             <span class="hidden sm:inline">Export</span>
           </Button>
         </div>
+
+        {#if recentSearches.length > 0 && !searchQuery.trim()}
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-xs text-muted-foreground">Recent:</span>
+            {#each recentSearches as term (term)}
+              <button
+                type="button"
+                onclick={() => applyRecentSearch(term)}
+                class="inline-flex items-center rounded-full border bg-background px-2.5 py-0.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors max-w-[200px] truncate"
+                title={term}
+              >
+                {term}
+              </button>
+            {/each}
+            <button
+              type="button"
+              onclick={clearRecentSearches}
+              class="text-xs text-muted-foreground hover:text-foreground underline"
+            >
+              Clear
+            </button>
+          </div>
+        {/if}
 
         <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t border-dashed">
           <Popover.Root>
@@ -1762,6 +1898,17 @@
                 </Button>
               {/if}
               {#if viewMode === "table"}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={toggleDensity}
+                  class="gap-1.5"
+                  title={rowDensity === "compact" ? "Comfortable rows" : "Compact rows"}
+                  aria-label={rowDensity === "compact" ? "Comfortable rows" : "Compact rows"}
+                >
+                  <Rows3 class="w-4 h-4" />
+                  <span class="hidden sm:inline">{rowDensity === "compact" ? "Compact" : "Cozy"}</span>
+                </Button>
                 <ColumnConfigMenu
                   bind:columns={customColumns}
                   onchange={(cols) => { columnStore?.set(cols); }}
@@ -1805,7 +1952,7 @@
           {:else}
             <TableLoadingOverlay loading={isLoading}>
             <div class="rounded-md border overflow-x-auto" bind:this={logsContainer}>
-              <Table class="w-full">
+              <Table class="w-full {rowDensity === 'compact' ? '[&_td]:py-1 [&_th]:py-1' : ''}">
                 <TableHeader>
                   <TableRow>
                     <TableHead class="w-[180px]">Time</TableHead>
@@ -1824,7 +1971,7 @@
                     {@const globalIndex = i}
                     <TableRow data-log-row class={selectedLogIndex === globalIndex ? 'bg-accent/50 ring-1 ring-primary/30' : ''}>
                       <TableCell class="font-mono text-xs">
-                        {formatDateTime(log.time)}
+                        <span title={formatTimeAgo(log.time)}>{formatDateTime(log.time)}</span>
                       </TableCell>
                       <TableCell>
                         <a
@@ -1885,9 +2032,14 @@
                           {log.level}
                         </button>
                       </TableCell>
-                      <TableCell class="max-w-md truncate"
-                        >{log.message}</TableCell
-                      >
+                      <TableCell class="max-w-md truncate">
+                        {#each highlightSegments(log.message, searchQuery) as seg}
+                          {#if seg.match}<mark
+                              class="rounded-sm bg-yellow-200 text-inherit dark:bg-yellow-500/40"
+                              >{seg.text}</mark
+                            >{:else}{seg.text}{/if}
+                        {/each}
+                      </TableCell>
                       {#each customColumns as col (col)}
                         {@const cellValue = resolveMetadataPath(log.metadata, col)}
                         <TableCell
