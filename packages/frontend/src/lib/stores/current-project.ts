@@ -16,11 +16,15 @@ function load(): string | null {
 }
 
 function createCurrentProjectStore() {
-  const { subscribe, set } = writable<string | null>(load());
+  // In-memory source of truth, hydrated from localStorage once. get() reads this
+  // so a selection survives within a session even if localStorage is blocked.
+  let current = load();
+  const { subscribe, set } = writable<string | null>(current);
 
   return {
     subscribe,
     set: (projectId: string | null) => {
+      current = projectId;
       if (browser) {
         try {
           if (projectId) localStorage.setItem(STORAGE_KEY, projectId);
@@ -32,7 +36,7 @@ function createCurrentProjectStore() {
       set(projectId);
     },
     /** Current value without subscribing. */
-    get: (): string | null => load(),
+    get: (): string | null => current,
   };
 }
 

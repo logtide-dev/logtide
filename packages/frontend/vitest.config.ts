@@ -24,6 +24,9 @@ export default defineConfig({
       // (new URL().pathname encodes spaces as %20 which breaks Vite resolution)
       $lib: path.resolve(__dirname, 'src/lib'),
       '@logtide/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
+      // $app/environment is a SvelteKit virtual module with no resolution under
+      // plain vitest; point it at a stub so store/component tests can import it.
+      '$app/environment': path.resolve(__dirname, 'src/test-stubs/app-environment.ts'),
     },
   },
 });

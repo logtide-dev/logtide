@@ -27,11 +27,16 @@ function load(): StoredTimeRange | null {
 }
 
 function createTimeRangeStore() {
-  const { subscribe, set } = writable<StoredTimeRange | null>(load());
+  // Source of truth in memory, hydrated from localStorage once. get() reads this
+  // so the value survives within a session even if localStorage is blocked (a
+  // failed setItem must not make get() return null while subscribers see it).
+  let current = load();
+  const { subscribe, set } = writable<StoredTimeRange | null>(current);
 
   return {
     subscribe,
     set: (value: StoredTimeRange | null) => {
+      current = value;
       if (browser) {
         try {
           if (value) localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
@@ -42,7 +47,7 @@ function createTimeRangeStore() {
       }
       set(value);
     },
-    get: (): StoredTimeRange | null => load(),
+    get: (): StoredTimeRange | null => current,
   };
 }
 
