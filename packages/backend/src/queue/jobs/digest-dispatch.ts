@@ -71,7 +71,8 @@ export async function processDigestDispatch(_job: IJob<Record<string, never>>): 
         frequency: config.frequency,
         delivery_hour: config.delivery_hour,
         delivery_day_of_week: config.delivery_day_of_week,
-        last_sent_at: config.last_sent_at ? new Date(config.last_sent_at as unknown as string) : null,
+        // Already a Date (Kysely Timestamp select type); no string round-trip.
+        last_sent_at: config.last_sent_at ?? null,
       },
       now
     )
