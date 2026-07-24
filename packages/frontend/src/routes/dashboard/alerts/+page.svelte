@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { browser } from "$app/environment";
+	import { page } from "$app/state";
+	import { goto } from "$app/navigation";
 	import { getApiUrl } from "$lib/config";
 	import { currentOrganization } from "$lib/stores/organization";
 	import {
 		alertsAPI,
 		type AlertRule,
 		type AlertHistory,
+		type AlertBuilderPrefill,
 	} from "$lib/api/alerts";
 	import { getRecentDetections, type DetectionEvent } from "$lib/api/siem";
 	import { toastStore } from "$lib/stores/toast";
@@ -46,6 +49,7 @@
 	import Plus from "@lucide/svelte/icons/plus";
 	import Trash2 from "@lucide/svelte/icons/trash-2";
 	import Pencil from "@lucide/svelte/icons/pencil";
+	import Copy from "@lucide/svelte/icons/copy";
 	import Clock from "@lucide/svelte/icons/clock";
 	import Mail from "@lucide/svelte/icons/mail";
 	import FolderKanban from "@lucide/svelte/icons/folder-kanban";
@@ -78,6 +82,44 @@
 	let loadingHistory = $state(false);
 	let error = $state("");
 	let showCreateDialog = $state(false);
+	// Prefill for "create alert from this error" (URL params) and "duplicate".
+	let prefillValues = $state<AlertBuilderPrefill | undefined>(undefined);
+	let prefillProcessed = false;
+	$effect(() => {
+		if (!browser || prefillProcessed) return;
+		const params = page.url.searchParams;
+		if (params.get("new") === "1") {
+			prefillProcessed = true;
+			const levels = params.get("levels");
+			prefillValues = {
+				name: params.get("name") ?? undefined,
+				service: params.get("service") ?? undefined,
+				levels: levels ? levels.split(",").filter(Boolean) : undefined,
+			};
+			showCreateDialog = true;
+			// Strip the params so a refresh does not reopen the dialog.
+			goto("/dashboard/alerts", { replaceState: true, keepFocus: true, noScroll: true });
+		}
+	});
+
+	function duplicateAlert(rule: AlertRule) {
+		prefillValues = {
+			name: `${rule.name} (copy)`,
+			service: rule.service,
+			levels: rule.level,
+			threshold: rule.threshold,
+			timeWindow: rule.timeWindow,
+			alertType: rule.alertType,
+			baselineType: rule.baselineType,
+			deviationMultiplier: rule.deviationMultiplier,
+			minBaselineValue: rule.minBaselineValue,
+			cooldownMinutes: rule.cooldownMinutes,
+			sustainedMinutes: rule.sustainedMinutes,
+			metadataFilters: rule.metadataFilters,
+			channelIds: rule.channelIds,
+		};
+		showCreateDialog = true;
+	}
 	let deletingAlertId = $state<string | null>(null);
 	let lastLoadedOrgId = $state<string | null>(null);
 	let showDeleteDialog = $state(false);
@@ -478,6 +520,10 @@
 											<Pencil class="w-4 h-4" />
 											Edit
 										</Button>
+										<Button variant="outline" size="sm" class="gap-2" onclick={() => duplicateAlert(alert)}>
+											<Copy class="w-4 h-4" />
+											Duplicate
+										</Button>
 										<Button variant="destructive" size="sm" class="gap-2" onclick={() => { alertToDelete = alert.id; showDeleteDialog = true; }}>
 											<Trash2 class="w-4 h-4" />
 											Delete
@@ -783,6 +829,10 @@
 	<CreateAlertDialog
 		bind:open={showCreateDialog}
 		organizationId={$currentOrganization.id}
+		initialValues={prefillValues}
+		onOpenChange={(o) => {
+			if (!o) prefillValues = undefined;
+		}}
 		onSuccess={() => {
 			loadAlertRules();
 			loadAlertHistory();

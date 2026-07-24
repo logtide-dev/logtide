@@ -492,6 +492,9 @@
                     <div>Detection enqueue failures: <span class={c.detectionEnqueueFailed > 0 ? 'font-semibold text-destructive' : ''}>{c.detectionEnqueueFailed}</span></div>
                     <div>Exception enqueue failures: <span class={c.exceptionEnqueueFailed > 0 ? 'font-semibold text-destructive' : ''}>{c.exceptionEnqueueFailed}</span></div>
                     <div>Identifier failures: {c.identifierFailed}</div>
+                    <div>Timestamp skew: {c.timestampSkew.toLocaleString('en-US')}</div>
+                    <div>Span timestamp skew: {c.spanTimestampSkew.toLocaleString('en-US')}</div>
+                    <div>Metric timestamp skew: {c.metricTimestampSkew.toLocaleString('en-US')}</div>
                     <div class="col-span-2 flex flex-wrap gap-x-4 pt-1 text-xs text-muted-foreground border-t">
                         <span>GeoIP: <span class={ingestionHealth.enrichment.geoIp.ready ? 'text-green-500' : 'text-orange-500'}>{ingestionHealth.enrichment.geoIp.ready ? 'ready' : 'unavailable'}</span></span>
                         <span>IP reputation: <span class={ingestionHealth.enrichment.ipReputation.ready ? 'text-green-500' : 'text-orange-500'}>{ingestionHealth.enrichment.ipReputation.ready ? 'ready' : 'unavailable'}</span></span>

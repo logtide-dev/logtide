@@ -10,11 +10,22 @@
     trend?: {
       value: number;
       isPositive: boolean;
+      /** Suffix after the number. Defaults to '%'. Pass '' for a plain count, ' pp' for percentage points. */
+      unit?: string;
+      /** Trailing label. Defaults to 'from last period'. */
+      label?: string;
     };
     onclick?: () => void;
   }
 
   let { title, value, icon: Icon, description, trend, onclick }: Props = $props();
+
+  function formatTrend(t: NonNullable<Props['trend']>): string {
+    const unit = t.unit ?? '%';
+    const decimals = unit === '' ? 0 : 2;
+    const sign = t.isPositive ? '+' : '';
+    return `${sign}${t.value.toFixed(decimals)}${unit} ${t.label ?? 'from last period'}`;
+  }
 </script>
 
 {#if onclick}
@@ -36,7 +47,7 @@
         {/if}
         {#if trend}
           <p class="text-xs {trend.isPositive ? 'text-green-600' : 'text-red-600'}">
-            {trend.isPositive ? '+' : ''}{trend.value.toFixed(2)}% from last period
+            {formatTrend(trend)}
           </p>
         {/if}
       </CardContent>

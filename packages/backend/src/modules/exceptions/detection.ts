@@ -13,6 +13,11 @@ import type { ExceptionLanguage, StructuredException } from '@logtide/shared';
 // Library patterns for detecting vendor/library code
 const LIBRARY_PATTERNS = [
   /node_modules/,
+  // Node.js runtime frames (node:internal/..., node:events, ...). These are not
+  // application code, and because async stack traces vary in which internal
+  // frames they include, treating them as app code makes the same logical error
+  // fingerprint differently and split into several error groups.
+  /^node:/,
   /vendor\//,
   /site-packages/,
   /\.cargo/,

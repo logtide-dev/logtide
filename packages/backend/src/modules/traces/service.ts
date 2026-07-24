@@ -2,8 +2,9 @@ import { db } from '../../database/index.js';
 import { pool } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
-import { recordSpanIngestion } from '../metering/index.js';
+import { recordSpanIngestion, metering } from '../metering/index.js';
 import { piiMaskingService } from '../pii-masking/service.js';
+import { createSkewTracker } from '../ingestion/skew.js';
 import type { TransformedSpan, AggregatedTrace } from '../otlp/trace-transformer.js';
 import type {
   SpanRecord as ReservoirSpanRecord,
@@ -142,7 +143,40 @@ export class TracesService {
       );
     }
 
+    // Clock skew (span-metric-skew): observed on end_time, not start_time. A span
+    // that STARTED 27h ago is routinely legitimate (batch jobs, long transactions,
+    // long-poll), because spans are exported at end; clock skew shifts both ends
+    // together, so end_time is what separates the two cases. Counted over the
+    // post-masking survivors only, to match the log path's semantics of only
+    // counting records that actually get written (a second loop, not folded into
+    // the map above, since masking runs after it here).
+    //
+    // 24h is a judgement call here, not a derivation: for logs it is exactly the
+    // maximum alert time_window, so past it no rule can ever match. No alert rules
+    // run over spans, so there is no equivalent statement; the harm is weaker
+    // (invisible in trace view default time windows). Reused for consistency.
+    //
+    // Accepted limitation: a collector draining a multi-day persistent queue, or an
+    // offline edge agent, produces genuinely old end_time with a correct clock and
+    // will be flagged the same as real skew. Same accepted equivalence class as log
+    // backfill; we warn rather than reject because we cannot tell them apart.
+    const spanSkewTracker = createSkewTracker(Date.now());
+    for (const span of spansToStore) {
+      spanSkewTracker.observe(span.endTime);
+    }
+    const spanSkew = spanSkewTracker.summary();
+
     const result = await reservoir.ingestSpans(spansToStore);
+
+    if (spanSkew && organizationId) {
+      metering.record({
+        type: 'ingestion.span_timestamp_skew',
+        quantity: spanSkew.count,
+        organizationId,
+        projectId,
+        metadata: { maxPastMs: spanSkew.maxPastMs, maxFutureMs: spanSkew.maxFutureMs },
+      });
+    }
 
     // Metering: record ingested span count (fire-and-forget; activates
     // the tracing.max_spans_monthly quota in the capability system).

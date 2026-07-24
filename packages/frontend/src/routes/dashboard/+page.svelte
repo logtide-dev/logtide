@@ -19,6 +19,8 @@
   } from '$lib/stores/custom-dashboards';
   import DashboardContainer from '$lib/components/custom-dashboards/DashboardContainer.svelte';
   import DashboardSwitcher from '$lib/components/custom-dashboards/DashboardSwitcher.svelte';
+  import * as Select from '$lib/components/ui/select';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import PanelConfigDialog from '$lib/components/custom-dashboards/PanelConfigDialog.svelte';
   import AddPanelDialog from '$lib/components/custom-dashboards/AddPanelDialog.svelte';
   import CreateDashboardDialog from '$lib/components/custom-dashboards/CreateDashboardDialog.svelte';
@@ -168,6 +170,34 @@
 
   // ─── Edit mode ────────────────────────────────────────────────────────
 
+  // Auto-refresh (global, for the active dashboard's panels)
+  let autoRefreshMs = $state(0);
+  const autoRefreshOptions = [
+    { value: '0', label: 'Auto-refresh off', short: 'Off' },
+    { value: '30000', label: 'Every 30s', short: '30s' },
+    { value: '60000', label: 'Every 1m', short: '1m' },
+    { value: '300000', label: 'Every 5m', short: '5m' },
+  ];
+  const autoRefreshShort = $derived(
+    autoRefreshOptions.find((o) => o.value === String(autoRefreshMs))?.short ?? 'Off'
+  );
+
+  function setAutoRefresh(v: string | undefined) {
+    autoRefreshMs = v ? parseInt(v, 10) || 0 : 0;
+    if (browser) localStorage.setItem('logtide_dashboard_autorefresh', String(autoRefreshMs));
+  }
+
+  $effect(() => {
+    if (!browser) return;
+    const ms = autoRefreshMs;
+    // Pause while editing so a refresh does not clobber unsaved layout edits.
+    if (ms <= 0 || $editMode) return;
+    const id = setInterval(() => {
+      void customDashboardsStore.fetchAllPanelData();
+    }, ms);
+    return () => clearInterval(id);
+  });
+
   function startEdit() {
     customDashboardsStore.enterEditMode();
   }
@@ -235,6 +265,11 @@
   // ─── Shortcuts ────────────────────────────────────────────────────────
 
   onMount(() => {
+    const savedAutoRefresh = localStorage.getItem('logtide_dashboard_autorefresh');
+    if (savedAutoRefresh) {
+      const parsed = parseInt(savedAutoRefresh, 10);
+      if (!isNaN(parsed) && parsed >= 0) autoRefreshMs = parsed;
+    }
     shortcutsStore.setScope('dashboard');
     shortcutsStore.register([
       {
@@ -307,6 +342,21 @@
           {$dashboardSaving ? 'Saving…' : 'Save'}
         </Button>
       {:else if $activeDashboard}
+        <Select.Root
+          type="single"
+          value={String(autoRefreshMs)}
+          onValueChange={setAutoRefresh}
+        >
+          <Select.Trigger class="w-auto gap-2" title="Auto-refresh">
+            <RefreshCw class="w-4 h-4 shrink-0 {autoRefreshMs > 0 ? 'text-primary' : 'text-muted-foreground'}" />
+            <span class="whitespace-nowrap">{autoRefreshShort}</span>
+          </Select.Trigger>
+          <Select.Content>
+            {#each autoRefreshOptions as opt}
+              <Select.Item value={opt.value}>{opt.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
         <Button variant="outline" onclick={startEdit} class="gap-2">
           <Pencil class="w-4 h-4" />
           Edit

@@ -44,6 +44,20 @@ export class FingerprintService {
   }
 
   /**
+   * The throw site: raw "file:function" of the first application frame, or null
+   * when there is none. Used as the coarse-grouping key's frame component (see
+   * migration 055's logtide_merge_key). Kept raw (not path-normalized) so the app
+   * and the SQL function agree without duplicating normalization.
+   */
+  static topAppFrame(parsedException: ParsedException): string | null {
+    const frame = parsedException.frames.find((f) => f.isAppCode);
+    if (!frame) return null;
+    const file = frame.originalFile || frame.filePath;
+    const func = frame.originalFunction || frame.functionName || '<anonymous>';
+    return `${file}:${func}`;
+  }
+
+  /**
    * Default normalization when parser is not available
    */
   private static defaultNormalize(frames: StackFrame[]): string {

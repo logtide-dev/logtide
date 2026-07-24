@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../../database/index.js';
 import { UsersService } from '../../../modules/users/service.js';
+import { createTestSession } from '../../helpers/auth.js';
+import { authenticationService } from '../../../modules/auth/authentication-service.js';
 
 describe('UsersService', () => {
     let usersService: UsersService;
@@ -192,111 +194,11 @@ describe('UsersService', () => {
         });
     });
 
-    describe('login', () => {
-        it('should return session info for valid credentials', async () => {
-            await usersService.createUser({
-                email: 'login@example.com',
-                password: 'password123',
-                name: 'Login User',
-            });
-
-            const session = await usersService.login({
-                email: 'login@example.com',
-                password: 'password123',
-            });
-
-            expect(session.sessionId).toBeDefined();
-            expect(session.userId).toBeDefined();
-            expect(session.token).toBeDefined();
-            expect(session.token).toHaveLength(64);
-            expect(session.expiresAt).toBeInstanceOf(Date);
-            expect(session.expiresAt.getTime()).toBeGreaterThan(Date.now());
-        });
-
-        it('should throw error for non-existent user', async () => {
-            await expect(
-                usersService.login({
-                    email: 'nonexistent@example.com',
-                    password: 'password123',
-                })
-            ).rejects.toThrow('Invalid email or password');
-        });
-
-        it('should throw error for wrong password', async () => {
-            await usersService.createUser({
-                email: 'wrongpass@example.com',
-                password: 'correctPassword',
-                name: 'Test User',
-            });
-
-            await expect(
-                usersService.login({
-                    email: 'wrongpass@example.com',
-                    password: 'wrongPassword',
-                })
-            ).rejects.toThrow('Invalid email or password');
-        });
-
-        it('should update last_login timestamp', async () => {
-            const user = await usersService.createUser({
-                email: 'lastlogin@example.com',
-                password: 'password123',
-                name: 'Last Login User',
-            });
-
-            expect(user.lastLogin).toBeNull();
-
-            await usersService.login({
-                email: 'lastlogin@example.com',
-                password: 'password123',
-            });
-
-            const updatedUser = await usersService.getUserById(user.id);
-            expect(updatedUser?.lastLogin).not.toBeNull();
-        });
-
-        it('should reject login for disabled user', async () => {
-            await usersService.createUser({
-                email: 'disabled@example.com',
-                password: 'password123',
-                name: 'Disabled User',
-            });
-
-            await db
-                .updateTable('users')
-                .set({ disabled: true })
-                .where('email', '=', 'disabled@example.com')
-                .execute();
-
-            await expect(
-                usersService.login({
-                    email: 'disabled@example.com',
-                    password: 'password123',
-                })
-            ).rejects.toThrow('This account has been disabled');
-        });
-
-        it('should allow multiple concurrent sessions', async () => {
-            await usersService.createUser({
-                email: 'multi@example.com',
-                password: 'password123',
-                name: 'Multi Session User',
-            });
-
-            const session1 = await usersService.login({
-                email: 'multi@example.com',
-                password: 'password123',
-            });
-
-            const session2 = await usersService.login({
-                email: 'multi@example.com',
-                password: 'password123',
-            });
-
-            expect(session1.sessionId).not.toBe(session2.sessionId);
-            expect(session1.token).not.toBe(session2.token);
-        });
-    });
+    // Local login behavior (credential verification, disabled/SSO rejection,
+    // enumeration hardening, session creation) is covered on the provider path:
+    // see tests/modules/auth/local-provider.test.ts and authentication-service.test.ts,
+    // plus audit coverage in tests/modules/audit-log/record-integration.test.ts.
+    // usersService.login was removed as a redundant parallel implementation.
 
     describe('validateSession', () => {
         it('should return user profile for valid session', async () => {
@@ -306,10 +208,7 @@ describe('UsersService', () => {
                 name: 'Validate User',
             });
 
-            const session = await usersService.login({
-                email: 'validate@example.com',
-                password: 'password123',
-            });
+            const session = await createTestSession(user.id);
 
             const profile = await usersService.validateSession(session.token);
 
@@ -325,16 +224,13 @@ describe('UsersService', () => {
         });
 
         it('should return null for expired session', async () => {
-            await usersService.createUser({
+            const user = await usersService.createUser({
                 email: 'expired@example.com',
                 password: 'password123',
                 name: 'Expired User',
             });
 
-            const session = await usersService.login({
-                email: 'expired@example.com',
-                password: 'password123',
-            });
+            const session = await createTestSession(user.id);
 
             // Manually expire the session
             await db
@@ -355,10 +251,7 @@ describe('UsersService', () => {
                 name: 'Disabled User',
             });
 
-            const session = await usersService.login({
-                email: 'disabled@example.com',
-                password: 'password123',
-            });
+            const session = await createTestSession(user.id);
 
             // Disable the user
             await db
@@ -373,16 +266,13 @@ describe('UsersService', () => {
         });
 
         it('should delete expired session on validation', async () => {
-            await usersService.createUser({
+            const user = await usersService.createUser({
                 email: 'cleanup@example.com',
                 password: 'password123',
                 name: 'Cleanup User',
             });
 
-            const session = await usersService.login({
-                email: 'cleanup@example.com',
-                password: 'password123',
-            });
+            const session = await createTestSession(user.id);
 
             // Manually expire the session
             await db
@@ -406,16 +296,13 @@ describe('UsersService', () => {
 
     describe('logout', () => {
         it('should delete the session', async () => {
-            await usersService.createUser({
+            const user = await usersService.createUser({
                 email: 'logout@example.com',
                 password: 'password123',
                 name: 'Logout User',
             });
 
-            const session = await usersService.login({
-                email: 'logout@example.com',
-                password: 'password123',
-            });
+            const session = await createTestSession(user.id);
 
             await usersService.logout(session.token);
 
@@ -513,13 +400,13 @@ describe('UsersService', () => {
                 newPassword: 'newPassword',
             });
 
-            // Should be able to login with new password
-            const session = await usersService.login({
+            // Should be able to authenticate with the new password
+            const result = await authenticationService.authenticateWithProvider('local', {
                 email: 'password@example.com',
                 password: 'newPassword',
             });
 
-            expect(session.token).toBeDefined();
+            expect(result.session.token).toBeDefined();
         });
 
         it('should throw error when changing password without current password', async () => {
@@ -599,10 +486,7 @@ describe('UsersService', () => {
                 name: 'Cascade User',
             });
 
-            const session = await usersService.login({
-                email: 'cascade@example.com',
-                password: 'password123',
-            });
+            const session = await createTestSession(user.id);
 
             await usersService.deleteUser(user.id, 'password123');
 
@@ -610,7 +494,7 @@ describe('UsersService', () => {
             const dbSession = await db
                 .selectFrom('sessions')
                 .select('id')
-                .where('id', '=', session.sessionId)
+                .where('id', '=', session.id)
                 .executeTakeFirst();
 
             expect(dbSession).toBeUndefined();
@@ -625,10 +509,7 @@ describe('UsersService', () => {
                 name: 'Cleanup User',
             });
 
-            const session = await usersService.login({
-                email: 'cleanup@example.com',
-                password: 'password123',
-            });
+            const session = await createTestSession(user.id);
 
             // Expire the session
             await db
@@ -643,16 +524,13 @@ describe('UsersService', () => {
         });
 
         it('should not delete valid sessions', async () => {
-            await usersService.createUser({
+            const user = await usersService.createUser({
                 email: 'valid@example.com',
                 password: 'password123',
                 name: 'Valid User',
             });
 
-            await usersService.login({
-                email: 'valid@example.com',
-                password: 'password123',
-            });
+            await createTestSession(user.id);
 
             const deleted = await usersService.cleanupExpiredSessions();
 

@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
+import { AuthError, AuthErrorCode } from '../auth/providers/types.js';
 import { usersService } from './service.js';
+import { authenticationService } from '../auth/authentication-service.js';
 import { config } from '../../config/index.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
@@ -52,11 +56,29 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
         const user = await usersService.createUser(body);
 
-        // Automatically log in the new user
-        const session = await usersService.login({
-          email: body.email,
-          password: body.password,
-        });
+        // Automatically log in the new user through the provider registry.
+        // This also creates the user_identities link for the local provider.
+        // If this fails for a transient reason the user row is already committed,
+        // so we return 201 with no session instead of propagating a 500. The
+        // account is fully recoverable via a subsequent /login.
+        let session: { token: string; expiresAt: Date } | null = null;
+        try {
+          const result = await authenticationService.authenticateWithProvider('local', {
+            email: body.email,
+            password: body.password,
+          });
+          session = result.session;
+        } catch (autoLoginError) {
+          // The user row is already committed, so this stays a 201 without a
+          // session (recoverable via /login), but the cause must be visible to
+          // operators: a persistent failure here silently degrades every signup.
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('error', '[Auth] Post-registration auto-login failed', {
+              userId: user.id,
+              error: autoLoginError instanceof Error ? autoLoginError.message : String(autoLoginError),
+            });
+          }
+        }
 
         await auditLogService.record({
           action: 'user.registered',
@@ -72,10 +94,12 @@ export async function usersRoutes(fastify: FastifyInstance) {
             name: user.name,
             is_admin: user.is_admin,
           },
-          session: {
-            token: session.token,
-            expiresAt: session.expiresAt,
-          },
+          ...(session ? {
+            session: {
+              token: session.token,
+              expiresAt: session.expiresAt,
+            },
+          } : {}),
         });
       } catch (error) {
         if (error instanceof z.ZodError) {
@@ -111,14 +135,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
       try {
         parsedBody = loginSchema.parse(request.body);
 
-        const session = await usersService.login(parsedBody);
-        const user = await usersService.getUserById(session.userId);
-
-        if (!user) {
-          return reply.status(500).send({
-            error: 'Internal server error',
-          });
-        }
+        const { user, session } = await authenticationService.authenticateWithProvider('local', parsedBody);
 
         await auditLogService.record({
           action: 'auth.login_succeeded',
@@ -147,17 +164,30 @@ export async function usersRoutes(fastify: FastifyInstance) {
           });
         }
 
-        if (error instanceof Error) {
-          if (error.message.includes('Invalid')) {
-            // parsedBody is defined here (zod succeeded before the service threw)
+        if (error instanceof AuthError) {
+          // Classify by the provider's typed code, not the message string, so a
+          // reword of a user-facing message can never silently turn a login
+          // failure into a 500 or drop its audit row.
+          const mapping: Partial<Record<AuthErrorCode, { status: number; reason: string }>> = {
+            [AuthErrorCode.INVALID_CREDENTIALS]: { status: 401, reason: 'invalid_credentials' },
+            [AuthErrorCode.SSO_REQUIRED]: { status: 401, reason: 'sso_required' },
+            [AuthErrorCode.USER_DISABLED]: { status: 401, reason: 'account_disabled' },
+            [AuthErrorCode.PROVIDER_UNAVAILABLE]: { status: 503, reason: 'provider_unavailable' },
+          };
+          const mapped = mapping[error.code];
+
+          if (mapped) {
+            // parsedBody is defined here (zod succeeded before the service threw).
+            // The reason lands only in the audit log, never in the HTTP response,
+            // so recording it does not weaken the anti-enumeration behavior.
             await auditLogService.record({
               action: 'auth.login_failed',
               outcome: 'failure',
               organizationId: null,
               actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
-              metadata: { method: 'local' },
+              metadata: { method: 'local', reason: mapped.reason },
             });
-            return reply.status(401).send({
+            return reply.status(mapped.status).send({
               error: error.message,
             });
           }

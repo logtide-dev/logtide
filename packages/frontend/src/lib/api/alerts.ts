@@ -5,6 +5,23 @@ import type { LogLevel, MetadataFilter, MetadataFilterInput } from '@logtide/sha
 export type AlertType = 'threshold' | 'rate_of_change';
 export type BaselineType = 'same_time_yesterday' | 'same_day_last_week' | 'rolling_7d_avg' | 'percentile_p95';
 
+/** Optional values to prefill the alert builder (create-from-error, duplicate). */
+export interface AlertBuilderPrefill {
+  name?: string;
+  service?: string | null;
+  levels?: string[];
+  threshold?: number;
+  timeWindow?: number;
+  alertType?: AlertType;
+  baselineType?: BaselineType | null;
+  deviationMultiplier?: number | null;
+  minBaselineValue?: number | null;
+  cooldownMinutes?: number | null;
+  sustainedMinutes?: number | null;
+  metadataFilters?: MetadataFilterInput[];
+  channelIds?: string[];
+}
+
 export interface AlertRule {
   id: string;
   organizationId: string;

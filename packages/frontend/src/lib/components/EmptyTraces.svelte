@@ -65,9 +65,10 @@ import (
     "go.opentelemetry.io/otel/sdk/trace"
 )
 
-exporter, _ := otlptracehttp.New(ctx,
+exporter, _ := otlptracehttp.New(context.Background(),
     otlptracehttp.WithEndpoint("${apiUrlValue.replace('https://', '').replace('http://', '')}"),
     otlptracehttp.WithURLPath("/v1/otlp/traces"),
+    otlptracehttp.WithInsecure(), // remove for HTTPS
     otlptracehttp.WithHeaders(map[string]string{
         "X-API-Key": "YOUR_API_KEY",
     }),

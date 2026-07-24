@@ -1,6 +1,6 @@
 {
   "name": "@logtide/frontend",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "LogTide Frontend Dashboard",
   "type": "module",
@@ -20,13 +20,14 @@
     "sourcemaps:upload": "logtide sourcemaps upload build/client --release $npm_package_version"
   },
   "dependencies": {
+    "@internationalized/date": "^3.12.2",
     "@logtide/core": "0.7.0",
     "@logtide/shared": "workspace:*",
     "@logtide/sveltekit": "0.7.0",
     "@lucide/svelte": "^0.482.0",
     "@tanstack/svelte-table": "^8.21.3",
     "canvas-confetti": "^1.9.4",
-    "echarts": "^6.0.0",
+    "echarts": "^6.1.0",
     "leaflet": "^1.9.4",
     "shiki": "^3.18.0",
     "svelte-dnd-action": "^0.9.69",

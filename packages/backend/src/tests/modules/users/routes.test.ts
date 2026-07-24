@@ -1,9 +1,24 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { hub } from '@logtide/core';
 import { db } from '../../../database/index.js';
 import { usersRoutes } from '../../../modules/users/routes.js';
 import { usersService } from '../../../modules/users/service.js';
 import { settingsService } from '../../../modules/settings/service.js';
+import { authenticationService } from '../../../modules/auth/authentication-service.js';
+import { AuthError, AuthErrorCode } from '../../../modules/auth/providers/types.js';
+import { createTestSession } from '../../helpers/auth.js';
+
+// Mock internal observability so the auto-login failure path is fully
+// exercised (isInternalLoggingEnabled is env-driven and off in tests)
+vi.mock('@logtide/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@logtide/core')>()),
+  hub: { captureLog: vi.fn() },
+}));
+vi.mock('../../../utils/internal-logger.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/internal-logger.js')>()),
+  isInternalLoggingEnabled: () => true,
+}));
 
 // Mock settingsService
 vi.mock('../../../modules/settings/service.js', () => ({
@@ -71,6 +86,42 @@ describe('Users Routes', () => {
       expect(body.user.email).toBe('newuser@example.com');
       expect(body.user.name).toBe('New User');
       expect(body.session.token).toBeDefined();
+    });
+
+    it('returns 201 without a session and logs when auto-login fails', async () => {
+      const authSpy = vi.spyOn(authenticationService, 'authenticateWithProvider')
+        .mockRejectedValueOnce(new Error('session backend unavailable'));
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/register',
+        payload: {
+          email: 'no-session@example.com',
+          password: 'password123',
+          name: 'No Session',
+        },
+      });
+
+      expect(response.statusCode).toBe(201);
+      const body = JSON.parse(response.body);
+      expect(body.user.email).toBe('no-session@example.com');
+      expect(body.session).toBeUndefined();
+
+      // The swallowed failure must be visible to operators
+      expect(hub.captureLog).toHaveBeenCalledWith(
+        'error',
+        '[Auth] Post-registration auto-login failed',
+        expect.objectContaining({ error: 'session backend unavailable' })
+      );
+
+      // Only the registration auto-login was forced to fail; the account exists
+      // and is recoverable via a normal login through the provider path.
+      authSpy.mockRestore();
+      const result = await authenticationService.authenticateWithProvider('local', {
+        email: 'no-session@example.com',
+        password: 'password123',
+      });
+      expect(result.session.token).toBeDefined();
     });
 
     it('should return 400 for invalid email', async () => {
@@ -221,6 +272,25 @@ describe('Users Routes', () => {
 
       expect(response.statusCode).toBe(400);
     });
+
+    it('returns 503 when the local provider is unavailable', async () => {
+      const authSpy = vi.spyOn(authenticationService, 'authenticateWithProvider')
+        .mockRejectedValueOnce(
+          new AuthError("Authentication provider 'local' not found or disabled", AuthErrorCode.PROVIDER_UNAVAILABLE)
+        );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/login',
+        payload: {
+          email: 'login@example.com',
+          password: 'password123',
+        },
+      });
+
+      expect(response.statusCode).toBe(503);
+      authSpy.mockRestore();
+    });
   });
 
   describe('POST /logout', () => {
@@ -231,10 +301,7 @@ describe('Users Routes', () => {
         name: 'Logout User',
       });
 
-      const session = await usersService.login({
-        email: 'logout@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'POST',
@@ -267,10 +334,7 @@ describe('Users Routes', () => {
         name: 'Me User',
       });
 
-      const session = await usersService.login({
-        email: 'me@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'GET',
@@ -310,16 +374,13 @@ describe('Users Routes', () => {
 
   describe('PUT /me', () => {
     it('should update user name', async () => {
-      await usersService.createUser({
+      const user = await usersService.createUser({
         email: 'update@example.com',
         password: 'password123',
         name: 'Old Name',
       });
 
-      const session = await usersService.login({
-        email: 'update@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'PUT',
@@ -338,16 +399,13 @@ describe('Users Routes', () => {
     });
 
     it('should update email', async () => {
-      await usersService.createUser({
+      const user = await usersService.createUser({
         email: 'oldemail@example.com',
         password: 'password123',
         name: 'Test User',
       });
 
-      const session = await usersService.login({
-        email: 'oldemail@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'PUT',
@@ -366,16 +424,13 @@ describe('Users Routes', () => {
     });
 
     it('should update password with correct current password', async () => {
-      await usersService.createUser({
+      const user = await usersService.createUser({
         email: 'password@example.com',
         password: 'oldpassword',
         name: 'Test User',
       });
 
-      const session = await usersService.login({
-        email: 'password@example.com',
-        password: 'oldpassword',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'PUT',
@@ -391,25 +446,22 @@ describe('Users Routes', () => {
 
       expect(response.statusCode).toBe(200);
 
-      // Verify can login with new password
-      const newSession = await usersService.login({
+      // Verify the new password authenticates through the provider path
+      const result = await authenticationService.authenticateWithProvider('local', {
         email: 'password@example.com',
         password: 'newpassword123',
       });
-      expect(newSession.token).toBeDefined();
+      expect(result.session.token).toBeDefined();
     });
 
     it('should return 400 when changing password without current password', async () => {
-      await usersService.createUser({
+      const user = await usersService.createUser({
         email: 'nopassword@example.com',
         password: 'password123',
         name: 'Test User',
       });
 
-      const session = await usersService.login({
-        email: 'nopassword@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'PUT',
@@ -444,16 +496,13 @@ describe('Users Routes', () => {
         name: 'Existing User',
       });
 
-      await usersService.createUser({
+      const user = await usersService.createUser({
         email: 'changemail@example.com',
         password: 'password123',
         name: 'Change Mail User',
       });
 
-      const session = await usersService.login({
-        email: 'changemail@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'PUT',
@@ -472,16 +521,13 @@ describe('Users Routes', () => {
 
   describe('DELETE /me', () => {
     it('should delete user with correct password', async () => {
-      await usersService.createUser({
+      const user = await usersService.createUser({
         email: 'delete@example.com',
         password: 'password123',
         name: 'Delete User',
       });
 
-      const session = await usersService.login({
-        email: 'delete@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -497,25 +543,22 @@ describe('Users Routes', () => {
       expect(response.statusCode).toBe(204);
 
       // Verify user is deleted
-      const user = await db
+      const deletedUser = await db
         .selectFrom('users')
         .select('id')
         .where('email', '=', 'delete@example.com')
         .executeTakeFirst();
-      expect(user).toBeUndefined();
+      expect(deletedUser).toBeUndefined();
     });
 
     it('should return 400 with incorrect password', async () => {
-      await usersService.createUser({
+      const user = await usersService.createUser({
         email: 'nodelete@example.com',
         password: 'password123',
         name: 'No Delete User',
       });
 
-      const session = await usersService.login({
-        email: 'nodelete@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -532,16 +575,13 @@ describe('Users Routes', () => {
     });
 
     it('should return 400 without password', async () => {
-      await usersService.createUser({
+      const user = await usersService.createUser({
         email: 'needpassword@example.com',
         password: 'password123',
         name: 'Need Password User',
       });
 
-      const session = await usersService.login({
-        email: 'needpassword@example.com',
-        password: 'password123',
-      });
+      const session = await createTestSession(user.id);
 
       const response = await app.inject({
         method: 'DELETE',

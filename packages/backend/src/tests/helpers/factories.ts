@@ -7,14 +7,16 @@ import crypto from 'crypto';
  */
 export async function createTestUser(overrides: {
     email?: string;
-    password?: string;
+    /** null creates an SSO-only user with no local password */
+    password?: string | null;
     name?: string;
+    disabled?: boolean;
 } = {}) {
     const email = overrides.email || `test-${Date.now()}@example.com`;
-    const password = overrides.password || 'password123';
+    const password = overrides.password === undefined ? 'password123' : overrides.password;
     const name = overrides.name || 'Test User';
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = password === null ? null : await bcrypt.hash(password, 10);
 
     const user = await db
         .insertInto('users')
@@ -22,6 +24,7 @@ export async function createTestUser(overrides: {
             email,
             password_hash: hashedPassword,
             name,
+            disabled: overrides.disabled ?? false,
         })
         .returningAll()
         .executeTakeFirstOrThrow();

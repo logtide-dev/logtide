@@ -99,6 +99,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum inbound webhook receivers per organization',
   },
+  'digests.max_recipients': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum digest email recipients per organization',
+  },
 
   // Consumption quotas (OSS-permissive: null = unlimited). signal maps to #212 metering types.
   'ingestion.max_bytes_monthly': {

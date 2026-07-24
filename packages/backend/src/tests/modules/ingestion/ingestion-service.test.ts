@@ -473,4 +473,68 @@ describe('IngestionService', () => {
             expect(result.rejected).toEqual([]);
         });
     });
+
+    describe('clock skew detection (#279)', () => {
+        it('records a skew counter and still stores the log', async () => {
+            const recordSpy = vi.spyOn(metering, 'record');
+
+            const skewed = new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString();
+            const result = await ingestionService.ingestLogs(
+                [{ time: skewed, service: 'ubuntu', level: 'critical', message: 'skewed log' }],
+                projectId,
+            );
+
+            // The invariant that matters: skew never rejects.
+            expect(result.received).toBe(1);
+            expect(result.rejected).toEqual([]);
+
+            const skewCall = recordSpy.mock.calls.find(
+                ([e]) => e.type === 'ingestion.timestamp_skew',
+            );
+            expect(skewCall).toBeDefined();
+            expect(skewCall![0].quantity).toBe(1);
+            expect(skewCall![0].projectId).toBe(projectId);
+            expect(skewCall![0].metadata).toMatchObject({ maxFutureMs: 0 });
+            expect((skewCall![0].metadata as { maxPastMs: number }).maxPastMs).toBeGreaterThan(
+                24 * 60 * 60 * 1000,
+            );
+
+            recordSpy.mockRestore();
+        });
+
+        it('records no skew counter for a fresh log', async () => {
+            const recordSpy = vi.spyOn(metering, 'record');
+
+            await ingestionService.ingestLogs(
+                [{ time: new Date().toISOString(), service: 'ubuntu', level: 'info', message: 'fresh' }],
+                projectId,
+            );
+
+            expect(
+                recordSpy.mock.calls.find(([e]) => e.type === 'ingestion.timestamp_skew'),
+            ).toBeUndefined();
+
+            recordSpy.mockRestore();
+        });
+
+        it('counts only the skewed records in a mixed batch', async () => {
+            const recordSpy = vi.spyOn(metering, 'record');
+
+            await ingestionService.ingestLogs(
+                [
+                    { time: new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString(), service: 'a', level: 'info', message: 'old' },
+                    { time: new Date().toISOString(), service: 'a', level: 'info', message: 'fresh' },
+                    { time: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(), service: 'a', level: 'info', message: 'older' },
+                ],
+                projectId,
+            );
+
+            const skewCall = recordSpy.mock.calls.find(
+                ([e]) => e.type === 'ingestion.timestamp_skew',
+            );
+            expect(skewCall![0].quantity).toBe(2);
+
+            recordSpy.mockRestore();
+        });
+    });
 });

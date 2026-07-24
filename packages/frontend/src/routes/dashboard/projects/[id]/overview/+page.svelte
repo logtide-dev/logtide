@@ -12,6 +12,9 @@
   import TopServicesWidget from '$lib/components/dashboard/TopServicesWidget.svelte';
   import RecentErrorsWidget from '$lib/components/dashboard/RecentErrorsWidget.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import IngestionSkewBanner from '$lib/components/projects/IngestionSkewBanner.svelte';
+  import { projectsAPI } from '$lib/api/projects';
+  import type { ProjectSkewHealthMap } from '$lib/api/projects';
 
   import Activity from '@lucide/svelte/icons/activity';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
@@ -24,6 +27,7 @@
   let activity = $state<ActivityOverviewData | null>(null);
   let topServices = $state<TopService[]>([]);
   let recentErrors = $state<RecentError[]>([]);
+  let skew = $state<ProjectSkewHealthMap | null>(null);
   let loading = $state(true);
   let error = $state('');
   let lastLoadedKey = $state<string | null>(null);
@@ -45,17 +49,21 @@
 
     try {
       const orgId = $currentOrganization.id;
-      const [statsData, activityData, servicesData, errorsData] = await Promise.all([
+      const [statsData, activityData, servicesData, errorsData, healthData] = await Promise.all([
         dashboardAPI.getStats(orgId, projectId),
         dashboardAPI.getActivityOverview(orgId, projectId),
         dashboardAPI.getTopServices(orgId, projectId),
         dashboardAPI.getRecentErrors(orgId, projectId),
+        projectsAPI
+          .getIngestionHealth(projectId)
+          .catch(() => ({ skew: { logs: null, spans: null, metrics: null } })),
       ]);
 
       stats = statsData;
       activity = activityData;
       topServices = servicesData;
       recentErrors = errorsData;
+      skew = healthData.skew;
 
       lastLoadedKey = `${orgId}-${projectId}`;
     } catch (e) {
@@ -76,6 +84,7 @@
       activity = null;
       topServices = [];
       recentErrors = [];
+      skew = null;
       lastLoadedKey = null;
       return;
     }
@@ -162,6 +171,12 @@
 </svelte:head>
 
 <div class="space-y-6">
+  {#if !loading && !error}
+    <IngestionSkewBanner skew={skew?.logs ?? null} signal="logs" />
+    <IngestionSkewBanner skew={skew?.spans ?? null} signal="spans" />
+    <IngestionSkewBanner skew={skew?.metrics ?? null} signal="metrics" />
+  {/if}
+
   {#if loading}
     <div class="flex items-center justify-center py-24">
       <Spinner />
@@ -192,7 +207,8 @@
         description="Logs ingested today"
         trend={{
           value: stats.totalLogsToday.trend,
-          isPositive: stats.totalLogsToday.trend >= 0
+          isPositive: stats.totalLogsToday.trend >= 0,
+          label: 'from yesterday'
         }}
         icon={Activity}
         onclick={handleTotalLogsClick}
@@ -200,10 +216,12 @@
       <StatsCard
         title="Error Rate"
         value={stats.errorRate.value.toFixed(1) + '%'}
-        description="Error rate last 24h"
+        description="Error rate today"
         trend={{
           value: Math.abs(stats.errorRate.trend),
-          isPositive: stats.errorRate.trend <= 0
+          isPositive: stats.errorRate.trend <= 0,
+          unit: ' pp',
+          label: 'from yesterday'
         }}
         icon={AlertTriangle}
         onclick={handleErrorRateClick}
@@ -214,7 +232,9 @@
         description="Services reporting"
         trend={{
           value: Math.abs(stats.activeServices.trend),
-          isPositive: stats.activeServices.trend >= 0
+          isPositive: stats.activeServices.trend >= 0,
+          unit: '',
+          label: 'vs yesterday'
         }}
         icon={Server}
         onclick={handleActiveServicesClick}
@@ -222,10 +242,11 @@
       <StatsCard
         title="Throughput"
         value={formatThroughput(stats.avgThroughput.value)}
-        description="Current throughput"
+        description="Logs/sec, last hour"
         trend={{
           value: stats.avgThroughput.trend,
-          isPositive: stats.avgThroughput.trend >= 0
+          isPositive: stats.avgThroughput.trend >= 0,
+          label: 'from last hour'
         }}
         icon={TrendingUp}
         onclick={handleThroughputClick}

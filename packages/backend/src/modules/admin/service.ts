@@ -1234,6 +1234,9 @@ export class AdminService {
                 'ingestion.detection_enqueue_failed',
                 'ingestion.exception_enqueue_failed',
                 'ingestion.identifier_failed',
+                'ingestion.timestamp_skew',
+                'ingestion.span_timestamp_skew',
+                'ingestion.metric_timestamp_skew',
             ])
             .groupBy('type')
             .execute();
@@ -1249,6 +1252,9 @@ export class AdminService {
                 detectionEnqueueFailed: byType['ingestion.detection_enqueue_failed'] ?? 0,
                 exceptionEnqueueFailed: byType['ingestion.exception_enqueue_failed'] ?? 0,
                 identifierFailed: byType['ingestion.identifier_failed'] ?? 0,
+                timestampSkew: byType['ingestion.timestamp_skew'] ?? 0,
+                spanTimestampSkew: byType['ingestion.span_timestamp_skew'] ?? 0,
+                metricTimestampSkew: byType['ingestion.metric_timestamp_skew'] ?? 0,
             },
             enrichment: enrichmentService.getStatus(),
         };

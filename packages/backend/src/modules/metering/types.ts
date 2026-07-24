@@ -14,7 +14,13 @@ export type MeteringEventType =
   | 'ingestion.pii_rejected'
   | 'ingestion.detection_enqueue_failed'
   | 'ingestion.exception_enqueue_failed'
-  | 'ingestion.identifier_failed';
+  | 'ingestion.identifier_failed'
+  // Clock skew at ingestion (#279): not billed, surfaced in admin stats and per project.
+  | 'ingestion.timestamp_skew'
+  // Clock skew for spans/metrics (span-metric-skew): same rationale as above,
+  // kept under the ingestion.* prefix (see breakdown.ts / recorder.ts).
+  | 'ingestion.span_timestamp_skew'
+  | 'ingestion.metric_timestamp_skew';
 
 export interface MeteringEvent {
   type: MeteringEventType;

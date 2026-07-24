@@ -79,6 +79,7 @@ export interface AuthenticationResult {
  */
 export enum AuthErrorCode {
   INVALID_CREDENTIALS = 'INVALID_CREDENTIALS',
+  SSO_REQUIRED = 'SSO_REQUIRED',
   USER_DISABLED = 'USER_DISABLED',
   PROVIDER_UNAVAILABLE = 'PROVIDER_UNAVAILABLE',
   PROVIDER_ERROR = 'PROVIDER_ERROR',
@@ -87,6 +88,23 @@ export enum AuthErrorCode {
   EMAIL_NOT_VERIFIED = 'EMAIL_NOT_VERIFIED',
   AUTO_REGISTER_DISABLED = 'AUTO_REGISTER_DISABLED',
   ACCOUNT_LOCKED = 'ACCOUNT_LOCKED',
+}
+
+/**
+ * Typed authentication error.
+ *
+ * Carries the provider's AuthErrorCode end to end so callers (HTTP routes,
+ * audit logging) can classify a failure by code instead of matching the
+ * user-facing message string, which would silently break on any reword.
+ */
+export class AuthError extends Error {
+  readonly code: AuthErrorCode;
+
+  constructor(message: string, code: AuthErrorCode) {
+    super(message);
+    this.name = 'AuthError';
+    this.code = code;
+  }
 }
 
 /**

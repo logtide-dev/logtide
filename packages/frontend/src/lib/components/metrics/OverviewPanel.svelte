@@ -1,9 +1,9 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import MetricCard from "./MetricCard.svelte";
+  import EmptyMetrics from "$lib/components/EmptyMetrics.svelte";
   import { chartColors } from "$lib/utils/echarts-theme";
   import type { MetricOverviewItem, MetricAggregateResult } from "$lib/api/metrics";
-  import Activity from "@lucide/svelte/icons/activity";
   import Button from "$lib/components/ui/button/button.svelte";
   import ExternalLink from "@lucide/svelte/icons/external-link";
 
@@ -49,11 +49,7 @@
 </script>
 
 {#if displayServices.length === 0}
-  <div class="flex flex-col items-center justify-center py-16 text-muted-foreground">
-    <Activity class="w-12 h-12 mb-3 opacity-50" />
-    <p class="text-lg font-medium mb-1">No metrics found</p>
-    <p class="text-sm">Start sending OTLP metrics to see them here</p>
-  </div>
+  <EmptyMetrics />
 {:else}
   {#each displayServices as service, si}
     <div class="mb-8">

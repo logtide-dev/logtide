@@ -5,7 +5,6 @@ import { db } from '../../database/connection.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 
 const SALT_ROUNDS = 10;
-const SESSION_DURATION_DAYS = 30;
 
 // Constant key for the Postgres transaction-scoped advisory lock that
 // serializes the first-admin promotion decision across concurrent
@@ -16,11 +15,6 @@ export interface CreateUserInput {
   email: string;
   password: string;
   name: string;
-}
-
-export interface LoginInput {
-  email: string;
-  password: string;
 }
 
 export interface SessionInfo {
@@ -146,67 +140,6 @@ export class UsersService {
       disabled: user.disabled,
       createdAt: new Date(user.created_at),
       lastLogin: user.last_login ? new Date(user.last_login) : null,
-    };
-  }
-
-  /**
-   * Authenticate a user and create a session
-   */
-  async login(input: LoginInput): Promise<SessionInfo> {
-    // Find user by email (case-insensitive, matching how emails are stored)
-    const user = await db
-      .selectFrom('users')
-      .select(['id', 'email', 'password_hash', 'disabled'])
-      .where('email', '=', input.email.toLowerCase().trim())
-      .executeTakeFirst();
-
-    if (!user) {
-      throw new Error('Invalid email or password');
-    }
-
-    // Check if user has a local password (external auth users may not)
-    if (!user.password_hash) {
-      throw new Error('Please log in using your organization SSO');
-    }
-
-    // Verify password
-    const isValidPassword = await this.verifyPassword(input.password, user.password_hash);
-    if (!isValidPassword) {
-      throw new Error('Invalid email or password');
-    }
-
-    // Check if account is disabled
-    if (user.disabled) {
-      throw new Error('This account has been disabled');
-    }
-
-    // Update last login
-    await db
-      .updateTable('users')
-      .set({ last_login: new Date() })
-      .where('id', '=', user.id)
-      .execute();
-
-    // Create session
-    const token = this.generateToken();
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + SESSION_DURATION_DAYS);
-
-    const session = await db
-      .insertInto('sessions')
-      .values({
-        user_id: user.id,
-        token,
-        expires_at: expiresAt,
-      })
-      .returning(['id', 'token', 'expires_at'])
-      .executeTakeFirstOrThrow();
-
-    return {
-      sessionId: session.id,
-      userId: user.id,
-      token: session.token,
-      expiresAt: new Date(session.expires_at),
     };
   }
 

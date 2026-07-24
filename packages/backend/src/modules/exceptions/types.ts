@@ -47,4 +47,15 @@ export interface CreateExceptionParams {
   logId: string;
   parsedData: ParsedException;
   fingerprint: string;
+  /**
+   * Service that emitted the error log. Carried on the exception row so the
+   * error-group trigger can attribute the service on every storage engine,
+   * not just TimescaleDB (where logs live in Postgres).
+   */
+  service?: string | null;
+  /**
+   * Raw "file:function" of the first app frame (throw site). Carried so the
+   * trigger can compute the group's coarse merge key for auto-merge.
+   */
+  topFrame?: string | null;
 }

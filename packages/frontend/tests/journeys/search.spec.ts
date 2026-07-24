@@ -239,9 +239,10 @@ test.describe('Search Journey', () => {
     await customButton.click();
     await page.waitForTimeout(500);
 
-    // Verify datetime inputs appear
-    await expect(page.locator('input[type="datetime-local"]').first()).toBeVisible();
-    await expect(page.locator('input[type="datetime-local"]').nth(1)).toBeVisible();
+    // Custom range now uses an in-app calendar plus explicit time inputs.
+    await expect(page.getByText('From time')).toBeVisible();
+    await expect(page.locator('input[type="time"]').first()).toBeVisible();
+    await expect(page.locator('input[type="time"]').nth(1)).toBeVisible();
   });
 
   test('10. User can export logs', async ({ page }) => {

@@ -65,6 +65,12 @@ export const AUDIT_ACTIONS = {
   'channel.created': 'config_change',
   'channel.updated': 'config_change',
   'channel.deleted': 'config_change',
+  // email digest reports (#154)
+  'digest.config_updated': 'config_change',
+  'digest.config_deleted': 'config_change',
+  'digest.recipient_added': 'config_change',
+  'digest.recipient_removed': 'config_change',
+  'digest.recipient_resubscribed': 'config_change',
   // webhooks
   'webhook.delivery_replayed': 'config_change',
   // auth

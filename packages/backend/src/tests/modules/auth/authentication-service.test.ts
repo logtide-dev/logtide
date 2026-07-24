@@ -5,6 +5,7 @@ import { AuthenticationService } from '../../../modules/auth/authentication-serv
 import { CacheManager } from '../../../utils/cache.js';
 import { settingsService } from '../../../modules/settings/service.js';
 import * as providerRegistryModule from '../../../modules/auth/providers/registry.js';
+import { AuthErrorCode } from '../../../modules/auth/providers/types.js';
 import crypto from 'crypto';
 
 describe('AuthenticationService', () => {
@@ -28,7 +29,10 @@ describe('AuthenticationService', () => {
         await db.deleteFrom('projects').execute();
         await db.deleteFrom('organizations').execute();
         await db.deleteFrom('users').execute();
-        await db.deleteFrom('auth_providers').execute();
+        // Keep the migration-seeded 'local' provider: POST /auth/login and
+        // /auth/register resolve it through the provider registry, so wiping
+        // it breaks every login-based test file that runs after this one.
+        await db.deleteFrom('auth_providers').where('slug', '!=', 'local').execute();
     });
 
     afterAll(async () => {
@@ -41,22 +45,30 @@ describe('AuthenticationService', () => {
         await db.deleteFrom('projects').execute();
         await db.deleteFrom('organizations').execute();
         await db.deleteFrom('users').execute();
-        await db.deleteFrom('auth_providers').execute();
+        await db.deleteFrom('auth_providers').where('slug', '!=', 'local').execute();
     });
 
     describe('authenticateWithProvider', () => {
-        it('should throw error when provider not found', async () => {
+        it('should throw AuthError with PROVIDER_UNAVAILABLE when provider not found', async () => {
             await expect(
                 authService.authenticateWithProvider('nonexistent', { email: 'test@test.com', password: 'test' })
             ).rejects.toThrow("Authentication provider 'nonexistent' not found or disabled");
+
+            await expect(
+                authService.authenticateWithProvider('nonexistent', { email: 'test@test.com', password: 'test' })
+            ).rejects.toMatchObject({ name: 'AuthError', code: AuthErrorCode.PROVIDER_UNAVAILABLE });
         });
 
-        it('should throw error when authentication fails', async () => {
+        it('should throw AuthError carrying the provider errorCode when authentication fails', async () => {
             const mockProviderId = crypto.randomUUID();
             // Create a mock provider
             const mockProvider = {
                 config: { id: mockProviderId, type: 'local', name: 'Local', slug: 'local', enabled: true, config: {} },
-                authenticate: vi.fn().mockResolvedValue({ success: false, error: 'Invalid credentials' }),
+                authenticate: vi.fn().mockResolvedValue({
+                    success: false,
+                    error: 'Invalid credentials',
+                    errorCode: AuthErrorCode.INVALID_CREDENTIALS,
+                }),
                 supportsRedirect: () => false,
             };
 
@@ -65,7 +77,7 @@ describe('AuthenticationService', () => {
 
             await expect(
                 authService.authenticateWithProvider('local', { email: 'test@test.com', password: 'wrong' })
-            ).rejects.toThrow('Invalid credentials');
+            ).rejects.toMatchObject({ name: 'AuthError', code: AuthErrorCode.INVALID_CREDENTIALS });
 
             getProviderSpy.mockRestore();
         });
@@ -520,18 +532,19 @@ describe('AuthenticationService', () => {
 
         it('should throw error when identity not found', async () => {
             const user = await createTestUser();
+            const providerAId = crypto.randomUUID();
+            const providerBId = crypto.randomUUID();
 
             // Create two identities so we can try to unlink
+            // (slugs must not collide with the migration-seeded 'local' provider)
             await db.insertInto('auth_providers').values([
-                { id: crypto.randomUUID(), type: 'local', name: 'Local', slug: 'local', enabled: true, config: {} },
-                { id: crypto.randomUUID(), type: 'oidc', name: 'OIDC', slug: 'oidc', enabled: true, config: {} },
+                { id: providerAId, type: 'local', name: 'Local', slug: 'local-notfound', enabled: true, config: {} },
+                { id: providerBId, type: 'oidc', name: 'OIDC', slug: 'oidc-notfound', enabled: true, config: {} },
             ]).execute();
 
-            const providers = await db.selectFrom('auth_providers').selectAll().execute();
-
             await db.insertInto('user_identities').values([
-                { user_id: user.id, provider_id: providers[0].id, provider_user_id: user.id, metadata: {} },
-                { user_id: user.id, provider_id: providers[1].id, provider_user_id: 'ext-id', metadata: {} },
+                { user_id: user.id, provider_id: providerAId, provider_user_id: user.id, metadata: {} },
+                { user_id: user.id, provider_id: providerBId, provider_user_id: 'ext-id', metadata: {} },
             ]).execute();
 
             // Use a valid UUID format that doesn't exist

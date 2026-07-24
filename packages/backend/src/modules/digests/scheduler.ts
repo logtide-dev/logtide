@@ -1,17 +1,21 @@
 /**
  * Digest Scheduler
  *
- * Reads all active digest configs from the database and registers them as
- * repeating cron jobs via the queue abstraction. Called once at worker startup.
+ * Registers a single static hourly cron job ("digest-dispatch") at worker
+ * startup. The dispatch job (src/queue/jobs/digest-dispatch.ts) scans the
+ * active digest configs each hour and enqueues digest-generation jobs for the
+ * ones due at that UTC hour.
  *
- * Both BullMQ (Redis) and graphile-worker (PostgreSQL) backends are supported
- * through the ICronRegistry interface — this service never knows which is active.
+ * Earlier versions registered one cron job per organization at boot, but
+ * graphile-worker cron items cannot change while the runner is up, so config
+ * CRUD would have required a worker restart. A static dispatch cron plus a
+ * due-check keeps schedule changes live on both queue backends (BullMQ and
+ * graphile-worker) through the ICronRegistry interface - this service never
+ * knows which is active.
  */
 
-import { db } from '../../database/connection.js';
 import { getCronRegistry } from '../../queue/queue-factory.js';
 import { hub } from '@logtide/core';
-import type { CronJobDefinition } from '../../queue/abstractions/types.js';
 
 export interface DigestJobPayload {
   organizationId: string;
@@ -19,58 +23,24 @@ export interface DigestJobPayload {
   frequency: 'daily' | 'weekly';
 }
 
+export const DIGEST_DISPATCH_CRON = '0 * * * *'; // every hour on the hour
+
 export class DigestScheduler {
   /**
-   * Register all active digest configs as repeating cron jobs.
+   * Register the hourly digest-dispatch cron job. Called once at worker boot.
    */
-  async registerAllDigests(): Promise<void> {
-    const configs = await db
-      .selectFrom('digest_configs')
-      .select(['id', 'organization_id', 'frequency', 'delivery_hour', 'delivery_day_of_week'])
-      .where('enabled', '=', true)
-      .execute();
+  async registerDispatchCron(): Promise<void> {
+    await getCronRegistry('digest-dispatch').registerCronJobs([
+      {
+        task: 'digest-dispatch',
+        cronExpression: DIGEST_DISPATCH_CRON,
+        payload: {},
+        // Stable identifier - prevents duplicate schedules on restart
+        identifier: 'digest-dispatch',
+      },
+    ]);
 
-    if (configs.length === 0) {
-      hub.captureLog('info', '[DigestScheduler] No active digest configs found');
-      return;
-    }
-
-    const items: CronJobDefinition[] = configs.map((config) => ({
-      task: 'digest-generation',
-      cronExpression: this.buildCronExpression(
-        config.frequency as 'daily' | 'weekly',
-        config.delivery_hour,
-        config.delivery_day_of_week
-      ),
-      payload: {
-        organizationId: config.organization_id,
-        digestConfigId: config.id,
-        frequency: config.frequency,
-      } satisfies DigestJobPayload,
-      // Stable identifier per org — prevents duplicate schedules on restart
-      identifier: `digest:${config.organization_id}`,
-    }));
-
-    await getCronRegistry('digest-generation').registerCronJobs(items);
-    hub.captureLog('info', `[DigestScheduler] Registered ${items.length} digest schedule(s)`);
-  }
-
-  /**
-   * Build a standard 5-field cron expression from a digest config.
-   *
-   * Daily:  "0 8 * * *"   — every day at delivery_hour 
-   * Weekly: "0 8 * * 1"   — every week on delivery_day_of_week
-   */
-  private buildCronExpression(
-    frequency: 'daily' | 'weekly',
-    deliveryHour: number,
-    deliveryDayOfWeek: number | null
-  ): string {
-    if (frequency === 'daily') {
-      return `0 ${deliveryHour} * * *`;
-    }
-    // Weekly — delivery_day_of_week is guaranteed non-null by the DB constraint
-    return `0 ${deliveryHour} * * ${deliveryDayOfWeek}`;
+    hub.captureLog('info', '[DigestScheduler] Registered hourly digest dispatch cron');
   }
 }
 

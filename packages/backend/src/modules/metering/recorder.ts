@@ -29,7 +29,15 @@ export class MeteringRecorder {
   }
 
   record(event: MeteringEvent): void {
-    if (!config.METERING_ENABLED) return;
+    // METERING_ENABLED gates usage/resource metering (billing-shaped). The
+    // `ingestion.*` types are operational health counters, not usage: they are
+    // already excluded from tenant usage breakdowns by the `NOT LIKE
+    // 'ingestion.%'` filter in breakdown.ts. A billing toggle must not be able
+    // to silently blind operators to ingestion health (including the
+    // pii_rejected safety counter), so those types bypass this gate. The
+    // hardCap drop-guard below still applies: it is a memory safety valve,
+    // not a feature toggle.
+    if (!config.METERING_ENABLED && !event.type.startsWith('ingestion.')) return;
     if (this.buffer.length >= this.hardCap) {
       this.dropped++;
       return;

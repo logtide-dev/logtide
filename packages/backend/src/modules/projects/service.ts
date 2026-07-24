@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import type { Project, StatusPageVisibility } from '@logtide/shared';
 import bcrypt from 'bcrypt';
@@ -37,6 +38,30 @@ export interface UpdateProjectInput {
   statusPageVisibility?: StatusPageVisibility;
   statusPagePassword?: string;
 }
+
+export interface ProjectSkewHealth {
+  /** Total skewed records seen in the last 24h. */
+  count24h: number;
+  /** Worst past delta across the window, in ms. */
+  maxPastMs: number;
+  /** Worst future delta across the window, in ms. */
+  maxFutureMs: number;
+  lastSeenAt: string;
+}
+
+/** Per-signal skew health (span-metric-skew). Each entry is null when that
+ * signal had no skew in the 24h window. */
+export interface ProjectSkewHealthMap {
+  logs: ProjectSkewHealth | null;
+  spans: ProjectSkewHealth | null;
+  metrics: ProjectSkewHealth | null;
+}
+
+const SKEW_TYPE_TO_SIGNAL: Record<string, keyof ProjectSkewHealthMap> = {
+  'ingestion.timestamp_skew': 'logs',
+  'ingestion.span_timestamp_skew': 'spans',
+  'ingestion.metric_timestamp_skew': 'metrics',
+};
 
 // All columns returned on every Project fetch
 const PROJECT_COLUMNS = [
@@ -230,6 +255,69 @@ export class ProjectsService {
     }
 
     return mapProject(project);
+  }
+
+  /**
+   * Per-project ingestion health (#279, span-metric-skew). Reads the clock skew
+   * counters written by ingestLogs/ingestSpans/ingestMetrics, aggregated in SQL
+   * with one round trip per project (GROUP BY type keeps it a single query
+   * instead of three). Filters on (organization_id, type, time) plus project_id,
+   * so the planner favors idx_metering_org_type_time: type is highly selective
+   * while (org, project, 24h) alone matches every metering row for the project.
+   * metadata->>'x' yields text, so each field is cast to float8 before MAX to
+   * avoid a lexicographic (string) max. With GROUP BY, a signal with zero
+   * matching rows simply produces no row (rather than one row of NULLs), so
+   * each entry of the returned map starts null and is only filled in for types
+   * that actually matched.
+   */
+  async getIngestionHealth(
+    organizationId: string,
+    projectId: string,
+  ): Promise<{ skew: ProjectSkewHealthMap }> {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const query = sql<{
+      type: string;
+      count24h: number | string | null;
+      max_past_ms: number | string | null;
+      max_future_ms: number | string | null;
+      last_seen_at: Date | string | null;
+    }>`
+      SELECT
+        type,
+        COALESCE(SUM(quantity), 0)::float8 AS count24h,
+        COALESCE(MAX((metadata->>'maxPastMs')::float8), 0) AS max_past_ms,
+        COALESCE(MAX((metadata->>'maxFutureMs')::float8), 0) AS max_future_ms,
+        MAX(time) AS last_seen_at
+      FROM metering_events
+      WHERE organization_id = ${organizationId}
+        AND project_id = ${projectId}
+        AND type IN ('ingestion.timestamp_skew', 'ingestion.span_timestamp_skew', 'ingestion.metric_timestamp_skew')
+        AND time >= ${since}
+      GROUP BY type
+    `;
+    const result = await query.execute(db);
+
+    const toNumber = (value: number | string | null): number =>
+      typeof value === 'number' ? value : parseFloat(value ?? '0');
+
+    const skew: ProjectSkewHealthMap = { logs: null, spans: null, metrics: null };
+
+    for (const row of result.rows) {
+      const signal = SKEW_TYPE_TO_SIGNAL[row.type];
+      if (!signal) continue;
+
+      const lastSeenAt = row.last_seen_at instanceof Date ? row.last_seen_at : new Date(row.last_seen_at as string);
+
+      skew[signal] = {
+        count24h: toNumber(row.count24h),
+        maxPastMs: toNumber(row.max_past_ms),
+        maxFutureMs: toNumber(row.max_future_ms),
+        lastSeenAt: lastSeenAt.toISOString(),
+      };
+    }
+
+    return { skew };
   }
 
   /**

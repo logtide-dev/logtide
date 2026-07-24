@@ -282,6 +282,7 @@
         // Update locally to avoid full page refresh
         rules = rules.map((r) => r.id === rule.id ? { ...r, enabled: !r.enabled } : r);
       }
+      toastStore.success(!rule.enabled ? `${rule.displayName} enabled` : `${rule.displayName} disabled`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to update rule';
       toastStore.error(msg);
@@ -308,6 +309,7 @@
         // Update locally to avoid full page refresh
         rules = rules.map((r) => r.id === rule.id ? { ...r, action: newAction } : r);
       }
+      toastStore.success(`${rule.displayName} set to ${newAction}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to update action';
       toastStore.error(msg);
