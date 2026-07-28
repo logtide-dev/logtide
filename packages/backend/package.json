@@ -59,7 +59,7 @@
     "fastify-plugin": "^5.0.1",
     "graphile-worker": "^0.16.6",
     "ioredis": "^5.8.2",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^4.3.0",
     "kysely": "^0.28.17",
     "ldapts": "^7.2.1",
     "maxmind": "^5.0.1",
