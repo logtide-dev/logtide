@@ -154,7 +154,7 @@
       {mapError}
     </div>
   {:else}
-    <div bind:this={mapContainer} class="min-h-0 flex-1 rounded-md"></div>
+    <div bind:this={mapContainer} class="geo-map-canvas min-h-0 flex-1 rounded-md"></div>
     {#if typed.droppedCount > 0}
       <p class="px-2 pt-1 text-xs text-muted-foreground">
         {typed.droppedCount.toLocaleString('en-US')} values without valid coordinates were skipped
@@ -175,13 +175,25 @@
     stroke: hsl(var(--primary));
     stroke-opacity: 0.9;
   }
-  :global(.leaflet-container) {
+  /* leaflet.css is imported dynamically AFTER these component styles are
+     injected, so plain :global(.leaflet-*) selectors lose the cascade tie to
+     it. Anchoring on the scoped container class wins on specificity instead,
+     which keeps the map theme-correct in dark mode. */
+  .geo-map-canvas {
     background: transparent;
     font: inherit;
   }
-  :global(.leaflet-tooltip) {
+  .geo-map-canvas :global(.leaflet-tooltip) {
     background: hsl(var(--popover));
     color: hsl(var(--popover-foreground));
+    border-color: hsl(var(--border));
+  }
+  .geo-map-canvas :global(.leaflet-tooltip-top::before) {
+    border-top-color: hsl(var(--popover));
+  }
+  .geo-map-canvas :global(.leaflet-bar a) {
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
     border-color: hsl(var(--border));
   }
 </style>
