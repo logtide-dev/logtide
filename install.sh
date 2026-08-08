@@ -197,6 +197,8 @@ PUBLIC_API_URL=http://localhost:8080
 INTERNAL_LOGGING_ENABLED=false
 
 # Fluent Bit (Optional - Auto log collection)
+# Project-scoped ingestion key from the UI (Project > Settings > API Keys), starts with "lp_".
+# Required with --profile logging or --profile metrics: if empty, every ingest gets a 401.
 # FLUENT_BIT_API_KEY=
 EOF
 

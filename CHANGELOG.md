@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Fixed
+- **`FLUENT_BIT_API_KEY` documented in the example env files**: the bundled Fluent Bit services (`--profile logging` and `--profile metrics`) pass `LOGTIDE_API_KEY: ${FLUENT_BIT_API_KEY:-}` to the collector, but the variable appeared in neither `.env.example` nor `docker/.env.example`, so a user following the examples ended up with Fluent Bit sending an empty `X-API-Key` header. Every ingest request was then rejected with 401 while the whole stack looked healthy, which reads as "LogTide is running but receives no logs" (reported in discussion #292). Both example files now document the variable next to `FLUENT_BIT_IMAGE`, including where to create the project-scoped key and what happens when it is empty; the commented entry that `install.sh` writes into the generated `docker/.env` gained the same explanation.
+
 ## [1.2.0] - 2026-07-23
 
 ### Security
