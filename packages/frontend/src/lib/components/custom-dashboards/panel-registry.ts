@@ -32,6 +32,7 @@ import Shield from '@lucide/svelte/icons/shield';
 import HeartPulse from '@lucide/svelte/icons/heart-pulse';
 import CircleCheck from '@lucide/svelte/icons/circle-check';
 import Layers from '@lucide/svelte/icons/layers';
+import Globe from '@lucide/svelte/icons/globe';
 import type {
   PanelType,
   PanelConfig,
@@ -50,6 +51,7 @@ import type {
   MonitorStatusConfig,
   SystemStatusConfig,
   ActivityOverviewConfig,
+  GeoMapConfig,
 } from '@logtide/shared';
 import { uuid } from '$lib/utils/uuid';
 
@@ -66,6 +68,7 @@ import DetectionEventsPanel from './panels/DetectionEventsPanel.svelte';
 import MonitorStatusPanel from './panels/MonitorStatusPanel.svelte';
 import SystemStatusPanel from './panels/SystemStatusPanel.svelte';
 import ActivityOverviewPanel from './panels/ActivityOverviewPanel.svelte';
+import GeoMapPanel from './panels/GeoMapPanel.svelte';
 
 import TimeSeriesConfigForm from './config-forms/TimeSeriesConfigForm.svelte';
 import SingleStatConfigForm from './config-forms/SingleStatConfigForm.svelte';
@@ -80,6 +83,7 @@ import DetectionEventsConfigForm from './config-forms/DetectionEventsConfigForm.
 import MonitorStatusConfigForm from './config-forms/MonitorStatusConfigForm.svelte';
 import SystemStatusConfigForm from './config-forms/SystemStatusConfigForm.svelte';
 import ActivityOverviewConfigForm from './config-forms/ActivityOverviewConfigForm.svelte';
+import GeoMapConfigForm from './config-forms/GeoMapConfigForm.svelte';
 
 export interface PanelComponentProps<TConfig extends PanelConfig = PanelConfig> {
   config: TConfig;
@@ -365,6 +369,30 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
     component: ActivityOverviewPanel as Component<PanelComponentProps>,
     configForm: ActivityOverviewConfigForm as Component<ConfigFormProps>,
     minW: 6,
+    minH: 3,
+  },
+  geo_map: {
+    type: 'geo_map',
+    label: 'Geo Map',
+    description: 'World map of log volume from GeoIP metadata.',
+    icon: Globe,
+    defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
+    defaultConfig: {
+      type: 'geo_map',
+      title: 'Traffic Map',
+      source: 'logs',
+      projectId: null,
+      interval: '24h',
+      mode: 'country',
+      limit: 100,
+      fieldPrefix: 'geo',
+      levels: [],
+      service: null,
+      hostname: null,
+    } as GeoMapConfig,
+    component: GeoMapPanel as Component<PanelComponentProps>,
+    configForm: GeoMapConfigForm as Component<ConfigFormProps>,
+    minW: 4,
     minH: 3,
   },
 };

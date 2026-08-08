@@ -31,7 +31,9 @@
     "leaflet": "^1.9.4",
     "shiki": "^3.18.0",
     "svelte-dnd-action": "^0.9.69",
-    "web-vitals": "^4.0.0"
+    "topojson-client": "^3.1.0",
+    "web-vitals": "^4.0.0",
+    "world-atlas": "^2.0.2"
   },
   "devDependencies": {
     "@logtide/cli": "0.7.0",
@@ -43,7 +45,9 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
     "@types/canvas-confetti": "^1.9.0",
+    "@types/geojson": "^7946.0.16",
     "@types/leaflet": "^1.9.21",
+    "@types/topojson-client": "^3.1.5",
     "autoprefixer": "^10.4.22",
     "bits-ui": "^1.8.0",
     "clsx": "^2.1.1",

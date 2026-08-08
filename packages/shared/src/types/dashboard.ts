@@ -27,7 +27,8 @@ export type PanelType =
   | 'detection_events'
   | 'monitor_status'
   | 'system_status'
-  | 'activity_overview';
+  | 'activity_overview'
+  | 'geo_map';
 
 // ─── Layout (12-column grid) ────────────────────────────────────────────────
 
@@ -205,6 +206,22 @@ export interface ActivityOverviewConfig {
   series: ActivityOverviewSeries[];
 }
 
+// ─── Geo map panel (GeoIP world map) ────────────────────────────────────────
+
+export interface GeoMapConfig {
+  type: 'geo_map';
+  title: string;
+  source: 'logs';
+  projectId: string | null;
+  interval: '1h' | '24h' | '7d';
+  mode: 'country' | 'points';
+  limit: number; // points mode top-N; 10-500
+  fieldPrefix: string; // geoip step target, e.g. 'geo'; strict charset, no dots
+  levels: LogLevelKey[]; // empty = all levels
+  service: string | null;
+  hostname: string | null;
+}
+
 export type PanelConfig =
   | TimeSeriesConfig
   | SingleStatConfig
@@ -218,7 +235,8 @@ export type PanelConfig =
   | DetectionEventsConfig
   | MonitorStatusConfig
   | SystemStatusConfig
-  | ActivityOverviewConfig;
+  | ActivityOverviewConfig
+  | GeoMapConfig;
 
 // ─── Panel instance (layout + config) ───────────────────────────────────────
 
