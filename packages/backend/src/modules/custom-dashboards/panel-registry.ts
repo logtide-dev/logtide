@@ -170,6 +170,24 @@ const activityOverviewSchema = z.object({
   series: z.array(activityOverviewSeriesEnum).min(1),
 });
 
+// fieldPrefix is interpolated into the metadata JSON key of the topValues SQL
+// (via `metadata.${prefix}_country_code`). The charset here is the FIRST of two
+// independent injection barriers; reservoir's validateFieldName is the second.
+// No dots: a dot would let a prefix masquerade as a nested metadata path.
+const geoMapSchema = z.object({
+  type: z.literal('geo_map'),
+  title: z.string().min(1).max(100),
+  source: z.literal('logs'),
+  projectId: z.string().uuid().nullable(),
+  interval: z.enum(['1h', '24h', '7d']),
+  mode: z.enum(['country', 'points']),
+  limit: z.number().int().min(10).max(500),
+  fieldPrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]{0,31}$/),
+  levels: z.array(levelEnum),
+  service: z.string().max(200).nullable(),
+  hostname: z.string().max(200).nullable(),
+});
+
 export const panelConfigSchema = z.discriminatedUnion('type', [
   timeSeriesSchema,
   singleStatSchema,
@@ -184,6 +202,7 @@ export const panelConfigSchema = z.discriminatedUnion('type', [
   monitorStatusSchema,
   systemStatusSchema,
   activityOverviewSchema,
+  geoMapSchema,
 ]);
 
 export interface BackendPanelDefinition {
@@ -257,6 +276,11 @@ export const panelRegistry: Record<PanelType, BackendPanelDefinition> = {
     type: 'activity_overview',
     schema: activityOverviewSchema as unknown as z.ZodType<PanelConfig>,
     defaultLayout: { w: 12, h: 4 },
+  },
+  geo_map: {
+    type: 'geo_map',
+    schema: geoMapSchema as unknown as z.ZodType<PanelConfig>,
+    defaultLayout: { w: 6, h: 4 },
   },
 };
 

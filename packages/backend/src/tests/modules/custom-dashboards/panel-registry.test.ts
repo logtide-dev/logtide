@@ -7,7 +7,7 @@ describe('panelRegistry', () => {
       'time_series', 'single_stat', 'top_n_table', 'live_log_stream',
       'alert_status', 'metric_chart', 'metric_stat', 'trace_latency',
       'trace_volume', 'detection_events', 'monitor_status', 'system_status',
-      'activity_overview',
+      'activity_overview', 'geo_map',
     ];
     for (const type of types) {
       expect(panelRegistry[type as keyof typeof panelRegistry]).toBeDefined();
@@ -189,5 +189,59 @@ describe('dashboardDocumentSchema', () => {
   it('rejects invalid schema_version', () => {
     const doc = { schema_version: 0, panels: [] };
     expect(() => dashboardDocumentSchema.parse(doc)).toThrow();
+  });
+});
+
+describe('geo_map schema', () => {
+  const valid = {
+    type: 'geo_map',
+    title: 'Traffic Map',
+    source: 'logs',
+    projectId: null,
+    interval: '24h',
+    mode: 'country',
+    limit: 100,
+    fieldPrefix: 'geo',
+    levels: [],
+    service: null,
+    hostname: null,
+  };
+
+  it('accepts a valid country-mode config', () => {
+    expect(panelConfigSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts a valid points-mode config with filters', () => {
+    const parsed = panelConfigSchema.safeParse({
+      ...valid,
+      mode: 'points',
+      levels: ['error', 'critical'],
+      service: 'caddy',
+      hostname: 'edge-1',
+      fieldPrefix: 'upstream_geo',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects fieldPrefix with dots (would fake nested metadata paths in SQL)', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, fieldPrefix: 'geo.country' }).success).toBe(false);
+  });
+
+  it('rejects fieldPrefix with quotes or spaces', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, fieldPrefix: "geo'--" }).success).toBe(false);
+    expect(panelConfigSchema.safeParse({ ...valid, fieldPrefix: 'geo x' }).success).toBe(false);
+  });
+
+  it('rejects fieldPrefix longer than 32 chars', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, fieldPrefix: 'a'.repeat(33) }).success).toBe(false);
+  });
+
+  it('rejects out-of-bounds limit', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, limit: 5 }).success).toBe(false);
+    expect(panelConfigSchema.safeParse({ ...valid, limit: 501 }).success).toBe(false);
+  });
+
+  it('has a registry entry with a default layout', () => {
+    expect(panelRegistry.geo_map.defaultLayout).toEqual({ w: 6, h: 4 });
   });
 });
