@@ -1,4 +1,5 @@
 import type { GeoIpStep, LogForPipeline } from '../types.js';
+import { buildGeoPlace } from '../geo-place.js';
 
 // Lazy import to avoid crashing when GeoLite2 DB is not present
 async function tryGeoLookup(ip: string): Promise<Record<string, unknown> | null> {
@@ -22,7 +23,36 @@ export async function runGeoIpStep(
   try {
     const geo = await tryGeoLookup(ip);
     if (!geo) return {};
-    return { [step.target]: geo };
+
+    // Nested object (backward compatible) plus flat keys the dashboard geo map
+    // panel can aggregate with reservoir.topValues, which resolves a single
+    // JSON key on Timescale/ClickHouse and cannot address nested paths.
+    const out: Record<string, unknown> = { [step.target]: geo };
+
+    if (typeof geo.country === 'string' && geo.country) {
+      out[`${step.target}_country`] = geo.country;
+    }
+    if (typeof geo.countryCode === 'string' && geo.countryCode) {
+      out[`${step.target}_country_code`] = geo.countryCode;
+    }
+    if (typeof geo.city === 'string' && geo.city) {
+      out[`${step.target}_city`] = geo.city;
+    }
+    if (
+      typeof geo.latitude === 'number' &&
+      typeof geo.longitude === 'number' &&
+      typeof geo.country === 'string'
+    ) {
+      const place = buildGeoPlace({
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        city: typeof geo.city === 'string' ? geo.city : null,
+        country: geo.country,
+      });
+      if (place) out[`${step.target}_place`] = place;
+    }
+
+    return out;
   } catch {
     return {};
   }
