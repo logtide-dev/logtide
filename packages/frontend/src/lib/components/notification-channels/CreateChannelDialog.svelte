@@ -14,6 +14,7 @@
 		EmailChannelConfig,
 		WebhookChannelConfig,
 	} from '$lib/api/notification-channels';
+	import { isDiscordWebhookUrl } from '@logtide/shared';
 	import Mail from '@lucide/svelte/icons/mail';
 	import Webhook from '@lucide/svelte/icons/webhook';
 	import TestTube from '@lucide/svelte/icons/test-tube';
@@ -65,6 +66,9 @@
 	let hasStoredAuthSecret = $state(false);
 
 	const isEditing = $derived(!!channel);
+	// Discord rejects the raw event envelope, so the backend sends an embed to
+	// these URLs instead. Surfacing it here keeps the payload change discoverable.
+	const isDiscordUrl = $derived(isDiscordWebhookUrl(webhookUrl));
 
 	function resetForm() {
 		name = '';
@@ -358,7 +362,16 @@
 			{#if channelType === 'webhook'}
 				<div class="space-y-4">
 					<div class="space-y-2">
-						<Label for="webhook-url">URL *</Label>
+						<div class="flex items-center gap-2">
+							<Label for="webhook-url">URL *</Label>
+							{#if isDiscordUrl}
+								<span
+									class="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+								>
+									Discord format
+								</span>
+							{/if}
+						</div>
 						<Input
 							id="webhook-url"
 							type="url"
@@ -366,6 +379,11 @@
 							bind:value={webhookUrl}
 							disabled={submitting}
 						/>
+						{#if isDiscordUrl}
+							<p class="text-xs text-muted-foreground">
+								LogTide will send a Discord embed to this URL instead of the raw JSON envelope.
+							</p>
+						{/if}
 					</div>
 
 					<div class="grid grid-cols-2 gap-4">
