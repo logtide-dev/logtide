@@ -113,9 +113,16 @@ describe('webhookDeliveryService', () => {
     });
 
     it('ignores deliveries older than the window, so stuck rows cannot suppress new events', async () => {
-      await create(orgId, 'mon-5:down');
-      // Zero-length window: everything already created is outside it.
-      expect(await lookup(orgId, 'mon-5:down', 0)).toBeUndefined();
+      const d = await create(orgId, 'mon-5:down');
+      // Age the row explicitly rather than shrinking the window: created_at comes
+      // from the database clock and the window from the node clock, so a
+      // zero-length window is a race under load.
+      await db
+        .updateTable('webhook_deliveries')
+        .set({ created_at: new Date(Date.now() - 10 * 60 * 1000) })
+        .where('id', '=', d.id)
+        .execute();
+      expect(await lookup(orgId, 'mon-5:down')).toBeUndefined();
     });
 
     it('is scoped to the organization', async () => {
