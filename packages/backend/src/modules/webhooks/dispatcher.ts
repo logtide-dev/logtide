@@ -11,6 +11,7 @@ import { config } from '../../config/index.js';
 import { safeFetch, SsrfBlockedError } from '../../utils/ssrf-guard.js';
 import { hooks, HookRejectionError } from '../../hooks/index.js';
 import { buildSignatureHeaders } from './signing.js';
+import { formatOutbound } from './formatters/index.js';
 import { createQueue } from '../../queue/connection.js';
 import { webhookDeliveryService } from './service.js';
 import type { DeliverOnceParams, DeliverOnceResult, EnqueueParams, WebhookDeliveryJobData } from './types.js';
@@ -73,7 +74,10 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
   }
 
   // Serialize and sign AFTER the hook so mutations are included.
-  const bodyString = JSON.stringify(params.body ?? {});
+  // Destination-specific body shape runs here too: after the hook, so handlers
+  // keep seeing the canonical envelope whatever the destination, and before
+  // signing, so the signature covers the bytes actually sent.
+  const bodyString = JSON.stringify(formatOutbound(params.url, params.body ?? {}));
   if (params.signingSecret) {
     const unix = Math.floor(Date.now() / 1000);
     Object.assign(headers, buildSignatureHeaders(params.signingSecret, bodyString, unix));

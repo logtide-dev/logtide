@@ -132,4 +132,91 @@ describe('deliverOnce', () => {
     expect(r.retryable).toBe(false);
     expect(safeFetchMock).not.toHaveBeenCalled();
   });
+
+  const DISCORD_URL = 'https://discord.com/api/webhooks/153199955952022743/token';
+
+  it('formats the body for discord destinations', async () => {
+    safeFetchMock.mockResolvedValue(okResponse());
+    const body = {
+      id: 'evt_a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+      type: 'monitor.status_changed',
+      version: 1,
+      occurredAt: '2026-08-10T09:19:12.000Z',
+      organizationId: '00000000-0000-0000-0000-000000000001',
+      projectId: null,
+      data: {
+        title: 'Monitor down: api',
+        message: 'api is not responding',
+        severity: 'critical',
+        status: 'down',
+      },
+    };
+    await deliverOnce({
+      url: DISCORD_URL,
+      body,
+      organizationId: 'org-1',
+      eventType: 'monitor.status_changed',
+    });
+    const [, init] = safeFetchMock.mock.calls[0];
+    const sent = JSON.parse(init.body);
+    expect(sent.embeds[0].title).toBe('Monitor down: api');
+    expect(sent.type).toBeUndefined();
+  });
+
+  it('leaves the envelope untouched for non-discord destinations', async () => {
+    safeFetchMock.mockResolvedValue(okResponse());
+    const body = { id: 'evt_x', type: 'monitor.status_changed', data: { title: 'x' } };
+    await deliverOnce({
+      url: 'https://example.com/hook',
+      body,
+      organizationId: 'org-1',
+      eventType: 'monitor.status_changed',
+    });
+    const [, init] = safeFetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual(body);
+  });
+
+  it('signs the bytes actually sent to discord', async () => {
+    safeFetchMock.mockResolvedValue(okResponse());
+    await deliverOnce({
+      url: DISCORD_URL,
+      body: {
+        id: 'evt_y',
+        type: 'channel.test',
+        occurredAt: '2026-08-10T09:19:12.000Z',
+        data: { title: 'Test', message: 'hi' },
+      },
+      organizationId: 'org-1',
+      eventType: 'channel.test',
+      signingSecret: 'whsec_discord',
+    });
+    const [, init] = safeFetchMock.mock.calls[0];
+    const ts = Number(init.headers['X-Logtide-Timestamp']);
+    const sig = init.headers['X-Logtide-Signature'].split('v1=')[1];
+    expect(verifySignature('whsec_discord', ts, init.body, sig)).toBe(true);
+    expect(JSON.parse(init.body).embeds).toBeDefined();
+  });
+
+  it('runs the beforeWebhookDispatch hook on the envelope, not the discord body', async () => {
+    safeFetchMock.mockResolvedValue(okResponse());
+    hooksMock.hasHandlers.mockReturnValue(true);
+    hooksMock.run.mockImplementation(async (_phase: string, ctx: any) => {
+      ctx.body.data.title = 'mutated by hook';
+    });
+    await deliverOnce({
+      url: DISCORD_URL,
+      body: {
+        id: 'evt_z',
+        type: 'channel.test',
+        occurredAt: '2026-08-10T09:19:12.000Z',
+        data: { title: 'original', message: 'hi' },
+      },
+      organizationId: 'org-1',
+      eventType: 'channel.test',
+    });
+    const [, hookCtx] = hooksMock.run.mock.calls[0];
+    expect(hookCtx.body.type).toBe('channel.test');
+    const [, init] = safeFetchMock.mock.calls[0];
+    expect(JSON.parse(init.body).embeds[0].title).toBe('mutated by hook');
+  });
 });
