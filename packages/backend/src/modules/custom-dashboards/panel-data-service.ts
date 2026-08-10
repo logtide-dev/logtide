@@ -28,7 +28,9 @@ import type {
   ActivityOverviewConfig,
   ActivityOverviewSeries,
   GeoMapConfig,
+  LogTableConfig,
 } from '@logtide/shared';
+import { resolveMetadataPath, formatMetadataCell } from '@logtide/shared';
 import { dashboardService } from '../dashboard/service.js';
 import { alertsService } from '../alerts/service.js';
 import { metricsService } from '../metrics/service.js';
@@ -100,6 +102,20 @@ export interface LiveLogStreamSnapshot {
     projectId: string;
     traceId?: string;
   }>;
+}
+
+export interface LogTableRow {
+  id: string;
+  projectId: string;
+  time: string; // ISO
+  level: string;
+  service: string;
+  message: string;
+  cells: (string | null)[]; // aligned index-by-index with config.columns
+}
+
+export interface LogTableSnapshot {
+  logs: LogTableRow[];
 }
 
 export interface AlertStatusData {
@@ -466,6 +482,73 @@ const liveLogStreamFetcher: PanelDataSource<
           message: l.message,
           projectId: l.projectId || '',
           traceId: l.traceId,
+        })
+      ),
+    };
+  },
+};
+
+const LOG_TABLE_RANGE_MS: Record<LogTableConfig['timeRange'], number> = {
+  '15m': 15 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+};
+
+const logTableFetcher: PanelDataSource<LogTableConfig, LogTableSnapshot> = {
+  type: 'log_table',
+  async fetchData(config, ctx) {
+    // Live mode streams over the per-project WebSocket; the batch endpoint
+    // still gets called for the panel, so answer cheaply and let the
+    // frontend ignore snapshot data entirely.
+    if (config.mode === 'live') {
+      return { logs: [] };
+    }
+
+    const projectIds = config.projectId
+      ? [config.projectId]
+      : await resolveProjectIdsForOrg(ctx.organizationId);
+
+    if (projectIds.length === 0) {
+      return { logs: [] };
+    }
+
+    const now = new Date();
+    const from = new Date(now.getTime() - LOG_TABLE_RANGE_MS[config.timeRange]);
+
+    const result = await reservoir.query({
+      projectId: projectIds,
+      level: config.levels.length > 0 ? config.levels : undefined,
+      service: config.service ?? undefined,
+      from,
+      to: now,
+      limit: config.maxRows,
+      sortOrder: 'desc',
+    });
+
+    return {
+      logs: result.logs.map(
+        (l: {
+          id?: string;
+          time: Date;
+          service: string;
+          level: string;
+          message: string;
+          projectId: string;
+          metadata?: Record<string, unknown>;
+        }) => ({
+          id: l.id ?? '',
+          projectId: l.projectId || '',
+          time: l.time.toISOString(),
+          level: l.level,
+          service: l.service,
+          message: l.message,
+          // Columns are resolved in memory against the row's metadata; they
+          // never touch SQL, so arbitrary user paths are safe here.
+          cells: config.columns.map((col) =>
+            formatMetadataCell(resolveMetadataPath(l.metadata, col))
+          ),
         })
       ),
     };
@@ -1238,6 +1321,7 @@ const dataFetchers: Record<PanelType, AnyFetcher> = {
   system_status: systemStatusFetcher as AnyFetcher,
   activity_overview: activityOverviewFetcher as AnyFetcher,
   geo_map: geoMapFetcher as AnyFetcher,
+  log_table: logTableFetcher as AnyFetcher,
 };
 
 export async function fetchPanelData(

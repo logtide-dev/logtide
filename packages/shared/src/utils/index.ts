@@ -10,5 +10,6 @@ export function isValidLogLevel(level: string): level is LogLevel {
 
 // Re-export utility modules
 export * from './datetime.js';
+export * from './metadata-path.js';
 export * from './mitre.js';
 export * from './severity.js';

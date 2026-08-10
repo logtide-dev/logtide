@@ -7,7 +7,7 @@ describe('panelRegistry', () => {
       'time_series', 'single_stat', 'top_n_table', 'live_log_stream',
       'alert_status', 'metric_chart', 'metric_stat', 'trace_latency',
       'trace_volume', 'detection_events', 'monitor_status', 'system_status',
-      'activity_overview', 'geo_map',
+      'activity_overview', 'geo_map', 'log_table',
     ];
     for (const type of types) {
       expect(panelRegistry[type as keyof typeof panelRegistry]).toBeDefined();
@@ -243,5 +243,67 @@ describe('geo_map schema', () => {
 
   it('has a registry entry with a default layout', () => {
     expect(panelRegistry.geo_map.defaultLayout).toEqual({ w: 6, h: 4 });
+  });
+});
+
+describe('log_table schema', () => {
+  const valid = {
+    type: 'log_table',
+    title: 'WAN hits',
+    source: 'logs',
+    projectId: null,
+    mode: 'snapshot',
+    timeRange: '1h',
+    levels: [],
+    service: null,
+    maxRows: 25,
+    columns: ['http_host', 'geo.city'],
+    builtinColumns: ['time', 'level', 'service', 'message'],
+    wrapCells: false,
+  };
+
+  it('accepts a valid snapshot config', () => {
+    expect(panelConfigSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects live mode without a project', () => {
+    const result = panelConfigSchema.safeParse({ ...valid, mode: 'live', projectId: null });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts live mode with a project', () => {
+    const result = panelConfigSchema.safeParse({
+      ...valid,
+      mode: 'live',
+      projectId: '5f0c1b2a-1111-4222-8333-444455556666',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects more than 10 columns', () => {
+    const columns = Array.from({ length: 11 }, (_, i) => `c${i}`);
+    expect(panelConfigSchema.safeParse({ ...valid, columns }).success).toBe(false);
+  });
+
+  it('rejects a config with zero total columns', () => {
+    const result = panelConfigSchema.safeParse({ ...valid, columns: [], builtinColumns: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects out-of-range maxRows', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 5 }).success).toBe(false);
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 101 }).success).toBe(false);
+  });
+
+  it('validates a full panel instance through dashboardDocumentSchema', () => {
+    const doc = {
+      schema_version: 1,
+      panels: [{ id: 'lt1', layout: { x: 0, y: 0, w: 12, h: 4 }, config: valid }],
+    };
+    expect(dashboardDocumentSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('has a registry entry with a default layout', () => {
+    expect(panelRegistry.log_table.defaultLayout).toEqual({ w: 12, h: 4 });
   });
 });

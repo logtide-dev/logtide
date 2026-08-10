@@ -13,6 +13,7 @@
   import { formatTimeAgo } from "$lib/utils/datetime";
   import { timeRangeStore } from "$lib/stores/time-range";
   import type { Project, MetadataFilterInput } from "@logtide/shared";
+  import { resolveMetadataPath, formatMetadataCell } from "@logtide/shared";
   import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import Input from "$lib/components/ui/input/input.svelte";
@@ -893,28 +894,6 @@
   function getBreadcrumbs(log: LogEntry): Breadcrumb[] {
     const bc = (log.metadata as Record<string, unknown> | undefined)?.breadcrumbs;
     return Array.isArray(bc) ? (bc as Breadcrumb[]) : [];
-  }
-
-  // Resolve a metadata column value, supporting dot-notation paths into nested
-  // objects (e.g. "sdk.name"). Exact top-level keys win first, so flat keys that
-  // literally contain dots (e.g. "debug.trace_id") still resolve correctly.
-  function resolveMetadataPath(
-    metadata: Record<string, any> | undefined,
-    path: string,
-  ): unknown {
-    if (!metadata) return undefined;
-    if (Object.prototype.hasOwnProperty.call(metadata, path)) return metadata[path];
-    let current: any = metadata;
-    for (const part of path.split(".")) {
-      if (current === null || typeof current !== "object") return undefined;
-      current = current[part];
-    }
-    return current;
-  }
-
-  function formatMetadataCell(value: unknown): string {
-    if (typeof value === "object") return JSON.stringify(value);
-    return String(value);
   }
 
   function openContextDialog(log: LogEntry) {
