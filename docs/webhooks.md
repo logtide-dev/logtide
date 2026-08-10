@@ -201,4 +201,5 @@ Outbound targets are resolved and validated before each request; loopback, priva
 | `WEBHOOK_GLOBAL_CONCURRENCY` | `50` | Concurrent deliveries across all organizations. |
 | `WEBHOOK_DELIVERY_LOG_LIMIT` | `1000` | Attempts retained per delivery in the delivery log. |
 | `WEBHOOK_REQUEST_TIMEOUT_MS` | `10000` | Per-attempt request timeout in milliseconds. |
+| `WEBHOOK_DEDUP_WINDOW_MS` | `60000` | How long an in-flight delivery suppresses an identical re-enqueue of the same event. |
 | `MONITOR_ALLOW_PRIVATE_TARGETS` | `false` | Allow delivery to private/internal addresses (self-hosted). |
