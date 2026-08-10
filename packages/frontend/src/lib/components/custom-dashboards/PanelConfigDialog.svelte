@@ -44,7 +44,9 @@
       </Dialog.Description>
     </Dialog.Header>
     {#if FormComponent && draft}
-      <div class="py-2">
+      <!-- Config forms vary a lot in length (log_table is the tallest), so the
+           form scrolls and Save/Cancel stay pinned. -->
+      <div data-dialog-scroll-body class="py-2 max-h-[60vh] overflow-y-auto pr-1">
         <FormComponent
           config={draft as any}
           onChange={(updated: PanelConfig) => {
