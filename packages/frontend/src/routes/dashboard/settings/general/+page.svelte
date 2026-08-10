@@ -207,7 +207,13 @@
       <div class="space-y-4">
         <div class="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
           <div class="flex-1">
-            <div class="text-2xl font-bold">{currentOrg?.retentionDays || 90} days</div>
+            <div class="text-2xl font-bold">
+              {#if currentOrg?.retentionDays != null}
+                {currentOrg.retentionDays} days
+              {:else}
+                <span class="text-muted-foreground">...</span>
+              {/if}
+            </div>
             <p class="text-sm text-muted-foreground">
               Logs older than this will be automatically deleted
             </p>

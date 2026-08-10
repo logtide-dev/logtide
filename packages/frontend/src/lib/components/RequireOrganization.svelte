@@ -104,6 +104,18 @@
     } else {
       checkingOrg = false;
       loading = false;
+
+      // The cached org object only exists to avoid a name flash on reload;
+      // fields like retentionDays go stale if changed elsewhere (e.g. Admin).
+      // Revalidate in the background without blocking the page.
+      organizationStore
+        .fetchOrganizations(async () => {
+          const response = await organizationsAPI.getOrganizations();
+          return response.organizations;
+        })
+        .catch((error) => {
+          console.error('Failed to refresh organizations:', error);
+        });
     }
   });
 
