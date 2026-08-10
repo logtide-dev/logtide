@@ -78,5 +78,7 @@ export async function processWebhookDelivery(job: IJob<WebhookDeliveryJobData>):
     delay,
     maxAttempts: 1,
     jobKey: `webhook-retry-${delivery.id}-${attemptNumber}`,
+    removeOnComplete: true,
+    removeOnFail: true,
   });
 }
