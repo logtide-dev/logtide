@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import type { LogTableConfig, BuiltinLogColumn } from '@logtide/shared';
+  import { resolveMetadataPath, formatMetadataCell } from '@logtide/shared';
+  import { logsAPI } from '$lib/api/logs';
   import { Badge } from '$lib/components/ui/badge';
 
   interface LogTableRow {
@@ -17,6 +20,16 @@
     logs: LogTableRow[];
   }
 
+  interface WsLog {
+    id: string;
+    time: string;
+    projectId: string;
+    service: string;
+    level: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+  }
+
   interface Props {
     config: LogTableConfig;
     data: unknown;
@@ -26,8 +39,89 @@
 
   let { config, data }: Props = $props();
 
+  const isLive = config.mode === 'live' && config.projectId !== null;
+
+  let liveRows = $state<LogTableRow[]>([]);
+  let liveStatus = $state<'connecting' | 'live' | 'reconnecting' | 'failed'>('connecting');
+  let ws: WebSocket | null = null;
+  let destroyed = false;
+  let retries = 0;
+  const MAX_RETRIES = 5;
+
   const snapshot = $derived(data as LogTableSnapshot | null);
-  const rows = $derived(snapshot?.logs ?? []);
+  const rows = $derived(isLive ? liveRows : (snapshot?.logs ?? []));
+
+  function toRow(log: WsLog): LogTableRow {
+    return {
+      id: log.id,
+      projectId: log.projectId,
+      time: log.time,
+      level: log.level,
+      service: log.service,
+      message: log.message,
+      cells: config.columns.map((col) =>
+        formatMetadataCell(resolveMetadataPath(log.metadata, col))
+      ),
+    };
+  }
+
+  async function connect() {
+    if (destroyed || !config.projectId) return;
+    try {
+      const socket = await logsAPI.createLogsWebSocket({
+        projectId: config.projectId,
+        service: config.service ?? undefined,
+      });
+      if (destroyed) {
+        socket.close();
+        return;
+      }
+      ws = socket;
+      liveStatus = 'live';
+      retries = 0;
+      socket.onmessage = (ev) => {
+        let parsed: { type?: string; logs?: WsLog[] };
+        try {
+          parsed = JSON.parse(ev.data as string);
+        } catch {
+          return;
+        }
+        if (parsed.type !== 'logs' || !Array.isArray(parsed.logs)) return;
+        // The WS helper only forwards a single level filter, so multi-level
+        // configs filter here on the client.
+        const incoming = parsed.logs.filter(
+          (l) => config.levels.length === 0 || (config.levels as string[]).includes(l.level)
+        );
+        if (incoming.length === 0) return;
+        // Newest first, capped at maxRows.
+        liveRows = [...incoming.map(toRow).reverse(), ...liveRows].slice(0, config.maxRows);
+      };
+      socket.onclose = () => scheduleReconnect();
+      socket.onerror = () => socket.close();
+    } catch {
+      scheduleReconnect();
+    }
+  }
+
+  function scheduleReconnect() {
+    if (destroyed) return;
+    ws = null;
+    if (retries >= MAX_RETRIES) {
+      liveStatus = 'failed';
+      return;
+    }
+    retries += 1;
+    liveStatus = 'reconnecting';
+    setTimeout(connect, Math.min(1000 * 2 ** retries, 15000));
+  }
+
+  onMount(() => {
+    if (isLive) void connect();
+    return () => {
+      destroyed = true;
+      ws?.close();
+    };
+  });
 
   const BUILTIN_LABELS: Record<BuiltinLogColumn, string> = {
     time: 'Time',
@@ -68,8 +162,22 @@
 </script>
 
 <div class="h-full overflow-auto">
+  {#if isLive}
+    <div class="flex items-center gap-1.5 px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+      <span
+        class="inline-block w-1.5 h-1.5 rounded-full {liveStatus === 'live'
+          ? 'bg-emerald-500'
+          : liveStatus === 'failed'
+            ? 'bg-destructive'
+            : 'bg-amber-500 animate-pulse'}"
+      ></span>
+      {liveStatus === 'live' ? 'live' : liveStatus === 'failed' ? 'stream unavailable' : 'connecting'}
+    </div>
+  {/if}
   {#if rows.length === 0}
-    <p class="text-center py-6 text-sm text-muted-foreground">No logs in range</p>
+    <p class="text-center py-6 text-sm text-muted-foreground">
+      {isLive ? 'Waiting for logs' : 'No logs in range'}
+    </p>
   {:else}
     <table class="w-full text-xs font-mono">
       <thead class="sticky top-0 bg-card text-muted-foreground">
