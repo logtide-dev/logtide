@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import type { LogTableConfig, BuiltinLogColumn } from '@logtide/shared';
   import { resolveMetadataPath, formatMetadataCell } from '@logtide/shared';
@@ -39,7 +38,7 @@
 
   let { config, data }: Props = $props();
 
-  const isLive = config.mode === 'live' && config.projectId !== null;
+  const isLive = $derived(config.mode === 'live' && config.projectId !== null);
 
   let liveRows = $state<LogTableRow[]>([]);
   let liveStatus = $state<'connecting' | 'live' | 'reconnecting' | 'failed'>('connecting');
@@ -115,11 +114,21 @@
     setTimeout(connect, Math.min(1000 * 2 ** retries, 15000));
   }
 
-  onMount(() => {
-    if (isLive) void connect();
+  // Connection lifecycle follows the config: the panel component is not
+  // remounted when its config is edited, so switching mode/project/service
+  // must tear the socket down and reconnect.
+  $effect(() => {
+    const live = config.mode === 'live' && config.projectId !== null;
+    void config.service; // reconnect when the service filter changes
+    if (!live) return;
+    destroyed = false;
+    retries = 0;
+    liveStatus = 'connecting';
+    void connect();
     return () => {
       destroyed = true;
       ws?.close();
+      ws = null;
     };
   });
 
