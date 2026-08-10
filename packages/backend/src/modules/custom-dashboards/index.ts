@@ -14,5 +14,7 @@ export type {
   SingleStatPanelData,
   TopNTableData,
   LiveLogStreamSnapshot,
+  LogTableRow,
+  LogTableSnapshot,
   AlertStatusData,
 } from './panel-data-service.js';
