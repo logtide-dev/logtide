@@ -72,4 +72,61 @@ describe('webhookDeliveryService', () => {
     expect(reset?.status).toBe('pending');
     expect(reset?.attempt_count).toBe(0);
   });
+
+  describe('findInFlightDelivery', () => {
+    const lookup = (orgIdArg: string, eventId: string, windowMs = 60000) =>
+      webhookDeliveryService.findInFlightDelivery({
+        organizationId: orgIdArg,
+        eventType: 'monitor.status_changed',
+        eventId,
+        since: new Date(Date.now() - windowMs),
+      });
+
+    const create = (orgIdArg: string, eventId: string) =>
+      webhookDeliveryService.createDelivery({
+        organizationId: orgIdArg,
+        eventType: 'monitor.status_changed',
+        eventId,
+        url: 'https://e.com/hook',
+        maxAttempts: 5,
+      });
+
+    it('matches a pending delivery inside the window', async () => {
+      const d = await create(orgId, 'mon-1:down');
+      expect((await lookup(orgId, 'mon-1:down'))?.id).toBe(d.id);
+    });
+
+    it('matches a delivery that is retrying', async () => {
+      const d = await create(orgId, 'mon-2:down');
+      await webhookDeliveryService.markRetrying(d.id, 1, new Date(Date.now() + 5000), 'HTTP 500');
+      expect((await lookup(orgId, 'mon-2:down'))?.id).toBe(d.id);
+    });
+
+    it('ignores terminal deliveries so a repeated event is not suppressed', async () => {
+      const dead = await create(orgId, 'mon-3:down');
+      await webhookDeliveryService.markDead(dead.id, 5, 'gave up');
+      expect(await lookup(orgId, 'mon-3:down')).toBeUndefined();
+
+      const delivered = await create(orgId, 'mon-4:down');
+      await webhookDeliveryService.markDelivered(delivered.id);
+      expect(await lookup(orgId, 'mon-4:down')).toBeUndefined();
+    });
+
+    it('ignores deliveries older than the window, so stuck rows cannot suppress new events', async () => {
+      await create(orgId, 'mon-5:down');
+      // Zero-length window: everything already created is outside it.
+      expect(await lookup(orgId, 'mon-5:down', 0)).toBeUndefined();
+    });
+
+    it('is scoped to the organization', async () => {
+      const other = await createTestOrganization({});
+      await create(orgId, 'mon-6:down');
+      expect(await lookup(other.id, 'mon-6:down')).toBeUndefined();
+    });
+
+    it('does not match a different event id', async () => {
+      await create(orgId, 'mon-7:down');
+      expect(await lookup(orgId, 'mon-7:up')).toBeUndefined();
+    });
+  });
 });
