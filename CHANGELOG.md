@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.3.0] - 2026-08-11
 
 ### Security
 - **Bumped `@sveltejs/kit` to 2.70.2** (Dependabot `GHSA-29g2-3rmr-qm68` MODERATE, plus `GHSA-866w-xmhq-wj7x` and `GHSA-wqjv-9729-c5q2`). `GHSA-29g2-3rmr-qm68` is the one that mattered in practice: versions `<=2.70.1` parse the `Accept` header for content negotiation with a quadratic regular expression, so a single crafted header pins a CPU core. The frontend image runs the SvelteKit Node server directly (`CMD ["node", "build/index.js"]` via `adapter-node`), so the header reaches that code path unauthenticated on the public frontend port. The other two advisories cover remote-function form handling (prototype pollution in the file-input deletion path, and a process crash on oversized payloads); LogTide uses no remote functions, so those were unreachable. The root pnpm override floor was raised from `>=2.60.1` to `>=2.70.2`.
