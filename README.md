@@ -103,7 +103,11 @@ This runs only **PostgreSQL + backend + frontend**. The backend automatically us
 Enable additional services with `--profile`:
 
 ```bash
-# Docker log collection (Fluent Bit)
+# Log collection via Fluent Bit: Docker container logs + syslog listener
+# on port 514 UDP/TCP for network devices (Cisco, H3C, routers, firewalls).
+# Requires FLUENT_BIT_API_KEY in .env (a project write key), otherwise every
+# forwarded log is rejected with 401. Without this profile no syslog listener
+# runs at all.
 docker compose --profile logging up -d
 
 # System metrics (CPU, memory, disk, network)
