@@ -32,6 +32,8 @@ import Shield from '@lucide/svelte/icons/shield';
 import HeartPulse from '@lucide/svelte/icons/heart-pulse';
 import CircleCheck from '@lucide/svelte/icons/circle-check';
 import Layers from '@lucide/svelte/icons/layers';
+import Globe from '@lucide/svelte/icons/globe';
+import Table from '@lucide/svelte/icons/table';
 import type {
   PanelType,
   PanelConfig,
@@ -50,6 +52,8 @@ import type {
   MonitorStatusConfig,
   SystemStatusConfig,
   ActivityOverviewConfig,
+  GeoMapConfig,
+  LogTableConfig,
 } from '@logtide/shared';
 import { uuid } from '$lib/utils/uuid';
 
@@ -66,6 +70,8 @@ import DetectionEventsPanel from './panels/DetectionEventsPanel.svelte';
 import MonitorStatusPanel from './panels/MonitorStatusPanel.svelte';
 import SystemStatusPanel from './panels/SystemStatusPanel.svelte';
 import ActivityOverviewPanel from './panels/ActivityOverviewPanel.svelte';
+import GeoMapPanel from './panels/GeoMapPanel.svelte';
+import LogTablePanel from './panels/LogTablePanel.svelte';
 
 import TimeSeriesConfigForm from './config-forms/TimeSeriesConfigForm.svelte';
 import SingleStatConfigForm from './config-forms/SingleStatConfigForm.svelte';
@@ -80,6 +86,8 @@ import DetectionEventsConfigForm from './config-forms/DetectionEventsConfigForm.
 import MonitorStatusConfigForm from './config-forms/MonitorStatusConfigForm.svelte';
 import SystemStatusConfigForm from './config-forms/SystemStatusConfigForm.svelte';
 import ActivityOverviewConfigForm from './config-forms/ActivityOverviewConfigForm.svelte';
+import GeoMapConfigForm from './config-forms/GeoMapConfigForm.svelte';
+import LogTableConfigForm from './config-forms/LogTableConfigForm.svelte';
 
 export interface PanelComponentProps<TConfig extends PanelConfig = PanelConfig> {
   config: TConfig;
@@ -364,6 +372,55 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
     } as ActivityOverviewConfig,
     component: ActivityOverviewPanel as Component<PanelComponentProps>,
     configForm: ActivityOverviewConfigForm as Component<ConfigFormProps>,
+    minW: 6,
+    minH: 3,
+  },
+  geo_map: {
+    type: 'geo_map',
+    label: 'Geo Map',
+    description: 'World map of log volume from GeoIP metadata.',
+    icon: Globe,
+    defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
+    defaultConfig: {
+      type: 'geo_map',
+      title: 'Traffic Map',
+      source: 'logs',
+      projectId: null,
+      interval: '24h',
+      mode: 'country',
+      limit: 100,
+      fieldPrefix: 'geo',
+      levels: [],
+      service: null,
+      hostname: null,
+    } as GeoMapConfig,
+    component: GeoMapPanel as Component<PanelComponentProps>,
+    configForm: GeoMapConfigForm as Component<ConfigFormProps>,
+    minW: 4,
+    minH: 3,
+  },
+  log_table: {
+    type: 'log_table',
+    label: 'Log Table',
+    description: 'Individual log rows with configurable metadata columns.',
+    icon: Table,
+    defaultLayout: { x: 0, y: 0, w: 12, h: 4 },
+    defaultConfig: {
+      type: 'log_table',
+      title: 'Log Table',
+      source: 'logs',
+      projectId: null,
+      mode: 'snapshot',
+      timeRange: '1h',
+      levels: [],
+      service: null,
+      maxRows: 25,
+      columns: [],
+      builtinColumns: ['time', 'level', 'service', 'message'],
+      wrapCells: false,
+    } as LogTableConfig,
+    component: LogTablePanel as Component<PanelComponentProps>,
+    configForm: LogTableConfigForm as Component<ConfigFormProps>,
     minW: 6,
     minH: 3,
   },

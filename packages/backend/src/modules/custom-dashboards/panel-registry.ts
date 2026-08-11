@@ -170,21 +170,89 @@ const activityOverviewSchema = z.object({
   series: z.array(activityOverviewSeriesEnum).min(1),
 });
 
-export const panelConfigSchema = z.discriminatedUnion('type', [
-  timeSeriesSchema,
-  singleStatSchema,
-  topNTableSchema,
-  liveLogStreamSchema,
-  alertStatusSchema,
-  metricChartSchema,
-  metricStatSchema,
-  traceLatencySchema,
-  traceVolumeSchema,
-  detectionEventsSchema,
-  monitorStatusSchema,
-  systemStatusSchema,
-  activityOverviewSchema,
-]);
+// fieldPrefix is interpolated into the metadata JSON key of the topValues SQL
+// (via `metadata.${prefix}_country_code`). The charset here is the FIRST of two
+// independent injection barriers; reservoir's validateFieldName is the second.
+// No dots: a dot would let a prefix masquerade as a nested metadata path.
+const geoMapSchema = z.object({
+  type: z.literal('geo_map'),
+  title: z.string().min(1).max(100),
+  source: z.literal('logs'),
+  projectId: z.string().uuid().nullable(),
+  interval: z.enum(['1h', '24h', '7d']),
+  mode: z.enum(['country', 'points']),
+  limit: z.number().int().min(10).max(500),
+  fieldPrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]{0,31}$/),
+  levels: z.array(levelEnum),
+  service: z.string().max(200).nullable(),
+  hostname: z.string().max(200).nullable(),
+});
+
+const builtinLogColumnEnum = z.enum(['time', 'level', 'service', 'message']);
+
+// Unlike geo_map's fieldPrefix, column paths are NEVER interpolated into SQL:
+// the fetcher pulls whole rows via reservoir.query and resolves paths in
+// memory. Bounds (count/length) are the only enforcement needed here.
+const logTableBaseSchema = z.object({
+  type: z.literal('log_table'),
+  title: z.string().min(1).max(100),
+  source: z.literal('logs'),
+  projectId: z.string().uuid().nullable(),
+  mode: z.enum(['snapshot', 'live']),
+  timeRange: z.enum(['15m', '1h', '6h', '24h', '7d']),
+  levels: z.array(levelEnum),
+  service: z.string().max(200).nullable(),
+  maxRows: z.number().int().min(10).max(100),
+  columns: z.array(z.string().min(1).max(200)).max(10),
+  builtinColumns: z.array(builtinLogColumnEnum),
+  wrapCells: z.boolean(),
+});
+
+type LogTableShape = z.infer<typeof logTableBaseSchema>;
+
+function refineLogTable(cfg: LogTableShape, ctx: z.RefinementCtx): void {
+  if (cfg.mode === 'live' && cfg.projectId === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Live mode requires a specific project',
+      path: ['projectId'],
+    });
+  }
+  if (cfg.builtinColumns.length + cfg.columns.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one column (built-in or metadata) is required',
+      path: ['columns'],
+    });
+  }
+}
+
+const logTableSchema = logTableBaseSchema.superRefine(refineLogTable);
+
+// The union members must stay plain ZodObjects (discriminatedUnion cannot
+// contain refined schemas), so log_table's cross-field rules are re-applied
+// on top of the union.
+export const panelConfigSchema = z
+  .discriminatedUnion('type', [
+    timeSeriesSchema,
+    singleStatSchema,
+    topNTableSchema,
+    liveLogStreamSchema,
+    alertStatusSchema,
+    metricChartSchema,
+    metricStatSchema,
+    traceLatencySchema,
+    traceVolumeSchema,
+    detectionEventsSchema,
+    monitorStatusSchema,
+    systemStatusSchema,
+    activityOverviewSchema,
+    geoMapSchema,
+    logTableBaseSchema,
+  ])
+  .superRefine((cfg, ctx) => {
+    if (cfg.type === 'log_table') refineLogTable(cfg, ctx);
+  });
 
 export interface BackendPanelDefinition {
   readonly type: PanelType;
@@ -256,6 +324,16 @@ export const panelRegistry: Record<PanelType, BackendPanelDefinition> = {
   activity_overview: {
     type: 'activity_overview',
     schema: activityOverviewSchema as unknown as z.ZodType<PanelConfig>,
+    defaultLayout: { w: 12, h: 4 },
+  },
+  geo_map: {
+    type: 'geo_map',
+    schema: geoMapSchema as unknown as z.ZodType<PanelConfig>,
+    defaultLayout: { w: 6, h: 4 },
+  },
+  log_table: {
+    type: 'log_table',
+    schema: logTableSchema as unknown as z.ZodType<PanelConfig>,
     defaultLayout: { w: 12, h: 4 },
   },
 };

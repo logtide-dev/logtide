@@ -85,6 +85,9 @@ const configSchema = z.object({
   WEBHOOK_GLOBAL_CONCURRENCY: z.string().default('50').transform(Number),
   WEBHOOK_DELIVERY_LOG_LIMIT: z.string().default('1000').transform(Number),
   WEBHOOK_REQUEST_TIMEOUT_MS: z.string().default('10000').transform(Number),
+  // How long an in-flight delivery suppresses an identical re-enqueue. Bounded
+  // on purpose: dedup must not outlive the event it deduplicates.
+  WEBHOOK_DEDUP_WINDOW_MS: z.string().default('60000').transform(Number),
 
   // Lifecycle hooks (#216). Comma-separated paths to .js/.mjs modules loaded
   // at boot (server AND worker). Each default-exports (hooks) => void.

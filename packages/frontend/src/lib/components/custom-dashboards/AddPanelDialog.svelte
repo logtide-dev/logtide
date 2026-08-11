@@ -33,7 +33,12 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 py-2">
+    <!-- The list grows with every new panel type, so it scrolls on its own and
+         the footer actions stay reachable on short viewports. -->
+    <div
+      data-dialog-scroll-body
+      class="grid grid-cols-1 sm:grid-cols-2 gap-3 py-2 max-h-[60vh] overflow-y-auto"
+    >
       {#each definitions as def}
         {@const Icon = def.icon}
         <button

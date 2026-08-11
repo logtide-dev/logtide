@@ -197,7 +197,13 @@ PUBLIC_API_URL=http://localhost:8080
 INTERNAL_LOGGING_ENABLED=false
 
 # Fluent Bit (Optional - Auto log collection)
+# Project-scoped ingestion key from the UI (Project > Settings > API Keys), starts with "lp_".
+# Required with --profile logging or --profile metrics: if empty, every ingest gets a 401.
+# The logging profile also provides the syslog listener (port 514 UDP/TCP) for
+# network devices; it does NOT start by default, see "Useful commands" below.
 # FLUENT_BIT_API_KEY=
+# Timezone offset in hours for RFC 3164 syslog timestamps (e.g. 2 for CEST, 8 for UTC+8)
+# SYSLOG_TZ_OFFSET=0
 EOF
 
     echo -e "${GREEN}✓${NC} Environment file created at docker/.env"
@@ -283,6 +289,11 @@ show_completion() {
     echo "   Stop services:    cd docker && $DOCKER_COMPOSE down"
     echo "   Restart:          cd docker && $DOCKER_COMPOSE restart"
     echo "   Update:           cd docker && $DOCKER_COMPOSE pull && $DOCKER_COMPOSE up -d"
+    echo ""
+    echo -e "${BLUE}→${NC} Collect Docker/syslog logs (network devices need this):"
+    echo "   1. Set FLUENT_BIT_API_KEY in docker/.env (project API key from the UI)"
+    echo "   2. cd docker && $DOCKER_COMPOSE --profile logging up -d"
+    echo "   This starts Fluent Bit: Docker log collection + syslog on port 514 (UDP/TCP)"
     echo ""
     echo -e "${BLUE}→${NC} Documentation:"
     echo "   README:           cat README.md"

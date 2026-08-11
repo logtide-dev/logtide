@@ -27,7 +27,9 @@ export type PanelType =
   | 'detection_events'
   | 'monitor_status'
   | 'system_status'
-  | 'activity_overview';
+  | 'activity_overview'
+  | 'geo_map'
+  | 'log_table';
 
 // ─── Layout (12-column grid) ────────────────────────────────────────────────
 
@@ -205,6 +207,41 @@ export interface ActivityOverviewConfig {
   series: ActivityOverviewSeries[];
 }
 
+// ─── Geo map panel (GeoIP world map) ────────────────────────────────────────
+
+export interface GeoMapConfig {
+  type: 'geo_map';
+  title: string;
+  source: 'logs';
+  projectId: string | null;
+  interval: '1h' | '24h' | '7d';
+  mode: 'country' | 'points';
+  limit: number; // points mode top-N; 10-500
+  fieldPrefix: string; // geoip step target, e.g. 'geo'; strict charset, no dots
+  levels: LogLevelKey[]; // empty = all levels
+  service: string | null;
+  hostname: string | null;
+}
+
+// ─── Log table panel (raw rows with metadata columns) ───────────────────────
+
+export type BuiltinLogColumn = 'time' | 'level' | 'service' | 'message';
+
+export interface LogTableConfig {
+  type: 'log_table';
+  title: string;
+  source: 'logs';
+  projectId: string | null; // null = org-wide; REQUIRED when mode === 'live'
+  mode: 'snapshot' | 'live'; // live = per-project WebSocket tail
+  timeRange: '15m' | '1h' | '6h' | '24h' | '7d'; // snapshot mode only
+  levels: LogLevelKey[]; // empty = all levels
+  service: string | null;
+  maxRows: number; // 10-100
+  columns: string[]; // metadata paths (resolveMetadataPath semantics), max 10
+  builtinColumns: BuiltinLogColumn[]; // built-ins to show; builtins+columns >= 1
+  wrapCells: boolean; // wrap cell content instead of single-line ellipsis
+}
+
 export type PanelConfig =
   | TimeSeriesConfig
   | SingleStatConfig
@@ -218,7 +255,9 @@ export type PanelConfig =
   | DetectionEventsConfig
   | MonitorStatusConfig
   | SystemStatusConfig
-  | ActivityOverviewConfig;
+  | ActivityOverviewConfig
+  | GeoMapConfig
+  | LogTableConfig;
 
 // ─── Panel instance (layout + config) ───────────────────────────────────────
 

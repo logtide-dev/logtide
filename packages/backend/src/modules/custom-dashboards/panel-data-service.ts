@@ -27,7 +27,10 @@ import type {
   SystemStatusConfig,
   ActivityOverviewConfig,
   ActivityOverviewSeries,
+  GeoMapConfig,
+  LogTableConfig,
 } from '@logtide/shared';
+import { resolveMetadataPath, formatMetadataCell } from '@logtide/shared';
 import { dashboardService } from '../dashboard/service.js';
 import { alertsService } from '../alerts/service.js';
 import { metricsService } from '../metrics/service.js';
@@ -36,6 +39,8 @@ import { SiemDashboardService } from '../siem/dashboard-service.js';
 import { db } from '../../database/index.js';
 import { reservoir } from '../../database/reservoir.js';
 import { sql } from 'kysely';
+import { parseGeoPlace } from '../log-pipeline/geo-place.js';
+import { COUNTRY_CENTROIDS } from './geo-centroids.js';
 
 const siemDashboardService = new SiemDashboardService(db);
 
@@ -76,6 +81,18 @@ export interface TopNTableData {
   total: number;
 }
 
+export interface GeoMapData {
+  points: Array<{
+    lat: number;
+    lon: number;
+    count: number;
+    label: string;
+    countryCode?: string;
+  }>;
+  total: number; // sum of counts of ALL aggregated values, dropped included
+  droppedCount: number; // distinct values dropped (invalid parse / unknown country)
+}
+
 export interface LiveLogStreamSnapshot {
   logs: Array<{
     time: string;
@@ -85,6 +102,20 @@ export interface LiveLogStreamSnapshot {
     projectId: string;
     traceId?: string;
   }>;
+}
+
+export interface LogTableRow {
+  id: string;
+  projectId: string;
+  time: string; // ISO
+  level: string;
+  service: string;
+  message: string;
+  cells: (string | null)[]; // aligned index-by-index with config.columns
+}
+
+export interface LogTableSnapshot {
+  logs: LogTableRow[];
 }
 
 export interface AlertStatusData {
@@ -331,6 +362,81 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
   },
 };
 
+// Matches the Zod regex in panel-registry.ts. Defense in depth: this fetcher
+// builds a metadata field name from config, and the field name is interpolated
+// into SQL by the reservoir translators. Zod already rejected bad prefixes at
+// the API boundary; revalidate here so a fetcher call from any other path can
+// never reach the translators with a hostile prefix.
+const FIELD_PREFIX_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]{0,31}$/;
+
+const geoMapFetcher: PanelDataSource<GeoMapConfig, GeoMapData> = {
+  type: 'geo_map',
+  async fetchData(config, ctx) {
+    if (!FIELD_PREFIX_PATTERN.test(config.fieldPrefix)) {
+      throw new Error(`Invalid geo map field prefix: ${config.fieldPrefix}`);
+    }
+
+    const projectIds = config.projectId
+      ? [config.projectId]
+      : await resolveProjectIdsForOrg(ctx.organizationId);
+
+    if (projectIds.length === 0) {
+      return { points: [], total: 0, droppedCount: 0 };
+    }
+
+    const now = new Date();
+    const from = new Date(now.getTime() - intervalToMs(config.interval));
+
+    const suffix = config.mode === 'country' ? '_country_code' : '_place';
+    const result = await reservoir.topValues({
+      field: `metadata.${config.fieldPrefix}${suffix}`,
+      projectId: projectIds,
+      from,
+      to: now,
+      level: config.levels.length > 0 ? config.levels : undefined,
+      service: config.service ?? undefined,
+      hostname: config.hostname ?? undefined,
+      // Country mode: fetch every country (the table has 235 entries).
+      // Points mode: the configured top-N.
+      limit: config.mode === 'country' ? 300 : config.limit,
+    });
+
+    const points: GeoMapData['points'] = [];
+    let total = 0;
+    let droppedCount = 0;
+
+    for (const { value, count } of result.values) {
+      total += count;
+
+      if (config.mode === 'country') {
+        const centroid = COUNTRY_CENTROIDS[value.toUpperCase()];
+        if (!centroid) {
+          droppedCount++;
+          continue;
+        }
+        points.push({
+          lat: centroid.lat,
+          lon: centroid.lon,
+          count,
+          label: centroid.name,
+          countryCode: value.toUpperCase(),
+        });
+      } else {
+        // geo_place values are untrusted client-written metadata; parseGeoPlace
+        // validates bounds and drops garbage.
+        const parsed = parseGeoPlace(value);
+        if (!parsed) {
+          droppedCount++;
+          continue;
+        }
+        points.push({ lat: parsed.lat, lon: parsed.lon, count, label: parsed.label });
+      }
+    }
+
+    return { points, total, droppedCount };
+  },
+};
+
 const liveLogStreamFetcher: PanelDataSource<
   LiveLogStreamConfig,
   LiveLogStreamSnapshot
@@ -376,6 +482,73 @@ const liveLogStreamFetcher: PanelDataSource<
           message: l.message,
           projectId: l.projectId || '',
           traceId: l.traceId,
+        })
+      ),
+    };
+  },
+};
+
+const LOG_TABLE_RANGE_MS: Record<LogTableConfig['timeRange'], number> = {
+  '15m': 15 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+};
+
+const logTableFetcher: PanelDataSource<LogTableConfig, LogTableSnapshot> = {
+  type: 'log_table',
+  async fetchData(config, ctx) {
+    // Live mode streams over the per-project WebSocket; the batch endpoint
+    // still gets called for the panel, so answer cheaply and let the
+    // frontend ignore snapshot data entirely.
+    if (config.mode === 'live') {
+      return { logs: [] };
+    }
+
+    const projectIds = config.projectId
+      ? [config.projectId]
+      : await resolveProjectIdsForOrg(ctx.organizationId);
+
+    if (projectIds.length === 0) {
+      return { logs: [] };
+    }
+
+    const now = new Date();
+    const from = new Date(now.getTime() - LOG_TABLE_RANGE_MS[config.timeRange]);
+
+    const result = await reservoir.query({
+      projectId: projectIds,
+      level: config.levels.length > 0 ? config.levels : undefined,
+      service: config.service ?? undefined,
+      from,
+      to: now,
+      limit: config.maxRows,
+      sortOrder: 'desc',
+    });
+
+    return {
+      logs: result.logs.map(
+        (l: {
+          id?: string;
+          time: Date;
+          service: string;
+          level: string;
+          message: string;
+          projectId: string;
+          metadata?: Record<string, unknown>;
+        }) => ({
+          id: l.id ?? '',
+          projectId: l.projectId || '',
+          time: l.time.toISOString(),
+          level: l.level,
+          service: l.service,
+          message: l.message,
+          // Columns are resolved in memory against the row's metadata; they
+          // never touch SQL, so arbitrary user paths are safe here.
+          cells: config.columns.map((col) =>
+            formatMetadataCell(resolveMetadataPath(l.metadata, col))
+          ),
         })
       ),
     };
@@ -1147,6 +1320,8 @@ const dataFetchers: Record<PanelType, AnyFetcher> = {
   monitor_status: monitorStatusFetcher as AnyFetcher,
   system_status: systemStatusFetcher as AnyFetcher,
   activity_overview: activityOverviewFetcher as AnyFetcher,
+  geo_map: geoMapFetcher as AnyFetcher,
+  log_table: logTableFetcher as AnyFetcher,
 };
 
 export async function fetchPanelData(

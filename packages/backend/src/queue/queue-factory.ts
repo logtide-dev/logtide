@@ -106,6 +106,10 @@ class QueueSystemManager {
         connectionString: config.databaseUrl,
         max: 10, // Separate pool for queue operations
       });
+      // Without this handler an idle client error (e.g. DB restart) crashes the process
+      this.pgPool.on('error', (err) => {
+        console.error('[QueueSystem] Unexpected error on idle PG queue client:', err.message);
+      });
       console.log('[QueueSystem] Using graphile-worker (PostgreSQL) backend');
     }
 

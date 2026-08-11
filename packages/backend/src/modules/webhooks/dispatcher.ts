@@ -11,6 +11,7 @@ import { config } from '../../config/index.js';
 import { safeFetch, SsrfBlockedError } from '../../utils/ssrf-guard.js';
 import { hooks, HookRejectionError } from '../../hooks/index.js';
 import { buildSignatureHeaders } from './signing.js';
+import { formatOutbound } from './formatters/index.js';
 import { createQueue } from '../../queue/connection.js';
 import { webhookDeliveryService } from './service.js';
 import type { DeliverOnceParams, DeliverOnceResult, EnqueueParams, WebhookDeliveryJobData } from './types.js';
@@ -73,7 +74,10 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
   }
 
   // Serialize and sign AFTER the hook so mutations are included.
-  const bodyString = JSON.stringify(params.body ?? {});
+  // Destination-specific body shape runs here too: after the hook, so handlers
+  // keep seeing the canonical envelope whatever the destination, and before
+  // signing, so the signature covers the bytes actually sent.
+  const bodyString = JSON.stringify(formatOutbound(params.url, params.body ?? {}));
   if (params.signingSecret) {
     const unix = Math.floor(Date.now() / 1000);
     Object.assign(headers, buildSignatureHeaders(params.signingSecret, bodyString, unix));
@@ -158,27 +162,36 @@ function deriveEventId(params: EnqueueParams): string {
     .slice(0, 32);
 }
 
-/**
- * Build the queue job id. BullMQ forbids ':' in custom job ids (it is the Redis
- * key separator), and event ids can embed URLs, so the readable composite is
- * hashed to a stable, collision-resistant, separator-safe id.
- */
-function buildJobKey(organizationId: string, eventType: string, eventId: string): string {
-  const digest = createHash('sha256').update(`${organizationId}:${eventType}:${eventId}`).digest('hex');
-  return `webhook-${digest}`;
-}
-
 export const webhookDispatcher = {
   deliverOnce,
 
   /**
-   * Persist a delivery row and enqueue it. Deterministic jobKey
-   * (webhook:<org>:<eventType>:<eventId>) deduplicates upstream double-enqueues.
+   * Persist a delivery row and enqueue it.
+   *
+   * Deduplication of upstream double-enqueues is done here, explicitly and
+   * bounded: an identical event already in flight and created within
+   * WEBHOOK_DEDUP_WINDOW_MS returns that delivery instead of creating a second
+   * one. It deliberately does NOT ride on the queue's job key, because key
+   * retention differs per backend: BullMQ keeps a completed job's id forever
+   * unless removeOnComplete is set, which turned dedup into permanent
+   * suppression and left every later occurrence stranded at status='pending'.
+   * The job key is per delivery row (unique by construction) so the queue can
+   * only ever collapse two workers racing the same row.
+   *
    * Retries are driven manually by the job re-enqueueing itself, so the queue's
    * own retry is disabled (maxAttempts: 1).
    */
   async enqueue(params: EnqueueParams): Promise<{ deliveryId: string }> {
     const eventId = deriveEventId(params);
+
+    const inFlight = await webhookDeliveryService.findInFlightDelivery({
+      organizationId: params.organizationId,
+      eventType: params.eventType,
+      eventId,
+      since: new Date(Date.now() - config.WEBHOOK_DEDUP_WINDOW_MS),
+    });
+    if (inFlight) return { deliveryId: inFlight.id };
+
     const delivery = await webhookDeliveryService.createDelivery({
       organizationId: params.organizationId,
       eventType: params.eventType,
@@ -195,20 +208,26 @@ export const webhookDispatcher = {
       },
     });
     await webhookQueue.add('deliver', { deliveryId: delivery.id }, {
-      jobKey: buildJobKey(params.organizationId, params.eventType, eventId),
+      jobKey: `webhook-${delivery.id}`,
       maxAttempts: 1,
+      removeOnComplete: true,
+      removeOnFail: true,
     });
     return { deliveryId: delivery.id };
   },
 
   /**
    * Re-enqueue an already-persisted delivery (used by manual replay). The
-   * jobKey dedupes rapid double-replays of the same delivery.
+   * jobKey dedupes rapid double-replays of the same delivery; removeOnComplete
+   * keeps that dedup window to the job's lifetime instead of forever, so a
+   * delivery can be replayed again later.
    */
   async enqueueExisting(deliveryId: string): Promise<void> {
     await webhookQueue.add('deliver', { deliveryId }, {
       jobKey: `webhook-replay-${deliveryId}`,
       maxAttempts: 1,
+      removeOnComplete: true,
+      removeOnFail: true,
     });
   },
 };

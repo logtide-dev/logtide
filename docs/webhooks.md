@@ -156,6 +156,8 @@ Deliveries created before the envelope change that are manually replayed re-send
 
 The HMAC signature (see "Verifying webhook signatures" below) covers the serialized envelope as the raw request body. The existing verification snippet is valid for envelope payloads without any changes. The `X-Logtide-Event-Version: 1` header lets you route by version before parsing.
 
+For destinations with a vendor-specific body (see "Discord destinations" below), the signature covers the bytes actually sent, which are the vendor payload rather than the envelope.
+
 ### Zod schemas from `@logtide/shared`
 
 ```ts
@@ -172,6 +174,20 @@ const envelope = parseWebhookEvent(body);
 
 ---
 
+## Discord destinations
+
+A webhook whose URL is a Discord webhook endpoint receives a Discord message instead of the envelope, because Discord rejects any body without `content`, `embeds` or file parts with HTTP 400.
+
+Detection: host `discord.com` or `discordapp.com` (including subdomains such as `ptb.` and `canary.`) with a path starting `/api/webhooks/` or `/api/v10/webhooks/`. This applies to every event source (channel test, monitors, alerts, incidents, errors) as well as retries and replays; no channel setting is involved.
+
+Each event becomes one embed: `title` and `description` come from the event data, the color from its severity (green for a monitor recovery), the footer from the organization name, `timestamp` from the envelope `occurredAt`, `url` from the event link, and the remaining per-type values become embed fields. Discord's size limits are enforced by truncating values and dropping trailing fields.
+
+To receive something else, append `/slack` or `/github` to the Discord webhook URL: those are Discord's own compatibility endpoints, and LogTide leaves the body of such URLs alone.
+
+The delivery log keeps storing the canonical envelope, so replays and the delivery detail view show the event rather than the Discord payload.
+
+---
+
 ## SSRF protection
 
 Outbound targets are resolved and validated before each request; loopback, private, link-local (including cloud metadata), CGNAT, multicast, and reserved IPv4/IPv6 ranges are rejected, and every redirect hop is revalidated. Self-hosted deployments that need to reach internal endpoints can opt in with `MONITOR_ALLOW_PRIVATE_TARGETS=true`.
@@ -185,4 +201,5 @@ Outbound targets are resolved and validated before each request; loopback, priva
 | `WEBHOOK_GLOBAL_CONCURRENCY` | `50` | Concurrent deliveries across all organizations. |
 | `WEBHOOK_DELIVERY_LOG_LIMIT` | `1000` | Attempts retained per delivery in the delivery log. |
 | `WEBHOOK_REQUEST_TIMEOUT_MS` | `10000` | Per-attempt request timeout in milliseconds. |
+| `WEBHOOK_DEDUP_WINDOW_MS` | `60000` | How long an in-flight delivery suppresses an identical re-enqueue of the same event. |
 | `MONITOR_ALLOW_PRIVATE_TARGETS` | `false` | Allow delivery to private/internal addresses (self-hosted). |

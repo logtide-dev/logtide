@@ -10,14 +10,18 @@ vi.mock('ioredis', () => {
     return { default: mockRedis };
 });
 
-// Mock pg Pool
-vi.mock('pg', () => ({
+// Mock pg Pool (EventEmitter-based so unhandled 'error' events crash like the real Pool)
+vi.mock('pg', async () => {
+    const { EventEmitter } = await import('node:events');
+    class MockPool extends EventEmitter {
+        end = vi.fn().mockResolvedValue(undefined);
+    }
+    return {
         default: {
-        Pool: vi.fn().mockImplementation(() => ({
-            end: vi.fn().mockResolvedValue(undefined),
-        })),
-    },
-}));
+            Pool: vi.fn().mockImplementation(() => new MockPool()),
+        },
+    };
+});
 
 // Mock adapters
 vi.mock('../../queue/adapters/bullmq-adapter.js', () => ({
@@ -114,6 +118,33 @@ describe('QueueFactory', () => {
             });
 
             expect(consoleSpy).toHaveBeenCalledWith('[QueueSystem] Already initialized');
+            consoleSpy.mockRestore();
+        });
+    });
+
+    describe('pg pool error handling', () => {
+        it('should survive pool error events without crashing (graphile backend)', async () => {
+            queueFactory.initializeQueueSystem({
+                backend: 'graphile',
+                databaseUrl: 'postgresql://localhost:5432',
+            });
+
+            const pgModule = (await import('pg')).default;
+            const poolResults = (pgModule.Pool as any).mock.results;
+            const pool = poolResults[poolResults.length - 1].value;
+
+            const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+            // Without an 'error' listener, EventEmitter rethrows and would crash the process
+            expect(() =>
+                pool.emit('error', new Error('terminating connection due to administrator command'))
+            ).not.toThrow();
+
+            expect(consoleSpy).toHaveBeenCalledWith(
+                '[QueueSystem] Unexpected error on idle PG queue client:',
+                'terminating connection due to administrator command'
+            );
+
             consoleSpy.mockRestore();
         });
     });

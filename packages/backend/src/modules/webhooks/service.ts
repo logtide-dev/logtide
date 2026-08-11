@@ -50,6 +50,31 @@ export const webhookDeliveryService = {
       .executeTakeFirstOrThrow();
   },
 
+  /**
+   * Find a delivery for the same logical event that is still in flight and was
+   * created after `since`. Used to suppress double-enqueues without letting the
+   * suppression outlive the event: terminal rows (delivered, dead) and rows
+   * older than the window never match.
+   */
+  async findInFlightDelivery(input: {
+    organizationId: string;
+    eventType: string;
+    eventId: string;
+    since: Date;
+  }): Promise<DeliveryRow | undefined> {
+    return db
+      .selectFrom('webhook_deliveries')
+      .selectAll()
+      .where('organization_id', '=', input.organizationId)
+      .where('event_type', '=', input.eventType)
+      .where('event_id', '=', input.eventId)
+      .where('status', 'in', ['pending', 'failed'])
+      .where('created_at', '>=', input.since)
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+  },
+
   async getDelivery(id: string): Promise<DeliveryRow | undefined> {
     return db.selectFrom('webhook_deliveries').selectAll().where('id', '=', id).executeTakeFirst();
   },

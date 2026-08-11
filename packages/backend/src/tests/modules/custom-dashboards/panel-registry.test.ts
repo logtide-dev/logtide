@@ -7,7 +7,7 @@ describe('panelRegistry', () => {
       'time_series', 'single_stat', 'top_n_table', 'live_log_stream',
       'alert_status', 'metric_chart', 'metric_stat', 'trace_latency',
       'trace_volume', 'detection_events', 'monitor_status', 'system_status',
-      'activity_overview',
+      'activity_overview', 'geo_map', 'log_table',
     ];
     for (const type of types) {
       expect(panelRegistry[type as keyof typeof panelRegistry]).toBeDefined();
@@ -189,5 +189,121 @@ describe('dashboardDocumentSchema', () => {
   it('rejects invalid schema_version', () => {
     const doc = { schema_version: 0, panels: [] };
     expect(() => dashboardDocumentSchema.parse(doc)).toThrow();
+  });
+});
+
+describe('geo_map schema', () => {
+  const valid = {
+    type: 'geo_map',
+    title: 'Traffic Map',
+    source: 'logs',
+    projectId: null,
+    interval: '24h',
+    mode: 'country',
+    limit: 100,
+    fieldPrefix: 'geo',
+    levels: [],
+    service: null,
+    hostname: null,
+  };
+
+  it('accepts a valid country-mode config', () => {
+    expect(panelConfigSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts a valid points-mode config with filters', () => {
+    const parsed = panelConfigSchema.safeParse({
+      ...valid,
+      mode: 'points',
+      levels: ['error', 'critical'],
+      service: 'caddy',
+      hostname: 'edge-1',
+      fieldPrefix: 'upstream_geo',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects fieldPrefix with dots (would fake nested metadata paths in SQL)', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, fieldPrefix: 'geo.country' }).success).toBe(false);
+  });
+
+  it('rejects fieldPrefix with quotes or spaces', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, fieldPrefix: "geo'--" }).success).toBe(false);
+    expect(panelConfigSchema.safeParse({ ...valid, fieldPrefix: 'geo x' }).success).toBe(false);
+  });
+
+  it('rejects fieldPrefix longer than 32 chars', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, fieldPrefix: 'a'.repeat(33) }).success).toBe(false);
+  });
+
+  it('rejects out-of-bounds limit', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, limit: 5 }).success).toBe(false);
+    expect(panelConfigSchema.safeParse({ ...valid, limit: 501 }).success).toBe(false);
+  });
+
+  it('has a registry entry with a default layout', () => {
+    expect(panelRegistry.geo_map.defaultLayout).toEqual({ w: 6, h: 4 });
+  });
+});
+
+describe('log_table schema', () => {
+  const valid = {
+    type: 'log_table',
+    title: 'WAN hits',
+    source: 'logs',
+    projectId: null,
+    mode: 'snapshot',
+    timeRange: '1h',
+    levels: [],
+    service: null,
+    maxRows: 25,
+    columns: ['http_host', 'geo.city'],
+    builtinColumns: ['time', 'level', 'service', 'message'],
+    wrapCells: false,
+  };
+
+  it('accepts a valid snapshot config', () => {
+    expect(panelConfigSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects live mode without a project', () => {
+    const result = panelConfigSchema.safeParse({ ...valid, mode: 'live', projectId: null });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts live mode with a project', () => {
+    const result = panelConfigSchema.safeParse({
+      ...valid,
+      mode: 'live',
+      projectId: '5f0c1b2a-1111-4222-8333-444455556666',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects more than 10 columns', () => {
+    const columns = Array.from({ length: 11 }, (_, i) => `c${i}`);
+    expect(panelConfigSchema.safeParse({ ...valid, columns }).success).toBe(false);
+  });
+
+  it('rejects a config with zero total columns', () => {
+    const result = panelConfigSchema.safeParse({ ...valid, columns: [], builtinColumns: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects out-of-range maxRows', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 5 }).success).toBe(false);
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 101 }).success).toBe(false);
+  });
+
+  it('validates a full panel instance through dashboardDocumentSchema', () => {
+    const doc = {
+      schema_version: 1,
+      panels: [{ id: 'lt1', layout: { x: 0, y: 0, w: 12, h: 4 }, config: valid }],
+    };
+    expect(dashboardDocumentSchema.safeParse(doc).success).toBe(true);
+  });
+
+  it('has a registry entry with a default layout', () => {
+    expect(panelRegistry.log_table.defaultLayout).toEqual({ w: 12, h: 4 });
   });
 });
