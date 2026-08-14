@@ -331,7 +331,8 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
 
     const prewhereClause = prewhere.length > 0 ? ` PREWHERE ${prewhere.join(' AND ')}` : '';
     const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
-    let query = `SELECT ${selectExpr} AS value, count() AS count FROM ${this.tableName}${prewhereClause}${whereClause} GROUP BY value ORDER BY count DESC`;
+    const lastSeenExpr = params.includeLastSeen ? ', max(time) AS last_seen' : '';
+    let query = `SELECT ${selectExpr} AS value, count() AS count${lastSeenExpr} FROM ${this.tableName}${prewhereClause}${whereClause} GROUP BY value ORDER BY count DESC`;
 
     if (params.limit) {
       query += ` LIMIT {p_limit:UInt32}`;

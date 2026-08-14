@@ -471,6 +471,15 @@ export class TimescaleEngine extends StorageEngine {
       values: result.rows.map((row: Record<string, unknown>) => ({
         value: row.value as string,
         count: Number(row.count),
+        // Spread so callers that did not ask for it get objects without the key.
+        ...(row.last_seen != null
+          ? {
+              lastSeen:
+                row.last_seen instanceof Date
+                  ? row.last_seen.toISOString()
+                  : new Date(row.last_seen as string).toISOString(),
+            }
+          : {}),
       })),
       executionTimeMs: Date.now() - start,
     };

@@ -516,6 +516,47 @@ describe('ClickHouseEngine (integration)', () => {
       expect(result.values).toHaveLength(1);
       expect(result.values[0].value).toBe('scheduler');
     });
+
+    it('returns lastSeen per value when requested', async () => {
+      // The seed logs all sit at 12:00:00Z; this later api log makes MAX(time)
+      // a real aggregate rather than the single seeded timestamp.
+      await engine.ingest([
+        makeLog({ service: 'api', level: 'info', time: new Date('2025-01-15T15:30:00Z') }),
+      ]);
+
+      const result = await engine.topValues({
+        field: 'service',
+        projectId: 'proj-1',
+        from: new Date('2025-01-15T00:00:00Z'),
+        to: new Date('2025-01-16T00:00:00Z'),
+        includeLastSeen: true,
+        limit: 5,
+      });
+
+      expect(result.values.length).toBeGreaterThan(0);
+      for (const v of result.values) {
+        expect(v.lastSeen).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      }
+
+      const apiEntry = result.values.find((v) => v.value === 'api');
+      expect(apiEntry!.lastSeen).toBe('2025-01-15T15:30:00.000Z');
+      const workerEntry = result.values.find((v) => v.value === 'worker');
+      expect(workerEntry!.lastSeen).toBe('2025-01-15T12:00:00.000Z');
+    });
+
+    it('omits lastSeen when not requested', async () => {
+      const result = await engine.topValues({
+        field: 'service',
+        projectId: 'proj-1',
+        from: new Date('2025-01-15T00:00:00Z'),
+        to: new Date('2025-01-16T00:00:00Z'),
+      });
+
+      expect(result.values.length).toBeGreaterThan(0);
+      for (const v of result.values) {
+        expect('lastSeen' in v).toBe(false);
+      }
+    });
   });
 
   describe('query with exclusive bounds', () => {

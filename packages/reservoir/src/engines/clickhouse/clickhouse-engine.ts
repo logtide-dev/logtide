@@ -718,6 +718,12 @@ export class ClickHouseEngine extends StorageEngine {
       values: rows.map((row) => ({
         value: String(row.value),
         count: Number(row.count),
+        // JSONEachRow serializes DateTime64 without a zone; parseClickHouseTime
+        // is the same conversion the log row mapper uses. Spread so callers that
+        // did not ask for it get objects without the key.
+        ...(row.last_seen != null
+          ? { lastSeen: parseClickHouseTime(row.last_seen).toISOString() }
+          : {}),
       })),
       executionTimeMs: Date.now() - start,
     };
