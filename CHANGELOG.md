@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Panel pause**: every dashboard panel gains a Pause/Resume toggle; paused panels are skipped by auto-refresh and batch fetches (manual per-panel refresh still works), and a paused live Log Table freezes its rows while keeping the socket alive (#296).
 - **Time series labels**: `time_series` panels accept optional per-level `seriesLabels` (e.g. info -> "Heartbeat"); legend and tooltip use them, falling back to Debug/Info/Warn/Error/Critical (#300).
 - **Display preferences**: new Settings > Display card with 12h/24h clock and explicit IANA timezone; all custom-dashboard panel timestamps honor it (browser timezone and 24h remain the defaults) (#297).
+- **Top-N metadata dimension**: `top_n_table` panels can rank any flat metadata key (e.g. GeoIP `geo_place`) with limit up to 50, optional level/service filters and a Last seen column; reservoir `topValues` learned `includeLastSeen` on TimescaleDB, ClickHouse and MongoDB (#299).
 
 
 ## [1.3.0] - 2026-08-11

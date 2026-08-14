@@ -50,15 +50,41 @@ const singleStatSchema = z.object({
   compareWithPrevious: z.boolean(),
 });
 
-const topNTableSchema = z.object({
+// metadataField is interpolated into the metadata JSON key of the topValues SQL
+// (via `metadata.${field}`). The charset here is the FIRST of two independent
+// injection barriers; the fetcher re-check is the second and reservoir's
+// validateFieldName is the third. Dots are allowed on purpose: reservoir treats
+// the part after `metadata.` as one flat key on SQL engines and as a nested path
+// on MongoDB, same as the Log Search metadata columns.
+const TOP_N_METADATA_FIELD = /^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/;
+
+const topNTableBaseSchema = z.object({
   type: z.literal('top_n_table'),
   title: z.string().min(1).max(100),
   source: z.literal('logs'),
-  dimension: z.enum(['service', 'error_message']),
-  limit: z.number().int().min(3).max(20),
+  dimension: z.enum(['service', 'error_message', 'metadata']),
+  metadataField: z.string().regex(TOP_N_METADATA_FIELD).nullable().optional(),
+  limit: z.number().int().min(3).max(50),
   projectId: z.string().uuid().nullable(),
   interval: z.enum(['1h', '24h', '7d']),
+  showLastSeen: z.boolean().optional(),
+  levels: z.array(levelEnum).optional(),
+  service: z.string().max(200).nullable().optional(),
 });
+
+type TopNTableShape = z.infer<typeof topNTableBaseSchema>;
+
+function refineTopNTable(cfg: TopNTableShape, ctx: z.RefinementCtx): void {
+  if (cfg.dimension === 'metadata' && !cfg.metadataField) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Metadata dimension requires a metadata field',
+      path: ['metadataField'],
+    });
+  }
+}
+
+const topNTableSchema = topNTableBaseSchema.superRefine(refineTopNTable);
 
 const liveLogStreamSchema = z.object({
   type: z.literal('live_log_stream'),
@@ -243,13 +269,13 @@ function refineLogTable(cfg: LogTableShape, ctx: z.RefinementCtx): void {
 const logTableSchema = logTableBaseSchema.superRefine(refineLogTable);
 
 // The union members must stay plain ZodObjects (discriminatedUnion cannot
-// contain refined schemas), so log_table's cross-field rules are re-applied
-// on top of the union.
+// contain refined schemas), so log_table's and top_n_table's cross-field rules
+// are re-applied on top of the union.
 export const panelConfigSchema = z
   .discriminatedUnion('type', [
     timeSeriesSchema,
     singleStatSchema,
-    topNTableSchema,
+    topNTableBaseSchema,
     liveLogStreamSchema,
     alertStatusSchema,
     metricChartSchema,
@@ -265,6 +291,7 @@ export const panelConfigSchema = z
   ])
   .superRefine((cfg, ctx) => {
     if (cfg.type === 'log_table') refineLogTable(cfg, ctx);
+    if (cfg.type === 'top_n_table') refineTopNTable(cfg, ctx);
   });
 
 export interface BackendPanelDefinition {

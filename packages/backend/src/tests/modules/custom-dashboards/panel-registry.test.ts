@@ -246,6 +246,69 @@ describe('geo_map schema', () => {
   });
 });
 
+describe('top_n_table schema', () => {
+  const legacy = {
+    type: 'top_n_table',
+    title: 'Top services',
+    source: 'logs',
+    dimension: 'service',
+    limit: 5,
+    projectId: null,
+    interval: '24h',
+  };
+
+  it('accepts legacy top_n_table without new fields', () => {
+    expect(panelConfigSchema.safeParse(legacy).success).toBe(true);
+  });
+
+  it('accepts metadata dimension with field and limit 50', () => {
+    const parsed = panelConfigSchema.safeParse({
+      ...legacy,
+      dimension: 'metadata',
+      metadataField: 'geo_place',
+      limit: 50,
+      showLastSeen: true,
+      levels: ['error'],
+      service: 'caddy',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects metadata dimension without metadataField', () => {
+    expect(panelConfigSchema.safeParse({ ...legacy, dimension: 'metadata' }).success).toBe(false);
+    expect(
+      panelConfigSchema.safeParse({ ...legacy, dimension: 'metadata', metadataField: null }).success
+    ).toBe(false);
+    expect(
+      panelConfigSchema.safeParse({ ...legacy, dimension: 'metadata', metadataField: '' }).success
+    ).toBe(false);
+  });
+
+  it('rejects metadataField with quotes', () => {
+    expect(
+      panelConfigSchema.safeParse({
+        ...legacy,
+        dimension: 'metadata',
+        metadataField: "x' OR 1=1--",
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects limit above 50', () => {
+    expect(panelConfigSchema.safeParse({ ...legacy, limit: 51 }).success).toBe(false);
+  });
+
+  it('accepts a dotted metadata path', () => {
+    expect(
+      panelConfigSchema.safeParse({
+        ...legacy,
+        dimension: 'metadata',
+        metadataField: 'geo.city',
+      }).success
+    ).toBe(true);
+  });
+});
+
 describe('log_table schema', () => {
   const valid = {
     type: 'log_table',
