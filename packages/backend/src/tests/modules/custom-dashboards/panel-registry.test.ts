@@ -308,6 +308,53 @@ describe('log_table schema', () => {
   });
 });
 
+describe('time_series seriesLabels', () => {
+  const baseTimeSeries = {
+    type: 'time_series',
+    title: 'Volume',
+    source: 'logs',
+    projectId: null,
+    interval: '24h',
+    levels: ['info', 'warn', 'error'],
+    service: null,
+  };
+
+  it('accepts time_series without seriesLabels (backward compat)', () => {
+    expect(panelConfigSchema.safeParse(baseTimeSeries).success).toBe(true);
+  });
+
+  it('accepts time_series with partial seriesLabels', () => {
+    const labels = { info: 'Heartbeat', warn: 'Normal', error: 'Blocked' };
+    const result = panelConfigSchema.safeParse({ ...baseTimeSeries, seriesLabels: labels });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.type === 'time_series' && result.data.seriesLabels).toEqual(labels);
+  });
+
+  it('rejects seriesLabels with unknown level key', () => {
+    const result = panelConfigSchema.safeParse({
+      ...baseTimeSeries,
+      seriesLabels: { fatal: 'Nope' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects seriesLabels longer than 40 chars', () => {
+    const result = panelConfigSchema.safeParse({
+      ...baseTimeSeries,
+      seriesLabels: { info: 'x'.repeat(41) },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty seriesLabels values', () => {
+    const result = panelConfigSchema.safeParse({
+      ...baseTimeSeries,
+      seriesLabels: { info: '' },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('live_log_stream schema', () => {
   const valid = {
     type: 'live_log_stream',

@@ -9,6 +9,7 @@
     getLegendStyle,
   } from '$lib/utils/echarts-theme';
   import type { TimeSeriesConfig } from '@logtide/shared';
+  import { resolveSeriesLabel } from './series-labels';
 
   interface TimeSeriesPanelData {
     series: Array<{
@@ -58,7 +59,7 @@
     const lineSeries: echarts.SeriesOption[] = [];
     if (showDebug) {
       lineSeries.push({
-        name: 'Debug',
+        name: resolveSeriesLabel('debug', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -69,7 +70,7 @@
     }
     if (showInfo) {
       lineSeries.push({
-        name: 'Info',
+        name: resolveSeriesLabel('info', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -80,7 +81,7 @@
     }
     if (showWarn) {
       lineSeries.push({
-        name: 'Warn',
+        name: resolveSeriesLabel('warn', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -91,7 +92,7 @@
     }
     if (showError) {
       lineSeries.push({
-        name: 'Error',
+        name: resolveSeriesLabel('error', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -102,7 +103,7 @@
     }
     if (showCritical) {
       lineSeries.push({
-        name: 'Critical',
+        name: resolveSeriesLabel('critical', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,

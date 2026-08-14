@@ -26,6 +26,19 @@ const timeSeriesSchema = z.object({
   interval: z.enum(['1h', '6h', '24h', '7d', '30d']),
   levels: z.array(levelEnum).min(1),
   service: z.string().max(200).nullable(),
+  // Optional per-level legend/tooltip labels. Absent on every dashboard saved
+  // before this field existed, so it must stay optional. .strict() rejects
+  // unknown level keys instead of silently stripping them.
+  seriesLabels: z
+    .object({
+      debug: z.string().min(1).max(40).optional(),
+      info: z.string().min(1).max(40).optional(),
+      warn: z.string().min(1).max(40).optional(),
+      error: z.string().min(1).max(40).optional(),
+      critical: z.string().min(1).max(40).optional(),
+    })
+    .strict()
+    .optional(),
 });
 
 const singleStatSchema = z.object({

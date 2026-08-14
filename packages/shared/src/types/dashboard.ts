@@ -52,6 +52,8 @@ export interface TimeSeriesConfig {
   interval: '1h' | '6h' | '24h' | '7d' | '30d';
   levels: LogLevelKey[];
   service: string | null;
+  /** Optional per-level display labels for legend and tooltip; falls back to Debug/Info/Warn/Error/Critical */
+  seriesLabels?: Partial<Record<LogLevelKey, string>>;
 }
 
 export interface SingleStatConfig {
