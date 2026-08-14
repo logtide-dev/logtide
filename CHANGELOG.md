@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Live Log Stream rows**: raised the `live_log_stream` panel `maxRows` cap from 50 to 100, matching the Log Table panel (#298).
+- **Panel pause**: every dashboard panel gains a Pause/Resume toggle; paused panels are skipped by auto-refresh and batch fetches (manual per-panel refresh still works), and a paused live Log Table freezes its rows while keeping the socket alive (#296).
 - **Time series labels**: `time_series` panels accept optional per-level `seriesLabels` (e.g. info -> "Heartbeat"); legend and tooltip use them, falling back to Debug/Info/Warn/Error/Critical (#300).
 
 

@@ -38,6 +38,9 @@ interface DashboardStoreState {
   saveError: string | null;
   // Per-panel data, keyed by panel.id
   panelData: Record<string, PanelDataEntry>;
+  // Panels frozen by the user. Ephemeral: never saved with the dashboard,
+  // never persisted, cleared when the active dashboard changes.
+  pausedPanels: Set<string>;
   // Inline edit mode
   editMode: boolean;
   // Pending edit snapshot - null when not editing
@@ -56,6 +59,7 @@ const initialState: DashboardStoreState = {
   activeError: null,
   saveError: null,
   panelData: {},
+  pausedPanels: new Set<string>(),
   editMode: false,
   pendingPanels: null,
   originalPanels: null,
@@ -118,6 +122,7 @@ function createDashboardStore() {
           activeDashboard: dashboard,
           dashboards: mergeDashboardIntoList(s.dashboards, dashboard),
           loadingActive: false,
+          pausedPanels: new Set<string>(),
         }));
         await this.fetchAllPanelData();
       } catch (e) {
@@ -143,6 +148,7 @@ function createDashboardStore() {
           ...s,
           activeDashboard: fromList,
           panelData: {},
+          pausedPanels: new Set<string>(),
           activeError: null,
         }));
         await this.fetchAllPanelData();
@@ -160,6 +166,7 @@ function createDashboardStore() {
           ...s,
           activeDashboard: dashboard,
           panelData: {},
+          pausedPanels: new Set<string>(),
           loadingActive: false,
         }));
         await this.fetchAllPanelData();
@@ -179,13 +186,23 @@ function createDashboardStore() {
       const dashboard = state.activeDashboard;
       if (!dashboard || dashboard.panels.length === 0) return;
 
+      // Paused panels are frozen: they are left out of the request and their
+      // data entries are never touched by the batch. With every panel paused
+      // there is nothing to ask for - and the API reads an empty id list as
+      // "all panels", so the guard has to happen here.
+      const targetPanels = dashboard.panels.filter((p) => !state.pausedPanels.has(p.id));
+      if (targetPanels.length === 0) return;
+      const targetIds = targetPanels.map((p) => p.id);
+      const targetIdSet = new Set(targetIds);
+      const somePaused = targetIds.length !== dashboard.panels.length;
+
       const fetchSeq = ++panelFetchSeq;
       const fetchedDashboardId = dashboard.id;
 
-      // Mark all panels as loading
+      // Mark the fetched panels as loading
       update((s) => {
         const next: Record<string, PanelDataEntry> = { ...s.panelData };
-        for (const p of dashboard.panels) {
+        for (const p of targetPanels) {
           next[p.id] = {
             data: next[p.id]?.data ?? null,
             loading: true,
@@ -199,7 +216,10 @@ function createDashboardStore() {
       try {
         const result = await customDashboardsAPI.fetchPanelData(
           dashboard.id,
-          dashboard.organizationId
+          dashboard.organizationId,
+          // Undefined keeps the "all panels" request the API already sends
+          // when nothing is paused.
+          somePaused ? targetIds : undefined
         );
         const now = Date.now();
         update((s) => {
@@ -210,6 +230,7 @@ function createDashboardStore() {
           }
           const next: Record<string, PanelDataEntry> = { ...s.panelData };
           for (const [panelId, entry] of Object.entries(result.panels)) {
+            if (!targetIdSet.has(panelId)) continue;
             next[panelId] = {
               data: entry.data,
               loading: false,
@@ -226,7 +247,7 @@ function createDashboardStore() {
             return s;
           }
           const next: Record<string, PanelDataEntry> = { ...s.panelData };
-          for (const p of dashboard.panels) {
+          for (const p of targetPanels) {
             next[p.id] = {
               ...(next[p.id] ?? { data: null, lastFetchedAt: null }),
               loading: false,
@@ -266,6 +287,23 @@ function createDashboardStore() {
           error: e instanceof Error ? e.message : 'Failed to refresh panel',
         });
       }
+    },
+
+    /**
+     * Freeze / unfreeze a single panel. A paused panel is skipped by
+     * `fetchAllPanelData` (auto-refresh and the `r` shortcut alike) but still
+     * honours an explicit `refreshPanel` call.
+     */
+    togglePanelPause(panelId: string): void {
+      update((s) => {
+        const next = new Set(s.pausedPanels);
+        if (next.has(panelId)) {
+          next.delete(panelId);
+        } else {
+          next.add(panelId);
+        }
+        return { ...s, pausedPanels: next };
+      });
     },
 
     // ─── Edit mode ──────────────────────────────────────────────────────
@@ -539,3 +577,4 @@ export const pendingPanels = derived(customDashboardsStore, (s) => s.pendingPane
 export const dashboardSaving = derived(customDashboardsStore, (s) => s.saving);
 export const dashboardSaveError = derived(customDashboardsStore, (s) => s.saveError);
 export const panelDataMap = derived(customDashboardsStore, (s) => s.panelData);
+export const pausedPanelIds = derived(customDashboardsStore, (s) => s.pausedPanels);

@@ -16,6 +16,7 @@
     dashboardSaving,
     dashboardSaveError,
     panelDataMap,
+    pausedPanelIds,
   } from '$lib/stores/custom-dashboards';
   import DashboardContainer from '$lib/components/custom-dashboards/DashboardContainer.svelte';
   import DashboardSwitcher from '$lib/components/custom-dashboards/DashboardSwitcher.svelte';
@@ -237,6 +238,10 @@
     void customDashboardsStore.refreshPanel(panelId);
   }
 
+  function handleTogglePanelPause(panelId: string) {
+    customDashboardsStore.togglePanelPause(panelId);
+  }
+
   function handleAddPanelSubmit(panel: PanelInstance) {
     customDashboardsStore.addPanel(panel);
   }
@@ -408,11 +413,13 @@
         panels={displayedPanels}
         panelData={$panelDataMap}
         editMode={$editMode}
+        pausedPanelIds={$pausedPanelIds}
         onReorder={handleReorder}
         onResizePanel={handleResizePanel}
         onEditPanel={handleEditPanel}
         onRemovePanel={handleRemovePanel}
         onRefreshPanel={handleRefreshPanel}
+        onTogglePanelPause={handleTogglePanelPause}
       />
     {/if}
   {/if}

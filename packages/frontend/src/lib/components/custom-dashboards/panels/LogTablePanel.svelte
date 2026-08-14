@@ -34,9 +34,10 @@
     data: unknown;
     loading: boolean;
     error: string | null;
+    paused?: boolean;
   }
 
-  let { config, data }: Props = $props();
+  let { config, data, paused = false }: Props = $props();
 
   const isLive = $derived(config.mode === 'live' && config.projectId !== null);
 
@@ -79,6 +80,9 @@
       liveStatus = 'live';
       retries = 0;
       socket.onmessage = (ev) => {
+        // Paused panels freeze what they already show. The socket stays open
+        // so resuming picks the stream back up without a reconnect.
+        if (paused) return;
         let parsed: { type?: string; logs?: WsLog[] };
         try {
           parsed = JSON.parse(ev.data as string);

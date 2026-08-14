@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
+import { tick } from 'svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
@@ -221,6 +222,46 @@ describe('LogTablePanel (live)', () => {
     await vi.waitFor(() => expect(fake.onmessage).not.toBeNull());
     unmount();
     expect(fake.closed).toBe(true);
+  });
+
+  it('discards pushes while paused and keeps the socket open', async () => {
+    const sockets: FakeWebSocket[] = [];
+    createLogsWebSocket.mockImplementation(async () => {
+      const socket = new FakeWebSocket();
+      sockets.push(socket);
+      return socket;
+    });
+    const live = async () => {
+      await vi.waitFor(() => expect(sockets.at(-1)?.onmessage).not.toBeNull());
+      return sockets.at(-1)!;
+    };
+
+    const liveConfig = config({ mode: 'live', projectId: 'proj-1' });
+    const base = { config: liveConfig, data: null, loading: false, error: null };
+    const { container, rerender } = render(LogTablePanel, {
+      props: { ...base, paused: false },
+    });
+
+    (await live()).emitLogs([wsLog({ id: 'live-before', message: 'before pause' })]);
+    expect(await screen.findByText('before pause')).toBeInTheDocument();
+
+    await rerender({ ...base, paused: true });
+    const paused = await live();
+    paused.emitLogs([wsLog({ id: 'live-paused', message: 'while paused' })]);
+    await tick();
+
+    // Dropped, and the rows captured before the pause stay frozen on screen.
+    expect(screen.queryByText('while paused')).toBeNull();
+    expect(screen.getByText('before pause')).toBeInTheDocument();
+    expect(container.querySelectorAll('tbody tr').length).toBe(1);
+    // The stream is still attached: pausing must not close the socket.
+    expect(paused.closed).toBe(false);
+
+    await rerender({ ...base, paused: false });
+    (await live()).emitLogs([wsLog({ id: 'live-after', message: 'after resume' })]);
+
+    expect(await screen.findByText('after resume')).toBeInTheDocument();
+    expect(container.querySelectorAll('tbody tr').length).toBe(2);
   });
 
   it('does not open a socket in snapshot mode', async () => {
