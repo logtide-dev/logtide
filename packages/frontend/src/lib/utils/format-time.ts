@@ -18,10 +18,12 @@ const STYLE_OPTIONS: Record<TimestampStyle, Intl.DateTimeFormatOptions> = {
 const CLOCK_24: Intl.DateTimeFormatOptions = { hourCycle: 'h23' };
 const CLOCK_12: Intl.DateTimeFormatOptions = { hour12: true };
 
-// Some ICU builds separate the AM/PM marker with a narrow no-break space;
-// normalize to a plain space so output is stable across builds.
+// Some ICU builds separate the AM/PM marker with a narrow no-break space
+// (U+202F), older ones with a regular no-break space (U+00A0); normalize both
+// to a plain space so output stays stable across builds. Escape syntax on
+// purpose: the source must not carry invisible characters.
 function normalize(value: string): string {
-  return value.replace(/ /g, ' ');
+  return value.replace(/[\u202f\u00a0]/g, ' ');
 }
 
 export function formatTimestamp(

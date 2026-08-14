@@ -248,6 +248,7 @@ describe('LogTablePanel (live)', () => {
 
     await rerender({ ...base, paused: true });
     const paused = await live();
+    const socketsWhilePaused = sockets.length;
     paused.emitLogs([wsLog({ id: 'live-paused', message: 'while paused' })]);
     await tick();
 
@@ -255,8 +256,14 @@ describe('LogTablePanel (live)', () => {
     expect(screen.queryByText('while paused')).toBeNull();
     expect(screen.getByText('before pause')).toBeInTheDocument();
     expect(container.querySelectorAll('tbody tr').length).toBe(1);
-    // The stream is still attached: pausing must not close the socket.
+    // The stream is still attached: pausing must not close the socket. The
+    // push is dropped inside the message handler, not by tearing the stream
+    // down, so no reconnect happens while paused. NB: @testing-library/svelte
+    // re-proxies props on every rerender, which re-runs the lifecycle effect
+    // and costs one reconnect per rerender no matter what; the count is
+    // therefore compared between rerenders, never across them.
     expect(paused.closed).toBe(false);
+    expect(sockets.length).toBe(socketsWhilePaused);
 
     await rerender({ ...base, paused: false });
     (await live()).emitLogs([wsLog({ id: 'live-after', message: 'after resume' })]);

@@ -19,6 +19,9 @@ describe('formatTimestamp', () => {
   it('dateTime combines date and clock', () => {
     expect(formatTimestamp(T, 'dateTime', { hour12: false, timeZone: 'UTC' })).toBe('Mar 5, 21:07');
   });
+  it('dateTime honors 12h clock', () => {
+    expect(formatTimestamp(T, 'dateTime', { hour12: true, timeZone: 'UTC' })).toBe('Mar 5, 09:07 PM');
+  });
   it('falls back to browser zone on invalid timeZone instead of throwing', () => {
     expect(() => formatTimestamp(T, 'time', { hour12: false, timeZone: 'Not/AZone' })).not.toThrow();
   });
