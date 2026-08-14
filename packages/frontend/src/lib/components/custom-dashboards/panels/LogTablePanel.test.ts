@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 
@@ -14,6 +14,7 @@ vi.mock('$lib/api/logs', () => ({
 
 import LogTablePanel from './LogTablePanel.svelte';
 import { goto } from '$app/navigation';
+import { displayPreferences } from '$lib/stores/display-preferences';
 import type { LogTableConfig } from '@logtide/shared';
 
 function config(overrides: Partial<LogTableConfig> = {}): LogTableConfig {
@@ -270,5 +271,41 @@ describe('LogTablePanel (live)', () => {
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(createLogsWebSocket).not.toHaveBeenCalled();
+  });
+});
+
+// -- display preferences (#297) ----------------------------------------------
+
+describe('LogTablePanel time column honors display preferences', () => {
+  afterEach(() => {
+    displayPreferences.set({ hour12: false, timeZone: null });
+  });
+
+  it('renders a 24 hour clock in the selected timezone', () => {
+    displayPreferences.set({ hour12: false, timeZone: 'UTC' });
+    render(LogTablePanel, {
+      props: { config: config(), data: { logs: [row] }, loading: false, error: null },
+    });
+    expect(screen.getByText('12:00:00')).toBeInTheDocument();
+  });
+
+  it('switches to a 12 hour clock when the preference changes', async () => {
+    displayPreferences.set({ hour12: false, timeZone: 'UTC' });
+    render(LogTablePanel, {
+      props: { config: config(), data: { logs: [row] }, loading: false, error: null },
+    });
+
+    displayPreferences.set({ hour12: true, timeZone: 'UTC' });
+    await tick();
+
+    expect(screen.getByText('12:00:00 PM')).toBeInTheDocument();
+  });
+
+  it('applies an explicit timezone offset', () => {
+    displayPreferences.set({ hour12: false, timeZone: 'America/Los_Angeles' });
+    render(LogTablePanel, {
+      props: { config: config(), data: { logs: [row] }, loading: false, error: null },
+    });
+    expect(screen.getByText('05:00:00')).toBeInTheDocument();
   });
 });

@@ -4,6 +4,8 @@
   import { resolveMetadataPath, formatMetadataCell } from '@logtide/shared';
   import { logsAPI } from '$lib/api/logs';
   import { Badge } from '$lib/components/ui/badge';
+  import { displayPreferences } from '$lib/stores/display-preferences';
+  import { formatTimestamp } from '$lib/utils/format-time';
 
   interface LogTableRow {
     id: string;
@@ -153,15 +155,6 @@
       : 'whitespace-nowrap truncate max-w-[28rem]'
   );
 
-  function formatTime(time: string): string {
-    return new Date(time).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
-  }
-
   function levelVariant(level: string): 'default' | 'secondary' | 'destructive' | 'outline' {
     if (level === 'critical' || level === 'error') return 'destructive';
     if (level === 'warn') return 'outline';
@@ -208,7 +201,7 @@
           <tr class="cursor-pointer hover:bg-accent/30" onclick={() => openLog(row)}>
             {#each builtins as col (col)}
               {#if col === 'time'}
-                <td class="px-2 py-1 text-muted-foreground whitespace-nowrap">{formatTime(row.time)}</td>
+                <td class="px-2 py-1 text-muted-foreground whitespace-nowrap">{formatTimestamp(row.time, 'timeSeconds', $displayPreferences)}</td>
               {:else if col === 'level'}
                 <td class="px-2 py-1">
                   <Badge variant={levelVariant(row.level)} class="text-[10px] uppercase">{row.level}</Badge>
