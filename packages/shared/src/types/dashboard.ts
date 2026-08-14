@@ -80,7 +80,7 @@ export interface LiveLogStreamConfig {
   projectId: string | null;
   service: string | null;
   levels: LogLevelKey[];
-  maxRows: number; // 10–50
+  maxRows: number; // 10-100
 }
 
 export interface AlertStatusConfig {

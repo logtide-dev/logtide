@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Live Log Stream rows**: raised the `live_log_stream` panel `maxRows` cap from 50 to 100, matching the Log Table panel (#298).
+
+
 ## [1.3.0] - 2026-08-11
 
 ### Security

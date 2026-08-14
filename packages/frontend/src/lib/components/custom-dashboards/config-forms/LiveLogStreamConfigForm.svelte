@@ -78,11 +78,11 @@
       id="lls-max-rows"
       type="number"
       min="10"
-      max="50"
+      max="100"
       value={config.maxRows}
       oninput={(e) => {
         const v = parseInt((e.currentTarget as HTMLInputElement).value, 10);
-        if (!Number.isNaN(v)) update('maxRows', Math.min(50, Math.max(10, v)));
+        if (!Number.isNaN(v)) update('maxRows', Math.min(100, Math.max(10, v)));
       }}
     />
   </div>

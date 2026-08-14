@@ -54,7 +54,7 @@ const liveLogStreamSchema = z.object({
   projectId: z.string().uuid().nullable(),
   service: z.string().max(200).nullable(),
   levels: z.array(levelEnum).min(1),
-  maxRows: z.number().int().min(10).max(50),
+  maxRows: z.number().int().min(10).max(100),
 });
 
 const alertStatusSchema = z.object({

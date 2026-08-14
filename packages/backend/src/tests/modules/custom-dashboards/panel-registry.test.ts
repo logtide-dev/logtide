@@ -307,3 +307,31 @@ describe('log_table schema', () => {
     expect(panelRegistry.log_table.defaultLayout).toEqual({ w: 12, h: 4 });
   });
 });
+
+describe('live_log_stream schema', () => {
+  const valid = {
+    type: 'live_log_stream',
+    title: 'Stream',
+    source: 'logs',
+    projectId: null,
+    service: null,
+    levels: ['info'],
+    maxRows: 25,
+  };
+
+  it('accepts a valid config', () => {
+    expect(panelConfigSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts maxRows of 100', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 100 }).success).toBe(true);
+  });
+
+  it('rejects maxRows above 100', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 101 }).success).toBe(false);
+  });
+
+  it('rejects maxRows below 10', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 9 }).success).toBe(false);
+  });
+});
