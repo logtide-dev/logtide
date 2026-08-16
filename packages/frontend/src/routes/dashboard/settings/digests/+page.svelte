@@ -22,8 +22,13 @@
     SelectValue,
   } from '$lib/components/ui/select';
   import { Separator } from '$lib/components/ui/separator';
-  import { canManageMembers } from '@logtide/shared';
-  import type { OrganizationWithRole } from '@logtide/shared';
+  import {
+    canManageMembers,
+    DIGEST_SECTION_KEYS,
+    DIGEST_SECTION_DEFAULTS,
+    mergeDigestSections,
+  } from '@logtide/shared';
+  import type { DigestSectionKey, OrganizationWithRole } from '@logtide/shared';
   import Save from '@lucide/svelte/icons/save';
   import Mail from '@lucide/svelte/icons/mail';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -44,11 +49,92 @@
   let deliveryHour = $state(8);
   let deliveryDayOfWeek = $state(1);
   let newRecipientEmail = $state('');
+  // Always a complete record: the API returns the merged sections, and before
+  // the first load (or after a failed one) the shared defaults stand in.
+  let sections = $state<Record<string, boolean>>(mergeDigestSections(null));
 
   let canManage = $derived(currentOrg ? canManageMembers(currentOrg.role) : false);
 
   const dayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const hours = Array.from({ length: 24 }, (_, i) => i);
+
+  const sectionMeta: Record<DigestSectionKey, { label: string; description: string }> = {
+    logVolume: {
+      label: 'Log volume',
+      description: 'Total logs with trend vs the previous period',
+    },
+    topErrorServices: {
+      label: 'Top services by errors',
+      description: 'Services with the most error and critical logs',
+    },
+    newErrorGroups: {
+      label: 'New error groups',
+      description: 'Exceptions first seen during the period',
+    },
+    security: {
+      label: 'Security',
+      description: 'Sigma detections, top rules and open incidents',
+    },
+    uptime: {
+      label: 'Uptime',
+      description: 'Monitor availability and worst performers',
+    },
+    logBreakdown: {
+      label: 'Log level breakdown',
+      description: 'Per-level counts, error rate and daily volumes',
+    },
+    topErrorMessages: {
+      label: 'Top error messages',
+      description: 'Most frequent error and critical messages',
+    },
+    traces: {
+      label: 'Traces',
+      description: 'Span volume, service latency and slowest spans',
+    },
+    metrics: {
+      label: 'Metrics',
+      description: 'Metric datapoints ingested with trend',
+    },
+    alerts: {
+      label: 'Alerts',
+      description: 'Alert rules triggered during the period',
+    },
+    securityActivity: {
+      label: 'Security activity',
+      description: 'Incidents opened and resolved, top MITRE techniques',
+    },
+    monitorPerformance: {
+      label: 'Monitor performance',
+      description: 'Response times and failed checks per monitor',
+    },
+    usage: {
+      label: 'Usage',
+      description: 'Ingestion volumes per project and quota warnings',
+    },
+    webhooks: {
+      label: 'Webhook deliveries',
+      description: 'Delivered, failed and dead webhook deliveries',
+    },
+    teamActivity: {
+      label: 'Team activity',
+      description: 'Member changes, config changes and failed logins',
+    },
+  };
+
+  /**
+   * Only the keys that differ from the shared defaults are persisted. Storing
+   * all 15 booleans would freeze today's defaults into the row and stop future
+   * default changes from ever reaching this organization.
+   */
+  function changedSections(): Record<string, boolean> {
+    const changed: Record<string, boolean> = {};
+    for (const key of DIGEST_SECTION_KEYS) {
+      if (sections[key] !== DIGEST_SECTION_DEFAULTS[key]) {
+        changed[key] = sections[key];
+      }
+    }
+    return changed;
+  }
 
   function hourLabel(hour: number): string {
     return `${hour.toString().padStart(2, '0')}:00 UTC`;
@@ -85,6 +171,7 @@
         deliveryHour = config.delivery_hour;
         deliveryDayOfWeek = config.delivery_day_of_week ?? 1;
       }
+      sections = mergeDigestSections(config?.sections);
     } catch (e) {
       toastStore.error(e instanceof Error ? e.message : 'Failed to load digest settings');
     } finally {
@@ -101,7 +188,9 @@
         deliveryHour,
         deliveryDayOfWeek: frequency === 'weekly' ? deliveryDayOfWeek : null,
         enabled,
+        sections: changedSections(),
       });
+      sections = mergeDigestSections(config.sections);
       toastStore.success('Digest settings saved');
     } catch (e) {
       toastStore.error(e instanceof Error ? e.message : 'Failed to save digest settings');
@@ -163,106 +252,137 @@
   {#if loading}
     <p class="text-sm text-muted-foreground">Loading digest settings...</p>
   {:else}
-    <Card>
-      <CardHeader>
-        <CardTitle>Schedule</CardTitle>
-        <CardDescription>
-          When the digest report is generated and sent. Times are in UTC.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            saveConfig();
-          }}
-          class="space-y-4"
-        >
-          <div class="flex items-center justify-between">
-            <div class="space-y-0.5">
-              <Label>Enable digest emails</Label>
-              <p class="text-sm text-muted-foreground">
-                Subscribed recipients receive the report on the schedule below.
-              </p>
-            </div>
-            <Switch checked={enabled} onCheckedChange={(v) => (enabled = v)} disabled={!canManage || saving} />
-          </div>
-
-          <Separator />
-
-          <div class="grid gap-4 sm:grid-cols-3">
-            <div class="space-y-2">
-              <Label>Frequency</Label>
-              <Select
-                type="single"
-                value={frequency}
-                onValueChange={(v) => (frequency = v as DigestFrequency)}
-                disabled={!canManage || saving}
-              >
-                <SelectTrigger>
-                  <SelectValue>{frequency === 'daily' ? 'Daily' : 'Weekly'}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                </SelectContent>
-              </Select>
+    <!-- Schedule and Sections are one form: a single Save Settings button at
+         the end of the Sections card commits both. -->
+    <form
+      onsubmit={(e) => {
+        e.preventDefault();
+        saveConfig();
+      }}
+      class="space-y-6"
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle>Schedule</CardTitle>
+          <CardDescription>
+            When the digest report is generated and sent. Times are in UTC.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div class="space-y-0.5">
+                <Label>Enable digest emails</Label>
+                <p class="text-sm text-muted-foreground">
+                  Subscribed recipients receive the report on the schedule below.
+                </p>
+              </div>
+              <Switch checked={enabled} onCheckedChange={(v) => (enabled = v)} disabled={!canManage || saving} />
             </div>
 
-            <div class="space-y-2">
-              <Label>Delivery time</Label>
-              <Select
-                type="single"
-                value={String(deliveryHour)}
-                onValueChange={(v) => (deliveryHour = Number(v))}
-                disabled={!canManage || saving}
-              >
-                <SelectTrigger>
-                  <SelectValue>{hourLabel(deliveryHour)}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {#each hours as hour (hour)}
-                    <SelectItem value={String(hour)}>{hourLabel(hour)}</SelectItem>
-                  {/each}
-                </SelectContent>
-              </Select>
-            </div>
+            <Separator />
 
-            {#if frequency === 'weekly'}
+            <div class="grid gap-4 sm:grid-cols-3">
               <div class="space-y-2">
-                <Label>Day of week</Label>
+                <Label>Frequency</Label>
                 <Select
                   type="single"
-                  value={String(deliveryDayOfWeek)}
-                  onValueChange={(v) => (deliveryDayOfWeek = Number(v))}
+                  value={frequency}
+                  onValueChange={(v) => (frequency = v as DigestFrequency)}
                   disabled={!canManage || saving}
                 >
                   <SelectTrigger>
-                    <SelectValue>{dayLabels[deliveryDayOfWeek]}</SelectValue>
+                    <SelectValue>{frequency === 'daily' ? 'Daily' : 'Weekly'}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {#each dayLabels as day, index (day)}
-                      <SelectItem value={String(index)}>{day}</SelectItem>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div class="space-y-2">
+                <Label>Delivery time</Label>
+                <Select
+                  type="single"
+                  value={String(deliveryHour)}
+                  onValueChange={(v) => (deliveryHour = Number(v))}
+                  disabled={!canManage || saving}
+                >
+                  <SelectTrigger>
+                    <SelectValue>{hourLabel(deliveryHour)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {#each hours as hour (hour)}
+                      <SelectItem value={String(hour)}>{hourLabel(hour)}</SelectItem>
                     {/each}
                   </SelectContent>
                 </Select>
               </div>
+
+              {#if frequency === 'weekly'}
+                <div class="space-y-2">
+                  <Label>Day of week</Label>
+                  <Select
+                    type="single"
+                    value={String(deliveryDayOfWeek)}
+                    onValueChange={(v) => (deliveryDayOfWeek = Number(v))}
+                    disabled={!canManage || saving}
+                  >
+                    <SelectTrigger>
+                      <SelectValue>{dayLabels[deliveryDayOfWeek]}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {#each dayLabels as day, index (day)}
+                        <SelectItem value={String(index)}>{day}</SelectItem>
+                      {/each}
+                    </SelectContent>
+                  </Select>
+                </div>
+              {/if}
+            </div>
+
+            {#if config?.last_sent_at}
+              <p class="text-xs text-muted-foreground">
+                Last sent: {new Date(config.last_sent_at).toLocaleString()}
+              </p>
             {/if}
           </div>
+        </CardContent>
+      </Card>
 
-          {#if config?.last_sent_at}
-            <p class="text-xs text-muted-foreground">
-              Last sent: {new Date(config.last_sent_at).toLocaleString()}
-            </p>
-          {/if}
+      <Card>
+        <CardHeader>
+          <CardTitle>Sections</CardTitle>
+          <CardDescription>
+            Choose what the digest reports on. New sections are off by default.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          {#each DIGEST_SECTION_KEYS as key (key)}
+            <div class="flex items-center justify-between gap-4">
+              <div class="space-y-0.5">
+                <Label>{sectionMeta[key].label}</Label>
+                <p class="text-sm text-muted-foreground">{sectionMeta[key].description}</p>
+              </div>
+              <Switch
+                checked={sections[key]}
+                onCheckedChange={(v) => (sections[key] = v)}
+                disabled={!canManage || saving}
+                aria-label={sectionMeta[key].label}
+              />
+            </div>
+          {/each}
+
+          <Separator />
 
           <Button type="submit" disabled={!canManage || saving} class="gap-2">
             <Save class="w-4 h-4" />
-            {saving ? 'Saving...' : 'Save Schedule'}
+            {saving ? 'Saving...' : 'Save Settings'}
           </Button>
-        </form>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </form>
 
     <Card>
       <CardHeader>

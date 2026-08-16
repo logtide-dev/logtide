@@ -10,6 +10,8 @@ export interface DigestConfig {
   delivery_day_of_week: number | null;
   enabled: boolean;
   last_sent_at: string | null;
+  /** Always the full merged record: the API resolves defaults server side. */
+  sections: Record<string, boolean>;
   created_at: string;
   updated_at: string;
 }
@@ -27,6 +29,8 @@ export interface DigestConfigInput {
   deliveryHour: number;
   deliveryDayOfWeek?: number | null;
   enabled: boolean;
+  /** Partial on purpose: only keys that differ from the defaults are stored. */
+  sections?: Partial<Record<string, boolean>>;
 }
 
 async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {

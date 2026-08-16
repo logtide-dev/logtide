@@ -666,7 +666,16 @@ export class MongoDBEngine extends StorageEngine {
     const offset = params.offset ?? 0;
 
     const filter = this.buildSpanFilter(params);
-    const sortBy = params.sortBy === 'start_time' || params.sortBy === 'time' ? params.sortBy : 'start_time';
+    // Same allowlist as the Timescale and ClickHouse engines so callers get the
+    // same ordering on every engine (there it also guards against SQL injection)
+    const ALLOWED_SORT_FIELDS = new Set([
+      'start_time',
+      'end_time',
+      'duration_ms',
+      'service_name',
+      'operation_name',
+    ]);
+    const sortBy = ALLOWED_SORT_FIELDS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
     const sortOrder = params.sortOrder === 'desc' ? -1 : 1;
 
     const [docs, total] = await Promise.all([

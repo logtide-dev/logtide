@@ -18,6 +18,7 @@ import type {
   ApiKeyType,
   PanelInstance,
   MetadataFilter,
+  DigestSections,
 } from '@logtide/shared';
 
 // Re-export types for backward compatibility (modules importing from database/types)
@@ -1142,6 +1143,12 @@ export interface DigestConfigsTable {
   delivery_day_of_week: number | null; 
   enabled: Generated<boolean>;
   last_sent_at: Timestamp | null;
+  // JSONB partial map of section key to boolean; NULL means all defaults
+  sections: ColumnType<
+    Partial<DigestSections> | null,
+    Partial<DigestSections> | null,
+    Partial<DigestSections> | null
+  >;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
