@@ -252,131 +252,137 @@
   {#if loading}
     <p class="text-sm text-muted-foreground">Loading digest settings...</p>
   {:else}
-    <Card>
-      <CardHeader>
-        <CardTitle>Schedule</CardTitle>
-        <CardDescription>
-          When the digest report is generated and sent. Times are in UTC.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            saveConfig();
-          }}
-          class="space-y-4"
-        >
-          <div class="flex items-center justify-between">
-            <div class="space-y-0.5">
-              <Label>Enable digest emails</Label>
-              <p class="text-sm text-muted-foreground">
-                Subscribed recipients receive the report on the schedule below.
-              </p>
-            </div>
-            <Switch checked={enabled} onCheckedChange={(v) => (enabled = v)} disabled={!canManage || saving} />
-          </div>
-
-          <Separator />
-
-          <div class="grid gap-4 sm:grid-cols-3">
-            <div class="space-y-2">
-              <Label>Frequency</Label>
-              <Select
-                type="single"
-                value={frequency}
-                onValueChange={(v) => (frequency = v as DigestFrequency)}
-                disabled={!canManage || saving}
-              >
-                <SelectTrigger>
-                  <SelectValue>{frequency === 'daily' ? 'Daily' : 'Weekly'}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                </SelectContent>
-              </Select>
+    <!-- Schedule and Sections are one form: a single Save Settings button at
+         the end of the Sections card commits both. -->
+    <form
+      onsubmit={(e) => {
+        e.preventDefault();
+        saveConfig();
+      }}
+      class="space-y-6"
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle>Schedule</CardTitle>
+          <CardDescription>
+            When the digest report is generated and sent. Times are in UTC.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <div class="space-y-0.5">
+                <Label>Enable digest emails</Label>
+                <p class="text-sm text-muted-foreground">
+                  Subscribed recipients receive the report on the schedule below.
+                </p>
+              </div>
+              <Switch checked={enabled} onCheckedChange={(v) => (enabled = v)} disabled={!canManage || saving} />
             </div>
 
-            <div class="space-y-2">
-              <Label>Delivery time</Label>
-              <Select
-                type="single"
-                value={String(deliveryHour)}
-                onValueChange={(v) => (deliveryHour = Number(v))}
-                disabled={!canManage || saving}
-              >
-                <SelectTrigger>
-                  <SelectValue>{hourLabel(deliveryHour)}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {#each hours as hour (hour)}
-                    <SelectItem value={String(hour)}>{hourLabel(hour)}</SelectItem>
-                  {/each}
-                </SelectContent>
-              </Select>
-            </div>
+            <Separator />
 
-            {#if frequency === 'weekly'}
+            <div class="grid gap-4 sm:grid-cols-3">
               <div class="space-y-2">
-                <Label>Day of week</Label>
+                <Label>Frequency</Label>
                 <Select
                   type="single"
-                  value={String(deliveryDayOfWeek)}
-                  onValueChange={(v) => (deliveryDayOfWeek = Number(v))}
+                  value={frequency}
+                  onValueChange={(v) => (frequency = v as DigestFrequency)}
                   disabled={!canManage || saving}
                 >
                   <SelectTrigger>
-                    <SelectValue>{dayLabels[deliveryDayOfWeek]}</SelectValue>
+                    <SelectValue>{frequency === 'daily' ? 'Daily' : 'Weekly'}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {#each dayLabels as day, index (day)}
-                      <SelectItem value={String(index)}>{day}</SelectItem>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div class="space-y-2">
+                <Label>Delivery time</Label>
+                <Select
+                  type="single"
+                  value={String(deliveryHour)}
+                  onValueChange={(v) => (deliveryHour = Number(v))}
+                  disabled={!canManage || saving}
+                >
+                  <SelectTrigger>
+                    <SelectValue>{hourLabel(deliveryHour)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {#each hours as hour (hour)}
+                      <SelectItem value={String(hour)}>{hourLabel(hour)}</SelectItem>
                     {/each}
                   </SelectContent>
                 </Select>
               </div>
+
+              {#if frequency === 'weekly'}
+                <div class="space-y-2">
+                  <Label>Day of week</Label>
+                  <Select
+                    type="single"
+                    value={String(deliveryDayOfWeek)}
+                    onValueChange={(v) => (deliveryDayOfWeek = Number(v))}
+                    disabled={!canManage || saving}
+                  >
+                    <SelectTrigger>
+                      <SelectValue>{dayLabels[deliveryDayOfWeek]}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {#each dayLabels as day, index (day)}
+                        <SelectItem value={String(index)}>{day}</SelectItem>
+                      {/each}
+                    </SelectContent>
+                  </Select>
+                </div>
+              {/if}
+            </div>
+
+            {#if config?.last_sent_at}
+              <p class="text-xs text-muted-foreground">
+                Last sent: {new Date(config.last_sent_at).toLocaleString()}
+              </p>
             {/if}
           </div>
+        </CardContent>
+      </Card>
 
-          {#if config?.last_sent_at}
-            <p class="text-xs text-muted-foreground">
-              Last sent: {new Date(config.last_sent_at).toLocaleString()}
-            </p>
-          {/if}
+      <Card>
+        <CardHeader>
+          <CardTitle>Sections</CardTitle>
+          <CardDescription>
+            Choose what the digest reports on. New sections are off by default.
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          {#each DIGEST_SECTION_KEYS as key (key)}
+            <div class="flex items-center justify-between gap-4">
+              <div class="space-y-0.5">
+                <Label>{sectionMeta[key].label}</Label>
+                <p class="text-sm text-muted-foreground">{sectionMeta[key].description}</p>
+              </div>
+              <Switch
+                checked={sections[key]}
+                onCheckedChange={(v) => (sections[key] = v)}
+                disabled={!canManage || saving}
+                aria-label={sectionMeta[key].label}
+              />
+            </div>
+          {/each}
+
+          <Separator />
 
           <Button type="submit" disabled={!canManage || saving} class="gap-2">
             <Save class="w-4 h-4" />
-            {saving ? 'Saving...' : 'Save Schedule'}
+            {saving ? 'Saving...' : 'Save Settings'}
           </Button>
-        </form>
-      </CardContent>
-    </Card>
-
-    <Card>
-      <CardHeader>
-        <CardTitle>Sections</CardTitle>
-        <CardDescription>
-          Choose what the digest reports on. New sections are off by default.
-        </CardDescription>
-      </CardHeader>
-      <CardContent class="space-y-4">
-        {#each DIGEST_SECTION_KEYS as key (key)}
-          <div class="flex items-center justify-between gap-4">
-            <div class="space-y-0.5">
-              <Label>{sectionMeta[key].label}</Label>
-              <p class="text-sm text-muted-foreground">{sectionMeta[key].description}</p>
-            </div>
-            <Switch
-              checked={sections[key]}
-              onCheckedChange={(v) => (sections[key] = v)}
-              disabled={!canManage || saving}
-              aria-label={sectionMeta[key].label}
-            />
-          </div>
-        {/each}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </form>
 
     <Card>
       <CardHeader>

@@ -142,7 +142,7 @@ describe('digest sections card', () => {
 
     await fireEvent.click(sectionSwitch('Team activity'));
     await fireEvent.click(sectionSwitch('Log volume'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(saveConfig).toHaveBeenCalledTimes(1);
     expect(saveConfig.mock.calls[0][1].sections).toEqual({
@@ -159,7 +159,7 @@ describe('digest sections card', () => {
     render(Page);
     await screen.findByText('Sections');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Save Schedule' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(saveConfig.mock.calls[0][1].sections).toEqual({});
   });
