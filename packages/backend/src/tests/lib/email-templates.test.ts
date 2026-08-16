@@ -870,4 +870,353 @@ describe('Email Templates - Digest', () => {
     expect(result.text).toContain('Weekly Digest');
     expect(result.text).toContain('last 7 days');
   });
+
+  it('keeps the preheader unchanged when no expanded section is present', () => {
+    const result = generateDigestEmail(baseData);
+
+    expect(result.html).toContain('15,000 logs, 11 detections for Acme Corp');
+  });
+
+  // ==========================================================================
+  // Expanded digest sections (#154 expansion)
+  // ==========================================================================
+
+  const longMessage = 'x'.repeat(200);
+
+  const fullData: DigestEmailData = {
+    ...baseData,
+    frequency: 'weekly',
+    periodLabel: 'last 7 days',
+    logBreakdown: {
+      levels: [
+        { level: 'info', current: 9000, previous: 7000 },
+        { level: 'error', current: 500, previous: 300 },
+      ],
+      errorRatePct: 3.3,
+      previousErrorRatePct: 2,
+      daily: [{ date: '2026-08-10', count: 1200 }],
+    },
+    topErrorMessages: [
+      { message: '<script>alert(1)</script> connection refused', count: 120 },
+      { message: longMessage, count: 9 },
+    ],
+    alerts: {
+      total: 12,
+      previousTotal: 4,
+      trend: '+8 (+200.0%)',
+      topRules: [{ name: 'High <error> rate', count: 7 }],
+    },
+    traces: {
+      spanCount: 40000,
+      previousSpanCount: 30000,
+      trend: '+10000 (+33.3%)',
+      errorSpanCount: 250,
+      services: [
+        { service: 'checkout-<svc>', calls: 1200, errorRatePct: 3, p95Ms: 450 },
+        { service: 'billing', calls: 300, errorRatePct: 0, p95Ms: null },
+      ],
+      slowestSpans: [{ service: 'checkout-<svc>', operation: 'GET /<pay>', durationMs: 5200 }],
+    },
+    metrics: { datapoints: 88000, previousDatapoints: 80000, trend: '+8000 (+10.0%)' },
+    securityActivity: {
+      openedBySeverity: [
+        { severity: 'critical', count: 2 },
+        { severity: 'low', count: 1 },
+      ],
+      resolvedCount: 5,
+      topTechniques: [{ technique: 'T1110<script>', count: 9 }],
+    },
+    monitorPerformance: [
+      { name: 'API <Health>', avgMs: 120, p95Ms: 450, failedChecks: 3 },
+      { name: 'Heartbeat <hb>', avgMs: 0, p95Ms: 0, failedChecks: 0 },
+    ],
+    usage: {
+      logEvents: 1500000,
+      logBytes: 1610612736,
+      spans: 40000,
+      topProjects: [{ name: 'Payments <prj>', events: 900000 }],
+      quotaWarnings: [{ capability: 'logs.retention<days>', usedPct: 92 }],
+    },
+    webhooks: { delivered: 500, failed: 12, dead: 3 },
+    teamActivity: { membersAdded: 2, membersRemoved: 1, configChanges: 7, failedLogins: 4 },
+  };
+
+  it('renders every expanded section title in HTML and plaintext', () => {
+    const result = generateDigestEmail(fullData);
+
+    const htmlTitles = [
+      'Log Breakdown',
+      'Top Error Messages',
+      'Traces',
+      'Metrics',
+      'Alerts',
+      'Security Activity',
+      'Monitor Performance',
+      'Usage',
+      'Webhooks',
+      'Team Activity',
+    ];
+    for (const title of htmlTitles) {
+      expect(result.html, `html should contain the ${title} section`).toContain(title);
+    }
+
+    const textTitles = [
+      'LOG BREAKDOWN',
+      'TOP ERROR MESSAGES',
+      'TRACES',
+      'METRICS',
+      'ALERTS',
+      'SECURITY ACTIVITY',
+      'MONITOR PERFORMANCE',
+      'USAGE',
+      'WEBHOOKS',
+      'TEAM ACTIVITY',
+    ];
+    for (const title of textTitles) {
+      expect(result.text, `text should contain the ${title} section`).toContain(title);
+    }
+  });
+
+  it('orders the sections as specified', () => {
+    const { html } = generateDigestEmail(fullData);
+
+    const order = [
+      'Log Volume',
+      'Log Breakdown',
+      'Top Services by Errors',
+      'Top Error Messages',
+      'New Error Groups',
+      'Traces',
+      'Metrics',
+      'Alerts',
+      'Security',
+      'Security Activity',
+      'Uptime',
+      'Monitor Performance',
+      'Usage',
+      'Webhooks',
+      'Team Activity',
+      'View Dashboard',
+    ];
+
+    const positions = order.map((title) => html.indexOf(title));
+    for (const [index, position] of positions.entries()) {
+      expect(position, `${order[index]} should be present`).toBeGreaterThan(-1);
+      if (index > 0) {
+        expect(position, `${order[index]} should follow ${order[index - 1]}`).toBeGreaterThan(
+          positions[index - 1]
+        );
+      }
+    }
+  });
+
+  it('renders the log breakdown numbers in both formats', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('9,000');
+    expect(result.html).toContain('3.3%');
+    expect(result.html).toContain('2026-08-10');
+    expect(result.text).toContain('info: 9,000');
+    expect(result.text).toContain('Error rate: 3.3% (previous: 2%)');
+    expect(result.text).toContain('2026-08-10: 1,200');
+  });
+
+  it('renders traces with a worst-project p95 label and a dash for missing p95', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('40,000');
+    expect(result.html).toContain('p95 (worst)');
+    expect(result.html).toContain('worst project');
+    expect(result.html).toContain('450ms');
+    expect(result.html).toContain('3%');
+    expect(result.text).toContain('Spans: 40,000');
+    expect(result.text).toContain('Error spans: 250');
+    expect(result.text).toContain('p95 450ms');
+    expect(result.text).toContain('p95 -');
+    expect(result.text).toContain('GET /<pay>');
+  });
+
+  it('renders alert totals and the top rules table', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('+8 (+200.0%)');
+    expect(result.text).toContain('Triggers: 12');
+    expect(result.text).toContain('Previous triggers: 4');
+    expect(result.text).toContain('High <error> rate: 7');
+  });
+
+  it('renders the alerts section without a rules table when nothing fired this period', () => {
+    const data: DigestEmailData = {
+      ...fullData,
+      alerts: { total: 0, previousTotal: 6, trend: '-6 (-100.0%)', topRules: [] },
+    };
+
+    const result = generateDigestEmail(data);
+
+    expect(result.html).toContain('Alerts');
+    expect(result.html).toContain('-6 (-100.0%)');
+    expect(result.html).not.toContain('Triggers</th>');
+    expect(result.text).toContain('Triggers: 0');
+    expect(result.text).toContain('Previous triggers: 6');
+  });
+
+  it('renders security activity counts and MITRE techniques', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('T1110');
+    expect(result.text).toContain('Incidents opened: 3');
+    expect(result.text).toContain('Incidents resolved: 5');
+    expect(result.text).toContain('critical: 2');
+  });
+
+  it('renders untimed monitors with a dash instead of 0ms', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('120ms');
+    // Untimed (heartbeat) monitors render a dash cell, never "0ms"
+    expect(result.html).toContain('>-</td>');
+    expect(result.html).not.toContain('>0ms</td>');
+    expect(result.text).toContain('avg 120ms, p95 450ms');
+    expect(result.text).toContain('avg -, p95 -');
+  });
+
+  it('humanizes usage bytes and labels quota warnings as month-to-date', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('1.5 GB');
+    expect(result.html).toContain('Month-to-date usage above 80% of limit');
+    expect(result.html).toContain('92%');
+    expect(result.text).toContain('Log events: 1,500,000');
+    expect(result.text).toContain('Log volume: 1.5 GB');
+    expect(result.text).toContain('Month-to-date usage above 80% of limit');
+    expect(result.text).toContain('logs.retention<days>: 92%');
+  });
+
+  it('highlights dead webhook deliveries and renders team activity', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('dead-letter queue');
+    expect(result.text).toContain('Delivered: 500');
+    expect(result.text).toContain('Dead: 3');
+    expect(result.text).toContain('Members added: 2');
+    expect(result.text).toContain('Failed logins: 4');
+  });
+
+  it('truncates long error messages to 120 characters', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('x'.repeat(117) + '...');
+    expect(result.html).not.toContain('x'.repeat(121));
+    expect(result.text).toContain('x'.repeat(117) + '...');
+    expect(result.text).not.toContain('x'.repeat(121));
+  });
+
+  it('escapes user-controlled values from the expanded sections', () => {
+    const result = generateDigestEmail(fullData);
+
+    const payloads = [
+      '<script>alert(1)</script>',
+      'High <error> rate',
+      'checkout-<svc>',
+      'GET /<pay>',
+      'API <Health>',
+      'Heartbeat <hb>',
+      'Payments <prj>',
+      'T1110<script>',
+      'logs.retention<days>',
+    ];
+    for (const payload of payloads) {
+      expect(result.html, `html should escape ${payload}`).not.toContain(payload);
+    }
+
+    expect(result.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(result.html).toContain('High &lt;error&gt; rate');
+    expect(result.html).toContain('logs.retention&lt;days&gt;');
+  });
+
+  it('omits expanded sections that are undefined', () => {
+    const result = generateDigestEmail(baseData);
+
+    const htmlTitles = [
+      'Log Breakdown',
+      'Top Error Messages',
+      'Traces',
+      'Metrics',
+      'Alerts',
+      'Security Activity',
+      'Monitor Performance',
+      'Usage',
+      'Webhooks',
+      'Team Activity',
+    ];
+    for (const title of htmlTitles) {
+      expect(result.html, `html should omit the ${title} section`).not.toContain(title);
+    }
+
+    const textTitles = [
+      'LOG BREAKDOWN',
+      'TOP ERROR MESSAGES',
+      'TRACES',
+      'METRICS',
+      'ALERTS',
+      'SECURITY ACTIVITY',
+      'MONITOR PERFORMANCE',
+      'USAGE',
+      'WEBHOOKS',
+      'TEAM ACTIVITY',
+    ];
+    for (const title of textTitles) {
+      expect(result.text, `text should omit the ${title} section`).not.toContain(title);
+    }
+  });
+
+  it('stays quiet when logs and spans are both zero', () => {
+    const data: DigestEmailData = {
+      ...baseData,
+      logVolume: { current: 0, previous: 0, trend: 'no change' },
+      traces: {
+        spanCount: 0,
+        previousSpanCount: 0,
+        trend: 'no change',
+        errorSpanCount: 0,
+        services: [],
+        slowestSpans: [],
+      },
+    };
+
+    const result = generateDigestEmail(data);
+
+    expect(result.html).toContain('No activity during this period');
+    expect(result.text).toContain('No activity during this period');
+    expect(result.html).toContain('Quiet period for Acme Corp');
+  });
+
+  it('is not a quiet period when the traces section carries spans', () => {
+    const data: DigestEmailData = {
+      ...baseData,
+      logVolume: { current: 0, previous: 0, trend: 'no change' },
+      traces: {
+        spanCount: 500,
+        previousSpanCount: 0,
+        trend: '+500 (new activity)',
+        errorSpanCount: 1,
+        services: [],
+        slowestSpans: [],
+      },
+    };
+
+    const result = generateDigestEmail(data);
+
+    expect(result.html).not.toContain('No activity during this period');
+    expect(result.text).not.toContain('No activity during this period');
+    expect(result.text).toContain('Total logs: 0');
+    expect(result.text).toContain('Spans: 500');
+  });
+
+  it('adds alert and incident counts to the preheader when those sections are present', () => {
+    const result = generateDigestEmail(fullData);
+
+    expect(result.html).toContain('12 alerts');
+    expect(result.html).toContain('3 incidents');
+  });
 });
