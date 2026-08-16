@@ -543,18 +543,36 @@ export class MongoDBEngine extends StorageEngine {
 
     const pipeline: Document[] = [
       { $match: filter },
-      { $group: { _id: `$${mongoField}`, count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: `$${mongoField}`,
+          count: { $sum: 1 },
+          ...(params.includeLastSeen ? { lastSeen: { $max: '$time' } } : {}),
+        },
+      },
       { $match: { _id: { $ne: null } } },
       { $sort: { count: -1 } },
       { $limit: limit },
-      { $project: { value: '$_id', count: 1, _id: 0 } },
+      {
+        $project: {
+          value: '$_id',
+          count: 1,
+          _id: 0,
+          ...(params.includeLastSeen ? { lastSeen: 1 } : {}),
+        },
+      },
     ];
 
     const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
     return {
       values: rows
         .filter((r) => r.value != null && String(r.value) !== '')
-        .map((r) => ({ value: String(r.value), count: Number(r.count) })),
+        .map((r) => ({
+          value: String(r.value),
+          count: Number(r.count),
+          // Spread so callers that did not ask for it get objects without the key.
+          ...(r.lastSeen instanceof Date ? { lastSeen: r.lastSeen.toISOString() } : {}),
+        })),
       executionTimeMs: Date.now() - start,
     };
   }

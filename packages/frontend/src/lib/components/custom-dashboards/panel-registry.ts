@@ -94,6 +94,9 @@ export interface PanelComponentProps<TConfig extends PanelConfig = PanelConfig> 
   data: unknown;
   loading: boolean;
   error: string | null;
+  // Ephemeral freeze flag: panels that stream their own data (live log table)
+  // must stop applying updates while the user has the panel paused.
+  paused?: boolean;
 }
 
 export interface ConfigFormProps<TConfig extends PanelConfig = PanelConfig> {
@@ -167,9 +170,13 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
       title: 'Top Services',
       source: 'logs',
       dimension: 'service',
+      metadataField: null,
       limit: 5,
       projectId: null,
       interval: '24h',
+      showLastSeen: false,
+      levels: [],
+      service: null,
     } as TopNTableConfig,
     component: TopNTablePanel as Component<PanelComponentProps>,
     configForm: TopNTableConfigForm as Component<ConfigFormProps>,

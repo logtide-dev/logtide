@@ -12,6 +12,14 @@
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Separator } from '$lib/components/ui/separator';
   import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+  } from '$lib/components/ui/select';
+  import { displayPreferences } from '$lib/stores/display-preferences';
+  import {
     AlertDialog,
     AlertDialogAction,
     AlertDialogCancel,
@@ -25,6 +33,7 @@
   import type { OrganizationWithRole } from '@logtide/shared';
   import Save from '@lucide/svelte/icons/save';
   import Clock from '@lucide/svelte/icons/clock';
+  import Monitor from '@lucide/svelte/icons/monitor';
   import Trash2 from '@lucide/svelte/icons/trash-2';
 
   let user: any = null;
@@ -127,6 +136,44 @@
   }
 
   let isOwner = $derived(currentOrg?.role === 'owner');
+
+  // Display preferences are per viewer and stored in the browser, so they need
+  // no role check and no save button: every change applies immediately.
+  const BROWSER_TIMEZONE = '__browser__';
+
+  const timeFormatOptions = [
+    { value: '24', label: '24-hour' },
+    { value: '12', label: '12-hour (AM/PM)' },
+  ];
+
+  // Intl.supportedValuesOf is newer than the TS lib this project targets and is
+  // missing in older runtimes; an empty list still leaves "Browser default"
+  // usable rather than breaking the card.
+  const timeZones: string[] = (() => {
+    const intl = Intl as typeof Intl & {
+      supportedValuesOf?: (key: 'timeZone') => string[];
+    };
+    try {
+      return intl.supportedValuesOf?.('timeZone') ?? [];
+    } catch {
+      return [];
+    }
+  })();
+
+  let timeFormatValue = $derived($displayPreferences.hour12 ? '12' : '24');
+  let timeZoneValue = $derived($displayPreferences.timeZone ?? BROWSER_TIMEZONE);
+  let timeZoneLabel = $derived($displayPreferences.timeZone ?? 'Browser default');
+
+  function setTimeFormat(value: string) {
+    displayPreferences.set({ ...$displayPreferences, hour12: value === '12' });
+  }
+
+  function setTimeZone(value: string) {
+    displayPreferences.set({
+      ...$displayPreferences,
+      timeZone: value === BROWSER_TIMEZONE ? null : value,
+    });
+  }
 </script>
 
 <svelte:head>
@@ -223,6 +270,54 @@
           The log retention policy is configured by your system administrator.
           Contact your admin if you need to change this setting.
         </p>
+      </div>
+    </CardContent>
+  </Card>
+
+  <Card>
+    <CardHeader>
+      <div class="flex items-center gap-2">
+        <Monitor class="w-5 h-5 text-primary" />
+        <div>
+          <CardTitle>Display</CardTitle>
+          <CardDescription>How timestamps are rendered for you in this browser</CardDescription>
+        </div>
+      </div>
+    </CardHeader>
+    <CardContent>
+      <div class="space-y-4">
+        <div class="space-y-2">
+          <Label>Time format</Label>
+          <Select type="single" value={timeFormatValue} onValueChange={(v) => v && setTimeFormat(v)}>
+            <SelectTrigger>
+              <SelectValue>
+                {timeFormatOptions.find((o) => o.value === timeFormatValue)?.label}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {#each timeFormatOptions as option (option.value)}
+                <SelectItem value={option.value}>{option.label}</SelectItem>
+              {/each}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div class="space-y-2">
+          <Label>Timezone</Label>
+          <Select type="single" value={timeZoneValue} onValueChange={(v) => v && setTimeZone(v)}>
+            <SelectTrigger>
+              <SelectValue>{timeZoneLabel}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={BROWSER_TIMEZONE}>Browser default</SelectItem>
+              {#each timeZones as zone (zone)}
+                <SelectItem value={zone}>{zone}</SelectItem>
+              {/each}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <p class="text-sm text-muted-foreground">Applies to dashboard panels.</p>
       </div>
     </CardContent>
   </Card>

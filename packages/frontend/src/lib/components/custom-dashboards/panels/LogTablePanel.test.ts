@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
+import { tick } from 'svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
@@ -13,6 +14,7 @@ vi.mock('$lib/api/logs', () => ({
 
 import LogTablePanel from './LogTablePanel.svelte';
 import { goto } from '$app/navigation';
+import { displayPreferences } from '$lib/stores/display-preferences';
 import type { LogTableConfig } from '@logtide/shared';
 
 function config(overrides: Partial<LogTableConfig> = {}): LogTableConfig {
@@ -223,11 +225,94 @@ describe('LogTablePanel (live)', () => {
     expect(fake.closed).toBe(true);
   });
 
+  it('discards pushes while paused and keeps the socket open', async () => {
+    const sockets: FakeWebSocket[] = [];
+    createLogsWebSocket.mockImplementation(async () => {
+      const socket = new FakeWebSocket();
+      sockets.push(socket);
+      return socket;
+    });
+    const live = async () => {
+      await vi.waitFor(() => expect(sockets.at(-1)?.onmessage).not.toBeNull());
+      return sockets.at(-1)!;
+    };
+
+    const liveConfig = config({ mode: 'live', projectId: 'proj-1' });
+    const base = { config: liveConfig, data: null, loading: false, error: null };
+    const { container, rerender } = render(LogTablePanel, {
+      props: { ...base, paused: false },
+    });
+
+    (await live()).emitLogs([wsLog({ id: 'live-before', message: 'before pause' })]);
+    expect(await screen.findByText('before pause')).toBeInTheDocument();
+
+    await rerender({ ...base, paused: true });
+    const paused = await live();
+    const socketsWhilePaused = sockets.length;
+    paused.emitLogs([wsLog({ id: 'live-paused', message: 'while paused' })]);
+    await tick();
+
+    // Dropped, and the rows captured before the pause stay frozen on screen.
+    expect(screen.queryByText('while paused')).toBeNull();
+    expect(screen.getByText('before pause')).toBeInTheDocument();
+    expect(container.querySelectorAll('tbody tr').length).toBe(1);
+    // The stream is still attached: pausing must not close the socket. The
+    // push is dropped inside the message handler, not by tearing the stream
+    // down, so no reconnect happens while paused. NB: @testing-library/svelte
+    // re-proxies props on every rerender, which re-runs the lifecycle effect
+    // and costs one reconnect per rerender no matter what; the count is
+    // therefore compared between rerenders, never across them.
+    expect(paused.closed).toBe(false);
+    expect(sockets.length).toBe(socketsWhilePaused);
+
+    await rerender({ ...base, paused: false });
+    (await live()).emitLogs([wsLog({ id: 'live-after', message: 'after resume' })]);
+
+    expect(await screen.findByText('after resume')).toBeInTheDocument();
+    expect(container.querySelectorAll('tbody tr').length).toBe(2);
+  });
+
   it('does not open a socket in snapshot mode', async () => {
     render(LogTablePanel, {
       props: { config: config(), data: { logs: [] }, loading: false, error: null },
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(createLogsWebSocket).not.toHaveBeenCalled();
+  });
+});
+
+// -- display preferences (#297) ----------------------------------------------
+
+describe('LogTablePanel time column honors display preferences', () => {
+  afterEach(() => {
+    displayPreferences.set({ hour12: false, timeZone: null });
+  });
+
+  it('renders a 24 hour clock in the selected timezone', () => {
+    displayPreferences.set({ hour12: false, timeZone: 'UTC' });
+    render(LogTablePanel, {
+      props: { config: config(), data: { logs: [row] }, loading: false, error: null },
+    });
+    expect(screen.getByText('12:00:00')).toBeInTheDocument();
+  });
+
+  it('switches to a 12 hour clock when the preference changes', async () => {
+    displayPreferences.set({ hour12: false, timeZone: 'UTC' });
+    render(LogTablePanel, {
+      props: { config: config(), data: { logs: [row] }, loading: false, error: null },
+    });
+
+    displayPreferences.set({ hour12: true, timeZone: 'UTC' });
+    await tick();
+
+    expect(screen.getByText('12:00:00 PM')).toBeInTheDocument();
+  });
+
+  it('applies an explicit timezone offset', () => {
+    displayPreferences.set({ hour12: false, timeZone: 'America/Los_Angeles' });
+    render(LogTablePanel, {
+      props: { config: config(), data: { logs: [row] }, loading: false, error: null },
+    });
+    expect(screen.getByText('05:00:00')).toBeInTheDocument();
   });
 });

@@ -510,6 +510,43 @@ describe('TimescaleEngine', () => {
 
       expect(result.values).toHaveLength(0);
     });
+
+    it('adds MAX(time) when includeLastSeen is set', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [{ value: 'a', count: '2', last_seen: new Date('2026-01-01T00:00:00Z') }],
+      });
+      await engine.connect();
+
+      const result = await engine.topValues({
+        field: 'metadata.geo_place',
+        projectId: 'p1',
+        from: new Date('2026-01-01'),
+        to: new Date('2026-01-02'),
+        limit: 10,
+        includeLastSeen: true,
+      });
+
+      const sql = mockQuery.mock.calls.at(-1)![0] as string;
+      expect(sql).toContain('MAX(time) AS last_seen');
+      expect(result.values[0].lastSeen).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('omits last_seen when includeLastSeen is not set', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ value: 'a', count: '2' }] });
+      await engine.connect();
+
+      const result = await engine.topValues({
+        field: 'service',
+        projectId: 'p1',
+        from: new Date(),
+        to: new Date(),
+        limit: 5,
+      });
+
+      expect(mockQuery.mock.calls.at(-1)![0]).not.toContain('last_seen');
+      expect(result.values[0].lastSeen).toBeUndefined();
+      expect('lastSeen' in result.values[0]).toBe(false);
+    });
   });
 
   describe('getCapabilities', () => {

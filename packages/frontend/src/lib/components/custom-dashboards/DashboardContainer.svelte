@@ -25,22 +25,26 @@
     panels: PanelInstance[];
     panelData: Record<string, PanelDataEntry>;
     editMode: boolean;
+    pausedPanelIds?: Set<string>;
     onReorder?: (panels: PanelInstance[]) => void;
     onResizePanel?: (panelId: string, layout: PanelLayout) => void;
     onEditPanel?: (panelId: string) => void;
     onRemovePanel?: (panelId: string) => void;
     onRefreshPanel?: (panelId: string) => void;
+    onTogglePanelPause?: (panelId: string) => void;
   }
 
   let {
     panels,
     panelData,
     editMode,
+    pausedPanelIds = new Set<string>(),
     onReorder,
     onResizePanel,
     onEditPanel,
     onRemovePanel,
     onRefreshPanel,
+    onTogglePanelPause,
   }: Props = $props();
 
   const ROW_HEIGHT_PX = 80;
@@ -221,9 +225,11 @@
         loading={entry.loading}
         error={entry.error}
         {editMode}
+        paused={pausedPanelIds.has(panel.id)}
         onEdit={onEditPanel}
         onRemove={onRemovePanel}
         onRefresh={onRefreshPanel}
+        onTogglePause={onTogglePanelPause ? () => onTogglePanelPause(panel.id) : undefined}
         onResizeStart={handleResizeStart}
       />
     </div>

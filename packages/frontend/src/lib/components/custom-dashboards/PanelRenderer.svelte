@@ -9,6 +9,8 @@
   import Settings2 from '@lucide/svelte/icons/settings-2';
   import X from '@lucide/svelte/icons/x';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+  import Pause from '@lucide/svelte/icons/pause';
+  import Play from '@lucide/svelte/icons/play';
 
   interface Props {
     panel: PanelInstance;
@@ -16,9 +18,11 @@
     loading: boolean;
     error: string | null;
     editMode: boolean;
+    paused?: boolean;
     onEdit?: (panelId: string) => void;
     onRemove?: (panelId: string) => void;
     onRefresh?: (panelId: string) => void;
+    onTogglePause?: () => void;
     onResizeStart?: (panelId: string, ev: PointerEvent) => void;
   }
 
@@ -28,9 +32,11 @@
     loading,
     error,
     editMode,
+    paused = false,
     onEdit,
     onRemove,
     onRefresh,
+    onTogglePause,
     onResizeStart,
   }: Props = $props();
 
@@ -58,8 +64,27 @@
         </span>
       {/if}
       <h3 class="text-sm font-medium truncate">{panel.config.title}</h3>
+      {#if paused && !editMode}
+        <span class="flex-shrink-0 text-[10px] uppercase tracking-wide text-amber-500">Paused</span>
+      {/if}
     </div>
     <div class="flex items-center gap-1 flex-shrink-0">
+      {#if !editMode && onTogglePause}
+        <button
+          type="button"
+          class="p-1 rounded hover:bg-accent {paused
+            ? 'text-amber-500 hover:text-amber-500'
+            : 'text-muted-foreground hover:text-foreground'}"
+          onclick={() => onTogglePause?.()}
+          title={paused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
+        >
+          {#if paused}
+            <Play class="w-3.5 h-3.5" />
+          {:else}
+            <Pause class="w-3.5 h-3.5" />
+          {/if}
+        </button>
+      {/if}
       {#if !editMode && onRefresh}
         <button
           type="button"
@@ -103,7 +128,7 @@
         {error}
       </div>
     {:else}
-      <PanelComponent config={panel.config as any} {data} {loading} {error} />
+      <PanelComponent config={panel.config as any} {data} {loading} {error} {paused} />
     {/if}
   </div>
 

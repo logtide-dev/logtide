@@ -77,7 +77,7 @@ export interface SingleStatPanelData {
 }
 
 export interface TopNTableData {
-  rows: Array<{ key: string; count: number; percentage: number }>;
+  rows: Array<{ key: string; count: number; percentage: number; lastSeen?: string }>;
   total: number;
 }
 
@@ -295,10 +295,17 @@ const singleStatFetcher: PanelDataSource<SingleStatConfig, SingleStatPanelData> 
   },
 };
 
+// Matches the Zod regex in panel-registry.ts. Defense in depth: the metadata
+// field name is interpolated into SQL by the reservoir translators, so revalidate
+// here in case a fetcher call arrives from a path that did not go through Zod.
+const TOP_N_METADATA_FIELD = /^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/;
+
 const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
   type: 'top_n_table',
   async fetchData(config, ctx) {
     if (config.dimension === 'service') {
+      // showLastSeen is ignored here on purpose: this dimension is served by the
+      // continuous-aggregate fast path, which has no per-value max event time.
       const services = await dashboardService.getTopServices(
         ctx.organizationId,
         config.limit,
@@ -315,9 +322,6 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
       };
     }
 
-    // 'error_message': aggregate the most frequent error messages in the
-    // selected time range. We use reservoir.topValues on the `message` field
-    // restricted to error/critical levels.
     const projectIds = config.projectId
       ? [config.projectId]
       : await resolveProjectIdsForOrg(ctx.organizationId);
@@ -330,6 +334,55 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
     const intervalMs = intervalToMs(config.interval);
     const from = new Date(now.getTime() - intervalMs);
 
+    if (config.dimension === 'metadata') {
+      // Rank a flat metadata key (GeoIP `geo_place`, `http_host`, ...) with the
+      // panel's own level/service filters.
+      const field = config.metadataField ?? '';
+      if (!TOP_N_METADATA_FIELD.test(field)) {
+        throw new Error(`Invalid top-n metadata field: ${field}`);
+      }
+
+      const levels = config.levels && config.levels.length > 0 ? config.levels : undefined;
+      const service = config.service ?? undefined;
+
+      const [metaTop, metaTotalResult] = await Promise.all([
+        reservoir.topValues({
+          field: `metadata.${field}`,
+          projectId: projectIds,
+          from,
+          to: now,
+          level: levels,
+          service,
+          limit: config.limit,
+          includeLastSeen: config.showLastSeen === true,
+        }),
+        // True total of all matching logs in the window, so percentages are a
+        // share of the whole, not of just the top-N rows that fit the limit.
+        reservoir.count({
+          projectId: projectIds,
+          from,
+          to: now,
+          level: levels,
+          service,
+        }),
+      ]);
+
+      const metaTotal = metaTotalResult.count;
+
+      return {
+        rows: metaTop.values.map((v: { value: string; count: number; lastSeen?: string }) => ({
+          key: v.value,
+          count: v.count,
+          percentage: metaTotal > 0 ? Math.round((v.count / metaTotal) * 100) : 0,
+          ...(v.lastSeen !== undefined ? { lastSeen: v.lastSeen } : {}),
+        })),
+        total: metaTotal,
+      };
+    }
+
+    // 'error_message': aggregate the most frequent error messages in the
+    // selected time range. We use reservoir.topValues on the `message` field
+    // restricted to error/critical levels.
     const [top, totalResult] = await Promise.all([
       reservoir.topValues({
         field: 'message',
@@ -338,6 +391,7 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
         to: now,
         level: ['error', 'critical'],
         limit: config.limit,
+        includeLastSeen: config.showLastSeen === true,
       }),
       // True total of all error/critical logs in the window, so percentages are a
       // share of the whole, not of just the top-N rows that fit the limit.
@@ -352,10 +406,11 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
     const total = totalResult.count;
 
     return {
-      rows: top.values.map((v: { value: string; count: number }) => ({
+      rows: top.values.map((v: { value: string; count: number; lastSeen?: string }) => ({
         key: v.value,
         count: v.count,
         percentage: total > 0 ? Math.round((v.count / total) * 100) : 0,
+        ...(v.lastSeen !== undefined ? { lastSeen: v.lastSeen } : {}),
       })),
       total,
     };

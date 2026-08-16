@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import * as echarts from 'echarts';
   import { themeStore } from '$lib/stores/theme';
+  import { displayPreferences } from '$lib/stores/display-preferences';
+  import { formatTimestamp } from '$lib/utils/format-time';
   import {
     chartColors,
     getAxisStyle,
@@ -53,20 +55,14 @@
     alerts: { label: 'Alerts', color: chartColors.series.gray ?? '#9ca3af', key: 'alerts' },
   };
 
-  function formatTimeLabel(time: string, bucket: 'hour' | 'day'): string {
-    const d = new Date(time);
-    if (bucket === 'day') {
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    }
-    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  }
-
   function buildOption(): echarts.EChartsOption {
     const axisStyle = getAxisStyle();
     const tooltipStyle = getTooltipStyle();
     const legendStyle = getLegendStyle();
+    const prefs = displayPreferences.get();
     const series = typedData?.series ?? [];
     const bucket = typedData?.bucket ?? 'hour';
+    const labelStyle = bucket === 'day' ? 'monthDay' : 'time';
     const enabled = config.series;
 
     const chartSeries: echarts.SeriesOption[] = enabled.map((s) => {
@@ -89,7 +85,7 @@
       xAxis: {
         type: 'category',
         boundaryGap: false,
-        data: series.map((d) => formatTimeLabel(d.time, bucket)),
+        data: series.map((d) => formatTimestamp(d.time, labelStyle, prefs)),
         ...axisStyle,
       },
       yAxis: {
@@ -111,10 +107,16 @@
     const unsub = themeStore.subscribe(() => {
       if (chart) chart.setOption(buildOption(), true);
     });
+    // Axis labels are built inside buildOption(), not in markup, so the clock
+    // preference has to trigger a redraw explicitly.
+    const unsubPrefs = displayPreferences.subscribe(() => {
+      if (chart) chart.setOption(buildOption(), true);
+    });
 
     return () => {
       observer.disconnect();
       unsub();
+      unsubPrefs();
       chart?.dispose();
     };
   });
