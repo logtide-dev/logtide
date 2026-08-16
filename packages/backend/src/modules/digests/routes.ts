@@ -14,6 +14,7 @@ import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { auditLogService } from '../audit-log/service.js';
+import { DIGEST_SECTION_KEYS, mergeDigestSections } from '@logtide/shared';
 
 const organizationsService = new OrganizationsService();
 
@@ -25,12 +26,21 @@ const orgQuerySchema = z.object({
   organizationId: z.string().uuid('organizationId must be a valid uuid'),
 });
 
+// Generated from the shared catalog so the API cannot drift from it; strict so
+// unknown section keys are rejected instead of silently stored.
+const sectionsSchema = z
+  .object(Object.fromEntries(DIGEST_SECTION_KEYS.map((key) => [key, z.boolean().optional()])))
+  .strict()
+  .optional()
+  .nullable();
+
 const configBodySchema = z
   .object({
     frequency: z.enum(['daily', 'weekly']),
     deliveryHour: z.number().int().min(0).max(23),
     deliveryDayOfWeek: z.number().int().min(0).max(6).nullish(),
     enabled: z.boolean(),
+    sections: sectionsSchema,
   })
   .refine((body) => body.frequency !== 'weekly' || body.deliveryDayOfWeek != null, {
     message: 'deliveryDayOfWeek is required for weekly digests',
@@ -85,7 +95,11 @@ export async function digestsRoutes(fastify: FastifyInstance) {
       const config = await digestsService.getConfig(organizationId);
       const recipients = await digestsService.listRecipients(organizationId);
 
-      return reply.send({ config: config ?? null, recipients });
+      // sections is always the merged record so clients never duplicate defaults
+      return reply.send({
+        config: config ? { ...config, sections: mergeDigestSections(config.sections) } : null,
+        recipients,
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });
@@ -119,7 +133,10 @@ export async function digestsRoutes(fastify: FastifyInstance) {
         deliveryHour: body.deliveryHour,
         deliveryDayOfWeek: body.deliveryDayOfWeek,
         enabled: body.enabled,
+        sections: body.sections,
       });
+
+      const sections = mergeDigestSections(config.sections);
 
       await auditLogService.record({
         action: 'digest.config_updated',
@@ -129,10 +146,11 @@ export async function digestsRoutes(fastify: FastifyInstance) {
           frequency: config.frequency,
           deliveryHour: config.delivery_hour,
           enabled: config.enabled,
+          enabledSections: DIGEST_SECTION_KEYS.filter((key) => sections[key]),
         },
       });
 
-      return reply.send({ config });
+      return reply.send({ config: { ...config, sections } });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });

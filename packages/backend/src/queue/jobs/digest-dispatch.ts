@@ -17,6 +17,7 @@ import { createQueue } from '../connection.js';
 import { hub } from '@logtide/core';
 import type { IJob } from '../abstractions/types.js';
 import type { DigestJobPayload } from '../../modules/digests/scheduler.js';
+import { mergeDigestSections } from '@logtide/shared';
 
 interface DispatchableConfig {
   frequency: 'daily' | 'weekly';
@@ -61,6 +62,7 @@ export async function processDigestDispatch(_job: IJob<Record<string, never>>): 
       'delivery_hour',
       'delivery_day_of_week',
       'last_sent_at',
+      'sections',
     ])
     .where('enabled', '=', true)
     .execute();
@@ -94,6 +96,8 @@ export async function processDigestDispatch(_job: IJob<Record<string, never>>): 
         organizationId: config.organization_id,
         digestConfigId: config.id,
         frequency: config.frequency,
+        // Merged here so the generator never re-reads the config row
+        sections: mergeDigestSections(config.sections),
       },
       {
         // Hour-keyed so a duplicate dispatch within the same slot dedupes

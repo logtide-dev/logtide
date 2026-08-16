@@ -28,6 +28,7 @@ vi.mock('../../../database/connection.js', () => ({
 
 import { isConfigDue, processDigestDispatch } from '../../../queue/jobs/digest-dispatch.js';
 import { db } from '../../../database/connection.js';
+import { DIGEST_SECTION_DEFAULTS } from '@logtide/shared';
 
 function makeJob(): IJob<Record<string, never>> {
   return { id: 'dispatch_1', name: 'digest-dispatch', data: {} };
@@ -109,11 +110,40 @@ describe('processDigestDispatch', () => {
       organizationId: 'org_1',
       digestConfigId: 'conf_due',
       frequency: 'daily',
+      // a row without stored sections travels as the plain defaults
+      sections: DIGEST_SECTION_DEFAULTS,
     });
     // hour-keyed jobKey dedupes double enqueues within the same hour
     expect(options.jobKey).toBe('digest:conf_due:2026-07-13T08');
 
     expect(db.updateTable).toHaveBeenCalledWith('digest_configs');
+    vi.useRealTimers();
+  });
+
+  it('carries the stored section toggles merged over the defaults', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-13T08:00:30.000Z'));
+
+    mockExecute.mockResolvedValueOnce([
+      {
+        id: 'conf_due',
+        organization_id: 'org_1',
+        frequency: 'daily',
+        delivery_hour: 8,
+        delivery_day_of_week: null,
+        last_sent_at: null,
+        sections: { traces: true },
+      },
+    ]);
+    mockExecute.mockResolvedValue(undefined);
+
+    await processDigestDispatch(makeJob());
+
+    expect(mockAdd).toHaveBeenCalledTimes(1);
+    const [, payload] = mockAdd.mock.calls[0];
+    expect(payload.sections.traces).toBe(true);
+    expect(payload.sections.logVolume).toBe(true);
+    expect(payload.sections.teamActivity).toBe(false);
     vi.useRealTimers();
   });
 

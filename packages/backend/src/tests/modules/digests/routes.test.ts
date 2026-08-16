@@ -112,6 +112,23 @@ describe('Digests Routes', () => {
       expect(body.recipients[0].unsubscribe_token).toBeUndefined();
     });
 
+    it('returns merged defaults for a config saved without sections', async () => {
+      await insertConfig(testOrganization.id);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/digests/config?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const { sections } = JSON.parse(res.body).config;
+      expect(sections.logVolume).toBe(true);
+      expect(sections.uptime).toBe(true);
+      expect(sections.traces).toBe(false);
+      expect(sections.teamActivity).toBe(false);
+    });
+
     it('rejects non-members', async () => {
       const outsider = await createTestUser({ email: 'outsider@example.com' });
       const outsiderToken = await createTestSession(outsider.id);
@@ -189,6 +206,86 @@ describe('Digests Routes', () => {
         url: `/api/v1/digests/config?organizationId=${testOrganization.id}`,
         headers: { Authorization: `Bearer ${authToken}` },
         payload: { frequency: 'daily', deliveryHour: 24, enabled: true },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('accepts a partial sections object and returns the merged record', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/digests/config?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { frequency: 'daily', deliveryHour: 8, enabled: true, sections: { traces: true } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).config.sections.traces).toBe(true);
+
+      const getRes = await app.inject({
+        method: 'GET',
+        url: `/api/v1/digests/config?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const cfg = JSON.parse(getRes.body).config;
+      expect(cfg.sections.traces).toBe(true);
+      expect(cfg.sections.logVolume).toBe(true);
+      expect(cfg.sections.teamActivity).toBe(false);
+
+      // only the partial is persisted, defaults stay code-side
+      const row = await db
+        .selectFrom('digest_configs')
+        .select(['sections'])
+        .where('organization_id', '=', testOrganization.id)
+        .executeTakeFirstOrThrow();
+      expect(row.sections).toEqual({ traces: true });
+    });
+
+    it('keeps stored sections when a later save omits them', async () => {
+      await insertConfig(testOrganization.id, { sections: { traces: true } });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/digests/config?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { frequency: 'daily', deliveryHour: 10, enabled: true },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).config.sections.traces).toBe(true);
+    });
+
+    it('resets to defaults when sections is explicitly null', async () => {
+      await insertConfig(testOrganization.id, { sections: { traces: true } });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/digests/config?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { frequency: 'daily', deliveryHour: 10, enabled: true, sections: null },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body).config.sections.traces).toBe(false);
+    });
+
+    it('rejects unknown section keys', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/digests/config?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { frequency: 'daily', deliveryHour: 8, enabled: true, sections: { bogus: true } },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects non-boolean section values', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/digests/config?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { frequency: 'daily', deliveryHour: 8, enabled: true, sections: { traces: 'yes' } },
       });
 
       expect(res.statusCode).toBe(400);

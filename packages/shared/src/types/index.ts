@@ -16,6 +16,9 @@ export * from './notification-channel.js';
 // Re-export webhook delivery types
 export * from './webhook-delivery.js';
 
+// Re-export digest section catalog
+export * from './digest.js';
+
 // Re-export custom dashboard types
 export * from './dashboard.js';
 export * from './dashboard-migrations.js';

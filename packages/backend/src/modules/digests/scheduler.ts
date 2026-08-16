@@ -16,11 +16,14 @@
 
 import { getCronRegistry } from '../../queue/queue-factory.js';
 import { hub } from '@logtide/core';
+import type { DigestSections } from '@logtide/shared';
 
 export interface DigestJobPayload {
   organizationId: string;
   digestConfigId: string;
   frequency: 'daily' | 'weekly';
+  /** Merged section toggles; absent on jobs enqueued before this shipped. */
+  sections?: DigestSections;
 }
 
 export const DIGEST_DISPATCH_CRON = '0 * * * *'; // every hour on the hour

@@ -8,12 +8,15 @@
 import crypto from 'crypto';
 import { db } from '../../database/connection.js';
 import type { DigestFrequency } from '../../database/types.js';
+import type { DigestSections } from '@logtide/shared';
 
 export interface DigestConfigInput {
   frequency: DigestFrequency;
   deliveryHour: number;
   deliveryDayOfWeek?: number | null;
   enabled: boolean;
+  /** Partial section map; undefined leaves the stored value alone, null resets to defaults. */
+  sections?: Partial<DigestSections> | null;
 }
 
 export class DigestsService {
@@ -27,6 +30,7 @@ export class DigestsService {
         'delivery_day_of_week',
         'enabled',
         'last_sent_at',
+        'sections',
         'created_at',
         'updated_at',
       ])
@@ -41,6 +45,8 @@ export class DigestsService {
       delivery_hour: input.deliveryHour,
       delivery_day_of_week: input.frequency === 'weekly' ? input.deliveryDayOfWeek ?? null : null,
       enabled: input.enabled,
+      // The partial is stored as given; defaults live in code, not in the row
+      sections: input.sections ?? null,
     };
 
     return db
@@ -52,6 +58,9 @@ export class DigestsService {
           delivery_hour: values.delivery_hour,
           delivery_day_of_week: values.delivery_day_of_week,
           enabled: values.enabled,
+          // An omitted sections field keeps whatever is stored; an explicit
+          // null resets the organization to the code-side defaults.
+          ...(input.sections !== undefined ? { sections: input.sections } : {}),
           updated_at: new Date(),
         })
       )
@@ -62,6 +71,7 @@ export class DigestsService {
         'delivery_day_of_week',
         'enabled',
         'last_sent_at',
+        'sections',
         'created_at',
         'updated_at',
       ])
