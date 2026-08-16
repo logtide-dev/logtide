@@ -8,6 +8,10 @@ vi.mock('../../../database/reservoir.js', () => ({
     count: vi.fn(),
     topValues: vi.fn(),
     aggregate: vi.fn(),
+    getSpanTimeseries: vi.fn(),
+    getServiceHealthStats: vi.fn(),
+    querySpans: vi.fn(),
+    queryMetrics: vi.fn(),
   },
 }));
 
@@ -73,6 +77,14 @@ describe('DigestGeneratorService', () => {
     mockReservoir.count.mockReset().mockResolvedValue({ count: 0 });
     mockReservoir.topValues.mockReset().mockResolvedValue({ values: [] });
     mockReservoir.aggregate.mockReset().mockResolvedValue({ timeseries: [], total: 0 });
+    mockReservoir.getSpanTimeseries.mockReset().mockResolvedValue([]);
+    mockReservoir.getServiceHealthStats.mockReset().mockResolvedValue([]);
+    mockReservoir.querySpans
+      .mockReset()
+      .mockResolvedValue({ spans: [], total: 0, hasMore: false, limit: 5, offset: 0 });
+    mockReservoir.queryMetrics
+      .mockReset()
+      .mockResolvedValue({ metrics: [], total: 0, hasMore: false, limit: 1, offset: 0 });
     mockSendMail.mockReset().mockResolvedValue({ messageId: 'test-message-id' });
 
     generator = new DigestGeneratorService();
@@ -699,6 +711,256 @@ describe('DigestGeneratorService', () => {
       });
 
       expect(report.alerts).toBeUndefined();
+    });
+  });
+
+  describe('traces and metrics sections', () => {
+    /**
+     * Both sections talk to the reservoir only, so they never move the shared
+     * fluent db mock's call cursor.
+     */
+    it('computes traces section when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }, { id: 'project_2' }]); // projects
+
+      mockReservoir.getSpanTimeseries.mockResolvedValueOnce([
+        {
+          time: new Date('2026-08-15T10:00:00.000Z'),
+          spanCount: 300,
+          errorCount: 15,
+          p50: 10,
+          p95: 100,
+          p99: 200,
+        },
+        {
+          time: new Date('2026-08-15T11:00:00.000Z'),
+          spanCount: 200,
+          errorCount: 10,
+          p50: 12,
+          p95: 110,
+          p99: 210,
+        },
+      ]); // current window
+      mockReservoir.getSpanTimeseries.mockResolvedValueOnce([
+        {
+          time: new Date('2026-08-14T10:00:00.000Z'),
+          spanCount: 400,
+          errorCount: 40,
+          p50: 11,
+          p95: 105,
+          p99: 205,
+        },
+      ]); // previous window
+
+      // Same service seen in both projects: calls and errors sum, p95 is the max
+      mockReservoir.getServiceHealthStats.mockResolvedValueOnce([
+        { serviceName: 'api', totalCalls: 300, totalErrors: 16, avgLatencyMs: 20, p95LatencyMs: 120 },
+      ]); // project_1
+      mockReservoir.getServiceHealthStats.mockResolvedValueOnce([
+        { serviceName: 'api', totalCalls: 200, totalErrors: 5, avgLatencyMs: 30, p95LatencyMs: 180 },
+        { serviceName: 'web', totalCalls: 100, totalErrors: 3, avgLatencyMs: 5, p95LatencyMs: 40 },
+      ]); // project_2
+
+      mockReservoir.querySpans.mockResolvedValueOnce({
+        spans: [
+          { serviceName: 'api', operationName: 'GET /users', durationMs: 900 },
+          { serviceName: 'web', operationName: 'render', durationMs: 500 },
+        ],
+        total: 2,
+        hasMore: false,
+        limit: 5,
+        offset: 0,
+      });
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        traces: true,
+      });
+
+      expect(report.traces).toEqual({
+        spanCount: 500,
+        previousSpanCount: 400,
+        trend: '+100 (+25.0%)',
+        errorSpanCount: 25,
+        services: [
+          { service: 'api', calls: 500, errorRatePct: 4.2, p95Ms: 180 },
+          { service: 'web', calls: 100, errorRatePct: 3, p95Ms: 40 },
+        ],
+        slowestSpans: [
+          { service: 'api', operation: 'GET /users', durationMs: 900 },
+          { service: 'web', operation: 'render', durationMs: 500 },
+        ],
+      });
+
+      const timeseriesCall = mockReservoir.getSpanTimeseries.mock.calls[0][0];
+      expect(timeseriesCall.projectIds).toEqual(['project_1', 'project_2']);
+      expect(timeseriesCall.bucket).toBe('hour');
+
+      // getServiceHealthStats is single-project: one call per project
+      expect(mockReservoir.getServiceHealthStats).toHaveBeenCalledTimes(2);
+      expect(mockReservoir.getServiceHealthStats.mock.calls[0][0]).toBe('project_1');
+      expect(mockReservoir.getServiceHealthStats.mock.calls[1][0]).toBe('project_2');
+
+      const spanCall = mockReservoir.querySpans.mock.calls[0][0];
+      expect(spanCall.projectId).toEqual(['project_1', 'project_2']);
+      expect(spanCall.sortBy).toBe('duration_ms');
+      expect(spanCall.sortOrder).toBe('desc');
+      expect(spanCall.limit).toBe(5);
+    });
+
+    it('buckets weekly span volume by day', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      mockReservoir.getSpanTimeseries.mockResolvedValue([
+        {
+          time: new Date('2026-08-15T00:00:00.000Z'),
+          spanCount: 10,
+          errorCount: 1,
+          p50: null,
+          p95: null,
+          p99: null,
+        },
+      ]);
+
+      await generator.buildReportData('org_1', 'Test Org', 'weekly', {
+        ...DIGEST_SECTION_DEFAULTS,
+        traces: true,
+      });
+
+      expect(mockReservoir.getSpanTimeseries.mock.calls[0][0].bucket).toBe('day');
+      expect(mockReservoir.getSpanTimeseries.mock.calls[1][0].bucket).toBe('day');
+    });
+
+    it('keeps only the top 5 services by calls', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      mockReservoir.getSpanTimeseries.mockResolvedValueOnce([
+        {
+          time: new Date('2026-08-15T10:00:00.000Z'),
+          spanCount: 60,
+          errorCount: 0,
+          p50: null,
+          p95: null,
+          p99: null,
+        },
+      ]);
+
+      mockReservoir.getServiceHealthStats.mockResolvedValueOnce(
+        ['a', 'b', 'c', 'd', 'e', 'f'].map((name, i) => ({
+          serviceName: name,
+          totalCalls: (i + 1) * 10,
+          totalErrors: 0,
+          avgLatencyMs: 1,
+          p95LatencyMs: null,
+        }))
+      );
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        traces: true,
+      });
+
+      expect(report.traces?.services.map((s) => s.service)).toEqual(['f', 'e', 'd', 'c', 'b']);
+      expect(report.traces?.services[0]).toEqual({
+        service: 'f',
+        calls: 60,
+        errorRatePct: 0,
+        p95Ms: null,
+      });
+    });
+
+    it('returns undefined traces when no spans in either window', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        traces: true,
+      });
+
+      expect(report.traces).toBeUndefined();
+      // Nothing to rank: the follow-up queries never run
+      expect(mockReservoir.getServiceHealthStats).not.toHaveBeenCalled();
+      expect(mockReservoir.querySpans).not.toHaveBeenCalled();
+    });
+
+    it('returns undefined traces when the org has no projects', async () => {
+      mockDb.execute.mockResolvedValueOnce([]); // no projects
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        traces: true,
+        metrics: true,
+      });
+
+      expect(report.traces).toBeUndefined();
+      expect(report.metrics).toBeUndefined();
+      expect(mockReservoir.getSpanTimeseries).not.toHaveBeenCalled();
+      expect(mockReservoir.queryMetrics).not.toHaveBeenCalled();
+    });
+
+    it('traces disabled by default issues no span queries', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.traces).toBeUndefined();
+      expect(mockReservoir.getSpanTimeseries).not.toHaveBeenCalled();
+      expect(mockReservoir.getServiceHealthStats).not.toHaveBeenCalled();
+      expect(mockReservoir.querySpans).not.toHaveBeenCalled();
+    });
+
+    it('computes metrics section when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      mockReservoir.queryMetrics.mockResolvedValueOnce({
+        metrics: [],
+        total: 1200,
+        hasMore: true,
+        limit: 1,
+        offset: 0,
+      });
+      mockReservoir.queryMetrics.mockResolvedValueOnce({
+        metrics: [],
+        total: 1000,
+        hasMore: true,
+        limit: 1,
+        offset: 0,
+      });
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        metrics: true,
+      });
+
+      expect(report.metrics).toEqual({
+        datapoints: 1200,
+        previousDatapoints: 1000,
+        trend: '+200 (+20.0%)',
+      });
+
+      const metricCall = mockReservoir.queryMetrics.mock.calls[0][0];
+      expect(metricCall.projectId).toEqual(['project_1']);
+      expect(metricCall.limit).toBe(1);
+      expect(mockReservoir.queryMetrics).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns undefined metrics when both windows are empty', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        metrics: true,
+      });
+
+      expect(report.metrics).toBeUndefined();
+    });
+
+    it('metrics disabled by default issues no queryMetrics call', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.metrics).toBeUndefined();
+      expect(mockReservoir.queryMetrics).not.toHaveBeenCalled();
     });
   });
 });

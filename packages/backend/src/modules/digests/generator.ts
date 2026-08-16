@@ -63,6 +63,21 @@ export interface DigestReportData {
     trend: string;
     topRules: Array<{ name: string; count: number }>;
   };
+  traces?: {
+    spanCount: number;
+    previousSpanCount: number;
+    trend: string;
+    errorSpanCount: number;
+    /** Top 5 by calls desc */
+    services: Array<{ service: string; calls: number; errorRatePct: number; p95Ms: number | null }>;
+    /** Top 5 slowest spans in the period */
+    slowestSpans: Array<{ service: string; operation: string; durationMs: number }>;
+  };
+  metrics?: {
+    datapoints: number;
+    previousDatapoints: number;
+    trend: string;
+  };
 }
 
 interface DigestRecipient {
@@ -189,6 +204,12 @@ export class DigestGeneratorService {
     const alerts = sections.alerts
       ? await this.calculateAlertsSummary(organizationId, period)
       : undefined;
+    const traces = sections.traces
+      ? await this.calculateTracesSummary(projectIds, period, frequency)
+      : undefined;
+    const metrics = sections.metrics
+      ? await this.calculateMetricsSummary(projectIds, period)
+      : undefined;
 
     return {
       organizationName,
@@ -202,6 +223,8 @@ export class DigestGeneratorService {
       logBreakdown,
       topErrorMessages,
       alerts,
+      traces,
+      metrics,
     };
   }
 
@@ -606,6 +629,146 @@ export class DigestGeneratorService {
       previousTotal,
       trend: this.calculateTrend(total, previousTotal),
       topRules: topRules.map((r) => ({ name: r.name, count: Number(r.count) })),
+    };
+  }
+
+  /**
+   * Span volume and error spans for both windows, the busiest services and the
+   * slowest spans of the period. Engine-agnostic through reservoir.
+   */
+  private async calculateTracesSummary(
+    projectIds: string[],
+    period: Period,
+    frequency: 'daily' | 'weekly'
+  ): Promise<DigestReportData['traces']> {
+    if (projectIds.length === 0) {
+      return undefined;
+    }
+
+    // Hourly buckets over 24h, daily over 7d: either way the row count stays
+    // bounded (24 or 7) and we only ever sum them.
+    const bucket = frequency === 'weekly' ? 'day' : 'hour';
+
+    const currentBuckets = await reservoir.getSpanTimeseries({
+      projectIds,
+      from: period.from,
+      to: period.to,
+      bucket,
+    });
+
+    const previousBuckets = await reservoir.getSpanTimeseries({
+      projectIds,
+      from: period.previousFrom,
+      to: period.previousTo,
+      bucket,
+    });
+
+    const spanCount = currentBuckets.reduce((sum, b) => sum + b.spanCount, 0);
+    const previousSpanCount = previousBuckets.reduce((sum, b) => sum + b.spanCount, 0);
+
+    // No traces in either window: skip the ranking queries and the section
+    if (spanCount === 0 && previousSpanCount === 0) {
+      return undefined;
+    }
+
+    const errorSpanCount = currentBuckets.reduce((sum, b) => sum + b.errorCount, 0);
+
+    // getServiceHealthStats is single-project by design: query each project and
+    // merge by service name.
+    const byService = new Map<string, { calls: number; errors: number; p95Ms: number | null }>();
+
+    for (const projectId of projectIds) {
+      const stats = await reservoir.getServiceHealthStats(projectId, period.from, period.to);
+
+      for (const stat of stats) {
+        const entry = byService.get(stat.serviceName) ?? { calls: 0, errors: 0, p95Ms: null };
+        entry.calls += stat.totalCalls;
+        entry.errors += stat.totalErrors;
+        // Worst-project p95, NOT a merged percentile: percentiles cannot be
+        // combined from per-project values without the raw distribution, so the
+        // digest reports the worst project's p95 for the service.
+        if (
+          stat.p95LatencyMs !== null &&
+          (entry.p95Ms === null || stat.p95LatencyMs > entry.p95Ms)
+        ) {
+          entry.p95Ms = stat.p95LatencyMs;
+        }
+        byService.set(stat.serviceName, entry);
+      }
+    }
+
+    const services = Array.from(byService.entries())
+      .map(([service, entry]) => ({
+        service,
+        calls: entry.calls,
+        errorRatePct: this.errorRate(entry.errors, entry.calls),
+        p95Ms: entry.p95Ms,
+      }))
+      .sort((a, b) => b.calls - a.calls)
+      .slice(0, 5);
+
+    // NOTE: the MongoDB engine only sorts spans by start_time, so on that engine
+    // this is the 5 most recent spans rather than the 5 slowest.
+    const slowest = await reservoir.querySpans({
+      projectId: projectIds,
+      from: period.from,
+      to: period.to,
+      toExclusive: true,
+      sortBy: 'duration_ms',
+      sortOrder: 'desc',
+      limit: 5,
+    });
+
+    return {
+      spanCount,
+      previousSpanCount,
+      trend: this.calculateTrend(spanCount, previousSpanCount),
+      errorSpanCount,
+      services,
+      slowestSpans: slowest.spans.map((s) => ({
+        service: s.serviceName,
+        operation: s.operationName,
+        durationMs: s.durationMs,
+      })),
+    };
+  }
+
+  /**
+   * Metric datapoints ingested in the period vs the previous one. Only the
+   * result total is needed, so both queries ask for a single row.
+   */
+  private async calculateMetricsSummary(
+    projectIds: string[],
+    period: Period
+  ): Promise<DigestReportData['metrics']> {
+    if (projectIds.length === 0) {
+      return undefined;
+    }
+
+    const current = await reservoir.queryMetrics({
+      projectId: projectIds,
+      from: period.from,
+      to: period.to,
+      toExclusive: true,
+      limit: 1,
+    });
+
+    const previous = await reservoir.queryMetrics({
+      projectId: projectIds,
+      from: period.previousFrom,
+      to: period.previousTo,
+      toExclusive: true,
+      limit: 1,
+    });
+
+    if (current.total === 0 && previous.total === 0) {
+      return undefined;
+    }
+
+    return {
+      datapoints: current.total,
+      previousDatapoints: previous.total,
+      trend: this.calculateTrend(current.total, previous.total),
     };
   }
 
