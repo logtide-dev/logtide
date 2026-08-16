@@ -10,6 +10,8 @@ import nodemailer from 'nodemailer';
 import { db } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
 import { hub } from '@logtide/core';
+import { DIGEST_SECTION_DEFAULTS, LOG_LEVELS } from '@logtide/shared';
+import type { DigestSections } from '@logtide/shared';
 import { config } from '../../config/index.js';
 import { generateDigestEmail } from '../../lib/email-templates.js';
 import type { DigestJobPayload } from './scheduler.js';
@@ -45,6 +47,22 @@ export interface DigestReportData {
     overallUptimePct: number;
     worstMonitors: Array<{ name: string; uptimePct: number }>;
   } | null;
+  // Optional sections: undefined means "disabled OR no data", and the email
+  // skips them entirely (no empty-state lines, unlike the five sections above).
+  logBreakdown?: {
+    levels: Array<{ level: string; current: number; previous: number }>;
+    errorRatePct: number;
+    previousErrorRatePct: number;
+    /** Weekly digests only */
+    daily?: Array<{ date: string; count: number }>;
+  };
+  topErrorMessages?: Array<{ message: string; count: number }>;
+  alerts?: {
+    total: number;
+    previousTotal: number;
+    trend: string;
+    topRules: Array<{ name: string; count: number }>;
+  };
 }
 
 interface DigestRecipient {
@@ -115,7 +133,13 @@ export class DigestGeneratorService {
         return;
       }
 
-      const report = await this.buildReportData(organizationId, organization.name, frequency);
+      // Jobs enqueued before section toggles shipped carry no flags: use defaults.
+      const report = await this.buildReportData(
+        organizationId,
+        organization.name,
+        frequency,
+        payload.sections ?? DIGEST_SECTION_DEFAULTS
+      );
 
       await this.sendDigestEmails(recipients, report);
 
@@ -127,13 +151,19 @@ export class DigestGeneratorService {
   }
 
   /**
-   * Compute all report sections for the period. Sections run sequentially:
-   * this is a background cron path where simplicity beats latency.
+   * Compute the enabled report sections for the period. Sections run
+   * sequentially: this is a background cron path where simplicity beats
+   * latency. A disabled section costs zero queries.
+   *
+   * The five original sections always run (they are non-optional fields of
+   * DigestReportData); the optional ones are computed after them, in the
+   * catalog order of DIGEST_SECTION_KEYS, so the order stays unambiguous.
    */
   async buildReportData(
     organizationId: string,
     organizationName: string,
-    frequency: 'daily' | 'weekly'
+    frequency: 'daily' | 'weekly',
+    sections: DigestSections = DIGEST_SECTION_DEFAULTS
   ): Promise<DigestReportData> {
     const period = this.buildPeriod(frequency);
 
@@ -150,6 +180,16 @@ export class DigestGeneratorService {
     const security = await this.calculateSecuritySummary(organizationId, period);
     const uptime = await this.calculateUptimeSummary(organizationId, period);
 
+    const logBreakdown = sections.logBreakdown
+      ? await this.calculateLogBreakdown(projectIds, period, frequency)
+      : undefined;
+    const topErrorMessages = sections.topErrorMessages
+      ? await this.calculateTopErrorMessages(projectIds, period)
+      : undefined;
+    const alerts = sections.alerts
+      ? await this.calculateAlertsSummary(organizationId, period)
+      : undefined;
+
     return {
       organizationName,
       frequency,
@@ -159,6 +199,9 @@ export class DigestGeneratorService {
       newErrorGroups,
       security,
       uptime,
+      logBreakdown,
+      topErrorMessages,
+      alerts,
     };
   }
 
@@ -386,6 +429,183 @@ export class DigestGeneratorService {
       monitorCount: monitors.length,
       overallUptimePct,
       worstMonitors: perMonitor.slice(0, 5),
+    };
+  }
+
+  /**
+   * Per-level counts for both windows plus the error rate, and for weekly
+   * digests a per-day volume table. Engine-agnostic through reservoir.
+   * Levels outside LOG_LEVELS cannot exist (the level column is constrained on
+   * every engine), so the canonical five are the whole population here.
+   */
+  private async calculateLogBreakdown(
+    projectIds: string[],
+    period: Period,
+    frequency: 'daily' | 'weekly'
+  ): Promise<DigestReportData['logBreakdown']> {
+    if (projectIds.length === 0) {
+      return undefined;
+    }
+
+    const current = await reservoir.topValues({
+      field: 'level',
+      projectId: projectIds,
+      from: period.from,
+      to: period.to,
+      toExclusive: true,
+      limit: 10,
+    });
+
+    const previous = await reservoir.topValues({
+      field: 'level',
+      projectId: projectIds,
+      from: period.previousFrom,
+      to: period.previousTo,
+      toExclusive: true,
+      limit: 10,
+    });
+
+    const currentByLevel = new Map(current.values.map((v) => [v.value, v.count]));
+    const previousByLevel = new Map(previous.values.map((v) => [v.value, v.count]));
+
+    const levels = LOG_LEVELS.map((level) => ({
+      level: level as string, // widened: the report shape is engine-agnostic
+      current: currentByLevel.get(level) ?? 0,
+      previous: previousByLevel.get(level) ?? 0,
+    }));
+
+    const currentTotal = levels.reduce((sum, l) => sum + l.current, 0);
+    const previousTotal = levels.reduce((sum, l) => sum + l.previous, 0);
+
+    if (currentTotal === 0 && previousTotal === 0) {
+      return undefined;
+    }
+
+    const errorRatePct = this.errorRate(
+      levels.reduce((sum, l) => sum + (this.isErrorLevel(l.level) ? l.current : 0), 0),
+      currentTotal
+    );
+    const previousErrorRatePct = this.errorRate(
+      levels.reduce((sum, l) => sum + (this.isErrorLevel(l.level) ? l.previous : 0), 0),
+      previousTotal
+    );
+
+    if (frequency !== 'weekly') {
+      return { levels, errorRatePct, previousErrorRatePct };
+    }
+
+    const aggregated = await reservoir.aggregate({
+      projectId: projectIds,
+      from: period.from,
+      to: period.to,
+      interval: '1d',
+    });
+
+    const daily = aggregated.timeseries.map((bucket) => ({
+      date: new Date(bucket.bucket).toISOString().slice(0, 10),
+      count: bucket.total,
+    }));
+
+    return {
+      levels,
+      errorRatePct,
+      previousErrorRatePct,
+      ...(daily.length > 0 ? { daily } : {}),
+    };
+  }
+
+  private isErrorLevel(level: string): boolean {
+    return (ERROR_LEVELS as readonly string[]).includes(level);
+  }
+
+  /** Share of error+critical logs, one decimal. */
+  private errorRate(errorCount: number, total: number): number {
+    if (total === 0) {
+      return 0;
+    }
+
+    return Math.round((errorCount / total) * 1000) / 10;
+  }
+
+  /**
+   * Top 5 error/critical log messages in the period.
+   */
+  private async calculateTopErrorMessages(
+    projectIds: string[],
+    period: Period
+  ): Promise<DigestReportData['topErrorMessages']> {
+    if (projectIds.length === 0) {
+      return undefined;
+    }
+
+    const result = await reservoir.topValues({
+      field: 'message',
+      projectId: projectIds,
+      level: [...ERROR_LEVELS],
+      from: period.from,
+      to: period.to,
+      limit: 5,
+    });
+
+    if (result.values.length === 0) {
+      return undefined;
+    }
+
+    return result.values.map((v) => ({ message: v.value, count: v.count }));
+  }
+
+  /**
+   * Alert triggers in the period vs the previous one, plus the rules that
+   * fired most. alert_history carries no organization_id, so tenant scoping
+   * goes through the alert_rules join.
+   */
+  private async calculateAlertsSummary(
+    organizationId: string,
+    period: Period
+  ): Promise<DigestReportData['alerts']> {
+    const currentRow = await db
+      .selectFrom('alert_history')
+      .innerJoin('alert_rules', 'alert_rules.id', 'alert_history.rule_id')
+      .select((eb) => eb.fn.countAll<number>().as('count'))
+      .where('alert_rules.organization_id', '=', organizationId)
+      .where('alert_history.triggered_at', '>=', period.from)
+      .where('alert_history.triggered_at', '<', period.to)
+      .executeTakeFirst();
+
+    const previousRow = await db
+      .selectFrom('alert_history')
+      .innerJoin('alert_rules', 'alert_rules.id', 'alert_history.rule_id')
+      .select((eb) => eb.fn.countAll<number>().as('count'))
+      .where('alert_rules.organization_id', '=', organizationId)
+      .where('alert_history.triggered_at', '>=', period.previousFrom)
+      .where('alert_history.triggered_at', '<', period.previousTo)
+      .executeTakeFirst();
+
+    const total = Number(currentRow?.count ?? 0);
+    const previousTotal = Number(previousRow?.count ?? 0);
+
+    // Nothing fired in either window: skip the ranking query and the section
+    if (total === 0 && previousTotal === 0) {
+      return undefined;
+    }
+
+    const topRules = await db
+      .selectFrom('alert_history')
+      .innerJoin('alert_rules', 'alert_rules.id', 'alert_history.rule_id')
+      .select((eb) => ['alert_rules.name', eb.fn.countAll<number>().as('count')] as const)
+      .where('alert_rules.organization_id', '=', organizationId)
+      .where('alert_history.triggered_at', '>=', period.from)
+      .where('alert_history.triggered_at', '<', period.to)
+      .groupBy('alert_rules.name')
+      .orderBy('count', 'desc')
+      .limit(5)
+      .execute();
+
+    return {
+      total,
+      previousTotal,
+      trend: this.calculateTrend(total, previousTotal),
+      topRules: topRules.map((r) => ({ name: r.name, count: Number(r.count) })),
     };
   }
 

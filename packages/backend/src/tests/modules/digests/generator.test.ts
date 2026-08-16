@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { DIGEST_SECTION_DEFAULTS } from '@logtide/shared';
 import { DigestGeneratorService } from '../../../modules/digests/generator.js';
 import type { DigestJobPayload } from '../../../modules/digests/scheduler.js';
 
@@ -6,6 +7,7 @@ vi.mock('../../../database/reservoir.js', () => ({
   reservoir: {
     count: vi.fn(),
     topValues: vi.fn(),
+    aggregate: vi.fn(),
   },
 }));
 
@@ -18,6 +20,7 @@ vi.mock('@logtide/core', () => ({
 vi.mock('../../../database/connection.js', () => ({
     db: {
       selectFrom: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       groupBy: vi.fn().mockReturnThis(),
@@ -69,6 +72,7 @@ describe('DigestGeneratorService', () => {
     mockDb.executeTakeFirst.mockReset().mockResolvedValue({ count: 0 });
     mockReservoir.count.mockReset().mockResolvedValue({ count: 0 });
     mockReservoir.topValues.mockReset().mockResolvedValue({ values: [] });
+    mockReservoir.aggregate.mockReset().mockResolvedValue({ timeseries: [], total: 0 });
     mockSendMail.mockReset().mockResolvedValue({ messageId: 'test-message-id' });
 
     generator = new DigestGeneratorService();
@@ -492,6 +496,209 @@ describe('DigestGeneratorService', () => {
       mockDb.execute.mockResolvedValueOnce([]);
       const weekly = await generator.buildReportData('org_1', 'Test Org', 'weekly');
       expect(weekly.periodLabel).toBe('last 7 days');
+    });
+  });
+
+  describe('optional sections', () => {
+    /**
+     * The optional sections are computed AFTER the five original ones, in
+     * catalog order (logBreakdown, topErrorMessages, alerts), so their mocked
+     * responses queue behind the existing sections' ones.
+     */
+    it('skips disabled sections without issuing their queries', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      // top error services current + previous (the only two topValues calls)
+      mockReservoir.topValues.mockResolvedValueOnce({ values: [{ value: 'api', count: 3 }] });
+      mockReservoir.topValues.mockResolvedValueOnce({ values: [] });
+
+      const report = await generator.buildReportData(
+        'org_1',
+        'Test Org',
+        'daily',
+        DIGEST_SECTION_DEFAULTS
+      );
+
+      expect(report.logBreakdown).toBeUndefined();
+      expect(report.topErrorMessages).toBeUndefined();
+      expect(report.alerts).toBeUndefined();
+      expect(mockReservoir.topValues).toHaveBeenCalledTimes(2);
+      expect(mockReservoir.aggregate).not.toHaveBeenCalled();
+    });
+
+    it('defaults to the section defaults when no flags are passed', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.logBreakdown).toBeUndefined();
+      expect(report.topErrorMessages).toBeUndefined();
+      expect(report.alerts).toBeUndefined();
+    });
+
+    it('computes logBreakdown when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      mockReservoir.topValues.mockResolvedValueOnce({ values: [] }); // top error services
+      mockReservoir.topValues.mockResolvedValueOnce({
+        values: [
+          { value: 'info', count: 80 },
+          { value: 'error', count: 20 },
+        ],
+      }); // levels, current window
+      mockReservoir.topValues.mockResolvedValueOnce({
+        values: [{ value: 'info', count: 100 }],
+      }); // levels, previous window
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        logBreakdown: true,
+      });
+
+      expect(report.logBreakdown).toEqual({
+        levels: [
+          { level: 'debug', current: 0, previous: 0 },
+          { level: 'info', current: 80, previous: 100 },
+          { level: 'warn', current: 0, previous: 0 },
+          { level: 'error', current: 20, previous: 0 },
+          { level: 'critical', current: 0, previous: 0 },
+        ],
+        errorRatePct: 20,
+        previousErrorRatePct: 0,
+      });
+
+      const levelCall = mockReservoir.topValues.mock.calls[1][0];
+      expect(levelCall.field).toBe('level');
+      expect(levelCall.projectId).toEqual(['project_1']);
+      expect(levelCall.toExclusive).toBe(true);
+
+      // Daily digests never build the per-day table
+      expect(mockReservoir.aggregate).not.toHaveBeenCalled();
+    });
+
+    it('returns undefined logBreakdown when both windows are empty', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        logBreakdown: true,
+      });
+
+      expect(report.logBreakdown).toBeUndefined();
+    });
+
+    it('adds the per-day table for weekly logBreakdown', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      mockReservoir.topValues.mockResolvedValueOnce({ values: [] }); // top error services
+      mockReservoir.topValues.mockResolvedValueOnce({
+        values: [{ value: 'info', count: 10 }],
+      });
+      mockReservoir.topValues.mockResolvedValueOnce({ values: [] });
+
+      mockReservoir.aggregate.mockResolvedValueOnce({
+        timeseries: [
+          { bucket: new Date('2026-08-10T00:00:00.000Z'), total: 4 },
+          { bucket: new Date('2026-08-11T00:00:00.000Z'), total: 6 },
+        ],
+        total: 10,
+      });
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'weekly', {
+        ...DIGEST_SECTION_DEFAULTS,
+        logBreakdown: true,
+      });
+
+      expect(report.logBreakdown?.daily).toEqual([
+        { date: '2026-08-10', count: 4 },
+        { date: '2026-08-11', count: 6 },
+      ]);
+
+      const aggregateCall = mockReservoir.aggregate.mock.calls[0][0];
+      expect(aggregateCall.interval).toBe('1d');
+      expect(aggregateCall.projectId).toEqual(['project_1']);
+    });
+
+    it('computes topErrorMessages when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      mockReservoir.topValues.mockResolvedValueOnce({ values: [] }); // top error services
+      mockReservoir.topValues.mockResolvedValueOnce({
+        values: [
+          { value: 'db timeout', count: 12 },
+          { value: 'null pointer', count: 3 },
+        ],
+      });
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        topErrorMessages: true,
+      });
+
+      expect(report.topErrorMessages).toEqual([
+        { message: 'db timeout', count: 12 },
+        { message: 'null pointer', count: 3 },
+      ]);
+
+      const messageCall = mockReservoir.topValues.mock.calls[1][0];
+      expect(messageCall.field).toBe('message');
+      expect(messageCall.level).toEqual(['error', 'critical']);
+      expect(messageCall.limit).toBe(5);
+    });
+
+    it('returns undefined topErrorMessages when there are none', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        topErrorMessages: true,
+      });
+
+      expect(report.topErrorMessages).toBeUndefined();
+    });
+
+    it('computes alerts section when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+      mockDb.execute.mockResolvedValueOnce([]); // error_groups
+      mockDb.execute.mockResolvedValueOnce([]); // security top rules
+      mockDb.execute.mockResolvedValueOnce([]); // monitors (uptime null)
+      mockDb.execute.mockResolvedValueOnce([{ name: 'High error rate', count: 5 }]); // alert rules
+
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 0 }); // detections total
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 0 }); // open incidents
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 7 }); // alerts current
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 3 }); // alerts previous
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        alerts: true,
+      });
+
+      expect(report.alerts).toEqual({
+        total: 7,
+        previousTotal: 3,
+        trend: '+4 (+133.3%)',
+        topRules: [{ name: 'High error rate', count: 5 }],
+      });
+
+      // Org scoping goes through the alert_rules join, alert_history has no org column
+      expect(mockDb.innerJoin).toHaveBeenCalledWith(
+        'alert_rules',
+        'alert_rules.id',
+        'alert_history.rule_id'
+      );
+      expect(mockDb.where).toHaveBeenCalledWith('alert_rules.organization_id', '=', 'org_1');
+    });
+
+    it('returns undefined alerts when no triggers in either window', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        alerts: true,
+      });
+
+      expect(report.alerts).toBeUndefined();
     });
   });
 });
