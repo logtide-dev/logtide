@@ -394,7 +394,7 @@
       <CardContent class="space-y-4">
         {#if !config}
           <p class="text-sm text-muted-foreground">
-            Save the schedule first, then add recipients.
+            Save the settings first, then add recipients.
           </p>
         {:else}
           {#if canManage}

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { db } from '../../../database/index.js';
-import { reservoirReady } from '../../../database/reservoir.js';
+import { reservoir, reservoirReady } from '../../../database/reservoir.js';
 import { getUsageBreakdown } from '../../../modules/metering/breakdown.js';
 import { createTestContext, createTestProject } from '../../helpers/factories.js';
 
@@ -85,5 +85,48 @@ describe('getUsageBreakdown', () => {
     const lvl = Object.fromEntries(b.byLevel.map((l) => [l.value, l.count]));
     expect(lvl['info']).toBe(5);
     expect(lvl['error']).toBe(1);
+  });
+
+  it('issues the per-project topValues queries by default', async () => {
+    const spy = vi.spyOn(reservoir, 'topValues');
+
+    try {
+      await getUsageBreakdown({
+        organizationId: orgId,
+        from: new Date(Date.now() - 60 * 60 * 1000),
+        to: new Date(Date.now() + 5 * 60 * 1000),
+      });
+
+      // two projects x (service + level)
+      expect(spy).toHaveBeenCalledTimes(4);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('skips the reservoir entirely when includeValueBreakdowns is false', async () => {
+    const spy = vi.spyOn(reservoir, 'topValues');
+
+    try {
+      const b = await getUsageBreakdown({
+        organizationId: orgId,
+        from: new Date(Date.now() - 60 * 60 * 1000),
+        to: new Date(Date.now() + 5 * 60 * 1000),
+        includeValueBreakdowns: false,
+      });
+
+      expect(spy).not.toHaveBeenCalled();
+      expect(b.byService).toEqual([]);
+      expect(b.byLevel).toEqual([]);
+
+      // the metering-backed halves are unaffected
+      const byType = Object.fromEntries(b.byType.map((t) => [t.type, t.quantity]));
+      expect(byType['logs.ingested.events']).toBe(150);
+      expect(byType['logs.ingested.bytes']).toBe(4500);
+      expect(b.byProject).toHaveLength(2);
+      expect(b.byProject[0]).toMatchObject({ projectId: proj1.id, events: 100 });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

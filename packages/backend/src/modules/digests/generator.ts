@@ -217,7 +217,9 @@ export class DigestGeneratorService {
   /**
    * Compute the enabled report sections for the period. Sections run
    * sequentially: this is a background cron path where simplicity beats
-   * latency. A disabled section costs zero queries.
+   * latency. A disabled section costs zero queries. Inside a section the
+   * current/previous reservoir window pairs DO run in parallel, since they are
+   * independent reads of the same store.
    *
    * Every section is gated, the five original ones included: their toggles are
    * real, not decorative. Sections are computed in the catalog order of
@@ -325,19 +327,20 @@ export class DigestGeneratorService {
       return { current: 0, previous: 0, trend: this.calculateTrend(0, 0) };
     }
 
-    const currentResult = await reservoir.count({
-      projectId: projectIds,
-      from: period.from,
-      to: period.to,
-      toExclusive: true,
-    });
-
-    const previousResult = await reservoir.count({
-      projectId: projectIds,
-      from: period.previousFrom,
-      to: period.previousTo,
-      toExclusive: true,
-    });
+    const [currentResult, previousResult] = await Promise.all([
+      reservoir.count({
+        projectId: projectIds,
+        from: period.from,
+        to: period.to,
+        toExclusive: true,
+      }),
+      reservoir.count({
+        projectId: projectIds,
+        from: period.previousFrom,
+        to: period.previousTo,
+        toExclusive: true,
+      }),
+    ]);
 
     return {
       current: currentResult.count,
@@ -349,6 +352,11 @@ export class DigestGeneratorService {
   /**
    * Top 5 services by error+critical log count, with the delta against the
    * previous period. Engine-agnostic through reservoir.topValues.
+   *
+   * The two windows stay SEQUENTIAL on purpose: the previous window is only
+   * queried when the current one returned something, and an empty current
+   * period is the common case for a quiet org. Parallelizing would trade a
+   * skipped query for a wasted one.
    */
   private async calculateTopErrorServices(
     projectIds: string[],
@@ -549,23 +557,24 @@ export class DigestGeneratorService {
       return undefined;
     }
 
-    const current = await reservoir.topValues({
-      field: 'level',
-      projectId: projectIds,
-      from: period.from,
-      to: period.to,
-      toExclusive: true,
-      limit: 10,
-    });
-
-    const previous = await reservoir.topValues({
-      field: 'level',
-      projectId: projectIds,
-      from: period.previousFrom,
-      to: period.previousTo,
-      toExclusive: true,
-      limit: 10,
-    });
+    const [current, previous] = await Promise.all([
+      reservoir.topValues({
+        field: 'level',
+        projectId: projectIds,
+        from: period.from,
+        to: period.to,
+        toExclusive: true,
+        limit: 10,
+      }),
+      reservoir.topValues({
+        field: 'level',
+        projectId: projectIds,
+        from: period.previousFrom,
+        to: period.previousTo,
+        toExclusive: true,
+        limit: 10,
+      }),
+    ]);
 
     const currentByLevel = new Map(current.values.map((v) => [v.value, v.count]));
     const previousByLevel = new Map(previous.values.map((v) => [v.value, v.count]));
@@ -728,19 +737,20 @@ export class DigestGeneratorService {
     // bounded (24 or 7) and we only ever sum them.
     const bucket = frequency === 'weekly' ? 'day' : 'hour';
 
-    const currentBuckets = await reservoir.getSpanTimeseries({
-      projectIds,
-      from: period.from,
-      to: period.to,
-      bucket,
-    });
-
-    const previousBuckets = await reservoir.getSpanTimeseries({
-      projectIds,
-      from: period.previousFrom,
-      to: period.previousTo,
-      bucket,
-    });
+    const [currentBuckets, previousBuckets] = await Promise.all([
+      reservoir.getSpanTimeseries({
+        projectIds,
+        from: period.from,
+        to: period.to,
+        bucket,
+      }),
+      reservoir.getSpanTimeseries({
+        projectIds,
+        from: period.previousFrom,
+        to: period.previousTo,
+        bucket,
+      }),
+    ]);
 
     const spanCount = currentBuckets.reduce((sum, b) => sum + b.spanCount, 0);
     const previousSpanCount = previousBuckets.reduce((sum, b) => sum + b.spanCount, 0);
@@ -756,9 +766,13 @@ export class DigestGeneratorService {
     // merge by service name.
     const byService = new Map<string, { calls: number; errors: number; p95Ms: number | null }>();
 
-    for (const projectId of projectIds) {
-      const stats = await reservoir.getServiceHealthStats(projectId, period.from, period.to);
+    const perProjectStats = await Promise.all(
+      projectIds.map((projectId) =>
+        reservoir.getServiceHealthStats(projectId, period.from, period.to)
+      )
+    );
 
+    for (const stats of perProjectStats) {
       for (const stat of stats) {
         const entry = byService.get(stat.serviceName) ?? { calls: 0, errors: 0, p95Ms: null };
         entry.calls += stat.totalCalls;
@@ -822,21 +836,22 @@ export class DigestGeneratorService {
       return undefined;
     }
 
-    const current = await reservoir.queryMetrics({
-      projectId: projectIds,
-      from: period.from,
-      to: period.to,
-      toExclusive: true,
-      limit: 1,
-    });
-
-    const previous = await reservoir.queryMetrics({
-      projectId: projectIds,
-      from: period.previousFrom,
-      to: period.previousTo,
-      toExclusive: true,
-      limit: 1,
-    });
+    const [current, previous] = await Promise.all([
+      reservoir.queryMetrics({
+        projectId: projectIds,
+        from: period.from,
+        to: period.to,
+        toExclusive: true,
+        limit: 1,
+      }),
+      reservoir.queryMetrics({
+        projectId: projectIds,
+        from: period.previousFrom,
+        to: period.previousTo,
+        toExclusive: true,
+        limit: 1,
+      }),
+    ]);
 
     if (current.total === 0 && previous.total === 0) {
       return undefined;
@@ -982,6 +997,9 @@ export class DigestGeneratorService {
       from: period.from,
       to: period.to,
       limit: 5,
+      // The digest reports byType and byProject only, so the per-project
+      // service/level log scans behind byService/byLevel are pure waste here.
+      includeValueBreakdowns: false,
     });
 
     const quantityByType = new Map(breakdown.byType.map((t) => [t.type, t.quantity]));

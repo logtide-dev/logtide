@@ -36,6 +36,13 @@ export interface UsageBreakdownParams {
   to: Date;
   /** Cap on the number of services returned (levels are always returned in full). */
   limit?: number;
+  /**
+   * When false, byService/byLevel come back empty and the per-project reservoir
+   * queries behind them are skipped entirely. For callers that only need the
+   * metering halves (the digest usage section), that is two log-store scans per
+   * project saved. Defaults to true, so existing callers are unaffected.
+   */
+  includeValueBreakdowns?: boolean;
 }
 
 /**
@@ -43,10 +50,13 @@ export interface UsageBreakdownParams {
  * - byProject: events/bytes per project from metering_events, joined to project names.
  * - byService / byLevel: composition of the ingested logs, aggregated across the org's
  *   projects via the reservoir abstraction (so it works on any storage engine).
+ *   Opt out with includeValueBreakdowns: false when the caller only needs the
+ *   metering halves.
  */
 export async function getUsageBreakdown(params: UsageBreakdownParams): Promise<UsageBreakdown> {
   const { organizationId, from, to } = params;
   const limit = params.limit ?? 20;
+  const includeValueBreakdowns = params.includeValueBreakdowns ?? true;
 
   const projects = await db
     .selectFrom('projects')
@@ -99,6 +109,10 @@ export async function getUsageBreakdown(params: UsageBreakdownParams): Promise<U
     type: r.type,
     quantity: typeof r.quantity === 'number' ? r.quantity : parseFloat(r.quantity),
   }));
+
+  if (!includeValueBreakdowns) {
+    return { byType, byProject, byService: [], byLevel: [] };
+  }
 
   // Service + level composition from the ingested logs, merged across the org's projects.
   const serviceCounts = new Map<string, number>();

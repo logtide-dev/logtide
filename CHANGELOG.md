@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **MongoDB span sorting**: MongoDB span queries now accept the same sort fields as TimescaleDB and ClickHouse (`duration_ms`, `end_time`, `service_name`, `operation_name`); previously any sort other than `start_time`/`time` was silently ignored.
+- **Digest generation follow-ups**: the usage section no longer runs the per-project service/level log scans it discarded, the current/previous reservoir window pairs and the per-project span health lookups now run in parallel, MongoDB gained a `(project_id, duration_ms)` span index for the slowest-spans read, and the digest settings empty state matches the renamed Save Settings button.
 
 
 ## [1.3.0] - 2026-08-11

@@ -1438,6 +1438,8 @@ export class MongoDBEngine extends StorageEngine {
     // Compound indexes for filtered span queries
     await safeCreateIndex(col, { project_id: 1, service_name: 1, time: -1 }, 'idx_span_service_time');
     await safeCreateIndex(col, { project_id: 1, service_name: 1, status_code: 1, time: -1 }, 'idx_span_service_status_time');
+    // Serves duration-sorted top-K reads (digest slowest spans)
+    await safeCreateIndex(col, { project_id: 1, duration_ms: -1 }, 'idx_span_project_duration');
   }
 
   private async createTracesIndexes(db: Db): Promise<void> {
