@@ -26,34 +26,37 @@ export interface DigestReportData {
   organizationName: string;
   frequency: 'daily' | 'weekly';
   periodLabel: string;
-  logVolume: {
+  // The five original sections: undefined ONLY when the section is disabled.
+  // Enabled but empty keeps their own semantics (zeros, empty arrays, null
+  // uptime) and the email still renders them with their empty-state lines.
+  logVolume?: {
     current: number;
     previous: number;
     trend: string;
   };
-  topErrorServices: Array<{
+  topErrorServices?: Array<{
     service: string;
     errorCount: number;
     previousCount: number;
     delta: number;
   }>;
-  newErrorGroups: Array<{
+  newErrorGroups?: Array<{
     exceptionType: string;
     exceptionMessage: string;
     occurrenceCount: number;
     language: string;
   }>;
-  security: {
+  security?: {
     totalDetections: number;
     topRules: Array<{ ruleTitle: string; severity: string; count: number }>;
     openIncidents: number;
   };
-  uptime: {
+  uptime?: {
     monitorCount: number;
     overallUptimePct: number;
     worstMonitors: Array<{ name: string; uptimePct: number }>;
   } | null;
-  // Optional sections: undefined means "disabled OR no data", and the email
+  // Expanded sections: undefined means "disabled OR no data", and the email
   // skips them entirely (no empty-state lines, unlike the five sections above).
   logBreakdown?: {
     levels: Array<{ level: string; current: number; previous: number }>;
@@ -216,9 +219,9 @@ export class DigestGeneratorService {
    * sequentially: this is a background cron path where simplicity beats
    * latency. A disabled section costs zero queries.
    *
-   * The five original sections always run (they are non-optional fields of
-   * DigestReportData); the optional ones are computed after them, in the
-   * catalog order of DIGEST_SECTION_KEYS, so the order stays unambiguous.
+   * Every section is gated, the five original ones included: their toggles are
+   * real, not decorative. Sections are computed in the catalog order of
+   * DIGEST_SECTION_KEYS so the order stays unambiguous.
    */
   async buildReportData(
     organizationId: string,
@@ -235,11 +238,21 @@ export class DigestGeneratorService {
       .execute();
     const projectIds = projects.map((p) => p.id);
 
-    const logVolume = await this.calculateLogVolume(projectIds, period);
-    const topErrorServices = await this.calculateTopErrorServices(projectIds, period);
-    const newErrorGroups = await this.calculateNewErrorGroups(organizationId, period);
-    const security = await this.calculateSecuritySummary(organizationId, period);
-    const uptime = await this.calculateUptimeSummary(organizationId, period);
+    const logVolume = sections.logVolume
+      ? await this.calculateLogVolume(projectIds, period)
+      : undefined;
+    const topErrorServices = sections.topErrorServices
+      ? await this.calculateTopErrorServices(projectIds, period)
+      : undefined;
+    const newErrorGroups = sections.newErrorGroups
+      ? await this.calculateNewErrorGroups(organizationId, period)
+      : undefined;
+    const security = sections.security
+      ? await this.calculateSecuritySummary(organizationId, period)
+      : undefined;
+    const uptime = sections.uptime
+      ? await this.calculateUptimeSummary(organizationId, period)
+      : undefined;
 
     const logBreakdown = sections.logBreakdown
       ? await this.calculateLogBreakdown(projectIds, period, frequency)
@@ -307,7 +320,7 @@ export class DigestGeneratorService {
   private async calculateLogVolume(
     projectIds: string[],
     period: Period
-  ): Promise<DigestReportData['logVolume']> {
+  ): Promise<NonNullable<DigestReportData['logVolume']>> {
     if (projectIds.length === 0) {
       return { current: 0, previous: 0, trend: this.calculateTrend(0, 0) };
     }
@@ -340,7 +353,7 @@ export class DigestGeneratorService {
   private async calculateTopErrorServices(
     projectIds: string[],
     period: Period
-  ): Promise<DigestReportData['topErrorServices']> {
+  ): Promise<NonNullable<DigestReportData['topErrorServices']>> {
     if (projectIds.length === 0) {
       return [];
     }
@@ -387,7 +400,7 @@ export class DigestGeneratorService {
   private async calculateNewErrorGroups(
     organizationId: string,
     period: Period
-  ): Promise<DigestReportData['newErrorGroups']> {
+  ): Promise<NonNullable<DigestReportData['newErrorGroups']>> {
     const groups = await db
       .selectFrom('error_groups')
       .select(['exception_type', 'exception_message', 'occurrence_count', 'language'])
@@ -414,7 +427,7 @@ export class DigestGeneratorService {
   private async calculateSecuritySummary(
     organizationId: string,
     period: Period
-  ): Promise<DigestReportData['security']> {
+  ): Promise<NonNullable<DigestReportData['security']>> {
     const totalRow = await db
       .selectFrom('detection_events')
       .select((eb) => eb.fn.countAll<number>().as('count'))

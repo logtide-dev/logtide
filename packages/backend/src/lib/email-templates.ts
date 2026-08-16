@@ -939,15 +939,22 @@ function formatPct(value: number): string {
 }
 
 /**
- * Inbox preview line. The logs + detections pair is the original wording and
- * stays byte-identical when no expanded section is present; alerts and
- * incidents are appended only when their sections carry data.
+ * Inbox preview line. Every part is conditional on its section being present,
+ * so a disabled section never shows up as a zero. The logs + detections pair is
+ * the original wording and stays byte-identical with the default sections on
+ * and no expanded section present; alerts and incidents are appended only when
+ * their sections carry data.
  */
 function buildPreheader(data: DigestEmailData): string {
-  const parts = [
-    `${data.logVolume.current.toLocaleString('en-US')} logs`,
-    `${data.security.totalDetections.toLocaleString('en-US')} detections`,
-  ];
+  const parts: string[] = [];
+
+  if (data.logVolume) {
+    parts.push(`${data.logVolume.current.toLocaleString('en-US')} logs`);
+  }
+
+  if (data.security) {
+    parts.push(`${data.security.totalDetections.toLocaleString('en-US')} detections`);
+  }
 
   if (data.alerts) {
     parts.push(`${data.alerts.total.toLocaleString('en-US')} alerts`);
@@ -958,6 +965,11 @@ function buildPreheader(data: DigestEmailData): string {
     parts.push(`${opened.toLocaleString('en-US')} incidents`);
   }
 
+  // Every counted section is off: there is no number worth previewing.
+  if (parts.length === 0) {
+    return `Digest for ${data.organizationName}`;
+  }
+
   return `${parts.join(', ')} for ${data.organizationName}`;
 }
 
@@ -965,57 +977,77 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
   const frequencyLabel = data.frequency === 'daily' ? 'Daily' : 'Weekly';
   const title = `${frequencyLabel} Digest`;
   // A period is only quiet when nothing arrived at all: an org that ships no
-  // logs but does ship traces is not quiet, so spans veto the message.
+  // logs but does ship traces is not quiet, so spans veto the message. With the
+  // log volume section disabled there is no volume to call quiet at all.
   const quiet =
+    !!data.logVolume &&
     data.logVolume.current === 0 &&
     data.logVolume.previous === 0 &&
     (!data.traces || data.traces.spanCount + data.traces.previousSpanCount === 0);
 
-  const logVolumeSection = quiet
-    ? alertBox('No activity during this period. Your systems have been quiet.', 'info')
-    : infoBox([
-        { label: 'Total Logs', value: data.logVolume.current.toLocaleString('en-US') },
-        { label: 'Trend', value: data.logVolume.trend },
-        { label: 'Previous Period', value: data.logVolume.previous.toLocaleString('en-US') },
-      ]);
+  // --------------------------------------------------------------------------
+  // The five original sections. Each carries its own title so a disabled one
+  // (undefined) leaves nothing behind; enabled but empty still renders with the
+  // zeros and empty-state lines it has always shown.
+  // --------------------------------------------------------------------------
 
-  const topServicesSection =
-    data.topErrorServices.length > 0
-      ? digestTable(
-          ['Service', 'Errors', 'Previous', 'Delta'],
-          data.topErrorServices.map((s) => [
-            s.service,
-            s.errorCount.toLocaleString('en-US'),
-            s.previousCount.toLocaleString('en-US'),
-            formatDelta(s.delta),
-          ])
-        )
-      : digestEmptyLine('No errors recorded in this period.');
+  const logVolumeSection = data.logVolume
+    ? digestSectionTitle('Log Volume') +
+      (quiet
+        ? alertBox('No activity during this period. Your systems have been quiet.', 'info')
+        : infoBox([
+            { label: 'Total Logs', value: data.logVolume.current.toLocaleString('en-US') },
+            { label: 'Trend', value: data.logVolume.trend },
+            { label: 'Previous Period', value: data.logVolume.previous.toLocaleString('en-US') },
+          ]))
+    : '';
 
-  const errorGroupsSection =
-    data.newErrorGroups.length > 0
-      ? digestTable(
-          ['Error', 'Language', 'Occurrences'],
-          data.newErrorGroups.map((g) => [
-            `${g.exceptionType}${g.exceptionMessage ? ': ' + truncate(g.exceptionMessage, 60) : ''}`,
-            g.language,
-            g.occurrenceCount.toLocaleString('en-US'),
-          ])
-        )
-      : digestEmptyLine('No new error groups appeared in this period.');
+  const topServicesSection = data.topErrorServices
+    ? digestSectionTitle('Top Services by Errors') +
+      (data.topErrorServices.length > 0
+        ? digestTable(
+            ['Service', 'Errors', 'Previous', 'Delta'],
+            data.topErrorServices.map((s) => [
+              s.service,
+              s.errorCount.toLocaleString('en-US'),
+              s.previousCount.toLocaleString('en-US'),
+              formatDelta(s.delta),
+            ])
+          )
+        : digestEmptyLine('No errors recorded in this period.'))
+    : '';
 
-  const securityRows = [
-    { label: 'Detections', value: data.security.totalDetections.toLocaleString('en-US') },
-    { label: 'Open Incidents', value: data.security.openIncidents.toLocaleString('en-US') },
-  ];
-  const securitySection =
-    data.security.topRules.length > 0
-      ? infoBox(securityRows) +
-        digestTable(
-          ['Rule', 'Severity', 'Detections'],
-          data.security.topRules.map((r) => [r.ruleTitle, r.severity, r.count.toLocaleString('en-US')])
-        )
-      : infoBox(securityRows);
+  const errorGroupsSection = data.newErrorGroups
+    ? digestSectionTitle('New Error Groups') +
+      (data.newErrorGroups.length > 0
+        ? digestTable(
+            ['Error', 'Language', 'Occurrences'],
+            data.newErrorGroups.map((g) => [
+              `${g.exceptionType}${g.exceptionMessage ? ': ' + truncate(g.exceptionMessage, 60) : ''}`,
+              g.language,
+              g.occurrenceCount.toLocaleString('en-US'),
+            ])
+          )
+        : digestEmptyLine('No new error groups appeared in this period.'))
+    : '';
+
+  const securitySection = data.security
+    ? digestSectionTitle('Security') +
+      infoBox([
+        { label: 'Detections', value: data.security.totalDetections.toLocaleString('en-US') },
+        { label: 'Open Incidents', value: data.security.openIncidents.toLocaleString('en-US') },
+      ]) +
+      (data.security.topRules.length > 0
+        ? digestTable(
+            ['Rule', 'Severity', 'Detections'],
+            data.security.topRules.map((r) => [
+              r.ruleTitle,
+              r.severity,
+              r.count.toLocaleString('en-US'),
+            ])
+          )
+        : '')
+    : '';
 
   const uptimeSection = data.uptime
     ? digestSectionTitle('Uptime') +
@@ -1239,18 +1271,14 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
       ${divider()}
       ${subtitle(`${data.organizationName} - ${data.periodLabel}`)}
       ${timestamp()}
-      ${digestSectionTitle('Log Volume')}
       ${logVolumeSection}
       ${logBreakdownSection}
-      ${digestSectionTitle('Top Services by Errors')}
       ${topServicesSection}
       ${topErrorMessagesSection}
-      ${digestSectionTitle('New Error Groups')}
       ${errorGroupsSection}
       ${tracesSection}
       ${metricsSection}
       ${alertsSection}
-      ${digestSectionTitle('Security')}
       ${securitySection}
       ${securityActivitySection}
       ${uptimeSection}
@@ -1279,14 +1307,16 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
   lines.push(`Period: ${data.periodLabel}`);
   lines.push('');
   lines.push('='.repeat(50));
-  heading('LOG VOLUME');
-  if (quiet) {
-    lines.push('No activity during this period.');
-    lines.push('Your systems have been quiet.');
-  } else {
-    lines.push(`Total logs: ${data.logVolume.current.toLocaleString('en-US')}`);
-    lines.push(`Trend: ${data.logVolume.trend}`);
-    lines.push(`Previous period: ${data.logVolume.previous.toLocaleString('en-US')}`);
+  if (data.logVolume) {
+    heading('LOG VOLUME');
+    if (quiet) {
+      lines.push('No activity during this period.');
+      lines.push('Your systems have been quiet.');
+    } else {
+      lines.push(`Total logs: ${data.logVolume.current.toLocaleString('en-US')}`);
+      lines.push(`Trend: ${data.logVolume.trend}`);
+      lines.push(`Previous period: ${data.logVolume.previous.toLocaleString('en-US')}`);
+    }
   }
   if (data.logBreakdown) {
     heading('LOG BREAKDOWN');
@@ -1305,15 +1335,17 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
       }
     }
   }
-  heading('TOP SERVICES BY ERRORS');
-  if (data.topErrorServices.length > 0) {
-    for (const s of data.topErrorServices) {
-      lines.push(
-        `${s.service}: ${s.errorCount.toLocaleString('en-US')} errors (previous: ${s.previousCount.toLocaleString('en-US')}, delta: ${formatDelta(s.delta)})`
-      );
+  if (data.topErrorServices) {
+    heading('TOP SERVICES BY ERRORS');
+    if (data.topErrorServices.length > 0) {
+      for (const s of data.topErrorServices) {
+        lines.push(
+          `${s.service}: ${s.errorCount.toLocaleString('en-US')} errors (previous: ${s.previousCount.toLocaleString('en-US')}, delta: ${formatDelta(s.delta)})`
+        );
+      }
+    } else {
+      lines.push('No errors recorded in this period.');
     }
-  } else {
-    lines.push('No errors recorded in this period.');
   }
   if (data.topErrorMessages) {
     heading('TOP ERROR MESSAGES');
@@ -1321,14 +1353,16 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
       lines.push(`${truncate(m.message, 120)}: ${m.count.toLocaleString('en-US')}`);
     }
   }
-  heading('NEW ERROR GROUPS');
-  if (data.newErrorGroups.length > 0) {
-    for (const g of data.newErrorGroups) {
-      const message = g.exceptionMessage ? `: ${truncate(g.exceptionMessage, 80)}` : '';
-      lines.push(`${g.exceptionType}${message} (${g.language}, ${g.occurrenceCount.toLocaleString('en-US')} occurrences)`);
+  if (data.newErrorGroups) {
+    heading('NEW ERROR GROUPS');
+    if (data.newErrorGroups.length > 0) {
+      for (const g of data.newErrorGroups) {
+        const message = g.exceptionMessage ? `: ${truncate(g.exceptionMessage, 80)}` : '';
+        lines.push(`${g.exceptionType}${message} (${g.language}, ${g.occurrenceCount.toLocaleString('en-US')} occurrences)`);
+      }
+    } else {
+      lines.push('No new error groups appeared in this period.');
     }
-  } else {
-    lines.push('No new error groups appeared in this period.');
   }
   if (data.traces) {
     heading('TRACES');
@@ -1366,11 +1400,13 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
       lines.push(`${r.name}: ${r.count.toLocaleString('en-US')} triggers`);
     }
   }
-  heading('SECURITY');
-  lines.push(`Detections: ${data.security.totalDetections.toLocaleString('en-US')}`);
-  lines.push(`Open incidents: ${data.security.openIncidents.toLocaleString('en-US')}`);
-  for (const r of data.security.topRules) {
-    lines.push(`${r.ruleTitle} [${r.severity}]: ${r.count.toLocaleString('en-US')} detections`);
+  if (data.security) {
+    heading('SECURITY');
+    lines.push(`Detections: ${data.security.totalDetections.toLocaleString('en-US')}`);
+    lines.push(`Open incidents: ${data.security.openIncidents.toLocaleString('en-US')}`);
+    for (const r of data.security.topRules) {
+      lines.push(`${r.ruleTitle} [${r.severity}]: ${r.count.toLocaleString('en-US')} detections`);
+    }
   }
   if (data.securityActivity) {
     heading('SECURITY ACTIVITY');

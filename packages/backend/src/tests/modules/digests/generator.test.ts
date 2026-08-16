@@ -531,6 +531,115 @@ describe('DigestGeneratorService', () => {
     });
   });
 
+  describe('gating of the five original sections', () => {
+    /**
+     * The five sections that shipped with the original digest are toggleable
+     * like every other one: disabled means undefined AND zero queries, never a
+     * zeroed section. Enabled-but-empty keeps its own semantics (zeros, empty
+     * arrays, null uptime) and is covered by the buildReportData tests above.
+     */
+    const queriedTables = (): string[] =>
+      mockDb.selectFrom.mock.calls.map((c: unknown[]) => c[0] as string);
+
+    it('omits logVolume and issues no count queries when disabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        logVolume: false,
+      });
+
+      expect(report.logVolume).toBeUndefined();
+      expect(mockReservoir.count).not.toHaveBeenCalled();
+    });
+
+    it('omits topErrorServices and issues no topValues query when disabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        topErrorServices: false,
+      });
+
+      expect(report.topErrorServices).toBeUndefined();
+      expect(mockReservoir.topValues).not.toHaveBeenCalled();
+    });
+
+    it('omits newErrorGroups and never reads error_groups when disabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        newErrorGroups: false,
+      });
+
+      expect(report.newErrorGroups).toBeUndefined();
+      expect(queriedTables()).not.toContain('error_groups');
+    });
+
+    it('omits security and issues no detection queries when disabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        security: false,
+      });
+
+      expect(report.security).toBeUndefined();
+      expect(queriedTables()).not.toContain('detection_events');
+      expect(queriedTables()).not.toContain('incidents');
+      // The detection total and the open-incident count are the only two
+      // single-row queries of the default section set.
+      expect(mockDb.executeTakeFirst).not.toHaveBeenCalled();
+    });
+
+    it('omits uptime and never reads the monitor tables when disabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        uptime: false,
+      });
+
+      expect(report.uptime).toBeUndefined();
+      expect(queriedTables()).not.toContain('monitors');
+      expect(queriedTables()).not.toContain('monitor_uptime_daily');
+    });
+
+    it('issues only the project lookup when every section is disabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      const allOff = Object.fromEntries(
+        Object.keys(DIGEST_SECTION_DEFAULTS).map((key) => [key, false])
+      ) as typeof DIGEST_SECTION_DEFAULTS;
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', allOff);
+
+      expect(report.logVolume).toBeUndefined();
+      expect(report.topErrorServices).toBeUndefined();
+      expect(report.newErrorGroups).toBeUndefined();
+      expect(report.security).toBeUndefined();
+      expect(report.uptime).toBeUndefined();
+      expect(queriedTables()).toEqual(['projects']);
+      expect(mockDb.execute).toHaveBeenCalledTimes(1);
+      expect(mockDb.executeTakeFirst).not.toHaveBeenCalled();
+      expect(mockReservoir.count).not.toHaveBeenCalled();
+      expect(mockReservoir.topValues).not.toHaveBeenCalled();
+    });
+
+    it('still reports zeros and empty arrays when the sections are enabled but empty', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.logVolume).toEqual({ current: 0, previous: 0, trend: 'no change' });
+      expect(report.topErrorServices).toEqual([]);
+      expect(report.newErrorGroups).toEqual([]);
+      expect(report.security).toEqual({ totalDetections: 0, topRules: [], openIncidents: 0 });
+      expect(report.uptime).toBeNull();
+    });
+  });
+
   describe('optional sections', () => {
     /**
      * The optional sections are computed AFTER the five original ones, in

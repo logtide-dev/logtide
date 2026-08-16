@@ -1219,4 +1219,98 @@ describe('Email Templates - Digest', () => {
     expect(result.html).toContain('12 alerts');
     expect(result.html).toContain('3 incidents');
   });
+
+  // ==========================================================================
+  // Gating of the five original sections: undefined means the section was
+  // disabled, and then nothing of it renders (not even its title).
+  // ==========================================================================
+
+  it('omits the log volume section when it is undefined', () => {
+    const result = generateDigestEmail({ ...baseData, logVolume: undefined });
+
+    expect(result.html).not.toContain('Log Volume');
+    expect(result.text).not.toContain('LOG VOLUME');
+    expect(result.text).not.toContain('Total logs:');
+  });
+
+  it('omits the top services section when it is undefined', () => {
+    const result = generateDigestEmail({ ...baseData, topErrorServices: undefined });
+
+    expect(result.html).not.toContain('Top Services by Errors');
+    expect(result.text).not.toContain('TOP SERVICES BY ERRORS');
+    expect(result.html).not.toContain('No errors recorded in this period.');
+  });
+
+  it('omits the new error groups section when it is undefined', () => {
+    const result = generateDigestEmail({ ...baseData, newErrorGroups: undefined });
+
+    expect(result.html).not.toContain('New Error Groups');
+    expect(result.text).not.toContain('NEW ERROR GROUPS');
+    expect(result.html).not.toContain('No new error groups appeared in this period.');
+  });
+
+  it('omits the security section when it is undefined', () => {
+    const result = generateDigestEmail({ ...baseData, security: undefined });
+
+    expect(result.html).not.toContain('Security');
+    expect(result.text).not.toContain('SECURITY');
+    expect(result.text).not.toContain('Open incidents:');
+  });
+
+  it('omits the uptime section when it is undefined', () => {
+    const result = generateDigestEmail({ ...baseData, uptime: undefined });
+
+    expect(result.html).not.toContain('Uptime');
+    expect(result.text).not.toContain('UPTIME');
+  });
+
+  it('keeps the enabled-but-empty sections with their empty-state lines', () => {
+    const empty: DigestEmailData = {
+      ...baseData,
+      logVolume: { current: 0, previous: 0, trend: 'no change' },
+      topErrorServices: [],
+      newErrorGroups: [],
+      security: { totalDetections: 0, topRules: [], openIncidents: 0 },
+      uptime: null,
+    };
+
+    const result = generateDigestEmail(empty);
+
+    expect(result.html).toContain('Top Services by Errors');
+    expect(result.html).toContain('No errors recorded in this period.');
+    expect(result.html).toContain('New Error Groups');
+    expect(result.html).toContain('No new error groups appeared in this period.');
+    expect(result.text).toContain('SECURITY');
+    expect(result.text).toContain('Open incidents: 0');
+  });
+
+  it('is never a quiet period when the log volume section is disabled', () => {
+    const result = generateDigestEmail({ ...fullData, logVolume: undefined });
+
+    expect(result.html).not.toContain('No activity during this period');
+    expect(result.text).not.toContain('No activity during this period');
+    expect(result.html).not.toContain('Quiet period for Acme Corp');
+  });
+
+  it('drops the logs and detections parts of the preheader with those sections off', () => {
+    const result = generateDigestEmail({
+      ...fullData,
+      logVolume: undefined,
+      security: undefined,
+    });
+
+    expect(result.html).not.toContain('logs, ');
+    expect(result.html).not.toContain('11 detections');
+    expect(result.html).toContain('12 alerts, 3 incidents for Acme Corp');
+  });
+
+  it('falls back to a generic preheader when no section feeds it', () => {
+    const result = generateDigestEmail({
+      ...baseData,
+      logVolume: undefined,
+      security: undefined,
+    });
+
+    expect(result.html).toContain('Digest for Acme Corp');
+  });
 });
