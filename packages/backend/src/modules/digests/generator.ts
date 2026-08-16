@@ -7,8 +7,11 @@
  */
 
 import nodemailer from 'nodemailer';
+import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
+import { getUsageBreakdown } from '../metering/breakdown.js';
+import { getCapabilityUsage } from '../metering/capability-usage.js';
 import { hub } from '@logtide/core';
 import { DIGEST_SECTION_DEFAULTS, LOG_LEVELS } from '@logtide/shared';
 import type { DigestSections } from '@logtide/shared';
@@ -78,6 +81,40 @@ export interface DigestReportData {
     previousDatapoints: number;
     trend: string;
   };
+  securityActivity?: {
+    /** Only severities with at least one incident, ordered critical first */
+    openedBySeverity: Array<{ severity: string; count: number }>;
+    resolvedCount: number;
+    /** Top 5 MITRE techniques seen in the period */
+    topTechniques: Array<{ technique: string; count: number }>;
+  };
+  /** Top 5 monitors by p95 response time, worst first */
+  monitorPerformance?: Array<{
+    name: string;
+    avgMs: number;
+    p95Ms: number;
+    failedChecks: number;
+  }>;
+  usage?: {
+    logEvents: number;
+    logBytes: number;
+    spans: number;
+    /** Top 5 projects by ingested events */
+    topProjects: Array<{ name: string; events: number }>;
+    /** Capabilities at or above 80% of their configured limit (month to date) */
+    quotaWarnings: Array<{ capability: string; usedPct: number }>;
+  };
+  webhooks?: {
+    delivered: number;
+    failed: number;
+    dead: number;
+  };
+  teamActivity?: {
+    membersAdded: number;
+    membersRemoved: number;
+    configChanges: number;
+    failedLogins: number;
+  };
 }
 
 interface DigestRecipient {
@@ -93,6 +130,12 @@ interface Period {
 }
 
 const ERROR_LEVELS = ['error', 'critical'] as const;
+
+/** Reporting order for incident severities, worst first. */
+const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'informational'] as const;
+
+/** A capability at or above this share of its limit is worth warning about. */
+const QUOTA_WARNING_THRESHOLD = 0.8;
 
 let emailTransporter: nodemailer.Transporter | null = null;
 
@@ -210,6 +253,21 @@ export class DigestGeneratorService {
     const metrics = sections.metrics
       ? await this.calculateMetricsSummary(projectIds, period)
       : undefined;
+    const securityActivity = sections.securityActivity
+      ? await this.calculateSecurityActivity(organizationId, period)
+      : undefined;
+    const monitorPerformance = sections.monitorPerformance
+      ? await this.calculateMonitorPerformance(organizationId, period)
+      : undefined;
+    const usage = sections.usage
+      ? await this.calculateUsageSummary(organizationId, period)
+      : undefined;
+    const webhooks = sections.webhooks
+      ? await this.calculateWebhookSummary(organizationId, period)
+      : undefined;
+    const teamActivity = sections.teamActivity
+      ? await this.calculateTeamActivity(organizationId, period)
+      : undefined;
 
     return {
       organizationName,
@@ -225,6 +283,11 @@ export class DigestGeneratorService {
       alerts,
       traces,
       metrics,
+      securityActivity,
+      monitorPerformance,
+      usage,
+      webhooks,
+      teamActivity,
     };
   }
 
@@ -768,6 +831,235 @@ export class DigestGeneratorService {
       previousDatapoints: previous.total,
       trend: this.calculateTrend(current.total, previous.total),
     };
+  }
+
+  /**
+   * Incident flow of the period: what was opened (by severity), what was
+   * resolved, and which MITRE techniques the detections mapped to.
+   */
+  private async calculateSecurityActivity(
+    organizationId: string,
+    period: Period
+  ): Promise<DigestReportData['securityActivity']> {
+    const openedRows = await db
+      .selectFrom('incidents')
+      .select((eb) => ['severity', eb.fn.countAll<number>().as('count')] as const)
+      .where('organization_id', '=', organizationId)
+      .where('created_at', '>=', period.from)
+      .where('created_at', '<', period.to)
+      .groupBy('severity')
+      .execute();
+
+    const resolvedRow = await db
+      .selectFrom('incidents')
+      .select((eb) => eb.fn.countAll<number>().as('count'))
+      .where('organization_id', '=', organizationId)
+      .where('resolved_at', '>=', period.from)
+      .where('resolved_at', '<', period.to)
+      .executeTakeFirst();
+
+    // Only mitre_techniques is unnested here. Unnesting mitre_techniques and
+    // mitre_tactics in the same SELECT makes PostgreSQL evaluate them in
+    // lockstep and NULL-pad the shorter array, which is bug #200.
+    const techniqueRows = await db
+      .selectFrom('detection_events')
+      .select([
+        sql<string>`unnest(mitre_techniques)`.as('technique'),
+        sql<number>`count(*)::int`.as('count'),
+      ])
+      .where('organization_id', '=', organizationId)
+      .where('time', '>=', period.from)
+      .where('time', '<', period.to)
+      .where('mitre_techniques', 'is not', null)
+      .groupBy('technique')
+      .orderBy('count', 'desc')
+      .limit(5)
+      .execute();
+
+    const openedBySeverity = openedRows
+      .map((r) => ({ severity: String(r.severity), count: Number(r.count) }))
+      .filter((r) => r.count > 0)
+      .sort((a, b) => this.severityRank(a.severity) - this.severityRank(b.severity));
+
+    const topTechniques = techniqueRows
+      .filter((r) => r.technique)
+      .map((r) => ({ technique: r.technique, count: Number(r.count) }));
+
+    const resolvedCount = Number(resolvedRow?.count ?? 0);
+    const openedTotal = openedBySeverity.reduce((sum, r) => sum + r.count, 0);
+
+    if (openedTotal === 0 && resolvedCount === 0 && topTechniques.length === 0) {
+      return undefined;
+    }
+
+    return { openedBySeverity, resolvedCount, topTechniques };
+  }
+
+  /** Position in SEVERITY_ORDER; unknown severities sort last. */
+  private severityRank(severity: string): number {
+    const index = (SEVERITY_ORDER as readonly string[]).indexOf(severity);
+    return index === -1 ? SEVERITY_ORDER.length : index;
+  }
+
+  /**
+   * Response time and failure count per monitor over the period, worst p95
+   * first. GROUP BY only yields monitors that were actually checked in the
+   * window, so idle monitors never reach the email.
+   */
+  private async calculateMonitorPerformance(
+    organizationId: string,
+    period: Period
+  ): Promise<DigestReportData['monitorPerformance']> {
+    const rows = await db
+      .selectFrom('monitor_results')
+      .innerJoin('monitors', 'monitors.id', 'monitor_results.monitor_id')
+      .select([
+        'monitors.name as name',
+        sql<number | null>`avg(monitor_results.response_time_ms)`.as('avg_ms'),
+        sql<number | null>`percentile_cont(0.95) within group (order by monitor_results.response_time_ms)`.as(
+          'p95_ms'
+        ),
+        sql<number>`count(*) filter (where monitor_results.status = 'down')::int`.as(
+          'failed_checks'
+        ),
+      ])
+      .where('monitor_results.organization_id', '=', organizationId)
+      .where('monitor_results.time', '>=', period.from)
+      .where('monitor_results.time', '<', period.to)
+      .groupBy(['monitor_results.monitor_id', 'monitors.name'])
+      .execute();
+
+    if (rows.length === 0) {
+      return undefined;
+    }
+
+    // Sorted here rather than in SQL: heartbeat monitors record no
+    // response_time_ms, so their percentile is NULL and PostgreSQL would sort
+    // those rows first under ORDER BY ... DESC.
+    return rows
+      .map((r) => ({
+        name: r.name,
+        avgMs: Math.round(Number(r.avg_ms ?? 0)),
+        p95Ms: Math.round(Number(r.p95_ms ?? 0)),
+        failedChecks: Number(r.failed_checks ?? 0),
+      }))
+      .sort((a, b) => b.p95Ms - a.p95Ms)
+      .slice(0, 5);
+  }
+
+  /**
+   * Ingestion volume for the period plus capabilities close to their cap.
+   * Quota usage is month-to-date by definition (that is the quota window), not
+   * period-scoped: the email labels it as such.
+   */
+  private async calculateUsageSummary(
+    organizationId: string,
+    period: Period
+  ): Promise<DigestReportData['usage']> {
+    const breakdown = await getUsageBreakdown({
+      organizationId,
+      from: period.from,
+      to: period.to,
+      limit: 5,
+    });
+
+    const quantityByType = new Map(breakdown.byType.map((t) => [t.type, t.quantity]));
+    const logEvents = Number(quantityByType.get('logs.ingested.events') ?? 0);
+    const logBytes = Number(quantityByType.get('logs.ingested.bytes') ?? 0);
+    const spans = Number(quantityByType.get('spans.ingested') ?? 0);
+
+    // byProject already comes sorted by events desc
+    const topProjects = breakdown.byProject
+      .slice(0, 5)
+      .map((p) => ({ name: p.projectName, events: p.events }));
+
+    const capabilityUsage = await getCapabilityUsage(organizationId);
+
+    const quotaWarnings = capabilityUsage
+      .filter(
+        (c): c is typeof c & { limit: number } =>
+          c.limit !== null && c.limit > 0 && c.current / c.limit >= QUOTA_WARNING_THRESHOLD
+      )
+      .map((c) => ({
+        capability: c.capability as string,
+        usedPct: Math.round((c.current / c.limit) * 100),
+      }));
+
+    if (logEvents === 0 && spans === 0 && quotaWarnings.length === 0) {
+      return undefined;
+    }
+
+    return { logEvents, logBytes, spans, topProjects, quotaWarnings };
+  }
+
+  /**
+   * Outbound webhook deliveries created in the period, by outcome. `status` is
+   * mutable row state (a pending row can still turn into delivered or dead
+   * after the digest is sent), so windowing on created_at is the digest's
+   * deliberate approximation. Pending rows are in-flight, not an outcome, and
+   * are left out of both the report and the empty check.
+   */
+  private async calculateWebhookSummary(
+    organizationId: string,
+    period: Period
+  ): Promise<DigestReportData['webhooks']> {
+    const rows = await db
+      .selectFrom('webhook_deliveries')
+      .select((eb) => ['status', eb.fn.countAll<number>().as('count')] as const)
+      .where('organization_id', '=', organizationId)
+      .where('created_at', '>=', period.from)
+      .where('created_at', '<', period.to)
+      .groupBy('status')
+      .execute();
+
+    const countByStatus = new Map(rows.map((r) => [String(r.status), Number(r.count)]));
+    const delivered = countByStatus.get('delivered') ?? 0;
+    const failed = countByStatus.get('failed') ?? 0;
+    const dead = countByStatus.get('dead') ?? 0;
+
+    if (delivered + failed + dead === 0) {
+      return undefined;
+    }
+
+    return { delivered, failed, dead };
+  }
+
+  /**
+   * Membership and configuration churn from the audit log. One pass with
+   * filtered counts: four separate COUNT queries would scan the same rows four
+   * times.
+   */
+  private async calculateTeamActivity(
+    organizationId: string,
+    period: Period
+  ): Promise<DigestReportData['teamActivity']> {
+    const row = await db
+      .selectFrom('audit_log')
+      .select([
+        sql<number>`count(*) filter (where action = 'user.invite_accepted')::int`.as(
+          'members_added'
+        ),
+        sql<number>`count(*) filter (where action in ('user.removed', 'user.left'))::int`.as(
+          'members_removed'
+        ),
+        sql<number>`count(*) filter (where category = 'config_change')::int`.as('config_changes'),
+        sql<number>`count(*) filter (where action = 'auth.login_failed')::int`.as('failed_logins'),
+      ])
+      .where('organization_id', '=', organizationId)
+      .where('time', '>=', period.from)
+      .where('time', '<', period.to)
+      .executeTakeFirst();
+
+    const membersAdded = Number(row?.members_added ?? 0);
+    const membersRemoved = Number(row?.members_removed ?? 0);
+    const configChanges = Number(row?.config_changes ?? 0);
+    const failedLogins = Number(row?.failed_logins ?? 0);
+
+    if (membersAdded === 0 && membersRemoved === 0 && configChanges === 0 && failedLogins === 0) {
+      return undefined;
+    }
+
+    return { membersAdded, membersRemoved, configChanges, failedLogins };
   }
 
   private async fetchRecipients(

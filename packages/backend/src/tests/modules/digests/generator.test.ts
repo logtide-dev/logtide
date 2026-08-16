@@ -21,6 +21,22 @@ vi.mock('@logtide/core', () => ({
   },
 }));
 
+// The usage section reads the metering module directly (not through the db
+// mock), so both functions are stubbed at module level and never move the
+// shared fluent db mock's call cursor.
+const { mockGetUsageBreakdown, mockGetCapabilityUsage } = vi.hoisted(() => ({
+  mockGetUsageBreakdown: vi.fn(),
+  mockGetCapabilityUsage: vi.fn(),
+}));
+
+vi.mock('../../../modules/metering/breakdown.js', () => ({
+  getUsageBreakdown: mockGetUsageBreakdown,
+}));
+
+vi.mock('../../../modules/metering/capability-usage.js', () => ({
+  getCapabilityUsage: mockGetCapabilityUsage,
+}));
+
 vi.mock('../../../database/connection.js', () => ({
     db: {
       selectFrom: vi.fn().mockReturnThis(),
@@ -86,6 +102,10 @@ describe('DigestGeneratorService', () => {
       .mockReset()
       .mockResolvedValue({ metrics: [], total: 0, hasMore: false, limit: 1, offset: 0 });
     mockSendMail.mockReset().mockResolvedValue({ messageId: 'test-message-id' });
+    mockGetUsageBreakdown
+      .mockReset()
+      .mockResolvedValue({ byType: [], byProject: [], byService: [], byLevel: [] });
+    mockGetCapabilityUsage.mockReset().mockResolvedValue([]);
 
     generator = new DigestGeneratorService();
   });
@@ -961,6 +981,299 @@ describe('DigestGeneratorService', () => {
 
       expect(report.metrics).toBeUndefined();
       expect(mockReservoir.queryMetrics).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('security activity, monitors, usage, webhooks and team sections', () => {
+    /**
+     * These five sections are computed last, after metrics, in the order
+     * securityActivity -> monitorPerformance -> usage -> webhooks -> teamActivity.
+     * With every one of them disabled the shared fluent db mock only sees the
+     * five original sections, so the mocks below queue behind:
+     *   execute:          projects, error_groups, security top rules, monitors
+     *   executeTakeFirst: detection total, open incidents
+     */
+    it('issues no queries at all when the five sections are disabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily');
+
+      expect(report.securityActivity).toBeUndefined();
+      expect(report.monitorPerformance).toBeUndefined();
+      expect(report.usage).toBeUndefined();
+      expect(report.webhooks).toBeUndefined();
+      expect(report.teamActivity).toBeUndefined();
+
+      // Only the five original sections queried
+      expect(mockDb.execute).toHaveBeenCalledTimes(4);
+      expect(mockDb.executeTakeFirst).toHaveBeenCalledTimes(2);
+      expect(mockGetUsageBreakdown).not.toHaveBeenCalled();
+      expect(mockGetCapabilityUsage).not.toHaveBeenCalled();
+    });
+
+    it('computes securityActivity when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+      mockDb.execute.mockResolvedValueOnce([]); // error_groups
+      mockDb.execute.mockResolvedValueOnce([]); // security top rules
+      mockDb.execute.mockResolvedValueOnce([]); // monitors (uptime null)
+      mockDb.execute.mockResolvedValueOnce([
+        { severity: 'high', count: 4 },
+        { severity: 'critical', count: 2 },
+        { severity: 'low', count: 0 },
+      ]); // incidents opened by severity
+      mockDb.execute.mockResolvedValueOnce([
+        { technique: 'T1078', count: 9 },
+        { technique: null, count: 5 },
+        { technique: 'T1059', count: 2 },
+      ]); // unnested mitre techniques
+
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 0 }); // detections total
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 0 }); // open incidents
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 3 }); // incidents resolved
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        securityActivity: true,
+      });
+
+      expect(report.securityActivity).toEqual({
+        // severity order critical..informational, zero-count severities dropped
+        openedBySeverity: [
+          { severity: 'critical', count: 2 },
+          { severity: 'high', count: 4 },
+        ],
+        resolvedCount: 3,
+        // null techniques (NULL-padded rows) are never emitted
+        topTechniques: [
+          { technique: 'T1078', count: 9 },
+          { technique: 'T1059', count: 2 },
+        ],
+      });
+
+      expect(mockDb.where).toHaveBeenCalledWith('organization_id', '=', 'org_1');
+    });
+
+    it('returns undefined securityActivity when nothing happened', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        securityActivity: true,
+      });
+
+      expect(report.securityActivity).toBeUndefined();
+    });
+
+    it('computes monitorPerformance when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+      mockDb.execute.mockResolvedValueOnce([]); // error_groups
+      mockDb.execute.mockResolvedValueOnce([]); // security top rules
+      mockDb.execute.mockResolvedValueOnce([]); // monitors (uptime null)
+      mockDb.execute.mockResolvedValueOnce([
+        { name: 'm1', avg_ms: 10.4, p95_ms: 20.6, failed_checks: 0 },
+        { name: 'm2', avg_ms: 20, p95_ms: 40, failed_checks: 1 },
+        { name: 'm3', avg_ms: 30, p95_ms: 60, failed_checks: 2 },
+        { name: 'm4', avg_ms: 40, p95_ms: 80, failed_checks: 3 },
+        { name: 'm5', avg_ms: 50, p95_ms: 100, failed_checks: 4 },
+        { name: 'm6', avg_ms: null, p95_ms: null, failed_checks: 5 },
+      ]); // monitor_results aggregate
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        monitorPerformance: true,
+      });
+
+      // Top 5 by p95 desc; m6 (no timed checks) sorts last and falls off
+      expect(report.monitorPerformance).toEqual([
+        { name: 'm5', avgMs: 50, p95Ms: 100, failedChecks: 4 },
+        { name: 'm4', avgMs: 40, p95Ms: 80, failedChecks: 3 },
+        { name: 'm3', avgMs: 30, p95Ms: 60, failedChecks: 2 },
+        { name: 'm2', avgMs: 20, p95Ms: 40, failedChecks: 1 },
+        { name: 'm1', avgMs: 10, p95Ms: 21, failedChecks: 0 },
+      ]);
+
+      expect(mockDb.innerJoin).toHaveBeenCalledWith(
+        'monitors',
+        'monitors.id',
+        'monitor_results.monitor_id'
+      );
+      expect(mockDb.where).toHaveBeenCalledWith(
+        'monitor_results.organization_id',
+        '=',
+        'org_1'
+      );
+    });
+
+    it('returns undefined monitorPerformance when no monitor was checked', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        monitorPerformance: true,
+      });
+
+      expect(report.monitorPerformance).toBeUndefined();
+    });
+
+    it('computes usage from the metering module when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      mockGetUsageBreakdown.mockResolvedValueOnce({
+        byType: [
+          { type: 'logs.ingested.bytes', quantity: 4500000 },
+          { type: 'logs.ingested.events', quantity: 12000 },
+        ],
+        byProject: [
+          { projectId: 'p1', projectName: 'Prod', events: 9000, bytes: 900 },
+          { projectId: 'p2', projectName: 'Staging', events: 1500, bytes: 150 },
+          { projectId: 'p3', projectName: 'Dev', events: 800, bytes: 80 },
+          { projectId: 'p4', projectName: 'QA', events: 400, bytes: 40 },
+          { projectId: 'p5', projectName: 'Sandbox', events: 200, bytes: 20 },
+          { projectId: 'p6', projectName: 'Scratch', events: 100, bytes: 10 },
+        ],
+        byService: [],
+        byLevel: [],
+      });
+
+      mockGetCapabilityUsage.mockResolvedValueOnce([
+        {
+          capability: 'ingestion.max_events_month',
+          kind: 'quota',
+          current: 900,
+          limit: 1000,
+          description: '',
+        },
+        { capability: 'alerts.max_rules', kind: 'limit', current: 1, limit: 10, description: '' },
+        // unlimited: never a warning, and never a division by null
+        { capability: 'apikeys.max', kind: 'limit', current: 5, limit: null, description: '' },
+        // limit 0: excluded so it cannot produce an Infinity percentage
+        {
+          capability: 'dashboards.max_custom',
+          kind: 'limit',
+          current: 3,
+          limit: 0,
+          description: '',
+        },
+      ]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        usage: true,
+      });
+
+      expect(report.usage).toEqual({
+        logEvents: 12000,
+        logBytes: 4500000,
+        spans: 0,
+        topProjects: [
+          { name: 'Prod', events: 9000 },
+          { name: 'Staging', events: 1500 },
+          { name: 'Dev', events: 800 },
+          { name: 'QA', events: 400 },
+          { name: 'Sandbox', events: 200 },
+        ],
+        quotaWarnings: [{ capability: 'ingestion.max_events_month', usedPct: 90 }],
+      });
+
+      const breakdownCall = mockGetUsageBreakdown.mock.calls[0][0];
+      expect(breakdownCall.organizationId).toBe('org_1');
+      expect(breakdownCall.limit).toBe(5);
+      expect(mockGetCapabilityUsage).toHaveBeenCalledWith('org_1');
+    });
+
+    it('returns undefined usage when nothing was ingested and no quota is close', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        usage: true,
+      });
+
+      expect(report.usage).toBeUndefined();
+      expect(mockGetUsageBreakdown).toHaveBeenCalledTimes(1);
+    });
+
+    it('computes webhooks delivery counts when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+      mockDb.execute.mockResolvedValueOnce([]); // error_groups
+      mockDb.execute.mockResolvedValueOnce([]); // security top rules
+      mockDb.execute.mockResolvedValueOnce([]); // monitors (uptime null)
+      mockDb.execute.mockResolvedValueOnce([
+        { status: 'delivered', count: 10 },
+        { status: 'failed', count: 2 },
+        { status: 'dead', count: 1 },
+        { status: 'pending', count: 7 },
+      ]); // webhook_deliveries by status
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        webhooks: true,
+      });
+
+      // pending is in-flight state, not an outcome: never reported
+      expect(report.webhooks).toEqual({ delivered: 10, failed: 2, dead: 1 });
+    });
+
+    it('returns undefined webhooks when only pending deliveries exist', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+      mockDb.execute.mockResolvedValueOnce([]);
+      mockDb.execute.mockResolvedValueOnce([]);
+      mockDb.execute.mockResolvedValueOnce([]);
+      mockDb.execute.mockResolvedValueOnce([{ status: 'pending', count: 5 }]);
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        webhooks: true,
+      });
+
+      expect(report.webhooks).toBeUndefined();
+    });
+
+    it('computes teamActivity counters when enabled', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 0 }); // detections total
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 0 }); // open incidents
+      mockDb.executeTakeFirst.mockResolvedValueOnce({
+        members_added: 2,
+        members_removed: 1,
+        config_changes: 5,
+        failed_logins: 9,
+      }); // audit_log counters
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        teamActivity: true,
+      });
+
+      expect(report.teamActivity).toEqual({
+        membersAdded: 2,
+        membersRemoved: 1,
+        configChanges: 5,
+        failedLogins: 9,
+      });
+
+      expect(mockDb.where).toHaveBeenCalledWith('organization_id', '=', 'org_1');
+    });
+
+    it('returns undefined teamActivity when every counter is zero', async () => {
+      mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]);
+
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 0 });
+      mockDb.executeTakeFirst.mockResolvedValueOnce({ count: 0 });
+      mockDb.executeTakeFirst.mockResolvedValueOnce({
+        members_added: 0,
+        members_removed: 0,
+        config_changes: 0,
+        failed_logins: 0,
+      });
+
+      const report = await generator.buildReportData('org_1', 'Test Org', 'daily', {
+        ...DIGEST_SECTION_DEFAULTS,
+        teamActivity: true,
+      });
+
+      expect(report.teamActivity).toBeUndefined();
     });
   });
 });
