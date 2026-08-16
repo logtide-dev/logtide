@@ -10,8 +10,11 @@ import nodemailer from 'nodemailer';
 import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
+// breakdown.js only pulls in the db and the reservoir, both already loaded here.
+// capability-usage.js is NOT imported statically: it constructs five feature
+// services at module init, so it is loaded lazily inside calculateUsageSummary
+// and costs nothing while the usage section is disabled (the default).
 import { getUsageBreakdown } from '../metering/breakdown.js';
-import { getCapabilityUsage } from '../metering/capability-usage.js';
 import { hub } from '@logtide/core';
 import { DIGEST_SECTION_DEFAULTS, LOG_LEVELS } from '@logtide/shared';
 import type { DigestSections } from '@logtide/shared';
@@ -924,6 +927,11 @@ export class DigestGeneratorService {
         ),
       ])
       .where('monitor_results.organization_id', '=', organizationId)
+      // monitor_results.monitor_id carries NO foreign key (migration 034
+      // declares it without one, for hypertable performance) and deleting a
+      // monitor leaves its results behind, so the joined side is scoped
+      // explicitly rather than trusted to be same-tenant.
+      .where('monitors.organization_id', '=', organizationId)
       .where('monitor_results.time', '>=', period.from)
       .where('monitor_results.time', '<', period.to)
       .groupBy(['monitor_results.monitor_id', 'monitors.name'])
@@ -973,6 +981,7 @@ export class DigestGeneratorService {
       .slice(0, 5)
       .map((p) => ({ name: p.projectName, events: p.events }));
 
+    const { getCapabilityUsage } = await import('../metering/capability-usage.js');
     const capabilityUsage = await getCapabilityUsage(organizationId);
 
     const quotaWarnings = capabilityUsage

@@ -1011,6 +1011,68 @@ describe('DigestGeneratorService', () => {
       expect(mockGetCapabilityUsage).not.toHaveBeenCalled();
     });
 
+    it('pins the window column and bounds of every new query', async () => {
+      // Frozen clock so period.from/period.to are exact values rather than
+      // "whatever new Date() returned", which is what makes the bounds
+      // assertable at all.
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-08-16T12:00:00.000Z'));
+
+      try {
+        const from = new Date('2026-08-15T12:00:00.000Z');
+        const to = new Date('2026-08-16T12:00:00.000Z');
+
+        mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
+        // every later list query falls through to the [] default, and every
+        // count to { count: 0 }: this test asserts the SQL windows, not the data
+
+        await generator.buildReportData('org_1', 'Test Org', 'daily', {
+          ...DIGEST_SECTION_DEFAULTS,
+          securityActivity: true,
+          monitorPerformance: true,
+          usage: true,
+          webhooks: true,
+          teamActivity: true,
+        });
+
+        const windowCalls = mockDb.where.mock.calls.filter(
+          (c: unknown[]) => c[1] === '>=' || c[1] === '<'
+        );
+
+        // Ordered, exhaustive: pins the column each query windows on AND that
+        // every one of them uses the CURRENT period, never previousFrom/previousTo.
+        expect(windowCalls).toEqual([
+          ['first_seen', '>=', from], // error_groups (existing section)
+          ['first_seen', '<', to],
+          ['time', '>=', from], // detection_events total, security section (existing)
+          ['time', '<', to],
+          ['time', '>=', from], // detection_events top rules (existing)
+          ['time', '<', to],
+          ['created_at', '>=', from], // incidents opened in the period
+          ['created_at', '<', to],
+          ['resolved_at', '>=', from], // incidents resolved in the period
+          ['resolved_at', '<', to],
+          ['time', '>=', from], // detection_events, unnested techniques
+          ['time', '<', to],
+          ['monitor_results.time', '>=', from],
+          ['monitor_results.time', '<', to],
+          ['created_at', '>=', from], // webhook_deliveries
+          ['created_at', '<', to],
+          ['time', '>=', from], // audit_log
+          ['time', '<', to],
+        ]);
+
+        expect(mockGetUsageBreakdown).toHaveBeenCalledWith({
+          organizationId: 'org_1',
+          from,
+          to,
+          limit: 5,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('computes securityActivity when enabled', async () => {
       mockDb.execute.mockResolvedValueOnce([{ id: 'project_1' }]); // projects
       mockDb.execute.mockResolvedValueOnce([]); // error_groups
@@ -1102,6 +1164,10 @@ describe('DigestGeneratorService', () => {
         '=',
         'org_1'
       );
+      // monitor_id has no foreign key (migration 034 declares it without one,
+      // for hypertable performance) and deleted monitors leave orphan results,
+      // so the joined side must be scoped too
+      expect(mockDb.where).toHaveBeenCalledWith('monitors.organization_id', '=', 'org_1');
     });
 
     it('returns undefined monitorPerformance when no monitor was checked', async () => {
