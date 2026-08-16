@@ -1176,6 +1176,7 @@ describe('DigestGeneratorService', () => {
           from,
           to,
           limit: 5,
+          includeValueBreakdowns: false,
         });
       } finally {
         vi.useRealTimers();
@@ -1353,6 +1354,8 @@ describe('DigestGeneratorService', () => {
       const breakdownCall = mockGetUsageBreakdown.mock.calls[0][0];
       expect(breakdownCall.organizationId).toBe('org_1');
       expect(breakdownCall.limit).toBe(5);
+      // the digest never reads byService/byLevel, so it opts out of those scans
+      expect(breakdownCall.includeValueBreakdowns).toBe(false);
       expect(mockGetCapabilityUsage).toHaveBeenCalledWith('org_1');
     });
 
