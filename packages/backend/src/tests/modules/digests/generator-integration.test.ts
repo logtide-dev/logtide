@@ -3,7 +3,11 @@ import { DigestGeneratorService } from '../../../modules/digests/generator.js';
 import { db } from '../../../database/connection.js';
 import { reservoir } from '../../../database/reservoir.js';
 
-const mockSendMail = vi.fn().mockResolvedValue({ messageId: 'test-message-id' });
+// Hoisted: other modules in the generator's import graph build a transporter at
+// module-init time, so the factory must not close over a plain const.
+const { mockSendMail } = vi.hoisted(() => ({
+  mockSendMail: vi.fn().mockResolvedValue({ messageId: 'test-message-id' }),
+}));
 vi.mock('nodemailer', () => ({
   default: {
     createTransport: vi.fn(() => ({
