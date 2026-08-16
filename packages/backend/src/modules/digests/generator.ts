@@ -707,8 +707,6 @@ export class DigestGeneratorService {
       .sort((a, b) => b.calls - a.calls)
       .slice(0, 5);
 
-    // NOTE: the MongoDB engine only sorts spans by start_time, so on that engine
-    // this is the 5 most recent spans rather than the 5 slowest.
     const slowest = await reservoir.querySpans({
       projectId: projectIds,
       from: period.from,
