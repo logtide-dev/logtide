@@ -247,11 +247,14 @@ export interface TopValuesParams {
   fromExclusive?: boolean;
   toExclusive?: boolean;
   limit?: number;
+  /** When true, each value carries the max event time seen in the window */
+  includeLastSeen?: boolean;
 }
 
 /** Result of a top values query */
 export interface TopValuesResult {
-  values: Array<{ value: string; count: number }>;
+  /** lastSeen is an ISO 8601 UTC string, present only when includeLastSeen was requested */
+  values: Array<{ value: string; count: number; lastSeen?: string }>;
   executionTimeMs?: number;
 }
 

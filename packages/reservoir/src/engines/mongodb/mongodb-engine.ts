@@ -543,18 +543,36 @@ export class MongoDBEngine extends StorageEngine {
 
     const pipeline: Document[] = [
       { $match: filter },
-      { $group: { _id: `$${mongoField}`, count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: `$${mongoField}`,
+          count: { $sum: 1 },
+          ...(params.includeLastSeen ? { lastSeen: { $max: '$time' } } : {}),
+        },
+      },
       { $match: { _id: { $ne: null } } },
       { $sort: { count: -1 } },
       { $limit: limit },
-      { $project: { value: '$_id', count: 1, _id: 0 } },
+      {
+        $project: {
+          value: '$_id',
+          count: 1,
+          _id: 0,
+          ...(params.includeLastSeen ? { lastSeen: 1 } : {}),
+        },
+      },
     ];
 
     const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
     return {
       values: rows
         .filter((r) => r.value != null && String(r.value) !== '')
-        .map((r) => ({ value: String(r.value), count: Number(r.count) })),
+        .map((r) => ({
+          value: String(r.value),
+          count: Number(r.count),
+          // Spread so callers that did not ask for it get objects without the key.
+          ...(r.lastSeen instanceof Date ? { lastSeen: r.lastSeen.toISOString() } : {}),
+        })),
       executionTimeMs: Date.now() - start,
     };
   }
@@ -648,7 +666,16 @@ export class MongoDBEngine extends StorageEngine {
     const offset = params.offset ?? 0;
 
     const filter = this.buildSpanFilter(params);
-    const sortBy = params.sortBy === 'start_time' || params.sortBy === 'time' ? params.sortBy : 'start_time';
+    // Same allowlist as the Timescale and ClickHouse engines so callers get the
+    // same ordering on every engine (there it also guards against SQL injection)
+    const ALLOWED_SORT_FIELDS = new Set([
+      'start_time',
+      'end_time',
+      'duration_ms',
+      'service_name',
+      'operation_name',
+    ]);
+    const sortBy = ALLOWED_SORT_FIELDS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
     const sortOrder = params.sortOrder === 'desc' ? -1 : 1;
 
     const [docs, total] = await Promise.all([
@@ -1411,6 +1438,8 @@ export class MongoDBEngine extends StorageEngine {
     // Compound indexes for filtered span queries
     await safeCreateIndex(col, { project_id: 1, service_name: 1, time: -1 }, 'idx_span_service_time');
     await safeCreateIndex(col, { project_id: 1, service_name: 1, status_code: 1, time: -1 }, 'idx_span_service_status_time');
+    // Serves duration-sorted top-K reads (digest slowest spans)
+    await safeCreateIndex(col, { project_id: 1, duration_ms: -1 }, 'idx_span_project_duration');
   }
 
   private async createTracesIndexes(db: Db): Promise<void> {

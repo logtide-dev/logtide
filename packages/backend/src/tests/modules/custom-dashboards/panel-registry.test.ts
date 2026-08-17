@@ -246,6 +246,69 @@ describe('geo_map schema', () => {
   });
 });
 
+describe('top_n_table schema', () => {
+  const legacy = {
+    type: 'top_n_table',
+    title: 'Top services',
+    source: 'logs',
+    dimension: 'service',
+    limit: 5,
+    projectId: null,
+    interval: '24h',
+  };
+
+  it('accepts legacy top_n_table without new fields', () => {
+    expect(panelConfigSchema.safeParse(legacy).success).toBe(true);
+  });
+
+  it('accepts metadata dimension with field and limit 50', () => {
+    const parsed = panelConfigSchema.safeParse({
+      ...legacy,
+      dimension: 'metadata',
+      metadataField: 'geo_place',
+      limit: 50,
+      showLastSeen: true,
+      levels: ['error'],
+      service: 'caddy',
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects metadata dimension without metadataField', () => {
+    expect(panelConfigSchema.safeParse({ ...legacy, dimension: 'metadata' }).success).toBe(false);
+    expect(
+      panelConfigSchema.safeParse({ ...legacy, dimension: 'metadata', metadataField: null }).success
+    ).toBe(false);
+    expect(
+      panelConfigSchema.safeParse({ ...legacy, dimension: 'metadata', metadataField: '' }).success
+    ).toBe(false);
+  });
+
+  it('rejects metadataField with quotes', () => {
+    expect(
+      panelConfigSchema.safeParse({
+        ...legacy,
+        dimension: 'metadata',
+        metadataField: "x' OR 1=1--",
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects limit above 50', () => {
+    expect(panelConfigSchema.safeParse({ ...legacy, limit: 51 }).success).toBe(false);
+  });
+
+  it('accepts a dotted metadata path', () => {
+    expect(
+      panelConfigSchema.safeParse({
+        ...legacy,
+        dimension: 'metadata',
+        metadataField: 'geo.city',
+      }).success
+    ).toBe(true);
+  });
+});
+
 describe('log_table schema', () => {
   const valid = {
     type: 'log_table',
@@ -305,5 +368,80 @@ describe('log_table schema', () => {
 
   it('has a registry entry with a default layout', () => {
     expect(panelRegistry.log_table.defaultLayout).toEqual({ w: 12, h: 4 });
+  });
+});
+
+describe('time_series seriesLabels', () => {
+  const baseTimeSeries = {
+    type: 'time_series',
+    title: 'Volume',
+    source: 'logs',
+    projectId: null,
+    interval: '24h',
+    levels: ['info', 'warn', 'error'],
+    service: null,
+  };
+
+  it('accepts time_series without seriesLabels (backward compat)', () => {
+    expect(panelConfigSchema.safeParse(baseTimeSeries).success).toBe(true);
+  });
+
+  it('accepts time_series with partial seriesLabels', () => {
+    const labels = { info: 'Heartbeat', warn: 'Normal', error: 'Blocked' };
+    const result = panelConfigSchema.safeParse({ ...baseTimeSeries, seriesLabels: labels });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.type === 'time_series' && result.data.seriesLabels).toEqual(labels);
+  });
+
+  it('rejects seriesLabels with unknown level key', () => {
+    const result = panelConfigSchema.safeParse({
+      ...baseTimeSeries,
+      seriesLabels: { fatal: 'Nope' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects seriesLabels longer than 40 chars', () => {
+    const result = panelConfigSchema.safeParse({
+      ...baseTimeSeries,
+      seriesLabels: { info: 'x'.repeat(41) },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty seriesLabels values', () => {
+    const result = panelConfigSchema.safeParse({
+      ...baseTimeSeries,
+      seriesLabels: { info: '' },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('live_log_stream schema', () => {
+  const valid = {
+    type: 'live_log_stream',
+    title: 'Stream',
+    source: 'logs',
+    projectId: null,
+    service: null,
+    levels: ['info'],
+    maxRows: 25,
+  };
+
+  it('accepts a valid config', () => {
+    expect(panelConfigSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts maxRows of 100', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 100 }).success).toBe(true);
+  });
+
+  it('rejects maxRows above 100', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 101 }).success).toBe(false);
+  });
+
+  it('rejects maxRows below 10', () => {
+    expect(panelConfigSchema.safeParse({ ...valid, maxRows: 9 }).success).toBe(false);
   });
 });

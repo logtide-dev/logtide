@@ -7,6 +7,7 @@
 
 import { config } from '../config/index.js';
 import { getLogoUrl } from './logo.js';
+import type { DigestReportData } from '../modules/digests/generator.js';
 
 // ============================================================================
 // HELPERS
@@ -843,40 +844,16 @@ Manage notifications: ${frontendUrl}/dashboard/settings/channels
 // DIGEST REPORT EMAIL (#154)
 // ============================================================================
 
-export interface DigestEmailData {
-  organizationName: string;
-  frequency: 'daily' | 'weekly';
-  periodLabel: string;
-  logVolume: {
-    current: number;
-    previous: number;
-    trend: string;
-  };
-  topErrorServices: Array<{
-    service: string;
-    errorCount: number;
-    previousCount: number;
-    delta: number;
-  }>;
-  newErrorGroups: Array<{
-    exceptionType: string;
-    exceptionMessage: string;
-    occurrenceCount: number;
-    language: string;
-  }>;
-  security: {
-    totalDetections: number;
-    topRules: Array<{ ruleTitle: string; severity: string; count: number }>;
-    openIncidents: number;
-  };
-  uptime: {
-    monitorCount: number;
-    overallUptimePct: number;
-    worstMonitors: Array<{ name: string; uptimePct: number }>;
-  } | null;
+/**
+ * The email is a pure projection of the generator's report: the section shapes
+ * live there and are imported as TYPES ONLY, so nothing of the generator (db,
+ * reservoir, nodemailer) is pulled into this module at runtime and the
+ * generator -> template import stays a one-way edge.
+ */
+export type DigestEmailData = DigestReportData & {
   unsubscribeUrl: string;
   dashboardUrl: string;
-}
+};
 
 function digestSectionTitle(title: string): string {
   return `<tr>
@@ -930,56 +907,147 @@ function formatDelta(delta: number): string {
   return delta.toLocaleString('en-US');
 }
 
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
+
+/** Human-readable byte size: whole bytes, one decimal from KB up (1.5 GB). */
+function formatBytes(bytes: number): string {
+  let value = Math.max(0, bytes);
+  let unit = 0;
+
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+
+  const rendered = unit === 0 ? Math.round(value).toLocaleString('en-US') : value.toFixed(1);
+  return `${rendered} ${BYTE_UNITS[unit]}`;
+}
+
+/**
+ * Durations in ms, or a dash when there is nothing to show. Heartbeat monitors
+ * record no response time and surface as 0, which means "not timed" and must
+ * never be printed as an instant 0ms response.
+ */
+function formatMs(ms: number | null): string {
+  if (ms === null || ms <= 0) return '-';
+  return `${ms.toLocaleString('en-US')}ms`;
+}
+
+/** Percentages carry at most one decimal and are never fixed-width. */
+function formatPct(value: number): string {
+  return `${value.toLocaleString('en-US')}%`;
+}
+
+/**
+ * Inbox preview line. Every part is conditional on its section being present,
+ * so a disabled section never shows up as a zero. The logs + detections pair is
+ * the original wording and stays byte-identical with the default sections on
+ * and no expanded section present; alerts and incidents are appended only when
+ * their sections carry data.
+ */
+function buildPreheader(data: DigestEmailData): string {
+  const parts: string[] = [];
+
+  if (data.logVolume) {
+    parts.push(`${data.logVolume.current.toLocaleString('en-US')} logs`);
+  }
+
+  if (data.security) {
+    parts.push(`${data.security.totalDetections.toLocaleString('en-US')} detections`);
+  }
+
+  if (data.alerts) {
+    parts.push(`${data.alerts.total.toLocaleString('en-US')} alerts`);
+  }
+
+  if (data.securityActivity) {
+    const opened = data.securityActivity.openedBySeverity.reduce((sum, s) => sum + s.count, 0);
+    parts.push(`${opened.toLocaleString('en-US')} incidents`);
+  }
+
+  // Every counted section is off: there is no number worth previewing.
+  if (parts.length === 0) {
+    return `Digest for ${data.organizationName}`;
+  }
+
+  return `${parts.join(', ')} for ${data.organizationName}`;
+}
+
 export function generateDigestEmail(data: DigestEmailData): { html: string; text: string } {
   const frequencyLabel = data.frequency === 'daily' ? 'Daily' : 'Weekly';
   const title = `${frequencyLabel} Digest`;
-  const quiet = data.logVolume.current === 0 && data.logVolume.previous === 0;
+  // A period is only quiet when nothing arrived at all: an org that ships no
+  // logs but does ship traces is not quiet, so spans veto the message. With the
+  // log volume section disabled there is no volume to call quiet at all.
+  const quiet =
+    !!data.logVolume &&
+    data.logVolume.current === 0 &&
+    data.logVolume.previous === 0 &&
+    (!data.traces || data.traces.spanCount + data.traces.previousSpanCount === 0);
 
-  const logVolumeSection = quiet
-    ? alertBox('No activity during this period. Your systems have been quiet.', 'info')
-    : infoBox([
-        { label: 'Total Logs', value: data.logVolume.current.toLocaleString('en-US') },
-        { label: 'Trend', value: data.logVolume.trend },
-        { label: 'Previous Period', value: data.logVolume.previous.toLocaleString('en-US') },
-      ]);
+  // --------------------------------------------------------------------------
+  // The five original sections. Each carries its own title so a disabled one
+  // (undefined) leaves nothing behind; enabled but empty still renders with the
+  // zeros and empty-state lines it has always shown.
+  // --------------------------------------------------------------------------
 
-  const topServicesSection =
-    data.topErrorServices.length > 0
-      ? digestTable(
-          ['Service', 'Errors', 'Previous', 'Delta'],
-          data.topErrorServices.map((s) => [
-            s.service,
-            s.errorCount.toLocaleString('en-US'),
-            s.previousCount.toLocaleString('en-US'),
-            formatDelta(s.delta),
-          ])
-        )
-      : digestEmptyLine('No errors recorded in this period.');
+  const logVolumeSection = data.logVolume
+    ? digestSectionTitle('Log Volume') +
+      (quiet
+        ? alertBox('No activity during this period. Your systems have been quiet.', 'info')
+        : infoBox([
+            { label: 'Total Logs', value: data.logVolume.current.toLocaleString('en-US') },
+            { label: 'Trend', value: data.logVolume.trend },
+            { label: 'Previous Period', value: data.logVolume.previous.toLocaleString('en-US') },
+          ]))
+    : '';
 
-  const errorGroupsSection =
-    data.newErrorGroups.length > 0
-      ? digestTable(
-          ['Error', 'Language', 'Occurrences'],
-          data.newErrorGroups.map((g) => [
-            `${g.exceptionType}${g.exceptionMessage ? ': ' + truncate(g.exceptionMessage, 60) : ''}`,
-            g.language,
-            g.occurrenceCount.toLocaleString('en-US'),
-          ])
-        )
-      : digestEmptyLine('No new error groups appeared in this period.');
+  const topServicesSection = data.topErrorServices
+    ? digestSectionTitle('Top Services by Errors') +
+      (data.topErrorServices.length > 0
+        ? digestTable(
+            ['Service', 'Errors', 'Previous', 'Delta'],
+            data.topErrorServices.map((s) => [
+              s.service,
+              s.errorCount.toLocaleString('en-US'),
+              s.previousCount.toLocaleString('en-US'),
+              formatDelta(s.delta),
+            ])
+          )
+        : digestEmptyLine('No errors recorded in this period.'))
+    : '';
 
-  const securityRows = [
-    { label: 'Detections', value: data.security.totalDetections.toLocaleString('en-US') },
-    { label: 'Open Incidents', value: data.security.openIncidents.toLocaleString('en-US') },
-  ];
-  const securitySection =
-    data.security.topRules.length > 0
-      ? infoBox(securityRows) +
-        digestTable(
-          ['Rule', 'Severity', 'Detections'],
-          data.security.topRules.map((r) => [r.ruleTitle, r.severity, r.count.toLocaleString('en-US')])
-        )
-      : infoBox(securityRows);
+  const errorGroupsSection = data.newErrorGroups
+    ? digestSectionTitle('New Error Groups') +
+      (data.newErrorGroups.length > 0
+        ? digestTable(
+            ['Error', 'Language', 'Occurrences'],
+            data.newErrorGroups.map((g) => [
+              `${g.exceptionType}${g.exceptionMessage ? ': ' + truncate(g.exceptionMessage, 60) : ''}`,
+              g.language,
+              g.occurrenceCount.toLocaleString('en-US'),
+            ])
+          )
+        : digestEmptyLine('No new error groups appeared in this period.'))
+    : '';
+
+  const securitySection = data.security
+    ? digestSectionTitle('Security') +
+      infoBox([
+        { label: 'Detections', value: data.security.totalDetections.toLocaleString('en-US') },
+        { label: 'Open Incidents', value: data.security.openIncidents.toLocaleString('en-US') },
+      ]) +
+      (data.security.topRules.length > 0
+        ? digestTable(
+            ['Rule', 'Severity', 'Detections'],
+            data.security.topRules.map((r) => [
+              r.ruleTitle,
+              r.severity,
+              r.count.toLocaleString('en-US'),
+            ])
+          )
+        : '')
+    : '';
 
   const uptimeSection = data.uptime
     ? digestSectionTitle('Uptime') +
@@ -995,87 +1063,419 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
         : '')
     : '';
 
+  // --------------------------------------------------------------------------
+  // Expanded sections. Each one is undefined when disabled OR empty, and then
+  // renders nothing at all: no title, no empty-state line.
+  // (digestEmptyLine doubles as the muted one-liner for short section notes.)
+  // --------------------------------------------------------------------------
+
+  const logBreakdownSection = data.logBreakdown
+    ? digestSectionTitle('Log Breakdown') +
+      digestTable(
+        ['Level', 'Logs', 'Previous'],
+        data.logBreakdown.levels.map((l) => [
+          l.level,
+          l.current.toLocaleString('en-US'),
+          l.previous.toLocaleString('en-US'),
+        ])
+      ) +
+      infoBox([
+        { label: 'Error Rate', value: formatPct(data.logBreakdown.errorRatePct) },
+        { label: 'Previous Error Rate', value: formatPct(data.logBreakdown.previousErrorRatePct) },
+      ]) +
+      (data.logBreakdown.daily?.length
+        ? digestTable(
+            ['Day', 'Logs'],
+            data.logBreakdown.daily.map((d) => [d.date, d.count.toLocaleString('en-US')])
+          )
+        : '')
+    : '';
+
+  const topErrorMessagesSection = data.topErrorMessages
+    ? digestSectionTitle('Top Error Messages') +
+      digestTable(
+        ['Message', 'Count'],
+        data.topErrorMessages.map((m) => [
+          truncate(m.message, 120),
+          m.count.toLocaleString('en-US'),
+        ])
+      )
+    : '';
+
+  const tracesSection = data.traces
+    ? digestSectionTitle('Traces') +
+      infoBox([
+        { label: 'Spans', value: data.traces.spanCount.toLocaleString('en-US') },
+        { label: 'Span Trend', value: data.traces.trend },
+        { label: 'Previous Period', value: data.traces.previousSpanCount.toLocaleString('en-US') },
+        { label: 'Error Spans', value: data.traces.errorSpanCount.toLocaleString('en-US') },
+      ]) +
+      (data.traces.services.length > 0
+        ? digestEmptyLine(
+            'Top services by calls. p95 is the worst project value, not a merged percentile.'
+          ) +
+          digestTable(
+            ['Service', 'Calls', 'Error Rate', 'p95 (worst)'],
+            data.traces.services.map((s) => [
+              s.service,
+              s.calls.toLocaleString('en-US'),
+              formatPct(s.errorRatePct),
+              formatMs(s.p95Ms),
+            ])
+          )
+        : '') +
+      (data.traces.slowestSpans.length > 0
+        ? digestEmptyLine('Slowest spans in the period.') +
+          digestTable(
+            ['Operation', 'Service', 'Duration'],
+            data.traces.slowestSpans.map((s) => [
+              s.operation,
+              s.service,
+              formatMs(s.durationMs),
+            ])
+          )
+        : '')
+    : '';
+
+  const metricsSection = data.metrics
+    ? digestSectionTitle('Metrics') +
+      infoBox([
+        { label: 'Datapoints', value: data.metrics.datapoints.toLocaleString('en-US') },
+        { label: 'Datapoint Trend', value: data.metrics.trend },
+        {
+          label: 'Previous Period',
+          value: data.metrics.previousDatapoints.toLocaleString('en-US'),
+        },
+      ])
+    : '';
+
+  const alertsSection = data.alerts
+    ? digestSectionTitle('Alerts') +
+      infoBox([
+        { label: 'Triggers', value: data.alerts.total.toLocaleString('en-US') },
+        { label: 'Alert Trend', value: data.alerts.trend },
+        { label: 'Previous Period', value: data.alerts.previousTotal.toLocaleString('en-US') },
+      ]) +
+      // Nothing fired this period but something fired in the previous one: the
+      // totals still matter, the (empty) ranking does not.
+      (data.alerts.topRules.length > 0
+        ? digestTable(
+            ['Rule', 'Triggers'],
+            data.alerts.topRules.map((r) => [r.name, r.count.toLocaleString('en-US')])
+          )
+        : '')
+    : '';
+
+  const incidentsOpened = data.securityActivity
+    ? data.securityActivity.openedBySeverity.reduce((sum, s) => sum + s.count, 0)
+    : 0;
+
+  const securityActivitySection = data.securityActivity
+    ? digestSectionTitle('Security Activity') +
+      infoBox([
+        { label: 'Incidents Opened', value: incidentsOpened.toLocaleString('en-US') },
+        {
+          label: 'Incidents Resolved',
+          value: data.securityActivity.resolvedCount.toLocaleString('en-US'),
+        },
+      ]) +
+      (data.securityActivity.openedBySeverity.length > 0
+        ? digestTable(
+            ['Severity', 'Opened'],
+            data.securityActivity.openedBySeverity.map((s) => [
+              s.severity,
+              s.count.toLocaleString('en-US'),
+            ])
+          )
+        : '') +
+      (data.securityActivity.topTechniques.length > 0
+        ? digestTable(
+            ['MITRE Technique', 'Detections'],
+            data.securityActivity.topTechniques.map((t) => [
+              t.technique,
+              t.count.toLocaleString('en-US'),
+            ])
+          )
+        : '')
+    : '';
+
+  const monitorPerformanceSection = data.monitorPerformance
+    ? digestSectionTitle('Monitor Performance') +
+      digestEmptyLine('Monitors without response timing (heartbeats) show a dash.') +
+      digestTable(
+        ['Monitor', 'Avg', 'p95', 'Failed'],
+        data.monitorPerformance.map((m) => [
+          m.name,
+          formatMs(m.avgMs),
+          formatMs(m.p95Ms),
+          m.failedChecks.toLocaleString('en-US'),
+        ])
+      )
+    : '';
+
+  const usageSection = data.usage
+    ? digestSectionTitle('Usage') +
+      infoBox([
+        { label: 'Log Events', value: data.usage.logEvents.toLocaleString('en-US') },
+        { label: 'Log Volume', value: formatBytes(data.usage.logBytes) },
+        { label: 'Spans', value: data.usage.spans.toLocaleString('en-US') },
+      ]) +
+      (data.usage.topProjects.length > 0
+        ? digestTable(
+            ['Project', 'Events'],
+            data.usage.topProjects.map((p) => [p.name, p.events.toLocaleString('en-US')])
+          )
+        : '') +
+      // Quota windows are month-to-date, not period-scoped: say so.
+      (data.usage.quotaWarnings.length > 0
+        ? alertBox(
+            `Month-to-date usage above 80% of limit: ${data.usage.quotaWarnings
+              .map((w) => `<strong>${escapeHtml(w.capability)}</strong> ${w.usedPct}%`)
+              .join(', ')}`,
+            'warning'
+          )
+        : '')
+    : '';
+
+  const webhooksSection = data.webhooks
+    ? digestSectionTitle('Webhooks') +
+      infoBox([
+        { label: 'Delivered', value: data.webhooks.delivered.toLocaleString('en-US') },
+        { label: 'Failed', value: data.webhooks.failed.toLocaleString('en-US') },
+        { label: 'Dead', value: data.webhooks.dead.toLocaleString('en-US') },
+      ]) +
+      (data.webhooks.dead > 0
+        ? alertBox(
+            `<strong>${data.webhooks.dead.toLocaleString('en-US')}</strong> deliver${data.webhooks.dead === 1 ? 'y' : 'ies'} reached the dead-letter queue and need attention.`,
+            'warning'
+          )
+        : '')
+    : '';
+
+  const teamActivitySection = data.teamActivity
+    ? digestSectionTitle('Team Activity') +
+      infoBox([
+        { label: 'Members Added', value: data.teamActivity.membersAdded.toLocaleString('en-US') },
+        {
+          label: 'Members Removed',
+          value: data.teamActivity.membersRemoved.toLocaleString('en-US'),
+        },
+        { label: 'Config Changes', value: data.teamActivity.configChanges.toLocaleString('en-US') },
+        { label: 'Failed Logins', value: data.teamActivity.failedLogins.toLocaleString('en-US') },
+      ])
+    : '';
+
   const html = baseTemplate(
     card(`
       ${header(title, { text: data.frequency, color: colors.info })}
       ${divider()}
       ${subtitle(`${data.organizationName} - ${data.periodLabel}`)}
       ${timestamp()}
-      ${digestSectionTitle('Log Volume')}
       ${logVolumeSection}
-      ${digestSectionTitle('Top Services by Errors')}
+      ${logBreakdownSection}
       ${topServicesSection}
-      ${digestSectionTitle('New Error Groups')}
+      ${topErrorMessagesSection}
       ${errorGroupsSection}
-      ${digestSectionTitle('Security')}
+      ${tracesSection}
+      ${metricsSection}
+      ${alertsSection}
       ${securitySection}
+      ${securityActivitySection}
       ${uptimeSection}
+      ${monitorPerformanceSection}
+      ${usageSection}
+      ${webhooksSection}
+      ${teamActivitySection}
       ${cta('View Dashboard', data.dashboardUrl)}
     `),
     {
-      preheader: quiet
-        ? `Quiet period for ${data.organizationName}`
-        : `${data.logVolume.current.toLocaleString('en-US')} logs, ${data.security.totalDetections.toLocaleString('en-US')} detections for ${data.organizationName}`,
+      preheader: quiet ? `Quiet period for ${data.organizationName}` : buildPreheader(data),
       unsubscribeUrl: data.unsubscribeUrl,
     }
   );
 
   const lines: string[] = [];
+  // Same shape as before: a blank line, the heading, then a rule of its length.
+  const heading = (text: string): void => {
+    lines.push('');
+    lines.push(text);
+    lines.push('-'.repeat(text.length));
+  };
+
   lines.push(`LogTide ${frequencyLabel} Digest`);
   lines.push(`Organization: ${data.organizationName}`);
   lines.push(`Period: ${data.periodLabel}`);
   lines.push('');
   lines.push('='.repeat(50));
-  lines.push('');
-  lines.push('LOG VOLUME');
-  lines.push('-'.repeat(10));
-  if (quiet) {
-    lines.push('No activity during this period.');
-    lines.push('Your systems have been quiet.');
-  } else {
-    lines.push(`Total logs: ${data.logVolume.current.toLocaleString('en-US')}`);
-    lines.push(`Trend: ${data.logVolume.trend}`);
-    lines.push(`Previous period: ${data.logVolume.previous.toLocaleString('en-US')}`);
+  if (data.logVolume) {
+    heading('LOG VOLUME');
+    if (quiet) {
+      lines.push('No activity during this period.');
+      lines.push('Your systems have been quiet.');
+    } else {
+      lines.push(`Total logs: ${data.logVolume.current.toLocaleString('en-US')}`);
+      lines.push(`Trend: ${data.logVolume.trend}`);
+      lines.push(`Previous period: ${data.logVolume.previous.toLocaleString('en-US')}`);
+    }
   }
-  lines.push('');
-  lines.push('TOP SERVICES BY ERRORS');
-  lines.push('-'.repeat(22));
-  if (data.topErrorServices.length > 0) {
-    for (const s of data.topErrorServices) {
+  if (data.logBreakdown) {
+    heading('LOG BREAKDOWN');
+    for (const l of data.logBreakdown.levels) {
       lines.push(
-        `${s.service}: ${s.errorCount.toLocaleString('en-US')} errors (previous: ${s.previousCount.toLocaleString('en-US')}, delta: ${formatDelta(s.delta)})`
+        `${l.level}: ${l.current.toLocaleString('en-US')} (previous: ${l.previous.toLocaleString('en-US')})`
       );
     }
-  } else {
-    lines.push('No errors recorded in this period.');
-  }
-  lines.push('');
-  lines.push('NEW ERROR GROUPS');
-  lines.push('-'.repeat(16));
-  if (data.newErrorGroups.length > 0) {
-    for (const g of data.newErrorGroups) {
-      const message = g.exceptionMessage ? `: ${truncate(g.exceptionMessage, 80)}` : '';
-      lines.push(`${g.exceptionType}${message} (${g.language}, ${g.occurrenceCount.toLocaleString('en-US')} occurrences)`);
+    lines.push(
+      `Error rate: ${formatPct(data.logBreakdown.errorRatePct)} (previous: ${formatPct(data.logBreakdown.previousErrorRatePct)})`
+    );
+    if (data.logBreakdown.daily?.length) {
+      lines.push('Per day:');
+      for (const d of data.logBreakdown.daily) {
+        lines.push(`${d.date}: ${d.count.toLocaleString('en-US')}`);
+      }
     }
-  } else {
-    lines.push('No new error groups appeared in this period.');
   }
-  lines.push('');
-  lines.push('SECURITY');
-  lines.push('-'.repeat(8));
-  lines.push(`Detections: ${data.security.totalDetections.toLocaleString('en-US')}`);
-  lines.push(`Open incidents: ${data.security.openIncidents.toLocaleString('en-US')}`);
-  for (const r of data.security.topRules) {
-    lines.push(`${r.ruleTitle} [${r.severity}]: ${r.count.toLocaleString('en-US')} detections`);
+  if (data.topErrorServices) {
+    heading('TOP SERVICES BY ERRORS');
+    if (data.topErrorServices.length > 0) {
+      for (const s of data.topErrorServices) {
+        lines.push(
+          `${s.service}: ${s.errorCount.toLocaleString('en-US')} errors (previous: ${s.previousCount.toLocaleString('en-US')}, delta: ${formatDelta(s.delta)})`
+        );
+      }
+    } else {
+      lines.push('No errors recorded in this period.');
+    }
+  }
+  if (data.topErrorMessages) {
+    heading('TOP ERROR MESSAGES');
+    for (const m of data.topErrorMessages) {
+      lines.push(`${truncate(m.message, 120)}: ${m.count.toLocaleString('en-US')}`);
+    }
+  }
+  if (data.newErrorGroups) {
+    heading('NEW ERROR GROUPS');
+    if (data.newErrorGroups.length > 0) {
+      for (const g of data.newErrorGroups) {
+        const message = g.exceptionMessage ? `: ${truncate(g.exceptionMessage, 80)}` : '';
+        lines.push(`${g.exceptionType}${message} (${g.language}, ${g.occurrenceCount.toLocaleString('en-US')} occurrences)`);
+      }
+    } else {
+      lines.push('No new error groups appeared in this period.');
+    }
+  }
+  if (data.traces) {
+    heading('TRACES');
+    lines.push(`Spans: ${data.traces.spanCount.toLocaleString('en-US')}`);
+    lines.push(`Span trend: ${data.traces.trend}`);
+    lines.push(`Previous spans: ${data.traces.previousSpanCount.toLocaleString('en-US')}`);
+    lines.push(`Error spans: ${data.traces.errorSpanCount.toLocaleString('en-US')}`);
+    if (data.traces.services.length > 0) {
+      lines.push('Top services by calls (p95 is the worst project value):');
+      for (const s of data.traces.services) {
+        lines.push(
+          `${s.service}: ${s.calls.toLocaleString('en-US')} calls, ${formatPct(s.errorRatePct)} errors, p95 ${formatMs(s.p95Ms)}`
+        );
+      }
+    }
+    if (data.traces.slowestSpans.length > 0) {
+      lines.push('Slowest spans:');
+      for (const s of data.traces.slowestSpans) {
+        lines.push(`${s.operation} (${s.service}): ${formatMs(s.durationMs)}`);
+      }
+    }
+  }
+  if (data.metrics) {
+    heading('METRICS');
+    lines.push(`Datapoints: ${data.metrics.datapoints.toLocaleString('en-US')}`);
+    lines.push(`Datapoint trend: ${data.metrics.trend}`);
+    lines.push(`Previous datapoints: ${data.metrics.previousDatapoints.toLocaleString('en-US')}`);
+  }
+  if (data.alerts) {
+    heading('ALERTS');
+    lines.push(`Triggers: ${data.alerts.total.toLocaleString('en-US')}`);
+    lines.push(`Alert trend: ${data.alerts.trend}`);
+    lines.push(`Previous triggers: ${data.alerts.previousTotal.toLocaleString('en-US')}`);
+    for (const r of data.alerts.topRules) {
+      lines.push(`${r.name}: ${r.count.toLocaleString('en-US')} triggers`);
+    }
+  }
+  if (data.security) {
+    heading('SECURITY');
+    lines.push(`Detections: ${data.security.totalDetections.toLocaleString('en-US')}`);
+    lines.push(`Open incidents: ${data.security.openIncidents.toLocaleString('en-US')}`);
+    for (const r of data.security.topRules) {
+      lines.push(`${r.ruleTitle} [${r.severity}]: ${r.count.toLocaleString('en-US')} detections`);
+    }
+  }
+  if (data.securityActivity) {
+    heading('SECURITY ACTIVITY');
+    lines.push(`Incidents opened: ${incidentsOpened.toLocaleString('en-US')}`);
+    lines.push(
+      `Incidents resolved: ${data.securityActivity.resolvedCount.toLocaleString('en-US')}`
+    );
+    if (data.securityActivity.openedBySeverity.length > 0) {
+      lines.push('Opened by severity:');
+      for (const s of data.securityActivity.openedBySeverity) {
+        lines.push(`${s.severity}: ${s.count.toLocaleString('en-US')}`);
+      }
+    }
+    if (data.securityActivity.topTechniques.length > 0) {
+      lines.push('Top MITRE techniques:');
+      for (const t of data.securityActivity.topTechniques) {
+        lines.push(`${t.technique}: ${t.count.toLocaleString('en-US')}`);
+      }
+    }
   }
   if (data.uptime) {
-    lines.push('');
-    lines.push('UPTIME');
-    lines.push('-'.repeat(6));
+    heading('UPTIME');
     lines.push(`Overall: ${data.uptime.overallUptimePct.toLocaleString('en-US')}% across ${data.uptime.monitorCount.toLocaleString('en-US')} monitor(s)`);
     for (const m of data.uptime.worstMonitors) {
       lines.push(`${m.name}: ${m.uptimePct.toLocaleString('en-US')}%`);
     }
+  }
+  if (data.monitorPerformance) {
+    heading('MONITOR PERFORMANCE');
+    lines.push('Monitors without response timing (heartbeats) show a dash.');
+    for (const m of data.monitorPerformance) {
+      lines.push(
+        `${m.name}: avg ${formatMs(m.avgMs)}, p95 ${formatMs(m.p95Ms)}, ${m.failedChecks.toLocaleString('en-US')} failed checks`
+      );
+    }
+  }
+  if (data.usage) {
+    heading('USAGE');
+    lines.push(`Log events: ${data.usage.logEvents.toLocaleString('en-US')}`);
+    lines.push(`Log volume: ${formatBytes(data.usage.logBytes)}`);
+    lines.push(`Spans: ${data.usage.spans.toLocaleString('en-US')}`);
+    if (data.usage.topProjects.length > 0) {
+      lines.push('Top projects:');
+      for (const p of data.usage.topProjects) {
+        lines.push(`${p.name}: ${p.events.toLocaleString('en-US')} events`);
+      }
+    }
+    if (data.usage.quotaWarnings.length > 0) {
+      lines.push('Month-to-date usage above 80% of limit:');
+      for (const w of data.usage.quotaWarnings) {
+        lines.push(`${w.capability}: ${w.usedPct}%`);
+      }
+    }
+  }
+  if (data.webhooks) {
+    heading('WEBHOOKS');
+    lines.push(`Delivered: ${data.webhooks.delivered.toLocaleString('en-US')}`);
+    lines.push(`Failed: ${data.webhooks.failed.toLocaleString('en-US')}`);
+    lines.push(`Dead: ${data.webhooks.dead.toLocaleString('en-US')}`);
+    if (data.webhooks.dead > 0) {
+      lines.push('Dead-lettered deliveries need attention.');
+    }
+  }
+  if (data.teamActivity) {
+    heading('TEAM ACTIVITY');
+    lines.push(`Members added: ${data.teamActivity.membersAdded.toLocaleString('en-US')}`);
+    lines.push(`Members removed: ${data.teamActivity.membersRemoved.toLocaleString('en-US')}`);
+    lines.push(`Config changes: ${data.teamActivity.configChanges.toLocaleString('en-US')}`);
+    lines.push(`Failed logins: ${data.teamActivity.failedLogins.toLocaleString('en-US')}`);
   }
   lines.push('');
   lines.push(`View your dashboard: ${data.dashboardUrl}`);

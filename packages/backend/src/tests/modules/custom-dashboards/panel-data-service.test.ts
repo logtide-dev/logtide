@@ -402,6 +402,159 @@ describe('top_n_table panel', () => {
       ),
     ).rejects.toThrow(/belong/);
   });
+
+  it('metadata dimension: ranks values with counts and lastSeen', async () => {
+    const now = new Date();
+    const newest = new Date(now.getTime() - 60 * 1000);
+    await createTestLog({ projectId, service: 'edge', level: 'info', metadata: { geo_place: 'NY' }, time: new Date(now.getTime() - 5 * 60 * 1000) });
+    await createTestLog({ projectId, service: 'edge', level: 'info', metadata: { geo_place: 'NY' }, time: new Date(now.getTime() - 3 * 60 * 1000) });
+    await createTestLog({ projectId, service: 'edge', level: 'info', metadata: { geo_place: 'NY' }, time: newest });
+    await createTestLog({ projectId, service: 'edge', level: 'info', metadata: { geo_place: 'LA' }, time: new Date(now.getTime() - 4 * 60 * 1000) });
+
+    const r = (await fetchPanelData(
+      {
+        type: 'top_n_table',
+        title: 'Top places',
+        source: 'logs',
+        dimension: 'metadata',
+        metadataField: 'geo_place',
+        limit: 10,
+        projectId,
+        interval: '24h',
+        showLastSeen: true,
+      },
+      ctx(),
+    )) as { rows: Array<{ key: string; count: number; percentage: number; lastSeen?: string }>; total: number };
+
+    expect(r.rows[0].key).toBe('NY');
+    expect(r.rows[0].count).toBe(3);
+    expect(r.rows[0].lastSeen).toBe(newest.toISOString());
+    const la = r.rows.find((row) => row.key === 'LA');
+    expect(la!.count).toBe(1);
+  });
+
+  it('metadata dimension: omits lastSeen when showLastSeen is off', async () => {
+    await createTestLog({ projectId, service: 'edge', level: 'info', metadata: { geo_place: 'NY' } });
+
+    const r = (await fetchPanelData(
+      {
+        type: 'top_n_table',
+        title: 'Top places',
+        source: 'logs',
+        dimension: 'metadata',
+        metadataField: 'geo_place',
+        limit: 10,
+        projectId,
+        interval: '24h',
+      },
+      ctx(),
+    )) as { rows: Array<Record<string, unknown>> };
+
+    expect(r.rows.length).toBeGreaterThan(0);
+    expect('lastSeen' in r.rows[0]).toBe(false);
+  });
+
+  it('metadata dimension: respects levels filter', async () => {
+    await createTestLog({ projectId, service: 'edge', level: 'error', metadata: { geo_place: 'ERR' } });
+    await createTestLog({ projectId, service: 'edge', level: 'info', metadata: { geo_place: 'INFO' } });
+
+    const r = (await fetchPanelData(
+      {
+        type: 'top_n_table',
+        title: 'Top places',
+        source: 'logs',
+        dimension: 'metadata',
+        metadataField: 'geo_place',
+        limit: 10,
+        projectId,
+        interval: '24h',
+        levels: ['error'],
+      },
+      ctx(),
+    )) as { rows: Array<{ key: string }> };
+
+    expect(r.rows.map((row) => row.key)).toEqual(['ERR']);
+  });
+
+  it('metadata dimension: respects service filter', async () => {
+    await createTestLog({ projectId, service: 'edge', level: 'info', metadata: { geo_place: 'EDGE' } });
+    await createTestLog({ projectId, service: 'other', level: 'info', metadata: { geo_place: 'OTHER' } });
+
+    const r = (await fetchPanelData(
+      {
+        type: 'top_n_table',
+        title: 'Top places',
+        source: 'logs',
+        dimension: 'metadata',
+        metadataField: 'geo_place',
+        limit: 10,
+        projectId,
+        interval: '24h',
+        service: 'edge',
+      },
+      ctx(),
+    )) as { rows: Array<{ key: string }> };
+
+    expect(r.rows.map((row) => row.key)).toEqual(['EDGE']);
+  });
+
+  it('metadata dimension: rejects invalid field at the fetcher barrier', async () => {
+    await expect(
+      fetchPanelData(
+        {
+          type: 'top_n_table',
+          title: 'Bad',
+          source: 'logs',
+          dimension: 'metadata',
+          metadataField: "bad'key",
+          limit: 10,
+          projectId,
+          interval: '24h',
+        },
+        ctx(),
+      ),
+    ).rejects.toThrow(/Invalid top-n metadata field/);
+  });
+
+  it('metadata dimension: org isolation', async () => {
+    await createTestLog({ projectId: otherProjectId, service: 'spy', level: 'info', metadata: { geo_place: 'FOREIGN' } });
+    await createTestLog({ projectId, service: 'edge', level: 'info', metadata: { geo_place: 'MINE' } });
+
+    const r = (await fetchPanelData(
+      {
+        type: 'top_n_table',
+        title: 'Top places',
+        source: 'logs',
+        dimension: 'metadata',
+        metadataField: 'geo_place',
+        limit: 10,
+        projectId: null,
+        interval: '24h',
+      },
+      ctx(),
+    )) as { rows: Array<{ key: string }> };
+
+    expect(r.rows.map((row) => row.key)).toContain('MINE');
+    expect(r.rows.map((row) => row.key)).not.toContain('FOREIGN');
+  });
+
+  it('tenancy: foreign projectId throws for metadata dimension', async () => {
+    await expect(
+      fetchPanelData(
+        {
+          type: 'top_n_table',
+          title: 'X',
+          source: 'logs',
+          dimension: 'metadata',
+          metadataField: 'geo_place',
+          limit: 5,
+          projectId: otherProjectId,
+          interval: '24h',
+        },
+        ctx(),
+      ),
+    ).rejects.toThrow(/belong/);
+  });
 });
 
 // ─── live_log_stream ─────────────────────────────────────────────────────────

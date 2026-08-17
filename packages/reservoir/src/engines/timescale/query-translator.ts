@@ -394,7 +394,8 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     conditions.push(`${selectExpr} != ''`);
 
     const where = ` WHERE ${conditions.join(' AND ')}`;
-    let query = `SELECT ${selectExpr} AS value, COUNT(*) AS count FROM ${this.table}${where} GROUP BY value ORDER BY count DESC`;
+    const lastSeenExpr = params.includeLastSeen ? ', MAX(time) AS last_seen' : '';
+    let query = `SELECT ${selectExpr} AS value, COUNT(*) AS count${lastSeenExpr} FROM ${this.table}${where} GROUP BY value ORDER BY count DESC`;
 
     if (params.limit) {
       query += ` LIMIT $${idx}`;

@@ -9,6 +9,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { resolveSeriesLabel } from '../panels/series-labels';
 
   interface Props {
     config: TimeSeriesConfig;
@@ -34,6 +35,20 @@
       set.add(level);
     }
     update('levels', Array.from(set));
+  }
+
+  // Selected levels in canonical order, so the label inputs never reorder.
+  const labelledLevels = $derived(levels.filter((level) => config.levels.includes(level)));
+
+  function setSeriesLabel(level: LogLevelKey, raw: string) {
+    const next: Partial<Record<LogLevelKey, string>> = { ...config.seriesLabels };
+    const trimmed = raw.trim();
+    if (trimmed.length > 0) {
+      next[level] = trimmed;
+    } else {
+      delete next[level];
+    }
+    update('seriesLabels', Object.keys(next).length > 0 ? next : undefined);
   }
 </script>
 
@@ -77,6 +92,25 @@
         >
           {level}
         </button>
+      {/each}
+    </div>
+  </div>
+
+  <div class="space-y-1.5">
+    <Label>Series labels (optional)</Label>
+    <div class="space-y-2">
+      {#each labelledLevels as level (level)}
+        <div class="space-y-1">
+          <Label for="ts-label-{level}" class="text-xs text-muted-foreground">Label for {level}</Label>
+          <Input
+            id="ts-label-{level}"
+            type="text"
+            maxlength={40}
+            placeholder={resolveSeriesLabel(level)}
+            value={config.seriesLabels?.[level] ?? ''}
+            oninput={(e) => setSeriesLabel(level, (e.currentTarget as HTMLInputElement).value)}
+          />
+        </div>
       {/each}
     </div>
   </div>

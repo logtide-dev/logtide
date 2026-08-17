@@ -52,6 +52,8 @@ export interface TimeSeriesConfig {
   interval: '1h' | '6h' | '24h' | '7d' | '30d';
   levels: LogLevelKey[];
   service: string | null;
+  /** Optional per-level display labels for legend and tooltip; falls back to Debug/Info/Warn/Error/Critical */
+  seriesLabels?: Partial<Record<LogLevelKey, string>>;
 }
 
 export interface SingleStatConfig {
@@ -67,10 +69,18 @@ export interface TopNTableConfig {
   type: 'top_n_table';
   title: string;
   source: 'logs';
-  dimension: 'service' | 'error_message';
-  limit: number; // 5–20
+  dimension: 'service' | 'error_message' | 'metadata';
+  /** required when dimension === 'metadata'; flat metadata key, no leading 'metadata.' */
+  metadataField?: string | null;
+  limit: number; // 3-50
   projectId: string | null;
   interval: '1h' | '24h' | '7d';
+  /** default false; honored for error_message and metadata dimensions */
+  showLastSeen?: boolean;
+  /** metadata dimension only; empty/absent = all levels */
+  levels?: LogLevelKey[];
+  /** metadata dimension only */
+  service?: string | null;
 }
 
 export interface LiveLogStreamConfig {
@@ -80,7 +90,7 @@ export interface LiveLogStreamConfig {
   projectId: string | null;
   service: string | null;
   levels: LogLevelKey[];
-  maxRows: number; // 10–50
+  maxRows: number; // 10-100
 }
 
 export interface AlertStatusConfig {

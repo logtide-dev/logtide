@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.3.1] - 2026-08-18
+
+### Added
+
+- **Live Log Stream rows**: raised the `live_log_stream` panel `maxRows` cap from 50 to 100, matching the Log Table panel (#298).
+- **Panel pause**: every dashboard panel gains a Pause/Resume toggle; paused panels are skipped by auto-refresh and batch fetches (manual per-panel refresh still works), and a paused live Log Table freezes its rows while keeping the socket alive (#296).
+- **Time series labels**: `time_series` panels accept optional per-level `seriesLabels` (e.g. info -> "Heartbeat"); legend and tooltip use them, falling back to Debug/Info/Warn/Error/Critical (#300).
+- **Display preferences**: new Settings > Display card with 12h/24h clock and explicit IANA timezone; all custom-dashboard panel timestamps honor it (browser timezone and 24h remain the defaults) (#297).
+- **Top-N metadata dimension**: `top_n_table` panels can rank any flat metadata key (e.g. GeoIP `geo_place`) with limit up to 50, optional level/service filters and a Last seen column; reservoir `topValues` learned `includeLastSeen` on TimescaleDB, ClickHouse and MongoDB (#299).
+- **Digest sections**: daily/weekly digest emails can now report on every vertical, with ten new toggleable sections (log level breakdown, top error messages, traces, metrics, alerts, security activity, monitor performance, usage and quota warnings, webhook deliveries, team activity); new sections are off by default and configurable per organization in Settings > Email Digests.
+
+### Fixed
+
+- **MongoDB span sorting**: MongoDB span queries now accept the same sort fields as TimescaleDB and ClickHouse (`duration_ms`, `end_time`, `service_name`, `operation_name`); previously any sort other than `start_time`/`time` was silently ignored.
+- **Digest generation follow-ups**: the usage section no longer runs the per-project service/level log scans it discarded, the current/previous reservoir window pairs and the per-project span health lookups now run in parallel, MongoDB gained a `(project_id, duration_ms)` span index for the slowest-spans read, and the digest settings empty state matches the renamed Save Settings button.
+
+
 ## [1.3.0] - 2026-08-11
 
 ### Security

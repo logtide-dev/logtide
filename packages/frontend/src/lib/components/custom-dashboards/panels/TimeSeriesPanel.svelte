@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import * as echarts from 'echarts';
   import { themeStore } from '$lib/stores/theme';
+  import { displayPreferences } from '$lib/stores/display-preferences';
+  import { formatTimestamp } from '$lib/utils/format-time';
   import {
     chartColors,
     getAxisStyle,
@@ -9,6 +11,7 @@
     getLegendStyle,
   } from '$lib/utils/echarts-theme';
   import type { TimeSeriesConfig } from '@logtide/shared';
+  import { resolveSeriesLabel } from './series-labels';
 
   interface TimeSeriesPanelData {
     series: Array<{
@@ -36,18 +39,11 @@
 
   const typedData = $derived(data as TimeSeriesPanelData | null);
 
-  function formatTimeLabel(time: string): string {
-    return new Date(time).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
-  }
-
   function buildOption(): echarts.EChartsOption {
     const axisStyle = getAxisStyle();
     const tooltipStyle = getTooltipStyle();
     const legendStyle = getLegendStyle();
+    const prefs = displayPreferences.get();
     const series = typedData?.series ?? [];
     const showDebug = config.levels.includes('debug');
     const showInfo = config.levels.includes('info');
@@ -58,7 +54,7 @@
     const lineSeries: echarts.SeriesOption[] = [];
     if (showDebug) {
       lineSeries.push({
-        name: 'Debug',
+        name: resolveSeriesLabel('debug', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -69,7 +65,7 @@
     }
     if (showInfo) {
       lineSeries.push({
-        name: 'Info',
+        name: resolveSeriesLabel('info', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -80,7 +76,7 @@
     }
     if (showWarn) {
       lineSeries.push({
-        name: 'Warn',
+        name: resolveSeriesLabel('warn', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -91,7 +87,7 @@
     }
     if (showError) {
       lineSeries.push({
-        name: 'Error',
+        name: resolveSeriesLabel('error', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -102,7 +98,7 @@
     }
     if (showCritical) {
       lineSeries.push({
-        name: 'Critical',
+        name: resolveSeriesLabel('critical', config.seriesLabels),
         type: 'line',
         smooth: true,
         showSymbol: false,
@@ -119,7 +115,7 @@
       xAxis: {
         type: 'category',
         boundaryGap: false,
-        data: series.map((d) => formatTimeLabel(d.time)),
+        data: series.map((d) => formatTimestamp(d.time, 'time', prefs)),
         ...axisStyle,
       },
       yAxis: {
@@ -141,10 +137,16 @@
     const unsub = themeStore.subscribe(() => {
       if (chart) chart.setOption(buildOption(), true);
     });
+    // Axis labels are built inside buildOption(), not in markup, so the clock
+    // preference has to trigger a redraw explicitly.
+    const unsubPrefs = displayPreferences.subscribe(() => {
+      if (chart) chart.setOption(buildOption(), true);
+    });
 
     return () => {
       observer.disconnect();
       unsub();
+      unsubPrefs();
       chart?.dispose();
     };
   });

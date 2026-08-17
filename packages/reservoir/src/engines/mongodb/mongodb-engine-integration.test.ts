@@ -628,6 +628,43 @@ describe('MongoDBEngine (integration)', () => {
       expect(result.values).toHaveLength(1);
       expect(result.values[0].value).toBe('scheduler');
     });
+
+    it('returns lastSeen per value when requested', async () => {
+      // The seed logs all sit at 12:00:00Z; this later api log makes $max a real
+      // aggregate rather than the single seeded timestamp.
+      await engine.ingest([
+        makeLog({ service: 'api', level: 'info', time: new Date('2025-01-15T15:30:00Z') }),
+      ]);
+
+      const result = await engine.topValues({
+        field: 'service',
+        projectId: 'proj-1',
+        from: new Date('2025-01-15T00:00:00Z'),
+        to: new Date('2025-01-16T00:00:00Z'),
+        includeLastSeen: true,
+        limit: 5,
+      });
+
+      expect(result.values.length).toBeGreaterThan(0);
+      const apiEntry = result.values.find((v) => v.value === 'api');
+      expect(apiEntry!.lastSeen).toBe('2025-01-15T15:30:00.000Z');
+      const workerEntry = result.values.find((v) => v.value === 'worker');
+      expect(workerEntry!.lastSeen).toBe('2025-01-15T12:00:00.000Z');
+    });
+
+    it('omits lastSeen when not requested', async () => {
+      const result = await engine.topValues({
+        field: 'service',
+        projectId: 'proj-1',
+        from: new Date('2025-01-15T00:00:00Z'),
+        to: new Date('2025-01-16T00:00:00Z'),
+      });
+
+      expect(result.values.length).toBeGreaterThan(0);
+      for (const v of result.values) {
+        expect('lastSeen' in v).toBe(false);
+      }
+    });
   });
 
   // =========================================================================
@@ -802,6 +839,72 @@ describe('MongoDBEngine (integration)', () => {
 
       expect(result.spans).toHaveLength(1);
       expect(result.hasMore).toBe(true);
+    });
+
+    it('sorts by duration_ms when requested', async () => {
+      // Inserted out of duration order on purpose: sorting by the insertion
+      // default (start_time) would return 120, 900, 30
+      await engine.ingestSpans([
+        makeSpan({ spanId: 'span-d1', projectId: 'proj-sort', operationName: 'mid', durationMs: 120 }),
+        makeSpan({ spanId: 'span-d2', projectId: 'proj-sort', operationName: 'slow', durationMs: 900 }),
+        makeSpan({ spanId: 'span-d3', projectId: 'proj-sort', operationName: 'fast', durationMs: 30 }),
+      ]);
+
+      const result = await engine.querySpans({
+        projectId: 'proj-sort',
+        from: new Date('2025-01-15T00:00:00Z'),
+        to: new Date('2025-01-16T00:00:00Z'),
+        sortBy: 'duration_ms',
+        sortOrder: 'desc',
+      });
+
+      expect(result.spans.map((s) => s.durationMs)).toEqual([900, 120, 30]);
+      expect(result.spans.map((s) => s.operationName)).toEqual(['slow', 'mid', 'fast']);
+    });
+
+    it('sorts by service_name and operation_name', async () => {
+      await engine.ingestSpans([
+        makeSpan({ spanId: 'span-s1', projectId: 'proj-sort', serviceName: 'worker' }),
+        makeSpan({ spanId: 'span-s2', projectId: 'proj-sort', serviceName: 'api' }),
+        makeSpan({ spanId: 'span-s3', projectId: 'proj-sort', serviceName: 'db' }),
+      ]);
+
+      const result = await engine.querySpans({
+        projectId: 'proj-sort',
+        from: new Date('2025-01-15T00:00:00Z'),
+        to: new Date('2025-01-16T00:00:00Z'),
+        sortBy: 'service_name',
+        sortOrder: 'asc',
+      });
+
+      expect(result.spans.map((s) => s.serviceName)).toEqual(['api', 'db', 'worker']);
+    });
+
+    it('falls back to start_time for unsupported sort fields', async () => {
+      await engine.ingestSpans([
+        makeSpan({
+          spanId: 'span-f1',
+          projectId: 'proj-sort',
+          startTime: new Date('2025-01-15T14:00:00Z'),
+          durationMs: 10,
+        }),
+        makeSpan({
+          spanId: 'span-f2',
+          projectId: 'proj-sort',
+          startTime: new Date('2025-01-15T13:00:00Z'),
+          durationMs: 999,
+        }),
+      ]);
+
+      const result = await engine.querySpans({
+        projectId: 'proj-sort',
+        from: new Date('2025-01-15T00:00:00Z'),
+        to: new Date('2025-01-16T00:00:00Z'),
+        sortBy: 'attributes; drop',
+        sortOrder: 'asc',
+      });
+
+      expect(result.spans.map((s) => s.spanId)).toEqual(['span-f2', 'span-f1']);
     });
   });
 
