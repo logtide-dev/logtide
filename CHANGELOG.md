@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Panel time ranges**: every window-scoped dashboard panel (`time_series`, `top_n_table`, `geo_map`, `log_table`, `metric_chart`, `metric_stat`, `trace_latency`, `trace_volume`, `detection_events`, `activity_overview`) now accepts one shared preset list: 15m, 1h, 6h, 12h, 24h, 48h, 3d, 7d, 14d and 30d; config forms label the control "Time range" with human-readable labels (#305).
+- **Dashboard time override**: a toolbar picker on custom dashboards temporarily overrides the time range of every window-scoped panel (per-panel configs and saved dashboards are untouched); "Panel defaults" restores per-panel windows (#305).
+
+### Fixed
+
+- **Time series panel window**: the `time_series` panel always rendered the last 24 hours regardless of its configured interval; it now honors the window with adaptive bucketing (1m/5m/15m/1h/1d), zero-filled buckets and date-aware axis labels on multi-day ranges (#305).
+- **Top services window**: the `top_n_table` service dimension always aggregated the last 7 days regardless of its configured interval; it now honors the window (the continuous-aggregate fast path remains for the 7d default) and supports the Last seen column (#305).
+- **Geo map viewport**: the `geo_map` panel no longer destroys and re-fits the map on every auto-refresh; pan/zoom is preserved across refreshes, the map auto-fits only on first paint or when the panel config changes, and a new "Fit data" control re-frames on demand (#304).
+
 
 ## [1.3.1] - 2026-08-18
 
