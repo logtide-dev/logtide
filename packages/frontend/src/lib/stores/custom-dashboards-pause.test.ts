@@ -78,7 +78,7 @@ describe('custom dashboards store - panel pause', () => {
 
     await customDashboardsStore.fetchAllPanelData();
 
-    expect(fetchPanelData).toHaveBeenCalledWith('dash-1', 'org-1', ['panel-b']);
+    expect(fetchPanelData).toHaveBeenCalledWith('dash-1', 'org-1', ['panel-b'], undefined);
   });
 
   it('skips the network call entirely when every panel is paused', async () => {
@@ -97,7 +97,7 @@ describe('custom dashboards store - panel pause', () => {
 
     await customDashboardsStore.fetchAllPanelData();
 
-    expect(fetchPanelData).toHaveBeenCalledWith('dash-1', 'org-1', undefined);
+    expect(fetchPanelData).toHaveBeenCalledWith('dash-1', 'org-1', undefined, undefined);
   });
 
   it('does not clobber a paused panel data entry on batch refresh', async () => {
@@ -138,7 +138,7 @@ describe('custom dashboards store - panel pause', () => {
 
     await customDashboardsStore.refreshPanel('panel-a');
 
-    expect(fetchPanelData).toHaveBeenCalledWith('dash-1', 'org-1', ['panel-a']);
+    expect(fetchPanelData).toHaveBeenCalledWith('dash-1', 'org-1', ['panel-a'], undefined);
     expect(get(panelDataMap)['panel-a'].data).toEqual({ v: 'manual' });
   });
 

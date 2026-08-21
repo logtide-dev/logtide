@@ -9,6 +9,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
 
   interface Props {
     config: TraceLatencyConfig;
@@ -17,7 +18,6 @@
 
   let { config, onChange }: Props = $props();
 
-  const ranges: TraceLatencyConfig['timeRange'][] = ['1h', '6h', '24h', '7d'];
   const percentiles: Array<'p50' | 'p95' | 'p99'> = ['p50', 'p95', 'p99'];
 
   function update<K extends keyof TraceLatencyConfig>(key: K, value: TraceLatencyConfig[K]) {
@@ -69,11 +69,11 @@
       onValueChange={(v) => v && update('timeRange', v as TraceLatencyConfig['timeRange'])}
     >
       <SelectTrigger>
-        <SelectValue>{config.timeRange}</SelectValue>
+        <SelectValue>{timeRangeLabel(config.timeRange)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {#each ranges as r}
-          <SelectItem value={r}>{r}</SelectItem>
+        {#each TIME_RANGE_OPTIONS as option (option.value)}
+          <SelectItem value={option.value}>{option.label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>

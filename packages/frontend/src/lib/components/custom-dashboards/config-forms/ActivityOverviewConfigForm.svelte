@@ -12,6 +12,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
 
   interface Props {
     config: ActivityOverviewConfig;
@@ -20,7 +21,6 @@
 
   let { config, onChange }: Props = $props();
 
-  const timeRanges = ['24h', '7d', '30d'] as const;
   const seriesOptions: Array<{ key: ActivityOverviewSeries; label: string }> = [
     { key: 'logs', label: 'Logs' },
     { key: 'log_errors', label: 'Log errors' },
@@ -69,11 +69,11 @@
         v && update('timeRange', v as ActivityOverviewConfig['timeRange'])}
     >
       <SelectTrigger>
-        <SelectValue>{config.timeRange}</SelectValue>
+        <SelectValue>{timeRangeLabel(config.timeRange)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {#each timeRanges as r}
-          <SelectItem value={r}>{r}</SelectItem>
+        {#each TIME_RANGE_OPTIONS as option (option.value)}
+          <SelectItem value={option.value}>{option.label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>

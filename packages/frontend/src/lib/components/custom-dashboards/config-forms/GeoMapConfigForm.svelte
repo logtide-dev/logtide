@@ -9,6 +9,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
 
   interface Props {
     config: GeoMapConfig;
@@ -22,7 +23,6 @@
     { value: 'points', label: 'By location (points)' },
   ];
 
-  const intervals: Array<GeoMapConfig['interval']> = ['1h', '24h', '7d'];
   const allLevels: LogLevelKey[] = ['debug', 'info', 'warn', 'error', 'critical'];
 
   function update<K extends keyof GeoMapConfig>(key: K, value: GeoMapConfig[K]) {
@@ -67,18 +67,18 @@
   </div>
 
   <div class="space-y-1.5">
-    <Label>Time window</Label>
+    <Label>Time range</Label>
     <Select
       type="single"
       value={config.interval}
       onValueChange={(v) => v && update('interval', v as GeoMapConfig['interval'])}
     >
       <SelectTrigger>
-        <SelectValue>{config.interval}</SelectValue>
+        <SelectValue>{timeRangeLabel(config.interval)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {#each intervals as i}
-          <SelectItem value={i}>{i}</SelectItem>
+        {#each TIME_RANGE_OPTIONS as option (option.value)}
+          <SelectItem value={option.value}>{option.label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>

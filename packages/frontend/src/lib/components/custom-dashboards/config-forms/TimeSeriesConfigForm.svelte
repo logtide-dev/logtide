@@ -10,6 +10,7 @@
     SelectValue,
   } from '$lib/components/ui/select';
   import { resolveSeriesLabel } from '../panels/series-labels';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
 
   interface Props {
     config: TimeSeriesConfig;
@@ -18,7 +19,6 @@
 
   let { config, onChange }: Props = $props();
 
-  const intervals = ['1h', '6h', '24h', '7d', '30d'] as const;
   const levels: LogLevelKey[] = ['debug', 'info', 'warn', 'error', 'critical'];
 
   function update<K extends keyof TimeSeriesConfig>(key: K, value: TimeSeriesConfig[K]) {
@@ -64,18 +64,18 @@
   </div>
 
   <div class="space-y-1.5">
-    <Label>Time interval</Label>
+    <Label>Time range</Label>
     <Select
       type="single"
       value={config.interval}
       onValueChange={(v) => v && update('interval', v as TimeSeriesConfig['interval'])}
     >
       <SelectTrigger>
-        <SelectValue>{config.interval}</SelectValue>
+        <SelectValue>{timeRangeLabel(config.interval)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {#each intervals as i}
-          <SelectItem value={i}>{i}</SelectItem>
+        {#each TIME_RANGE_OPTIONS as option (option.value)}
+          <SelectItem value={option.value}>{option.label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>
