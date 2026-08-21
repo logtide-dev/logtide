@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Time series panel window**: the `time_series` panel always rendered the last 24 hours regardless of its configured interval; it now honors the window with adaptive bucketing (1m/5m/15m/1h/1d), zero-filled buckets and date-aware axis labels on multi-day ranges (#305).
 - **Top services window**: the `top_n_table` service dimension always aggregated the last 7 days regardless of its configured interval; it now honors the window (the continuous-aggregate fast path remains for the 7d default) and supports the Last seen column (#305).
-- **Geo map viewport**: the `geo_map` panel no longer destroys and re-fits the map on every auto-refresh; pan/zoom is preserved across refreshes, the map auto-fits only on first paint or when the panel config changes, and a new "Fit data" control re-frames on demand. Mouse wheel over the panel now scrolls the dashboard instead of zooming the map (zoom stays available via the +/- controls, double click and pinch), so scrolling past the panel cannot silently reset the framing (#304).
+- **Geo map viewport**: the `geo_map` panel no longer destroys and re-fits the map on every auto-refresh; pan/zoom is preserved across refreshes, the map auto-fits only on first paint or when the panel config changes, and a new "Fit data" control re-frames on demand. Mouse wheel over the panel now scrolls the dashboard instead of zooming the map (zoom stays available via the +/- controls, double click and pinch), so scrolling past the panel cannot silently reset the framing, and the map no longer paints above open dialogs (Leaflet pane z-indexes are now contained to the panel) (#304).
 
 
 ## [1.3.1] - 2026-08-18
