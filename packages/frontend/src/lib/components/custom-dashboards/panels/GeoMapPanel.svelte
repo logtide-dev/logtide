@@ -170,6 +170,12 @@
             minZoom: 1,
             maxZoom: 8,
             worldCopyJump: true,
+            // Wheel over an embedded panel must scroll the dashboard, not
+            // zoom the map: with it enabled, scrolling past the panel both
+            // scrolls the page AND silently destroys the user's framing,
+            // defeating the viewport preservation this panel guarantees
+            // (#304). Zoom stays available via +/-, double click and pinch.
+            scrollWheelZoom: false,
           })
           .setView([20, 0], 1);
         leaflet
