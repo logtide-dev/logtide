@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { FeatureCollection } from 'geojson';
+import type { GeoMapConfig } from '@logtide/shared';
 
 const MIN_RADIUS = 4;
 const MAX_RADIUS = 18;
@@ -13,6 +14,24 @@ export function bubbleRadius(count: number, maxCount: number): number {
   if (maxCount <= 0) return MAX_RADIUS;
   const ratio = Math.min(1, Math.max(0, count / maxCount));
   return MIN_RADIUS + (MAX_RADIUS - MIN_RADIUS) * Math.sqrt(ratio);
+}
+
+// Signature of every config field that changes WHAT the panel queries (#304).
+// The panel re-fits the viewport only when this key changes (or on first
+// paint / the explicit control); background refreshes keep the user's pan and
+// zoom. `title` is display-only, so it is excluded on purpose; level order is
+// normalized because it does not change the query.
+export function geoMapRefitKey(config: GeoMapConfig): string {
+  return [
+    config.mode,
+    config.fieldPrefix,
+    config.projectId ?? '',
+    config.interval,
+    [...config.levels].sort().join(','),
+    config.service ?? '',
+    config.hostname ?? '',
+    String(config.limit),
+  ].join('|');
 }
 
 // World base layer: bundled Natural Earth 110m TopoJSON (about 106 KB),

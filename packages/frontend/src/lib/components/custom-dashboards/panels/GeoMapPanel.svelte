@@ -1,9 +1,9 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { tick, onMount } from 'svelte';
-  import type { Map as LeafletMap } from 'leaflet';
+  import type { Map as LeafletMap, LayerGroup } from 'leaflet';
   import type { GeoMapConfig } from '@logtide/shared';
-  import { bubbleRadius, loadWorldGeoJson } from './geo-map-utils';
+  import { bubbleRadius, loadWorldGeoJson, geoMapRefitKey } from './geo-map-utils';
 
   interface GeoMapPoint {
     lat: number;
@@ -28,11 +28,24 @@
 
   let { config, data }: Props = $props();
   const typed = $derived(data as GeoMapData | null);
+  const refitKey = $derived(geoMapRefitKey(config));
 
   let mapContainer: HTMLDivElement | undefined = $state();
   let map: LeafletMap | null = null;
+  // Container element the live map was created on. The empty state unmounts
+  // the canvas div, so a later non-empty payload binds a NEW div and the old
+  // map instance must be dropped.
+  let mapEl: HTMLDivElement | null = null;
+  let bubbles: LayerGroup | null = null;
+  let leaflet: typeof import('leaflet') | null = null;
+  let resizeObserver: ResizeObserver | null = null;
+  // Refit key at the last automatic fit. The viewport auto-fits ONLY on first
+  // paint or when this key changes (#304); background refreshes must never
+  // move a viewport the user may have panned/zoomed.
+  let lastFitKey: string | null = null;
   let mapError = $state<string | null>(null);
-  let isInitializing = false;
+  let isSyncing = false;
+  let syncQueued = false;
   let isMounted = false;
 
   function escapeHtml(text: string): string {
@@ -45,6 +58,8 @@
   }
 
   function destroyMap() {
+    resizeObserver?.disconnect();
+    resizeObserver = null;
     if (map) {
       try {
         map.remove();
@@ -53,70 +68,153 @@
       }
       map = null;
     }
+    bubbles = null;
+    mapEl = null;
+    lastFitKey = null;
   }
 
-  async function renderMap() {
-    if (isInitializing || !browser || !isMounted) return;
-    await tick();
-    if (!mapContainer || !typed || typed.points.length === 0) return;
-
-    if ((mapContainer as unknown as { _leaflet_id?: number })._leaflet_id) {
-      destroyMap();
-      await tick();
+  function fitToData() {
+    const points = typed?.points ?? [];
+    if (!map || !leaflet || points.length === 0) return;
+    if (points.length > 1) {
+      const bounds = leaflet.latLngBounds(points.map((p) => [p.lat, p.lon] as [number, number]));
+      map.fitBounds(bounds, { padding: [24, 24], maxZoom: 5 });
+    } else {
+      map.setView([points[0].lat, points[0].lon], 4);
     }
-    if (!mapContainer || !document.body.contains(mapContainer)) return;
+  }
 
-    isInitializing = true;
-    try {
-      const [L, world] = await Promise.all([import('leaflet'), loadWorldGeoJson()]);
-      await import('leaflet/dist/leaflet.css');
+  function addFitControl() {
+    if (!map || !leaflet) return;
+    const L = leaflet;
+    const FitControl = L.Control.extend({
+      onAdd: () => {
+        const div = L.DomUtil.create('div', 'leaflet-bar');
+        const link = L.DomUtil.create('a', 'geo-map-fit', div) as HTMLAnchorElement;
+        link.href = '#';
+        link.title = 'Fit map to data';
+        link.setAttribute('role', 'button');
+        link.setAttribute('aria-label', 'Fit map to data');
+        link.textContent = '⛶';
+        L.DomEvent.disableClickPropagation(div);
+        L.DomEvent.on(link, 'click', (e: Event) => {
+          e.preventDefault();
+          fitToData();
+        });
+        return div;
+      },
+    });
+    map.addControl(new FitControl({ position: 'topleft' }));
+  }
 
-      if (!mapContainer || !document.body.contains(mapContainer)) return;
+  function attachResizeObserver(container: HTMLDivElement) {
+    resizeObserver?.disconnect();
+    resizeObserver = new ResizeObserver(() => {
+      // The old rebuild-on-every-refresh accidentally hid stale sizes; a
+      // persistent map must be told when the panel is resized (edit mode
+      // drag handle, window resizes).
+      map?.invalidateSize();
+    });
+    resizeObserver.observe(container);
+  }
 
-      // No tile layer on purpose: the bundled world GeoJSON is the base map,
-      // so the panel works air-gapped and follows the app theme.
-      map = L.map(mapContainer, {
-        attributionControl: false,
-        zoomControl: true,
-        minZoom: 1,
-        maxZoom: 8,
-        worldCopyJump: true,
-      }).setView([20, 0], 1);
-
-      L.geoJSON(world, {
-        style: () => ({ className: 'geo-map-country', weight: 0.5 }),
-        interactive: false,
-      }).addTo(map);
-
-      const maxCount = Math.max(...typed.points.map((p) => p.count));
-      const bounds = L.latLngBounds([]);
-
-      for (const point of typed.points) {
-        const marker = L.circleMarker([point.lat, point.lon], {
+  function renderBubbles(points: GeoMapPoint[]) {
+    if (!map || !bubbles || !leaflet) return;
+    bubbles.clearLayers();
+    const maxCount = Math.max(...points.map((p) => p.count));
+    for (const point of points) {
+      const marker = leaflet
+        .circleMarker([point.lat, point.lon], {
           radius: bubbleRadius(point.count, maxCount),
           className: 'geo-map-bubble',
           weight: 1,
-        }).addTo(map);
+        })
+        .addTo(bubbles);
+      marker.bindTooltip(
+        `<span class="font-medium">${escapeHtml(point.label)}</span> ${point.count.toLocaleString('en-US')}`,
+        { direction: 'top' }
+      );
+    }
+  }
 
-        marker.bindTooltip(
-          `<span class="font-medium">${escapeHtml(point.label)}</span> ${point.count.toLocaleString('en-US')}`,
-          { direction: 'top' }
-        );
-        bounds.extend([point.lat, point.lon]);
+  // Incremental update (#304): the map, base layer and controls are created
+  // once per container; data refreshes only swap the bubble layer group.
+  async function doSync() {
+    if (!browser || !isMounted) return;
+    await tick();
+    const container = mapContainer;
+    const points = typed?.points;
+    if (!container || !points || points.length === 0) return;
+    if (!document.body.contains(container)) return;
+
+    try {
+      if (!leaflet) {
+        leaflet = await import('leaflet');
+        await import('leaflet/dist/leaflet.css');
       }
 
-      if (typed.points.length > 1) {
-        map.fitBounds(bounds, { padding: [24, 24], maxZoom: 5 });
-      } else {
-        map.setView([typed.points[0].lat, typed.points[0].lon], 4);
+      if (map && mapEl !== container) destroyMap();
+
+      let created = false;
+      if (!map) {
+        const world = await loadWorldGeoJson();
+        if (!isMounted || mapContainer !== container || !document.body.contains(container)) {
+          return;
+        }
+        // No tile layer on purpose: the bundled world GeoJSON is the base
+        // map, so the panel works air-gapped and follows the app theme.
+        map = leaflet
+          .map(container, {
+            attributionControl: false,
+            zoomControl: true,
+            minZoom: 1,
+            maxZoom: 8,
+            worldCopyJump: true,
+          })
+          .setView([20, 0], 1);
+        leaflet
+          .geoJSON(world, {
+            style: () => ({ className: 'geo-map-country', weight: 0.5 }),
+            interactive: false,
+          })
+          .addTo(map);
+        bubbles = leaflet.layerGroup().addTo(map);
+        addFitControl();
+        attachResizeObserver(container);
+        mapEl = container;
+        created = true;
+      }
+
+      renderBubbles(points);
+
+      if (created || lastFitKey !== refitKey) {
+        fitToData();
+        lastFitKey = refitKey;
       }
 
       mapError = null;
     } catch (err) {
       console.error('Failed to initialize geo map:', err);
       mapError = 'Failed to load map';
+    }
+  }
+
+  async function syncMap() {
+    // Coalesce overlapping runs: a refresh landing mid-initialization is
+    // replayed once the current pass finishes instead of racing it.
+    if (isSyncing) {
+      syncQueued = true;
+      return;
+    }
+    isSyncing = true;
+    try {
+      await doSync();
     } finally {
-      isInitializing = false;
+      isSyncing = false;
+      if (syncQueued) {
+        syncQueued = false;
+        void syncMap();
+      }
     }
   }
 
@@ -131,9 +229,12 @@
   $effect(() => {
     const points = typed?.points;
     const container = mapContainer;
-    if (browser && isMounted && container && points && points.length > 0) {
+    // Tracked on purpose: a config edit must resync (and re-fit) even when
+    // the data reference has not changed yet.
+    const key = refitKey;
+    if (browser && isMounted && container && points && points.length > 0 && key) {
       const timeout = setTimeout(() => {
-        renderMap();
+        void syncMap();
       }, 100);
       return () => clearTimeout(timeout);
     }
@@ -195,5 +296,9 @@
     background: hsl(var(--card));
     color: hsl(var(--foreground));
     border-color: hsl(var(--border));
+  }
+  .geo-map-canvas :global(a.geo-map-fit) {
+    font-size: 16px;
+    line-height: 26px;
   }
 </style>
