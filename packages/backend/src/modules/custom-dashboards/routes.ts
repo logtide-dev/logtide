@@ -4,7 +4,8 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { customDashboardsService } from './service.js';
 import { panelInstanceSchema } from './panel-registry.js';
-import { fetchPanelData } from './panel-data-service.js';
+import { fetchPanelData, applyTimeRangeOverride } from './panel-data-service.js';
+import { PANEL_TIME_RANGES } from '@logtide/shared';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
@@ -36,6 +37,9 @@ const importYamlSchema = z.object({
 const panelDataBatchSchema = z.object({
   organizationId: z.string().uuid(),
   panelIds: z.array(z.string()).optional(),
+  // Dashboard-level time override (#305): applied to every window-scoped
+  // panel for this request only, never persisted.
+  timeRange: z.enum(PANEL_TIME_RANGES).optional(),
 });
 
 async function checkMembership(userId: string, orgId: string): Promise<boolean> {
@@ -368,7 +372,12 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       const ctx = { organizationId: body.organizationId, userId: request.user.id };
       const settled = await Promise.allSettled(
         panelsToFetch.map((panel) =>
-          fetchPanelData(panel.config, ctx).then((data) => ({
+          fetchPanelData(
+            body.timeRange
+              ? applyTimeRangeOverride(panel.config, body.timeRange)
+              : panel.config,
+            ctx
+          ).then((data) => ({
             id: panel.id,
             data,
           }))

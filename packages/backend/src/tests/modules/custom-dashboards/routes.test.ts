@@ -1,12 +1,22 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import { customDashboardsRoutes } from '../../../modules/custom-dashboards/routes.js';
+import { fetchPanelData } from '../../../modules/custom-dashboards/panel-data-service.js';
 import { createTestContext, createTestSession } from '../../helpers/index.js';
 
 // Mock panel data service so we don't need real DB queries for data endpoint
-vi.mock('../../../modules/custom-dashboards/panel-data-service.js', () => ({
-  fetchPanelData: vi.fn().mockResolvedValue({ rows: [] }),
-}));
+// Partial mock: fetchPanelData is stubbed (its behavior has its own suites),
+// while applyTimeRangeOverride stays real so the batch route's override
+// wiring is exercised end to end.
+vi.mock('../../../modules/custom-dashboards/panel-data-service.js', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../modules/custom-dashboards/panel-data-service.js')
+  >();
+  return {
+    ...actual,
+    fetchPanelData: vi.fn().mockResolvedValue({ rows: [] }),
+  };
+});
 
 function authHeaders(token: string) {
   return { Authorization: `Bearer ${token}` };
@@ -458,6 +468,59 @@ describe('POST /api/v1/dashboards/:id/panels/data', () => {
       url: `/api/v1/dashboards/00000000-0000-0000-0000-000000000000/panels/data`,
       headers: authHeaders(authToken),
       payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('applies the dashboard-level timeRange override (#305)', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/dashboards',
+      headers: authHeaders(authToken),
+      payload: {
+        organizationId: ctx.organization.id,
+        name: 'Override dash',
+        panels: [makePanel('p-override')],
+      },
+    });
+    const { dashboard } = JSON.parse(createRes.payload);
+
+    // The stored panel is a 24h time_series; with the override the fetcher
+    // must receive a config rewritten to 15m for this request only.
+    vi.mocked(fetchPanelData).mockClear();
+    const overridden = await app.inject({
+      method: 'POST',
+      url: `/api/v1/dashboards/${dashboard.id}/panels/data`,
+      headers: authHeaders(authToken),
+      payload: { organizationId: ctx.organization.id, timeRange: '15m' },
+    });
+    expect(overridden.statusCode).toBe(200);
+    expect(fetchPanelData).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'time_series', interval: '15m' }),
+      expect.anything(),
+    );
+
+    // Without the override the stored config wins again (nothing persisted).
+    vi.mocked(fetchPanelData).mockClear();
+    const plain = await app.inject({
+      method: 'POST',
+      url: `/api/v1/dashboards/${dashboard.id}/panels/data`,
+      headers: authHeaders(authToken),
+      payload: { organizationId: ctx.organization.id },
+    });
+    expect(plain.statusCode).toBe(200);
+    expect(fetchPanelData).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'time_series', interval: '24h' }),
+      expect.anything(),
+    );
+  });
+
+  it('rejects an unknown timeRange override', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/dashboards/00000000-0000-0000-0000-000000000000/panels/data`,
+      headers: authHeaders(authToken),
+      payload: { organizationId: ctx.organization.id, timeRange: '2h' },
     });
     expect(res.statusCode).toBe(400);
   });
