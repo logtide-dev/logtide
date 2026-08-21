@@ -289,6 +289,11 @@
   .geo-map-canvas {
     background: transparent;
     font: inherit;
+    /* Leaflet stacks its panes at z-index 400-1000, far above the app's
+       dialogs (z-50). Isolating the canvas creates a stacking context so
+       those values stay contained and the map can never paint on top of an
+       open dialog. */
+    isolation: isolate;
   }
   .geo-map-canvas :global(.leaflet-tooltip) {
     background: hsl(var(--popover));
