@@ -1,5 +1,5 @@
 import { Kysely, sql } from 'kysely';
-import { MITRE_TECHNIQUES } from '@logtide/shared';
+import { MITRE_TECHNIQUES, panelTimeRangeToMs } from '@logtide/shared';
 import type { Database } from '../../database/types';
 import type {
   DashboardStats,
@@ -338,40 +338,26 @@ export class SiemDashboardService {
     };
   }
 
-  private getTimeRange(timeRange: '24h' | '7d' | '30d'): {
+  private getTimeRange(timeRange: string): {
     startTime: Date;
     endTime: Date;
   } {
     const endTime = new Date();
-    const startTime = new Date();
-
-    switch (timeRange) {
-      case '24h':
-        startTime.setHours(startTime.getHours() - 24);
-        break;
-      case '7d':
-        startTime.setDate(startTime.getDate() - 7);
-        break;
-      case '30d':
-        startTime.setDate(startTime.getDate() - 30);
-        break;
-    }
-
+    const startTime = new Date(endTime.getTime() - panelTimeRangeToMs(timeRange));
     return { startTime, endTime };
   }
 
-  private getBucketInterval(
-    timeRange: '24h' | '7d' | '30d'
-  ): string {
-    switch (timeRange) {
-      case '24h':
-        return '1 hour';
-      case '7d':
-        return '6 hours';
-      case '30d':
-        return '1 day';
-      default:
-        return '1 hour';
-    }
+  // Timeline bucket width by window size. The historical mapping is preserved
+  // (24h -> 1 hour, 7d -> 6 hours, 30d -> 1 day); the added tiers serve the
+  // wider panel presets (#305).
+  private getBucketInterval(timeRange: string): string {
+    const hour = 60 * 60 * 1000;
+    const ms = panelTimeRangeToMs(timeRange);
+    if (ms <= hour) return '5 minutes';
+    if (ms <= 6 * hour) return '15 minutes';
+    if (ms <= 12 * hour) return '30 minutes';
+    if (ms <= 48 * hour) return '1 hour';
+    if (ms <= 14 * 24 * hour) return '6 hours';
+    return '1 day';
   }
 }

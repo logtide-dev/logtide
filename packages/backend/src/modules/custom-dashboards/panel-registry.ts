@@ -14,16 +14,22 @@
 // No other backend file needs to change.
 
 import { z } from 'zod';
+import { PANEL_TIME_RANGES } from '@logtide/shared';
 import type { PanelType, PanelConfig, PanelLayout } from '@logtide/shared';
 
 const levelEnum = z.enum(['debug', 'info', 'warn', 'error', 'critical']);
+
+// One shared preset list for every window-scoped panel (#305). The catalog
+// lives in @logtide/shared so the config forms and this validator can never
+// drift apart.
+const timeRangeEnum = z.enum(PANEL_TIME_RANGES);
 
 const timeSeriesSchema = z.object({
   type: z.literal('time_series'),
   title: z.string().min(1).max(100),
   source: z.literal('logs'),
   projectId: z.string().uuid().nullable(),
-  interval: z.enum(['1h', '6h', '24h', '7d', '30d']),
+  interval: timeRangeEnum,
   levels: z.array(levelEnum).min(1),
   service: z.string().max(200).nullable(),
   // Optional per-level legend/tooltip labels. Absent on every dashboard saved
@@ -66,7 +72,7 @@ const topNTableBaseSchema = z.object({
   metadataField: z.string().regex(TOP_N_METADATA_FIELD).nullable().optional(),
   limit: z.number().int().min(3).max(50),
   projectId: z.string().uuid().nullable(),
-  interval: z.enum(['1h', '24h', '7d']),
+  interval: timeRangeEnum,
   showLastSeen: z.boolean().optional(),
   levels: z.array(levelEnum).optional(),
   service: z.string().max(200).nullable().optional(),
@@ -127,7 +133,7 @@ const metricChartSchema = z.object({
   metricName: z.string().min(1).max(255),
   aggregation: metricAggregationEnum,
   interval: metricIntervalEnum,
-  timeRange: z.enum(['1h', '6h', '24h', '7d', '30d']),
+  timeRange: timeRangeEnum,
   serviceName: z.string().max(200).nullable(),
 });
 
@@ -138,7 +144,7 @@ const metricStatSchema = z.object({
   projectId: z.string().uuid().nullable(),
   metricName: z.string().min(1).max(255),
   aggregation: metricAggregationEnum,
-  timeRange: z.enum(['1h', '6h', '24h']),
+  timeRange: timeRangeEnum,
   serviceName: z.string().max(200).nullable(),
   unit: z.string().max(20).nullable(),
 });
@@ -149,7 +155,7 @@ const traceLatencySchema = z.object({
   source: z.literal('traces'),
   projectId: z.string().uuid().nullable(),
   serviceName: z.string().max(200).nullable(),
-  timeRange: z.enum(['1h', '6h', '24h', '7d']),
+  timeRange: timeRangeEnum,
   showPercentiles: z.array(z.enum(['p50', 'p95', 'p99'])).min(1),
 });
 
@@ -159,7 +165,7 @@ const traceVolumeSchema = z.object({
   source: z.literal('traces'),
   projectId: z.string().uuid().nullable(),
   serviceName: z.string().max(200).nullable(),
-  timeRange: z.enum(['1h', '6h', '24h', '7d']),
+  timeRange: timeRangeEnum,
   showErrors: z.boolean(),
 });
 
@@ -168,7 +174,7 @@ const detectionEventsSchema = z.object({
   title: z.string().min(1).max(100),
   source: z.literal('detections'),
   projectId: z.string().uuid().nullable(),
-  timeRange: z.enum(['24h', '7d', '30d']),
+  timeRange: timeRangeEnum,
   severities: z
     .array(z.enum(['critical', 'high', 'medium', 'low', 'informational']))
     .min(1),
@@ -205,7 +211,7 @@ const activityOverviewSchema = z.object({
   title: z.string().min(1).max(100),
   source: z.literal('mixed'),
   projectId: z.string().uuid().nullable(),
-  timeRange: z.enum(['24h', '7d', '30d']),
+  timeRange: timeRangeEnum,
   series: z.array(activityOverviewSeriesEnum).min(1),
 });
 
@@ -218,7 +224,7 @@ const geoMapSchema = z.object({
   title: z.string().min(1).max(100),
   source: z.literal('logs'),
   projectId: z.string().uuid().nullable(),
-  interval: z.enum(['1h', '24h', '7d']),
+  interval: timeRangeEnum,
   mode: z.enum(['country', 'points']),
   limit: z.number().int().min(10).max(500),
   fieldPrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]{0,31}$/),
@@ -238,7 +244,7 @@ const logTableBaseSchema = z.object({
   source: z.literal('logs'),
   projectId: z.string().uuid().nullable(),
   mode: z.enum(['snapshot', 'live']),
-  timeRange: z.enum(['15m', '1h', '6h', '24h', '7d']),
+  timeRange: timeRangeEnum,
   levels: z.array(levelEnum),
   service: z.string().max(200).nullable(),
   maxRows: z.number().int().min(10).max(100),

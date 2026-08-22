@@ -273,6 +273,70 @@ describe('time_series panel', () => {
       ),
     ).rejects.toThrow(/belong/);
   });
+
+  // #305: the fetcher used to delegate to dashboardService.getTimeseries,
+  // which hardcoded a 24h window whatever the configured interval said.
+  const windowBase = () => ({
+    type: 'time_series' as const,
+    title: 'Window',
+    source: 'logs' as const,
+    projectId,
+    levels: ['debug', 'info', 'warn', 'error', 'critical'] as Array<'debug' | 'info' | 'warn' | 'error' | 'critical'>,
+    service: null,
+  });
+  const sumSeries = (r: { series: Array<{ total: number }> }) =>
+    r.series.reduce((acc, p) => acc + p.total, 0);
+
+  it('honors the configured window (#305)', async () => {
+    // A log 3 days old: outside a 24h window, inside a 7d one.
+    await createTestLog({
+      projectId,
+      service: 'api',
+      level: 'info',
+      message: 'old log',
+      time: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+    });
+
+    const day = (await fetchPanelData({ ...windowBase(), interval: '24h' }, ctx())) as {
+      series: Array<{ total: number }>; bucket: string;
+    };
+    const week = (await fetchPanelData({ ...windowBase(), interval: '7d' }, ctx())) as {
+      series: Array<{ total: number }>; bucket: string;
+    };
+
+    expect(day.bucket).toBe('1h');
+    expect(week.bucket).toBe('1h');
+    expect(sumSeries(day)).toBe(3); // the three fresh seeded logs
+    expect(sumSeries(week)).toBe(4); // plus the 3-day-old one
+  });
+
+  it('uses minute buckets for a 1h window (#305)', async () => {
+    const result = (await fetchPanelData({ ...windowBase(), interval: '1h' }, ctx())) as {
+      series: Array<{ total: number; time: string }>; bucket: string;
+    };
+    expect(result.bucket).toBe('1m');
+    expect(sumSeries(result)).toBe(3);
+    // Zero-filled minute buckets across the hour.
+    expect(result.series.length).toBeGreaterThanOrEqual(59);
+  });
+
+  it('uses day buckets for a 30d window (#305)', async () => {
+    const result = (await fetchPanelData({ ...windowBase(), interval: '30d' }, ctx())) as {
+      series: Array<{ total: number }>; bucket: string;
+    };
+    expect(result.bucket).toBe('1d');
+    expect(sumSeries(result)).toBe(3);
+    expect(result.series.length).toBeGreaterThanOrEqual(29);
+  });
+
+  it('applies the service filter (#305)', async () => {
+    const result = (await fetchPanelData(
+      { ...windowBase(), interval: '24h', service: 'api' },
+      ctx(),
+    )) as { series: Array<{ total: number }> };
+    // Seeded: api info + api error + worker warn; worker must be excluded.
+    expect(sumSeries(result)).toBe(2);
+  });
 });
 
 // ─── single_stat ──────────────────────────────────────────────────────────────
@@ -401,6 +465,45 @@ describe('top_n_table panel', () => {
         ctx(),
       ),
     ).rejects.toThrow(/belong/);
+  });
+
+  it('service dimension honors the interval window (#305)', async () => {
+    // A service that only logged 3 days ago must not rank in a 24h window.
+    await createTestLog({
+      projectId,
+      service: 'ancient',
+      level: 'info',
+      message: 'old service log',
+      time: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+    });
+
+    const day = (await fetchPanelData(
+      {
+        type: 'top_n_table',
+        title: 'Top services',
+        source: 'logs',
+        dimension: 'service',
+        limit: 10,
+        projectId,
+        interval: '24h',
+      },
+      ctx(),
+    )) as { rows: Array<{ key: string }> };
+    expect(day.rows.map((r) => r.key)).not.toContain('ancient');
+
+    const month = (await fetchPanelData(
+      {
+        type: 'top_n_table',
+        title: 'Top services',
+        source: 'logs',
+        dimension: 'service',
+        limit: 10,
+        projectId,
+        interval: '30d',
+      },
+      ctx(),
+    )) as { rows: Array<{ key: string }> };
+    expect(month.rows.map((r) => r.key)).toContain('ancient');
   });
 
   it('metadata dimension: ranks values with counts and lastSeen', async () => {

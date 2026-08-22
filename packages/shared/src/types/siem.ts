@@ -1,6 +1,7 @@
 import type { Severity, IncidentStatus } from '../constants/siem-constants.js';
 import type { PackCategory } from '../constants/sigma-constants.js';
 import type { IncidentSource } from '../constants/monitoring-constants.js';
+import type { PanelTimeRange } from './dashboard.js';
 
 export interface DetectionEvent {
   id: string;
@@ -185,7 +186,9 @@ export interface DashboardStats {
 export interface DashboardFilters {
   organizationId: string;
   projectId?: string | null;
-  timeRange: '24h' | '7d' | '30d';
+  // The SIEM dashboard API keeps offering 24h/7d/30d; the wider union exists
+  // for the detection_events custom-dashboard panel (#305).
+  timeRange: PanelTimeRange;
   severity?: Severity[];
 }
 

@@ -9,6 +9,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
 
   interface Props {
     config: TraceVolumeConfig;
@@ -17,7 +18,6 @@
 
   let { config, onChange }: Props = $props();
 
-  const timeRanges = ['1h', '6h', '24h', '7d'] as const;
 
   function update<K extends keyof TraceVolumeConfig>(key: K, value: TraceVolumeConfig[K]) {
     onChange({ ...config, [key]: value });
@@ -43,11 +43,11 @@
       onValueChange={(v) => v && update('timeRange', v as TraceVolumeConfig['timeRange'])}
     >
       <SelectTrigger>
-        <SelectValue>{config.timeRange}</SelectValue>
+        <SelectValue>{timeRangeLabel(config.timeRange)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {#each timeRanges as r}
-          <SelectItem value={r}>{r}</SelectItem>
+        {#each TIME_RANGE_OPTIONS as option (option.value)}
+          <SelectItem value={option.value}>{option.label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>

@@ -445,3 +445,81 @@ describe('live_log_stream schema', () => {
     expect(panelConfigSchema.safeParse({ ...valid, maxRows: 9 }).success).toBe(false);
   });
 });
+
+describe('panel time range presets (#305)', () => {
+  const configs: Record<string, Record<string, unknown>> = {
+    time_series: {
+      type: 'time_series', title: 'T', source: 'logs', projectId: null,
+      interval: '24h', levels: ['info'], service: null,
+    },
+    top_n_table: {
+      type: 'top_n_table', title: 'T', source: 'logs', dimension: 'service',
+      limit: 5, projectId: null, interval: '24h',
+    },
+    geo_map: {
+      type: 'geo_map', title: 'T', source: 'logs', projectId: null,
+      interval: '24h', mode: 'country', limit: 100, fieldPrefix: 'geo',
+      levels: [], service: null, hostname: null,
+    },
+    log_table: {
+      type: 'log_table', title: 'T', source: 'logs', projectId: null,
+      mode: 'snapshot', timeRange: '1h', levels: [], service: null,
+      maxRows: 25, columns: [], builtinColumns: ['time', 'message'], wrapCells: false,
+    },
+    metric_chart: {
+      type: 'metric_chart', title: 'T', source: 'metrics', projectId: null,
+      metricName: 'cpu', aggregation: 'avg', interval: '5m', timeRange: '24h',
+      serviceName: null,
+    },
+    metric_stat: {
+      type: 'metric_stat', title: 'T', source: 'metrics', projectId: null,
+      metricName: 'cpu', aggregation: 'last', timeRange: '1h',
+      serviceName: null, unit: null,
+    },
+    trace_latency: {
+      type: 'trace_latency', title: 'T', source: 'traces', projectId: null,
+      serviceName: null, timeRange: '24h', showPercentiles: ['p95'],
+    },
+    trace_volume: {
+      type: 'trace_volume', title: 'T', source: 'traces', projectId: null,
+      serviceName: null, timeRange: '24h', showErrors: true,
+    },
+    detection_events: {
+      type: 'detection_events', title: 'T', source: 'detections', projectId: null,
+      timeRange: '24h', severities: ['high'],
+    },
+    activity_overview: {
+      type: 'activity_overview', title: 'T', source: 'mixed', projectId: null,
+      timeRange: '24h', series: ['logs'],
+    },
+  };
+
+  const timeField: Record<string, string> = {
+    time_series: 'interval',
+    top_n_table: 'interval',
+    geo_map: 'interval',
+    log_table: 'timeRange',
+    metric_chart: 'timeRange',
+    metric_stat: 'timeRange',
+    trace_latency: 'timeRange',
+    trace_volume: 'timeRange',
+    detection_events: 'timeRange',
+    activity_overview: 'timeRange',
+  };
+
+  const presets = ['15m', '1h', '6h', '12h', '24h', '48h', '3d', '7d', '14d', '30d'];
+
+  for (const [type, base] of Object.entries(configs)) {
+    it(`accepts every shared preset on ${type}`, () => {
+      for (const preset of presets) {
+        const result = panelConfigSchema.safeParse({ ...base, [timeField[type]]: preset });
+        expect(result.success, `${type} should accept ${preset}`).toBe(true);
+      }
+    });
+
+    it(`rejects an unknown preset on ${type}`, () => {
+      const result = panelConfigSchema.safeParse({ ...base, [timeField[type]]: '2h' });
+      expect(result.success).toBe(false);
+    });
+  }
+});

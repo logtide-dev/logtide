@@ -7,6 +7,7 @@ import { getAuthToken } from '$lib/utils/auth';
 import type {
   CustomDashboard,
   PanelInstance,
+  PanelTimeRange,
 } from '@logtide/shared';
 
 export type { CustomDashboard, PanelInstance } from '@logtide/shared';
@@ -138,13 +139,14 @@ class CustomDashboardsAPI {
   async fetchPanelData(
     dashboardId: string,
     organizationId: string,
-    panelIds?: string[]
+    panelIds?: string[],
+    timeRange?: PanelTimeRange
   ): Promise<PanelDataBatchResponse> {
     return this.request<PanelDataBatchResponse>(
       `/${dashboardId}/panels/data`,
       {
         method: 'POST',
-        body: JSON.stringify({ organizationId, panelIds }),
+        body: JSON.stringify({ organizationId, panelIds, timeRange }),
       }
     );
   }

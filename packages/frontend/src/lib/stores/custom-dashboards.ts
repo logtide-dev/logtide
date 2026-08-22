@@ -13,6 +13,7 @@ import type {
   PanelInstance,
   PanelConfig,
   PanelLayout,
+  PanelTimeRange,
 } from '@logtide/shared';
 import { customDashboardsAPI } from '$lib/api/custom-dashboards';
 
@@ -41,6 +42,10 @@ interface DashboardStoreState {
   // Panels frozen by the user. Ephemeral: never saved with the dashboard,
   // never persisted, cleared when the active dashboard changes.
   pausedPanels: Set<string>;
+  // Dashboard-level time range override (#305). Ephemeral view state like
+  // pausedPanels: overrides every window-scoped panel while active, never
+  // saved with the dashboard, cleared when the active dashboard changes.
+  timeRangeOverride: PanelTimeRange | null;
   // Inline edit mode
   editMode: boolean;
   // Pending edit snapshot - null when not editing
@@ -60,6 +65,7 @@ const initialState: DashboardStoreState = {
   saveError: null,
   panelData: {},
   pausedPanels: new Set<string>(),
+  timeRangeOverride: null,
   editMode: false,
   pendingPanels: null,
   originalPanels: null,
@@ -123,6 +129,7 @@ function createDashboardStore() {
           dashboards: mergeDashboardIntoList(s.dashboards, dashboard),
           loadingActive: false,
           pausedPanels: new Set<string>(),
+          timeRangeOverride: null,
         }));
         await this.fetchAllPanelData();
       } catch (e) {
@@ -149,6 +156,7 @@ function createDashboardStore() {
           activeDashboard: fromList,
           panelData: {},
           pausedPanels: new Set<string>(),
+          timeRangeOverride: null,
           activeError: null,
         }));
         await this.fetchAllPanelData();
@@ -167,6 +175,7 @@ function createDashboardStore() {
           activeDashboard: dashboard,
           panelData: {},
           pausedPanels: new Set<string>(),
+          timeRangeOverride: null,
           loadingActive: false,
         }));
         await this.fetchAllPanelData();
@@ -219,7 +228,8 @@ function createDashboardStore() {
           dashboard.organizationId,
           // Undefined keeps the "all panels" request the API already sends
           // when nothing is paused.
-          somePaused ? targetIds : undefined
+          somePaused ? targetIds : undefined,
+          state.timeRangeOverride ?? undefined
         );
         const now = Date.now();
         update((s) => {
@@ -270,7 +280,10 @@ function createDashboardStore() {
         const result = await customDashboardsAPI.fetchPanelData(
           dashboard.id,
           dashboard.organizationId,
-          [panelId]
+          [panelId],
+          // A manual refresh must not silently revert one panel to its
+          // configured window while the dashboard override is active.
+          state.timeRangeOverride ?? undefined
         );
         const entry = result.panels[panelId];
         if (entry) {
@@ -304,6 +317,16 @@ function createDashboardStore() {
         }
         return { ...s, pausedPanels: next };
       });
+    },
+
+    /**
+     * Set (or clear with null) the dashboard-level time range override and
+     * refetch every non-paused panel with it. View state only: nothing is
+     * saved to the dashboard.
+     */
+    async setTimeRangeOverride(range: PanelTimeRange | null): Promise<void> {
+      update((s) => ({ ...s, timeRangeOverride: range }));
+      await this.fetchAllPanelData();
     },
 
     // ─── Edit mode ──────────────────────────────────────────────────────
@@ -578,3 +601,4 @@ export const dashboardSaving = derived(customDashboardsStore, (s) => s.saving);
 export const dashboardSaveError = derived(customDashboardsStore, (s) => s.saveError);
 export const panelDataMap = derived(customDashboardsStore, (s) => s.panelData);
 export const pausedPanelIds = derived(customDashboardsStore, (s) => s.pausedPanels);
+export const timeRangeOverride = derived(customDashboardsStore, (s) => s.timeRangeOverride);

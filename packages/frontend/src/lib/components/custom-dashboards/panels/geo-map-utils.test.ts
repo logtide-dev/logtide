@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { bubbleRadius, loadWorldGeoJson } from './geo-map-utils';
+import { bubbleRadius, loadWorldGeoJson, geoMapRefitKey } from './geo-map-utils';
+import type { GeoMapConfig } from '@logtide/shared';
 
 describe('bubbleRadius', () => {
   it('scales with the square root of count (area tracks volume)', () => {
@@ -17,6 +18,44 @@ describe('bubbleRadius', () => {
   it('never exceeds bounds on degenerate inputs', () => {
     expect(bubbleRadius(5, 0)).toBe(18); // maxCount 0 guard
     expect(bubbleRadius(200, 100)).toBe(18); // count > maxCount clamps
+  });
+});
+
+describe('geoMapRefitKey (#304)', () => {
+  const base: GeoMapConfig = {
+    type: 'geo_map',
+    title: 'Traffic Map',
+    source: 'logs',
+    projectId: null,
+    interval: '24h',
+    mode: 'country',
+    limit: 100,
+    fieldPrefix: 'geo',
+    levels: [],
+    service: null,
+    hostname: null,
+  };
+
+  it('is stable across title-only changes and object identity', () => {
+    expect(geoMapRefitKey({ ...base, title: 'Renamed' })).toBe(geoMapRefitKey({ ...base }));
+  });
+
+  it('changes when any query-shaping field changes', () => {
+    const key = geoMapRefitKey(base);
+    expect(geoMapRefitKey({ ...base, mode: 'points' })).not.toBe(key);
+    expect(geoMapRefitKey({ ...base, fieldPrefix: 'geoip' })).not.toBe(key);
+    expect(geoMapRefitKey({ ...base, projectId: 'p1' })).not.toBe(key);
+    expect(geoMapRefitKey({ ...base, interval: '48h' })).not.toBe(key);
+    expect(geoMapRefitKey({ ...base, levels: ['error'] })).not.toBe(key);
+    expect(geoMapRefitKey({ ...base, service: 'caddy' })).not.toBe(key);
+    expect(geoMapRefitKey({ ...base, hostname: 'edge-1' })).not.toBe(key);
+    expect(geoMapRefitKey({ ...base, limit: 200 })).not.toBe(key);
+  });
+
+  it('ignores level ordering', () => {
+    expect(geoMapRefitKey({ ...base, levels: ['error', 'info'] })).toBe(
+      geoMapRefitKey({ ...base, levels: ['info', 'error'] })
+    );
   });
 });
 

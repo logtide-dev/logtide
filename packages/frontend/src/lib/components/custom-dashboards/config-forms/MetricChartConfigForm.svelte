@@ -9,6 +9,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
 
   interface Props {
     config: MetricChartConfig;
@@ -19,7 +20,6 @@
 
   const aggregations: MetricAggregation[] = ['avg', 'sum', 'min', 'max', 'count', 'last', 'p50', 'p95', 'p99'];
   const intervals: MetricInterval[] = ['1m', '5m', '15m', '1h', '6h', '1d'];
-  const ranges: MetricChartConfig['timeRange'][] = ['1h', '6h', '24h', '7d', '30d'];
 
   function update<K extends keyof MetricChartConfig>(key: K, value: MetricChartConfig[K]) {
     onChange({ ...config, [key]: value });
@@ -94,11 +94,11 @@
       onValueChange={(v) => v && update('timeRange', v as MetricChartConfig['timeRange'])}
     >
       <SelectTrigger>
-        <SelectValue>{config.timeRange}</SelectValue>
+        <SelectValue>{timeRangeLabel(config.timeRange)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {#each ranges as r}
-          <SelectItem value={r}>{r}</SelectItem>
+        {#each TIME_RANGE_OPTIONS as option (option.value)}
+          <SelectItem value={option.value}>{option.label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>

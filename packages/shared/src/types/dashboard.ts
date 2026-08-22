@@ -31,6 +31,67 @@ export type PanelType =
   | 'geo_map'
   | 'log_table';
 
+// ─── Time range presets ─────────────────────────────────────────────────────
+//
+// One catalog for every panel that scopes its query to a lookback window
+// (issue #305). Widening this list is backwards compatible; narrowing it or
+// renaming a key is a breaking change for stored dashboards and needs a
+// schema_version bump + migration.
+
+export const PANEL_TIME_RANGES = [
+  '15m',
+  '1h',
+  '6h',
+  '12h',
+  '24h',
+  '48h',
+  '3d',
+  '7d',
+  '14d',
+  '30d',
+] as const;
+
+export type PanelTimeRange = (typeof PANEL_TIME_RANGES)[number];
+
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+export const PANEL_TIME_RANGE_MS: Record<PanelTimeRange, number> = {
+  '15m': 15 * MINUTE_MS,
+  '1h': HOUR_MS,
+  '6h': 6 * HOUR_MS,
+  '12h': 12 * HOUR_MS,
+  '24h': DAY_MS,
+  '48h': 2 * DAY_MS,
+  '3d': 3 * DAY_MS,
+  '7d': 7 * DAY_MS,
+  '14d': 14 * DAY_MS,
+  '30d': 30 * DAY_MS,
+};
+
+export const PANEL_TIME_RANGE_LABELS: Record<PanelTimeRange, string> = {
+  '15m': 'Last 15 minutes',
+  '1h': 'Last hour',
+  '6h': 'Last 6 hours',
+  '12h': 'Last 12 hours',
+  '24h': 'Last 24 hours',
+  '48h': 'Last 48 hours',
+  '3d': 'Last 3 days',
+  '7d': 'Last 7 days',
+  '14d': 'Last 14 days',
+  '30d': 'Last 30 days',
+};
+
+/**
+ * Window size in ms for a panel time range. Unknown strings fall back to 24h,
+ * matching the historical behavior of the backend's timeRangeToMs helper so a
+ * config written by a future version never crashes an older backend.
+ */
+export function panelTimeRangeToMs(range: string): number {
+  return PANEL_TIME_RANGE_MS[range as PanelTimeRange] ?? PANEL_TIME_RANGE_MS['24h'];
+}
+
 // ─── Layout (12-column grid) ────────────────────────────────────────────────
 
 export interface PanelLayout {
@@ -49,7 +110,7 @@ export interface TimeSeriesConfig {
   title: string;
   source: 'logs';
   projectId: string | null; // null = org-wide
-  interval: '1h' | '6h' | '24h' | '7d' | '30d';
+  interval: PanelTimeRange;
   levels: LogLevelKey[];
   service: string | null;
   /** Optional per-level display labels for legend and tooltip; falls back to Debug/Info/Warn/Error/Critical */
@@ -74,7 +135,7 @@ export interface TopNTableConfig {
   metadataField?: string | null;
   limit: number; // 3-50
   projectId: string | null;
-  interval: '1h' | '24h' | '7d';
+  interval: PanelTimeRange;
   /** default false; honored for error_message and metadata dimensions */
   showLastSeen?: boolean;
   /** metadata dimension only; empty/absent = all levels */
@@ -126,7 +187,7 @@ export interface MetricChartConfig {
   metricName: string;
   aggregation: MetricAggregation;
   interval: MetricInterval;
-  timeRange: '1h' | '6h' | '24h' | '7d' | '30d';
+  timeRange: PanelTimeRange;
   serviceName: string | null;
 }
 
@@ -137,7 +198,7 @@ export interface MetricStatConfig {
   projectId: string | null;
   metricName: string;
   aggregation: MetricAggregation;
-  timeRange: '1h' | '6h' | '24h';
+  timeRange: PanelTimeRange;
   serviceName: string | null;
   unit: string | null;
 }
@@ -150,7 +211,7 @@ export interface TraceLatencyConfig {
   source: 'traces';
   projectId: string | null;
   serviceName: string | null;
-  timeRange: '1h' | '6h' | '24h' | '7d';
+  timeRange: PanelTimeRange;
   showPercentiles: Array<'p50' | 'p95' | 'p99'>;
 }
 
@@ -162,7 +223,7 @@ export interface TraceVolumeConfig {
   source: 'traces';
   projectId: string | null;
   serviceName: string | null;
-  timeRange: '1h' | '6h' | '24h' | '7d';
+  timeRange: PanelTimeRange;
   showErrors: boolean;
 }
 
@@ -173,7 +234,7 @@ export interface DetectionEventsConfig {
   title: string;
   source: 'detections';
   projectId: string | null;
-  timeRange: '24h' | '7d' | '30d';
+  timeRange: PanelTimeRange;
   severities: Array<'critical' | 'high' | 'medium' | 'low' | 'informational'>;
 }
 
@@ -213,7 +274,7 @@ export interface ActivityOverviewConfig {
   title: string;
   source: 'mixed';
   projectId: string | null;
-  timeRange: '24h' | '7d' | '30d';
+  timeRange: PanelTimeRange;
   series: ActivityOverviewSeries[];
 }
 
@@ -224,7 +285,7 @@ export interface GeoMapConfig {
   title: string;
   source: 'logs';
   projectId: string | null;
-  interval: '1h' | '24h' | '7d';
+  interval: PanelTimeRange;
   mode: 'country' | 'points';
   limit: number; // points mode top-N; 10-500
   fieldPrefix: string; // geoip step target, e.g. 'geo'; strict charset, no dots
@@ -243,7 +304,7 @@ export interface LogTableConfig {
   source: 'logs';
   projectId: string | null; // null = org-wide; REQUIRED when mode === 'live'
   mode: 'snapshot' | 'live'; // live = per-project WebSocket tail
-  timeRange: '15m' | '1h' | '6h' | '24h' | '7d'; // snapshot mode only
+  timeRange: PanelTimeRange; // snapshot mode only
   levels: LogLevelKey[]; // empty = all levels
   service: string | null;
   maxRows: number; // 10-100
