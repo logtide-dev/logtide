@@ -30,7 +30,8 @@ import type {
   GeoMapConfig,
   LogTableConfig,
 } from '@logtide/shared';
-import { resolveMetadataPath, formatMetadataCell } from '@logtide/shared';
+import { resolveMetadataPath, formatMetadataCell, panelTimeRangeToMs } from '@logtide/shared';
+import type { PanelTimeRange } from '@logtide/shared';
 import { dashboardService } from '../dashboard/service.js';
 import { alertsService } from '../alerts/service.js';
 import { metricsService } from '../metrics/service.js';
@@ -67,6 +68,9 @@ export interface TimeSeriesPanelData {
     critical: number;
   }>;
   interval: string;
+  // Bucket granularity actually used for the window, so the frontend can pick
+  // a matching axis label style ('1m' | '5m' | '15m' | '1h' | '1d').
+  bucket: string;
 }
 
 export interface SingleStatPanelData {
@@ -222,35 +226,160 @@ export interface SystemStatusData {
 
 // ─── Fetchers ──────────────────────────────────────────────────────────────
 
+// Bucket granularity per window (#305): small windows need sub-hour buckets
+// to draw a useful line, hourly stays readable up to two weeks (14d = 336
+// points), and only the 30d window drops to daily buckets.
+type TimeSeriesBucket = '1m' | '5m' | '15m' | '1h' | '1d';
+
+const TIME_SERIES_BUCKET_MS: Record<TimeSeriesBucket, number> = {
+  '1m': 60 * 1000,
+  '5m': 5 * 60 * 1000,
+  '15m': 15 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '1d': 24 * 60 * 60 * 1000,
+};
+
+function timeSeriesBucketFor(windowMs: number): TimeSeriesBucket {
+  const hour = 60 * 60 * 1000;
+  if (windowMs <= hour) return '1m';
+  if (windowMs <= 6 * hour) return '5m';
+  if (windowMs <= 12 * hour) return '15m';
+  if (windowMs <= 14 * 24 * hour) return '1h';
+  return '1d';
+}
+
+// Bucket timestamps stepping by stepMs, epoch-floor aligned (the same rule
+// time_bucket / toStartOf* / $dateTrunc use in UTC). The start is CEILED to
+// the first boundary at or after `from`, so the series never begins with a
+// bucket the window only partially covers (it would always render short).
+function buildBucketTimesForStep(from: Date, to: Date, stepMs: number): string[] {
+  const out: string[] = [];
+  for (let t = Math.ceil(from.getTime() / stepMs) * stepMs; t <= to.getTime(); t += stepMs) {
+    out.push(new Date(t).toISOString());
+  }
+  return out;
+}
+
 const timeSeriesFetcher: PanelDataSource<TimeSeriesConfig, TimeSeriesPanelData> = {
   type: 'time_series',
   async fetchData(config, ctx) {
-    // For now, the existing dashboardService.getTimeseries returns last 24h.
-    // Interval other than 24h falls back to whatever the service supports;
-    // future iterations can parameterize the time window in dashboardService.
-    const series = await dashboardService.getTimeseries(
-      ctx.organizationId,
-      config.projectId ?? undefined
-    );
+    const windowMs = panelTimeRangeToMs(config.interval);
+    const bucket = timeSeriesBucketFor(windowMs);
 
-    // Filter levels client-side based on config (the backend already returns
-    // all levels per bucket - we zero out unwanted ones to keep the chart's
-    // type stable).
-    const allowed = new Set(config.levels);
-    const filtered = series.map((point) => ({
-      time: point.time,
-      total: 0,
-      debug: allowed.has('debug') ? point.debug : 0,
-      info: allowed.has('info') ? point.info : 0,
-      warn: allowed.has('warn') ? point.warn : 0,
-      error: allowed.has('error') ? point.error : 0,
-      critical: allowed.has('critical') ? point.critical : 0,
-    }));
-    for (const point of filtered) {
-      point.total = point.debug + point.info + point.warn + point.error + point.critical;
+    const projectIds = config.projectId
+      ? [config.projectId]
+      : await resolveProjectIdsForOrg(ctx.organizationId);
+    if (projectIds.length === 0) {
+      return { series: [], interval: config.interval, bucket };
     }
 
-    return { series: filtered, interval: config.interval };
+    const now = new Date();
+    const from = new Date(now.getTime() - windowMs);
+
+    const bucketTimes = buildBucketTimesForStep(from, now, TIME_SERIES_BUCKET_MS[bucket]);
+    const index = new Map<string, number>();
+    bucketTimes.forEach((t, i) => index.set(t, i));
+    const series: TimeSeriesPanelData['series'] = bucketTimes.map((time) => ({
+      time,
+      total: 0,
+      debug: 0,
+      info: 0,
+      warn: 0,
+      error: 0,
+      critical: 0,
+    }));
+
+    // Levels outside the config stay zero (the chart only draws configured
+    // levels, but the payload shape stays stable) and total counts only the
+    // configured ones, matching the pre-#305 behavior.
+    const allowed = new Set<string>(config.levels);
+    const add = (key: string, level: string, count: number) => {
+      const i = index.get(key);
+      if (i === undefined || count <= 0 || !allowed.has(level)) return;
+      const point = series[i];
+      switch (level) {
+        case 'debug': point.debug += count; break;
+        case 'info': point.info += count; break;
+        case 'warn': point.warn += count; break;
+        case 'error': point.error += count; break;
+        case 'critical': point.critical += count; break;
+        default: return;
+      }
+      point.total += count;
+    };
+
+    const isTimescale = reservoir.getEngineType() === 'timescale';
+
+    if (isTimescale && (bucket === '1h' || bucket === '1d')) {
+      // Cagg fast path with live tail backfill, same strategy (and caveats) as
+      // the activity_overview fetcher: the cagg lags real time, so read it only
+      // up to a bucket-aligned cutoff and take the recent tail from raw logs.
+      const caggBucket = bucket === '1h' ? ('hour' as const) : ('day' as const);
+      const caggTable = bucket === '1h' ? ('logs_hourly_stats' as const) : ('logs_daily_stats' as const);
+      const { caggCutoff, tailEnd } = computeCaggBackfillWindow(now, caggBucket);
+      const trunc = bucket === '1h'
+        ? sql<Date>`date_trunc('hour', time)`
+        : sql<Date>`date_trunc('day', time)`;
+
+      const rawRows = (fromD: Date, toD: Date) => {
+        let q = db
+          .selectFrom('logs')
+          .select([trunc.as('bucket'), 'level', sql<string>`COUNT(*)`.as('count')])
+          .where('project_id', 'in', projectIds)
+          .where('time', '>=', fromD)
+          .where('time', '<', toD);
+        if (config.service) q = q.where('service', '=', config.service);
+        return q
+          .groupBy([trunc, 'level'])
+          .execute()
+          .catch(() => [] as Array<{ bucket: unknown; level: string; count: string }>);
+      };
+
+      let caggQuery = db
+        .selectFrom(caggTable)
+        .select(['bucket', 'level', sql<string>`SUM(log_count)`.as('count')])
+        .where('project_id', 'in', projectIds)
+        .where('bucket', '>=', from)
+        .where('bucket', '<', caggCutoff)
+        .groupBy(['bucket', 'level']);
+      if (config.service) caggQuery = caggQuery.where('service', '=', config.service);
+      const caggRows = await caggQuery
+        .execute()
+        .catch(() => [] as Array<{ bucket: unknown; level: string; count: string }>);
+
+      // Raw fallback when the cagg is still empty (fresh install).
+      const olderRows = caggRows.length > 0 ? caggRows : await rawRows(from, caggCutoff);
+      const tailRows = await rawRows(caggCutoff, tailEnd);
+
+      for (const r of [...olderRows, ...tailRows]) {
+        add(new Date(r.bucket as unknown as string).toISOString(), r.level, Number(r.count ?? 0));
+      }
+    } else {
+      // Minute buckets have no cagg, and ClickHouse / MongoDB have no caggs at
+      // all: aggregate over raw storage through the reservoir abstraction.
+      const aggResult = await reservoir
+        .aggregate({
+          projectId: projectIds,
+          from,
+          to: now,
+          interval: bucket,
+          service: config.service ?? undefined,
+        })
+        .catch(() => ({
+          timeseries: [] as Array<{ bucket: Date; byLevel?: Record<string, number> }>,
+          total: 0,
+        }));
+
+      for (const b of aggResult.timeseries) {
+        const key = (b.bucket instanceof Date ? b.bucket : new Date(b.bucket)).toISOString();
+        if (!b.byLevel) continue;
+        for (const [level, count] of Object.entries(b.byLevel) as Array<[string, number]>) {
+          add(key, level, count);
+        }
+      }
+    }
+
+    return { series, interval: config.interval, bucket };
   },
 };
 
@@ -303,9 +432,12 @@ const TOP_N_METADATA_FIELD = /^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/;
 const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
   type: 'top_n_table',
   async fetchData(config, ctx) {
-    if (config.dimension === 'service') {
-      // showLastSeen is ignored here on purpose: this dimension is served by the
-      // continuous-aggregate fast path, which has no per-value max event time.
+    // The classic getTopServices fast path reads the daily continuous
+    // aggregate, but it hardcodes a 7-day window and has no per-value max
+    // event time. Use it only when the config asks for exactly that shape;
+    // every other service-dimension request goes through the same windowed
+    // reservoir path the other dimensions use (#305).
+    if (config.dimension === 'service' && config.interval === '7d' && config.showLastSeen !== true) {
       const services = await dashboardService.getTopServices(
         ctx.organizationId,
         config.limit,
@@ -331,8 +463,36 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
     }
 
     const now = new Date();
-    const intervalMs = intervalToMs(config.interval);
+    const intervalMs = panelTimeRangeToMs(config.interval);
     const from = new Date(now.getTime() - intervalMs);
+
+    if (config.dimension === 'service') {
+      // RULING (#299, unchanged): levels/service filters stay metadata-dim
+      // only; the service dimension ranks all logs in the window.
+      const [top, totalResult] = await Promise.all([
+        reservoir.topValues({
+          field: 'service',
+          projectId: projectIds,
+          from,
+          to: now,
+          limit: config.limit,
+          includeLastSeen: config.showLastSeen === true,
+        }),
+        // True total of all logs in the window, so percentages are a share of
+        // the whole (same rule as the metadata/error_message dimensions).
+        reservoir.count({ projectId: projectIds, from, to: now }),
+      ]);
+      const total = totalResult.count;
+      return {
+        rows: top.values.map((v: { value: string; count: number; lastSeen?: string }) => ({
+          key: v.value,
+          count: v.count,
+          percentage: total > 0 ? Math.round((v.count / total) * 100) : 0,
+          ...(v.lastSeen !== undefined ? { lastSeen: v.lastSeen } : {}),
+        })),
+        total,
+      };
+    }
 
     if (config.dimension === 'metadata') {
       // Rank a flat metadata key (GeoIP `geo_place`, `http_host`, ...) with the
@@ -440,7 +600,7 @@ const geoMapFetcher: PanelDataSource<GeoMapConfig, GeoMapData> = {
     }
 
     const now = new Date();
-    const from = new Date(now.getTime() - intervalToMs(config.interval));
+    const from = new Date(now.getTime() - panelTimeRangeToMs(config.interval));
 
     const suffix = config.mode === 'country' ? '_country_code' : '_place';
     const result = await reservoir.topValues({
@@ -543,14 +703,6 @@ const liveLogStreamFetcher: PanelDataSource<
   },
 };
 
-const LOG_TABLE_RANGE_MS: Record<LogTableConfig['timeRange'], number> = {
-  '15m': 15 * 60 * 1000,
-  '1h': 60 * 60 * 1000,
-  '6h': 6 * 60 * 60 * 1000,
-  '24h': 24 * 60 * 60 * 1000,
-  '7d': 7 * 24 * 60 * 60 * 1000,
-};
-
 const logTableFetcher: PanelDataSource<LogTableConfig, LogTableSnapshot> = {
   type: 'log_table',
   async fetchData(config, ctx) {
@@ -570,7 +722,7 @@ const logTableFetcher: PanelDataSource<LogTableConfig, LogTableSnapshot> = {
     }
 
     const now = new Date();
-    const from = new Date(now.getTime() - LOG_TABLE_RANGE_MS[config.timeRange]);
+    const from = new Date(now.getTime() - panelTimeRangeToMs(config.timeRange));
 
     const result = await reservoir.query({
       projectId: projectIds,
@@ -680,7 +832,7 @@ const metricChartFetcher: PanelDataSource<MetricChartConfig, MetricChartData> = 
     }
 
     const now = new Date();
-    const from = new Date(now.getTime() - timeRangeToMs(config.timeRange));
+    const from = new Date(now.getTime() - panelTimeRangeToMs(config.timeRange));
 
     const result = await metricsService.aggregateMetrics({
       projectId: projectIds,
@@ -723,11 +875,11 @@ const metricStatFetcher: PanelDataSource<MetricStatConfig, MetricStatData> = {
     }
 
     const now = new Date();
-    const from = new Date(now.getTime() - timeRangeToMs(config.timeRange));
+    const from = new Date(now.getTime() - panelTimeRangeToMs(config.timeRange));
 
-    // Use a single bucket spanning the whole window for the stat value.
-    // 1d is the largest supported aggregation interval that fits any
-    // timeRange this panel exposes (1h, 6h, 24h).
+    // Aggregate at the coarsest supported interval (1d); the combine step
+    // below folds however many buckets the window spans (a 30d range at 1d
+    // interval yields up to 31) into a single stat value.
     const result = await metricsService.aggregateMetrics({
       projectId: projectIds,
       metricName: config.metricName,
@@ -773,7 +925,7 @@ const traceLatencyFetcher: PanelDataSource<TraceLatencyConfig, TraceLatencyData>
     }
 
     const now = new Date();
-    const rangeMs = timeRangeToMs(config.timeRange);
+    const rangeMs = panelTimeRangeToMs(config.timeRange);
     const from = new Date(now.getTime() - rangeMs);
     const bucket: 'hour' | 'day' = rangeMs <= 48 * 60 * 60 * 1000 ? 'hour' : 'day';
 
@@ -809,7 +961,7 @@ const traceVolumeFetcher: PanelDataSource<TraceVolumeConfig, TraceVolumePanelDat
       : await resolveProjectIdsForOrg(ctx.organizationId);
 
     const bucket: 'hour' | 'day' =
-      timeRangeToMs(config.timeRange) <= 48 * 60 * 60 * 1000 ? 'hour' : 'day';
+      panelTimeRangeToMs(config.timeRange) <= 48 * 60 * 60 * 1000 ? 'hour' : 'day';
 
     if (projectIds.length === 0) {
       return {
@@ -821,7 +973,7 @@ const traceVolumeFetcher: PanelDataSource<TraceVolumeConfig, TraceVolumePanelDat
     }
 
     const now = new Date();
-    const from = new Date(now.getTime() - timeRangeToMs(config.timeRange));
+    const from = new Date(now.getTime() - panelTimeRangeToMs(config.timeRange));
 
     // Multi-engine span volume straight from raw spans via the reservoir
     // abstraction (works on Timescale, ClickHouse and MongoDB alike).
@@ -853,7 +1005,7 @@ const activityOverviewFetcher: PanelDataSource<
   type: 'activity_overview',
   async fetchData(config, ctx) {
     const bucket: 'hour' | 'day' =
-      timeRangeToMs(config.timeRange) <= 48 * 60 * 60 * 1000 ? 'hour' : 'day';
+      panelTimeRangeToMs(config.timeRange) <= 48 * 60 * 60 * 1000 ? 'hour' : 'day';
     const enabled = new Set(config.series);
 
     const projectIds = config.projectId
@@ -861,7 +1013,7 @@ const activityOverviewFetcher: PanelDataSource<
       : await resolveProjectIdsForOrg(ctx.organizationId);
 
     const now = new Date();
-    const from = new Date(now.getTime() - timeRangeToMs(config.timeRange));
+    const from = new Date(now.getTime() - panelTimeRangeToMs(config.timeRange));
 
     // Build the ordered list of bucket timestamps we expect in the window,
     // truncated to bucket boundary (same rule Postgres date_trunc would use).
@@ -1252,17 +1404,6 @@ const systemStatusFetcher: PanelDataSource<SystemStatusConfig, SystemStatusData>
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function timeRangeToMs(range: string): number {
-  switch (range) {
-    case '1h': return 60 * 60 * 1000;
-    case '6h': return 6 * 60 * 60 * 1000;
-    case '24h': return 24 * 60 * 60 * 1000;
-    case '7d': return 7 * 24 * 60 * 60 * 1000;
-    case '30d': return 30 * 24 * 60 * 60 * 1000;
-    default: return 24 * 60 * 60 * 1000;
-  }
-}
-
 async function resolveProjectIdsForOrg(organizationId: string): Promise<string[]> {
   const { db } = await import('../../database/index.js');
   const rows = await db
@@ -1346,17 +1487,6 @@ function buildBucketTimes(
   return out;
 }
 
-function intervalToMs(interval: '1h' | '24h' | '7d'): number {
-  switch (interval) {
-    case '1h':
-      return 60 * 60 * 1000;
-    case '24h':
-      return 24 * 60 * 60 * 1000;
-    case '7d':
-      return 7 * 24 * 60 * 60 * 1000;
-  }
-}
-
 // ─── Registry ──────────────────────────────────────────────────────────────
 
 type AnyFetcher = PanelDataSource<PanelConfig, unknown>;
@@ -1378,6 +1508,35 @@ const dataFetchers: Record<PanelType, AnyFetcher> = {
   geo_map: geoMapFetcher as AnyFetcher,
   log_table: logTableFetcher as AnyFetcher,
 };
+
+/**
+ * Dashboard-level time override (#305): return a copy of the panel config with
+ * its lookback window replaced by `range`. The override is a view-level tool,
+ * never persisted: panels without window semantics (single_stat, streams,
+ * alert/monitor status) and live-mode log tables are returned untouched.
+ */
+export function applyTimeRangeOverride(
+  config: PanelConfig,
+  range: PanelTimeRange
+): PanelConfig {
+  switch (config.type) {
+    case 'time_series':
+    case 'top_n_table':
+    case 'geo_map':
+      return { ...config, interval: range };
+    case 'log_table':
+      return config.mode === 'snapshot' ? { ...config, timeRange: range } : config;
+    case 'metric_chart':
+    case 'metric_stat':
+    case 'trace_latency':
+    case 'trace_volume':
+    case 'detection_events':
+    case 'activity_overview':
+      return { ...config, timeRange: range };
+    default:
+      return config;
+  }
+}
 
 export async function fetchPanelData(
   config: PanelConfig,

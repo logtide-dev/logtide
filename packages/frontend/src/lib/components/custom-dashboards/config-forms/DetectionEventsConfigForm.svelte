@@ -9,6 +9,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
 
   interface Props {
     config: DetectionEventsConfig;
@@ -17,7 +18,6 @@
 
   let { config, onChange }: Props = $props();
 
-  const ranges: DetectionEventsConfig['timeRange'][] = ['24h', '7d', '30d'];
   const severities: Array<'critical' | 'high' | 'medium' | 'low' | 'informational'> = [
     'critical',
     'high',
@@ -64,11 +64,11 @@
       onValueChange={(v) => v && update('timeRange', v as DetectionEventsConfig['timeRange'])}
     >
       <SelectTrigger>
-        <SelectValue>{config.timeRange}</SelectValue>
+        <SelectValue>{timeRangeLabel(config.timeRange)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {#each ranges as r}
-          <SelectItem value={r}>{r}</SelectItem>
+        {#each TIME_RANGE_OPTIONS as option (option.value)}
+          <SelectItem value={option.value}>{option.label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>

@@ -1,6 +1,6 @@
 {
   "name": "@logtide/reservoir",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Pluggable storage abstraction for Logtide log management",
   "type": "module",
   "main": "./dist/index.js",

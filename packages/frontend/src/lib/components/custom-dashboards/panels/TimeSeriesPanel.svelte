@@ -3,7 +3,8 @@
   import * as echarts from 'echarts';
   import { themeStore } from '$lib/stores/theme';
   import { displayPreferences } from '$lib/stores/display-preferences';
-  import { formatTimestamp } from '$lib/utils/format-time';
+  import { formatTimestamp, type TimestampStyle } from '$lib/utils/format-time';
+  import { panelTimeRangeToMs } from '@logtide/shared';
   import {
     chartColors,
     getAxisStyle,
@@ -24,6 +25,8 @@
       critical: number;
     }>;
     interval: string;
+    // Absent on payloads cached before #305; hourly was the only bucket then.
+    bucket?: string;
   }
 
   interface Props {
@@ -45,6 +48,16 @@
     const legendStyle = getLegendStyle();
     const prefs = displayPreferences.get();
     const series = typedData?.series ?? [];
+    // Axis label style follows the bucket (#305): day buckets show the date,
+    // hourly buckets on a multi-day window need date + time to disambiguate
+    // repeated clock times, everything else keeps time-of-day.
+    const bucket = typedData?.bucket ?? '1h';
+    const labelStyle: TimestampStyle =
+      bucket === '1d'
+        ? 'monthDay'
+        : bucket === '1h' && panelTimeRangeToMs(config.interval) > 48 * 60 * 60 * 1000
+          ? 'dateTime'
+          : 'time';
     const showDebug = config.levels.includes('debug');
     const showInfo = config.levels.includes('info');
     const showWarn = config.levels.includes('warn');
@@ -115,7 +128,7 @@
       xAxis: {
         type: 'category',
         boundaryGap: false,
-        data: series.map((d) => formatTimestamp(d.time, 'time', prefs)),
+        data: series.map((d) => formatTimestamp(d.time, labelStyle, prefs)),
         ...axisStyle,
       },
       yAxis: {

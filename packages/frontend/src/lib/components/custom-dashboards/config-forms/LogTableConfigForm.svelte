@@ -11,6 +11,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
   import { ProjectsAPI } from '$lib/api/projects';
   import { authStore } from '$lib/stores/auth';
   import { organizationStore } from '$lib/stores/organization';
@@ -25,7 +26,6 @@
 
   const allLevels: LogLevelKey[] = ['debug', 'info', 'warn', 'error', 'critical'];
   const allBuiltins: BuiltinLogColumn[] = ['time', 'level', 'service', 'message'];
-  const timeRanges: Array<LogTableConfig['timeRange']> = ['15m', '1h', '6h', '24h', '7d'];
 
   const BUILTIN_LABELS: Record<BuiltinLogColumn, string> = {
     time: 'Time',
@@ -156,18 +156,18 @@
 
   {#if config.mode === 'snapshot'}
     <div class="space-y-1.5">
-      <Label>Time window</Label>
+      <Label>Time range</Label>
       <Select
         type="single"
         value={config.timeRange}
         onValueChange={(v) => v && update('timeRange', v as LogTableConfig['timeRange'])}
       >
         <SelectTrigger>
-          <SelectValue>{config.timeRange}</SelectValue>
+          <SelectValue>{timeRangeLabel(config.timeRange)}</SelectValue>
         </SelectTrigger>
         <SelectContent>
-          {#each timeRanges as range (range)}
-            <SelectItem value={range}>{range}</SelectItem>
+          {#each TIME_RANGE_OPTIONS as option (option.value)}
+            <SelectItem value={option.value}>{option.label}</SelectItem>
           {/each}
         </SelectContent>
       </Select>

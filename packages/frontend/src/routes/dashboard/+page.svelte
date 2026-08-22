@@ -17,11 +17,14 @@
     dashboardSaveError,
     panelDataMap,
     pausedPanelIds,
+    timeRangeOverride,
   } from '$lib/stores/custom-dashboards';
   import DashboardContainer from '$lib/components/custom-dashboards/DashboardContainer.svelte';
   import DashboardSwitcher from '$lib/components/custom-dashboards/DashboardSwitcher.svelte';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '$lib/components/custom-dashboards/time-range-options';
   import * as Select from '$lib/components/ui/select';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+  import Clock from '@lucide/svelte/icons/clock';
   import PanelConfigDialog from '$lib/components/custom-dashboards/PanelConfigDialog.svelte';
   import AddPanelDialog from '$lib/components/custom-dashboards/AddPanelDialog.svelte';
   import CreateDashboardDialog from '$lib/components/custom-dashboards/CreateDashboardDialog.svelte';
@@ -33,7 +36,7 @@
   import Save from '@lucide/svelte/icons/save';
   import XIcon from '@lucide/svelte/icons/x';
   import Building2 from '@lucide/svelte/icons/building-2';
-  import type { CustomDashboard, PanelConfig, PanelInstance } from '@logtide/shared';
+  import type { CustomDashboard, PanelConfig, PanelInstance, PanelTimeRange } from '@logtide/shared';
 
   let lastLoadedOrg = $state<string | null>(null);
   let maxWidthClass = $state('max-w-full');
@@ -186,6 +189,13 @@
   function setAutoRefresh(v: string | undefined) {
     autoRefreshMs = v ? parseInt(v, 10) || 0 : 0;
     if (browser) localStorage.setItem('logtide_dashboard_autorefresh', String(autoRefreshMs));
+  }
+
+  function setDashboardTimeRange(v: string | undefined) {
+    if (!v) return;
+    void customDashboardsStore.setTimeRangeOverride(
+      v === '__default__' ? null : (v as PanelTimeRange)
+    );
   }
 
   $effect(() => {
@@ -347,6 +357,26 @@
           {$dashboardSaving ? 'Saving…' : 'Save'}
         </Button>
       {:else if $activeDashboard}
+        <!-- Dashboard-level time override (#305): view-only, never saved.
+             "Panel defaults" restores each panel's configured window. -->
+        <Select.Root
+          type="single"
+          value={$timeRangeOverride ?? '__default__'}
+          onValueChange={setDashboardTimeRange}
+        >
+          <Select.Trigger class="w-auto gap-2" title="Dashboard time range (overrides every panel while active)">
+            <Clock class="w-4 h-4 shrink-0 {$timeRangeOverride ? 'text-primary' : 'text-muted-foreground'}" />
+            <span class="whitespace-nowrap">
+              {$timeRangeOverride ? timeRangeLabel($timeRangeOverride) : 'Panel defaults'}
+            </span>
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item value="__default__">Panel defaults</Select.Item>
+            {#each TIME_RANGE_OPTIONS as opt (opt.value)}
+              <Select.Item value={opt.value}>{opt.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
         <Select.Root
           type="single"
           value={String(autoRefreshMs)}

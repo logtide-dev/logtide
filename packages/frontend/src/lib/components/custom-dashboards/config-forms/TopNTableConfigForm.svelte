@@ -9,6 +9,7 @@
     SelectTrigger,
     SelectValue,
   } from '$lib/components/ui/select';
+  import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
 
   interface Props {
     config: TopNTableConfig;
@@ -23,7 +24,6 @@
     { value: 'metadata', label: 'Metadata field' },
   ];
 
-  const intervals: Array<TopNTableConfig['interval']> = ['1h', '24h', '7d'];
   const allLevels: LogLevelKey[] = ['debug', 'info', 'warn', 'error', 'critical'];
 
   function update<K extends keyof TopNTableConfig>(key: K, value: TopNTableConfig[K]) {
@@ -38,8 +38,10 @@
     update('levels', next);
   }
 
-  // The cagg-backed service dimension has no per-value last seen time.
-  const supportsLastSeen = $derived(config.dimension !== 'service');
+  // Since #305 every dimension supports Last seen: turning it on routes the
+  // service dimension through the windowed reservoir path instead of the
+  // continuous-aggregate fast path (which has no per-value max event time).
+  const supportsLastSeen = true;
 </script>
 
 <div class="space-y-4">
@@ -126,18 +128,18 @@
   {/if}
 
   <div class="space-y-1.5">
-    <Label>Time window</Label>
+    <Label>Time range</Label>
     <Select
       type="single"
       value={config.interval}
       onValueChange={(v) => v && update('interval', v as TopNTableConfig['interval'])}
     >
       <SelectTrigger>
-        <SelectValue>{config.interval}</SelectValue>
+        <SelectValue>{timeRangeLabel(config.interval)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {#each intervals as i}
-          <SelectItem value={i}>{i}</SelectItem>
+        {#each TIME_RANGE_OPTIONS as option (option.value)}
+          <SelectItem value={option.value}>{option.label}</SelectItem>
         {/each}
       </SelectContent>
     </Select>
