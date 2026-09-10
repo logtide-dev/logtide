@@ -55,7 +55,7 @@
     "bcrypt": "^6.0.0",
     "bullmq": "^5.65.1",
     "dotenv": "^17.2.3",
-    "fastify": "^5.8.5",
+    "fastify": "^5.12.1",
     "fastify-plugin": "^5.0.1",
     "graphile-worker": "^0.16.6",
     "ioredis": "^5.8.2",
@@ -63,7 +63,7 @@
     "kysely": "^0.28.17",
     "ldapts": "^7.2.1",
     "maxmind": "^5.0.1",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^9.1.1",
     "openid-client": "^6.4.1",
     "pg": "^8.16.3",
     "protobufjs": "^7.6.3",
@@ -84,7 +84,7 @@
     "supertest": "^7.1.4",
     "ts-morph": "^28.0.0",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.6"
+    "vitest": "^5.0.0"
   },
   "engines": {
     "node": ">=20.0.0"
