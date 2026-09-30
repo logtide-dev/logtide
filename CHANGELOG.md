@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.0.2] - 2026-06-22
+## [Unreleased]
+
+### Fixed
+- **Completed BullMQ jobs were never removed from Redis** (unbounded memory growth): the BullMQ adapter forwarded `removeOnComplete: options?.removeOnComplete` (and `removeOnFail`) on every `add`, and since no caller sets those, an explicit `undefined` reached BullMQ. BullMQ merges job options with `{ ...defaultJobOptions, ...opts }`, so the `undefined` overrode the queue's default retention (`{ count: 100, age: 3600 }`) and finished jobs were kept forever. Every ingested batch left `log-pipeline`, `sigma-detection` and `exception-parsing` job hashes (each holding a copy of the log batch) in Redis; one production instance reached 2.7M keys / 6 GiB in two months and was repeatedly OOM-killed. The adapter now only forwards retention options the caller actually set, and the Worker carries the same retention as a fallback for jobs enqueued by older builds. Operators upgrading from <= 1.0.2 should delete the existing `bull:*:completed` job sets (or the Redis data) once, since this fix does not retroactively clean them
 
 A frontend correctness and security release from a comprehensive multi-agent frontend bug hunt (UI, logic, reactivity, leaks and security), plus a hardening of how the browser authenticates the live-streaming endpoints. The headline item is single-use stream tickets: the session token no longer travels in WebSocket/SSE URLs (where reverse proxies log it). One additive database migration (`049_stream_tickets`); otherwise a drop-in upgrade.
 

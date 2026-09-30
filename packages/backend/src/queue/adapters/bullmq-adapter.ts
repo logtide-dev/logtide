@@ -71,8 +71,12 @@ export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T>, ICronR
       priority: options?.priority,
       jobId: options?.jobKey,
       repeat: options?.repeat,
-      removeOnComplete: options?.removeOnComplete,
-      removeOnFail: options?.removeOnFail,
+      // Only forward retention options the caller actually set. BullMQ merges
+      // job options with `{ ...defaultJobOptions, ...opts }`, so passing an
+      // explicit `undefined` here would override DEFAULT_JOB_OPTIONS and keep
+      // every completed/failed job in Redis forever (unbounded memory growth).
+      ...(options?.removeOnComplete !== undefined && { removeOnComplete: options.removeOnComplete }),
+      ...(options?.removeOnFail !== undefined && { removeOnFail: options.removeOnFail }),
     });
 
     return {
@@ -144,7 +148,14 @@ export class BullMQWorkerAdapter<T = unknown> implements IWorkerAdapter<T> {
         const adaptedJob = adaptBullJob(bullJob);
         await processor(adaptedJob);
       },
-      { connection }
+      {
+        connection,
+        // Worker-level fallback retention: applies to any job whose own options
+        // do not set removeOnComplete/removeOnFail (e.g. jobs enqueued by an
+        // older backend build), so Redis cannot fill with finished jobs.
+        removeOnComplete: DEFAULT_JOB_OPTIONS.removeOnComplete,
+        removeOnFail: DEFAULT_JOB_OPTIONS.removeOnFail,
+      }
     );
 
     // Forward BullMQ events to our handlers
