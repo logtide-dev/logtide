@@ -5,6 +5,7 @@ import { getMailer } from '../lib/mailer.js';
 import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../utils/internal-logger.js';
 import { CAPABILITIES, type CapabilityName } from './registry.js';
+import { startOfUtcMonth } from './month.js';
 
 export type QuotaNotifyState = 'grace' | 'blocked';
 
@@ -25,10 +26,6 @@ export function formatQuotaValue(cap: CapabilityName, value: number): string {
     return `${v.toLocaleString('en-US', { maximumFractionDigits: 1 })} ${units[i]}`;
   }
   return value.toLocaleString('en-US');
-}
-
-function startOfUtcMonth(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
 /**

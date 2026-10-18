@@ -11,15 +11,11 @@ import {
 import { computeQuotaState } from './quota-state.js';
 import { notifyQuotaThreshold } from './quota-notifier.js';
 import type { MeteringService } from '../modules/metering/index.js';
+import { startOfUtcMonth } from './month.js';
 
 const QUOTA_CAPABILITIES = CAPABILITY_NAMES.filter(
   (n) => CAPABILITIES[n].kind === 'quota'
 ) as CapabilityName[];
-
-/** Start of the current UTC calendar month. */
-function startOfUtcMonth(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-}
 
 /**
  * Periodic job: the single place that joins a configured quota limit (#214) to
