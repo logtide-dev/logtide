@@ -108,6 +108,13 @@ export class OrganizationsAPI {
     });
   }
 
+  async createUpgradeHandoff(id: string, intent: 'upgrade' | 'manage'): Promise<{ url: string }> {
+    return this.request<{ url: string }>(`/organizations/${id}/upgrade-handoff`, {
+      method: 'POST',
+      body: JSON.stringify({ intent }),
+    });
+  }
+
   async deleteOrganization(id: string): Promise<void> {
     await this.request(`/organizations/${id}`, {
       method: 'DELETE',

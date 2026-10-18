@@ -57,6 +57,8 @@ export interface UserIdentity {
 export interface AuthConfig {
   authMode: 'standard' | 'none';
   signupEnabled: boolean;
+  /** Present (true) only when the host configured the external upgrade handoff. */
+  upgradeEnabled?: boolean;
 }
 
 export class AuthAPI {

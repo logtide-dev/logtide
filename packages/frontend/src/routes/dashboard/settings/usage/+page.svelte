@@ -21,6 +21,9 @@
   import { Button } from '$lib/components/ui/button';
   import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import { authAPI } from '$lib/api/auth';
+  import { organizationsAPI } from '$lib/api/organizations';
+  import { canShowUpgradeCta, anyCapabilityAtLimit } from '$lib/utils/upgrade-cta';
   import type { OrganizationWithRole } from '@logtide/shared';
   import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
@@ -51,6 +54,35 @@
 
   let lastLoadedOrgId = $state<string | null>(null);
   let lastLoadedDays = $state<number | null>(null);
+
+  let upgradeEnabled = $state(false);
+  let handoffBusy = $state<'upgrade' | 'manage' | null>(null);
+  let handoffError = $state('');
+
+  onMount(async () => {
+    try {
+      const cfg = await authAPI.getAuthConfig();
+      upgradeEnabled = cfg.upgradeEnabled === true;
+    } catch {
+      upgradeEnabled = false;
+    }
+  });
+
+  let showUpgradeCta = $derived(canShowUpgradeCta(upgradeEnabled, currentOrg?.role));
+  let atLimit = $derived(anyCapabilityAtLimit(capabilities));
+
+  async function startHandoff(intent: 'upgrade' | 'manage') {
+    if (!currentOrg || handoffBusy) return;
+    handoffBusy = intent;
+    handoffError = '';
+    try {
+      const { url } = await organizationsAPI.createUpgradeHandoff(currentOrg.id, intent);
+      window.location.assign(url);
+    } catch (e) {
+      handoffError = e instanceof Error ? e.message : 'Could not open billing';
+      handoffBusy = null;
+    }
+  }
 
   const unsubOrg = organizationStore.subscribe((state) => {
     currentOrg = state.currentOrganization;
@@ -214,11 +246,35 @@
       value={String(selectedDays)}
       onChange={(v) => { selectedDays = parseInt(v, 10) as RangeDays; }}
     />
-    <Button variant="outline" size="sm" onclick={() => load()} disabled={loading}>
-      <RotateCcw class="h-4 w-4 mr-1.5 {loading ? 'animate-spin' : ''}" />
-      Refresh
-    </Button>
+    <div class="flex items-center gap-2">
+      {#if showUpgradeCta}
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={() => startHandoff('manage')}
+          disabled={handoffBusy !== null}
+        >
+          Manage billing
+        </Button>
+        <Button
+          variant={atLimit ? 'default' : 'outline'}
+          size="sm"
+          onclick={() => startHandoff('upgrade')}
+          disabled={handoffBusy !== null}
+        >
+          Upgrade
+        </Button>
+      {/if}
+      <Button variant="outline" size="sm" onclick={() => load()} disabled={loading}>
+        <RotateCcw class="h-4 w-4 mr-1.5 {loading ? 'animate-spin' : ''}" />
+        Refresh
+      </Button>
+    </div>
   </div>
+
+  {#if handoffError}
+    <p class="text-sm text-destructive">{handoffError}</p>
+  {/if}
 
   {#if error}
     <p class="text-sm text-destructive">{error}</p>
