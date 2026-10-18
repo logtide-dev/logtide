@@ -6,29 +6,30 @@ import { authenticate } from '../../../modules/auth/middleware.js';
 import { retentionRoutes } from '../../../modules/retention/index.js';
 import { adminEntitlementsRoutes } from '../../../modules/capabilities/index.js';
 import { adminRoutes } from '../../../modules/admin/routes.js';
+import { contextPlugin } from '../../../context/index.js';
 import { createTestOrganization } from '../../helpers/factories.js';
 
 const TOKEN = 's'.repeat(40);
-const cfg = config as { ADMIN_SERVICE_TOKEN?: string };
+const cfg = config as { LOGTIDE_ADMIN_SERVICE_TOKEN?: string };
 
-describe('ADMIN_SERVICE_TOKEN config', () => {
+describe('LOGTIDE_ADMIN_SERVICE_TOKEN config', () => {
   const base = {
     DATABASE_URL: 'postgres://u:p@localhost:5432/db',
     API_KEY_SECRET: 'x'.repeat(32),
   };
 
   it('is inert when unset or empty', () => {
-    expect(configSchema.parse(base).ADMIN_SERVICE_TOKEN).toBeUndefined();
-    expect(configSchema.parse({ ...base, ADMIN_SERVICE_TOKEN: '' }).ADMIN_SERVICE_TOKEN).toBeUndefined();
+    expect(configSchema.parse(base).LOGTIDE_ADMIN_SERVICE_TOKEN).toBeUndefined();
+    expect(configSchema.parse({ ...base, LOGTIDE_ADMIN_SERVICE_TOKEN: '' }).LOGTIDE_ADMIN_SERVICE_TOKEN).toBeUndefined();
   });
 
   it('rejects a 31 character token', () => {
-    const res = configSchema.safeParse({ ...base, ADMIN_SERVICE_TOKEN: 'a'.repeat(31) });
+    const res = configSchema.safeParse({ ...base, LOGTIDE_ADMIN_SERVICE_TOKEN: 'a'.repeat(31) });
     expect(res.success).toBe(false);
   });
 
   it('accepts a 32 character token', () => {
-    expect(configSchema.parse({ ...base, ADMIN_SERVICE_TOKEN: 'a'.repeat(32) }).ADMIN_SERVICE_TOKEN).toBe('a'.repeat(32));
+    expect(configSchema.parse({ ...base, LOGTIDE_ADMIN_SERVICE_TOKEN: 'a'.repeat(32) }).LOGTIDE_ADMIN_SERVICE_TOKEN).toBe('a'.repeat(32));
   });
 });
 
@@ -38,6 +39,7 @@ describe('admin service token', () => {
 
   beforeAll(async () => {
     app = Fastify();
+    await app.register(contextPlugin);
     await app.register(retentionRoutes, { prefix: '/api/v1/admin' });
     await app.register(adminEntitlementsRoutes, { prefix: '/api/v1/admin' });
     await app.register(adminRoutes, { prefix: '/api/v1/admin' });
@@ -46,12 +48,12 @@ describe('admin service token', () => {
   });
 
   afterAll(async () => {
-    delete cfg.ADMIN_SERVICE_TOKEN;
+    delete cfg.LOGTIDE_ADMIN_SERVICE_TOKEN;
     await app.close();
   });
 
   afterEach(() => {
-    delete cfg.ADMIN_SERVICE_TOKEN;
+    delete cfg.LOGTIDE_ADMIN_SERVICE_TOKEN;
   });
 
   async function newOrg() {
@@ -63,7 +65,7 @@ describe('admin service token', () => {
   const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 
   it('PUT entitlements returns 200 and writes a service audit row', async () => {
-    cfg.ADMIN_SERVICE_TOKEN = TOKEN;
+    cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
     const id = await newOrg();
     const res = await app.inject({
       method: 'PUT',
@@ -80,10 +82,11 @@ describe('admin service token', () => {
       .executeTakeFirst();
     expect(row).toBeTruthy();
     expect((row!.metadata as any).actor).toBe('service:admin-service');
+    expect(row!.actor_type).toBe('system');
   });
 
   it('PUT retention returns 200 and writes a service audit row', async () => {
-    cfg.ADMIN_SERVICE_TOKEN = TOKEN;
+    cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
     const id = await newOrg();
     const res = await app.inject({
       method: 'PUT',
@@ -99,22 +102,34 @@ describe('admin service token', () => {
       .where('organization_id', '=', id)
       .executeTakeFirst();
     expect((row!.metadata as any).actor).toBe('service:admin-service');
+    expect(row!.actor_type).toBe('system');
+  });
+
+  it('GET retention accepts the token', async () => {
+    cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
+    const id = await newOrg();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/organizations/${id}/retention`,
+      headers: auth(TOKEN),
+    });
+    expect(res.statusCode).toBe(200);
   });
 
   it('non-admin route with the token is 401', async () => {
-    cfg.ADMIN_SERVICE_TOKEN = TOKEN;
+    cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
     const res = await app.inject({ method: 'GET', url: '/plain', headers: auth(TOKEN) });
     expect(res.statusCode).toBe(401);
   });
 
   it('admin route not opted in to the service token fails cleanly (401, no 500)', async () => {
-    cfg.ADMIN_SERVICE_TOKEN = TOKEN;
+    cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
     const res = await app.inject({ method: 'GET', url: '/api/v1/admin/users', headers: auth(TOKEN) });
     expect(res.statusCode).toBe(401);
   });
 
   it('wrong token is 401', async () => {
-    cfg.ADMIN_SERVICE_TOKEN = TOKEN;
+    cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
     const id = await newOrg();
     for (const t of ['w'.repeat(40), 'short', TOKEN + 'x']) {
       const res = await app.inject({

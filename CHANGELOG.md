@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Admin service token**: setting `ADMIN_SERVICE_TOKEN` (min 32 characters, shorter aborts startup) lets an external billing service call the org entitlements and retention admin endpoints with a static bearer. The token is compared in constant time and is honored only on those routes; anywhere else it is rejected exactly like an invalid session. Audit entries record `actor: service:admin-service` in metadata. Unset means unchanged behavior.
+- **Admin service token**: setting `LOGTIDE_ADMIN_SERVICE_TOKEN` (min 32 characters, shorter aborts startup) lets an external billing service call the org entitlements and retention admin endpoints with a static bearer. The token is compared in constant time and is honored only on those routes; anywhere else it is rejected exactly like an invalid session. Audit entries record `actor: service:admin-service` in metadata. Unset means unchanged behavior.
 - **Env-driven capability defaults**: `CAPABILITY_DEFAULTS_JSON` (`{"<capability>": boolean | integer | null}`) overrides the registry defaults at boot, validated against the registry (unknown keys, wrong types or malformed JSON abort startup with a clear error). Entitlement rows still win over defaults. Unset means unchanged behavior.
 
 ### Fixed

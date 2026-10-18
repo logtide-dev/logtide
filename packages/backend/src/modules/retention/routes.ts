@@ -95,6 +95,7 @@ export async function retentionRoutes(fastify: FastifyInstance) {
     {
       preHandler: [requireAdmin],
       config: {
+        allowServiceToken: true,
         rateLimit: rateLimitConfig,
       },
     },

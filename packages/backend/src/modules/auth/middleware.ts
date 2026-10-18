@@ -32,7 +32,7 @@ export interface ServicePrincipal {
 export const SERVICE_ACTOR_LABEL = 'service:admin-service';
 
 function matchesServiceToken(token: string): boolean {
-  const expected = config.ADMIN_SERVICE_TOKEN;
+  const expected = config.LOGTIDE_ADMIN_SERVICE_TOKEN;
   if (!expected) return false;
   const a = Buffer.from(token);
   const b = Buffer.from(expected);

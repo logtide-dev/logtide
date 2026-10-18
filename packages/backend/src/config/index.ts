@@ -78,9 +78,9 @@ const configSchema = z.object({
   // Hosting seam: static bearer an external billing service uses on a small set
   // of admin routes (entitlements, retention). Unset/empty = feature inert.
   // Shorter than 32 characters = boot failure.
-  ADMIN_SERVICE_TOKEN: z.preprocess(
+  LOGTIDE_ADMIN_SERVICE_TOKEN: z.preprocess(
     (v) => (v === '' ? undefined : v),
-    z.string().min(32, 'ADMIN_SERVICE_TOKEN must be at least 32 characters').optional()
+    z.string().min(32, 'LOGTIDE_ADMIN_SERVICE_TOKEN must be at least 32 characters').optional()
   ),
 
   // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
