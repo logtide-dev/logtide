@@ -54,6 +54,24 @@ export function recordSpanIngestion(params: {
   });
 }
 
+/**
+ * Recording site helper for metric ingestion. Fire-and-forget.
+ * Count of accepted datapoints; billed, so not under the ingestion.* prefix.
+ */
+export function recordMetricIngestion(params: {
+  datapointCount: number;
+  organizationId: string;
+  projectId: string;
+}): void {
+  if (params.datapointCount <= 0) return;
+  metering.record({
+    type: 'metrics.ingested.datapoints',
+    quantity: params.datapointCount,
+    organizationId: params.organizationId,
+    projectId: params.projectId,
+  });
+}
+
 export { MeteringRecorder } from './recorder.js';
 export { meteringService, MeteringService } from './service.js';
 export { getUsageBreakdown } from './breakdown.js';

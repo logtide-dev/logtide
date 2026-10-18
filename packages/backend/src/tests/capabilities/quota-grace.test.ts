@@ -57,6 +57,11 @@ describe('formatQuotaValue', () => {
     expect(formatQuotaValue('ingestion.max_events_monthly', 1234567)).toBe('1,234,567');
     expect(formatQuotaValue('ingestion.max_bytes_monthly', 1536 * 1024)).toBe('1.5 MB');
   });
+
+  it('formats metric datapoints as a plain count, not bytes', () => {
+    expect(formatQuotaValue('metrics.max_datapoints_monthly', 2048)).toBe('2,048');
+    expect(formatQuotaValue('metrics.max_datapoints_monthly', 5_000_000)).toBe('5,000,000');
+  });
 });
 
 describe('QuotaEvaluator grace and notifications', () => {

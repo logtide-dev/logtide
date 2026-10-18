@@ -21,11 +21,13 @@ vi.mock('../../../database/reservoir.js', () => ({
 }));
 
 const mockMeteringRecord = vi.fn();
+const mockRecordMetric = vi.fn();
 
 vi.mock('../../../modules/metering/index.js', () => ({
   metering: {
     record: (...args: unknown[]) => mockMeteringRecord(...args),
   },
+  recordMetricIngestion: (...args: unknown[]) => mockRecordMetric(...args),
 }));
 
 import { MetricsService } from '../../../modules/metrics/service.js';
@@ -118,23 +120,22 @@ describe('MetricsService', () => {
       it('records the accepted datapoint count under metrics.ingested.datapoints', async () => {
         mockIngestMetrics.mockResolvedValueOnce({ ingested: 3 });
         await service.ingestMetrics(rec(3), 'proj-1', 'org-1');
-        const call = mockMeteringRecord.mock.calls.find(([e]) => e.type === 'metrics.ingested.datapoints');
-        expect(call![0]).toEqual({
-          type: 'metrics.ingested.datapoints', quantity: 3, organizationId: 'org-1', projectId: 'proj-1',
+        expect(mockRecordMetric).toHaveBeenCalledWith({
+          datapointCount: 3, organizationId: 'org-1', projectId: 'proj-1',
         });
       });
 
       it('counts only accepted datapoints, not the submitted batch', async () => {
         mockIngestMetrics.mockResolvedValueOnce({ ingested: 2, failed: 3 });
         await service.ingestMetrics(rec(5), 'proj-1', 'org-1');
-        const call = mockMeteringRecord.mock.calls.find(([e]) => e.type === 'metrics.ingested.datapoints');
-        expect(call![0].quantity).toBe(2);
+        expect(mockRecordMetric.mock.calls[0][0].datapointCount).toBe(2);
       });
 
       it('records nothing when no datapoint was accepted', async () => {
         mockIngestMetrics.mockResolvedValueOnce({ ingested: 0, failed: 2 });
         await service.ingestMetrics(rec(2), 'proj-1', 'org-1');
-        expect(mockMeteringRecord.mock.calls.some(([e]) => e.type === 'metrics.ingested.datapoints')).toBe(false);
+        // The service passes the accepted count (0); the helper's <= 0 guard drops it.
+        expect(mockRecordMetric.mock.calls[0][0].datapointCount).toBe(0);
       });
     });
 
