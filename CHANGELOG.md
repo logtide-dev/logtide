@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Contributor License Agreement documented**: `CONTRIBUTING.md` (new subsection under Pull Requests), the pull request template checklist and the README License section now point to the CLA Assistant agreement (https://cla-assistant.io/logtide-dev/logtide) and explain that commits must use an email linked to the contributor's GitHub account. Contributions to the core stay AGPLv3; the CLA also lets the maintainer use them in commercial editions.
+- **Hosting guide**: new `docs/cloud-seams.md` ("Hosting LogTide for others") documents every hosting environment variable with default, validation and semantics, the signed upgrade handoff token format, the service-token routes, the new capabilities and quota/grace behavior, with a type-checked reference verifier in `docs/examples/verify-handoff.ts`. `docker/.env.example` lists all the new variables.
 - **Contributing guide**: `CONTRIBUTING.md` now documents the architectural rules every pull request must respect (multi-engine storage, tenant isolation, fail-closed PII masking, correctness under the async buffer, queue/dispatcher/capability abstractions, migrations, deployment footprint), and corrects outdated details: branch from and target `develop`, 80% backend coverage, the dev Compose file path and the `reservoir` package in the project structure.
 
 
