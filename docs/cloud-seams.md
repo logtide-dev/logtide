@@ -16,7 +16,7 @@ This page is for operators who run LogTide on behalf of other people (a managed 
 | `REQUIRE_EMAIL_VERIFICATION` | `false` | Require new local users to confirm their email |
 | `REGISTRATION_RATE_LIMIT_PER_HOUR` | unset (off) | Extra per-IP cap on registrations over one hour |
 
-An empty string is treated the same as unset for all of them.
+An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all seven through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
 
 ### CAPABILITY_DEFAULTS_JSON
 
@@ -53,7 +53,7 @@ Entitlement body for `PUT`:
 { "entitlements": [ { "capability": "projects.max", "limitValue": 5 } ] }
 ```
 
-`limitValue` is an integer `>= 0` or `null`; boolean capabilities use `enabled`. Unknown capabilities are rejected with `400`.
+`limitValue` is an integer `>= 0` or `null`; boolean capabilities use `enabled`. Unknown capabilities are rejected with `400`. Limits are stored as `BIGINT`, so byte quotas of 2 GiB and more work; the API accepts values up to `Number.MAX_SAFE_INTEGER` (2^53 - 1, about 8 PiB) so they always read back exactly.
 
 ### Upgrade handoff (LOGTIDE_UPGRADE_URL and LOGTIDE_UPGRADE_SIGNING_SECRET)
 
@@ -67,7 +67,7 @@ When active:
 
 - `POST /api/v1/organizations/:id/upgrade-handoff` exists (it is not registered at all otherwise). Body: `{ "intent": "upgrade" | "manage" }`. Only owners and admins of the organization may call it (`403` otherwise). It returns `{ "url": "..." }`, which is `LOGTIDE_UPGRADE_URL` with the token in the `t` query parameter (an existing query string is preserved).
 - `GET /api/v1/auth/config` includes `upgradeEnabled: true`, and the Usage page shows Upgrade / Manage billing buttons to owners and admins.
-- Capability (`403`) and quota (`429`) denials include `upgrade_available: true` in the body.
+- Capability (`403`) and quota (`429`) denials include `upgrade_available: true` in the body. This covers the OTLP endpoints too: the `429` bodies of `POST /v1/otlp/logs`, `/v1/otlp/traces` and `/v1/otlp/metrics` carry `upgrade_available: true` next to `partialSuccess`.
 
 The token never carries any LogTide session credential. It proves who the user is, their role and the organization.
 
@@ -117,7 +117,7 @@ When `false`, the verification routes are not registered and every user counts a
 
 ### REGISTRATION_RATE_LIMIT_PER_HOUR
 
-Positive integer; unset = off; anything else aborts startup. Caps `POST /api/v1/auth/register` per client IP over a one-hour window, on top of `AUTH_RATE_LIMIT_REGISTER`. It is keyed by IP only, so a forged `Authorization` header cannot rotate the counter. Over the cap the route answers `429` with a `Retry-After` header. It needs the rate-limit plugin; if that is not registered a warning is logged and the cap is not applied. Behind a reverse proxy make sure client IPs are resolved correctly, otherwise every request shares one IP.
+Positive integer; unset = off; anything else aborts startup. Caps `POST /api/v1/auth/register` per client IP over a one-hour window, on top of `AUTH_RATE_LIMIT_REGISTER`. It is keyed by IP only, so a forged `Authorization` header cannot rotate the counter. Over the cap the route answers `429` with a `Retry-After` header. It needs the rate-limit plugin; if that is not registered a warning is logged and the cap is not applied. Behind a reverse proxy set `TRUST_PROXY=true` so client IPs are resolved correctly, otherwise every request shares one IP (see Operator notes).
 
 ## Capabilities added for hosting
 
@@ -125,7 +125,7 @@ All three default to unlimited and can be set per organization through entitleme
 
 | Capability | Kind | Meaning |
 |---|---|---|
-| `projects.max` | limit | Maximum number of active projects (soft-deleted ones do not count). Enforced on `POST /api/v1/projects`, answers `403` at the limit |
+| `projects.max` | limit | Maximum number of active projects (soft-deleted ones do not count). Enforced on `POST /api/v1/projects` and on restoring a soft-deleted project (`POST /api/v1/projects/:id/restore`); both answer `403` at the limit |
 | `quota.grace_percent` | limit | Overage allowed above every quota of the organization before hard-blocking. `null` or `0` means no grace |
 | `metrics.max_datapoints_monthly` | quota | Month-to-date ingested OTLP metric datapoints. Over the limit `POST /v1/otlp/metrics` answers `429` while logs and spans keep flowing |
 
@@ -137,5 +137,25 @@ Quotas (`ingestion.max_bytes_monthly`, spans, metric datapoints and so on) are c
 
 - A background evaluator (`QUOTA_EVALUATOR_INTERVAL_MS`, default 60 seconds, disable with `QUOTA_EVALUATOR_ENABLED=false`) recomputes usage and decides the state, so blocking can lag by up to one interval.
 - A quota is `ok` below its limit, in `grace` from the limit up to `limit * (1 + grace_percent / 100)`, and `blocked` from that ceiling on. With no grace the first state past the limit is `blocked`. Ingestion is rejected only when `blocked`; blocked requests answer `429`.
-- The first time a quota enters `grace` or becomes `blocked` within a UTC month, organization owners and admins get an in-app notification and an email (the email needs SMTP; a failed email never breaks the evaluator). Each organization, capability and state is notified at most once per month.
+- The first time a quota enters `grace` or becomes `blocked` within a UTC month, organization owners and admins get an in-app notification and an email (the email needs SMTP; a failed email never breaks the evaluator). Each organization, capability, state and limit value is notified at most once per month: raising the limit mid-month (an upgrade) re-arms the notice at the new ceiling. With several backend replicas the check is atomic (a Postgres advisory lock), so one notice and one email go out, not one per replica.
 - The Usage page shows "In grace" and "Blocked" badges. The capability usage API returns a `state` for quota rows.
+
+## The internal logging organization
+
+Unless `INTERNAL_LOGGING_ENABLED=false`, LogTide creates a `logtide-internal` organization (with a project and an API key) for its own self-monitoring logs. It is an ordinary organization: every finite default from `CAPABILITY_DEFAULTS_JSON` applies to it, so a small default quota can block LogTide's own logs and a `projects.max` default counts its project. Give it explicit unlimited (`null`) entitlement rows for every capability your defaults restrict, for example with `PUT /api/v1/admin/organizations/<internal org id>/entitlements`:
+
+```json
+{ "entitlements": [
+  { "capability": "ingestion.max_bytes_monthly", "limitValue": null },
+  { "capability": "ingestion.max_events_monthly", "limitValue": null },
+  { "capability": "storage.max_bytes", "limitValue": null }
+] }
+```
+
+## Operator notes
+
+- **Reverse proxy**: `REGISTRATION_RATE_LIMIT_PER_HOUR` (like every IP-keyed limit) needs `TRUST_PROXY=true` when LogTide runs behind a proxy or load balancer. Without it every request appears to come from the proxy and all visitors share one counter.
+- **Service token rate limit**: the four service-token routes keep the admin rate limit of 100 requests per minute. The limiter key is derived from the credential (a hash, never the raw value), so every call made with the service token shares one counter; send several entitlement changes in one `PUT` instead of one request per capability.
+- **Metering**: quotas are evaluated against metered usage. With `METERING_ENABLED=false` nothing is metered, so quotas see no usage and never block. Static limits such as `projects.max` still apply.
+- **Capability names are part of the contract**: `CAPABILITY_DEFAULTS_JSON` rejects unknown names at startup. If a future release renames a capability, a JSON value that still uses the old name aborts startup; check the release notes before upgrading.
+- **Evaluation lag**: quota state is recomputed every `QUOTA_EVALUATOR_INTERVAL_MS` (default 60 seconds), so ingestion can run past a quota for up to one interval before it is blocked, and a raised limit unblocks it within one interval.
