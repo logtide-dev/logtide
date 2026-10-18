@@ -4,7 +4,7 @@ import { QuotaEvaluator } from '../../capabilities/quota-evaluator.js';
 import { quotaFlagCache } from '../../capabilities/quota-cache.js';
 import { capabilities } from '../../capabilities/facade.js';
 import { computeQuotaState } from '../../capabilities/quota-state.js';
-import { formatQuotaValue } from '../../capabilities/quota-notifier.js';
+import { formatQuotaValue, notifyQuotaThreshold } from '../../capabilities/quota-notifier.js';
 import { createTestContext } from '../helpers/factories.js';
 
 const CAP = 'ingestion.max_events_monthly';
@@ -132,5 +132,51 @@ describe('QuotaEvaluator grace and notifications', () => {
       .execute();
     await ev.runOnce();
     expect(await quotaNotifications(orgId, 'blocked')).toHaveLength(2);
+  });
+  it('a raised limit in the same month notifies again at the new ceiling', async () => {
+    await setLimit(orgId, CAP, 100);
+    let usage = 150;
+    const ev = new QuotaEvaluator(stubFor(orgId, () => usage));
+    await ev.runOnce();
+    expect(await quotaNotifications(orgId, 'blocked')).toHaveLength(1);
+
+    // Upgrade mid-month: limit 100 -> 200 (upsert like the admin route does).
+    await db
+      .updateTable('organization_entitlements')
+      .set({ limit_value: 200 })
+      .where('organization_id', '=', orgId)
+      .where('capability', '=', CAP)
+      .execute();
+    capabilities.invalidate(orgId);
+
+    usage = 180; // under the new ceiling: no new notification
+    await ev.runOnce();
+    expect(await quotaNotifications(orgId, 'blocked')).toHaveLength(1);
+
+    usage = 250; // crosses the new ceiling: notified again, once
+    await ev.runOnce();
+    await ev.runOnce();
+    const blocked = await quotaNotifications(orgId, 'blocked');
+    expect(blocked).toHaveLength(2);
+    expect(blocked.map((r) => (r.metadata as any).limit).sort()).toEqual([100, 200]);
+  });
+
+  it('concurrent evaluations (several replicas) send one notification and one email', async () => {
+    const params = {
+      organizationId: orgId,
+      capability: CAP as typeof CAP,
+      state: 'blocked' as const,
+      usage: 150,
+      limit: 100,
+      gracePercent: 0,
+      now: new Date(),
+    };
+    await Promise.all(Array.from({ length: 8 }, () => notifyQuotaThreshold(params)));
+
+    expect(await quotaNotifications(orgId, 'blocked')).toHaveLength(1);
+    const res = await fetch('http://localhost:8025/api/v2/messages');
+    const body: any = await res.json();
+    const mine = body.items.filter((m: any) => String(m.Content.Headers.Subject?.[0] ?? '').includes(CAP));
+    expect(mine).toHaveLength(1);
   });
 });
