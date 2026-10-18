@@ -64,6 +64,7 @@ import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { validateStorageConfig } from './database/storage-config.js';
 import { shutdownReservoir } from './database/reservoir.js';
 import { readFileSync } from 'fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -74,6 +75,17 @@ const PORT = config.PORT;
 const HOST = config.HOST;
 
 const quotaEvaluator = new QuotaEvaluator(meteringService);
+
+/**
+ * Rate-limit key: per credential when one is sent, else per client IP. The
+ * credential is hashed so raw API keys and bearer tokens never land in the
+ * rate-limit store (Redis keys are visible to anyone with Redis access).
+ */
+export function rateLimitKeyGenerator(request: { headers: Record<string, any>; ip: string }): string {
+  const credential = request.headers['x-api-key'] || request.headers['authorization']?.replace('Bearer ', '');
+  if (!credential) return request.ip;
+  return `key:${createHash('sha256').update(String(credential)).digest('hex').slice(0, 32)}`;
+}
 
 export async function build(opts = {}) {
   const fastify = Fastify({
@@ -148,11 +160,6 @@ export async function build(opts = {}) {
     },
     crossOriginEmbedderPolicy: false,
   });
-
-  const rateLimitKeyGenerator = (request: any) => {
-    const apiKey = request.headers['x-api-key'] || request.headers['authorization']?.replace('Bearer ', '');
-    return apiKey ? `key:${apiKey}` : request.ip;
-  };
 
   const redisConn = getConnection();
   if (isRedisConfigured() && redisConn) {
