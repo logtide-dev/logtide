@@ -83,7 +83,8 @@ export interface OrganizationEntitlementsTable {
   organization_id: string;
   capability: string;
   enabled: boolean | null;
-  limit_value: number | null;
+  /** BIGINT (migration 059): selected as a string by the pg driver, written as a number. */
+  limit_value: ColumnType<string | null, number | null, number | null>;
   updated_at: Generated<Timestamp>;
 }
 

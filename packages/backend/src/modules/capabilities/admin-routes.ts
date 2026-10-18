@@ -15,7 +15,8 @@ import { auditLogService } from '../audit-log/index.js';
 const entitlementInputSchema = z.object({
   capability: z.string(),
   enabled: z.boolean().optional(),
-  limitValue: z.number().int().min(0).nullable().optional(),
+  // limit_value is BIGINT; cap at MAX_SAFE_INTEGER so reads coerce back exactly.
+  limitValue: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
 });
 
 const putBodySchema = z.object({
