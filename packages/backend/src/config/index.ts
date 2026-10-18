@@ -17,6 +17,31 @@ if (process.env.NODE_ENV === 'test') {
   dotenv.config({ path: envPath, debug: false });
 }
 
+/** Boot-time validation of the two env vars. Returns an error message, or null. */
+function validateUpgradeConfig(env: { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGRADE_SIGNING_SECRET?: string }): string | null {
+  const url = env.LOGTIDE_UPGRADE_URL;
+  const secret = env.LOGTIDE_UPGRADE_SIGNING_SECRET;
+  if (!url && !secret) return null;
+  if (!url || !secret) {
+    return 'LOGTIDE_UPGRADE_URL and LOGTIDE_UPGRADE_SIGNING_SECRET must be set together (only one is set)';
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'LOGTIDE_UPGRADE_URL must be a valid absolute URL';
+  }
+  const localHttp =
+    parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+  if (parsed.protocol !== 'https:' && !localHttp) {
+    return 'LOGTIDE_UPGRADE_URL must use https (http is allowed only for localhost or 127.0.0.1)';
+  }
+  if (secret.length < 32) {
+    return 'LOGTIDE_UPGRADE_SIGNING_SECRET must be at least 32 characters';
+  }
+  return null;
+}
+
 const configSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -83,6 +108,12 @@ const configSchema = z.object({
     z.string().min(32, 'LOGTIDE_ADMIN_SERVICE_TOKEN must be at least 32 characters').optional()
   ),
 
+  // Hosting seam: signed upgrade handoff to an external billing portal. Active
+  // only when BOTH are set; exactly one set, a non-https URL (localhost http is
+  // allowed) or a secret under 32 characters = boot failure.
+  LOGTIDE_UPGRADE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  LOGTIDE_UPGRADE_SIGNING_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+
   // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
   STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   STORAGE_SNAPSHOT_INTERVAL_MS: z.string().default('86400000').transform(Number),
@@ -111,6 +142,15 @@ const configSchema = z.object({
   INITIAL_ADMIN_EMAIL: z.string().email().optional(),
   INITIAL_ADMIN_PASSWORD: z.string().min(8).optional(),
   INITIAL_ADMIN_NAME: z.string().optional(),
+}).superRefine((env, ctx) => {
+  const message = validateUpgradeConfig(env);
+  if (message) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [message.startsWith('LOGTIDE_UPGRADE_SIGNING_SECRET') ? 'LOGTIDE_UPGRADE_SIGNING_SECRET' : 'LOGTIDE_UPGRADE_URL'],
+      message,
+    });
+  }
 });
 
 export type Config = z.infer<typeof configSchema>;

@@ -409,6 +409,20 @@ export class OrganizationsService {
   }
 
   /**
+   * Role of a user in an organization, or null when not a member
+   */
+  async getMemberRole(organizationId: string, userId: string): Promise<OrgRole | null> {
+    const member = await db
+      .selectFrom('organization_members')
+      .select(['role'])
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+
+    return (member?.role as OrgRole | undefined) ?? null;
+  }
+
+  /**
    * Check if user is owner or admin
    */
   async isOwnerOrAdmin(organizationId: string, userId: string): Promise<boolean> {

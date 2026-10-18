@@ -14,6 +14,8 @@ import { detectionPacksRoutes } from './modules/detection-packs/index.js';
 import { usersRoutes } from './modules/users/routes.js';
 import { projectsRoutes } from './modules/projects/routes.js';
 import { organizationsRoutes } from './modules/organizations/routes.js';
+import { isUpgradeHandoffActive } from './modules/organizations/upgrade-handoff.js';
+import { CapabilityError, QuotaExceededError } from './capabilities/errors.js';
 import { invitationsRoutes } from './modules/invitations/routes.js';
 import { notificationsRoutes } from './modules/notifications/routes.js';
 import { apiKeysRoutes } from './modules/api-keys/routes.js';
@@ -111,6 +113,12 @@ export async function build(opts = {}) {
       }
       if (typeof (error as any).code === 'string') {
         body.code = (error as any).code;
+      }
+      if (
+        (error instanceof CapabilityError || error instanceof QuotaExceededError) &&
+        isUpgradeHandoffActive()
+      ) {
+        body.upgrade_available = true;
       }
       reply.code(statusCode).send(body);
       return;

@@ -4,6 +4,8 @@ import { OrganizationsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import type { OrgRole } from '@logtide/shared';
 import { auditLogService } from '../audit-log/index.js';
+import { config } from '../../config/index.js';
+import { isUpgradeHandoffActive, signUpgradeToken, buildUpgradeUrl } from './upgrade-handoff.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -35,9 +37,42 @@ const updateMemberRoleSchema = z.object({
   role: z.enum(['admin', 'member']),
 });
 
+const upgradeHandoffBodySchema = z.object({
+  intent: z.enum(['upgrade', 'manage']),
+});
+
 export async function organizationsRoutes(fastify: FastifyInstance) {
   // All routes require authentication
   fastify.addHook('onRequest', authenticate);
+
+  // Signed handoff to the external billing portal. 404 unless the feature is
+  // configured; owner/admin of the org only. Uses the normal user session.
+  fastify.post('/:id/upgrade-handoff', async (request: any, reply) => {
+    if (!isUpgradeHandoffActive()) {
+      return reply.status(404).send({ error: 'Not found' });
+    }
+    try {
+      const { id } = organizationIdSchema.parse(request.params);
+      const { intent } = upgradeHandoffBodySchema.parse(request.body);
+
+      const role = await organizationsService.getMemberRole(id, request.user.id);
+      if (role !== 'owner' && role !== 'admin') {
+        return reply.status(403).send({ error: 'Only organization owners and admins can manage billing' });
+      }
+
+      const cfg = config as { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGRADE_SIGNING_SECRET?: string };
+      const token = signUpgradeToken(
+        { org: id, user: request.user.id, email: request.user.email, role, intent },
+        cfg.LOGTIDE_UPGRADE_SIGNING_SECRET!
+      );
+      return reply.send({ url: buildUpgradeUrl(cfg.LOGTIDE_UPGRADE_URL!, token) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Invalid request' });
+      }
+      throw error;
+    }
+  });
 
   // Get all organizations for current user
   fastify.get('/', async (request: any, reply) => {

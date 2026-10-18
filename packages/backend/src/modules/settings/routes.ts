@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { settingsService, SETTING_KEYS } from './service.js';
 import { usersService } from '../users/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
+import { isUpgradeHandoffActive } from '../organizations/upgrade-handoff.js';
 import type { UserProfile } from '../users/service.js';
 import { auditLogService } from '../audit-log/service.js';
 
@@ -243,6 +244,7 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         authMode,
         signupEnabled,
         requiresLogin: authMode !== 'none',
+        ...(isUpgradeHandoffActive() ? { upgradeEnabled: true } : {}),
       });
     } catch (error) {
       console.error('Error fetching auth config:', error);
