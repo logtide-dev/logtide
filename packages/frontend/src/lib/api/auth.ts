@@ -59,6 +59,8 @@ export interface AuthConfig {
   signupEnabled: boolean;
   /** Present (true) only when the host configured the external upgrade handoff. */
   upgradeEnabled?: boolean;
+  /** Present (true) only when REQUIRE_EMAIL_VERIFICATION is on. */
+  emailVerificationRequired?: boolean;
 }
 
 export class AuthAPI {
@@ -247,6 +249,42 @@ export class AuthAPI {
         .json()
         .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Failed to unlink identity');
+    }
+  }
+
+  /** Consume an email verification token. Sends the session when signed in. */
+  async verifyEmail(token: string, sessionToken?: string | null): Promise<void> {
+    const response = await fetch(`${getApiBaseUrl()}/auth/verify-email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+      },
+      body: JSON.stringify({ token }),
+    });
+
+    if (!response.ok) {
+      throw new Error('This verification link is invalid, expired or was already used.');
+    }
+  }
+
+  /** Ask for a new verification email for the signed-in user. Always succeeds unless the request fails. */
+  async resendVerification(sessionToken: string | null): Promise<void> {
+    const response = await fetch(`${getApiBaseUrl()}/auth/resend-verification`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+      },
+      body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        response.status === 429
+          ? 'Too many requests. Please wait a while before asking for another email.'
+          : 'Could not send the verification email'
+      );
     }
   }
 
