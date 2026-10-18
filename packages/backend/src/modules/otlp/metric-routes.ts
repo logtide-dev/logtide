@@ -16,6 +16,8 @@ import { detectContentType, isGzipCompressed, decompressGzip } from './parser.js
 import { metricsService } from '../metrics/service.js';
 import { config } from '../../config/index.js';
 import { db } from '../../database/index.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinUsageQuota } from '../../capabilities/index.js';
 
 const collectStreamToBuffer = (stream: NodeJS.ReadableStream): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -86,6 +88,18 @@ const otlpMetricRoutes: FastifyPluginAsync = async (fastify) => {
     schema: {
       response: {
         200: {
+          type: 'object',
+          properties: {
+            partialSuccess: {
+              type: 'object',
+              properties: {
+                rejectedDataPoints: { type: 'number' },
+                errorMessage: { type: 'string' },
+              },
+            },
+          },
+        },
+        429: {
           type: 'object',
           properties: {
             partialSuccess: {
@@ -181,7 +195,14 @@ const otlpMetricRoutes: FastifyPluginAsync = async (fastify) => {
           };
         }
 
-        await metricsService.ingestMetrics(records, projectId, project.organization_id);
+        // Capability: hard-block metrics ingestion when over the datapoint quota.
+        // Blocks metrics only; logs and spans have their own quotas.
+        await context.runAsSystem('otlp:metric-ingest', async () => {
+          await context.with({ organizationId: project.organization_id }, async () => {
+            await assertWithinUsageQuota('metrics.max_datapoints_monthly');
+            await metricsService.ingestMetrics(records, projectId, project.organization_id);
+          });
+        });
 
         return {
           partialSuccess: {
@@ -191,6 +212,16 @@ const otlpMetricRoutes: FastifyPluginAsync = async (fastify) => {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        // Over-quota metric batches return 429 (retry later / upgrade), not 400.
+        if (error && (error as any).statusCode === 429) {
+          return reply.code(429).send({
+            partialSuccess: {
+              rejectedDataPoints: -1,
+              errorMessage,
+            },
+          });
+        }
+
         console.error('[OTLP Metrics] Ingestion error:', errorMessage);
 
         return reply.code(400).send({

@@ -53,6 +53,7 @@ describe('capability registry', () => {
     expect(CAPABILITIES['ingestion.max_events_monthly'].kind).toBe('quota');
     expect(CAPABILITIES['storage.max_bytes'].kind).toBe('quota');
     expect(CAPABILITIES['tracing.max_spans_monthly'].kind).toBe('quota');
+    expect(CAPABILITIES['metrics.max_datapoints_monthly'].kind).toBe('quota');
   });
 
   it('defaults every quota to null (unlimited) so OSS never blocks', () => {
@@ -61,6 +62,7 @@ describe('capability registry', () => {
       'ingestion.max_events_monthly',
       'storage.max_bytes',
       'tracing.max_spans_monthly',
+      'metrics.max_datapoints_monthly',
     ];
     for (const q of quotas) {
       const def = CAPABILITIES[q];
@@ -82,5 +84,7 @@ describe('capability registry', () => {
       expect(storageQuota.window).toBe('point_in_time');
     }
     if (spanQuota.kind === 'quota') expect(spanQuota.signal).toBe('spans.ingested');
+    const metricQuota = CAPABILITIES['metrics.max_datapoints_monthly'];
+    if (metricQuota.kind === 'quota') expect(metricQuota.signal).toBe('metrics.ingested.datapoints');
   });
 });

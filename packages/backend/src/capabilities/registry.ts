@@ -144,6 +144,13 @@ export const CAPABILITIES = {
     window: 'calendar_month',
     description: 'Month-to-date ingested spans cap (hard-block span ingestion)',
   },
+  'metrics.max_datapoints_monthly': {
+    kind: 'quota',
+    defaultLimit: null,
+    signal: 'metrics.ingested.datapoints',
+    window: 'calendar_month',
+    description: 'Month-to-date ingested metric datapoints cap (hard-block metrics ingestion)',
+  },
 } as const satisfies Record<string, CapabilityDef>;
 
 export type CapabilityName = keyof typeof CAPABILITIES;

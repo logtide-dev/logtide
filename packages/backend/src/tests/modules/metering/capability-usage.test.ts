@@ -29,6 +29,7 @@ describe('getCapabilityUsage', () => {
         'dashboards.max_custom',
         'ingestion.max_bytes_monthly',
         'ingestion.max_events_monthly',
+        'metrics.max_datapoints_monthly',
         'notifications.max_channels',
         'projects.max',
         'sigma.max_active_rules',

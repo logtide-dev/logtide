@@ -197,6 +197,7 @@
     'ingestion.max_bytes_monthly': { label: 'Ingested bytes (this month)', unit: 'bytes' },
     'storage.max_bytes': { label: 'Storage used', unit: 'bytes' },
     'tracing.max_spans_monthly': { label: 'Spans (this month)', unit: 'count' },
+    'metrics.max_datapoints_monthly': { label: 'Metric datapoints (this month)', unit: 'count' },
   };
 
   function capLabel(c: CapabilityUsage): string {
