@@ -129,6 +129,8 @@ export interface CapabilityUsage {
   /** Configured cap. null = unlimited (OSS default). */
   limit: number | null;
   description: string;
+  /** Quota kind only. */
+  state?: 'ok' | 'grace' | 'blocked' | 'unlimited';
 }
 
 export interface CapabilityUsageResponse {

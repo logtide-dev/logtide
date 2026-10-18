@@ -104,6 +104,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum digest email recipients per organization',
   },
+  'quota.grace_percent': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Percent of overage allowed above every quota before hard-blocking (null = 0, no grace). Applies to all quotas of the org.',
+  },
 
   // Consumption quotas (OSS-permissive: null = unlimited). signal maps to #212 metering types.
   'ingestion.max_bytes_monthly': {

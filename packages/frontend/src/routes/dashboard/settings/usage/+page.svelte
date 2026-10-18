@@ -21,6 +21,7 @@
   import { Button } from '$lib/components/ui/button';
   import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import QuotaStateBadge from '$lib/components/QuotaStateBadge.svelte';
   import { authAPI } from '$lib/api/auth';
   import { organizationsAPI } from '$lib/api/organizations';
   import { canShowUpgradeCta, anyCapabilityAtLimit } from '$lib/utils/upgrade-cta';
@@ -366,7 +367,7 @@
             {@const pct = capPercent(cap)}
             <div class="space-y-1.5">
               <div class="flex items-center justify-between gap-2 text-sm">
-                <span class="font-medium truncate" title={cap.description}>{capLabel(cap)}</span>
+                <span class="font-medium truncate" title={cap.description}>{capLabel(cap)} <QuotaStateBadge state={cap.state} /></span>
                 <span class="text-muted-foreground whitespace-nowrap">
                   {capFormat(cap, cap.current)} / {cap.limit === null ? '∞' : capFormat(cap, cap.limit)}
                   {#if pct !== null}

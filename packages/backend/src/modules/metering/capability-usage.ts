@@ -4,6 +4,7 @@ import {
   CAPABILITY_NAMES,
   type CapabilityName,
 } from '../../capabilities/registry.js';
+import { computeQuotaState, type QuotaState } from '../../capabilities/quota-state.js';
 import { meteringService } from './service.js';
 import { alertsService } from '../alerts/service.js';
 import { apiKeysService } from '../api-keys/service.js';
@@ -21,6 +22,8 @@ export interface CapabilityUsage {
   /** Configured cap. null = unlimited (OSS default); render as "no cap", not 0%. */
   limit: number | null;
   description: string;
+  /** Quota state (quota kind only): ok | grace | blocked | unlimited. */
+  state?: QuotaState;
 }
 
 // Current-count resolver per limit capability. audit.retention_days is a config
@@ -101,12 +104,14 @@ export async function getCapabilityUsage(
           Promise.all([
             quotaUsage(organizationId, cap, now),
             capabilities.getLimit(organizationId, cap),
+            capabilities.getLimit(organizationId, 'quota.grace_percent'),
           ]).then(
-            ([current, limit]): CapabilityUsage => ({
+            ([current, limit, grace]): CapabilityUsage => ({
               capability: cap,
               kind: 'quota',
               current,
               limit,
+              state: computeQuotaState(current, limit, grace),
               description: def.description,
             })
           ),

@@ -8,6 +8,8 @@ import {
   CAPABILITY_NAMES,
   type CapabilityName,
 } from './registry.js';
+import { computeQuotaState } from './quota-state.js';
+import { notifyQuotaThreshold } from './quota-notifier.js';
 import type { MeteringService } from '../modules/metering/index.js';
 
 const QUOTA_CAPABILITIES = CAPABILITY_NAMES.filter(
@@ -60,6 +62,8 @@ export class QuotaEvaluator {
 
   private async evaluateOrg(organizationId: string, now: Date): Promise<void> {
     const flags: Partial<Record<CapabilityName, boolean>> = {};
+    // Per-org grace allowance applying to every quota (null = 0%).
+    const gracePercent = (await capabilities.getLimit(organizationId, 'quota.grace_percent')) ?? 0;
 
     for (const cap of QUOTA_CAPABILITIES) {
       const def = CAPABILITIES[cap];
@@ -88,7 +92,11 @@ export class QuotaEvaluator {
           usage = rows.reduce((sum, r) => sum + r.quantity, 0);
         }
 
-        flags[cap] = usage >= limit;
+        const state = computeQuotaState(usage, limit, gracePercent);
+        flags[cap] = state === 'blocked';
+        if (state === 'grace' || state === 'blocked') {
+          await notifyQuotaThreshold({ organizationId, capability: cap, state, usage, limit, gracePercent, now });
+        }
       } catch (err) {
         // Fail-open: leave this capability's flag unset (under quota).
         console.warn(
