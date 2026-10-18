@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 import type { FastifyInstance } from 'fastify';
 import { build } from '../../../server.js';
 import { db } from '../../../database/index.js';
@@ -90,7 +88,7 @@ describe('upgrade token signer and reference verifier', () => {
     expect(a.nonce).not.toBe(b.nonce);
   });
 
-  it('rejects a tampered payload and writes evidence', () => {
+  it('rejects a tampered payload', () => {
     const token = signUpgradeToken(input, SECRET);
     const [enc, mac] = token.split('.');
     const forged = { ...JSON.parse(Buffer.from(enc, 'base64url').toString()), role: 'member', org: 'other' };
@@ -101,24 +99,20 @@ describe('upgrade token signer and reference verifier', () => {
     expect(verifyUpgradeToken(truncated, SECRET)).toBeNull();
     expect(verifyUpgradeToken('garbage', SECRET)).toBeNull();
     expect(verifyUpgradeToken('', SECRET)).toBeNull();
+  });
 
-    const dir = 'G:\\progetti\\logtide\\logtide\\.omo\\evidence';
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(
-        path.join(dir, 'w1-t3-tamper.txt'),
-        [
-          'valid token verifies: ' + (verifyUpgradeToken(token, SECRET) !== null),
-          'tampered payload (role member, org other) verifies: ' + (verifyUpgradeToken(tampered, SECRET) !== null),
-          'wrong secret verifies: ' + (verifyUpgradeToken(token, 'w'.repeat(40)) !== null),
-          'altered mac verifies: ' + (verifyUpgradeToken(truncated, SECRET) !== null),
-          'garbage verifies: ' + (verifyUpgradeToken('garbage', SECRET) !== null),
-          '',
-        ].join('\n')
-      );
-    } catch {
-      /* evidence is best effort */
-    }
+  it('rejects a correctly signed payload with a wrong field type', () => {
+    const sealed = (p: object) => {
+      const enc = Buffer.from(JSON.stringify(p)).toString('base64url');
+      const mac = crypto.createHmac('sha256', SECRET).update(enc).digest('base64url');
+      return `${enc}.${mac}`;
+    };
+    const good = { v: 1, ...input, exp: Math.floor(Date.now() / 1000) + 300, nonce: 'n'.repeat(22) };
+    expect(verifyUpgradeToken(sealed(good), SECRET)).not.toBeNull();
+    expect(verifyUpgradeToken(sealed({ ...good, org: 5 }), SECRET)).toBeNull();
+    expect(verifyUpgradeToken(sealed({ ...good, email: undefined }), SECRET)).toBeNull();
+    expect(verifyUpgradeToken(sealed({ ...good, nonce: '' }), SECRET)).toBeNull();
+    expect(verifyUpgradeToken(sealed({ ...good, intent: 'admin' }), SECRET)).toBeNull();
   });
 
   it('rejects an expired token', () => {
@@ -137,9 +131,16 @@ describe('upgrade token signer and reference verifier', () => {
 
 describe('upgrade handoff integration', () => {
   let app: FastifyInstance;
+  let appOff: FastifyInstance;
 
   beforeAll(async () => {
+    // The handoff route is registered at boot only when configured.
+    deactivate();
+    appOff = await build({ logger: false });
+    await appOff.ready();
+    activate();
     app = await build({ logger: false });
+    deactivate();
     app.get('/__cap', async () => {
       throw new CapabilityError('FEATURE_DISABLED', 'nope', 'alerts.max_rules');
     });
@@ -152,6 +153,7 @@ describe('upgrade handoff integration', () => {
   afterAll(async () => {
     deactivate();
     await app.close();
+    await appOff.close();
   });
 
   afterEach(() => deactivate());
@@ -183,10 +185,18 @@ describe('upgrade handoff integration', () => {
     expect(isUpgradeHandoffActive()).toBe(false);
   });
 
-  it('404 when not configured, even for the owner', async () => {
+  it('route does not exist when not configured (default 404, even unauthenticated)', async () => {
     const f = await fixture();
-    const res = await post(f.org.id, await session(f.owner.id), { intent: 'upgrade' });
-    expect(res.statusCode).toBe(404);
+    const url = `/api/v1/organizations/${f.org.id}/upgrade-handoff`;
+    const authed = await appOff.inject({
+      method: 'POST',
+      url,
+      headers: { authorization: `Bearer ${await session(f.owner.id)}` },
+      payload: { intent: 'upgrade' },
+    });
+    expect(authed.statusCode).toBe(404);
+    const anon = await appOff.inject({ method: 'POST', url, payload: { intent: 'upgrade' } });
+    expect(anon.statusCode).toBe(404);
   });
 
   it('is inactive when only one var is set', () => {

@@ -77,7 +77,11 @@ export function verifyUpgradeToken(
   } catch {
     return null;
   }
-  if (!payload || payload.v !== 1 || typeof payload.exp !== 'number') return null;
+  if (!payload || typeof payload !== 'object' || payload.v !== 1 || typeof payload.exp !== 'number') return null;
+  for (const k of ['org', 'user', 'email', 'role', 'nonce'] as const) {
+    if (typeof payload[k] !== 'string' || payload[k].length === 0) return null;
+  }
+  if (payload.intent !== 'upgrade' && payload.intent !== 'manage') return null;
   if (payload.exp <= Math.floor(nowMs / 1000)) return null;
   return payload;
 }

@@ -45,12 +45,10 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
   // All routes require authentication
   fastify.addHook('onRequest', authenticate);
 
-  // Signed handoff to the external billing portal. 404 unless the feature is
-  // configured; owner/admin of the org only. Uses the normal user session.
-  fastify.post('/:id/upgrade-handoff', async (request: any, reply) => {
-    if (!isUpgradeHandoffActive()) {
-      return reply.status(404).send({ error: 'Not found' });
-    }
+  // Signed handoff to the external billing portal. Registered ONLY when the
+  // feature is configured (boot-time), so inactive = default Fastify 404.
+  // Owner/admin of the org only. Uses the normal user session.
+  if (isUpgradeHandoffActive()) fastify.post('/:id/upgrade-handoff', async (request: any, reply) => {
     try {
       const { id } = organizationIdSchema.parse(request.params);
       const { intent } = upgradeHandoffBodySchema.parse(request.body);
