@@ -97,6 +97,17 @@ export interface UsersTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   last_login: Timestamp | null;
+  // NULL = unverified. Defaults to NOW(); only enforced when REQUIRE_EMAIL_VERIFICATION=true.
+  email_verified_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+}
+
+export interface EmailVerificationTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: string;
+  expires_at: Timestamp;
+  used_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
 }
 
 export interface SessionsTable {
@@ -1170,6 +1181,7 @@ export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
   stream_tickets: StreamTicketsTable;
+  email_verification_tokens: EmailVerificationTokensTable;
   organizations: OrganizationsTable;
   organization_members: OrganizationMembersTable;
   organization_invitations: OrganizationInvitationsTable;
