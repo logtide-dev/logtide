@@ -142,7 +142,7 @@ Quotas (`ingestion.max_bytes_monthly`, spans, metric datapoints and so on) are c
 
 ## The internal logging organization
 
-Unless `INTERNAL_LOGGING_ENABLED=false`, LogTide creates a `logtide-internal` organization (with a project and an API key) for its own self-monitoring logs. It is an ordinary organization: every finite default from `CAPABILITY_DEFAULTS_JSON` applies to it, so a small default quota can block LogTide's own logs and a `projects.max` default counts its project. Give it explicit unlimited (`null`) entitlement rows for every capability your defaults restrict, for example with `PUT /api/v1/admin/organizations/<internal org id>/entitlements`:
+Unless `INTERNAL_LOGGING_ENABLED=false` (or an `INTERNAL_API_KEY` is supplied), LogTide creates a `logtide-internal` organization (with a project and an API key) for its own self-monitoring logs. It is an ordinary organization: every finite default from `CAPABILITY_DEFAULTS_JSON` applies to it, so a small default quota can block LogTide's own logs and a `projects.max` default counts its project. Give it explicit unlimited (`null`) entitlement rows for every capability your defaults restrict, for example with `PUT /api/v1/admin/organizations/<internal org id>/entitlements`:
 
 ```json
 { "entitlements": [
