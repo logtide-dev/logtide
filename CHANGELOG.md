@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Contributing guide**: `CONTRIBUTING.md` now documents the architectural rules every pull request must respect (multi-engine storage, tenant isolation, fail-closed PII masking, correctness under the async buffer, queue/dispatcher/capability abstractions, migrations, deployment footprint), and corrects outdated details: branch from and target `develop`, 80% backend coverage, the dev Compose file path and the `reservoir` package in the project structure.
+
 
 ## [1.3.2] - 2026-08-22
 
