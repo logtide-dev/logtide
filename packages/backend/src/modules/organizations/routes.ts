@@ -308,6 +308,17 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
     try {
       const body = createOrganizationSchema.parse(request.body);
 
+      const maxOwned = config.MAX_ORGANIZATIONS_PER_USER;
+      if (maxOwned !== undefined) {
+        const owned = await organizationsService.countOwnedOrganizations(request.user.id);
+        if (owned >= maxOwned) {
+          return reply.status(403).send({
+            error: 'organization_limit_reached',
+            message: `You can own at most ${maxOwned.toLocaleString('en-US')} organization${maxOwned === 1 ? '' : 's'}`,
+          });
+        }
+      }
+
       const organization = await organizationsService.createOrganization({
         userId: request.user.id,
         name: body.name,

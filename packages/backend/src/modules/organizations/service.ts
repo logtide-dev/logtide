@@ -53,6 +53,17 @@ export class OrganizationsService {
     }
   }
 
+  /** Count organizations a user owns (organization_members role 'owner'). */
+  async countOwnedOrganizations(userId: string): Promise<number> {
+    const row = await db
+      .selectFrom('organization_members')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('user_id', '=', userId)
+      .where('role', '=', 'owner')
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Create a new organization
    */

@@ -114,6 +114,17 @@ const configSchema = z.object({
   LOGTIDE_UPGRADE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   LOGTIDE_UPGRADE_SIGNING_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
 
+  // Hosting seam: maximum organizations a single user may own. Positive integer;
+  // unset or empty = unlimited. Any other value = boot failure.
+  MAX_ORGANIZATIONS_PER_USER: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce
+      .number({ invalid_type_error: 'MAX_ORGANIZATIONS_PER_USER must be a positive integer' })
+      .int('MAX_ORGANIZATIONS_PER_USER must be a positive integer')
+      .positive('MAX_ORGANIZATIONS_PER_USER must be a positive integer')
+      .optional()
+  ),
+
   // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
   STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   STORAGE_SNAPSHOT_INTERVAL_MS: z.string().default('86400000').transform(Number),
