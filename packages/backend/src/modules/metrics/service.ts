@@ -44,6 +44,18 @@ export class MetricsService {
       });
     }
 
+    // Metering: accepted data points only (reservoir result), billed like
+    // spans. Deliberately not under the ingestion.* prefix, which is excluded
+    // from usage breakdowns and bypasses METERING_ENABLED=false.
+    if (organizationId && result.ingested > 0) {
+      metering.record({
+        type: 'metrics.ingested.datapoints',
+        quantity: result.ingested,
+        organizationId,
+        projectId,
+      });
+    }
+
     // Mark the project as having metrics (debounced, fire-and-forget)
     projectsService.markHasData(projectId, 'metrics').catch(() => {});
 
