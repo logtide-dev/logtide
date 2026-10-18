@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { sql } from 'kysely';
 import { db } from '../../database/index.js';
-import { authenticate } from '../auth/middleware.js';
+import { authenticate, SERVICE_ACTOR_LABEL } from '../auth/middleware.js';
 import { requireAdmin } from '../admin/middleware.js';
 import {
   capabilities,
@@ -74,7 +74,7 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
   // GET /api/v1/admin/organizations/:id/entitlements
   fastify.get(
     '/organizations/:id/entitlements',
-    { preHandler: [requireAdmin], config: { rateLimit: rateLimitConfig } },
+    { preHandler: [requireAdmin], config: { allowServiceToken: true, rateLimit: rateLimitConfig } },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const list = await capabilities.list(id);
@@ -85,7 +85,7 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
   // PUT /api/v1/admin/organizations/:id/entitlements
   fastify.put(
     '/organizations/:id/entitlements',
-    { preHandler: [requireAdmin], config: { rateLimit: rateLimitConfig } },
+    { preHandler: [requireAdmin], config: { allowServiceToken: true, rateLimit: rateLimitConfig } },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       let rows: ReturnType<typeof toUpsertRow>[] = [];
@@ -120,7 +120,7 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
           action: 'org.entitlements_updated',
           target: { type: 'organization_entitlement', id },
           organizationId: id,
-          metadata: { entitlements: rows.map((r) => ({ capability: r.capability, enabled: r.enabled, limitValue: r.limit_value })) },
+          metadata: { ...(request.servicePrincipal ? { actor: SERVICE_ACTOR_LABEL } : {}), entitlements: rows.map((r) => ({ capability: r.capability, enabled: r.enabled, limitValue: r.limit_value })) },
         });
 
         return reply.send({ message: 'Entitlements updated', updated: rows.length });

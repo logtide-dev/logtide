@@ -75,6 +75,14 @@ const configSchema = z.object({
   // Unset = registry defaults (unlimited). Invalid value = boot failure. Entitlement rows still win.
   CAPABILITY_DEFAULTS_JSON: z.string().optional(),
 
+  // Hosting seam: static bearer an external billing service uses on a small set
+  // of admin routes (entitlements, retention). Unset/empty = feature inert.
+  // Shorter than 32 characters = boot failure.
+  ADMIN_SERVICE_TOKEN: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().min(32, 'ADMIN_SERVICE_TOKEN must be at least 32 characters').optional()
+  ),
+
   // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
   STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   STORAGE_SNAPSHOT_INTERVAL_MS: z.string().default('86400000').transform(Number),

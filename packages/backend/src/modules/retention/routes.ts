@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { retentionService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { requireAdmin } from '../admin/middleware.js';
+import { SERVICE_ACTOR_LABEL } from '../auth/middleware.js';
 import { auditLogService } from '../audit-log/index.js';
 import { db } from '../../database/index.js';
 
@@ -36,6 +37,7 @@ export async function retentionRoutes(fastify: FastifyInstance) {
     {
       preHandler: [requireAdmin],
       config: {
+        allowServiceToken: true,
         rateLimit: rateLimitConfig,
       },
     },
@@ -63,6 +65,7 @@ export async function retentionRoutes(fastify: FastifyInstance) {
           organizationId: id,
           target: { type: 'organization', id },
           metadata: {
+            ...(request.servicePrincipal ? { actor: SERVICE_ACTOR_LABEL } : {}),
             ...(body.retentionDays !== undefined ? { retentionDays: body.retentionDays } : {}),
             ...(body.auditRetentionDays !== undefined ? { auditRetentionDays: body.auditRetentionDays } : {}),
           },
