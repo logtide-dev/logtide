@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Env-driven capability defaults**: `CAPABILITY_DEFAULTS_JSON` (`{"<capability>": boolean | integer | null}`) overrides the registry defaults at boot, validated against the registry (unknown keys, wrong types or malformed JSON abort startup with a clear error). Entitlement rows still win over defaults. Unset means unchanged behavior.
+
+### Fixed
+
+- **Quota evaluator ignored default quotas**: `QuotaEvaluator` only evaluated orgs holding a non-null quota entitlement row, so a quota coming from defaults never blocked anyone. When any quota default is finite it now evaluates every organization; with no quota defaults it still queries only orgs with rows.
+
 ### Changed
 
 - **Contributing guide**: `CONTRIBUTING.md` now documents the architectural rules every pull request must respect (multi-engine storage, tenant isolation, fail-closed PII masking, correctness under the async buffer, queue/dispatcher/capability abstractions, migrations, deployment footprint), and corrects outdated details: branch from and target `develop`, 80% backend coverage, the dev Compose file path and the `reservoir` package in the project structure.

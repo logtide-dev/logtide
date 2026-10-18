@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { z } from 'zod';
+import { applyDefaultOverrides } from '../capabilities/registry.js';
 
 // Load environment variables
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -69,6 +70,10 @@ const configSchema = z.object({
   // Capability usage-quota evaluator (#214). Periodic job that flags over-quota orgs.
   QUOTA_EVALUATOR_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   QUOTA_EVALUATOR_INTERVAL_MS: z.string().default('60000').transform(Number),
+
+  // Hosting seam: JSON object overriding capability defaults, e.g. {"ingestion.max_bytes_monthly": 1048576}.
+  // Unset = registry defaults (unlimited). Invalid value = boot failure. Entitlement rows still win.
+  CAPABILITY_DEFAULTS_JSON: z.string().optional(),
 
   // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
   STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
@@ -145,6 +150,15 @@ function loadConfig(): Config {
   if (!result.success) {
     console.error(formatConfigError(result.error));
     throw new Error('Invalid configuration - see error details above');
+  }
+
+  try {
+    applyDefaultOverrides(result.data.CAPABILITY_DEFAULTS_JSON);
+  } catch (err) {
+    console.error(`
+Invalid configuration: ${(err as Error).message}
+`);
+    throw err;
   }
 
   return result.data;

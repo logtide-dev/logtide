@@ -157,3 +157,68 @@ export function isQuotaCapability(name: CapabilityName): boolean {
 export function isKnownCapability(name: string): name is CapabilityName {
   return Object.prototype.hasOwnProperty.call(CAPABILITIES, name);
 }
+
+/**
+ * Hosting seam: CAPABILITY_DEFAULTS_JSON overrides registry defaults at boot.
+ * Contract: a JSON object `{ "<capability>": boolean | number | null }`.
+ *  - boolean capabilities take a boolean only;
+ *  - limit/quota capabilities take an integer >= 0, or null for unlimited.
+ * Validation is driven by the registry at call time (no hardcoded key list), so
+ * capabilities added later work automatically. The document is validated in full
+ * before anything is mutated, and any problem throws (boot must fail loudly).
+ * Resolution order is unchanged: entitlement row > default.
+ */
+const ORIGINAL_DEFAULTS: Record<string, boolean | number | null> = {};
+for (const name of CAPABILITY_NAMES) {
+  const def = CAPABILITIES[name];
+  ORIGINAL_DEFAULTS[name] = def.kind === 'boolean' ? def.defaultEnabled : def.defaultLimit;
+}
+
+const ENV_NAME = 'CAPABILITY_DEFAULTS_JSON';
+
+export function applyDefaultOverrides(json: string | undefined | null): void {
+  if (json === undefined || json === null || json.trim() === '') return;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    throw new Error(`${ENV_NAME} is not valid JSON: ${(err as Error).message}`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${ENV_NAME} must be a JSON object mapping capability names to values`);
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  for (const [name, value] of entries) {
+    if (!isKnownCapability(name)) {
+      throw new Error(
+        `${ENV_NAME} contains unknown capability "${name}". Known capabilities: ${CAPABILITY_NAMES.join(', ')}`
+      );
+    }
+    if (CAPABILITIES[name].kind === 'boolean') {
+      if (typeof value !== 'boolean') {
+        throw new Error(`${ENV_NAME}: "${name}" is a boolean capability and must be true or false`);
+      }
+    } else if (value !== null && !(typeof value === 'number' && Number.isInteger(value) && value >= 0)) {
+      throw new Error(
+        `${ENV_NAME}: "${name}" must be an integer >= 0 or null (unlimited)`
+      );
+    }
+  }
+
+  for (const [name, value] of entries) {
+    const def = CAPABILITIES[name as CapabilityName] as unknown as Record<string, unknown>;
+    if (def.kind === 'boolean') def.defaultEnabled = value as boolean;
+    else def.defaultLimit = value as number | null;
+  }
+}
+
+/** Restore registry defaults (test helper). */
+export function resetDefaultOverrides(): void {
+  for (const name of CAPABILITY_NAMES) {
+    const def = CAPABILITIES[name] as unknown as Record<string, unknown>;
+    if (def.kind === 'boolean') def.defaultEnabled = ORIGINAL_DEFAULTS[name];
+    else def.defaultLimit = ORIGINAL_DEFAULTS[name];
+  }
+}

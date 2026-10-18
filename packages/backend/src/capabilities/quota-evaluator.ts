@@ -33,10 +33,21 @@ export class QuotaEvaluator {
   constructor(private readonly metering: Pick<MeteringService, 'aggregate' | 'latestPointInTime'>) {}
 
   /**
-   * Orgs to evaluate: those with at least one non-null quota entitlement row.
-   * Cost scales with restricted orgs, not total orgs.
+   * Orgs to evaluate: those with at least one non-null quota entitlement row, or
+   * every org when any quota default is finite (organizations has no soft delete).
+   * Without quota defaults, cost scales with restricted orgs, not total orgs.
    */
   private async restrictedOrgIds(): Promise<string[]> {
+    // A finite quota default (CAPABILITY_DEFAULTS_JSON) restricts every org that has
+    // no explicit row, so all orgs must be evaluated. Rows with limit null still
+    // resolve to unlimited inside evaluateOrg via the resolver.
+    const hasFiniteQuotaDefault = QUOTA_CAPABILITIES.some(
+      (n) => (CAPABILITIES[n] as { defaultLimit: number | null }).defaultLimit !== null
+    );
+    if (hasFiniteQuotaDefault) {
+      const all = await db.selectFrom('organizations').select('id').execute();
+      return all.map((r) => r.id);
+    }
     const rows = await db
       .selectFrom('organization_entitlements')
       .select('organization_id')
