@@ -18,6 +18,7 @@ import { config } from '../../config/index.js';
 import { db } from '../../database/index.js';
 import { context } from '@logtide/shared/context';
 import { assertWithinUsageQuota } from '../../capabilities/index.js';
+import { upgradeHintFor } from '../organizations/upgrade-handoff.js';
 
 const collectStreamToBuffer = (stream: NodeJS.ReadableStream): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -109,6 +110,8 @@ const otlpMetricRoutes: FastifyPluginAsync = async (fastify) => {
                 errorMessage: { type: 'string' },
               },
             },
+            // Hosting seam: present only while the upgrade handoff is active.
+            upgrade_available: { type: 'boolean' },
           },
         },
         400: {
@@ -219,6 +222,7 @@ const otlpMetricRoutes: FastifyPluginAsync = async (fastify) => {
               rejectedDataPoints: -1,
               errorMessage,
             },
+            ...upgradeHintFor(error),
           });
         }
 

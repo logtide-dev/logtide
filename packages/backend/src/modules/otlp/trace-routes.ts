@@ -18,6 +18,7 @@ import { config } from '../../config/index.js';
 import { db } from '../../database/index.js';
 import { context } from '@logtide/shared/context';
 import { assertWithinUsageQuota } from '../../capabilities/index.js';
+import { upgradeHintFor } from '../organizations/upgrade-handoff.js';
 
 /**
  * Helper to collect chunks from a stream into a buffer.
@@ -140,6 +141,8 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
                 errorMessage: { type: 'string' },
               },
             },
+            // Hosting seam: present only while the upgrade handoff is active.
+            upgrade_available: { type: 'boolean' },
           },
         },
       },
@@ -244,6 +247,7 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
               rejectedSpans: -1,
               errorMessage,
             },
+            ...upgradeHintFor(error),
           });
         }
 

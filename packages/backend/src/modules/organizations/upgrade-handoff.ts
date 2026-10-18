@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { config } from '../../config/index.js';
+import { CapabilityError, QuotaExceededError } from '../../capabilities/errors.js';
 
 export type UpgradeIntent = 'upgrade' | 'manage';
 
@@ -26,6 +27,18 @@ type UpgradeConfig = { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGRADE_SIGNING_SEC
 export function isUpgradeHandoffActive(): boolean {
   const c = config as UpgradeConfig;
   return Boolean(c.LOGTIDE_UPGRADE_URL && c.LOGTIDE_UPGRADE_SIGNING_SECRET);
+}
+
+/**
+ * Body fragment for a capability (403) or quota (429) rejection: `{ upgrade_available: true }`
+ * while the handoff is active, `{}` otherwise (and for every other error), so OSS
+ * responses stay byte-for-byte unchanged.
+ */
+export function upgradeHintFor(error: unknown): { upgrade_available?: true } {
+  if ((error instanceof CapabilityError || error instanceof QuotaExceededError) && isUpgradeHandoffActive()) {
+    return { upgrade_available: true };
+  }
+  return {};
 }
 
 function b64url(input: Buffer | string): string {
