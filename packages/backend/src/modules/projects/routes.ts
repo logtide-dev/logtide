@@ -196,7 +196,17 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         return reply.status(409).send({ error: 'Project is not deleted' });
       }
 
-      const restored = await projectsService.restoreProject(id, request.user.id);
+      // Restoring re-activates a project, so it counts against projects.max
+      // exactly like a create (same lock, same system-context count).
+      const restored = await withLimitLock(project.organizationId, 'projects.max', async () => {
+        await context.runAsSystem('projects:restore-limit-check', async () => {
+          await context.with({ organizationId: project.organizationId }, async () => {
+            const count = await projectsService.countActiveForOrg(project.organizationId);
+            await assertWithinLimit('projects.max', count);
+          });
+        });
+        return projectsService.restoreProject(id, request.user.id);
+      });
       if (!restored) {
         return reply.status(404).send({ error: 'Project not found' });
       }

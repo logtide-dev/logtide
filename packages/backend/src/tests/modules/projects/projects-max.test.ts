@@ -121,4 +121,39 @@ describe('projects.max enforcement', () => {
     const blocked = await create(orgId, 'Now Full');
     expect(blocked.statusCode).toBe(403);
   });
+  const restore = (projectId: string, bearer = token) =>
+    app.inject({
+      method: 'POST',
+      url: `/api/v1/projects/${projectId}/restore`,
+      headers: { Authorization: `Bearer ${bearer}` },
+    });
+
+  it('blocks restoring a soft-deleted project when the limit is reached', async () => {
+    // 1 active project from createTestContext + 1 soft-deleted.
+    const gone = await insertProject(orgId, userId, 'Gone Restore', true);
+    await setLimit(orgId, 1);
+
+    const res = await restore(gone.id);
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body).code).toBe('capability.projects.max.limit_reached');
+
+    const row = await db.selectFrom('projects').select('deleted_at').where('id', '=', gone.id).executeTakeFirstOrThrow();
+    expect(row.deleted_at).not.toBeNull();
+  });
+
+  it('allows restoring a soft-deleted project when under the limit', async () => {
+    const gone = await insertProject(orgId, userId, 'Gone Restore Ok', true);
+    await setLimit(orgId, 2);
+
+    const res = await restore(gone.id);
+    expect(res.statusCode).toBe(200);
+    const row = await db.selectFrom('projects').select('deleted_at').where('id', '=', gone.id).executeTakeFirstOrThrow();
+    expect(row.deleted_at).toBeNull();
+  });
+
+  it('allows restoring when no limit is configured', async () => {
+    const gone = await insertProject(orgId, userId, 'Gone Restore Unlimited', true);
+    const res = await restore(gone.id);
+    expect(res.statusCode).toBe(200);
+  });
 });
