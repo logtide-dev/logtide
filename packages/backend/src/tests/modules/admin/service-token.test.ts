@@ -1,12 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import Fastify, { type FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { config, configSchema } from '../../../config/index.js';
-import { authenticate } from '../../../modules/auth/middleware.js';
-import { retentionRoutes } from '../../../modules/retention/index.js';
-import { adminEntitlementsRoutes } from '../../../modules/capabilities/index.js';
-import { adminRoutes } from '../../../modules/admin/routes.js';
-import { contextPlugin } from '../../../context/index.js';
+import { build } from '../../../server.js';
 import { createTestOrganization } from '../../helpers/factories.js';
 
 const TOKEN = 's'.repeat(40);
@@ -38,12 +34,9 @@ describe('admin service token', () => {
   let orgId: string;
 
   beforeAll(async () => {
-    app = Fastify();
-    await app.register(contextPlugin);
-    await app.register(retentionRoutes, { prefix: '/api/v1/admin' });
-    await app.register(adminEntitlementsRoutes, { prefix: '/api/v1/admin' });
-    await app.register(adminRoutes, { prefix: '/api/v1/admin' });
-    app.get('/plain', { onRequest: authenticate }, async (request) => ({ user: request.user?.id ?? null }));
+    // The REAL app (full plugin stack incl. the global auth plugin), not a
+    // bare Fastify instance: the global plugin is what used to reject the token.
+    app = await build({ logger: false });
     await app.ready();
   });
 
@@ -116,10 +109,17 @@ describe('admin service token', () => {
     expect(res.statusCode).toBe(200);
   });
 
-  it('non-admin route with the token is 401', async () => {
+  it('non-admin routes with the token are 401', async () => {
     cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
-    const res = await app.inject({ method: 'GET', url: '/plain', headers: auth(TOKEN) });
-    expect(res.statusCode).toBe(401);
+    const id = await newOrg();
+    // session-auth route (route-level authenticate)
+    const projects = await app.inject({ method: 'GET', url: '/api/v1/projects', headers: auth(TOKEN) });
+    expect(projects.statusCode).toBe(401);
+    // routes guarded only by the global auth plugin
+    const usage = await app.inject({ method: 'GET', url: `/api/v1/usage?organizationId=${id}`, headers: auth(TOKEN) });
+    expect(usage.statusCode).toBe(401);
+    const logs = await app.inject({ method: 'GET', url: '/api/v1/logs', headers: auth(TOKEN) });
+    expect(logs.statusCode).toBe(401);
   });
 
   it('admin route not opted in to the service token fails cleanly (401, no 500)', async () => {
