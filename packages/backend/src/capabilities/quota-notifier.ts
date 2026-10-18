@@ -1,7 +1,7 @@
-import nodemailer from 'nodemailer';
 import { sql } from 'kysely';
 import { db } from '../database/connection.js';
 import { config } from '../config/index.js';
+import { getMailer } from '../lib/mailer.js';
 import { notificationsService } from '../modules/notifications/service.js';
 import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../utils/internal-logger.js';
@@ -30,23 +30,6 @@ export function formatQuotaValue(cap: CapabilityName, value: number): string {
 
 function startOfUtcMonth(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-}
-
-let transporter: nodemailer.Transporter | null = null;
-function getTransporter(): nodemailer.Transporter | null {
-  if (!config.SMTP_HOST) return null;
-  if (!transporter) {
-    const opts: Record<string, unknown> = {
-      host: config.SMTP_HOST,
-      port: config.SMTP_PORT || 587,
-      secure: config.SMTP_SECURE || false,
-    };
-    if (config.SMTP_USER && config.SMTP_PASS) {
-      opts.auth = { user: config.SMTP_USER, pass: config.SMTP_PASS };
-    }
-    transporter = nodemailer.createTransport(opts as nodemailer.TransportOptions);
-  }
-  return transporter;
 }
 
 /**
@@ -121,7 +104,7 @@ export async function notifyQuotaThreshold(params: {
       });
     }
 
-    const mailer = getTransporter();
+    const mailer = getMailer();
     if (!mailer) return;
     try {
       await mailer.sendMail({

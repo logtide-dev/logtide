@@ -74,6 +74,15 @@ async function tokenFromMailhog(email: string): Promise<string | null> {
   return null;
 }
 
+async function eventually<T>(fn: () => Promise<T>, ok: (v: T) => boolean): Promise<T> {
+  let last = await fn();
+  for (let i = 0; i < 50 && !ok(last); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    last = await fn();
+  }
+  return last;
+}
+
 async function seedToken(userId: string, opts: { expired?: boolean } = {}): Promise<string> {
   const token = crypto.randomBytes(32).toString('base64url');
   await db
@@ -114,9 +123,20 @@ describe('email verification env validation', () => {
   });
 
   it('REQUIRE_EMAIL_VERIFICATION accepts true/false and rejects anything else', () => {
-    const on = parse({ REQUIRE_EMAIL_VERIFICATION: 'true' });
+    const on = parse({ REQUIRE_EMAIL_VERIFICATION: 'true', SMTP_HOST: 'smtp.example.com' });
     expect(on.success && on.data.REQUIRE_EMAIL_VERIFICATION).toBe(true);
-    expect(parse({ REQUIRE_EMAIL_VERIFICATION: 'yes' }).success).toBe(false);
+    expect(parse({ REQUIRE_EMAIL_VERIFICATION: 'yes', SMTP_HOST: 'smtp.example.com' }).success).toBe(false);
+  });
+
+  it('REQUIRE_EMAIL_VERIFICATION=true without SMTP_HOST fails boot with a clear message', () => {
+    const r = parse({ REQUIRE_EMAIL_VERIFICATION: 'true' });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      const errors = r.error.flatten().fieldErrors.REQUIRE_EMAIL_VERIFICATION ?? [];
+      expect(errors.join(' ')).toMatch(/needs SMTP_HOST/);
+    }
+    // Flag off never needs SMTP
+    expect(parse({ REQUIRE_EMAIL_VERIFICATION: 'false' }).success).toBe(true);
   });
 
   it('REGISTRATION_RATE_LIMIT_PER_HOUR is unset by default and must be a positive integer', () => {
@@ -331,6 +351,8 @@ describe('email verification gate ON', () => {
     expect(p.statusCode).toBe(202);
     expect(p.json()).toEqual(unknown.json());
     expect(await tokenFromMailhog(pending.email)).not.toBeNull();
+    // The verified account still got nothing once the background work settled
+    expect(await db.selectFrom('email_verification_tokens').selectAll().where('user_id', '=', verified.id).execute()).toHaveLength(0);
   });
 
   it('resend for the signed-in user replaces the previous token after the cooldown', async () => {
@@ -338,13 +360,16 @@ describe('email verification gate ON', () => {
     const session = await createTestSession(user.id);
     const headers = { authorization: `Bearer ${session.token}` };
 
+    const tokensOf = () => db.selectFrom('email_verification_tokens').selectAll().where('user_id', '=', user.id).execute();
+
     expect((await app.inject({ method: 'POST', url: '/api/v1/auth/resend-verification', headers })).statusCode).toBe(202);
-    const first = await db.selectFrom('email_verification_tokens').selectAll().where('user_id', '=', user.id).execute();
+    const first = await eventually(tokensOf, (t) => t.length === 1);
     expect(first).toHaveLength(1);
 
     // Inside the cooldown: no new token
     expect((await app.inject({ method: 'POST', url: '/api/v1/auth/resend-verification', headers })).statusCode).toBe(202);
-    const same = await db.selectFrom('email_verification_tokens').selectAll().where('user_id', '=', user.id).execute();
+    await new Promise((r) => setTimeout(r, 500)); // let the background resend settle
+    const same = await tokensOf();
     expect(same.map((t) => t.id)).toEqual(first.map((t) => t.id));
 
     // Age the token past the cooldown: the old token is replaced
@@ -354,7 +379,7 @@ describe('email verification gate ON', () => {
       .where('user_id', '=', user.id)
       .execute();
     expect((await app.inject({ method: 'POST', url: '/api/v1/auth/resend-verification', headers })).statusCode).toBe(202);
-    const after = await db.selectFrom('email_verification_tokens').selectAll().where('user_id', '=', user.id).execute();
+    const after = await eventually(tokensOf, (t) => t.length === 1 && t[0].id !== first[0].id);
     expect(after).toHaveLength(1);
     expect(after[0].id).not.toBe(first[0].id);
   });
@@ -414,6 +439,24 @@ describe('OIDC email verification', () => {
     const first = await findOrCreate(provider(), r);
     expect(await emailVerificationService.isVerified(first.user.id)).toBe(false);
     await findOrCreate(provider(), { ...r, emailVerified: true });
+    expect(await emailVerificationService.isVerified(first.user.id)).toBe(true);
+  });
+
+  it('an existing identity login only verifies when the asserted email matches the account email', async () => {
+    cfg.REQUIRE_EMAIL_VERIFICATION = true;
+    const original = uniqueEmail('oidc-orig');
+    const r = result(original, false);
+    const first = await findOrCreate(provider(), r);
+    expect(await emailVerificationService.isVerified(first.user.id)).toBe(false);
+
+    // The user changed the address locally; the IdP still vouches for the old one
+    const changed = uniqueEmail('oidc-changed');
+    await db.updateTable('users').set({ email: changed }).where('id', '=', first.user.id).execute();
+    await findOrCreate(provider(), { ...r, emailVerified: true });
+    expect(await emailVerificationService.isVerified(first.user.id)).toBe(false);
+
+    // Same address (case-insensitive): verified
+    await findOrCreate(provider(), { ...r, email: changed.toUpperCase(), emailVerified: true });
     expect(await emailVerificationService.isVerified(first.user.id)).toBe(true);
   });
 

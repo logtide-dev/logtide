@@ -337,6 +337,10 @@ export class UsersService {
     const updateData: any = {};
     if (input.name) updateData.name = input.name;
     if (normalizedEmail) updateData.email = normalizedEmail;
+    // Gate on: a new address starts unverified, written atomically with the email.
+    if (normalizedEmail && normalizedEmail !== user.email && isEmailVerificationRequired()) {
+      updateData.email_verified_at = null;
+    }
     if (input.newPassword) {
       updateData.password_hash = await this.hashPassword(input.newPassword);
     }

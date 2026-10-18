@@ -154,10 +154,6 @@ export class EmailVerificationService {
     if (user) await this.resendForUser(user.id);
   }
 
-  /** Mark a user unverified (used when the email address changes while the gate is on). */
-  async markUnverified(userId: string): Promise<void> {
-    await db.updateTable('users').set({ email_verified_at: null }).where('id', '=', userId).execute();
-  }
 }
 
 export const emailVerificationService = new EmailVerificationService();

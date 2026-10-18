@@ -381,9 +381,9 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       const updatedUser = await usersService.updateUser(currentUser.id, body);
 
-      // Gate on: a changed address must be confirmed again.
+      // Gate on: a changed address must be confirmed again (updateUser already
+      // cleared email_verified_at in the same UPDATE that changed the email).
       if (isEmailVerificationRequired() && updatedUser.email !== currentUser.email) {
-        await emailVerificationService.markUnverified(updatedUser.id);
         try {
           await emailVerificationService.issueAndSend(updatedUser);
         } catch (verificationError) {
@@ -539,17 +539,21 @@ export async function usersRoutes(fastify: FastifyInstance) {
         const bearer = request.headers.authorization?.replace('Bearer ', '');
         const sessionUser = bearer ? await usersService.validateSession(bearer) : null;
 
-        try {
-          if (sessionUser) {
-            await emailVerificationService.resendForUser(sessionUser.id);
-          } else {
-            const parsed = resendVerificationSchema.safeParse(request.body ?? {});
-            if (parsed.success && parsed.data.email) {
-              await emailVerificationService.resendForEmail(parsed.data.email);
-            }
+        // Fire and forget: the lookup, token write and SMTP send all run after
+        // the response, so its timing never reveals whether the address exists.
+        let work: Promise<void> | null = null;
+        if (sessionUser) {
+          work = emailVerificationService.resendForUser(sessionUser.id);
+        } else {
+          const parsed = resendVerificationSchema.safeParse(request.body ?? {});
+          if (parsed.success && parsed.data.email) {
+            work = emailVerificationService.resendForEmail(parsed.data.email);
           }
-        } catch (error) {
-          logVerificationError('[Auth] Resend verification failed', sessionUser?.id ?? null, error);
+        }
+        if (work) {
+          void work.catch((error) =>
+            logVerificationError('[Auth] Resend verification failed', sessionUser?.id ?? null, error)
+          );
         }
 
         return reply.status(202).send({

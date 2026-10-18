@@ -183,6 +183,14 @@ const configSchema = z.object({
       message,
     });
   }
+  if (env.REQUIRE_EMAIL_VERIFICATION && !env.SMTP_HOST) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['REQUIRE_EMAIL_VERIFICATION'],
+      message:
+        'REQUIRE_EMAIL_VERIFICATION=true needs SMTP_HOST: without SMTP no verification email can be sent and new users could never verify',
+    });
+  }
 });
 
 export type Config = z.infer<typeof configSchema>;

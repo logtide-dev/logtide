@@ -281,10 +281,13 @@ export class AuthenticationService {
         throw new AuthError('This account has been disabled', AuthErrorCode.USER_DISABLED);
       }
 
-      // Update user's last login
+      // Update user's last login. The IdP's verification only counts when it
+      // vouches for the account's current address (the user may have changed
+      // it locally since the identity was linked).
+      const sameEmail = existingIdentity.email.toLowerCase().trim() === email;
       await db
         .updateTable('users')
-        .set(loginUpdate)
+        .set(sameEmail ? loginUpdate : { last_login: new Date() })
         .where('id', '=', existingIdentity.id)
         .execute();
 
