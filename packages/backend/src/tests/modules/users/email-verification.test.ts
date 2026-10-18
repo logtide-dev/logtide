@@ -287,6 +287,31 @@ describe('email verification gate ON', () => {
     expect(reuse.json()).toEqual({ error: 'invalid_or_expired_token' });
   });
 
+  it('register does not wait for the verification email', async () => {
+    let release!: () => void;
+    const pending = new Promise<string>((resolve) => {
+      release = () => resolve('t');
+    });
+    const spy = vi.spyOn(emailVerificationService, 'issueAndSend').mockReturnValue(pending);
+    const started = Date.now();
+    const res = await Promise.race([
+      register(app, uniqueEmail('slow-smtp')),
+      new Promise<null>((r) => setTimeout(() => r(null), 3000)),
+    ]);
+    release();
+    expect(res).not.toBeNull();
+    expect(res!.statusCode).toBe(201);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('register still answers 201 when sending the verification email fails', async () => {
+    vi.spyOn(emailVerificationService, 'issueAndSend').mockRejectedValue(new Error('smtp down'));
+    const res = await register(app, uniqueEmail('smtp-fail'));
+    expect(res.statusCode).toBe(201);
+    expect(res.json().session.token).toBeDefined();
+  });
+
   it('rejects an expired token with 400', async () => {
     const user = await unverifiedUser('expired');
     const token = await seedToken(user.id, { expired: true });
@@ -431,6 +456,24 @@ describe('OIDC email verification', () => {
     expect(await emailVerificationService.isVerified(yes.user.id)).toBe(true);
     const no = await findOrCreate(provider(), result(uniqueEmail('oidc-no'), false));
     expect(await emailVerificationService.isVerified(no.user.id)).toBe(false);
+  });
+
+  it('gate on: a new unverified OIDC user is sent the verification email', async () => {
+    cfg.REQUIRE_EMAIL_VERIFICATION = true;
+    const email = uniqueEmail('oidc-mail');
+    const no = await findOrCreate(provider(), result(email, false));
+    expect(await tokenFromMailhog(email)).not.toBeNull();
+    const tokens = await eventually(
+      () => db.selectFrom('email_verification_tokens').select('id').where('user_id', '=', no.user.id).execute(),
+      (rows) => rows.length === 1
+    );
+    expect(tokens).toHaveLength(1);
+
+    // An IdP-verified user gets no mail and no token.
+    const yes = await findOrCreate(provider(), result(uniqueEmail('oidc-nomail'), true));
+    await new Promise((r) => setTimeout(r, 300));
+    const none = await db.selectFrom('email_verification_tokens').select('id').where('user_id', '=', yes.user.id).execute();
+    expect(none).toHaveLength(0);
   });
 
   it('a later login with email_verified: true verifies an unverified OIDC user', async () => {
