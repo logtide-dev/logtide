@@ -8,6 +8,7 @@ import { db } from '../../database/connection.js';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
+import { emailVerificationService } from '../users/email-verification.js';
 
 const createProjectSchema = z.object({
   organizationId: z.string().uuid('Invalid organization ID'),
@@ -255,6 +256,12 @@ export async function projectsRoutes(fastify: FastifyInstance) {
   fastify.post('/', async (request: any, reply) => {
     try {
       const body = createProjectSchema.parse(request.body);
+
+      // Email verification gate (no-op unless REQUIRE_EMAIL_VERIFICATION=true),
+      // checked before the projects.max limit.
+      if (await emailVerificationService.isBlocked(request.user.id)) {
+        return reply.status(403).send({ error: 'email_not_verified' });
+      }
 
       const project = await withLimitLock(body.organizationId, 'projects.max', async () => {
         // Membership first so non-members get the access error, not a limit error.

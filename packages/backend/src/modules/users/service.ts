@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
+import { isEmailVerificationRequired } from './email-verification-flag.js';
 
 const SALT_ROUNDS = 10;
 
@@ -127,6 +128,9 @@ export class UsersService {
           password_hash: passwordHash,
           name: input.name,
           is_admin: shouldBeAdmin,
+          // Column default (NOW()) marks the user verified; only an enabled gate
+          // starts a local registration as unverified.
+          ...(isEmailVerificationRequired() ? { email_verified_at: null } : {}),
         })
         .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
         .executeTakeFirstOrThrow();

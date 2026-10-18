@@ -10,7 +10,9 @@
  */
 
 import crypto from 'crypto';
+import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
+import { isEmailVerificationRequired } from '../users/email-verification-flag.js';
 import { CacheManager } from '../../utils/cache.js';
 import type { UserProfile, SessionInfo } from '../users/service.js';
 import { settingsService } from '../settings/service.js';
@@ -248,6 +250,14 @@ export class AuthenticationService {
     const email = result.email!.toLowerCase().trim();
     const name = result.name || email.split('@')[0];
 
+    // An OIDC identity whose IdP asserts email_verified: true confirms the
+    // user's email. Other providers never change the verification state.
+    const oidcEmailVerified = provider.config.type === 'oidc' && result.emailVerified === true;
+    const loginUpdate = {
+      last_login: new Date(),
+      ...(oidcEmailVerified ? { email_verified_at: sql<Date>`COALESCE(email_verified_at, NOW())` } : {}),
+    };
+
     // First, check if this external identity already exists
     const existingIdentity = await db
       .selectFrom('user_identities')
@@ -274,7 +284,7 @@ export class AuthenticationService {
       // Update user's last login
       await db
         .updateTable('users')
-        .set({ last_login: new Date() })
+        .set(loginUpdate)
         .where('id', '=', existingIdentity.id)
         .execute();
 
@@ -328,7 +338,7 @@ export class AuthenticationService {
       // Update user's last login
       await db
         .updateTable('users')
-        .set({ last_login: new Date() })
+        .set(loginUpdate)
         .where('id', '=', existingUser.id)
         .execute();
 
@@ -382,6 +392,11 @@ export class AuthenticationService {
         password_hash: null, // External auth users don't have local passwords
         is_admin: shouldBeAdmin,
         last_login: new Date(),
+        // Column default (NOW()) marks the user verified. With the gate on, an
+        // OIDC identity without email_verified: true starts unverified.
+        ...(isEmailVerificationRequired() && provider.config.type === 'oidc' && result.emailVerified !== true
+          ? { email_verified_at: null }
+          : {}),
       })
       .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
       .executeTakeFirstOrThrow();

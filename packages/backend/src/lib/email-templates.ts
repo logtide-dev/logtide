@@ -740,6 +740,48 @@ Sent by LogTide
 }
 
 // ============================================================================
+// EMAIL VERIFICATION
+// ============================================================================
+
+export interface EmailVerificationEmailData {
+  name: string;
+  token: string;
+}
+
+export function generateEmailVerificationEmail(data: EmailVerificationEmailData): { html: string; text: string } {
+  const frontendUrl = getFrontendUrl();
+  const verifyUrl = `${frontendUrl}/verify-email?token=${encodeURIComponent(data.token)}`;
+
+  const html = baseTemplate(
+    card(`
+      ${header('Verify your email', { text: 'Account', color: colors.info })}
+      ${divider()}
+      ${subtitle(`Hi ${data.name}, confirm your email address to finish setting up your LogTide account.`)}
+      ${alertBox('This link expires in 24 hours and can be used once.', 'info')}
+      ${cta('Verify email', verifyUrl)}
+    `),
+    { preheader: 'Confirm your email address for LogTide' }
+  );
+
+  const text = `
+VERIFY YOUR EMAIL
+${'='.repeat(50)}
+
+Hi ${data.name}, confirm your email address to finish setting up your LogTide account.
+
+Verify email: ${verifyUrl}
+
+This link expires in 24 hours and can be used once. If you did not create a
+LogTide account, you can ignore this email.
+
+--
+Sent by LogTide
+`.trim();
+
+  return { html, text };
+}
+
+// ============================================================================
 // MONITOR NOTIFICATION EMAIL
 // ============================================================================
 

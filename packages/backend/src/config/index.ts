@@ -125,6 +125,27 @@ const configSchema = z.object({
       .optional()
   ),
 
+  // Hosting seam: optional email verification. When true, newly registered
+  // local users must confirm their email before creating projects or API keys.
+  // Unset/false = no verification email, no gate (users count as verified).
+  REQUIRE_EMAIL_VERIFICATION: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.enum(['true', 'false'], { errorMap: () => ({ message: 'REQUIRE_EMAIL_VERIFICATION must be true or false' }) })
+      .default('false')
+      .transform((v) => v === 'true')
+  ),
+
+  // Hosting seam: extra per-IP cap on POST /auth/register over a rolling hour,
+  // on top of AUTH_RATE_LIMIT_REGISTER. Positive integer; unset or empty = off.
+  REGISTRATION_RATE_LIMIT_PER_HOUR: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce
+      .number({ invalid_type_error: 'REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer' })
+      .int('REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer')
+      .positive('REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer')
+      .optional()
+  ),
+
   // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
   STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   STORAGE_SNAPSHOT_INTERVAL_MS: z.string().default('86400000').transform(Number),

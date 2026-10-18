@@ -6,6 +6,8 @@ import { AuthError, AuthErrorCode } from '../auth/providers/types.js';
 import { usersService } from './service.js';
 import { authenticationService } from '../auth/authentication-service.js';
 import { config } from '../../config/index.js';
+import { isEmailVerificationRequired } from './email-verification-flag.js';
+import { emailVerificationService } from './email-verification.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
 import { auditLogService } from '../audit-log/index.js';
@@ -28,13 +30,64 @@ const updateUserSchema = z.object({
   newPassword: z.string().min(8, 'Password must be at least 8 characters').optional(),
 });
 
+const verifyEmailSchema = z.object({
+  token: z.string().min(1).max(200),
+});
+
+const resendVerificationSchema = z.object({
+  email: z.string().email().optional(),
+});
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+
+function logVerificationError(message: string, userId: string | null, error: unknown): void {
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('error', message, {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 const deleteUserSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
 export async function usersRoutes(fastify: FastifyInstance) {
+  // Optional hourly per-IP cap on registrations, layered on top of the
+  // AUTH_RATE_LIMIT_REGISTER route limit. Keyed by IP only (the global key
+  // generator would let a forged Authorization header rotate the key) and
+  // prefixed so it never shares a counter with the other limiters.
+  const registrationHourlyLimit = config.REGISTRATION_RATE_LIMIT_PER_HOUR;
+  const hourlyLimiter =
+    registrationHourlyLimit && fastify.hasDecorator('createRateLimit')
+      ? (fastify as any).createRateLimit({
+          max: registrationHourlyLimit,
+          timeWindow: ONE_HOUR_MS,
+          keyGenerator: (request: { ip: string }) => `registration-hourly:${request.ip}`,
+        })
+      : null;
+  if (registrationHourlyLimit && !hourlyLimiter) {
+    console.warn('[RateLimit] REGISTRATION_RATE_LIMIT_PER_HOUR is set but the rate-limit plugin is not registered');
+  }
+
   // Register new user
   fastify.post('/register', {
+    ...(hourlyLimiter
+      ? {
+          onRequest: async (request: any, reply: any) => {
+            const result = await hourlyLimiter(request);
+            if (!result.isAllowed && result.isExceeded) {
+              reply.header('retry-after', result.ttlInSeconds);
+              return reply.status(429).send({
+                statusCode: 429,
+                error: 'Too Many Requests',
+                message: 'Too many registrations from this address, please try again later',
+              });
+            }
+          },
+        }
+      : {}),
     config: {
       rateLimit: {
         max: config.AUTH_RATE_LIMIT_REGISTER, // Configurable via AUTH_RATE_LIMIT_REGISTER env var
@@ -55,6 +108,16 @@ export async function usersRoutes(fastify: FastifyInstance) {
         const body = registerSchema.parse(request.body);
 
         const user = await usersService.createUser(body);
+
+        // Gate on: email the verification link. A send failure never fails the
+        // registration (the user can request a resend from the app).
+        if (isEmailVerificationRequired()) {
+          try {
+            await emailVerificationService.issueAndSend(user);
+          } catch (verificationError) {
+            logVerificationError('[Auth] Failed to issue email verification token', user.id, verificationError);
+          }
+        }
 
         // Automatically log in the new user through the provider registry.
         // This also creates the user_identities link for the local provider.
@@ -93,6 +156,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
             email: user.email,
             name: user.name,
             is_admin: user.is_admin,
+            ...(isEmailVerificationRequired() ? { emailVerified: false } : {}),
           },
           ...(session ? {
             session: {
@@ -269,6 +333,11 @@ export async function usersRoutes(fastify: FastifyInstance) {
       });
     }
 
+    // Read fresh from the DB (the session cache would lag behind a verify).
+    const emailVerified = isEmailVerificationRequired()
+      ? await emailVerificationService.isVerified(user.id)
+      : undefined;
+
     return reply.send({
       user: {
         id: user.id,
@@ -277,6 +346,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
         is_admin: user.is_admin,
         createdAt: user.createdAt,
         lastLogin: user.lastLogin,
+        ...(emailVerified !== undefined ? { emailVerified } : {}),
       },
     });
   });
@@ -310,6 +380,16 @@ export async function usersRoutes(fastify: FastifyInstance) {
       }
 
       const updatedUser = await usersService.updateUser(currentUser.id, body);
+
+      // Gate on: a changed address must be confirmed again.
+      if (isEmailVerificationRequired() && updatedUser.email !== currentUser.email) {
+        await emailVerificationService.markUnverified(updatedUser.id);
+        try {
+          await emailVerificationService.issueAndSend(updatedUser);
+        } catch (verificationError) {
+          logVerificationError('[Auth] Failed to issue email verification token', updatedUser.id, verificationError);
+        }
+      }
 
       await auditLogService.record({
         action: 'user.profile_updated',
@@ -406,4 +486,76 @@ export async function usersRoutes(fastify: FastifyInstance) {
       throw error;
     }
   });
+  // Email verification routes exist only when the gate is on.
+  if (isEmailVerificationRequired()) {
+    // Consume a verification token. The token is the credential; when the
+    // caller is also signed in, a token belonging to another user is rejected
+    // without being consumed.
+    fastify.post('/verify-email', {
+      config: {
+        rateLimit: {
+          max: config.AUTH_RATE_LIMIT_LOGIN,
+          timeWindow: config.AUTH_RATE_LIMIT_WINDOW,
+          keyGenerator: (request: { ip: string }) => request.ip,
+        },
+      },
+      handler: async (request, reply) => {
+        const parsed = verifyEmailSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.status(400).send({ error: 'invalid_or_expired_token' });
+        }
+
+        const bearer = request.headers.authorization?.replace('Bearer ', '');
+        const sessionUser = bearer ? await usersService.validateSession(bearer) : null;
+
+        const result = await emailVerificationService.verify(parsed.data.token, sessionUser?.id);
+        if (!result.ok) {
+          return reply.status(400).send({ error: 'invalid_or_expired_token' });
+        }
+
+        await auditLogService.record({
+          action: 'user.email_verified',
+          target: { type: 'user', id: result.userId },
+          organizationId: null,
+          actor: { type: 'user', id: result.userId, label: null },
+        });
+
+        return reply.send({ verified: true });
+      },
+    });
+
+    // Resend the verification email. Signed-in callers resend for themselves;
+    // otherwise an email in the body is looked up. The answer is always 202 so
+    // it never reveals whether an address is registered or already verified.
+    fastify.post('/resend-verification', {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: ONE_HOUR_MS,
+          keyGenerator: (request: { ip: string }) => request.ip,
+        },
+      },
+      handler: async (request, reply) => {
+        const bearer = request.headers.authorization?.replace('Bearer ', '');
+        const sessionUser = bearer ? await usersService.validateSession(bearer) : null;
+
+        try {
+          if (sessionUser) {
+            await emailVerificationService.resendForUser(sessionUser.id);
+          } else {
+            const parsed = resendVerificationSchema.safeParse(request.body ?? {});
+            if (parsed.success && parsed.data.email) {
+              await emailVerificationService.resendForEmail(parsed.data.email);
+            }
+          }
+        } catch (error) {
+          logVerificationError('[Auth] Resend verification failed', sessionUser?.id ?? null, error);
+        }
+
+        return reply.status(202).send({
+          message: 'If the account exists and is not verified yet, a new verification email has been sent.',
+        });
+      },
+    });
+  }
 }

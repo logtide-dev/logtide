@@ -10,6 +10,7 @@ import { settingsService, SETTING_KEYS } from './service.js';
 import { usersService } from '../users/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
 import { isUpgradeHandoffActive } from '../organizations/upgrade-handoff.js';
+import { isEmailVerificationRequired } from '../users/email-verification-flag.js';
 import type { UserProfile } from '../users/service.js';
 import { auditLogService } from '../audit-log/service.js';
 
@@ -245,6 +246,7 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         signupEnabled,
         requiresLogin: authMode !== 'none',
         ...(isUpgradeHandoffActive() ? { upgradeEnabled: true } : {}),
+        ...(isEmailVerificationRequired() ? { emailVerificationRequired: true } : {}),
       });
     } catch (error) {
       console.error('Error fetching auth config:', error);
@@ -253,6 +255,7 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         authMode: 'standard',
         signupEnabled: true,
         requiresLogin: true,
+        ...(isEmailVerificationRequired() ? { emailVerificationRequired: true } : {}),
       });
     }
   });
