@@ -109,14 +109,15 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
         const user = await usersService.createUser(body);
 
-        // Gate on: email the verification link. A send failure never fails the
+        // Gate on: email the verification link, fire and forget so the response
+        // never depends on SMTP latency. A send failure never fails the
         // registration (the user can request a resend from the app).
         if (isEmailVerificationRequired()) {
-          try {
-            await emailVerificationService.issueAndSend(user);
-          } catch (verificationError) {
-            logVerificationError('[Auth] Failed to issue email verification token', user.id, verificationError);
-          }
+          void emailVerificationService
+            .issueAndSend(user)
+            .catch((verificationError) =>
+              logVerificationError('[Auth] Failed to issue email verification token', user.id, verificationError)
+            );
         }
 
         // Automatically log in the new user through the provider registry.
