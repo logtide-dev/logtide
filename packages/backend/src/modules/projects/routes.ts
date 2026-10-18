@@ -5,6 +5,8 @@ import { authenticate } from '../auth/middleware.js';
 import { auditLogService } from '../audit-log/index.js';
 import { reservoir } from '../../database/reservoir.js';
 import { db } from '../../database/connection.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 
 const createProjectSchema = z.object({
@@ -254,11 +256,22 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     try {
       const body = createProjectSchema.parse(request.body);
 
-      const project = await projectsService.createProject({
-        organizationId: body.organizationId,
-        userId: request.user.id,
-        name: body.name,
-        description: body.description,
+      const project = await withLimitLock(body.organizationId, 'projects.max', async () => {
+        // Membership first so non-members get the access error, not a limit error.
+        await projectsService.checkOrganizationAccess(body.organizationId, request.user.id);
+        await context.runAsSystem('projects:create-limit-check', async () => {
+          await context.with({ organizationId: body.organizationId }, async () => {
+            const count = await projectsService.countActiveForOrg(body.organizationId);
+            await assertWithinLimit('projects.max', count);
+          });
+        });
+
+        return projectsService.createProject({
+          organizationId: body.organizationId,
+          userId: request.user.id,
+          name: body.name,
+          description: body.description,
+        });
       });
 
       await auditLogService.record({

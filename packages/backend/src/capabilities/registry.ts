@@ -79,6 +79,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum number of API keys',
   },
+  'projects.max': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum number of active projects',
+  },
   'audit.retention_days': {
     kind: 'limit',
     defaultLimit: null,

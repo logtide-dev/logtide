@@ -190,6 +190,7 @@
     'alerts.max_rules': { label: 'Alert rules', unit: 'count' },
     'notifications.max_channels': { label: 'Notification channels', unit: 'count' },
     'apikeys.max': { label: 'API keys', unit: 'count' },
+    'projects.max': { label: 'Projects', unit: 'count' },
     'sigma.max_active_rules': { label: 'Active Sigma rules', unit: 'count' },
     'dashboards.max_custom': { label: 'Custom dashboards', unit: 'count' },
     'ingestion.max_events_monthly': { label: 'Events (this month)', unit: 'count' },

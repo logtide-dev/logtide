@@ -9,6 +9,7 @@ import { meteringService } from './service.js';
 import { alertsService } from '../alerts/service.js';
 import { apiKeysService } from '../api-keys/service.js';
 import { customDashboardsService } from '../custom-dashboards/service.js';
+import { projectsService } from '../projects/service.js';
 import { notificationChannelsService } from '../notification-channels/service.js';
 import { SigmaService } from '../sigma/service.js';
 
@@ -35,6 +36,7 @@ const LIMIT_COUNTERS: Partial<
   'alerts.max_rules': (o) => alertsService.countAlertRules(o),
   'notifications.max_channels': (o) => notificationChannelsService.countChannels(o),
   'apikeys.max': (o) => apiKeysService.countKeysForOrg(o),
+  'projects.max': (o) => projectsService.countActiveForOrg(o),
   'sigma.max_active_rules': (o) => sigmaService.countActiveRules(o),
   'dashboards.max_custom': (o) => customDashboardsService.countForOrg(o),
 };
