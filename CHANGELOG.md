@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **In-app billing seam**: setting `LOGTIDE_BILLING_API_URL` and `LOGTIDE_BILLING_API_TOKEN` (both or none; a partial set aborts startup, the URL must be absolute http or https, the token at least 32 characters) enables a Billing page backed by an external billing service. This release adds the configuration and the shared contract: `GET /api/v1/auth/config` gains `billingEnabled: true` only when active, `@logtide/shared` exports the billing types (`BillingOverview`, `BillingInvoice`, `BillingCheckoutSession`, `BillingCheckoutStatus`, `BillingPreview`, `billingPlanChangeSchema`) and `docs/cloud-seams.md` documents the full HTTP contract a billing service must implement. Unset: nothing changes and no key is added.
+
 
 ## [1.4.0] - 2026-10-20
 
