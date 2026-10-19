@@ -16,8 +16,11 @@ This page is for operators who run LogTide on behalf of other people (a managed 
 | `MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH` | unset (unlimited) | Maximum organizations one user may create per UTC calendar month |
 | `REQUIRE_EMAIL_VERIFICATION` | `false` | Require new local users to confirm their email |
 | `REGISTRATION_RATE_LIMIT_PER_HOUR` | unset (off) | Extra per-IP cap on registrations over one hour |
+| `LOGTIDE_TERMS_URL` | unset | Terms of Service page users must accept |
+| `LOGTIDE_PRIVACY_URL` | unset | Privacy Policy page users must accept |
+| `LOGTIDE_TERMS_VERSION` | unset | Current terms version; changing it asks every user to accept again |
 
-An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all eight through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
+An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all eleven through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
 
 ### CAPABILITY_DEFAULTS_JSON
 
@@ -123,6 +126,20 @@ When `false`, the verification routes are not registered and every user counts a
 ### REGISTRATION_RATE_LIMIT_PER_HOUR
 
 Positive integer; unset = off; anything else aborts startup. Caps `POST /api/v1/auth/register` per client IP over a one-hour window, on top of `AUTH_RATE_LIMIT_REGISTER`. It is keyed by IP only, so a forged `Authorization` header cannot rotate the counter. Over the cap the route answers `429` with a `Retry-After` header. It needs the rate-limit plugin; if that is not registered a warning is logged and the cap is not applied. Behind a reverse proxy set `TRUST_PROXY=true` so client IPs are resolved correctly, otherwise every request shares one IP (see Operator notes).
+
+### Terms acceptance (LOGTIDE_TERMS_URL, LOGTIDE_PRIVACY_URL and LOGTIDE_TERMS_VERSION)
+
+Active only when all three are set. Setting one or two aborts startup with a message naming the missing ones; so does a URL that is not an absolute https URL (plain http is allowed only for `localhost` and `127.0.0.1`) or a version that is empty, only spaces or longer than 64 characters. A date such as `2026-10-19` works well as the version. Unset or empty: the feature is fully inert (no checkbox, no modal, no new route, no extra keys, columns stay NULL).
+
+When active:
+
+- `GET /api/v1/auth/config` includes `termsUrl`, `privacyUrl` and `termsVersion`. The registration form then shows a required "I agree to the Terms of Service and the Privacy Policy" checkbox (both links open in a new tab) and the submit button stays disabled until it is checked.
+- `POST /api/v1/auth/register` must carry `acceptTerms: true`, otherwise it answers `400 { "error": "terms_not_accepted" }` and no user is created. The accepted version and time are stored with the new user (`users.terms_version`, `users.terms_accepted_at`, migration 061).
+- A user whose stored version differs from `LOGTIDE_TERMS_VERSION` (NULL included) is "terms pending". This covers users created before the feature was turned on (there is no backfill), OIDC/LDAP users who never saw the checkbox, and everyone after a version bump. `GET /api/v1/auth/me` then includes `user.termsAcceptanceRequired: true` and the app shows a blocking modal on the dashboard and onboarding pages with both links, an Accept button and a Log out option.
+- `POST /api/v1/auth/accept-terms` (session required, rate limited like login) with body `{ "version": "<current version>" }` records the acceptance. Any other version answers `409 { "error": "terms_version_mismatch" }`, so a tab left open across a version bump cannot accept terms the user did not see. Each acceptance is audited as `user.terms_accepted`.
+- While pending, `POST /api/v1/organizations`, `POST /api/v1/projects` and `POST /api/v1/projects/:id/api-keys` answer `403 { "error": "terms_not_accepted" }` (checked before the organization caps and the `projects.max` limit). Everything else keeps working: **ingestion with existing API keys is never blocked**, so bumping the version never breaks a running pipeline.
+
+To publish new terms, update the pages and change `LOGTIDE_TERMS_VERSION`, then restart the backend: every user is asked again on their next visit.
 
 ## Capabilities added for hosting
 
