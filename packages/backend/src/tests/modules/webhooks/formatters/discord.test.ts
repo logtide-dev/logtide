@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatOutbound } from '../../../../modules/webhooks/formatters/index.js';
+import { formatOutbound, discordFormatter } from '../../../../modules/webhooks/formatters/index.js';
 
 const DISCORD_URL = 'https://discord.com/api/webhooks/153199955952022743/token';
 const OTHER_URL = 'https://hooks.example.com/webhook';
@@ -148,5 +148,147 @@ describe('formatOutbound', () => {
     cyclic.self = cyclic;
     const body = formatOutbound(DISCORD_URL, cyclic) as any;
     expect(body.content ?? body.embeds).toBeTruthy();
+  });
+});
+
+describe('discordFormatter edge cases', () => {
+  function embedOf(body: unknown): any {
+    return (discordFormatter.format(body) as any).embeds[0];
+  }
+
+  it('renders primitive and undefined bodies as content blocks', () => {
+    expect((discordFormatter.format(null) as any).content).toContain('null');
+    expect((discordFormatter.format('plain text') as any).content).toContain('"plain text"');
+    // JSON.stringify(undefined) is undefined, so the String() fallback kicks in.
+    expect((discordFormatter.format(undefined) as any).content).toBe('```json\nundefined\n```');
+  });
+
+  it('treats an envelope with null data as a non-envelope', () => {
+    const body = discordFormatter.format({ type: 'channel.test', data: null }) as any;
+    expect(body.embeds).toBeUndefined();
+    expect(body.content).toContain('channel.test');
+  });
+
+  it('maps medium and low severities, and uppercase input, to their colors', () => {
+    expect(embedOf(envelope('channel.notification', { severity: 'medium' })).color).toBe(0xd97706);
+    expect(embedOf(envelope('channel.notification', { severity: 'LOW' })).color).toBe(0x2563eb);
+    expect(embedOf(envelope('channel.notification', { severity: 42 })).color).toBe(0x6b7280);
+  });
+
+  it('humanizes the type when there is no title and omits optional parts', () => {
+    const embed = embedOf({ type: 'custom.event_kind', data: {} });
+    expect(embed.title).toBe('Custom event kind');
+    expect(embed.description).toBeUndefined();
+    expect(embed.url).toBeUndefined();
+    expect(embed.timestamp).toBeUndefined();
+    expect(embed.footer.text).toBe('LogTide');
+    expect(embed.fields).toEqual([]);
+  });
+
+  it('renders the monitor response time in ms and skips missing fields', () => {
+    const embed = embedOf(
+      envelope('monitor.status_changed', {
+        status: 'down',
+        severity: 'high',
+        response_time_ms: 812,
+        downtime_duration: '',
+      })
+    );
+    const fields = Object.fromEntries(embed.fields.map((f: any) => [f.name, f.value]));
+    expect(fields['Response time']).toBe('812 ms');
+    expect(fields.Status).toBe('down');
+    expect(fields.Target).toBeUndefined();
+    expect(fields.Downtime).toBeUndefined();
+    expect(embed.color).toBe(0xea580c);
+  });
+
+  it('includes baseline fields for a rate-of-change alert', () => {
+    const embed = embedOf(
+      envelope('alert.triggered', {
+        alert_name: 'Spike',
+        log_count: 900,
+        threshold: 100,
+        time_window: 60,
+        baseline_metadata: { baseline_value: 100, current_value: 900, deviation_ratio: 9 },
+      })
+    );
+    expect(embed.fields.map((f: any) => [f.name, f.value])).toEqual([
+      ['Baseline', '100'],
+      ['Current', '900'],
+      ['Deviation', '9'],
+      ['Log count', '900'],
+      ['Threshold', '100'],
+      ['Time window', '60s'],
+    ]);
+  });
+
+  it('falls back to defaults for an alert with no data', () => {
+    const embed = embedOf(envelope('alert.triggered', {}));
+    expect(embed.title).toBe('Alert triggered: unnamed rule');
+    expect(embed.description).toBe('0 logs in 0s (threshold: 0)');
+    expect(embed.color).toBe(0xea580c);
+    expect(embed.fields).toEqual([]);
+  });
+
+  it('lists affected services for incident.created', () => {
+    const embed = embedOf(
+      envelope('incident.created', {
+        title: 'Brute force',
+        severity: 'critical',
+        incident_id: 'inc-1',
+        affected_services: ['auth', 'api'],
+      })
+    );
+    const fields = Object.fromEntries(embed.fields.map((f: any) => [f.name, f.value]));
+    expect(fields.Incident).toBe('inc-1');
+    expect(fields['Affected services']).toBe('auth, api');
+    expect(embed.color).toBe(0xdc2626);
+  });
+
+  it('skips affected services when the list is empty or not an array', () => {
+    const empty = embedOf(envelope('incident.created', { incident_id: 'inc-2', affected_services: [] }));
+    const notArray = embedOf(envelope('incident.created', { affected_services: 'auth' }));
+    expect(empty.fields.map((f: any) => f.name)).toEqual(['Incident']);
+    expect(notArray.fields).toEqual([]);
+  });
+
+  it('omits project and New fields for a recurring error without a project', () => {
+    const embed = embedOf(envelope('error.detected', { service: 'web', is_new: false }));
+    expect(embed.fields.map((f: any) => f.name)).toEqual(['Service']);
+  });
+
+  it('drops fields when the embed exceeds the total budget', () => {
+    const metadata: Record<string, unknown> = {};
+    for (let i = 0; i < 5; i++) metadata[`k${i}`] = 'v'.repeat(1500);
+    const embed = embedOf(
+      envelope('channel.notification', { title: 'Big', message: 'M'.repeat(3000), metadata })
+    );
+    expect(embed.fields.length).toBeLessThan(5);
+    expect(embed.description).toBe('M'.repeat(3000));
+    expect(JSON.stringify(embed).length).toBeLessThanOrEqual(6000);
+  });
+
+  it('shortens the description when fields alone cannot fit the budget', () => {
+    const link = `https://app.logtide.dev/${'p'.repeat(3000)}`;
+    const embed = embedOf(
+      envelope('channel.notification', { title: 'Long link', message: 'M'.repeat(4000), link })
+    );
+    expect(embed.url).toBe(link);
+    expect(embed.description.endsWith('...')).toBe(true);
+    expect(embed.description.length).toBeLessThan(4000);
+    expect(JSON.stringify(embed).length).toBeLessThanOrEqual(6000);
+  });
+
+  it('falls back to a content block when building the embed throws', () => {
+    const data: Record<string, unknown> = {};
+    Object.defineProperty(data, 'title', {
+      enumerable: false,
+      get() {
+        throw new Error('boom');
+      },
+    });
+    const body = discordFormatter.format({ type: 'channel.test', data }) as any;
+    expect(body.embeds).toBeUndefined();
+    expect(body.content).toContain('channel.test');
   });
 });
