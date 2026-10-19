@@ -1,6 +1,7 @@
 import type { Organization, OrganizationWithRole, OrganizationMemberWithUser, OrgRole } from '@logtide/shared';
 import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import { apiErrorMessage } from '$lib/utils/email-verification';
 
 export type { OrganizationMemberWithUser } from '@logtide/shared';
 
@@ -35,7 +36,7 @@ export class OrganizationsAPI {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(error.error || `HTTP ${response.status}`);
+      throw new Error(apiErrorMessage(error.error, `HTTP ${response.status}`));
     }
 
     if (response.status === 204) {

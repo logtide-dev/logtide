@@ -3,6 +3,7 @@ import {
   shouldShowVerifyBanner,
   apiErrorMessage,
   EMAIL_NOT_VERIFIED_MESSAGE,
+  TERMS_NOT_ACCEPTED_MESSAGE,
 } from './email-verification';
 
 describe('shouldShowVerifyBanner', () => {
@@ -24,6 +25,10 @@ describe('shouldShowVerifyBanner', () => {
 describe('apiErrorMessage', () => {
   it('maps email_not_verified to a readable message', () => {
     expect(apiErrorMessage('email_not_verified', 'x')).toBe(EMAIL_NOT_VERIFIED_MESSAGE);
+  });
+
+  it('maps terms_not_accepted to a readable message', () => {
+    expect(apiErrorMessage('terms_not_accepted', 'x')).toBe(TERMS_NOT_ACCEPTED_MESSAGE);
   });
 
   it('passes other errors through and falls back when empty', () => {
