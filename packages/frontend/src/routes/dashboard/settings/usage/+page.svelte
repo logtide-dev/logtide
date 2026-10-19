@@ -226,8 +226,8 @@
     return 'bg-green-500';
   }
 
-  // Limited first, unlimited after; null per-signal quotas hidden when the plan
-  // caps a quota (see visibleCapabilities).
+  // Limited first, unlimited after; null quotas hidden when the combined
+  // telemetry quota is capped (see visibleCapabilities).
   let sortedCapabilities = $derived(visibleCapabilities(capabilities));
 
   let hasAnyLimit = $derived(capabilities.some((c) => c.limit !== null));
@@ -300,7 +300,7 @@
 
     <Card>
       <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle class="text-sm font-medium">Bytes ingested</CardTitle>
+        <CardTitle class="text-sm font-medium">Log bytes ingested</CardTitle>
         <BarChart3 class="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
