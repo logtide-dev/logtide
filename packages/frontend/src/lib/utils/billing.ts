@@ -1,0 +1,169 @@
+import type { BillingCurrentPlan, BillingInterval, BillingPlanId } from '@logtide/shared';
+
+/** What a plan card offers, given the org's current plan. */
+export type PlanCta = 'current' | 'subscribe' | 'switch' | 'downgrade-to-free' | 'opening-soon' | 'none';
+
+export type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
+
+export interface BadgeInfo {
+  label: string;
+  variant: BadgeVariant;
+}
+
+/** The combined quota of hosted plans, used to tell a custom plan apart. */
+export const TELEMETRY_QUOTA = 'telemetry.max_bytes_monthly';
+
+/**
+ * CTA of one plan card.
+ *
+ * - No subscription (free or grandfathered): paid cards offer Subscribe, or
+ *   "opening soon" while sales are closed. A grandfathered org buys Pro through
+ *   the same checkout (the billing service defers the first charge to the end
+ *   of the grant).
+ * - Subscription: the same plan and interval is "current", the free card
+ *   cancels at period end, any other paid card switches. Switching is not a
+ *   checkout, so it does not depend on checkoutEnabled.
+ * - A subscription already set to cancel offers nothing but its own card:
+ *   switching would keep the pending cancellation and end the new plan at the
+ *   period end, so the user resumes first (Resume lives on the plan card).
+ * - Custom plans (limits set by LogTide) offer nothing.
+ */
+export function planCta(input: {
+  card: BillingPlanId;
+  current: BillingCurrentPlan;
+  checkoutEnabled: boolean;
+  interval: BillingInterval;
+  isCustom: boolean;
+}): PlanCta {
+  const { card, current, checkoutEnabled, interval, isCustom } = input;
+  if (isCustom) return 'none';
+
+  if (current.source !== 'subscription') {
+    if (card === 'free') return current.source === 'free' ? 'current' : 'none';
+    return checkoutEnabled ? 'subscribe' : 'opening-soon';
+  }
+
+  if (card === current.plan && interval === current.interval) return 'current';
+  if (current.cancelAtPeriodEnd) return 'none';
+  if (card === 'free') return 'downgrade-to-free';
+  return 'switch';
+}
+
+/** Money from minor units, en-US, honoring the currency's decimal places. */
+export function formatMoney(amountMinor: number, currency: string): string {
+  const code = currency.toUpperCase();
+  try {
+    const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: code });
+    const digits = fmt.resolvedOptions().maximumFractionDigits ?? 2;
+    return fmt.format(amountMinor / 10 ** digits);
+  } catch {
+    return `${(amountMinor / 100).toFixed(2)} ${code}`;
+  }
+}
+
+/** Whole percent saved by paying yearly instead of twelve months. */
+export function annualSavingPercent(month: number, year: number): number {
+  if (month <= 0) return 0;
+  return Math.max(0, Math.round((1 - year / (month * 12)) * 100));
+}
+
+/** "Jan 17, 2027", in the viewer's time zone. */
+export function formatBillingDate(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/** Status badge of the current plan. */
+export function statusBadge(current: BillingCurrentPlan): BadgeInfo {
+  if (current.source === 'free') return { label: 'Active', variant: 'secondary' };
+  if (current.source === 'grandfathered') {
+    const until = formatBillingDate(current.grandfatheredUntil);
+    return { label: until ? `Free until ${until}` : 'Included', variant: 'secondary' };
+  }
+
+  switch (current.status) {
+    case 'past_due':
+      return { label: 'Past due', variant: 'destructive' };
+    case 'unpaid':
+      return { label: 'Unpaid', variant: 'destructive' };
+    case 'incomplete':
+      return { label: 'Payment pending', variant: 'outline' };
+  }
+
+  const end = formatBillingDate(current.currentPeriodEnd);
+  if (current.cancelAtPeriodEnd && end) return { label: `Cancels on ${end}`, variant: 'outline' };
+
+  // A grandfathered org that bought Pro is in a trial that ends with the grant.
+  const until = formatBillingDate(current.grandfatheredUntil);
+  if (current.status === 'trialing' && until) return { label: `Free until ${until}`, variant: 'secondary' };
+
+  return { label: 'Active', variant: 'default' };
+}
+
+const ERROR_MESSAGES: Record<string, string> = {
+  checkout_disabled: 'Paid plans are opening soon',
+  billing_unavailable: 'Billing is temporarily unavailable',
+  subscription_exists: 'This organization already has a subscription',
+  payment_action_required: 'Your bank needs to confirm the payment',
+  billing_forbidden: 'Only organization owners and admins can manage billing',
+  billing_not_configured: 'Billing is not fully set up yet',
+  no_subscription: 'This organization has no active subscription',
+  no_customer: 'Subscribe to a plan before adding a card',
+  same_plan: 'You are already on this plan',
+};
+
+/** Plain message for a billing error code (toasts, inline errors). */
+export function billingErrorMessage(code: string): string {
+  return ERROR_MESSAGES[code] ?? 'Something went wrong with billing';
+}
+
+const CARD_BRANDS: Record<string, string> = {
+  visa: 'Visa',
+  mastercard: 'Mastercard',
+  amex: 'American Express',
+  discover: 'Discover',
+  diners: 'Diners Club',
+  jcb: 'JCB',
+  unionpay: 'UnionPay',
+  cartes_bancaires: 'Cartes Bancaires',
+};
+
+export function formatCardBrand(brand: string): string {
+  if (!brand) return 'Card';
+  return CARD_BRANDS[brand.toLowerCase()] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
+}
+
+/** Badge of a Stripe invoice status. */
+export function invoiceStatusBadge(status: string | null): BadgeInfo {
+  switch (status) {
+    case 'paid':
+      return { label: 'Paid', variant: 'secondary' };
+    case 'open':
+      return { label: 'Open', variant: 'outline' };
+    case 'draft':
+      return { label: 'Draft', variant: 'outline' };
+    case 'void':
+      return { label: 'Void', variant: 'outline' };
+    case 'uncollectible':
+      return { label: 'Uncollectible', variant: 'destructive' };
+    default:
+      return { label: 'Unknown', variant: 'outline' };
+  }
+}
+
+/**
+ * A "custom" plan is one LogTide manages by hand: the billing service reports
+ * plain Free (no subscription, no grant) but the org's combined telemetry quota
+ * is unlimited. Unknown capabilities (not loaded, or no telemetry row) are
+ * never custom, so a failed usage call cannot hide the plan picker.
+ */
+export function isCustomPlan(
+  current: BillingCurrentPlan,
+  capabilities: Array<{ capability: string; limit: number | null }> | null
+): boolean {
+  if (current.source !== 'free' || current.plan !== 'free') return false;
+  const telemetry = capabilities?.find((c) => c.capability === TELEMETRY_QUOTA);
+  return telemetry !== undefined && telemetry.limit === null;
+}

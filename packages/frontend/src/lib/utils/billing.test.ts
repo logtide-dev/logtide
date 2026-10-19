@@ -1,0 +1,239 @@
+import { describe, it, expect } from 'vitest';
+import type { BillingCurrentPlan } from '@logtide/shared';
+import {
+  planCta,
+  formatMoney,
+  annualSavingPercent,
+  statusBadge,
+  billingErrorMessage,
+  formatCardBrand,
+  invoiceStatusBadge,
+  isCustomPlan,
+} from './billing';
+
+const PERIOD_END = '2027-01-17T12:00:00.000Z';
+
+const FREE: BillingCurrentPlan = {
+  plan: 'free',
+  source: 'free',
+  interval: null,
+  status: null,
+  currentPeriodEnd: null,
+  cancelAtPeriodEnd: false,
+  grandfatheredUntil: null,
+  pastDueSince: null,
+};
+
+const PRO_MONTH: BillingCurrentPlan = {
+  plan: 'pro',
+  source: 'subscription',
+  interval: 'month',
+  status: 'active',
+  currentPeriodEnd: PERIOD_END,
+  cancelAtPeriodEnd: false,
+  grandfatheredUntil: null,
+  pastDueSince: null,
+};
+
+const GRANDFATHERED: BillingCurrentPlan = {
+  plan: 'pro',
+  source: 'grandfathered',
+  interval: null,
+  status: null,
+  currentPeriodEnd: null,
+  cancelAtPeriodEnd: false,
+  grandfatheredUntil: PERIOD_END,
+  pastDueSince: null,
+};
+
+const base = { checkoutEnabled: true, interval: 'month' as const, isCustom: false };
+
+describe('planCta', () => {
+  it('free org + pro card -> subscribe', () => {
+    expect(planCta({ ...base, card: 'pro', current: FREE })).toBe('subscribe');
+  });
+
+  it('free org + pro card with checkout disabled -> opening-soon', () => {
+    expect(planCta({ ...base, checkoutEnabled: false, card: 'pro', current: FREE })).toBe('opening-soon');
+  });
+
+  it('free org + free card -> current', () => {
+    expect(planCta({ ...base, card: 'free', current: FREE })).toBe('current');
+  });
+
+  it('pro month subscription + pro card month -> current', () => {
+    expect(planCta({ ...base, card: 'pro', current: PRO_MONTH })).toBe('current');
+  });
+
+  it('pro month subscription + pro card year -> switch', () => {
+    expect(planCta({ ...base, interval: 'year', card: 'pro', current: PRO_MONTH })).toBe('switch');
+  });
+
+  it('pro month subscription + pro_plus card -> switch', () => {
+    expect(planCta({ ...base, card: 'pro_plus', current: PRO_MONTH })).toBe('switch');
+  });
+
+  it('switching does not depend on checkoutEnabled (it is not a checkout)', () => {
+    expect(planCta({ ...base, checkoutEnabled: false, card: 'pro_plus', current: PRO_MONTH })).toBe('switch');
+  });
+
+  it('pro month subscription + free card -> downgrade-to-free', () => {
+    expect(planCta({ ...base, card: 'free', current: PRO_MONTH })).toBe('downgrade-to-free');
+  });
+
+  it('already cancelling + free card -> none', () => {
+    expect(planCta({ ...base, card: 'free', current: { ...PRO_MONTH, cancelAtPeriodEnd: true } })).toBe('none');
+  });
+
+  it('already cancelling + another paid card -> none (resume first)', () => {
+    expect(planCta({ ...base, card: 'pro_plus', current: { ...PRO_MONTH, cancelAtPeriodEnd: true } })).toBe('none');
+  });
+
+  it('already cancelling + its own card stays current', () => {
+    expect(planCta({ ...base, card: 'pro', current: { ...PRO_MONTH, cancelAtPeriodEnd: true } })).toBe('current');
+  });
+
+  it('grandfathered + pro card -> subscribe', () => {
+    expect(planCta({ ...base, card: 'pro', current: GRANDFATHERED })).toBe('subscribe');
+  });
+
+  it('grandfathered + pro_plus card -> subscribe', () => {
+    expect(planCta({ ...base, card: 'pro_plus', current: GRANDFATHERED })).toBe('subscribe');
+  });
+
+  it('grandfathered + free card -> none (nothing to cancel)', () => {
+    expect(planCta({ ...base, card: 'free', current: GRANDFATHERED })).toBe('none');
+  });
+
+  it('isCustom -> none for every card', () => {
+    for (const card of ['free', 'pro', 'pro_plus'] as const) {
+      for (const current of [FREE, PRO_MONTH, GRANDFATHERED]) {
+        expect(planCta({ ...base, isCustom: true, card, current })).toBe('none');
+      }
+    }
+  });
+});
+
+describe('formatMoney', () => {
+  it('formats USD minor units', () => {
+    expect(formatMoney(2900, 'usd')).toBe('$29.00');
+    expect(formatMoney(94800, 'usd')).toBe('$948.00');
+    expect(formatMoney(0, 'usd')).toBe('$0.00');
+  });
+
+  it('formats thousands with en-US separators', () => {
+    expect(formatMoney(123456, 'usd')).toBe('$1,234.56');
+  });
+
+  it('respects zero-decimal currencies', () => {
+    expect(formatMoney(500, 'jpy')).toBe('¥500');
+  });
+
+  it('falls back to a plain amount for an unknown currency code', () => {
+    expect(formatMoney(2900, 'not a code')).toBe('29.00 NOT A CODE');
+  });
+});
+
+describe('annualSavingPercent', () => {
+  it('rounds the saving of the annual price', () => {
+    expect(annualSavingPercent(2900, 28800)).toBe(17);
+    expect(annualSavingPercent(9900, 94800)).toBe(20);
+  });
+
+  it('never goes negative and survives a zero monthly price', () => {
+    expect(annualSavingPercent(1000, 13000)).toBe(0);
+    expect(annualSavingPercent(0, 0)).toBe(0);
+  });
+});
+
+describe('statusBadge', () => {
+  it('active subscription', () => {
+    expect(statusBadge(PRO_MONTH)).toEqual({ label: 'Active', variant: 'default' });
+  });
+
+  it('cancel at period end shows the end date', () => {
+    expect(statusBadge({ ...PRO_MONTH, cancelAtPeriodEnd: true }).label).toBe('Cancels on Jan 17, 2027');
+  });
+
+  it('past due is destructive', () => {
+    expect(statusBadge({ ...PRO_MONTH, status: 'past_due' })).toEqual({ label: 'Past due', variant: 'destructive' });
+  });
+
+  it('past due wins over a pending cancellation', () => {
+    expect(statusBadge({ ...PRO_MONTH, status: 'past_due', cancelAtPeriodEnd: true }).label).toBe('Past due');
+  });
+
+  it('grandfathered shows the grant end', () => {
+    expect(statusBadge(GRANDFATHERED).label).toBe('Free until Jan 17, 2027');
+  });
+
+  it('a grandfathered org that bought pro stays free until the grant ends', () => {
+    expect(
+      statusBadge({ ...PRO_MONTH, status: 'trialing', grandfatheredUntil: PERIOD_END }).label
+    ).toBe('Free until Jan 17, 2027');
+  });
+
+  it('free plan', () => {
+    expect(statusBadge(FREE)).toEqual({ label: 'Active', variant: 'secondary' });
+  });
+});
+
+describe('billingErrorMessage', () => {
+  it('maps the known codes', () => {
+    expect(billingErrorMessage('checkout_disabled')).toBe('Paid plans are opening soon');
+    expect(billingErrorMessage('billing_unavailable')).toBe('Billing is temporarily unavailable');
+    expect(billingErrorMessage('subscription_exists')).toBe('This organization already has a subscription');
+    expect(billingErrorMessage('payment_action_required')).toBe('Your bank needs to confirm the payment');
+  });
+
+  it('falls back to a generic message', () => {
+    expect(billingErrorMessage('something_new')).toBe('Something went wrong with billing');
+    expect(billingErrorMessage('')).toBe('Something went wrong with billing');
+  });
+});
+
+describe('formatCardBrand', () => {
+  it('names the common brands', () => {
+    expect(formatCardBrand('visa')).toBe('Visa');
+    expect(formatCardBrand('amex')).toBe('American Express');
+    expect(formatCardBrand('mastercard')).toBe('Mastercard');
+  });
+
+  it('capitalizes anything else', () => {
+    expect(formatCardBrand('somecard')).toBe('Somecard');
+    expect(formatCardBrand('')).toBe('Card');
+  });
+});
+
+describe('invoiceStatusBadge', () => {
+  it('maps Stripe invoice statuses', () => {
+    expect(invoiceStatusBadge('paid')).toEqual({ label: 'Paid', variant: 'secondary' });
+    expect(invoiceStatusBadge('open')).toEqual({ label: 'Open', variant: 'outline' });
+    expect(invoiceStatusBadge('uncollectible')).toEqual({ label: 'Uncollectible', variant: 'destructive' });
+    expect(invoiceStatusBadge(null)).toEqual({ label: 'Unknown', variant: 'outline' });
+  });
+});
+
+describe('isCustomPlan', () => {
+  const telemetry = (limit: number | null) => [
+    { capability: 'telemetry.max_bytes_monthly', kind: 'quota' as const, current: 0, limit, description: '' },
+  ];
+
+  it('free with no subscription and an unlimited telemetry quota is custom', () => {
+    expect(isCustomPlan(FREE, telemetry(null))).toBe(true);
+  });
+
+  it('a capped telemetry quota is the regular free plan', () => {
+    expect(isCustomPlan(FREE, telemetry(10_737_418_240))).toBe(false);
+  });
+
+  it('unknown capabilities are never custom', () => {
+    expect(isCustomPlan(FREE, null)).toBe(false);
+    expect(isCustomPlan(FREE, [])).toBe(false);
+  });
+
+  it('subscribed and grandfathered orgs are never custom', () => {
+    expect(isCustomPlan(PRO_MONTH, telemetry(null))).toBe(false);
+    expect(isCustomPlan(GRANDFATHERED, telemetry(null))).toBe(false);
+  });
+});
