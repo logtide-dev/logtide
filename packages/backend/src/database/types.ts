@@ -100,6 +100,10 @@ export interface UsersTable {
   last_login: Timestamp | null;
   // NULL = unverified. Defaults to NOW(); only enforced when REQUIRE_EMAIL_VERIFICATION=true.
   email_verified_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  // Terms/Privacy acceptance (migration 061). NULL = never accepted. Only read
+  // when the LOGTIDE_TERMS_* hosting seam is configured.
+  terms_accepted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  terms_version: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export interface EmailVerificationTokensTable {
