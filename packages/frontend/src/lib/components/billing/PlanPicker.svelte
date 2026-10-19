@@ -141,7 +141,7 @@
             : ''}"
         >
           <div class="flex items-center justify-between gap-2">
-            <h3 class="text-lg font-semibold">{plan.name}</h3>
+            <h4 class="text-lg font-semibold">{plan.name}</h4>
             {#if cta === 'current'}
               <Badge>Current</Badge>
             {:else if interval === 'year' && saving > 0}

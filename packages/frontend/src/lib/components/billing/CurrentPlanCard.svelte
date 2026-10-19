@@ -153,7 +153,6 @@
         {:else if current.source === 'grandfathered'}
           <p class="text-sm text-muted-foreground">
             Subscribe before {formatBillingDate(current.grandfatheredUntil)} to keep Pro without interruption.
-            Choosing Pro now is not charged until then.
           </p>
         {:else}
           <p class="text-sm text-muted-foreground">
