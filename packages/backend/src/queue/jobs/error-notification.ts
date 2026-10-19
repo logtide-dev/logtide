@@ -6,7 +6,7 @@
  * Now supports notification channels for webhooks and custom email recipients.
  */
 
-import nodemailer from 'nodemailer';
+import nodemailer, { type TransportOptions } from 'nodemailer';
 import type { IJob } from '../abstractions/types.js';
 import { config, isSmtpConfigured } from '../../config/index.js';
 import { db } from '../../database/connection.js';
@@ -50,7 +50,7 @@ function createTransporter() {
       pass: config.SMTP_PASS,
     };
   }
-  return nodemailer.createTransport(opts as nodemailer.TransportOptions);
+  return nodemailer.createTransport(opts as TransportOptions);
 }
 
 

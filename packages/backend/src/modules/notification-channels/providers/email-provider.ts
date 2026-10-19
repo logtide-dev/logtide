@@ -3,18 +3,18 @@
  * Sends notifications via SMTP using nodemailer
  */
 
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { config } from '../../../config/index.js';
 import type { NotificationProvider, NotificationContext, DeliveryResult } from './interface.js';
 import type { EmailChannelConfig, ChannelConfig } from '@logtide/shared';
 
 export class EmailProvider implements NotificationProvider {
   readonly type = 'email' as const;
-  private transporter: nodemailer.Transporter | null = null;
+  private transporter: Transporter | null = null;
 
   constructor() {
     if (config.SMTP_HOST) {
-      const transportOpts: nodemailer.TransportOptions & { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } } = {
+      const transportOpts: TransportOptions & { host: string; port: number; secure: boolean; auth?: { user: string; pass: string } } = {
         host: config.SMTP_HOST,
         port: config.SMTP_PORT || 587,
         secure: config.SMTP_SECURE || false,
