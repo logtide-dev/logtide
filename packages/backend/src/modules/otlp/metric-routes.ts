@@ -198,11 +198,13 @@ const otlpMetricRoutes: FastifyPluginAsync = async (fastify) => {
           };
         }
 
-        // Capability: hard-block metrics ingestion when over the datapoint quota.
-        // Blocks metrics only; logs and spans have their own quotas.
+        // Capability: hard-block metrics ingestion when over the datapoint quota
+        // (metrics only; logs and spans have their own quotas) or over the
+        // combined telemetry byte quota (shared by logs, traces and metrics).
         await context.runAsSystem('otlp:metric-ingest', async () => {
           await context.with({ organizationId: project.organization_id }, async () => {
             await assertWithinUsageQuota('metrics.max_datapoints_monthly');
+            await assertWithinUsageQuota('telemetry.max_bytes_monthly');
             await metricsService.ingestMetrics(records, projectId, project.organization_id);
           });
         });

@@ -222,11 +222,13 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
           };
         }
 
-        // Capability: hard-block span ingestion when over the tracing quota (#214).
+        // Capability: hard-block span ingestion when over the tracing quota (#214)
+        // or the combined telemetry byte quota.
         // Establish the org context so assertWithinUsageQuota can read it, then ingest.
         await context.runAsSystem('otlp:trace-ingest', async () => {
           await context.with({ organizationId: project.organization_id }, async () => {
             await assertWithinUsageQuota('tracing.max_spans_monthly');
+            await assertWithinUsageQuota('telemetry.max_bytes_monthly');
             await tracesService.ingestSpans(spans, traces, projectId, project.organization_id);
           });
         });

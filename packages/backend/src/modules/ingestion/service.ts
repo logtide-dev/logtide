@@ -153,6 +153,7 @@ export class IngestionService {
       await assertWithinUsageQuota('ingestion.max_bytes_monthly');
       await assertWithinUsageQuota('ingestion.max_events_monthly');
       await assertWithinUsageQuota('storage.max_bytes');
+      await assertWithinUsageQuota('telemetry.max_bytes_monthly');
     }
 
     // Convert logs to reservoir LogRecord format
