@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { config } from '../../config/index.js';
 import { generateInvitationEmail } from '../../lib/email-templates.js';
 
@@ -12,7 +12,7 @@ export interface InvitationEmailData {
 }
 
 // Create email transporter (reused across notifications)
-let emailTransporter: nodemailer.Transporter | null = null;
+let emailTransporter: Transporter | null = null;
 
 function getEmailTransporter() {
   if (!emailTransporter) {
@@ -34,7 +34,7 @@ function getEmailTransporter() {
       };
     }
 
-    emailTransporter = nodemailer.createTransport(transportOpts as nodemailer.TransportOptions);
+    emailTransporter = nodemailer.createTransport(transportOpts as TransportOptions);
 
     console.log(`Email transporter configured: ${config.SMTP_HOST}:${config.SMTP_PORT}`);
   }

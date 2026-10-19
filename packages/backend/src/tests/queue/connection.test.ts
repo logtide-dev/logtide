@@ -78,7 +78,7 @@ describe('Queue Connection Module', () => {
 
             // Mock ioredis
             vi.doMock('ioredis', () => ({
-                default: vi.fn().mockImplementation(() => mockRedis),
+                default: vi.fn().mockImplementation(function () { return mockRedis; }),
             }));
 
             // Mock config with Redis

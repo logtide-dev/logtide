@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock Redis before importing the module
 vi.mock('ioredis', () => {
-    const mockRedis = vi.fn().mockImplementation(() => ({
+    const mockRedis = vi.fn().mockImplementation(function () { return {
         status: 'ready',
         on: vi.fn(),
         quit: vi.fn().mockResolvedValue(undefined),
-    }));
+    }; });
     return { default: mockRedis };
 });
 
@@ -18,32 +18,40 @@ vi.mock('pg', async () => {
     }
     return {
         default: {
-            Pool: vi.fn().mockImplementation(() => new MockPool()),
+            Pool: vi.fn().mockImplementation(function () { return new MockPool(); }),
         },
     };
 });
 
 // Mock adapters
 vi.mock('../../queue/adapters/bullmq-adapter.js', () => ({
-    BullMQQueueAdapter: vi.fn().mockImplementation((name) => ({
-        name,
-        close: vi.fn().mockResolvedValue(undefined),
-    })),
-    BullMQWorkerAdapter: vi.fn().mockImplementation((name) => ({
-        name,
-        close: vi.fn().mockResolvedValue(undefined),
-    })),
+    BullMQQueueAdapter: vi.fn().mockImplementation(function (name) {
+        return {
+            name,
+            close: vi.fn().mockResolvedValue(undefined),
+        };
+    }),
+    BullMQWorkerAdapter: vi.fn().mockImplementation(function (name) {
+        return {
+            name,
+            close: vi.fn().mockResolvedValue(undefined),
+        };
+    }),
 }));
 
 vi.mock('../../queue/adapters/graphile-adapter.js', () => ({
-    GraphileQueueAdapter: vi.fn().mockImplementation((name) => ({
-        name,
-        close: vi.fn().mockResolvedValue(undefined),
-    })),
-    GraphileWorkerAdapter: vi.fn().mockImplementation((name) => ({
-        name,
-        close: vi.fn().mockResolvedValue(undefined),
-    })),
+    GraphileQueueAdapter: vi.fn().mockImplementation(function (name) {
+        return {
+            name,
+            close: vi.fn().mockResolvedValue(undefined),
+        };
+    }),
+    GraphileWorkerAdapter: vi.fn().mockImplementation(function (name) {
+        return {
+            name,
+            close: vi.fn().mockResolvedValue(undefined),
+        };
+    }),
     GraphileWorkerManager: {
         getInstance: vi.fn().mockReturnValue({
             start: vi.fn().mockResolvedValue(undefined),
