@@ -152,7 +152,6 @@ All of them default to unlimited and can be set per organization through entitle
 | `projects.max` | limit | Maximum number of active projects (soft-deleted ones do not count). Enforced on `POST /api/v1/projects` and on restoring a soft-deleted project (`POST /api/v1/projects/:id/restore`); both answer `403` at the limit |
 | `quota.grace_percent` | limit | Overage allowed above every quota of the organization before hard-blocking. `null` or `0` means no grace |
 | `metrics.max_datapoints_monthly` | quota | Month-to-date ingested OTLP metric datapoints. Over the limit `POST /v1/otlp/metrics` answers `429` while logs and spans keep flowing |
-
 | `telemetry.max_bytes_monthly` | quota | Month-to-date ingested bytes across logs, traces and metrics combined. Over the limit log ingestion (`POST /api/v1/ingest` and every other log path, including `POST /v1/otlp/logs`), `POST /v1/otlp/traces` and `POST /v1/otlp/metrics` all answer `429` |
 
 Metric datapoints are now metered as the `metrics.ingested.datapoints` usage type (only datapoints that were actually stored). Like spans, this follows `METERING_ENABLED`.
