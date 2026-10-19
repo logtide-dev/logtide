@@ -111,6 +111,13 @@ export interface EmailVerificationTokensTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface OrganizationCreationLogTable {
+  id: Generated<string>;
+  user_id: string;
+  organization_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
 export interface SessionsTable {
   id: Generated<string>;
   user_id: string;
@@ -1183,6 +1190,7 @@ export interface Database {
   sessions: SessionsTable;
   stream_tickets: StreamTicketsTable;
   email_verification_tokens: EmailVerificationTokensTable;
+  organization_creation_log: OrganizationCreationLogTable;
   organizations: OrganizationsTable;
   organization_members: OrganizationMembersTable;
   organization_invitations: OrganizationInvitationsTable;
