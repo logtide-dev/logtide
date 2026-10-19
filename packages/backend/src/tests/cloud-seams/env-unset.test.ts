@@ -159,6 +159,19 @@ describe('hosting seams with all env unset', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  it('billing routes are 404 when the seam is unset', async () => {
+    const ctx = await createTestContext();
+    const session = await createTestSession(ctx.user.id);
+    for (const [method, tail] of [['GET', ''], ['GET', '/invoices'], ['POST', '/checkout'], ['POST', '/cancel']] as const) {
+      const res = await app.inject({
+        method,
+        url: `/api/v1/organizations/${ctx.organization.id}/billing${tail}`,
+        headers: { authorization: `Bearer ${session.token}` },
+      });
+      expect(res.statusCode, `${method} ${tail}`).toBe(404);
+    }
+  });
+
   it('/auth/config has no seam keys', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/auth/config' });
     expect(res.statusCode).toBe(200);
