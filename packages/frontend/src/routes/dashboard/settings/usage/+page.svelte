@@ -29,7 +29,7 @@
   import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Gauge from '@lucide/svelte/icons/gauge';
-  import { visibleCapabilities } from '$lib/utils/usage-capabilities';
+  import { visibleCapabilities, formatBytes, capPercent, capBarColor } from '$lib/utils/usage-capabilities';
 
   // TODO(#214): entitlements/limits editor goes here once feature #214 backend is shipped
 
@@ -162,13 +162,6 @@
     return [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
   });
 
-  function formatBytes(n: number): string {
-    if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(2)} GB`;
-    if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(2)} MB`;
-    if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
-    return `${n} B`;
-  }
-
   function formatCount(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -208,22 +201,6 @@
 
   function capFormat(c: CapabilityUsage, n: number): string {
     return CAP_META[c.capability]?.unit === 'bytes' ? formatBytes(n) : formatCount(n);
-  }
-
-  // Only a null limit means unlimited (no percentage). A limit of 0 is the
-  // opposite (fully restricted), so it must render as at/over limit, not unlimited.
-  // Capped at 999 to avoid runaway labels.
-  function capPercent(c: CapabilityUsage): number | null {
-    if (c.limit === null) return null;
-    if (c.limit <= 0) return c.current > 0 ? 999 : 100;
-    return Math.min(999, Math.round((c.current / c.limit) * 100));
-  }
-
-  // green < 80%, amber 80-99%, red >= 100% (over limit).
-  function capBarColor(pct: number): string {
-    if (pct >= 100) return 'bg-destructive';
-    if (pct >= 80) return 'bg-amber-500';
-    return 'bg-green-500';
   }
 
   // Limited first, unlimited after; null quotas hidden when the combined
