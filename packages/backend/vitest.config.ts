@@ -11,6 +11,7 @@ export default defineConfig({
         exclude: ['node_modules', 'dist'],
         coverage: {
             provider: 'v8',
+            include: ['src/**/*.ts'],
             reporter: ['text', 'json', 'json-summary', 'html', 'lcov'],
             reportsDirectory: './coverage',
             exclude: [
@@ -43,12 +44,7 @@ export default defineConfig({
         testTimeout: 30000, // 30 seconds for integration tests
         hookTimeout: 30000,
         teardownTimeout: 10000,
-        poolOptions: {
-            threads: {
-                singleThread: true, // Run tests sequentially to avoid DB conflicts
-            },
-        },
-        fileParallelism: false, // Ensure files run sequentially too
+        fileParallelism: false, // Run test files sequentially to avoid DB conflicts
     },
     resolve: {
         alias: {

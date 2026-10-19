@@ -12,7 +12,7 @@ vi.mock('pg', () => {
   };
   return {
     default: {
-      Client: vi.fn(() => mockClient),
+      Client: vi.fn(function () { return mockClient; }),
     },
   };
 });
