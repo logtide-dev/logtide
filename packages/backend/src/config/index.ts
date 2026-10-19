@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { z } from 'zod';
+import { applyDefaultOverrides } from '../capabilities/registry.js';
 
 // Load environment variables
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -14,6 +15,66 @@ if (process.env.NODE_ENV === 'test') {
   // Load .env from project root for development/production
   const envPath = path.resolve(__dirname, '../../../../.env');
   dotenv.config({ path: envPath, debug: false });
+}
+
+/** Boot-time validation of the two env vars. Returns an error message, or null. */
+function validateUpgradeConfig(env: { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGRADE_SIGNING_SECRET?: string }): string | null {
+  const url = env.LOGTIDE_UPGRADE_URL;
+  const secret = env.LOGTIDE_UPGRADE_SIGNING_SECRET;
+  if (!url && !secret) return null;
+  if (!url || !secret) {
+    return 'LOGTIDE_UPGRADE_URL and LOGTIDE_UPGRADE_SIGNING_SECRET must be set together (only one is set)';
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'LOGTIDE_UPGRADE_URL must be a valid absolute URL';
+  }
+  const localHttp =
+    parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+  if (parsed.protocol !== 'https:' && !localHttp) {
+    return 'LOGTIDE_UPGRADE_URL must use https (http is allowed only for localhost or 127.0.0.1)';
+  }
+  if (secret.length < 32) {
+    return 'LOGTIDE_UPGRADE_SIGNING_SECRET must be at least 32 characters';
+  }
+  return null;
+}
+
+type TermsEnv = { LOGTIDE_TERMS_URL?: string; LOGTIDE_PRIVACY_URL?: string; LOGTIDE_TERMS_VERSION?: string };
+const TERMS_ENV_NAMES = ['LOGTIDE_TERMS_URL', 'LOGTIDE_PRIVACY_URL', 'LOGTIDE_TERMS_VERSION'] as const;
+
+/** Boot-time validation of the three terms env vars. Returns [field, message] issues. */
+function validateTermsConfig(env: TermsEnv): Array<[keyof TermsEnv, string]> {
+  const missing = TERMS_ENV_NAMES.filter((name) => env[name] === undefined);
+  if (missing.length === TERMS_ENV_NAMES.length) return [];
+  if (missing.length > 0) {
+    return [[
+      missing[0],
+      `LOGTIDE_TERMS_URL, LOGTIDE_PRIVACY_URL and LOGTIDE_TERMS_VERSION must be set together (missing: ${missing.join(', ')})`,
+    ]];
+  }
+  const issues: Array<[keyof TermsEnv, string]> = [];
+  for (const name of ['LOGTIDE_TERMS_URL', 'LOGTIDE_PRIVACY_URL'] as const) {
+    let parsed: URL;
+    try {
+      parsed = new URL(env[name] as string);
+    } catch {
+      issues.push([name, `${name} must be a valid absolute URL`]);
+      continue;
+    }
+    const localHttp =
+      parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+    if (parsed.protocol !== 'https:' && !localHttp) {
+      issues.push([name, `${name} must use https (http is allowed only for localhost or 127.0.0.1)`]);
+    }
+  }
+  const version = env.LOGTIDE_TERMS_VERSION as string;
+  if (version.trim() === '' || version.length > 64) {
+    issues.push(['LOGTIDE_TERMS_VERSION', 'LOGTIDE_TERMS_VERSION must be a non-empty string of at most 64 characters']);
+  }
+  return issues;
 }
 
 const configSchema = z.object({
@@ -70,6 +131,77 @@ const configSchema = z.object({
   QUOTA_EVALUATOR_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   QUOTA_EVALUATOR_INTERVAL_MS: z.string().default('60000').transform(Number),
 
+  // Hosting seam: JSON object overriding capability defaults, e.g. {"ingestion.max_bytes_monthly": 1048576}.
+  // Unset = registry defaults (unlimited). Invalid value = boot failure. Entitlement rows still win.
+  CAPABILITY_DEFAULTS_JSON: z.string().optional(),
+
+  // Hosting seam: static bearer an external billing service uses on a small set
+  // of admin routes (entitlements, retention). Unset/empty = feature inert.
+  // Shorter than 32 characters = boot failure.
+  LOGTIDE_ADMIN_SERVICE_TOKEN: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().min(32, 'LOGTIDE_ADMIN_SERVICE_TOKEN must be at least 32 characters').optional()
+  ),
+
+  // Hosting seam: signed upgrade handoff to an external billing portal. Active
+  // only when BOTH are set; exactly one set, a non-https URL (localhost http is
+  // allowed) or a secret under 32 characters = boot failure.
+  LOGTIDE_UPGRADE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  LOGTIDE_UPGRADE_SIGNING_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+
+  // Hosting seam: mandatory Terms of Service / Privacy Policy acceptance at
+  // registration, and re-acceptance when the version changes. Active only when
+  // ALL three are set; one or two set, a non-https URL (localhost http is
+  // allowed) or an empty / longer than 64 characters version = boot failure.
+  LOGTIDE_TERMS_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  LOGTIDE_PRIVACY_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  LOGTIDE_TERMS_VERSION: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+
+  // Hosting seam: maximum organizations a single user may own. Positive integer;
+  // unset or empty = unlimited. Any other value = boot failure.
+  MAX_ORGANIZATIONS_PER_USER: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce
+      .number({ invalid_type_error: 'MAX_ORGANIZATIONS_PER_USER must be a positive integer' })
+      .int('MAX_ORGANIZATIONS_PER_USER must be a positive integer')
+      .positive('MAX_ORGANIZATIONS_PER_USER must be a positive integer')
+      .optional()
+  ),
+
+  // Hosting seam: maximum organizations a single user may create per UTC calendar
+  // month (counted from organization_creation_log, so deleting an organization
+  // does not give the creation back). Positive integer; unset or empty =
+  // unlimited. Any other value = boot failure.
+  MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce
+      .number({ invalid_type_error: 'MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer' })
+      .int('MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer')
+      .positive('MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer')
+      .optional()
+  ),
+
+  // Hosting seam: optional email verification. When true, newly registered
+  // local users must confirm their email before creating projects or API keys.
+  // Unset/false = no verification email, no gate (users count as verified).
+  REQUIRE_EMAIL_VERIFICATION: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.enum(['true', 'false'], { errorMap: () => ({ message: 'REQUIRE_EMAIL_VERIFICATION must be true or false' }) })
+      .default('false')
+      .transform((v) => v === 'true')
+  ),
+
+  // Hosting seam: extra per-IP cap on POST /auth/register over a rolling hour,
+  // on top of AUTH_RATE_LIMIT_REGISTER. Positive integer; unset or empty = off.
+  REGISTRATION_RATE_LIMIT_PER_HOUR: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce
+      .number({ invalid_type_error: 'REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer' })
+      .int('REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer')
+      .positive('REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer')
+      .optional()
+  ),
+
   // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
   STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   STORAGE_SNAPSHOT_INTERVAL_MS: z.string().default('86400000').transform(Number),
@@ -98,6 +230,26 @@ const configSchema = z.object({
   INITIAL_ADMIN_EMAIL: z.string().email().optional(),
   INITIAL_ADMIN_PASSWORD: z.string().min(8).optional(),
   INITIAL_ADMIN_NAME: z.string().optional(),
+}).superRefine((env, ctx) => {
+  const message = validateUpgradeConfig(env);
+  if (message) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [message.startsWith('LOGTIDE_UPGRADE_SIGNING_SECRET') ? 'LOGTIDE_UPGRADE_SIGNING_SECRET' : 'LOGTIDE_UPGRADE_URL'],
+      message,
+    });
+  }
+  for (const [field, termsMessage] of validateTermsConfig(env)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: termsMessage });
+  }
+  if (env.REQUIRE_EMAIL_VERIFICATION && !env.SMTP_HOST) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['REQUIRE_EMAIL_VERIFICATION'],
+      message:
+        'REQUIRE_EMAIL_VERIFICATION=true needs SMTP_HOST: without SMTP no verification email can be sent and new users could never verify',
+    });
+  }
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -145,6 +297,15 @@ function loadConfig(): Config {
   if (!result.success) {
     console.error(formatConfigError(result.error));
     throw new Error('Invalid configuration - see error details above');
+  }
+
+  try {
+    applyDefaultOverrides(result.data.CAPABILITY_DEFAULTS_JSON);
+  } catch (err) {
+    console.error(`
+Invalid configuration: ${(err as Error).message}
+`);
+    throw err;
   }
 
   return result.data;

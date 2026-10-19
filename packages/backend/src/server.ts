@@ -14,6 +14,7 @@ import { detectionPacksRoutes } from './modules/detection-packs/index.js';
 import { usersRoutes } from './modules/users/routes.js';
 import { projectsRoutes } from './modules/projects/routes.js';
 import { organizationsRoutes } from './modules/organizations/routes.js';
+import { upgradeHintFor } from './modules/organizations/upgrade-handoff.js';
 import { invitationsRoutes } from './modules/invitations/routes.js';
 import { notificationsRoutes } from './modules/notifications/routes.js';
 import { apiKeysRoutes } from './modules/api-keys/routes.js';
@@ -48,6 +49,7 @@ import { sessionsRoutes } from './modules/sessions/routes.js';
 import { sourcemapsRoutes } from './modules/sourcemaps/index.js';
 import { auditLogRoutes, auditLogService } from './modules/audit-log/index.js';
 import { bootstrapService } from './modules/bootstrap/index.js';
+import { assertTermsCompatibleWithAuthMode } from './modules/users/terms.js';
 import { runDataAvailabilityBackfill } from './modules/projects/data-availability-backfill.js';
 import { notificationChannelsRoutes } from './modules/notification-channels/index.js';
 import { digestsRoutes } from './modules/digests/routes.js';
@@ -62,6 +64,7 @@ import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { validateStorageConfig } from './database/storage-config.js';
 import { shutdownReservoir } from './database/reservoir.js';
 import { readFileSync } from 'fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -73,7 +76,22 @@ const HOST = config.HOST;
 
 const quotaEvaluator = new QuotaEvaluator(meteringService);
 
+/**
+ * Rate-limit key: per credential when one is sent, else per client IP. The
+ * credential is hashed so raw API keys and bearer tokens never land in the
+ * rate-limit store (Redis keys are visible to anyone with Redis access).
+ */
+export function rateLimitKeyGenerator(request: { headers: Record<string, any>; ip: string }): string {
+  const credential = request.headers['x-api-key'] || request.headers['authorization']?.replace('Bearer ', '');
+  if (!credential) return request.ip;
+  return `key:${createHash('sha256').update(String(credential)).digest('hex').slice(0, 32)}`;
+}
+
 export async function build(opts = {}) {
+  // Terms seam + auth-free mode can never work together (the default user
+  // could never accept): refuse to build the app. No query when inactive.
+  await assertTermsCompatibleWithAuthMode();
+
   const fastify = Fastify({
     logger: true,
     bodyLimit: 10 * 1024 * 1024,
@@ -112,6 +130,7 @@ export async function build(opts = {}) {
       if (typeof (error as any).code === 'string') {
         body.code = (error as any).code;
       }
+      Object.assign(body, upgradeHintFor(error));
       reply.code(statusCode).send(body);
       return;
     }
@@ -140,11 +159,6 @@ export async function build(opts = {}) {
     },
     crossOriginEmbedderPolicy: false,
   });
-
-  const rateLimitKeyGenerator = (request: any) => {
-    const apiKey = request.headers['x-api-key'] || request.headers['authorization']?.replace('Bearer ', '');
-    return apiKey ? `key:${apiKey}` : request.ip;
-  };
 
   const redisConn = getConnection();
   if (isRedisConfigured() && redisConn) {
@@ -247,6 +261,9 @@ async function start() {
   meteringRecorder.start();
   quotaEvaluator.start();
   storageSnapshotJob.start();
+
+  // Fail before the auth-free default setup runs (build() checks again).
+  await assertTermsCompatibleWithAuthMode();
 
   const authMode = await settingsService.getAuthMode();
   if (authMode === 'none') {

@@ -104,7 +104,7 @@ export class ProjectsService {
   /**
    * Check if user has access to organization
    */
-  private async checkOrganizationAccess(organizationId: string, userId: string): Promise<void> {
+  async checkOrganizationAccess(organizationId: string, userId: string): Promise<void> {
     const member = await db
       .selectFrom('organization_members')
       .select('id')
@@ -115,6 +115,17 @@ export class ProjectsService {
     if (!member) {
       throw new Error('You do not have access to this organization');
     }
+  }
+
+  /** Count active (not soft-deleted) projects of an organization (capability limit input). */
+  async countActiveForOrg(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('projects')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
   }
 
   /**

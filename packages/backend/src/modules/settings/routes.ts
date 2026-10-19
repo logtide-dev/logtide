@@ -9,6 +9,9 @@ import { z } from 'zod';
 import { settingsService, SETTING_KEYS } from './service.js';
 import { usersService } from '../users/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
+import { isUpgradeHandoffActive } from '../organizations/upgrade-handoff.js';
+import { isEmailVerificationRequired } from '../users/email-verification-flag.js';
+import { getActiveTerms, TERMS_AUTH_FREE_ERROR, TERMS_AUTH_FREE_MESSAGE } from '../users/terms.js';
 import type { UserProfile } from '../users/service.js';
 import { auditLogService } from '../audit-log/service.js';
 
@@ -118,6 +121,9 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         if (!validKeys.includes(key as any)) {
           return reply.status(400).send({ error: `Invalid setting key: ${key}` });
         }
+        if (key === SETTING_KEYS.AUTH_MODE && body.value === 'none' && getActiveTerms()) {
+          return reply.status(400).send({ error: TERMS_AUTH_FREE_ERROR, message: TERMS_AUTH_FREE_MESSAGE });
+        }
 
         await settingsService.set(key as any, body.value as any, userId);
 
@@ -158,6 +164,10 @@ export async function settingsRoutes(fastify: FastifyInstance) {
       try {
         const body = updateSettingsSchema.parse(request.body);
         const userId = (request as any).user?.id;
+
+        if (body['auth.mode'] === 'none' && getActiveTerms()) {
+          return reply.status(400).send({ error: TERMS_AUTH_FREE_ERROR, message: TERMS_AUTH_FREE_MESSAGE });
+        }
 
         await settingsService.setMany(body, userId);
 
@@ -243,6 +253,10 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         authMode,
         signupEnabled,
         requiresLogin: authMode !== 'none',
+        ...(isUpgradeHandoffActive() ? { upgradeEnabled: true } : {}),
+        ...(isEmailVerificationRequired() ? { emailVerificationRequired: true } : {}),
+        // Terms seam: termsUrl, privacyUrl, termsVersion only when active.
+        ...(getActiveTerms() ?? {}),
       });
     } catch (error) {
       console.error('Error fetching auth config:', error);
@@ -251,6 +265,8 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         authMode: 'standard',
         signupEnabled: true,
         requiresLogin: true,
+        ...(isEmailVerificationRequired() ? { emailVerificationRequired: true } : {}),
+        ...(getActiveTerms() ?? {}),
       });
     }
   });

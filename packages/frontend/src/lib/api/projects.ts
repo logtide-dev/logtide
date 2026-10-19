@@ -1,4 +1,5 @@
 import type { Project } from '@logtide/shared';
+import { apiErrorMessage } from '$lib/utils/email-verification';
 import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 
@@ -124,7 +125,7 @@ export class ProjectsAPI {
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.error || 'Failed to create project');
+      throw new Error(apiErrorMessage(error.error, 'Failed to create project'));
     }
 
     return response.json();

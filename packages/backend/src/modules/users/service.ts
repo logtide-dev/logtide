@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
+import { isEmailVerificationRequired } from './email-verification-flag.js';
 
 const SALT_ROUNDS = 10;
 
@@ -15,6 +16,8 @@ export interface CreateUserInput {
   email: string;
   password: string;
   name: string;
+  /** Terms version accepted at registration (terms seam active only). */
+  termsVersion?: string;
 }
 
 export interface SessionInfo {
@@ -127,6 +130,11 @@ export class UsersService {
           password_hash: passwordHash,
           name: input.name,
           is_admin: shouldBeAdmin,
+          // Column default (NOW()) marks the user verified; only an enabled gate
+          // starts a local registration as unverified.
+          ...(isEmailVerificationRequired() ? { email_verified_at: null } : {}),
+          // Terms seam: acceptance is recorded in the same insert.
+          ...(input.termsVersion ? { terms_accepted_at: sql`NOW()`, terms_version: input.termsVersion } : {}),
         })
         .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
         .executeTakeFirstOrThrow();
@@ -333,6 +341,10 @@ export class UsersService {
     const updateData: any = {};
     if (input.name) updateData.name = input.name;
     if (normalizedEmail) updateData.email = normalizedEmail;
+    // Gate on: a new address starts unverified, written atomically with the email.
+    if (normalizedEmail && normalizedEmail !== user.email && isEmailVerificationRequired()) {
+      updateData.email_verified_at = null;
+    }
     if (input.newPassword) {
       updateData.password_hash = await this.hashPassword(input.newPassword);
     }

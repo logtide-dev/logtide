@@ -6,6 +6,8 @@ import { apiKeysService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { projectsService } from '../projects/service.js';
 import { auditLogService } from '../audit-log/index.js';
+import { emailVerificationService } from '../users/email-verification.js';
+import { termsAcceptanceService } from '../users/terms.js';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 
@@ -63,6 +65,17 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
     try {
       const { projectId } = projectIdSchema.parse(request.params);
       const body = createApiKeySchema.parse(request.body);
+
+      // Email verification gate (no-op unless REQUIRE_EMAIL_VERIFICATION=true):
+      // without an API key nothing can be ingested.
+      if (await emailVerificationService.isBlocked(request.user.id)) {
+        return reply.status(403).send({ error: 'email_not_verified' });
+      }
+      // Terms gate (no-op unless the LOGTIDE_TERMS_* seam is active). Only key
+      // creation is gated: existing keys keep ingesting.
+      if (await termsAcceptanceService.isPending(request.user.id)) {
+        return reply.status(403).send({ error: 'terms_not_accepted' });
+      }
 
       // Check if user has access to the project
       const project = await projectsService.getProjectById(projectId, request.user.id);

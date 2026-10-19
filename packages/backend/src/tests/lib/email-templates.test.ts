@@ -18,6 +18,7 @@ import {
   generateIncidentEmail,
   generateSigmaDetectionEmail,
   generateInvitationEmail,
+  generateEmailVerificationEmail,
   generateDigestEmail,
   type DigestEmailData,
 } from '../../lib/email-templates.js';
@@ -1312,5 +1313,20 @@ describe('Email Templates - Digest', () => {
     });
 
     expect(result.html).toContain('Digest for Acme Corp');
+  });
+});
+
+describe('generateEmailVerificationEmail', () => {
+  it('links to the frontend verify page with the url-encoded token', () => {
+    const result = generateEmailVerificationEmail({ name: 'Ada', token: 'abc_DEF-123' });
+    expect(result.html).toContain('/verify-email?token=abc_DEF-123');
+    expect(result.text).toContain('/verify-email?token=abc_DEF-123');
+    expect(result.text).toContain('24 hours');
+  });
+
+  it('escapes the user name in the html body', () => {
+    const result = generateEmailVerificationEmail({ name: '<script>x</script>', token: 't' });
+    expect(result.html).not.toContain('<script>x</script>');
+    expect(result.html).toContain('&lt;script&gt;');
   });
 });

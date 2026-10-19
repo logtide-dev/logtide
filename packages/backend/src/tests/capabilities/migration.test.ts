@@ -42,7 +42,8 @@ describe('organization_entitlements table', () => {
       .where('capability', '=', 'alerts.max_rules')
       .executeTakeFirst();
 
-    expect(row?.limit_value).toBe(5);
+    // BIGINT since migration 059: the pg driver returns int8 as a string.
+    expect(row?.limit_value).toBe('5');
     expect(row?.enabled).toBeNull();
   });
 

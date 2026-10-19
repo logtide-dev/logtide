@@ -1,6 +1,7 @@
 import { goto } from '$app/navigation';
 import { authStore } from '$lib/stores/auth';
 import { getAuthToken } from '$lib/utils/auth';
+import { requestTermsRecheck } from '$lib/stores/terms-recheck';
 
 /**
  * Global 401 handler.
@@ -91,6 +92,18 @@ export function installAuthFetchInterceptor(): void {
         !isTelemetryEndpoint(urlOf(input))
       ) {
         handleUnauthorized();
+      }
+      // Terms seam: a 403 terms_not_accepted means the terms changed (or were
+      // never accepted) while the app was open; ask the modal to re-check.
+      // Read from a clone, off the caller's path, so the body stays readable.
+      if (response.status === 403 && isApiRequest(urlOf(input))) {
+        response
+          .clone()
+          .json()
+          .then((body: { error?: unknown } | null) => {
+            if (body?.error === 'terms_not_accepted') requestTermsRecheck();
+          })
+          .catch(() => {});
       }
     } catch {
       // Never let interceptor logic break a fetch call.

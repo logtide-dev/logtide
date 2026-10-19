@@ -5,7 +5,11 @@ import { authenticate } from '../auth/middleware.js';
 import { auditLogService } from '../audit-log/index.js';
 import { reservoir } from '../../database/reservoir.js';
 import { db } from '../../database/connection.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
+import { emailVerificationService } from '../users/email-verification.js';
+import { termsAcceptanceService } from '../users/terms.js';
 
 const createProjectSchema = z.object({
   organizationId: z.string().uuid('Invalid organization ID'),
@@ -193,7 +197,17 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         return reply.status(409).send({ error: 'Project is not deleted' });
       }
 
-      const restored = await projectsService.restoreProject(id, request.user.id);
+      // Restoring re-activates a project, so it counts against projects.max
+      // exactly like a create (same lock, same system-context count).
+      const restored = await withLimitLock(project.organizationId, 'projects.max', async () => {
+        await context.runAsSystem('projects:restore-limit-check', async () => {
+          await context.with({ organizationId: project.organizationId }, async () => {
+            const count = await projectsService.countActiveForOrg(project.organizationId);
+            await assertWithinLimit('projects.max', count);
+          });
+        });
+        return projectsService.restoreProject(id, request.user.id);
+      });
       if (!restored) {
         return reply.status(404).send({ error: 'Project not found' });
       }
@@ -254,11 +268,32 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     try {
       const body = createProjectSchema.parse(request.body);
 
-      const project = await projectsService.createProject({
-        organizationId: body.organizationId,
-        userId: request.user.id,
-        name: body.name,
-        description: body.description,
+      // Email verification gate (no-op unless REQUIRE_EMAIL_VERIFICATION=true),
+      // checked before the projects.max limit.
+      if (await emailVerificationService.isBlocked(request.user.id)) {
+        return reply.status(403).send({ error: 'email_not_verified' });
+      }
+      // Terms gate (no-op unless the LOGTIDE_TERMS_* seam is active).
+      if (await termsAcceptanceService.isPending(request.user.id)) {
+        return reply.status(403).send({ error: 'terms_not_accepted' });
+      }
+
+      const project = await withLimitLock(body.organizationId, 'projects.max', async () => {
+        // Membership first so non-members get the access error, not a limit error.
+        await projectsService.checkOrganizationAccess(body.organizationId, request.user.id);
+        await context.runAsSystem('projects:create-limit-check', async () => {
+          await context.with({ organizationId: body.organizationId }, async () => {
+            const count = await projectsService.countActiveForOrg(body.organizationId);
+            await assertWithinLimit('projects.max', count);
+          });
+        });
+
+        return projectsService.createProject({
+          organizationId: body.organizationId,
+          userId: request.user.id,
+          name: body.name,
+          description: body.description,
+        });
       });
 
       await auditLogService.record({

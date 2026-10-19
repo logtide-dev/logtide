@@ -32,6 +32,7 @@ export const GLOBAL_TABLES = new Set<string>([
   'users', 'sessions', 'organizations', 'organization_members',
   'organization_invitations', 'user_identities', 'oidc_states',
   'system_settings', 'auth_providers', 'user_onboarding',
+  'email_verification_tokens', 'organization_creation_log',
 ]);
 
 export type TableCategory = 'tenant' | 'child' | 'global' | 'unknown';

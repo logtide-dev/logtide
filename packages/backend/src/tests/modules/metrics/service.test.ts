@@ -21,11 +21,13 @@ vi.mock('../../../database/reservoir.js', () => ({
 }));
 
 const mockMeteringRecord = vi.fn();
+const mockRecordMetric = vi.fn();
 
 vi.mock('../../../modules/metering/index.js', () => ({
   metering: {
     record: (...args: unknown[]) => mockMeteringRecord(...args),
   },
+  recordMetricIngestion: (...args: unknown[]) => mockRecordMetric(...args),
 }));
 
 import { MetricsService } from '../../../modules/metrics/service.js';
@@ -107,6 +109,34 @@ describe('MetricsService', () => {
       const result = await service.ingestMetrics(records, 'proj-1', 'org-1');
 
       expect(result).toBe(5);
+    });
+
+    describe('datapoint metering', () => {
+      const rec = (n: number) => Array.from({ length: n }, (_, i) => ({
+        time: new Date(), metricName: 'm' + i, metricType: 'gauge' as const, value: 1,
+        serviceName: 's', organizationId: '', projectId: '',
+      }));
+
+      it('records the accepted datapoint count under metrics.ingested.datapoints', async () => {
+        mockIngestMetrics.mockResolvedValueOnce({ ingested: 3 });
+        await service.ingestMetrics(rec(3), 'proj-1', 'org-1');
+        expect(mockRecordMetric).toHaveBeenCalledWith({
+          datapointCount: 3, organizationId: 'org-1', projectId: 'proj-1', records: expect.any(Array),
+        });
+      });
+
+      it('counts only accepted datapoints, not the submitted batch', async () => {
+        mockIngestMetrics.mockResolvedValueOnce({ ingested: 2, failed: 3 });
+        await service.ingestMetrics(rec(5), 'proj-1', 'org-1');
+        expect(mockRecordMetric.mock.calls[0][0].datapointCount).toBe(2);
+      });
+
+      it('records nothing when no datapoint was accepted', async () => {
+        mockIngestMetrics.mockResolvedValueOnce({ ingested: 0, failed: 2 });
+        await service.ingestMetrics(rec(2), 'proj-1', 'org-1');
+        // The service passes the accepted count (0); the helper's <= 0 guard drops it.
+        expect(mockRecordMetric.mock.calls[0][0].datapointCount).toBe(0);
+      });
     });
 
     describe('clock skew detection (span-metric-skew)', () => {

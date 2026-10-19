@@ -9,8 +9,10 @@ import type { MeteringEventType } from '../modules/metering/types.js';
  *  - boolean: on/off gate, compared as a flag.
  *  - limit:   static numeric cap compared to a caller-supplied COUNT(*). null = unlimited.
  *  - quota:   consumption cap compared to metered usage (#212). null = unlimited.
- *             `signal` is the #212 metering event type to aggregate; `window` is how to read it.
- *             `signal`/`window` live ONLY in the registry, never in the DB.
+ *             `signal` is the #212 metering event type to aggregate, or `signals` for
+ *             several types whose usage is SUMMED (combined quotas); `window` is how
+ *             to read it. Readers go through quotaSignals(def), never `def.signal`.
+ *             `signal(s)`/`window` live ONLY in the registry, never in the DB.
  */
 
 export type QuotaWindow = 'calendar_month' | 'point_in_time';
@@ -27,12 +29,23 @@ export interface LimitCapabilityDef {
   description: string;
 }
 
-export interface QuotaCapabilityDef {
+interface QuotaCapabilityBase {
   kind: 'quota';
   defaultLimit: number | null;
-  signal: MeteringEventType;
   window: QuotaWindow;
   description: string;
+}
+
+/** A quota reads one metering signal, or the SUM of several (combined quotas). */
+export type QuotaCapabilityDef = QuotaCapabilityBase &
+  (
+    | { signal: MeteringEventType; signals?: never }
+    | { signals: readonly MeteringEventType[]; signal?: never }
+  );
+
+/** The metering signals a quota sums (exactly one for single-signal quotas). */
+export function quotaSignals(def: QuotaCapabilityDef): readonly MeteringEventType[] {
+  return def.signals ?? [def.signal as MeteringEventType];
 }
 
 export type CapabilityDef =
@@ -79,6 +92,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum number of API keys',
   },
+  'projects.max': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum number of active projects',
+  },
   'audit.retention_days': {
     kind: 'limit',
     defaultLimit: null,
@@ -103,6 +121,11 @@ export const CAPABILITIES = {
     kind: 'limit',
     defaultLimit: null,
     description: 'Maximum digest email recipients per organization',
+  },
+  'quota.grace_percent': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Percent of overage allowed above every quota before hard-blocking (null = 0, no grace). Applies to all quotas of the org.',
   },
 
   // Consumption quotas (OSS-permissive: null = unlimited). signal maps to #212 metering types.
@@ -134,6 +157,22 @@ export const CAPABILITIES = {
     window: 'calendar_month',
     description: 'Month-to-date ingested spans cap (hard-block span ingestion)',
   },
+  'metrics.max_datapoints_monthly': {
+    kind: 'quota',
+    defaultLimit: null,
+    signal: 'metrics.ingested.datapoints',
+    window: 'calendar_month',
+    description: 'Month-to-date ingested metric datapoints cap (hard-block metrics ingestion)',
+  },
+  // Combined byte quota for hosted plans: usage is the SUM of the three byte
+  // signals, each measured as the JSON size of the accepted records.
+  'telemetry.max_bytes_monthly': {
+    kind: 'quota',
+    defaultLimit: null,
+    signals: ['logs.ingested.bytes', 'spans.ingested.bytes', 'metrics.ingested.bytes'],
+    window: 'calendar_month',
+    description: 'Monthly ingested bytes across logs, traces and metrics combined',
+  },
 } as const satisfies Record<string, CapabilityDef>;
 
 export type CapabilityName = keyof typeof CAPABILITIES;
@@ -156,4 +195,69 @@ export function isQuotaCapability(name: CapabilityName): boolean {
 
 export function isKnownCapability(name: string): name is CapabilityName {
   return Object.prototype.hasOwnProperty.call(CAPABILITIES, name);
+}
+
+/**
+ * Hosting seam: CAPABILITY_DEFAULTS_JSON overrides registry defaults at boot.
+ * Contract: a JSON object `{ "<capability>": boolean | number | null }`.
+ *  - boolean capabilities take a boolean only;
+ *  - limit/quota capabilities take an integer >= 0, or null for unlimited.
+ * Validation is driven by the registry at call time (no hardcoded key list), so
+ * capabilities added later work automatically. The document is validated in full
+ * before anything is mutated, and any problem throws (boot must fail loudly).
+ * Resolution order is unchanged: entitlement row > default.
+ */
+const ORIGINAL_DEFAULTS: Record<string, boolean | number | null> = {};
+for (const name of CAPABILITY_NAMES) {
+  const def = CAPABILITIES[name];
+  ORIGINAL_DEFAULTS[name] = def.kind === 'boolean' ? def.defaultEnabled : def.defaultLimit;
+}
+
+const ENV_NAME = 'CAPABILITY_DEFAULTS_JSON';
+
+export function applyDefaultOverrides(json: string | undefined | null): void {
+  if (json === undefined || json === null || json.trim() === '') return;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    throw new Error(`${ENV_NAME} is not valid JSON: ${(err as Error).message}`);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${ENV_NAME} must be a JSON object mapping capability names to values`);
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  for (const [name, value] of entries) {
+    if (!isKnownCapability(name)) {
+      throw new Error(
+        `${ENV_NAME} contains unknown capability "${name}". Known capabilities: ${CAPABILITY_NAMES.join(', ')}`
+      );
+    }
+    if (CAPABILITIES[name].kind === 'boolean') {
+      if (typeof value !== 'boolean') {
+        throw new Error(`${ENV_NAME}: "${name}" is a boolean capability and must be true or false`);
+      }
+    } else if (value !== null && !(typeof value === 'number' && Number.isInteger(value) && value >= 0)) {
+      throw new Error(
+        `${ENV_NAME}: "${name}" must be an integer >= 0 or null (unlimited)`
+      );
+    }
+  }
+
+  for (const [name, value] of entries) {
+    const def = CAPABILITIES[name as CapabilityName] as unknown as Record<string, unknown>;
+    if (def.kind === 'boolean') def.defaultEnabled = value as boolean;
+    else def.defaultLimit = value as number | null;
+  }
+}
+
+/** Restore registry defaults (test helper). */
+export function resetDefaultOverrides(): void {
+  for (const name of CAPABILITY_NAMES) {
+    const def = CAPABILITIES[name] as unknown as Record<string, unknown>;
+    if (def.kind === 'boolean') def.defaultEnabled = ORIGINAL_DEFAULTS[name];
+    else def.defaultLimit = ORIGINAL_DEFAULTS[name];
+  }
 }
