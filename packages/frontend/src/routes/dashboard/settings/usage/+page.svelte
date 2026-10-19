@@ -29,6 +29,7 @@
   import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Gauge from '@lucide/svelte/icons/gauge';
+  import { visibleCapabilities } from '$lib/utils/usage-capabilities';
 
   // TODO(#214): entitlements/limits editor goes here once feature #214 backend is shipped
 
@@ -198,6 +199,7 @@
     'storage.max_bytes': { label: 'Storage used', unit: 'bytes' },
     'tracing.max_spans_monthly': { label: 'Spans (this month)', unit: 'count' },
     'metrics.max_datapoints_monthly': { label: 'Metric datapoints (this month)', unit: 'count' },
+    'telemetry.max_bytes_monthly': { label: 'Telemetry (logs, traces and metrics)', unit: 'bytes' },
   };
 
   function capLabel(c: CapabilityUsage): string {
@@ -224,15 +226,9 @@
     return 'bg-green-500';
   }
 
-  // Capabilities with a configured limit come first (the actionable ones),
-  // unlimited ones after; stable within each group by registry order.
-  let sortedCapabilities = $derived(
-    [...capabilities].sort((a, b) => {
-      const al = a.limit === null ? 1 : 0;
-      const bl = b.limit === null ? 1 : 0;
-      return al - bl;
-    })
-  );
+  // Limited first, unlimited after; null per-signal quotas hidden when the plan
+  // caps a quota (see visibleCapabilities).
+  let sortedCapabilities = $derived(visibleCapabilities(capabilities));
 
   let hasAnyLimit = $derived(capabilities.some((c) => c.limit !== null));
 </script>
