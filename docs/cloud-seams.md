@@ -115,7 +115,7 @@ Positive integer; unset = unlimited; anything else aborts startup. Monthly quota
 When `true`:
 
 - Newly registered local users are still signed in immediately and receive an email with a link to `/verify-email?token=...`. The token is 32 random bytes, stored only as a SHA-256 hash, single use, valid 24 hours.
-- Until verified, `POST /api/v1/projects` and `POST /api/v1/projects/:id/api-keys` answer `403 { "error": "email_not_verified" }`. This check runs before the `projects.max` limit check.
+- Until verified, `POST /api/v1/projects`, `POST /api/v1/projects/:id/api-keys` and `POST /api/v1/projects/:id/receivers` (an inbound receiver mints an ingest credential too) answer `403 { "error": "email_not_verified" }`. This check runs before the `projects.max` limit check.
 - New routes: `POST /api/v1/auth/verify-email` (`400 invalid_or_expired_token` for unknown, reused, expired or someone else's token) and `POST /api/v1/auth/resend-verification` (always `202`, so it does not reveal whether an address exists; limited to 5 per hour per IP and a 60 second per-user cooldown).
 - `GET /api/v1/auth/config` includes `emailVerificationRequired: true`; `GET /api/v1/auth/me` includes `user.emailVerified`. The app shows a "Verify your email" banner.
 - OIDC users count as verified when the identity provider asserts `email_verified: true` for the current address. Admin-created, LDAP and bootstrap users are verified. Changing the email address requires verifying again.
@@ -137,9 +137,11 @@ When active:
 - `POST /api/v1/auth/register` must carry `acceptTerms: true`, otherwise it answers `400 { "error": "terms_not_accepted" }` and no user is created. The accepted version and time are stored with the new user (`users.terms_version`, `users.terms_accepted_at`, migration 061).
 - A user whose stored version differs from `LOGTIDE_TERMS_VERSION` (NULL included) is "terms pending". This covers users created before the feature was turned on (there is no backfill), OIDC/LDAP users who never saw the checkbox, and everyone after a version bump. `GET /api/v1/auth/me` then includes `user.termsAcceptanceRequired: true` and the app shows a blocking modal on the dashboard and onboarding pages with both links, an Accept button and a Log out option.
 - `POST /api/v1/auth/accept-terms` (session required, rate limited like login) with body `{ "version": "<current version>" }` records the acceptance. Any other version answers `409 { "error": "terms_version_mismatch" }`, so a tab left open across a version bump cannot accept terms the user did not see. Each acceptance is audited as `user.terms_accepted`.
-- While pending, `POST /api/v1/organizations`, `POST /api/v1/projects` and `POST /api/v1/projects/:id/api-keys` answer `403 { "error": "terms_not_accepted" }` (checked before the organization caps and the `projects.max` limit). Everything else keeps working: **ingestion with existing API keys is never blocked**, so bumping the version never breaks a running pipeline.
+- While pending, `POST /api/v1/organizations`, `POST /api/v1/projects`, `POST /api/v1/projects/:id/api-keys` and `POST /api/v1/projects/:id/receivers` answer `403 { "error": "terms_not_accepted" }` (checked before the organization caps and the `projects.max` limit). Everything else keeps working: **ingestion with existing API keys is never blocked**, so bumping the version never breaks a running pipeline.
 
-To publish new terms, update the pages and change `LOGTIDE_TERMS_VERSION`, then restart the backend: every user is asked again on their next visit.
+To publish new terms, update the pages and change `LOGTIDE_TERMS_VERSION`, then restart the backend: every user is asked again on their next visit. A page left open shows the modal as soon as one of its requests is refused with `terms_not_accepted`, without a reload.
+
+**Not compatible with auth-free mode.** In auth-free mode the default user has no session and could never accept, so the backend refuses to start when the terms are configured and the stored auth mode is `none`, and the admin settings API refuses to switch `auth.mode` to `none` while they are configured (`400 { "error": "terms_incompatible_with_auth_free_mode" }`).
 
 ## Capabilities added for hosting
 
