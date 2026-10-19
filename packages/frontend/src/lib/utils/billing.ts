@@ -167,3 +167,65 @@ export function isCustomPlan(
   const telemetry = capabilities?.find((c) => c.capability === TELEMETRY_QUOTA);
   return telemetry !== undefined && telemetry.limit === null;
 }
+
+export interface PlanTimeline {
+  label: string;
+  value: string;
+  note: string;
+}
+
+/** Third tile of the current plan card: what happens next, and when. */
+export function planTimeline(current: BillingCurrentPlan): PlanTimeline {
+  if (current.source === 'free') {
+    return { label: 'Next invoice', value: 'None', note: 'Upgrade any time' };
+  }
+  if (current.source === 'grandfathered') {
+    return {
+      label: 'Free until',
+      value: formatBillingDate(current.grandfatheredUntil) || 'Not set',
+      note: 'Subscribe before then to keep Pro',
+    };
+  }
+
+  const end = formatBillingDate(current.currentPeriodEnd) || 'Not set';
+  if (current.status === 'past_due' || current.status === 'unpaid') {
+    return {
+      label: 'Overdue since',
+      value: formatBillingDate(current.pastDueSince) || end,
+      note: 'Update your card to keep your plan',
+    };
+  }
+  if (current.status === 'incomplete') {
+    return { label: 'First payment', value: 'Pending', note: 'Waiting for the payment to complete' };
+  }
+  if (current.cancelAtPeriodEnd) {
+    return { label: 'Ends on', value: end, note: 'Then the Free plan limits apply' };
+  }
+  if (current.status === 'trialing') {
+    return { label: 'First charge on', value: end, note: 'No charge until then' };
+  }
+  return { label: 'Renews on', value: end, note: 'Renews automatically' };
+}
+
+/** Plan card price: "$29" for whole amounts, "$24.50" otherwise. */
+export function formatPlanPrice(amountMinor: number, currency: string): string {
+  const full = formatMoney(amountMinor, currency);
+  return full.replace(/\.00(?=\D*$)/, '');
+}
+
+/** Only https links from the billing service are rendered as hrefs. */
+export function safeExternalUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Cards are valid through the last day of their expiry month. */
+export function isCardExpired(card: { expMonth: number; expYear: number }, now: Date = new Date()): boolean {
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  return card.expYear < year || (card.expYear === year && card.expMonth < month);
+}

@@ -9,6 +9,10 @@ import {
   formatCardBrand,
   invoiceStatusBadge,
   isCustomPlan,
+  planTimeline,
+  formatPlanPrice,
+  safeExternalUrl,
+  isCardExpired,
 } from './billing';
 
 const PERIOD_END = '2027-01-17T12:00:00.000Z';
@@ -235,5 +239,71 @@ describe('isCustomPlan', () => {
   it('subscribed and grandfathered orgs are never custom', () => {
     expect(isCustomPlan(PRO_MONTH, telemetry(null))).toBe(false);
     expect(isCustomPlan(GRANDFATHERED, telemetry(null))).toBe(false);
+  });
+});
+
+describe('planTimeline', () => {
+  it('active subscription renews', () => {
+    expect(planTimeline(PRO_MONTH)).toEqual({
+      label: 'Renews on',
+      value: 'Jan 17, 2027',
+      note: 'Renews automatically',
+    });
+  });
+
+  it('cancelling subscription ends', () => {
+    expect(planTimeline({ ...PRO_MONTH, cancelAtPeriodEnd: true })).toMatchObject({
+      label: 'Ends on',
+      value: 'Jan 17, 2027',
+    });
+  });
+
+  it('grandfathered org that bought pro is first charged at the period end', () => {
+    expect(planTimeline({ ...PRO_MONTH, status: 'trialing', grandfatheredUntil: PERIOD_END })).toMatchObject({
+      label: 'First charge on',
+      value: 'Jan 17, 2027',
+    });
+  });
+
+  it('past due points at the overdue date', () => {
+    expect(
+      planTimeline({ ...PRO_MONTH, status: 'past_due', pastDueSince: '2026-12-20T12:00:00.000Z' })
+    ).toMatchObject({ label: 'Overdue since', value: 'Dec 20, 2026' });
+  });
+
+  it('grandfathered and free', () => {
+    expect(planTimeline(GRANDFATHERED)).toMatchObject({ label: 'Free until', value: 'Jan 17, 2027' });
+    expect(planTimeline(FREE)).toMatchObject({ label: 'Next invoice', value: 'None' });
+  });
+});
+
+describe('formatPlanPrice', () => {
+  it('drops the cents of whole amounts', () => {
+    expect(formatPlanPrice(2900, 'usd')).toBe('$29');
+    expect(formatPlanPrice(0, 'usd')).toBe('$0');
+  });
+
+  it('keeps cents when there are any', () => {
+    expect(formatPlanPrice(2450, 'usd')).toBe('$24.50');
+  });
+});
+
+describe('safeExternalUrl', () => {
+  it('keeps https links only', () => {
+    expect(safeExternalUrl('https://invoice.stripe.com/i/1')).toBe('https://invoice.stripe.com/i/1');
+    expect(safeExternalUrl('javascript:alert(1)')).toBeNull();
+    expect(safeExternalUrl('http://invoice.stripe.com/i/1')).toBeNull();
+    expect(safeExternalUrl('not a url')).toBeNull();
+    expect(safeExternalUrl(null)).toBeNull();
+  });
+});
+
+describe('isCardExpired', () => {
+  const now = new Date('2026-10-20T12:00:00.000Z');
+
+  it('a card is valid through the end of its expiry month', () => {
+    expect(isCardExpired({ expMonth: 10, expYear: 2026 }, now)).toBe(false);
+    expect(isCardExpired({ expMonth: 9, expYear: 2026 }, now)).toBe(true);
+    expect(isCardExpired({ expMonth: 1, expYear: 2027 }, now)).toBe(false);
   });
 });
