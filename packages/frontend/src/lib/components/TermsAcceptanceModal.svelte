@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { authStore } from '$lib/stores/auth';
   import { authAPI } from '$lib/api/auth';
+  import { termsRecheck } from '$lib/stores/terms-recheck';
   import Button from '$lib/components/ui/button/button.svelte';
   import FileCheck from '@lucide/svelte/icons/file-check-2';
 
@@ -21,7 +22,7 @@
     return user?.termsAcceptanceRequired === true;
   }
 
-  onMount(async () => {
+  async function check() {
     const token = $authStore.token;
     if (!token) return;
     try {
@@ -34,6 +35,23 @@
     } catch {
       visible = false;
     }
+  }
+
+  onMount(() => {
+    check();
+    // Re-check whenever an API call is refused with terms_not_accepted (the
+    // store's current value on subscribe is the baseline, not a trigger).
+    let baseline: number | null = null;
+    return termsRecheck.subscribe((n) => {
+      if (baseline === null) {
+        baseline = n;
+        return;
+      }
+      if (n !== baseline) {
+        baseline = n;
+        check();
+      }
+    });
   });
 
   async function accept() {

@@ -16,6 +16,7 @@ vi.mock('$app/navigation', () => ({ goto }));
 
 import TermsAcceptanceModal from './TermsAcceptanceModal.svelte';
 import { authStore } from '$lib/stores/auth';
+import { requestTermsRecheck } from '$lib/stores/terms-recheck';
 import { get } from 'svelte/store';
 
 const TERMS = {
@@ -99,5 +100,32 @@ describe('TermsAcceptanceModal', () => {
     await waitFor(() => expect(goto).toHaveBeenCalledWith('/login'));
     expect(logout).toHaveBeenCalledWith('session-1');
     expect(get(authStore).token).toBeNull();
+  });
+});
+
+describe('TermsAcceptanceModal re-check', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    for (const fn of [getAuthConfig, getMe, acceptTerms, logout, goto]) fn.mockReset();
+    authStore.setAuth({ id: 'u1', email: 'a@b.c', name: 'A' }, 'session-1');
+  });
+
+  it('appears without a reload when a request reports terms_not_accepted', async () => {
+    getAuthConfig.mockResolvedValue(TERMS);
+    getMe.mockResolvedValueOnce({ user: { id: 'u1' } });
+    render(TermsAcceptanceModal);
+    await waitFor(() => expect(getMe).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    // The terms version was bumped while the page was open.
+    getAuthConfig.mockResolvedValue({ ...TERMS, termsVersion: '2026-12-01' });
+    getMe.mockResolvedValueOnce({ user: { id: 'u1', termsAcceptanceRequired: true } });
+    requestTermsRecheck();
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+
+    acceptTerms.mockResolvedValue(undefined);
+    getMe.mockResolvedValueOnce({ user: { id: 'u1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+    expect(acceptTerms).toHaveBeenCalledWith('session-1', '2026-12-01');
   });
 });
