@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
+  import { authAPI } from '$lib/api/auth';
   import { organizationStore } from '$lib/stores/organization';
   import { layoutStore } from '$lib/stores/layout';
   import { canManageMembers } from '@logtide/shared';
@@ -16,6 +18,7 @@
   import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
   import Send from '@lucide/svelte/icons/send';
   import Newspaper from '@lucide/svelte/icons/newspaper';
+  import CreditCard from '@lucide/svelte/icons/credit-card';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -48,12 +51,27 @@
     return unsubscribe;
   });
 
+  // In-app billing exists only on instances that configured the billing API;
+  // anything else (including a failed config call) keeps the entry hidden.
+  let billingEnabled = $state(false);
+
+  onMount(async () => {
+    try {
+      const cfg = await authAPI.getAuthConfig();
+      billingEnabled = cfg.billingEnabled === true;
+    } catch {
+      billingEnabled = false;
+    }
+  });
+
   interface NavItem {
     label: string;
     href: string;
     icon: typeof Building2;
     adminOnly?: boolean;
     ownerOnly?: boolean;
+    /** Shown only when the auth config advertises billingEnabled. */
+    requiresBilling?: boolean;
   }
 
   interface NavGroup {
@@ -93,6 +111,7 @@
     {
       label: 'Billing & Usage',
       items: [
+        { label: 'Billing', href: '/dashboard/settings/billing', icon: CreditCard, adminOnly: true, requiresBilling: true },
         { label: 'Usage', href: '/dashboard/settings/usage', icon: BarChart3 },
       ],
     },
@@ -117,6 +136,7 @@
   function shouldShowItem(item: NavItem): boolean {
     if (item.adminOnly && !canManage) return false;
     if (item.ownerOnly && currentOrg?.role !== 'owner') return false;
+    if (item.requiresBilling && !billingEnabled) return false;
     return true;
   }
 

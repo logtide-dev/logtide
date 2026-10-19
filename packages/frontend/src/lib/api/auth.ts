@@ -61,6 +61,8 @@ export interface AuthConfig {
   signupEnabled: boolean;
   /** Present (true) only when the host configured the external upgrade handoff. */
   upgradeEnabled?: boolean;
+  /** Present (true) only when the host configured the in-app billing API. */
+  billingEnabled?: boolean;
   /** Present (true) only when REQUIRE_EMAIL_VERIFICATION is on. */
   emailVerificationRequired?: boolean;
   /** Present only when the host requires Terms and Privacy acceptance. */
