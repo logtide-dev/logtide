@@ -159,17 +159,17 @@ Metric datapoints are now metered as the `metrics.ingested.datapoints` usage typ
 
 ### Combined telemetry quota (recommended for hosted plans)
 
-`telemetry.max_bytes_monthly` is the recommended single quota for a hosted plan ("N GB per month of logs, traces and metrics"). Its usage is the sum of three metering types, all measured the same way, as `Buffer.byteLength(JSON.stringify(records))` of the accepted records:
+`telemetry.max_bytes_monthly` is the recommended single quota for a hosted plan ("N GB per month of logs, traces and metrics"). Its usage is the sum of three metering types, all measured the same way, as `Buffer.byteLength(JSON.stringify(records))` of the accepted records, counting customer-provided data only:
 
 | Signal | Metering type | Records measured |
 |---|---|---|
 | Logs | `logs.ingested.bytes` | The log batch of the request, after PII-masking rejections (unchanged, also used by `ingestion.max_bytes_monthly`) |
-| Traces | `spans.ingested.bytes` | The spans handed to storage, after PII masking dropped the spans it could not mask |
-| Metrics | `metrics.ingested.bytes` | The datapoints handed to storage |
+| Traces | `spans.ingested.bytes` | The spans handed to storage, after PII masking dropped the spans it could not mask, without the server-injected `organizationId`, `projectId` and `time` (a copy of `startTime`) fields |
+| Metrics | `metrics.ingested.bytes` | The datapoints handed to storage, without the server-injected `organizationId` and `projectId` fields |
 
-Nothing is counted when storage accepted no record; if a store reports only part of a batch as stored, the batch size is prorated by the accepted count. Measurement happens before storage and does not depend on the storage engine (TimescaleDB, ClickHouse and MongoDB measure identically). These are billed types (no `ingestion.` prefix): they show in usage data and follow `METERING_ENABLED`.
+The excluded fields are left out of a measured copy only; what is stored is unchanged. Nothing is counted when storage accepted no record; if a store reports only part of a batch as stored, the batch size is prorated by the accepted count. Measurement happens before storage and does not depend on the storage engine (TimescaleDB, ClickHouse and MongoDB measure identically). These are billed types (no `ingestion.` prefix): they show in usage data and follow `METERING_ENABLED`.
 
-The per-signal quotas keep working and can be combined with it; an organization is blocked by whichever applies first. A typical hosted setup sets `telemetry.max_bytes_monthly` per plan and keeps `metrics.max_datapoints_monthly` as a high safety cap against cardinality abuse. When an organization has at least one quota with a limit, the Usage page hides the quotas left unlimited, so only the plan's meters show (with no quota limit at all, every row shows as before).
+The per-signal quotas keep working and can be combined with it; an organization is blocked by whichever applies first. A typical hosted setup sets `telemetry.max_bytes_monthly` per plan and keeps `metrics.max_datapoints_monthly` as a high safety cap against cardinality abuse. When `telemetry.max_bytes_monthly` has a limit, the Usage page hides the quotas left unlimited, so only the plan's meters show; otherwise (including a self-hosted instance that caps some other quota) every row shows as before. The "Log bytes ingested" summary card on that page counts log bytes only.
 
 ## Quota behavior
 
