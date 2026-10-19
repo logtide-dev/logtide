@@ -49,6 +49,7 @@ import { sessionsRoutes } from './modules/sessions/routes.js';
 import { sourcemapsRoutes } from './modules/sourcemaps/index.js';
 import { auditLogRoutes, auditLogService } from './modules/audit-log/index.js';
 import { bootstrapService } from './modules/bootstrap/index.js';
+import { assertTermsCompatibleWithAuthMode } from './modules/users/terms.js';
 import { runDataAvailabilityBackfill } from './modules/projects/data-availability-backfill.js';
 import { notificationChannelsRoutes } from './modules/notification-channels/index.js';
 import { digestsRoutes } from './modules/digests/routes.js';
@@ -87,6 +88,10 @@ export function rateLimitKeyGenerator(request: { headers: Record<string, any>; i
 }
 
 export async function build(opts = {}) {
+  // Terms seam + auth-free mode can never work together (the default user
+  // could never accept): refuse to build the app. No query when inactive.
+  await assertTermsCompatibleWithAuthMode();
+
   const fastify = Fastify({
     logger: true,
     bodyLimit: 10 * 1024 * 1024,
@@ -256,6 +261,9 @@ async function start() {
   meteringRecorder.start();
   quotaEvaluator.start();
   storageSnapshotJob.start();
+
+  // Fail before the auth-free default setup runs (build() checks again).
+  await assertTermsCompatibleWithAuthMode();
 
   const authMode = await settingsService.getAuthMode();
   if (authMode === 'none') {

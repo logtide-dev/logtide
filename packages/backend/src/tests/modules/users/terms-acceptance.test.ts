@@ -469,3 +469,81 @@ describe('terms acceptance active (real app)', () => {
     expect(await me(headers)).not.toHaveProperty('termsAcceptanceRequired');
   });
 });
+
+describe('terms acceptance and auth-free mode', () => {
+  let app: FastifyInstance | null = null;
+
+  afterEach(async () => {
+    if (app) await app.close();
+    app = null;
+    await settingsService.set(SETTING_KEYS.AUTH_MODE, 'standard');
+    deactivate();
+  });
+
+  it('the real app refuses to build when terms are active and the stored auth mode is none', async () => {
+    await settingsService.set(SETTING_KEYS.AUTH_MODE, 'none');
+    activate();
+    await expect(build({ logger: false })).rejects.toThrow(/auth-free mode/);
+  });
+
+  it('auth-free mode without terms still builds', async () => {
+    await settingsService.set(SETTING_KEYS.AUTH_MODE, 'none');
+    deactivate();
+    app = await build({ logger: false });
+    await app.ready();
+  });
+
+  it('admin settings reject switching auth.mode to none while terms are active', async () => {
+    activate();
+    app = await build({ logger: false });
+    await app.ready();
+    const admin = await createTestUser({ email: uniqueEmail('admin') });
+    await db.updateTable('users').set({ is_admin: true }).where('id', '=', admin.id).execute();
+    const session = await createTestSession(admin.id);
+    const headers = { authorization: `Bearer ${session.token}` };
+
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/settings/auth.mode',
+      headers,
+      payload: { value: 'none' },
+    });
+    expect(put.statusCode).toBe(400);
+    expect(put.json().error).toBe('terms_incompatible_with_auth_free_mode');
+
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/settings',
+      headers,
+      payload: { 'auth.mode': 'none' },
+    });
+    expect(patch.statusCode).toBe(400);
+    expect(patch.json().error).toBe('terms_incompatible_with_auth_free_mode');
+    expect(await settingsService.getAuthMode()).toBe('standard');
+
+    // Other values and other keys are unaffected.
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/settings',
+      headers,
+      payload: { 'auth.mode': 'standard', 'auth.signup_enabled': true },
+    });
+    expect(ok.statusCode).toBe(200);
+  });
+
+  it('admin settings allow auth.mode none when terms are inactive', async () => {
+    deactivate();
+    app = await build({ logger: false });
+    await app.ready();
+    const admin = await createTestUser({ email: uniqueEmail('admin') });
+    await db.updateTable('users').set({ is_admin: true }).where('id', '=', admin.id).execute();
+    const session = await createTestSession(admin.id);
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/settings/auth.mode',
+      headers: { authorization: `Bearer ${session.token}` },
+      payload: { value: 'none' },
+    });
+    expect(put.statusCode).toBe(200);
+  });
+});

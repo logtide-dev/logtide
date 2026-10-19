@@ -49,3 +49,22 @@ export class TermsAcceptanceService {
 }
 
 export const termsAcceptanceService = new TermsAcceptanceService();
+
+/** Error code for an auth-free mode request while the terms seam is active. */
+export const TERMS_AUTH_FREE_ERROR = 'terms_incompatible_with_auth_free_mode';
+export const TERMS_AUTH_FREE_MESSAGE =
+  'Terms acceptance (LOGTIDE_TERMS_URL, LOGTIDE_PRIVACY_URL, LOGTIDE_TERMS_VERSION) cannot be combined with ' +
+  'auth-free mode: the default user has no session and could never accept the terms. Switch the auth mode ' +
+  'back to standard or unset the LOGTIDE_TERMS_* variables.';
+
+/**
+ * Refuses to start when the terms seam is active and the stored auth mode is
+ * 'none'. No query when the seam is inactive.
+ */
+export async function assertTermsCompatibleWithAuthMode(): Promise<void> {
+  if (!getActiveTerms()) return;
+  const { settingsService } = await import('../settings/service.js');
+  if ((await settingsService.getAuthMode()) === 'none') {
+    throw new Error(TERMS_AUTH_FREE_MESSAGE);
+  }
+}
