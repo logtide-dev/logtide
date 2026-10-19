@@ -30,6 +30,8 @@ const SEAM_ENV = [
   'LOGTIDE_TERMS_URL',
   'LOGTIDE_PRIVACY_URL',
   'LOGTIDE_TERMS_VERSION',
+  'LOGTIDE_BILLING_API_URL',
+  'LOGTIDE_BILLING_API_TOKEN',
 ] as const;
 
 const cfg = config as unknown as Record<string, unknown>;
@@ -67,6 +69,8 @@ describe('hosting seams with all env unset', () => {
     expect(cfg.LOGTIDE_TERMS_URL).toBeUndefined();
     expect(cfg.LOGTIDE_PRIVACY_URL).toBeUndefined();
     expect(cfg.LOGTIDE_TERMS_VERSION).toBeUndefined();
+    expect(cfg.LOGTIDE_BILLING_API_URL).toBeUndefined();
+    expect(cfg.LOGTIDE_BILLING_API_TOKEN).toBeUndefined();
   });
 
   it('registry defaults are unlimited / enabled', async () => {
@@ -164,6 +168,7 @@ describe('hosting seams with all env unset', () => {
     expect(body).not.toHaveProperty('termsUrl');
     expect(body).not.toHaveProperty('privacyUrl');
     expect(body).not.toHaveProperty('termsVersion');
+    expect(body).not.toHaveProperty('billingEnabled');
   });
 
   it('terms acceptance is inert: no /me key, no accept-terms route', async () => {
