@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Contributing guide**: `CONTRIBUTING.md` now documents the architectural rules every pull request must respect (multi-engine storage, tenant isolation, fail-closed PII masking, correctness under the async buffer, queue/dispatcher/capability abstractions, migrations, deployment footprint), and corrects outdated details: branch from and target `develop`, 80% backend coverage, the dev Compose file path and the `reservoir` package in the project structure.
 
+### Fixed
+
+- **Docker image builds**: the backend and frontend Dockerfiles installed an unpinned `pnpm`, so they picked up a newer major that no longer reads the `pnpm.overrides` field of `package.json` and rejected the lockfile with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, breaking every image build (and the E2E job that builds them). Both Dockerfiles now pin `pnpm@10`, matching the version CI uses.
+
 
 ## [1.3.2] - 2026-08-22
 
