@@ -6,7 +6,7 @@
  * security detections and monitor uptime.
  */
 
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
@@ -143,9 +143,9 @@ const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'informational'] as
 /** A capability at or above this share of its limit is worth warning about. */
 const QUOTA_WARNING_THRESHOLD = 0.8;
 
-let emailTransporter: nodemailer.Transporter | null = null;
+let emailTransporter: Transporter | null = null;
 
-function getEmailTransporter(): nodemailer.Transporter | null {
+function getEmailTransporter(): Transporter | null {
   if (!emailTransporter) {
     if (!config.SMTP_HOST) {
       hub.captureLog('warn', '[DigestGenerator] SMTP not configured - digest emails disabled');
@@ -165,7 +165,7 @@ function getEmailTransporter(): nodemailer.Transporter | null {
       };
     }
 
-    emailTransporter = nodemailer.createTransport(transportOpts as nodemailer.TransportOptions);
+    emailTransporter = nodemailer.createTransport(transportOpts as TransportOptions);
     hub.captureLog('info', `[DigestGenerator] Email transporter configured: ${config.SMTP_HOST}:${config.SMTP_PORT}`);
   }
 
