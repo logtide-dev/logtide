@@ -9,8 +9,10 @@ import type { MeteringEventType } from '../modules/metering/types.js';
  *  - boolean: on/off gate, compared as a flag.
  *  - limit:   static numeric cap compared to a caller-supplied COUNT(*). null = unlimited.
  *  - quota:   consumption cap compared to metered usage (#212). null = unlimited.
- *             `signal` is the #212 metering event type to aggregate; `window` is how to read it.
- *             `signal`/`window` live ONLY in the registry, never in the DB.
+ *             `signal` is the #212 metering event type to aggregate, or `signals` for
+ *             several types whose usage is SUMMED (combined quotas); `window` is how
+ *             to read it. Readers go through quotaSignals(def), never `def.signal`.
+ *             `signal(s)`/`window` live ONLY in the registry, never in the DB.
  */
 
 export type QuotaWindow = 'calendar_month' | 'point_in_time';
@@ -27,12 +29,23 @@ export interface LimitCapabilityDef {
   description: string;
 }
 
-export interface QuotaCapabilityDef {
+interface QuotaCapabilityBase {
   kind: 'quota';
   defaultLimit: number | null;
-  signal: MeteringEventType;
   window: QuotaWindow;
   description: string;
+}
+
+/** A quota reads one metering signal, or the SUM of several (combined quotas). */
+export type QuotaCapabilityDef = QuotaCapabilityBase &
+  (
+    | { signal: MeteringEventType; signals?: never }
+    | { signals: readonly MeteringEventType[]; signal?: never }
+  );
+
+/** The metering signals a quota sums (exactly one for single-signal quotas). */
+export function quotaSignals(def: QuotaCapabilityDef): readonly MeteringEventType[] {
+  return def.signals ?? [def.signal as MeteringEventType];
 }
 
 export type CapabilityDef =
@@ -150,6 +163,15 @@ export const CAPABILITIES = {
     signal: 'metrics.ingested.datapoints',
     window: 'calendar_month',
     description: 'Month-to-date ingested metric datapoints cap (hard-block metrics ingestion)',
+  },
+  // Combined byte quota for hosted plans: usage is the SUM of the three byte
+  // signals, each measured as the JSON size of the accepted records.
+  'telemetry.max_bytes_monthly': {
+    kind: 'quota',
+    defaultLimit: null,
+    signals: ['logs.ingested.bytes', 'spans.ingested.bytes', 'metrics.ingested.bytes'],
+    window: 'calendar_month',
+    description: 'Monthly ingested bytes across logs, traces and metrics combined',
   },
 } as const satisfies Record<string, CapabilityDef>;
 

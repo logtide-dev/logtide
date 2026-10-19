@@ -34,6 +34,7 @@ describe('getCapabilityUsage', () => {
         'projects.max',
         'sigma.max_active_rules',
         'storage.max_bytes',
+        'telemetry.max_bytes_monthly',
         'tracing.max_spans_monthly',
       ].sort()
     );

@@ -4,7 +4,7 @@ import { config } from '../config/index.js';
 import { getMailer } from '../lib/mailer.js';
 import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../utils/internal-logger.js';
-import { CAPABILITIES, type CapabilityName } from './registry.js';
+import { CAPABILITIES, quotaSignals, type CapabilityName } from './registry.js';
 import { startOfUtcMonth } from './month.js';
 
 export type QuotaNotifyState = 'grace' | 'blocked';
@@ -14,8 +14,12 @@ function log(level: 'info' | 'warn' | 'error', msg: string, meta?: Record<string
 }
 
 export function formatQuotaValue(cap: CapabilityName, value: number): string {
-  const def = CAPABILITIES[cap] as { signal?: string };
-  if (def.signal && (def.signal.endsWith('.bytes') || def.signal === 'storage.snapshot')) {
+  const def = CAPABILITIES[cap];
+  // Bytes when every signal of the quota is a byte measure (combined quotas too).
+  const isBytes =
+    def.kind === 'quota' &&
+    quotaSignals(def).every((s) => s.endsWith('.bytes') || s === 'storage.snapshot');
+  if (isBytes) {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     let v = value;
     let i = 0;

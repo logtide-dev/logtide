@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   CAPABILITIES,
   CAPABILITY_NAMES,
+  quotaSignals,
   type CapabilityName,
 } from '../../capabilities/registry.js';
 
@@ -34,7 +35,9 @@ describe('capability registry', () => {
     for (const name of CAPABILITY_NAMES) {
       const def = CAPABILITIES[name];
       if (def.kind === 'quota') {
-        expect(typeof def.signal).toBe('string');
+        const signals = quotaSignals(def);
+        expect(signals.length).toBeGreaterThan(0);
+        for (const sig of signals) expect(typeof sig).toBe('string');
         expect(['calendar_month', 'point_in_time']).toContain(def.window);
       }
     }
@@ -54,6 +57,7 @@ describe('capability registry', () => {
     expect(CAPABILITIES['storage.max_bytes'].kind).toBe('quota');
     expect(CAPABILITIES['tracing.max_spans_monthly'].kind).toBe('quota');
     expect(CAPABILITIES['metrics.max_datapoints_monthly'].kind).toBe('quota');
+    expect(CAPABILITIES['telemetry.max_bytes_monthly'].kind).toBe('quota');
   });
 
   it('defaults every quota to null (unlimited) so OSS never blocks', () => {
@@ -63,6 +67,7 @@ describe('capability registry', () => {
       'storage.max_bytes',
       'tracing.max_spans_monthly',
       'metrics.max_datapoints_monthly',
+      'telemetry.max_bytes_monthly',
     ];
     for (const q of quotas) {
       const def = CAPABILITIES[q];

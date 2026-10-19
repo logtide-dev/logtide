@@ -11,7 +11,7 @@ import {
 import { computeQuotaState } from './quota-state.js';
 import { notifyQuotaThreshold } from './quota-notifier.js';
 import type { MeteringService } from '../modules/metering/index.js';
-import { startOfUtcMonth } from './month.js';
+import { readQuotaUsage } from './quota-usage.js';
 
 const QUOTA_CAPABILITIES = CAPABILITY_NAMES.filter(
   (n) => CAPABILITIES[n].kind === 'quota'
@@ -72,21 +72,9 @@ export class QuotaEvaluator {
       }
 
       try {
-        let usage = 0;
-        if (def.window === 'point_in_time') {
-          // Gauge semantics: read the LATEST snapshot per project (summed across
-          // projects), never the historical sum of snapshot events.
-          usage = await this.metering.latestPointInTime(organizationId, def.signal);
-        } else {
-          const rows = await this.metering.aggregate({
-            organizationId,
-            from: startOfUtcMonth(now),
-            to: now,
-            groupBy: 'type',
-            type: def.signal,
-          });
-          usage = rows.reduce((sum, r) => sum + r.quantity, 0);
-        }
+        // Summed over every signal of the quota. Gauges (point_in_time) read the
+        // LATEST snapshot per project, never the historical sum of snapshot events.
+        const usage = await readQuotaUsage(this.metering, organizationId, def, now);
 
         const state = computeQuotaState(usage, limit, gracePercent);
         flags[cap] = state === 'blocked';

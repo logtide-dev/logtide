@@ -12,7 +12,7 @@ import { customDashboardsService } from '../custom-dashboards/service.js';
 import { projectsService } from '../projects/service.js';
 import { notificationChannelsService } from '../notification-channels/service.js';
 import { SigmaService } from '../sigma/service.js';
-import { startOfUtcMonth } from '../../capabilities/month.js';
+import { readQuotaUsage } from '../../capabilities/quota-usage.js';
 
 const sigmaService = new SigmaService();
 
@@ -42,8 +42,8 @@ const LIMIT_COUNTERS: Partial<
   'dashboards.max_custom': (o) => customDashboardsService.countForOrg(o),
 };
 
-// Mirrors QuotaEvaluator: point-in-time gauges read the latest snapshot, monthly
-// quotas sum the metering signal over the current calendar month.
+// Same reader as the QuotaEvaluator: point-in-time gauges read the latest
+// snapshot, monthly quotas sum their signal(s) over the current calendar month.
 async function quotaUsage(
   organizationId: string,
   cap: CapabilityName,
@@ -51,19 +51,7 @@ async function quotaUsage(
 ): Promise<number> {
   const def = CAPABILITIES[cap];
   if (def.kind !== 'quota') return 0;
-
-  if (def.window === 'point_in_time') {
-    return meteringService.latestPointInTime(organizationId, def.signal);
-  }
-
-  const rows = await meteringService.aggregate({
-    organizationId,
-    from: startOfUtcMonth(now),
-    to: now,
-    groupBy: 'type',
-    type: def.signal,
-  });
-  return rows.reduce((sum, r) => sum + r.quantity, 0);
+  return readQuotaUsage(meteringService, organizationId, def, now);
 }
 
 /**
