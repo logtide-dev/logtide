@@ -4,12 +4,15 @@ import {
   CAPABILITY_NAMES,
   type CapabilityName,
 } from '../../capabilities/registry.js';
+import { computeQuotaState, type QuotaState } from '../../capabilities/quota-state.js';
 import { meteringService } from './service.js';
 import { alertsService } from '../alerts/service.js';
 import { apiKeysService } from '../api-keys/service.js';
 import { customDashboardsService } from '../custom-dashboards/service.js';
+import { projectsService } from '../projects/service.js';
 import { notificationChannelsService } from '../notification-channels/service.js';
 import { SigmaService } from '../sigma/service.js';
+import { readQuotaUsage } from '../../capabilities/quota-usage.js';
 
 const sigmaService = new SigmaService();
 
@@ -21,6 +24,8 @@ export interface CapabilityUsage {
   /** Configured cap. null = unlimited (OSS default); render as "no cap", not 0%. */
   limit: number | null;
   description: string;
+  /** Quota state (quota kind only): ok | grace | blocked | unlimited. */
+  state?: QuotaState;
 }
 
 // Current-count resolver per limit capability. audit.retention_days is a config
@@ -32,17 +37,13 @@ const LIMIT_COUNTERS: Partial<
   'alerts.max_rules': (o) => alertsService.countAlertRules(o),
   'notifications.max_channels': (o) => notificationChannelsService.countChannels(o),
   'apikeys.max': (o) => apiKeysService.countKeysForOrg(o),
+  'projects.max': (o) => projectsService.countActiveForOrg(o),
   'sigma.max_active_rules': (o) => sigmaService.countActiveRules(o),
   'dashboards.max_custom': (o) => customDashboardsService.countForOrg(o),
 };
 
-/** Start of the current UTC calendar month (matches QuotaEvaluator semantics). */
-function startOfUtcMonth(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-}
-
-// Mirrors QuotaEvaluator: point-in-time gauges read the latest snapshot, monthly
-// quotas sum the metering signal over the current calendar month.
+// Same reader as the QuotaEvaluator: point-in-time gauges read the latest
+// snapshot, monthly quotas sum their signal(s) over the current calendar month.
 async function quotaUsage(
   organizationId: string,
   cap: CapabilityName,
@@ -50,19 +51,7 @@ async function quotaUsage(
 ): Promise<number> {
   const def = CAPABILITIES[cap];
   if (def.kind !== 'quota') return 0;
-
-  if (def.window === 'point_in_time') {
-    return meteringService.latestPointInTime(organizationId, def.signal);
-  }
-
-  const rows = await meteringService.aggregate({
-    organizationId,
-    from: startOfUtcMonth(now),
-    to: now,
-    groupBy: 'type',
-    type: def.signal,
-  });
-  return rows.reduce((sum, r) => sum + r.quantity, 0);
+  return readQuotaUsage(meteringService, organizationId, def, now);
 }
 
 /**
@@ -101,12 +90,14 @@ export async function getCapabilityUsage(
           Promise.all([
             quotaUsage(organizationId, cap, now),
             capabilities.getLimit(organizationId, cap),
+            capabilities.getLimit(organizationId, 'quota.grace_percent'),
           ]).then(
-            ([current, limit]): CapabilityUsage => ({
+            ([current, limit, grace]): CapabilityUsage => ({
               capability: cap,
               kind: 'quota',
               current,
               limit,
+              state: computeQuotaState(current, limit, grace),
               description: def.description,
             })
           ),

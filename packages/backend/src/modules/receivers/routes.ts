@@ -8,6 +8,8 @@ import { projectsService } from '../projects/service.js';
 import { auditLogService } from '../audit-log/index.js';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
+import { emailVerificationService } from '../users/email-verification.js';
+import { termsAcceptanceService } from '../users/terms.js';
 
 const createReceiverSchema = z
   .object({
@@ -72,6 +74,15 @@ export async function receiversRoutes(fastify: FastifyInstance) {
     try {
       const { projectId } = projectIdSchema.parse(request.params);
       const body = createReceiverSchema.parse(request.body);
+
+      // A receiver mints an ingest credential, so it carries the same gates as
+      // API key creation (both no-ops unless their hosting seam is on).
+      if (await emailVerificationService.isBlocked(request.user.id)) {
+        return reply.status(403).send({ error: 'email_not_verified' });
+      }
+      if (await termsAcceptanceService.isPending(request.user.id)) {
+        return reply.status(403).send({ error: 'terms_not_accepted' });
+      }
 
       const project = await projectsService.getProjectById(projectId, request.user.id);
       if (!project || project.deletedAt) {

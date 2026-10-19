@@ -1,6 +1,6 @@
 import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
-import { metering } from '../metering/index.js';
+import { metering, recordMetricIngestion } from '../metering/index.js';
 import { createSkewTracker } from '../ingestion/skew.js';
 import type {
   MetricRecord,
@@ -42,6 +42,13 @@ export class MetricsService {
         projectId,
         metadata: { maxPastMs: metricSkew.maxPastMs, maxFutureMs: metricSkew.maxFutureMs },
       });
+    }
+
+    // Metering: accepted data points only (reservoir result), billed like
+    // spans. Deliberately not under the ingestion.* prefix, which is excluded
+    // from usage breakdowns and bypasses METERING_ENABLED=false.
+    if (organizationId) {
+      recordMetricIngestion({ datapointCount: result.ingested, organizationId, projectId, records: enriched });
     }
 
     // Mark the project as having metrics (debounced, fire-and-forget)

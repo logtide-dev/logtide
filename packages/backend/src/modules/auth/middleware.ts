@@ -5,7 +5,9 @@
  * Used by all session-based route handlers (organizations, projects, etc.)
  */
 
+import { timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest, FastifyReply } from 'fastify';
+import { config } from '../../config/index.js';
 import { usersService, type UserProfile } from '../users/service.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
@@ -14,7 +16,28 @@ import { bootstrapService } from '../bootstrap/service.js';
 declare module 'fastify' {
   interface FastifyRequest {
     user?: UserProfile;
+    /** Set only on routes opted in via `config.allowServiceToken` (admin hosting seam). */
+    servicePrincipal?: ServicePrincipal;
   }
+  interface FastifyContextConfig {
+    allowServiceToken?: boolean;
+  }
+}
+
+export interface ServicePrincipal {
+  kind: 'service';
+  name: 'admin-service';
+}
+
+export const SERVICE_ACTOR_LABEL = 'service:admin-service';
+
+export function matchesServiceToken(token: string): boolean {
+  const expected = config.LOGTIDE_ADMIN_SERVICE_TOKEN;
+  if (!expected) return false;
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /**
@@ -29,6 +52,13 @@ export async function authenticate(
   const token = request.headers.authorization?.replace('Bearer ', '');
 
   if (token) {
+    // Service token: honored only on routes that explicitly opt in (admin
+    // routes behind requireAdmin). Everywhere else it is just an invalid session.
+    if (request.routeOptions?.config?.allowServiceToken && matchesServiceToken(token)) {
+      request.servicePrincipal = { kind: 'service', name: 'admin-service' };
+      return;
+    }
+
     const user = await usersService.validateSession(token);
 
     if (user) {

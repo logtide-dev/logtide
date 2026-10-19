@@ -8,16 +8,14 @@ import {
   CAPABILITY_NAMES,
   type CapabilityName,
 } from './registry.js';
+import { computeQuotaState } from './quota-state.js';
+import { notifyQuotaThreshold } from './quota-notifier.js';
 import type { MeteringService } from '../modules/metering/index.js';
+import { readQuotaUsage } from './quota-usage.js';
 
 const QUOTA_CAPABILITIES = CAPABILITY_NAMES.filter(
   (n) => CAPABILITIES[n].kind === 'quota'
 ) as CapabilityName[];
-
-/** Start of the current UTC calendar month. */
-function startOfUtcMonth(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-}
 
 /**
  * Periodic job: the single place that joins a configured quota limit (#214) to
@@ -33,10 +31,21 @@ export class QuotaEvaluator {
   constructor(private readonly metering: Pick<MeteringService, 'aggregate' | 'latestPointInTime'>) {}
 
   /**
-   * Orgs to evaluate: those with at least one non-null quota entitlement row.
-   * Cost scales with restricted orgs, not total orgs.
+   * Orgs to evaluate: those with at least one non-null quota entitlement row, or
+   * every org when any quota default is finite (organizations has no soft delete).
+   * Without quota defaults, cost scales with restricted orgs, not total orgs.
    */
   private async restrictedOrgIds(): Promise<string[]> {
+    // A finite quota default (CAPABILITY_DEFAULTS_JSON) restricts every org that has
+    // no explicit row, so all orgs must be evaluated. Rows with limit null still
+    // resolve to unlimited inside evaluateOrg via the resolver.
+    const hasFiniteQuotaDefault = QUOTA_CAPABILITIES.some(
+      (n) => (CAPABILITIES[n] as { defaultLimit: number | null }).defaultLimit !== null
+    );
+    if (hasFiniteQuotaDefault) {
+      const all = await db.selectFrom('organizations').select('id').execute();
+      return all.map((r) => r.id);
+    }
     const rows = await db
       .selectFrom('organization_entitlements')
       .select('organization_id')
@@ -49,6 +58,8 @@ export class QuotaEvaluator {
 
   private async evaluateOrg(organizationId: string, now: Date): Promise<void> {
     const flags: Partial<Record<CapabilityName, boolean>> = {};
+    // Per-org grace allowance applying to every quota (null = 0%).
+    const gracePercent = (await capabilities.getLimit(organizationId, 'quota.grace_percent')) ?? 0;
 
     for (const cap of QUOTA_CAPABILITIES) {
       const def = CAPABILITIES[cap];
@@ -61,23 +72,15 @@ export class QuotaEvaluator {
       }
 
       try {
-        let usage = 0;
-        if (def.window === 'point_in_time') {
-          // Gauge semantics: read the LATEST snapshot per project (summed across
-          // projects), never the historical sum of snapshot events.
-          usage = await this.metering.latestPointInTime(organizationId, def.signal);
-        } else {
-          const rows = await this.metering.aggregate({
-            organizationId,
-            from: startOfUtcMonth(now),
-            to: now,
-            groupBy: 'type',
-            type: def.signal,
-          });
-          usage = rows.reduce((sum, r) => sum + r.quantity, 0);
-        }
+        // Summed over every signal of the quota. Gauges (point_in_time) read the
+        // LATEST snapshot per project, never the historical sum of snapshot events.
+        const usage = await readQuotaUsage(this.metering, organizationId, def, now);
 
-        flags[cap] = usage >= limit;
+        const state = computeQuotaState(usage, limit, gracePercent);
+        flags[cap] = state === 'blocked';
+        if (state === 'grace' || state === 'blocked') {
+          await notifyQuotaThreshold({ organizationId, capability: cap, state, usage, limit, gracePercent, now });
+        }
       } catch (err) {
         // Fail-open: leave this capability's flag unset (under quota).
         console.warn(

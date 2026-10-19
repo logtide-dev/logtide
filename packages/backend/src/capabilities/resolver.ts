@@ -72,7 +72,8 @@ export class DbCapabilityResolver implements CapabilityResolver {
         if (def.kind === 'boolean') {
           values[name] = { kind: 'boolean', enabled: row.enabled ?? def.defaultEnabled };
         } else {
-          values[name] = { kind: def.kind, limit: row.limit_value ?? null };
+          // limit_value is BIGINT: the pg driver returns int8 as a string (migration 059).
+          values[name] = { kind: def.kind, limit: row.limit_value === null ? null : Number(row.limit_value) };
         }
       }
     } catch (err) {

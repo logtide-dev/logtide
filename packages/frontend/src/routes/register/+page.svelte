@@ -42,6 +42,11 @@
   let organizationsAPI = $derived(new OrganizationsAPI(() => token));
   let checkingAuthConfig = $state(true);
   let signupDisabled = $state(false);
+  // Terms seam: set only when the backend advertises termsUrl/privacyUrl.
+  let termsUrl = $state<string | null>(null);
+  let privacyUrl = $state<string | null>(null);
+  let acceptTerms = $state(false);
+  let termsRequired = $derived(termsUrl !== null && privacyUrl !== null);
 
   // Check auth config on mount
   onMount(async () => {
@@ -55,6 +60,10 @@
       }
       if (!config.signupEnabled) {
         signupDisabled = true;
+      }
+      if (config.termsUrl && config.privacyUrl) {
+        termsUrl = config.termsUrl;
+        privacyUrl = config.privacyUrl;
       }
     } catch (e) {
       console.error('Failed to get auth config:', e);
@@ -119,7 +128,12 @@
     error = '';
 
     try {
-      const response = await authAPI.register({ name, email, password });
+      const response = await authAPI.register({
+        name,
+        email,
+        password,
+        ...(termsRequired ? { acceptTerms } : {}),
+      });
       if (!response.session) {
         // 201 without a session: the account exists but auto-login failed
         // transiently, so send the user to the login page instead of crashing.
@@ -331,7 +345,26 @@
                 {/if}
               </div>
 
-              <Button type="submit" class="w-full gap-2" disabled={loading}>
+              {#if termsRequired}
+                <div class="flex items-start gap-2">
+                  <input
+                    id="acceptTerms"
+                    type="checkbox"
+                    bind:checked={acceptTerms}
+                    disabled={loading}
+                    required
+                    class="mt-0.5 h-4 w-4 rounded border-input accent-primary"
+                  />
+                  <label for="acceptTerms" class="text-sm text-muted-foreground">
+                    I agree to the
+                    <a href={termsUrl} target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Terms of Service</a>
+                    and the
+                    <a href={privacyUrl} target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Privacy Policy</a>
+                  </label>
+                </div>
+              {/if}
+
+              <Button type="submit" class="w-full gap-2" disabled={loading || (termsRequired && !acceptTerms)}>
                 {#if loading}
                   <Spinner size="sm" />
                   Creating account...

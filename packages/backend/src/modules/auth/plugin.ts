@@ -6,6 +6,7 @@ import { usersService } from '../users/service.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
 import { streamTicketService } from '../streaming/stream-ticket-service.js';
+import { matchesServiceToken } from './middleware.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -177,6 +178,14 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
     // 3. Try Bearer token (session-based auth) for UI
     if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+
+      // Admin service token (hosting seam): leave it to the route-level
+      // `authenticate`, which honors it only on routes that opted in via
+      // `config.allowServiceToken`. Everywhere else it falls through to the
+      // session check below and is rejected as an invalid session.
+      if (request.routeOptions?.config?.allowServiceToken && matchesServiceToken(token)) {
+        return;
+      }
 
       const user = await usersService.validateSession(token);
 

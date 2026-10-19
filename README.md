@@ -182,6 +182,8 @@ Ready-to-use SDKs with auto-instrumentation and distributed tracing.
 
 Distributed under the **GNU AGPLv3** License. See `LICENSE` for more information.
 
+Contributions require signing the [Contributor License Agreement](https://cla-assistant.io/logtide-dev/logtide); see `CONTRIBUTING.md`.
+
 ---
 
 <div align="center">

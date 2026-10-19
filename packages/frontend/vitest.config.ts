@@ -28,6 +28,7 @@ export default defineConfig({
       // plain vitest; point it at a stub so store/component tests can import it.
       '$app/environment': path.resolve(__dirname, 'src/test-stubs/app-environment.ts'),
       '$app/navigation': path.resolve(__dirname, 'src/test-stubs/app-navigation.ts'),
+      '$app/state': path.resolve(__dirname, 'src/test-stubs/app-state.ts'),
     },
   },
 });

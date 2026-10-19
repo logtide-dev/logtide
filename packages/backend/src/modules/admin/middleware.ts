@@ -6,6 +6,11 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
  * Requires that session authentication has already been performed
  */
 export async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
+    // Service principal was already vetted by authenticate on opted-in routes
+    if (request.servicePrincipal) {
+        return;
+    }
+
     const user = (request as any).user;
 
     if (!user) {

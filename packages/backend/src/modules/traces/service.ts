@@ -178,10 +178,10 @@ export class TracesService {
       });
     }
 
-    // Metering: record ingested span count (fire-and-forget; activates
-    // the tracing.max_spans_monthly quota in the capability system).
+    // Metering: record ingested span count and bytes of the spans as stored
+    // (fire-and-forget; feeds tracing.max_spans_monthly and telemetry.max_bytes_monthly).
     if (organizationId) {
-      recordSpanIngestion({ spanCount: result.ingested, organizationId, projectId });
+      recordSpanIngestion({ spanCount: result.ingested, organizationId, projectId, spans: spansToStore });
     }
 
     for (const [, trace] of traces) {

@@ -21,10 +21,15 @@
   import { Button } from '$lib/components/ui/button';
   import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
+  import QuotaStateBadge from '$lib/components/QuotaStateBadge.svelte';
+  import { authAPI } from '$lib/api/auth';
+  import { organizationsAPI } from '$lib/api/organizations';
+  import { canShowUpgradeCta, anyCapabilityAtLimit } from '$lib/utils/upgrade-cta';
   import type { OrganizationWithRole } from '@logtide/shared';
   import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Gauge from '@lucide/svelte/icons/gauge';
+  import { visibleCapabilities } from '$lib/utils/usage-capabilities';
 
   // TODO(#214): entitlements/limits editor goes here once feature #214 backend is shipped
 
@@ -51,6 +56,35 @@
 
   let lastLoadedOrgId = $state<string | null>(null);
   let lastLoadedDays = $state<number | null>(null);
+
+  let upgradeEnabled = $state(false);
+  let handoffBusy = $state<'upgrade' | 'manage' | null>(null);
+  let handoffError = $state('');
+
+  onMount(async () => {
+    try {
+      const cfg = await authAPI.getAuthConfig();
+      upgradeEnabled = cfg.upgradeEnabled === true;
+    } catch {
+      upgradeEnabled = false;
+    }
+  });
+
+  let showUpgradeCta = $derived(canShowUpgradeCta(upgradeEnabled, currentOrg?.role));
+  let atLimit = $derived(anyCapabilityAtLimit(capabilities));
+
+  async function startHandoff(intent: 'upgrade' | 'manage') {
+    if (!currentOrg || handoffBusy) return;
+    handoffBusy = intent;
+    handoffError = '';
+    try {
+      const { url } = await organizationsAPI.createUpgradeHandoff(currentOrg.id, intent);
+      window.location.assign(url);
+    } catch (e) {
+      handoffError = e instanceof Error ? e.message : 'Could not open billing';
+      handoffBusy = null;
+    }
+  }
 
   const unsubOrg = organizationStore.subscribe((state) => {
     currentOrg = state.currentOrganization;
@@ -157,12 +191,15 @@
     'alerts.max_rules': { label: 'Alert rules', unit: 'count' },
     'notifications.max_channels': { label: 'Notification channels', unit: 'count' },
     'apikeys.max': { label: 'API keys', unit: 'count' },
+    'projects.max': { label: 'Projects', unit: 'count' },
     'sigma.max_active_rules': { label: 'Active Sigma rules', unit: 'count' },
     'dashboards.max_custom': { label: 'Custom dashboards', unit: 'count' },
     'ingestion.max_events_monthly': { label: 'Events (this month)', unit: 'count' },
     'ingestion.max_bytes_monthly': { label: 'Ingested bytes (this month)', unit: 'bytes' },
     'storage.max_bytes': { label: 'Storage used', unit: 'bytes' },
     'tracing.max_spans_monthly': { label: 'Spans (this month)', unit: 'count' },
+    'metrics.max_datapoints_monthly': { label: 'Metric datapoints (this month)', unit: 'count' },
+    'telemetry.max_bytes_monthly': { label: 'Telemetry (logs, traces and metrics)', unit: 'bytes' },
   };
 
   function capLabel(c: CapabilityUsage): string {
@@ -189,15 +226,9 @@
     return 'bg-green-500';
   }
 
-  // Capabilities with a configured limit come first (the actionable ones),
-  // unlimited ones after; stable within each group by registry order.
-  let sortedCapabilities = $derived(
-    [...capabilities].sort((a, b) => {
-      const al = a.limit === null ? 1 : 0;
-      const bl = b.limit === null ? 1 : 0;
-      return al - bl;
-    })
-  );
+  // Limited first, unlimited after; null quotas hidden when the combined
+  // telemetry quota is capped (see visibleCapabilities).
+  let sortedCapabilities = $derived(visibleCapabilities(capabilities));
 
   let hasAnyLimit = $derived(capabilities.some((c) => c.limit !== null));
 </script>
@@ -214,11 +245,35 @@
       value={String(selectedDays)}
       onChange={(v) => { selectedDays = parseInt(v, 10) as RangeDays; }}
     />
-    <Button variant="outline" size="sm" onclick={() => load()} disabled={loading}>
-      <RotateCcw class="h-4 w-4 mr-1.5 {loading ? 'animate-spin' : ''}" />
-      Refresh
-    </Button>
+    <div class="flex items-center gap-2">
+      {#if showUpgradeCta}
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={() => startHandoff('manage')}
+          disabled={handoffBusy !== null}
+        >
+          Manage billing
+        </Button>
+        <Button
+          variant={atLimit ? 'default' : 'outline'}
+          size="sm"
+          onclick={() => startHandoff('upgrade')}
+          disabled={handoffBusy !== null}
+        >
+          Upgrade
+        </Button>
+      {/if}
+      <Button variant="outline" size="sm" onclick={() => load()} disabled={loading}>
+        <RotateCcw class="h-4 w-4 mr-1.5 {loading ? 'animate-spin' : ''}" />
+        Refresh
+      </Button>
+    </div>
   </div>
+
+  {#if handoffError}
+    <p class="text-sm text-destructive">{handoffError}</p>
+  {/if}
 
   {#if error}
     <p class="text-sm text-destructive">{error}</p>
@@ -245,7 +300,7 @@
 
     <Card>
       <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle class="text-sm font-medium">Bytes ingested</CardTitle>
+        <CardTitle class="text-sm font-medium">Log bytes ingested</CardTitle>
         <BarChart3 class="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
@@ -310,7 +365,7 @@
             {@const pct = capPercent(cap)}
             <div class="space-y-1.5">
               <div class="flex items-center justify-between gap-2 text-sm">
-                <span class="font-medium truncate" title={cap.description}>{capLabel(cap)}</span>
+                <span class="font-medium truncate" title={cap.description}>{capLabel(cap)} <QuotaStateBadge state={cap.state} /></span>
                 <span class="text-muted-foreground whitespace-nowrap">
                   {capFormat(cap, cap.current)} / {cap.limit === null ? '∞' : capFormat(cap, cap.limit)}
                   {#if pct !== null}

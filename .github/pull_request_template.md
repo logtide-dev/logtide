@@ -18,6 +18,10 @@ or background job (see `docs/security/tenant-isolation-audit.md`):
 
 <!-- If a change is intentionally cross-tenant (admin / platform), say so here. -->
 
+## Contributor License Agreement
+
+- [ ] I have signed the CLA (<https://cla-assistant.io/logtide-dev/logtide>) and my commits use an email linked to my GitHub account.
+
 ## Testing
 
 <!-- how this was verified -->

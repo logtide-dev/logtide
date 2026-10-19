@@ -18,6 +18,7 @@ import { config } from '../../config/index.js';
 import { db } from '../../database/index.js';
 import { context } from '@logtide/shared/context';
 import { assertWithinUsageQuota } from '../../capabilities/index.js';
+import { upgradeHintFor } from '../organizations/upgrade-handoff.js';
 
 /**
  * Helper to collect chunks from a stream into a buffer.
@@ -140,6 +141,8 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
                 errorMessage: { type: 'string' },
               },
             },
+            // Hosting seam: present only while the upgrade handoff is active.
+            upgrade_available: { type: 'boolean' },
           },
         },
       },
@@ -219,11 +222,13 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
           };
         }
 
-        // Capability: hard-block span ingestion when over the tracing quota (#214).
+        // Capability: hard-block span ingestion when over the tracing quota (#214)
+        // or the combined telemetry byte quota.
         // Establish the org context so assertWithinUsageQuota can read it, then ingest.
         await context.runAsSystem('otlp:trace-ingest', async () => {
           await context.with({ organizationId: project.organization_id }, async () => {
             await assertWithinUsageQuota('tracing.max_spans_monthly');
+            await assertWithinUsageQuota('telemetry.max_bytes_monthly');
             await tracesService.ingestSpans(spans, traces, projectId, project.organization_id);
           });
         });
@@ -244,6 +249,7 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
               rejectedSpans: -1,
               errorMessage,
             },
+            ...upgradeHintFor(error),
           });
         }
 

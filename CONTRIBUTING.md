@@ -42,6 +42,14 @@ For larger changes (new storage engine methods, schema changes, changes to the i
 
 Keep each pull request focused on one problem: no unrelated refactors, dependency upgrades or formatting churn in the same PR.
 
+#### Contributor License Agreement
+
+Before your first pull request can be merged you need to sign the Contributor License Agreement (CLA). A bot posts a comment on your first PR with a link; read the agreement text it shows, then sign by commenting as the bot asks. You sign once, for all your future contributions. You can also sign ahead of time at <https://cla-assistant.io/logtide-dev/logtide>.
+
+The bot recognises you through the email address on your commits, so **commit with an email address that is linked to your GitHub account** (check it under GitHub Settings, Emails). Commits made with an unlinked email cannot be matched to your account and the CLA check will stay pending.
+
+Contributions to the core are licensed under the AGPLv3 like the rest of the code. LogTide is open core, and the CLA also allows the maintainer to use contributions in commercial editions. See the agreement text shown by the bot for the exact terms.
+
 ## Development Setup
 
 ### Prerequisites

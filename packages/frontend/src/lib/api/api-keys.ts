@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from '$lib/config';
+import { apiErrorMessage } from '$lib/utils/email-verification';
 import { getAuthToken } from '$lib/utils/auth';
 
 export type ApiKeyType = 'write' | 'full';
@@ -72,7 +73,7 @@ export class ApiKeysAPI {
 
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.error || 'Failed to create API key');
+      throw new Error(apiErrorMessage(error.error, 'Failed to create API key'));
     }
 
     return response.json();

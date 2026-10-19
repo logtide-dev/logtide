@@ -50,6 +50,8 @@
   import Activity from "@lucide/svelte/icons/activity";
   import { formatTimeAgo } from "$lib/utils/datetime";
   import Footer from "$lib/components/Footer.svelte";
+  import EmailVerificationBanner from "$lib/components/EmailVerificationBanner.svelte";
+  import TermsAcceptanceModal from "$lib/components/TermsAcceptanceModal.svelte";
   import OnboardingChecklist from "$lib/components/OnboardingChecklist.svelte";
   import FeatureBadge from "$lib/components/FeatureBadge.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
@@ -826,6 +828,8 @@
     </header>
 
     <main class="flex-1 overflow-auto bg-background">
+      <EmailVerificationBanner />
+      <TermsAcceptanceModal />
       {@render children?.()}
     </main>
 

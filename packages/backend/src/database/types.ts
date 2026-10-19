@@ -83,7 +83,8 @@ export interface OrganizationEntitlementsTable {
   organization_id: string;
   capability: string;
   enabled: boolean | null;
-  limit_value: number | null;
+  /** BIGINT (migration 059): selected as a string by the pg driver, written as a number. */
+  limit_value: ColumnType<string | null, number | null, number | null>;
   updated_at: Generated<Timestamp>;
 }
 
@@ -97,6 +98,28 @@ export interface UsersTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   last_login: Timestamp | null;
+  // NULL = unverified. Defaults to NOW(); only enforced when REQUIRE_EMAIL_VERIFICATION=true.
+  email_verified_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  // Terms/Privacy acceptance (migration 061). NULL = never accepted. Only read
+  // when the LOGTIDE_TERMS_* hosting seam is configured.
+  terms_accepted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  terms_version: ColumnType<string | null, string | null | undefined, string | null>;
+}
+
+export interface EmailVerificationTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: string;
+  expires_at: Timestamp;
+  used_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
+export interface OrganizationCreationLogTable {
+  id: Generated<string>;
+  user_id: string;
+  organization_id: string | null;
+  created_at: Generated<Timestamp>;
 }
 
 export interface SessionsTable {
@@ -1170,6 +1193,8 @@ export interface Database {
   users: UsersTable;
   sessions: SessionsTable;
   stream_tickets: StreamTicketsTable;
+  email_verification_tokens: EmailVerificationTokensTable;
+  organization_creation_log: OrganizationCreationLogTable;
   organizations: OrganizationsTable;
   organization_members: OrganizationMembersTable;
   organization_invitations: OrganizationInvitationsTable;

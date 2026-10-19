@@ -4,6 +4,11 @@ import { OrganizationsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import type { OrgRole } from '@logtide/shared';
 import { auditLogService } from '../audit-log/index.js';
+import { config } from '../../config/index.js';
+import { withLimitLock } from '../../capabilities/limit-lock.js';
+import { startOfUtcMonth } from '../../capabilities/month.js';
+import { isUpgradeHandoffActive, signUpgradeToken, buildUpgradeUrl } from './upgrade-handoff.js';
+import { termsAcceptanceService } from '../users/terms.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -35,9 +40,40 @@ const updateMemberRoleSchema = z.object({
   role: z.enum(['admin', 'member']),
 });
 
+const upgradeHandoffBodySchema = z.object({
+  intent: z.enum(['upgrade', 'manage']),
+});
+
 export async function organizationsRoutes(fastify: FastifyInstance) {
   // All routes require authentication
   fastify.addHook('onRequest', authenticate);
+
+  // Signed handoff to the external billing portal. Registered ONLY when the
+  // feature is configured (boot-time), so inactive = default Fastify 404.
+  // Owner/admin of the org only. Uses the normal user session.
+  if (isUpgradeHandoffActive()) fastify.post('/:id/upgrade-handoff', async (request: any, reply) => {
+    try {
+      const { id } = organizationIdSchema.parse(request.params);
+      const { intent } = upgradeHandoffBodySchema.parse(request.body);
+
+      const role = await organizationsService.getMemberRole(id, request.user.id);
+      if (role !== 'owner' && role !== 'admin') {
+        return reply.status(403).send({ error: 'Only organization owners and admins can manage billing' });
+      }
+
+      const cfg = config as { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGRADE_SIGNING_SECRET?: string };
+      const token = signUpgradeToken(
+        { org: id, user: request.user.id, email: request.user.email, role, intent },
+        cfg.LOGTIDE_UPGRADE_SIGNING_SECRET!
+      );
+      return reply.send({ url: buildUpgradeUrl(cfg.LOGTIDE_UPGRADE_URL!, token) });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Invalid request' });
+      }
+      throw error;
+    }
+  });
 
   // Get all organizations for current user
   fastify.get('/', async (request: any, reply) => {
@@ -275,11 +311,56 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
     try {
       const body = createOrganizationSchema.parse(request.body);
 
-      const organization = await organizationsService.createOrganization({
-        userId: request.user.id,
-        name: body.name,
-        description: body.description,
+      // Terms gate (no-op unless the LOGTIDE_TERMS_* seam is active), checked
+      // before the per-user organization caps.
+      if (await termsAcceptanceService.isPending(request.user.id)) {
+        return reply.status(403).send({ error: 'terms_not_accepted' });
+      }
+
+      // One lock per user: the cap counts and the insert must not interleave
+      // across parallel POSTs, otherwise both caps can be overshot.
+      const outcome = await withLimitLock(`user:${request.user.id}`, 'organizations.create', async () => {
+        const maxOwned = config.MAX_ORGANIZATIONS_PER_USER;
+        if (maxOwned !== undefined) {
+          const owned = await organizationsService.countOwnedOrganizations(request.user.id);
+          if (owned >= maxOwned) {
+            return {
+              denied: {
+                error: 'organization_limit_reached',
+                message: `You can own at most ${maxOwned.toLocaleString('en-US')} organization${maxOwned === 1 ? '' : 's'}`,
+              },
+            };
+          }
+        }
+
+        const maxCreations = config.MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH;
+        if (maxCreations !== undefined) {
+          const createdThisMonth = await organizationsService.countCreationsSince(
+            request.user.id,
+            startOfUtcMonth(new Date()),
+          );
+          if (createdThisMonth >= maxCreations) {
+            return {
+              denied: {
+                error: 'organization_creation_limit_reached',
+                message: `You can create at most ${maxCreations.toLocaleString('en-US')} organization${maxCreations === 1 ? '' : 's'} per month`,
+              },
+            };
+          }
+        }
+
+        const created = await organizationsService.createOrganization({
+          userId: request.user.id,
+          name: body.name,
+          description: body.description,
+        });
+        return { organization: created };
       });
+
+      if ('denied' in outcome) {
+        return reply.status(403).send(outcome.denied);
+      }
+      const organization = outcome.organization;
 
       await auditLogService.record({
         action: 'org.created',

@@ -53,6 +53,28 @@ export class OrganizationsService {
     }
   }
 
+  /** Count organizations a user owns (organization_members role 'owner'). */
+  async countOwnedOrganizations(userId: string): Promise<number> {
+    const row = await db
+      .selectFrom('organization_members')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('user_id', '=', userId)
+      .where('role', '=', 'owner')
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
+  /** Count organizations the user created since `since` (survives org deletion). */
+  async countCreationsSince(userId: string, since: Date): Promise<number> {
+    const row = await db
+      .selectFrom('organization_creation_log')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('user_id', '=', userId)
+      .where('created_at', '>=', since)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Create a new organization
    */
@@ -63,27 +85,37 @@ export class OrganizationsService {
     // Find unique slug
     const uniqueSlug = await this.findUniqueSlug(baseSlug);
 
-    // Create organization
-    const org = await db
-      .insertInto('organizations')
-      .values({
-        name: input.name,
-        slug: uniqueSlug,
-        description: input.description || null,
-        owner_id: input.userId,
-      })
-      .returning(['id', 'name', 'slug', 'description', 'owner_id', 'retention_days', 'created_at', 'updated_at'])
-      .executeTakeFirstOrThrow();
+    // Org, owner membership and the creation log row commit together
+    const org = await db.transaction().execute(async (trx) => {
+      const created = await trx
+        .insertInto('organizations')
+        .values({
+          name: input.name,
+          slug: uniqueSlug,
+          description: input.description || null,
+          owner_id: input.userId,
+        })
+        .returning(['id', 'name', 'slug', 'description', 'owner_id', 'retention_days', 'created_at', 'updated_at'])
+        .executeTakeFirstOrThrow();
 
-    // Add user as owner member
-    await db
-      .insertInto('organization_members')
-      .values({
-        organization_id: org.id,
-        user_id: input.userId,
-        role: 'owner',
-      })
-      .execute();
+      // Add user as owner member
+      await trx
+        .insertInto('organization_members')
+        .values({
+          organization_id: created.id,
+          user_id: input.userId,
+          role: 'owner',
+        })
+        .execute();
+
+      // Append-only bookkeeping for MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH
+      await trx
+        .insertInto('organization_creation_log')
+        .values({ user_id: input.userId, organization_id: created.id })
+        .execute();
+
+      return created;
+    });
 
     return {
       id: org.id,
@@ -406,6 +438,20 @@ export class OrganizationsService {
         email: m.email,
       },
     }));
+  }
+
+  /**
+   * Role of a user in an organization, or null when not a member
+   */
+  async getMemberRole(organizationId: string, userId: string): Promise<OrgRole | null> {
+    const member = await db
+      .selectFrom('organization_members')
+      .select(['role'])
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+
+    return (member?.role as OrgRole | undefined) ?? null;
   }
 
   /**

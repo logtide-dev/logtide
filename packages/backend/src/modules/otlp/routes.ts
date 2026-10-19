@@ -17,6 +17,7 @@ import { ingestionService } from '../ingestion/service.js';
 import { config } from '../../config/index.js';
 import { db } from '../../database/index.js';
 import { context } from '@logtide/shared/context';
+import { upgradeHintFor } from '../organizations/upgrade-handoff.js';
 
 /**
  * Helper to collect chunks from a stream into a buffer.
@@ -144,6 +145,8 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
                 errorMessage: { type: 'string' },
               },
             },
+            // Hosting seam: present only while the upgrade handoff is active.
+            upgrade_available: { type: 'boolean' },
           },
         },
       },
@@ -261,6 +264,7 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
               rejectedLogRecords: -1,
               errorMessage,
             },
+            ...upgradeHintFor(error),
           });
         }
 
