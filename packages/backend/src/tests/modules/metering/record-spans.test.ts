@@ -111,22 +111,34 @@ describe('span and metric byte metering (telemetry quota)', () => {
     return { rows: r.length, total: r.reduce((a, x) => a + Number(x.quantity), 0) };
   };
 
-  const spans = [{ spanId: 'a', attributes: { k: 'v' } }, { spanId: 'b', attributes: { k: 'w' } }];
-  const points = [{ metricName: 'm', value: 1 }, { metricName: 'n', value: 2 }];
+  const injected = { organizationId: 'org-x', projectId: 'proj-x' };
+  const spans = [
+    { ...injected, time: 't0', startTime: 't0', spanId: 'a', attributes: { k: 'v', time: 'kept' } },
+    { ...injected, time: 't1', startTime: 't1', spanId: 'b', attributes: { k: 'w' } },
+  ];
+  const points = [{ ...injected, metricName: 'm', value: 1 }, { ...injected, metricName: 'n', value: 2 }];
+  // Customer-provided projection: no tenant ids, no span 'time' copy (nested keys untouched).
+  const spanBytes = Buffer.byteLength(JSON.stringify([
+    { startTime: 't0', spanId: 'a', attributes: { k: 'v', time: 'kept' } },
+    { startTime: 't1', spanId: 'b', attributes: { k: 'w' } },
+  ]));
+  const pointBytes = Buffer.byteLength(JSON.stringify([{ metricName: 'm', value: 1 }, { metricName: 'n', value: 2 }]));
 
-  it('records the exact JSON byte size of the stored spans', async () => {
+  it('records the JSON byte size of the customer-provided span fields', async () => {
     recordSpanIngestion({ spanCount: 2, organizationId: orgId, projectId, spans });
-    expect(await sumOf('spans.ingested.bytes')).toEqual({ rows: 1, total: Buffer.byteLength(JSON.stringify(spans)) });
+    expect(await sumOf('spans.ingested.bytes')).toEqual({ rows: 1, total: spanBytes });
   });
 
-  it('records the exact JSON byte size of the stored datapoints', async () => {
+  it('records the JSON byte size of the customer-provided datapoint fields', async () => {
+    const before = JSON.stringify(points);
     recordMetricIngestion({ datapointCount: 2, organizationId: orgId, projectId, records: points });
-    expect(await sumOf('metrics.ingested.bytes')).toEqual({ rows: 1, total: Buffer.byteLength(JSON.stringify(points)) });
+    expect(await sumOf('metrics.ingested.bytes')).toEqual({ rows: 1, total: pointBytes });
+    expect(JSON.stringify(points)).toBe(before); // stored records are not mutated
   });
 
   it('prorates a partially accepted batch', async () => {
     recordSpanIngestion({ spanCount: 1, organizationId: orgId, projectId, spans });
-    expect((await sumOf('spans.ingested.bytes')).total).toBe(Math.round(Buffer.byteLength(JSON.stringify(spans)) / 2));
+    expect((await sumOf('spans.ingested.bytes')).total).toBe(Math.round(spanBytes / 2));
   });
 
   it('records no bytes when nothing was accepted or no records were given', async () => {

@@ -24,6 +24,13 @@ const CAP = 'telemetry.max_bytes_monthly';
 const cfg = config as { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGRADE_SIGNING_SECRET?: string };
 const nowNs = () => String(Date.now() * 1_000_000);
 
+// Bytes cover customer-provided data only: the server-injected tenant ids and the
+// span 'time' copy of startTime are excluded from the measured projection.
+const customerSpanBytes = (stored: any[]) =>
+  Buffer.byteLength(JSON.stringify(stored.map(({ organizationId, projectId, time, ...rest }) => rest)));
+const customerMetricBytes = (stored: any[]) =>
+  Buffer.byteLength(JSON.stringify(stored.map(({ organizationId, projectId, ...rest }) => rest)));
+
 function tracesBody(spanIds: string[]) {
   return {
     resourceSpans: [
@@ -240,16 +247,19 @@ describe('telemetry quota on the real app', () => {
     });
 
   describe('metering bytes', () => {
-    it('records spans.ingested.bytes as the exact JSON size of the stored spans', async () => {
+    it('records spans.ingested.bytes as the JSON size of the customer-provided span fields', async () => {
       const spy = vi.spyOn(reservoir, 'ingestSpans');
       const res = await post('/v1/otlp/traces', tracesBody(['1', '2']));
       expect(res.statusCode).toBe(200);
       expect(spy).toHaveBeenCalledTimes(1);
       const stored = spy.mock.calls[0][0];
       expect(stored).toHaveLength(2);
+      expect(stored[0]).toHaveProperty('organizationId', orgId);
+      expect(stored[0]).toHaveProperty('time');
       const m = await meteredSum(orgId, 'spans.ingested.bytes');
+      expect(m.total).toBeLessThan(Buffer.byteLength(JSON.stringify(stored)));
       expect(m.rows).toBe(1);
-      expect(m.total).toBe(Buffer.byteLength(JSON.stringify(stored)));
+      expect(m.total).toBe(customerSpanBytes(stored));
     });
 
     it('does not count spans dropped by PII masking', async () => {
@@ -260,18 +270,20 @@ describe('telemetry quota on the real app', () => {
       const stored = spy.mock.calls[0][0];
       expect(stored).toHaveLength(1);
       const m = await meteredSum(orgId, 'spans.ingested.bytes');
-      expect(m.total).toBe(Buffer.byteLength(JSON.stringify(stored)));
+      expect(m.total).toBe(customerSpanBytes(stored));
     });
 
-    it('records metrics.ingested.bytes as the exact JSON size of the stored datapoints', async () => {
+    it('records metrics.ingested.bytes as the JSON size of the customer-provided datapoint fields', async () => {
       const spy = vi.spyOn(reservoir, 'ingestMetrics');
       const res = await post('/v1/otlp/metrics', metricsBody(['a', 'b']));
       expect(res.statusCode).toBe(200);
       const stored = spy.mock.calls[0][0];
       expect(stored).toHaveLength(2);
+      expect(stored[0]).toHaveProperty('organizationId', orgId);
       const m = await meteredSum(orgId, 'metrics.ingested.bytes');
+      expect(m.total).toBeLessThan(Buffer.byteLength(JSON.stringify(stored)));
       expect(m.rows).toBe(1);
-      expect(m.total).toBe(Buffer.byteLength(JSON.stringify(stored)));
+      expect(m.total).toBe(customerMetricBytes(stored));
     });
 
     it('does not count datapoints the store rejected', async () => {

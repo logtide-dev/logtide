@@ -36,16 +36,35 @@ export function recordLogIngestion(params: {
   });
 }
 
+/** Server-injected top-level fields never billed: tenant ids on every record. */
+const INJECTED_FIELDS = ['organizationId', 'projectId'] as const;
+/** Spans also carry `time`, a server-side copy of `startTime`. */
+const INJECTED_SPAN_FIELDS = [...INJECTED_FIELDS, 'time'] as const;
+
 /**
  * Bytes of the accepted records, measured like logs.ingested.bytes:
- * Buffer.byteLength(JSON.stringify(records)). `records` is the batch handed to
- * storage; when the store accepted only part of it (`accepted` < length, e.g. a
- * Mongo partial insert) the size is prorated, since which records failed is not
- * reported. Returns 0 when nothing was accepted.
+ * Buffer.byteLength(JSON.stringify(...)), but over a projection of each record
+ * WITHOUT the server-injected top-level fields in `omit`, so only
+ * customer-provided data is billed (logs are measured on the input, which has
+ * none of them). Nested keys are untouched and the stored records are never
+ * mutated. `records` is the batch handed to storage; when the store accepted
+ * only part of it (`accepted` < length, e.g. a Mongo partial insert) the size
+ * is prorated, since which records failed is not reported. Returns 0 when
+ * nothing was accepted.
  */
-function acceptedBytes(records: readonly unknown[], accepted: number): number {
+function acceptedBytes(
+  records: readonly unknown[],
+  accepted: number,
+  omit: readonly string[]
+): number {
   if (accepted <= 0 || records.length === 0) return 0;
-  const bytes = Buffer.byteLength(JSON.stringify(records));
+  const projected = records.map((r) => {
+    if (r === null || typeof r !== 'object' || Array.isArray(r)) return r;
+    const copy: Record<string, unknown> = { ...(r as Record<string, unknown>) };
+    for (const key of omit) delete copy[key];
+    return copy;
+  });
+  const bytes = Buffer.byteLength(JSON.stringify(projected));
   if (accepted >= records.length) return bytes;
   return Math.round((bytes * accepted) / records.length);
 }
@@ -53,7 +72,8 @@ function acceptedBytes(records: readonly unknown[], accepted: number): number {
 /**
  * Recording site helper for span ingestion (#212 follow-up). Fire-and-forget.
  * Records the accepted span count and, when `spans` (the batch as stored) is
- * given, its JSON byte size under spans.ingested.bytes (telemetry quota).
+ * given, the JSON byte size of its customer-provided fields under
+ * spans.ingested.bytes (telemetry quota).
  */
 export function recordSpanIngestion(params: {
   spanCount: number;
@@ -68,7 +88,7 @@ export function recordSpanIngestion(params: {
     organizationId: params.organizationId,
     projectId: params.projectId,
   });
-  const bytes = params.spans ? acceptedBytes(params.spans, params.spanCount) : 0;
+  const bytes = params.spans ? acceptedBytes(params.spans, params.spanCount, INJECTED_SPAN_FIELDS) : 0;
   if (bytes > 0) {
     metering.record({
       type: 'spans.ingested.bytes',
@@ -82,7 +102,8 @@ export function recordSpanIngestion(params: {
 /**
  * Recording site helper for metric ingestion. Fire-and-forget.
  * Count of accepted datapoints and, when `records` (the batch as stored) is
- * given, its JSON byte size under metrics.ingested.bytes (telemetry quota).
+ * given, the JSON byte size of its customer-provided fields under
+ * metrics.ingested.bytes (telemetry quota).
  * Billed, so not under the ingestion.* prefix.
  */
 export function recordMetricIngestion(params: {
@@ -98,7 +119,7 @@ export function recordMetricIngestion(params: {
     organizationId: params.organizationId,
     projectId: params.projectId,
   });
-  const bytes = params.records ? acceptedBytes(params.records, params.datapointCount) : 0;
+  const bytes = params.records ? acceptedBytes(params.records, params.datapointCount, INJECTED_FIELDS) : 0;
   if (bytes > 0) {
     metering.record({
       type: 'metrics.ingested.bytes',
