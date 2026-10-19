@@ -8,6 +8,7 @@ import { config } from '../../config/index.js';
 import { withLimitLock } from '../../capabilities/limit-lock.js';
 import { startOfUtcMonth } from '../../capabilities/month.js';
 import { isUpgradeHandoffActive, signUpgradeToken, buildUpgradeUrl } from './upgrade-handoff.js';
+import { termsAcceptanceService } from '../users/terms.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -309,6 +310,12 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
   fastify.post('/', async (request: any, reply) => {
     try {
       const body = createOrganizationSchema.parse(request.body);
+
+      // Terms gate (no-op unless the LOGTIDE_TERMS_* seam is active), checked
+      // before the per-user organization caps.
+      if (await termsAcceptanceService.isPending(request.user.id)) {
+        return reply.status(403).send({ error: 'terms_not_accepted' });
+      }
 
       // One lock per user: the cap counts and the insert must not interleave
       // across parallel POSTs, otherwise both caps can be overshot.

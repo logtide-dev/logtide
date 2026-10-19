@@ -27,6 +27,9 @@ const SEAM_ENV = [
   'MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH',
   'REQUIRE_EMAIL_VERIFICATION',
   'REGISTRATION_RATE_LIMIT_PER_HOUR',
+  'LOGTIDE_TERMS_URL',
+  'LOGTIDE_PRIVACY_URL',
+  'LOGTIDE_TERMS_VERSION',
 ] as const;
 
 const cfg = config as unknown as Record<string, unknown>;
@@ -61,6 +64,9 @@ describe('hosting seams with all env unset', () => {
     expect(cfg.MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH).toBeUndefined();
     expect(cfg.REQUIRE_EMAIL_VERIFICATION).toBe(false);
     expect(cfg.REGISTRATION_RATE_LIMIT_PER_HOUR).toBeUndefined();
+    expect(cfg.LOGTIDE_TERMS_URL).toBeUndefined();
+    expect(cfg.LOGTIDE_PRIVACY_URL).toBeUndefined();
+    expect(cfg.LOGTIDE_TERMS_VERSION).toBeUndefined();
   });
 
   it('registry defaults are unlimited / enabled', async () => {
@@ -155,6 +161,25 @@ describe('hosting seams with all env unset', () => {
     const body = res.json();
     expect(body).not.toHaveProperty('upgradeEnabled');
     expect(body).not.toHaveProperty('emailVerificationRequired');
+    expect(body).not.toHaveProperty('termsUrl');
+    expect(body).not.toHaveProperty('privacyUrl');
+    expect(body).not.toHaveProperty('termsVersion');
+  });
+
+  it('terms acceptance is inert: no /me key, no accept-terms route', async () => {
+    const ctx = await createTestContext();
+    const session = await createTestSession(ctx.user.id);
+    const headers = { authorization: `Bearer ${session.token}` };
+    const me = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().user).not.toHaveProperty('termsAcceptanceRequired');
+    const accept = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/accept-terms',
+      headers,
+      payload: { version: 'anything' },
+    });
+    expect(accept.statusCode).toBe(404);
   });
 
   it('registration, auto-login, project and API key creation work without verification', async () => {
@@ -187,6 +212,15 @@ describe('hosting seams with all env unset', () => {
         .where('user_id', '=', regBody.user.id)
         .execute();
       expect(tokens).toHaveLength(0);
+
+      // No terms acceptance was recorded or required.
+      const terms = await db
+        .selectFrom('users')
+        .select(['terms_accepted_at', 'terms_version'])
+        .where('id', '=', regBody.user.id)
+        .executeTakeFirstOrThrow();
+      expect(terms.terms_accepted_at).toBeNull();
+      expect(terms.terms_version).toBeNull();
 
       const org = await app.inject({
         method: 'POST',

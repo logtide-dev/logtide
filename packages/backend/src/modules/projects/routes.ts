@@ -9,6 +9,7 @@ import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 import { emailVerificationService } from '../users/email-verification.js';
+import { termsAcceptanceService } from '../users/terms.js';
 
 const createProjectSchema = z.object({
   organizationId: z.string().uuid('Invalid organization ID'),
@@ -271,6 +272,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       // checked before the projects.max limit.
       if (await emailVerificationService.isBlocked(request.user.id)) {
         return reply.status(403).send({ error: 'email_not_verified' });
+      }
+      // Terms gate (no-op unless the LOGTIDE_TERMS_* seam is active).
+      if (await termsAcceptanceService.isPending(request.user.id)) {
+        return reply.status(403).send({ error: 'terms_not_accepted' });
       }
 
       const project = await withLimitLock(body.organizationId, 'projects.max', async () => {
