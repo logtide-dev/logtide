@@ -1,4 +1,6 @@
 import { config } from '../../config/index.js';
+import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 
 export const BILLING_TIMEOUT_MS = 15_000;
 
@@ -66,6 +68,15 @@ export async function forwardToBilling(opts: ForwardToBillingOptions): Promise<F
       redirect: 'manual',
       signal: AbortSignal.timeout(opts.timeoutMs ?? BILLING_TIMEOUT_MS),
     });
+    if (res.status === 401 || res.status === 403) {
+      // Service-to-service auth is broken (token mismatch). Never pass this to
+      // the browser: it would read a 401 as an expired LogTide session.
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', 'billing service rejected the core credentials', { status: res.status, orgId: opts.orgId });
+      }
+      await res.body?.cancel().catch(() => undefined);
+      return unavailable();
+    }
     if (res.status < 200 || res.status >= 500 || (res.status >= 300 && res.status < 400)) {
       await res.body?.cancel().catch(() => undefined);
       return unavailable();

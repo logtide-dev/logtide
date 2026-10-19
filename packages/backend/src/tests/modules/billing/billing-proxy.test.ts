@@ -175,6 +175,28 @@ describe('billing proxy', () => {
     expect(res.json()).toEqual({ error: 'subscription_exists', message: 'already subscribed' });
   });
 
+  it('upstream 401 maps to 502 and does not log the user out', async () => {
+    const f = await fixture();
+    handler = (_r, res) => {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end('{"error":"unauthorized","message":"bad token"}');
+    };
+    const res = await call(f.owner.id, 'GET', f.org.id, '');
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toEqual({ error: 'billing_unavailable', message: 'Billing is temporarily unavailable' });
+  });
+
+  it('upstream 403 maps to 502', async () => {
+    const f = await fixture();
+    handler = (_r, res) => {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      res.end('{"error":"forbidden","message":"nope"}');
+    };
+    const res = await call(f.owner.id, 'POST', f.org.id, '/cancel');
+    expect(res.statusCode).toBe(502);
+    expect(res.json().error).toBe('billing_unavailable');
+  });
+
   it('billing 500 maps to 502 billing_unavailable', async () => {
     const f = await fixture();
     handler = (_r, res) => {
