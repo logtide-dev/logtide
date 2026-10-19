@@ -1,13 +1,13 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { config } from '../config/index.js';
 
-let transporter: nodemailer.Transporter | null = null;
+let transporter: Transporter | null = null;
 
 /**
  * Lazily created SMTP transporter for API-process emails that are sent
  * inline (no queue). Returns null when SMTP is not configured.
  */
-export function getMailer(): nodemailer.Transporter | null {
+export function getMailer(): Transporter | null {
   if (!config.SMTP_HOST) return null;
   if (!transporter) {
     const opts: Record<string, unknown> = {
@@ -18,7 +18,7 @@ export function getMailer(): nodemailer.Transporter | null {
     if (config.SMTP_USER && config.SMTP_PASS) {
       opts.auth = { user: config.SMTP_USER, pass: config.SMTP_PASS };
     }
-    transporter = nodemailer.createTransport(opts as nodemailer.TransportOptions);
+    transporter = nodemailer.createTransport(opts as TransportOptions);
   }
   return transporter;
 }
