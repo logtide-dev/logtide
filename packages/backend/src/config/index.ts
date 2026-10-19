@@ -125,6 +125,19 @@ const configSchema = z.object({
       .optional()
   ),
 
+  // Hosting seam: maximum organizations a single user may create per UTC calendar
+  // month (counted from organization_creation_log, so deleting an organization
+  // does not give the creation back). Positive integer; unset or empty =
+  // unlimited. Any other value = boot failure.
+  MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce
+      .number({ invalid_type_error: 'MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer' })
+      .int('MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer')
+      .positive('MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer')
+      .optional()
+  ),
+
   // Hosting seam: optional email verification. When true, newly registered
   // local users must confirm their email before creating projects or API keys.
   // Unset/false = no verification email, no gate (users count as verified).

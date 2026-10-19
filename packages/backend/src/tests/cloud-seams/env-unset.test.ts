@@ -24,6 +24,7 @@ const SEAM_ENV = [
   'LOGTIDE_UPGRADE_URL',
   'LOGTIDE_UPGRADE_SIGNING_SECRET',
   'MAX_ORGANIZATIONS_PER_USER',
+  'MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH',
   'REQUIRE_EMAIL_VERIFICATION',
   'REGISTRATION_RATE_LIMIT_PER_HOUR',
 ] as const;
@@ -57,6 +58,7 @@ describe('hosting seams with all env unset', () => {
     expect(cfg.LOGTIDE_UPGRADE_URL).toBeUndefined();
     expect(cfg.LOGTIDE_UPGRADE_SIGNING_SECRET).toBeUndefined();
     expect(cfg.MAX_ORGANIZATIONS_PER_USER).toBeUndefined();
+    expect(cfg.MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH).toBeUndefined();
     expect(cfg.REQUIRE_EMAIL_VERIFICATION).toBe(false);
     expect(cfg.REGISTRATION_RATE_LIMIT_PER_HOUR).toBeUndefined();
   });

@@ -13,10 +13,11 @@ This page is for operators who run LogTide on behalf of other people (a managed 
 | `LOGTIDE_UPGRADE_URL` | unset | External billing portal the Upgrade / Manage billing buttons redirect to |
 | `LOGTIDE_UPGRADE_SIGNING_SECRET` | unset | HMAC secret used to sign the handoff token |
 | `MAX_ORGANIZATIONS_PER_USER` | unset (unlimited) | Maximum organizations one user may own |
+| `MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH` | unset (unlimited) | Maximum organizations one user may create per UTC calendar month |
 | `REQUIRE_EMAIL_VERIFICATION` | `false` | Require new local users to confirm their email |
 | `REGISTRATION_RATE_LIMIT_PER_HOUR` | unset (off) | Extra per-IP cap on registrations over one hour |
 
-An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all seven through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
+An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all eight through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
 
 ### CAPABILITY_DEFAULTS_JSON
 
@@ -99,6 +100,10 @@ A complete reference verifier using only Node's `crypto` is in [`docs/examples/v
 ### MAX_ORGANIZATIONS_PER_USER
 
 Positive integer; unset = unlimited; anything else aborts startup. It counts organizations where the user is `owner`; being a member or admin of someone else's organization never counts. At the cap, `POST /api/v1/organizations` answers `403 { "error": "organization_limit_reached", "message": ... }`. That endpoint is the only path that creates a user-owned organization (registration, invitations and SSO login do not). Operator scripts such as seeding are not capped.
+
+### MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH
+
+Positive integer; unset = unlimited; anything else aborts startup. Monthly quotas are per organization and `MAX_ORGANIZATIONS_PER_USER` only counts organizations the user owns right now, so without this cap a user at the limit could delete an organization (a hard delete) and create a fresh one with zero month-to-date usage, resetting the free quota as often as they like. This cap counts creations instead of ownership: every `POST /api/v1/organizations` appends a row to `organization_creation_log` (always, even when the variable is unset, so turning the cap on later already has history), and the row survives the organization being deleted. When the number of rows for the user since the start of the current UTC calendar month (the same boundary the monthly quotas use) reaches the limit, the endpoint answers `403 { "error": "organization_creation_limit_reached", "message": ... }`. `MAX_ORGANIZATIONS_PER_USER` is checked first. The count and the insert run under a per-user lock, so parallel requests cannot overshoot either cap. There is no backfill: only creations made after migration 060 count.
 
 ### REQUIRE_EMAIL_VERIFICATION
 
