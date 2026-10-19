@@ -8,6 +8,7 @@ import { authenticationService } from '../auth/authentication-service.js';
 import { config } from '../../config/index.js';
 import { isEmailVerificationRequired } from './email-verification-flag.js';
 import { emailVerificationService } from './email-verification.js';
+import { getActiveTerms, termsAcceptanceService } from './terms.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
 import { auditLogService } from '../audit-log/index.js';
@@ -16,6 +17,14 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   name: z.string().min(1, 'Name is required'),
+  // Must be exactly true only when the terms seam is active. Typed unknown so
+  // an inactive seam never rejects a body it used to accept (unknown keys were
+  // stripped before this field existed).
+  acceptTerms: z.unknown().optional(),
+});
+
+const acceptTermsSchema = z.object({
+  version: z.string().max(64),
 });
 
 const loginSchema = z.object({
@@ -107,7 +116,19 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
         const body = registerSchema.parse(request.body);
 
-        const user = await usersService.createUser(body);
+        // Terms seam: when active, the Terms and Privacy Policy must be
+        // accepted explicitly; acceptance is stored with the new user.
+        const terms = getActiveTerms();
+        if (terms && body.acceptTerms !== true) {
+          return reply.status(400).send({ error: 'terms_not_accepted' });
+        }
+
+        const user = await usersService.createUser({
+          email: body.email,
+          password: body.password,
+          name: body.name,
+          ...(terms ? { termsVersion: terms.termsVersion } : {}),
+        });
 
         // Gate on: email the verification link, fire and forget so the response
         // never depends on SMTP latency. A send failure never fails the
@@ -338,6 +359,8 @@ export async function usersRoutes(fastify: FastifyInstance) {
     const emailVerified = isEmailVerificationRequired()
       ? await emailVerificationService.isVerified(user.id)
       : undefined;
+    // Terms seam: key present (true) only while the current version is not accepted.
+    const termsPending = await termsAcceptanceService.isPending(user.id);
 
     return reply.send({
       user: {
@@ -348,6 +371,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
         createdAt: user.createdAt,
         lastLogin: user.lastLogin,
         ...(emailVerified !== undefined ? { emailVerified } : {}),
+        ...(termsPending ? { termsAcceptanceRequired: true } : {}),
       },
     });
   });
@@ -487,6 +511,50 @@ export async function usersRoutes(fastify: FastifyInstance) {
       throw error;
     }
   });
+  // Terms acceptance route exists only when the terms seam is active. It covers
+  // users who never saw the registration checkbox (pre-existing, SSO) and
+  // re-acceptance after LOGTIDE_TERMS_VERSION changes.
+  if (getActiveTerms()) {
+    fastify.post('/accept-terms', {
+      config: {
+        rateLimit: {
+          max: config.AUTH_RATE_LIMIT_LOGIN,
+          timeWindow: config.AUTH_RATE_LIMIT_WINDOW,
+        },
+      },
+      handler: async (request, reply) => {
+        const token = request.headers.authorization?.replace('Bearer ', '');
+        if (!token) {
+          return reply.status(401).send({ error: 'No token provided' });
+        }
+        const user = await usersService.validateSession(token);
+        if (!user) {
+          return reply.status(401).send({ error: 'Invalid or expired session' });
+        }
+
+        // Read at call time: a version bump must be accepted explicitly, an
+        // acceptance of a stale version is refused.
+        const terms = getActiveTerms();
+        const parsed = acceptTermsSchema.safeParse(request.body ?? {});
+        if (!terms || !parsed.success || parsed.data.version !== terms.termsVersion) {
+          return reply.status(409).send({ error: 'terms_version_mismatch' });
+        }
+
+        await termsAcceptanceService.accept(user.id, terms.termsVersion);
+
+        await auditLogService.record({
+          action: 'user.terms_accepted',
+          target: { type: 'user', id: user.id },
+          organizationId: null,
+          actor: { type: 'user', id: user.id, label: user.email },
+          metadata: { version: terms.termsVersion },
+        });
+
+        return reply.send({ accepted: true, termsVersion: terms.termsVersion });
+      },
+    });
+  }
+
   // Email verification routes exist only when the gate is on.
   if (isEmailVerificationRequired()) {
     // Consume a verification token. The token is the credential; when the

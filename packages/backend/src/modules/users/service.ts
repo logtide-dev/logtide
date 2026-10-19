@@ -16,6 +16,8 @@ export interface CreateUserInput {
   email: string;
   password: string;
   name: string;
+  /** Terms version accepted at registration (terms seam active only). */
+  termsVersion?: string;
 }
 
 export interface SessionInfo {
@@ -131,6 +133,8 @@ export class UsersService {
           // Column default (NOW()) marks the user verified; only an enabled gate
           // starts a local registration as unverified.
           ...(isEmailVerificationRequired() ? { email_verified_at: null } : {}),
+          // Terms seam: acceptance is recorded in the same insert.
+          ...(input.termsVersion ? { terms_accepted_at: sql`NOW()`, terms_version: input.termsVersion } : {}),
         })
         .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
         .executeTakeFirstOrThrow();

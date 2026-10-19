@@ -42,6 +42,41 @@ function validateUpgradeConfig(env: { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGR
   return null;
 }
 
+type TermsEnv = { LOGTIDE_TERMS_URL?: string; LOGTIDE_PRIVACY_URL?: string; LOGTIDE_TERMS_VERSION?: string };
+const TERMS_ENV_NAMES = ['LOGTIDE_TERMS_URL', 'LOGTIDE_PRIVACY_URL', 'LOGTIDE_TERMS_VERSION'] as const;
+
+/** Boot-time validation of the three terms env vars. Returns [field, message] issues. */
+function validateTermsConfig(env: TermsEnv): Array<[keyof TermsEnv, string]> {
+  const missing = TERMS_ENV_NAMES.filter((name) => env[name] === undefined);
+  if (missing.length === TERMS_ENV_NAMES.length) return [];
+  if (missing.length > 0) {
+    return [[
+      missing[0],
+      `LOGTIDE_TERMS_URL, LOGTIDE_PRIVACY_URL and LOGTIDE_TERMS_VERSION must be set together (missing: ${missing.join(', ')})`,
+    ]];
+  }
+  const issues: Array<[keyof TermsEnv, string]> = [];
+  for (const name of ['LOGTIDE_TERMS_URL', 'LOGTIDE_PRIVACY_URL'] as const) {
+    let parsed: URL;
+    try {
+      parsed = new URL(env[name] as string);
+    } catch {
+      issues.push([name, `${name} must be a valid absolute URL`]);
+      continue;
+    }
+    const localHttp =
+      parsed.protocol === 'http:' && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+    if (parsed.protocol !== 'https:' && !localHttp) {
+      issues.push([name, `${name} must use https (http is allowed only for localhost or 127.0.0.1)`]);
+    }
+  }
+  const version = env.LOGTIDE_TERMS_VERSION as string;
+  if (version.trim() === '' || version.length > 64) {
+    issues.push(['LOGTIDE_TERMS_VERSION', 'LOGTIDE_TERMS_VERSION must be a non-empty string of at most 64 characters']);
+  }
+  return issues;
+}
+
 const configSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -113,6 +148,14 @@ const configSchema = z.object({
   // allowed) or a secret under 32 characters = boot failure.
   LOGTIDE_UPGRADE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   LOGTIDE_UPGRADE_SIGNING_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+
+  // Hosting seam: mandatory Terms of Service / Privacy Policy acceptance at
+  // registration, and re-acceptance when the version changes. Active only when
+  // ALL three are set; one or two set, a non-https URL (localhost http is
+  // allowed) or an empty / longer than 64 characters version = boot failure.
+  LOGTIDE_TERMS_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  LOGTIDE_PRIVACY_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
+  LOGTIDE_TERMS_VERSION: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
 
   // Hosting seam: maximum organizations a single user may own. Positive integer;
   // unset or empty = unlimited. Any other value = boot failure.
@@ -195,6 +238,9 @@ const configSchema = z.object({
       path: [message.startsWith('LOGTIDE_UPGRADE_SIGNING_SECRET') ? 'LOGTIDE_UPGRADE_SIGNING_SECRET' : 'LOGTIDE_UPGRADE_URL'],
       message,
     });
+  }
+  for (const [field, termsMessage] of validateTermsConfig(env)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: termsMessage });
   }
   if (env.REQUIRE_EMAIL_VERIFICATION && !env.SMTP_HOST) {
     ctx.addIssue({

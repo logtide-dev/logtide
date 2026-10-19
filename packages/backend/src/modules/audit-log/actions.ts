@@ -29,6 +29,7 @@ export const AUDIT_ACTIONS = {
   // users and membership
   'user.registered': 'user_management',
   'user.email_verified': 'user_management',
+  'user.terms_accepted': 'user_management',
   'user.created': 'user_management',
   'user.invited': 'user_management',
   'user.invite_accepted': 'user_management',
