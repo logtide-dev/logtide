@@ -16,6 +16,7 @@
   } from '$lib/components/onboarding';
   import Footer from '$lib/components/Footer.svelte';
   import EmailVerificationBanner from '$lib/components/EmailVerificationBanner.svelte';
+  import TermsAcceptanceModal from '$lib/components/TermsAcceptanceModal.svelte';
 
   let currentStep = $state<OnboardingStep>('welcome');
   let userName = $state('');
@@ -84,6 +85,7 @@
 
 {#if isAuthenticated && !checkingOrgs}
   <EmailVerificationBanner />
+  <TermsAcceptanceModal />
   <OnboardingWizard>
     {#if currentStep === 'welcome'}
       <WelcomeStep {userName} />
