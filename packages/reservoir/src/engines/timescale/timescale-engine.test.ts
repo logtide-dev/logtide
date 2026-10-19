@@ -8,10 +8,12 @@ const mockEnd = vi.fn();
 vi.mock('pg', () => {
   return {
     default: {
-      Pool: vi.fn(() => ({
-        query: mockQuery,
-        end: mockEnd,
-      })),
+      Pool: vi.fn(function () {
+        return {
+          query: mockQuery,
+          end: mockEnd,
+        };
+      }),
     },
   };
 });

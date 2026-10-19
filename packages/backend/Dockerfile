@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 
 # Install pnpm and build dependencies for native modules (like bcrypt)
 RUN apk add --no-cache python3 make g++ && \
-    npm install -g pnpm
+    npm install -g pnpm@10
 
 WORKDIR /app
 
@@ -35,7 +35,7 @@ FROM node:20-alpine
 
 # Install pnpm and runtime dependencies (nc for entrypoint)
 RUN apk add --no-cache netcat-openbsd && \
-    npm install -g pnpm
+    npm install -g pnpm@10
 
 WORKDIR /app
 

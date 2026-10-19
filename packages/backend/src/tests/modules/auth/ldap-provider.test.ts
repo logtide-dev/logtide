@@ -9,11 +9,11 @@ vi.mock('ldapts', () => {
     const mockSearch = vi.fn();
 
     return {
-        Client: vi.fn().mockImplementation(() => ({
+        Client: vi.fn().mockImplementation(function () { return {
             bind: mockBind,
             unbind: mockUnbind,
             search: mockSearch,
-        })),
+        }; }),
         __mockBind: mockBind,
         __mockUnbind: mockUnbind,
         __mockSearch: mockSearch,
