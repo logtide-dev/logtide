@@ -88,3 +88,66 @@ describe('recordMetricIngestion', () => {
     expect(await rows()).toHaveLength(0);
   });
 });
+
+describe('span and metric byte metering (telemetry quota)', () => {
+  let orgId: string;
+  let projectId: string;
+
+  beforeEach(async () => {
+    await db.deleteFrom('metering_events').execute();
+    const ctx = await createTestContext();
+    orgId = ctx.organization.id;
+    projectId = ctx.project.id;
+  });
+
+  const sumOf = async (type: string) => {
+    await meteringRecorder.flush();
+    const r = await db
+      .selectFrom('metering_events')
+      .select('quantity')
+      .where('organization_id', '=', orgId)
+      .where('type', '=', type as any)
+      .execute();
+    return { rows: r.length, total: r.reduce((a, x) => a + Number(x.quantity), 0) };
+  };
+
+  const spans = [{ spanId: 'a', attributes: { k: 'v' } }, { spanId: 'b', attributes: { k: 'w' } }];
+  const points = [{ metricName: 'm', value: 1 }, { metricName: 'n', value: 2 }];
+
+  it('records the exact JSON byte size of the stored spans', async () => {
+    recordSpanIngestion({ spanCount: 2, organizationId: orgId, projectId, spans });
+    expect(await sumOf('spans.ingested.bytes')).toEqual({ rows: 1, total: Buffer.byteLength(JSON.stringify(spans)) });
+  });
+
+  it('records the exact JSON byte size of the stored datapoints', async () => {
+    recordMetricIngestion({ datapointCount: 2, organizationId: orgId, projectId, records: points });
+    expect(await sumOf('metrics.ingested.bytes')).toEqual({ rows: 1, total: Buffer.byteLength(JSON.stringify(points)) });
+  });
+
+  it('prorates a partially accepted batch', async () => {
+    recordSpanIngestion({ spanCount: 1, organizationId: orgId, projectId, spans });
+    expect((await sumOf('spans.ingested.bytes')).total).toBe(Math.round(Buffer.byteLength(JSON.stringify(spans)) / 2));
+  });
+
+  it('records no bytes when nothing was accepted or no records were given', async () => {
+    recordSpanIngestion({ spanCount: 0, organizationId: orgId, projectId, spans });
+    recordMetricIngestion({ datapointCount: 0, organizationId: orgId, projectId, records: points });
+    recordSpanIngestion({ spanCount: 3, organizationId: orgId, projectId });
+    expect((await sumOf('spans.ingested.bytes')).rows).toBe(0);
+    expect((await sumOf('metrics.ingested.bytes')).rows).toBe(0);
+  });
+
+  it('surfaces the byte types in the usage breakdown', async () => {
+    recordSpanIngestion({ spanCount: 2, organizationId: orgId, projectId, spans });
+    recordMetricIngestion({ datapointCount: 2, organizationId: orgId, projectId, records: points });
+    await meteringRecorder.flush();
+    const b = await getUsageBreakdown({
+      organizationId: orgId,
+      from: new Date(Date.now() - 60 * 60 * 1000),
+      to: new Date(Date.now() + 5 * 60 * 1000),
+    });
+    const types = b.byType.map((t) => t.type);
+    expect(types).toContain('spans.ingested.bytes');
+    expect(types).toContain('metrics.ingested.bytes');
+  });
+});

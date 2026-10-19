@@ -2,14 +2,17 @@
  * Resource usage metering event types (#212).
  * The full set is declared up front so deferred recording sites
  * (spans, metric cardinality, storage snapshots) need no type change.
- * Wired recording sites: `logs.ingested.*`, `spans.ingested` and
- * `metrics.ingested.datapoints` (billed, so no `ingestion.` prefix).
+ * Wired recording sites: `logs.ingested.*`, `spans.ingested`, `spans.ingested.bytes`,
+ * `metrics.ingested.datapoints` and `metrics.ingested.bytes` (billed, so no
+ * `ingestion.` prefix).
  */
 export type MeteringEventType =
   | 'logs.ingested.bytes'
   | 'logs.ingested.events'
   | 'spans.ingested'
+  | 'spans.ingested.bytes'
   | 'metrics.ingested.datapoints'
+  | 'metrics.ingested.bytes'
   | 'metrics.cardinality'
   | 'storage.snapshot'
   // Ingestion health counters (WS1): not billed, surfaced in admin stats.

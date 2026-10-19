@@ -121,7 +121,7 @@ describe('MetricsService', () => {
         mockIngestMetrics.mockResolvedValueOnce({ ingested: 3 });
         await service.ingestMetrics(rec(3), 'proj-1', 'org-1');
         expect(mockRecordMetric).toHaveBeenCalledWith({
-          datapointCount: 3, organizationId: 'org-1', projectId: 'proj-1',
+          datapointCount: 3, organizationId: 'org-1', projectId: 'proj-1', records: expect.any(Array),
         });
       });
 

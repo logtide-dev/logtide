@@ -37,13 +37,29 @@ export function recordLogIngestion(params: {
 }
 
 /**
+ * Bytes of the accepted records, measured like logs.ingested.bytes:
+ * Buffer.byteLength(JSON.stringify(records)). `records` is the batch handed to
+ * storage; when the store accepted only part of it (`accepted` < length, e.g. a
+ * Mongo partial insert) the size is prorated, since which records failed is not
+ * reported. Returns 0 when nothing was accepted.
+ */
+function acceptedBytes(records: readonly unknown[], accepted: number): number {
+  if (accepted <= 0 || records.length === 0) return 0;
+  const bytes = Buffer.byteLength(JSON.stringify(records));
+  if (accepted >= records.length) return bytes;
+  return Math.round((bytes * accepted) / records.length);
+}
+
+/**
  * Recording site helper for span ingestion (#212 follow-up). Fire-and-forget.
- * Count only; span bytes are not metered.
+ * Records the accepted span count and, when `spans` (the batch as stored) is
+ * given, its JSON byte size under spans.ingested.bytes (telemetry quota).
  */
 export function recordSpanIngestion(params: {
   spanCount: number;
   organizationId: string;
   projectId: string;
+  spans?: readonly unknown[];
 }): void {
   if (params.spanCount <= 0) return;
   metering.record({
@@ -52,16 +68,28 @@ export function recordSpanIngestion(params: {
     organizationId: params.organizationId,
     projectId: params.projectId,
   });
+  const bytes = params.spans ? acceptedBytes(params.spans, params.spanCount) : 0;
+  if (bytes > 0) {
+    metering.record({
+      type: 'spans.ingested.bytes',
+      quantity: bytes,
+      organizationId: params.organizationId,
+      projectId: params.projectId,
+    });
+  }
 }
 
 /**
  * Recording site helper for metric ingestion. Fire-and-forget.
- * Count of accepted datapoints; billed, so not under the ingestion.* prefix.
+ * Count of accepted datapoints and, when `records` (the batch as stored) is
+ * given, its JSON byte size under metrics.ingested.bytes (telemetry quota).
+ * Billed, so not under the ingestion.* prefix.
  */
 export function recordMetricIngestion(params: {
   datapointCount: number;
   organizationId: string;
   projectId: string;
+  records?: readonly unknown[];
 }): void {
   if (params.datapointCount <= 0) return;
   metering.record({
@@ -70,6 +98,15 @@ export function recordMetricIngestion(params: {
     organizationId: params.organizationId,
     projectId: params.projectId,
   });
+  const bytes = params.records ? acceptedBytes(params.records, params.datapointCount) : 0;
+  if (bytes > 0) {
+    metering.record({
+      type: 'metrics.ingested.bytes',
+      quantity: bytes,
+      organizationId: params.organizationId,
+      projectId: params.projectId,
+    });
+  }
 }
 
 export { MeteringRecorder } from './recorder.js';
