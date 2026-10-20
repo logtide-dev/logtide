@@ -113,8 +113,8 @@ These two turn on a Billing page (Settings > Billing) whose data comes from an e
 When active:
 
 - `GET /api/v1/auth/config` includes `billingEnabled: true` (the key is absent otherwise) and the Usage page links Upgrade / Manage billing to the Billing page instead of the upgrade handoff.
-- The routes below exist under `/api/v1/organizations/:id/billing` (none is registered otherwise). Only owners and admins of the organization may call them: members get `403 { "error": "billing_forbidden" }`, non-members `404`. Request bodies for checkout, preview and change are validated in LogTide against `billingPlanChangeSchema` from `@logtide/shared`; the checkout session id in the path must match `^cs_[A-Za-z0-9_]{1,200}$`. Calls are limited to 60 per minute per user.
-- LogTide forwards each call with `fetch` to `<LOGTIDE_BILLING_API_URL>/api/v1/orgs/:orgId/billing<rest>` with a 15 second timeout. 2xx and 4xx answers from the billing service pass through with their status and body. A 5xx, a timeout or a network error becomes `502 { "error": "billing_unavailable" }`.
+- The routes below exist under `/api/v1/organizations/:id/billing` (none is registered otherwise). Only owners and admins of the organization may call them: members get `403 { "error": "billing_forbidden" }`, non-members `404`. Request bodies for checkout, preview and change are validated in LogTide against `billingPlanChangeSchema` from `@logtide/shared`; the checkout session id in the path must match `^cs_[A-Za-z0-9_]{1,200}$`. Calls are limited to 60 per minute per session token (the global rate-limit key is a hash of the bearer credential, so two browser sessions of the same user count separately).
+- LogTide forwards each call with `fetch` to `<LOGTIDE_BILLING_API_URL>/api/v1/orgs/:orgId/billing<rest>` with a 15 second timeout. 2xx and 4xx answers from the billing service pass through with their status and body, with one exception: a billing `401` or `403` means the service credentials do not match, so it becomes `502 { "error": "billing_unavailable" }` (passing it on would look like an expired LogTide session and sign the user out). A `503` whose JSON body has `error` exactly `checkout_disabled` or `billing_not_configured` passes through unchanged (status and body), because the Billing page has its own copy for those. Every other 5xx, a redirect, a body that is not JSON, a timeout or a network error becomes `502 { "error": "billing_unavailable" }`; the upstream detail is never passed on.
 
 | LogTide route | Billing service route |
 |---|---|
@@ -164,7 +164,7 @@ Every request carries `Authorization: Bearer <LOGTIDE_BILLING_API_TOKEN>` (compa
 - `POST .../preview` with `{ plan, interval }` returns `{ amountDue, currency, immediate }` (minor units). `409 no_subscription` when there is nothing to change, `400 same_plan` when plan and interval are unchanged.
 - `POST .../change` with `{ plan, interval }` returns `BillingOverview` after the change. Upgrades are invoiced immediately and apply once paid; downgrades are credited on the next invoice. `402 payment_action_required` with `{ hostedInvoiceUrl }` when the payment needs customer action.
 - `POST .../cancel` and `POST .../resume` return `BillingOverview` after setting or clearing cancel at period end. Both are idempotent; `409 no_subscription` when there is no subscription.
-- `POST .../payment-method` returns `{ clientSecret, publishableKey }` for an embedded session in setup mode, used to replace the card. `409 no_customer` when the organization never subscribed.
+- `POST .../payment-method` returns `{ clientSecret, publishableKey }` for an embedded session in setup mode, used to replace the card. `409 no_customer` when the organization never subscribed, `503 billing_not_configured` when the publishable key is missing.
 
 Mutating routes must be serialized per organization on the billing side so a double click cannot subscribe or change twice.
 

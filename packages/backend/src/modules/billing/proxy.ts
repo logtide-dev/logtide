@@ -29,9 +29,24 @@ function unavailable(): ForwardToBillingResult {
 }
 
 /**
+ * 503 codes that are part of the billing contract (the page has its own copy
+ * for them). Any other 5xx stays a generic 502.
+ */
+const PASS_THROUGH_503_CODES = new Set(['checkout_disabled', 'billing_not_configured']);
+
+function isContract503(body: unknown): boolean {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const code = (body as { error?: unknown }).error;
+  return typeof code === 'string' && PASS_THROUGH_503_CODES.has(code);
+}
+
+/**
  * Forward one call to the external billing service. 2xx and 4xx pass through
- * with their status and body; 5xx, unexpected statuses, timeouts and network
- * errors collapse into a generic 502 (the upstream detail is never leaked).
+ * with their status and body, except 401/403 (a broken service credential, see
+ * below). A 503 whose JSON `error` is `checkout_disabled` or
+ * `billing_not_configured` passes through unchanged; every other 5xx,
+ * unexpected statuses, timeouts and network errors collapse into a generic 502
+ * (the upstream detail is never leaked).
  */
 export async function forwardToBilling(opts: ForwardToBillingOptions): Promise<ForwardToBillingResult> {
   const cfg = config as { LOGTIDE_BILLING_API_URL?: string; LOGTIDE_BILLING_API_TOKEN?: string };
@@ -76,6 +91,16 @@ export async function forwardToBilling(opts: ForwardToBillingOptions): Promise<F
       }
       await res.body?.cancel().catch(() => undefined);
       return unavailable();
+    }
+    if (res.status === 503) {
+      const text = await res.text().catch(() => '');
+      let body: unknown = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        return unavailable();
+      }
+      return isContract503(body) ? { status: 503, body } : unavailable();
     }
     if (res.status < 200 || res.status >= 500 || (res.status >= 300 && res.status < 400)) {
       await res.body?.cancel().catch(() => undefined);

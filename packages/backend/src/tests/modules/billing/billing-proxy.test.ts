@@ -209,6 +209,61 @@ describe('billing proxy', () => {
     expect(res.body).not.toContain('leaked');
   });
 
+  it('503 checkout_disabled passes through', async () => {
+    const f = await fixture();
+    handler = (_r, res) => {
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end('{"error":"checkout_disabled","message":"Paid plans are opening soon."}');
+    };
+    const res = await call(f.owner.id, 'POST', f.org.id, '/checkout', { plan: 'pro', interval: 'month' });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({ error: 'checkout_disabled', message: 'Paid plans are opening soon.' });
+  });
+
+  it('503 billing_not_configured passes through', async () => {
+    const f = await fixture();
+    handler = (_r, res) => {
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end('{"error":"billing_not_configured","message":"Card updates are not available right now."}');
+    };
+    const res = await call(f.owner.id, 'POST', f.org.id, '/payment-method');
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toEqual({
+      error: 'billing_not_configured',
+      message: 'Card updates are not available right now.',
+    });
+  });
+
+  it('503 with another code maps to 502', async () => {
+    const f = await fixture();
+    const bodies = [
+      '{"error":"maintenance","message":"internal detail leaked"}',
+      'Service Unavailable',
+      '',
+      '{"error":["checkout_disabled"]}',
+    ];
+    for (const body of bodies) {
+      handler = (_r, res) => {
+        res.writeHead(503, { 'content-type': 'application/json' });
+        res.end(body);
+      };
+      const res = await call(f.owner.id, 'GET', f.org.id, '');
+      expect(res.statusCode, body).toBe(502);
+      expect(res.json()).toEqual({ error: 'billing_unavailable', message: 'Billing is temporarily unavailable' });
+    }
+  });
+
+  it('500 with a contract code still maps to 502', async () => {
+    const f = await fixture();
+    handler = (_r, res) => {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end('{"error":"checkout_disabled","message":"x"}');
+    };
+    const res = await call(f.owner.id, 'POST', f.org.id, '/checkout', { plan: 'pro', interval: 'month' });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().error).toBe('billing_unavailable');
+  });
+
   it('timeout maps to 502', async () => {
     const f = await fixture();
     setBillingTimeoutForTests(150);
