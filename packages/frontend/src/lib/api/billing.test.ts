@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BillingAPI, BillingApiError } from './billing';
+import { BillingAPI, BillingApiError, billingErrorText } from './billing';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
 
@@ -106,5 +106,22 @@ describe('billingAPI', () => {
     const err = await anon.getOverview(ORG).catch((e) => e);
     expect(err).toBeInstanceOf(BillingApiError);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('billingErrorText', () => {
+  it('uses our wording for known codes', () => {
+    expect(billingErrorText(new BillingApiError(409, 'billing_busy', 'locked'))).toBe(
+      'Another billing change is in progress. Try again in a moment.'
+    );
+  });
+
+  it("falls back to the server's message for unknown codes", () => {
+    expect(billingErrorText(new BillingApiError(400, 'invalid_request', 'Body must be valid'))).toBe('Body must be valid');
+  });
+
+  it('is generic for anything that is not a billing error', () => {
+    expect(billingErrorText(new Error('boom'))).toBe('Something went wrong with billing');
+    expect(billingErrorText(undefined)).toBe('Something went wrong with billing');
   });
 });

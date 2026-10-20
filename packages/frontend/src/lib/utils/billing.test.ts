@@ -13,6 +13,8 @@ import {
   formatPlanPrice,
   safeExternalUrl,
   isCardExpired,
+  canChangePlan,
+  asSentence,
 } from './billing';
 
 const PERIOD_END = '2027-01-17T12:00:00.000Z';
@@ -116,6 +118,35 @@ describe('planCta', () => {
       }
     }
   });
+
+  it('trialing subscription can still switch', () => {
+    const trialing = { ...PRO_MONTH, status: 'trialing' };
+    expect(planCta({ ...base, card: 'pro_plus', current: trialing })).toBe('switch');
+    expect(planCta({ ...base, interval: 'year', card: 'pro', current: trialing })).toBe('switch');
+  });
+
+  // Billing answers 409 subscription_not_active to a change unless the
+  // subscription is active or trialing: paid cards offer nothing then.
+  for (const status of ['past_due', 'unpaid', 'incomplete', 'paused']) {
+    it(`${status} subscription: paid cards -> none, own card stays current, free still cancels`, () => {
+      const current = { ...PRO_MONTH, status };
+      expect(planCta({ ...base, card: 'pro_plus', current })).toBe('none');
+      expect(planCta({ ...base, interval: 'year', card: 'pro', current })).toBe('none');
+      expect(planCta({ ...base, card: 'pro', current })).toBe('current');
+      expect(planCta({ ...base, card: 'free', current })).toBe('downgrade-to-free');
+    });
+  }
+});
+
+describe('canChangePlan', () => {
+  it('only active and trialing subscriptions can change plan', () => {
+    expect(canChangePlan(PRO_MONTH)).toBe(true);
+    expect(canChangePlan({ ...PRO_MONTH, status: 'trialing' })).toBe(true);
+    expect(canChangePlan({ ...PRO_MONTH, status: 'past_due' })).toBe(false);
+    expect(canChangePlan({ ...PRO_MONTH, status: 'incomplete' })).toBe(false);
+    expect(canChangePlan(FREE)).toBe(false);
+    expect(canChangePlan(GRANDFATHERED)).toBe(false);
+  });
 });
 
 describe('formatMoney', () => {
@@ -180,6 +211,12 @@ describe('statusBadge', () => {
   it('free plan', () => {
     expect(statusBadge(FREE)).toEqual({ label: 'Active', variant: 'secondary' });
   });
+
+  it('unknown Stripe statuses get a neutral label from the raw status', () => {
+    expect(statusBadge({ ...PRO_MONTH, status: 'paused' })).toEqual({ label: 'Paused', variant: 'outline' });
+    expect(statusBadge({ ...PRO_MONTH, status: 'canceled' })).toEqual({ label: 'Canceled', variant: 'outline' });
+    expect(statusBadge({ ...PRO_MONTH, status: 'incomplete_expired' }).label).toBe('Incomplete expired');
+  });
 });
 
 describe('billingErrorMessage', () => {
@@ -190,9 +227,28 @@ describe('billingErrorMessage', () => {
     expect(billingErrorMessage('payment_action_required')).toBe('Your bank needs to confirm the payment');
   });
 
+  it('maps plan-change refusals', () => {
+    expect(billingErrorMessage('subscription_not_active')).toBe('Update your payment method before changing plans.');
+    expect(billingErrorMessage('billing_busy')).toBe('Another billing change is in progress. Try again in a moment.');
+  });
+
   it('falls back to a generic message', () => {
     expect(billingErrorMessage('something_new')).toBe('Something went wrong with billing');
     expect(billingErrorMessage('')).toBe('Something went wrong with billing');
+  });
+
+  it('prefers the server message for unknown codes, never for known ones', () => {
+    expect(billingErrorMessage('something_new', 'The server explains it')).toBe('The server explains it');
+    expect(billingErrorMessage('something_new', '')).toBe('Something went wrong with billing');
+    expect(billingErrorMessage('checkout_disabled', 'Checkout is closed')).toBe('Paid plans are opening soon');
+  });
+});
+
+describe('asSentence', () => {
+  it('adds a final period only when missing', () => {
+    expect(asSentence('Billing is temporarily unavailable')).toBe('Billing is temporarily unavailable.');
+    expect(asSentence('Try again in a moment.')).toBe('Try again in a moment.');
+    expect(asSentence('Really?')).toBe('Really?');
   });
 });
 

@@ -33,6 +33,11 @@ export class BillingApiError extends Error {
   }
 }
 
+/** User-facing text for any error thrown by a billing call. */
+export function billingErrorText(e: unknown): string {
+  return e instanceof BillingApiError ? billingErrorMessage(e.code, e.message) : billingErrorMessage('');
+}
+
 const CODE_RE = /^[a-z][a-z0-9_]*$/;
 
 /**

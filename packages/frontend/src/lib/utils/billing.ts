@@ -26,6 +26,9 @@ export const TELEMETRY_QUOTA = 'telemetry.max_bytes_monthly';
  * - A subscription already set to cancel offers nothing but its own card:
  *   switching would keep the pending cancellation and end the new plan at the
  *   period end, so the user resumes first (Resume lives on the plan card).
+ * - A subscription that is not active or trialing (past due, unpaid, ...)
+ *   cannot change plan (billing answers 409 subscription_not_active): paid
+ *   cards offer nothing until the card is fixed; cancelling stays possible.
  * - Custom plans (limits set by LogTide) offer nothing.
  */
 export function planCta(input: {
@@ -46,7 +49,12 @@ export function planCta(input: {
   if (card === current.plan && interval === current.interval) return 'current';
   if (current.cancelAtPeriodEnd) return 'none';
   if (card === 'free') return 'downgrade-to-free';
-  return 'switch';
+  return canChangePlan(current) ? 'switch' : 'none';
+}
+
+/** Plan and interval changes need an active or trialing subscription. */
+export function canChangePlan(current: BillingCurrentPlan): boolean {
+  return current.source === 'subscription' && (current.status === 'active' || current.status === 'trialing');
 }
 
 /** Money from minor units, en-US, honoring the currency's decimal places. */
@@ -92,6 +100,13 @@ export function statusBadge(current: BillingCurrentPlan): BadgeInfo {
       return { label: 'Payment pending', variant: 'outline' };
   }
 
+  // Any other Stripe status (paused, canceled, ...) is shown as it is rather
+  // than passing for Active.
+  if (current.status && current.status !== 'active' && current.status !== 'trialing') {
+    const words = current.status.replace(/_/g, ' ');
+    return { label: words.charAt(0).toUpperCase() + words.slice(1), variant: 'outline' };
+  }
+
   const end = formatBillingDate(current.currentPeriodEnd);
   if (current.cancelAtPeriodEnd && end) return { label: `Cancels on ${end}`, variant: 'outline' };
 
@@ -112,11 +127,22 @@ const ERROR_MESSAGES: Record<string, string> = {
   no_subscription: 'This organization has no active subscription',
   no_customer: 'Subscribe to a plan before adding a card',
   same_plan: 'You are already on this plan',
+  subscription_not_active: 'Update your payment method before changing plans.',
+  billing_busy: 'Another billing change is in progress. Try again in a moment.',
 };
 
-/** Plain message for a billing error code (toasts, inline errors). */
-export function billingErrorMessage(code: string): string {
-  return ERROR_MESSAGES[code] ?? 'Something went wrong with billing';
+/**
+ * Plain message for a billing error code (toasts, inline errors). Known codes
+ * always get our wording; an unknown code falls back to the server's human
+ * message when there is one, else to a generic line.
+ */
+export function billingErrorMessage(code: string, serverMessage?: string | null): string {
+  return ERROR_MESSAGES[code] ?? (serverMessage || 'Something went wrong with billing');
+}
+
+/** Ends a message with a period unless it already ends with punctuation. */
+export function asSentence(message: string): string {
+  return /[.!?]$/.test(message) ? message : `${message}.`;
 }
 
 const CARD_BRANDS: Record<string, string> = {
