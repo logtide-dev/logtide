@@ -30,6 +30,7 @@
   import PlanPicker from '$lib/components/billing/PlanPicker.svelte';
   import InvoicesCard from '$lib/components/billing/InvoicesCard.svelte';
   import ChangePlanDialog from '$lib/components/billing/ChangePlanDialog.svelte';
+  import EmbeddedCheckoutDialog from '$lib/components/billing/EmbeddedCheckoutDialog.svelte';
   import { asSentence, formatBillingDate, isCustomPlan, TELEMETRY_QUOTA } from '$lib/utils/billing';
   import { capBarColor, capPercent, formatBytes } from '$lib/utils/usage-capabilities';
   import Gauge from '@lucide/svelte/icons/gauge';
@@ -61,6 +62,9 @@
   let busy = $state(false);
   let cancelOpen = $state(false);
   let changeOpen = $state(false);
+  let checkoutOpen = $state(false);
+  let checkoutKind = $state<'subscribe' | 'payment-method'>('subscribe');
+  let checkoutTarget = $state<{ plan: PaidPlanId; interval: BillingInterval } | null>(null);
   let changeTarget = $state<{ plan: PaidPlanId; interval: BillingInterval } | null>(null);
 
   // Responses for an org the user already switched away from are dropped.
@@ -143,6 +147,43 @@
   function openChange(plan: PaidPlanId, target: BillingInterval) {
     changeTarget = { plan, interval: target };
     changeOpen = true;
+  }
+
+  function openSubscribe(plan: PaidPlanId, target: BillingInterval) {
+    checkoutKind = 'subscribe';
+    checkoutTarget = { plan, interval: target };
+    checkoutOpen = true;
+  }
+
+  function openUpdateCard() {
+    checkoutKind = 'payment-method';
+    checkoutTarget = null;
+    checkoutOpen = true;
+  }
+
+  function onCheckoutDone(next: BillingOverview) {
+    overview = next;
+    interval = next.current.interval ?? interval;
+    if (checkoutKind === 'subscribe') {
+      const name = next.plans.find((p) => p.id === next.current.plan)?.name ?? next.current.plan;
+      toastStore.success(`Your plan is now ${name}`);
+    } else {
+      toastStore.success('Your payment card was updated');
+    }
+    if (currentOrg) void loadInvoices(currentOrg.id);
+  }
+
+  // Whatever happened in the dialog (a payment that is still settling, a
+  // closed window), the page shows the server's current state afterwards.
+  async function refreshOverview() {
+    const orgId = currentOrg?.id;
+    if (!orgId) return;
+    try {
+      const next = await billingAPI.getOverview(orgId);
+      if (isCurrentOrg(orgId)) overview = next;
+    } catch {
+      // Keep what is on screen.
+    }
   }
 
   function onChanged(next: BillingOverview) {
@@ -243,6 +284,7 @@
       onChangePlan={scrollToPlans}
       onCancel={() => (cancelOpen = true)}
       onResume={resume}
+      onUpdateCard={openUpdateCard}
     />
 
     <Card>
@@ -294,14 +336,13 @@
     </Card>
 
     {#if !isCustom}
-      <!-- onSubscribe / onUpdateCard stay unset until embedded checkout is
-           available: those buttons render disabled. -->
       <PlanPicker
         plans={overview.plans}
         current={overview.current}
         checkoutEnabled={overview.checkoutEnabled}
         bind:interval
         {busy}
+        onSubscribe={openSubscribe}
         onSwitch={openChange}
         onDowngrade={() => (cancelOpen = true)}
       />
@@ -312,6 +353,16 @@
       loading={invoicesLoading}
       error={invoicesError}
       onRetry={() => currentOrg && loadInvoices(currentOrg.id)}
+    />
+
+    <EmbeddedCheckoutDialog
+      bind:open={checkoutOpen}
+      orgId={currentOrg?.id ?? ''}
+      kind={checkoutKind}
+      plan={checkoutTarget?.plan}
+      interval={checkoutTarget?.interval}
+      onDone={onCheckoutDone}
+      onClose={refreshOverview}
     />
 
     <ChangePlanDialog

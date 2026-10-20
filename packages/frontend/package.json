@@ -25,6 +25,7 @@
     "@logtide/shared": "workspace:*",
     "@logtide/sveltekit": "0.7.0",
     "@lucide/svelte": "^0.482.0",
+    "@stripe/stripe-js": "8.11.0",
     "@tanstack/svelte-table": "^8.21.3",
     "canvas-confetti": "^1.9.4",
     "echarts": "^6.1.0",

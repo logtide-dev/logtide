@@ -22,6 +22,12 @@ vi.mock('$lib/api/billing', async (importOriginal) => ({
   billingAPI,
 }));
 vi.mock('$lib/api/usage', () => ({ getCapabilityUsage }));
+const { initEmbeddedCheckout } = vi.hoisted(() => ({
+  initEmbeddedCheckout: vi.fn(async () => ({ mount: vi.fn(), destroy: vi.fn() })),
+}));
+vi.mock('$lib/utils/stripe-loader', () => ({
+  loadStripeOnce: vi.fn(async () => ({ initEmbeddedCheckout })),
+}));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 import Page from './+page.svelte';
@@ -285,14 +291,29 @@ describe('billing settings page', () => {
     expect(screen.queryByRole('button', { name: /subscribe/i })).toBeNull();
   });
 
-  it('subscribe stays a disabled placeholder until checkout is wired', async () => {
+  it('subscribe opens the embedded checkout dialog for that plan', async () => {
     billingAPI.getOverview.mockResolvedValue(overview(FREE));
+    billingAPI.startCheckout.mockResolvedValue({ clientSecret: 'cs_test_1_secret_x', publishableKey: 'pk_test_123' });
 
     setup('owner');
 
     const buttons = await screen.findAllByRole('button', { name: /^Subscribe/ });
     expect(buttons.length).toBe(2);
-    for (const b of buttons) expect(b).toBeDisabled();
+    await fireEvent.click(buttons[0]);
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    await waitFor(() => expect(billingAPI.startCheckout).toHaveBeenCalledWith(ORG_ID, 'pro', 'month'));
+    await waitFor(() => expect(initEmbeddedCheckout).toHaveBeenCalled());
+  });
+
+  it('update card opens the payment method dialog', async () => {
+    billingAPI.getOverview.mockResolvedValue(overview(PRO_MONTH));
+    billingAPI.startPaymentMethodUpdate.mockResolvedValue({ clientSecret: 'cs_test_2_secret_x', publishableKey: 'pk_test_123' });
+
+    setup('owner');
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Update card' }));
+    await waitFor(() => expect(billingAPI.startPaymentMethodUpdate).toHaveBeenCalledWith(ORG_ID));
   });
 
   it('a free immediate change says nothing is due, and a trial says when the first charge happens', async () => {
