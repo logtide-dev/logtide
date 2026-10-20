@@ -130,7 +130,7 @@ When active:
 
 #### HTTP contract (billing service side, v1)
 
-Every request carries `Authorization: Bearer <LOGTIDE_BILLING_API_TOKEN>` (compare in constant time), `X-LogTide-User-Id`, `X-LogTide-User-Email` and `X-LogTide-User-Role` (`owner` or `admin`; anything else must be answered with 403). `:orgId` is a UUID. Errors on 4xx are `{ "error": "<code>", "message": "<human text>" }`. The TypeScript types are exported from `@logtide/shared` (`BillingOverview`, `BillingInvoice`, `BillingCheckoutSession`, `BillingCheckoutStatus`, `BillingPreview`).
+Every request carries `Authorization: Bearer <LOGTIDE_BILLING_API_TOKEN>` (compare in constant time), `X-LogTide-User-Id`, `X-LogTide-User-Email` (percent-encoded with `encodeURIComponent`, because header values must be ASCII and email addresses need not be; decode it with `decodeURIComponent` and answer `400 bad_caller` when that fails) and `X-LogTide-User-Role` (`owner` or `admin`; anything else must be answered with 403). `:orgId` is a UUID. Errors on 4xx are `{ "error": "<code>", "message": "<human text>" }`. The TypeScript types are exported from `@logtide/shared` (`BillingOverview`, `BillingInvoice`, `BillingCheckoutSession`, `BillingCheckoutStatus`, `BillingPreview`).
 
 `GET /api/v1/orgs/:orgId/billing` returns `BillingOverview`:
 

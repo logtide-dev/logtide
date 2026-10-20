@@ -62,7 +62,8 @@ export async function forwardToBilling(opts: ForwardToBillingOptions): Promise<F
   const headers: Record<string, string> = {
     authorization: `Bearer ${cfg.LOGTIDE_BILLING_API_TOKEN}`,
     'x-logtide-user-id': opts.caller.id,
-    'x-logtide-user-email': opts.caller.email,
+    // Percent-encoded: header values must be ASCII, emails need not be.
+    'x-logtide-user-email': encodeURIComponent(opts.caller.email),
     'x-logtide-user-role': opts.caller.role,
     accept: 'application/json',
   };

@@ -105,8 +105,21 @@ describe('billing proxy', () => {
     expect(seen[0].url).toBe(`/api/v1/orgs/${f.org.id}/billing`);
     expect(seen[0].headers.authorization).toBe(`Bearer ${TOKEN}`);
     expect(seen[0].headers['x-logtide-user-id']).toBe(f.owner.id);
-    expect(seen[0].headers['x-logtide-user-email']).toBe(f.owner.email);
+    expect(seen[0].headers['x-logtide-user-email']).toBe(encodeURIComponent(f.owner.email));
     expect(seen[0].headers['x-logtide-user-role']).toBe('owner');
+  });
+
+  it('non-ascii email is forwarded encoded', async () => {
+    const email = `j\u00f6rg-${Date.now()}+billing@ex\u00e4mple.com`;
+    const owner = await createTestUser({ email });
+    const org = await createTestOrganization({ ownerId: owner.id });
+    const res = await call(owner.id, 'GET', org.id, '');
+    expect(res.statusCode).toBe(200);
+    expect(seen).toHaveLength(1);
+    const header = seen[0].headers['x-logtide-user-email'] as string;
+    expect(header).toBe(encodeURIComponent(email));
+    expect(/^[\x21-\x7e]+$/.test(header)).toBe(true);
+    expect(decodeURIComponent(header)).toBe(email);
   });
 
   it('admin can POST checkout with a valid body', async () => {
