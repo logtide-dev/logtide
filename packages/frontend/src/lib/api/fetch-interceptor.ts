@@ -52,13 +52,6 @@ function isTelemetryEndpoint(url: string): boolean {
   );
 }
 
-// In-app billing routes proxy an external billing service. A 401 there must
-// never look like an expired LogTide session: the core already maps billing
-// service auth failures to 502, and this keeps the client side safe too.
-function isBillingEndpoint(url: string): boolean {
-  return /\/api\/v1\/organizations\/[^/?#]+\/billing(?:[/?#]|$)/.test(url);
-}
-
 function handleUnauthorized(): void {
   if (handling) return;
   handling = true;
@@ -96,8 +89,7 @@ export function installAuthFetchInterceptor(): void {
         getAuthToken() &&
         isApiRequest(urlOf(input)) &&
         !isAuthEndpoint(urlOf(input)) &&
-        !isTelemetryEndpoint(urlOf(input)) &&
-        !isBillingEndpoint(urlOf(input))
+        !isTelemetryEndpoint(urlOf(input))
       ) {
         handleUnauthorized();
       }

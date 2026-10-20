@@ -38,9 +38,9 @@ const CODE_RE = /^[a-z][a-z0-9_]*$/;
 /**
  * Client of the core's /organizations/:id/billing routes.
  *
- * Errors never go through a shared "session expired" path: the core maps
- * billing service auth failures to 502, and the global fetch interceptor
- * skips billing URLs, so nothing here can log the user out.
+ * The core maps billing service auth failures to 502, so a 401 here is the
+ * user's own expired session and the global fetch interceptor handles it like
+ * any other API call.
  */
 export class BillingAPI {
   constructor(private getToken: () => string | null) {}
