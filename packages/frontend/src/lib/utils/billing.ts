@@ -17,7 +17,9 @@ export const TELEMETRY_QUOTA = 'telemetry.max_bytes_monthly';
  * CTA of one plan card.
  *
  * - No subscription (free or grandfathered): paid cards offer Subscribe, or
- *   "opening soon" while sales are closed. A grandfathered org buys Pro through
+ *   "opening soon" while sales are closed or the billing service has no
+ *   Stripe publishable key (the embedded checkout cannot mount without one,
+ *   and checkout would answer 503 billing_not_configured). A grandfathered org buys Pro through
  *   the same checkout (the billing service defers the first charge to the end
  *   of the grant).
  * - Subscription: the same plan and interval is "current", the free card
@@ -35,21 +37,27 @@ export function planCta(input: {
   card: BillingPlanId;
   current: BillingCurrentPlan;
   checkoutEnabled: boolean;
+  publishableKey: string | null;
   interval: BillingInterval;
   isCustom: boolean;
 }): PlanCta {
-  const { card, current, checkoutEnabled, interval, isCustom } = input;
+  const { card, current, interval, isCustom } = input;
   if (isCustom) return 'none';
 
   if (current.source !== 'subscription') {
     if (card === 'free') return current.source === 'free' ? 'current' : 'none';
-    return checkoutEnabled ? 'subscribe' : 'opening-soon';
+    return salesOpen(input) ? 'subscribe' : 'opening-soon';
   }
 
   if (card === current.plan && interval === current.interval) return 'current';
   if (current.cancelAtPeriodEnd) return 'none';
   if (card === 'free') return 'downgrade-to-free';
   return canChangePlan(current) ? 'switch' : 'none';
+}
+
+/** New subscriptions need sales open and a Stripe publishable key to mount the checkout. */
+export function salesOpen(input: { checkoutEnabled: boolean; publishableKey: string | null }): boolean {
+  return input.checkoutEnabled && Boolean(input.publishableKey);
 }
 
 /** Plan and interval changes need an active or trialing subscription. */

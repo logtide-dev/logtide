@@ -340,6 +340,7 @@
         plans={overview.plans}
         current={overview.current}
         checkoutEnabled={overview.checkoutEnabled}
+        publishableKey={overview.publishableKey}
         bind:interval
         {busy}
         onSubscribe={openSubscribe}

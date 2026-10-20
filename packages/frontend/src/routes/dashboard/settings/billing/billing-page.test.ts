@@ -291,6 +291,16 @@ describe('billing settings page', () => {
     expect(screen.queryByRole('button', { name: /subscribe/i })).toBeNull();
   });
 
+  it('no publishable key shows opening soon instead of subscribe', async () => {
+    billingAPI.getOverview.mockResolvedValue(overview(FREE, { publishableKey: null }));
+
+    setup('owner');
+
+    expect((await screen.findAllByRole('button', { name: 'Opening soon' })).length).toBe(2);
+    expect(screen.queryByRole('button', { name: /subscribe/i })).toBeNull();
+    expect(screen.getByText(/Everything on the Free plan keeps working/)).toBeInTheDocument();
+  });
+
   it('subscribe opens the embedded checkout dialog for that plan', async () => {
     billingAPI.getOverview.mockResolvedValue(overview(FREE));
     billingAPI.startCheckout.mockResolvedValue({ clientSecret: 'cs_test_1_secret_x', publishableKey: 'pk_test_123' });

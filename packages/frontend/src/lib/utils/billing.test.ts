@@ -52,7 +52,7 @@ const GRANDFATHERED: BillingCurrentPlan = {
   pastDueSince: null,
 };
 
-const base = { checkoutEnabled: true, interval: 'month' as const, isCustom: false };
+const base = { checkoutEnabled: true, publishableKey: 'pk_test_1' as string | null, interval: 'month' as const, isCustom: false };
 
 describe('planCta', () => {
   it('free org + pro card -> subscribe', () => {
@@ -61,6 +61,16 @@ describe('planCta', () => {
 
   it('free org + pro card with checkout disabled -> opening-soon', () => {
     expect(planCta({ ...base, checkoutEnabled: false, card: 'pro', current: FREE })).toBe('opening-soon');
+  });
+
+  it('no publishable key: subscribe cards -> opening-soon even with checkout enabled', () => {
+    expect(planCta({ ...base, publishableKey: null, card: 'pro', current: FREE })).toBe('opening-soon');
+    expect(planCta({ ...base, publishableKey: null, card: 'pro_plus', current: GRANDFATHERED })).toBe('opening-soon');
+    expect(planCta({ ...base, publishableKey: null, card: 'free', current: FREE })).toBe('current');
+  });
+
+  it('switching does not need a publishable key', () => {
+    expect(planCta({ ...base, publishableKey: null, card: 'pro_plus', current: PRO_MONTH })).toBe('switch');
   });
 
   it('free org + free card -> current', () => {

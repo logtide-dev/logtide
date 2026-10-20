@@ -12,6 +12,7 @@
     formatBillingDate,
     formatPlanPrice,
     planCta,
+    salesOpen,
     type PlanCta,
   } from '$lib/utils/billing';
   import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -22,6 +23,8 @@
     plans: BillingPlanInfo[];
     current: BillingCurrentPlan;
     checkoutEnabled: boolean;
+    /** Stripe publishable key from the overview; without it Subscribe is "opening soon". */
+    publishableKey: string | null;
     interval?: BillingInterval;
     busy?: boolean;
     /** Wired to the embedded checkout; Subscribe stays disabled while absent. */
@@ -34,6 +37,7 @@
     plans,
     current,
     checkoutEnabled,
+    publishableKey,
     interval = $bindable('month'),
     busy = false,
     onSubscribe,
@@ -51,6 +55,7 @@
   );
 
   const subscribed = $derived(current.source === 'subscription');
+  const open = $derived(salesOpen({ checkoutEnabled, publishableKey }));
 
   function monthlyPrice(plan: BillingPlanInfo): number {
     if (!plan.prices) return 0;
@@ -96,7 +101,7 @@
   }
 
   function ctaOf(plan: BillingPlanInfo): PlanCta {
-    return planCta({ card: plan.id, current, checkoutEnabled, interval, isCustom: false });
+    return planCta({ card: plan.id, current, checkoutEnabled, publishableKey, interval, isCustom: false });
   }
 </script>
 
@@ -126,7 +131,7 @@
   </CardHeader>
 
   <CardContent class="space-y-4">
-    {#if !checkoutEnabled && !subscribed}
+    {#if !open && !subscribed}
       <Alert>
         <Info class="h-4 w-4" />
         <AlertDescription>
