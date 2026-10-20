@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.5.0] - 2026-10-20
+
+### Added
+
+- **In-app billing**: organizations on an instance connected to a billing service manage their plan without leaving LogTide. Settings > Billing & Usage > Billing (owners and admins only, hidden unless billing is enabled) shows the current plan with its status, renewal date and card, the month's combined telemetry quota, and a monthly/annual plan picker. Owners and admins can subscribe through an embedded Stripe Checkout inside the page, update the payment card the same way, switch plan or billing interval with a price preview before confirming (a payment that needs the bank's confirmation links to the invoice), cancel at period end and resume, and browse the invoice history with hosted and PDF links. When billing is enabled the Usage page's Upgrade and Manage billing buttons lead to this page instead of the external upgrade handoff. A billing outage shows a retryable "temporarily unavailable" state, and a change that the billing service accepted but has not shown yet says so instead of reporting a failure. New frontend dependency: `@stripe/stripe-js`, pinned to exactly 8.11.0; it is loaded lazily, only when a checkout dialog opens on the Billing page, so instances without the billing seam never fetch Stripe.js. Configuration: set `LOGTIDE_BILLING_API_URL` and `LOGTIDE_BILLING_API_TOKEN` together (a partial set aborts startup; the URL must be absolute http or https, the token at least 32 characters). `GET /api/v1/auth/config` then gains `billingEnabled: true`, `@logtide/shared` exports the billing types (`BillingOverview`, `BillingInvoice`, `BillingCheckoutSession`, `BillingCheckoutStatus`, `BillingPreview`, `billingPlanChangeSchema`), and `docs/cloud-seams.md` documents the HTTP contract a billing service must implement. Unset: nothing changes and no key is added. The plan picker has a Personal/Business switch and a country selector that show prices with the country's standard VAT included (EU consumers) or excluded, with the same rates as the pricing page on logtide.dev; the choice is remembered in the browser and is display only (checkout still taxes from the billing address).
+
+
 ## [1.4.0] - 2026-10-20
 
 ### Added

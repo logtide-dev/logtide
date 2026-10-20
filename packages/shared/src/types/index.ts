@@ -19,6 +19,9 @@ export * from './webhook-delivery.js';
 // Re-export digest section catalog
 export * from './digest.js';
 
+// Re-export billing contract types
+export * from './billing.js';
+
 // Re-export custom dashboard types
 export * from './dashboard.js';
 export * from './dashboard-migrations.js';

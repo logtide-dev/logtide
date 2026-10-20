@@ -10,6 +10,7 @@ import { settingsService, SETTING_KEYS } from './service.js';
 import { usersService } from '../users/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
 import { isUpgradeHandoffActive } from '../organizations/upgrade-handoff.js';
+import { isBillingApiActive } from '../billing/seam.js';
 import { isEmailVerificationRequired } from '../users/email-verification-flag.js';
 import { getActiveTerms, TERMS_AUTH_FREE_ERROR, TERMS_AUTH_FREE_MESSAGE } from '../users/terms.js';
 import type { UserProfile } from '../users/service.js';
@@ -254,6 +255,7 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         signupEnabled,
         requiresLogin: authMode !== 'none',
         ...(isUpgradeHandoffActive() ? { upgradeEnabled: true } : {}),
+        ...(isBillingApiActive() ? { billingEnabled: true } : {}),
         ...(isEmailVerificationRequired() ? { emailVerificationRequired: true } : {}),
         // Terms seam: termsUrl, privacyUrl, termsVersion only when active.
         ...(getActiveTerms() ?? {}),
