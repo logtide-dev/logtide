@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BillingCurrentPlan, BillingInterval, BillingOverview, BillingPlanInfo, BillingPreview } from '@logtide/shared';
-  import { billingAPI, BillingApiError, type PaidPlanId } from '$lib/api/billing';
+  import { billingAPI, BillingApiError, billingErrorText, type PaidPlanId } from '$lib/api/billing';
   import {
     Dialog,
     DialogContent,
@@ -12,10 +12,11 @@
   import { Button } from '$lib/components/ui/button';
   import { Alert, AlertDescription } from '$lib/components/ui/alert';
   import Spinner from '$lib/components/Spinner.svelte';
-  import { billingErrorMessage, formatBillingDate, formatMoney, safeExternalUrl } from '$lib/utils/billing';
+  import { asSentence, formatBillingDate, formatMoney, safeExternalUrl } from '$lib/utils/billing';
   import ArrowRight from '@lucide/svelte/icons/arrow-right';
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import ExternalLink from '@lucide/svelte/icons/external-link';
+  import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 
   interface Props {
     open?: boolean;
@@ -30,12 +31,16 @@
 
   let preview = $state<BillingPreview | null>(null);
   let previewLoading = $state(false);
-  let error = $state<string | null>(null);
+  let previewError = $state<string | null>(null);
+  let changeError = $state<string | null>(null);
   let actionUrl = $state<string | null>(null);
   let submitting = $state(false);
   // Which (org, plan, interval) the shown preview belongs to; a stale answer
   // for an earlier target is dropped.
   let previewKey = '';
+
+  const trialing = $derived(current.status === 'trialing');
+  const periodEnd = $derived(formatBillingDate(current.currentPeriodEnd));
 
   function intervalWord(i: BillingInterval | null): string {
     return i === 'year' ? 'annually' : 'monthly';
@@ -53,16 +58,28 @@
 
   async function loadPreview(t: { plan: PaidPlanId; interval: BillingInterval }, key: string) {
     previewLoading = true;
+    previewError = null;
     try {
       const result = await billingAPI.preview(orgId, t.plan, t.interval);
       if (key !== previewKey) return;
       preview = result;
     } catch (e) {
       if (key !== previewKey) return;
-      error = e instanceof BillingApiError ? billingErrorMessage(e.code) : billingErrorMessage('');
+      previewError = billingErrorText(e);
     } finally {
       if (key === previewKey) previewLoading = false;
     }
+  }
+
+  function retryPreview() {
+    if (open && target && previewKey) void loadPreview(target, previewKey);
+  }
+
+  function reset() {
+    preview = null;
+    previewError = null;
+    changeError = null;
+    actionUrl = null;
   }
 
   $effect(() => {
@@ -70,16 +87,12 @@
       const key = `${orgId}:${target.plan}:${target.interval}`;
       if (key !== previewKey) {
         previewKey = key;
-        preview = null;
-        error = null;
-        actionUrl = null;
+        reset();
         void loadPreview(target, key);
       }
     } else if (!open) {
       previewKey = '';
-      preview = null;
-      error = null;
-      actionUrl = null;
+      reset();
       previewLoading = false;
     }
   });
@@ -87,19 +100,16 @@
   async function confirm() {
     if (!target || submitting) return;
     submitting = true;
-    error = null;
+    changeError = null;
     actionUrl = null;
     try {
       const overview = await billingAPI.changePlan(orgId, target.plan, target.interval);
       onChanged(overview);
       open = false;
     } catch (e) {
-      if (e instanceof BillingApiError) {
-        error = billingErrorMessage(e.code);
-        actionUrl = e.code === 'payment_action_required' ? safeExternalUrl(e.hostedInvoiceUrl) : null;
-      } else {
-        error = billingErrorMessage('');
-      }
+      changeError = billingErrorText(e);
+      actionUrl =
+        e instanceof BillingApiError && e.code === 'payment_action_required' ? safeExternalUrl(e.hostedInvoiceUrl) : null;
     } finally {
       submitting = false;
     }
@@ -138,18 +148,35 @@
             <Spinner size="sm" />
             Calculating the price...
           </div>
+        {:else if previewError}
+          <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/50 p-4">
+            <p class="text-sm text-destructive">
+              The price could not be calculated. {asSentence(previewError)}
+            </p>
+            <Button variant="outline" size="sm" onclick={retryPreview}>
+              <RotateCcw class="mr-1.5 h-4 w-4" />
+              Retry
+            </Button>
+          </div>
         {:else if preview}
           <div class="rounded-lg border p-4">
-            {#if preview.immediate}
+            {#if preview.immediate && preview.amountDue > 0}
               <p class="text-sm text-muted-foreground">Charged today</p>
               <p class="mt-1 text-2xl font-bold">{formatMoney(preview.amountDue, preview.currency)}</p>
               <p class="mt-1 text-xs text-muted-foreground">
-                The difference for the rest of the current period, charged to your card on file. The new
+                Prorated, after the credit for your unused time, and charged to your card on file. The new
                 plan applies as soon as the payment goes through.
               </p>
+            {:else if preview.immediate}
+              <p class="text-sm font-medium">Nothing to pay today. The new plan applies right away.</p>
+              {#if trialing && periodEnd}
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Your first charge at the new price is on {periodEnd}.
+                </p>
+              {/if}
             {:else}
               <p class="text-sm text-muted-foreground">
-                Next invoice{current.currentPeriodEnd ? `, ${formatBillingDate(current.currentPeriodEnd)}` : ''}
+                Next invoice{periodEnd ? `, ${periodEnd}` : ''}
               </p>
               <p class="mt-1 text-2xl font-bold">{formatMoney(preview.amountDue, preview.currency)}</p>
               <p class="mt-1 text-xs text-muted-foreground">
@@ -160,11 +187,11 @@
           </div>
         {/if}
 
-        {#if error}
+        {#if changeError}
           <Alert variant="destructive">
             <TriangleAlert class="h-4 w-4" />
             <AlertDescription>
-              {error}.
+              {asSentence(changeError)}
               {#if actionUrl}
                 <a
                   href={actionUrl}
@@ -175,7 +202,7 @@
                   Confirm the payment
                   <ExternalLink class="h-3.5 w-3.5" />
                 </a>
-                <span class="block mt-1">Your plan changes once the payment is confirmed.</span>
+                <span class="mt-1 block">Your plan changes once the payment is confirmed.</span>
               {/if}
             </AlertDescription>
           </Alert>

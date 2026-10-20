@@ -6,6 +6,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
   import {
+    canChangePlan,
     formatCardBrand,
     formatMoney,
     formatBillingDate,
@@ -168,7 +169,9 @@
             {#if current.cancelAtPeriodEnd}
               <Button size="sm" disabled={busy} onclick={onResume}>Resume subscription</Button>
             {:else}
-              <Button variant="outline" size="sm" disabled={busy} onclick={onChangePlan}>Change plan</Button>
+              {#if canChangePlan(current)}
+                <Button variant="outline" size="sm" disabled={busy} onclick={onChangePlan}>Change plan</Button>
+              {/if}
               <Button
                 variant="ghost"
                 size="sm"

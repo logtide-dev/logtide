@@ -8,6 +8,7 @@
   import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
   import {
     annualSavingPercent,
+    canChangePlan,
     formatBillingDate,
     formatPlanPrice,
     planCta,
@@ -85,6 +86,9 @@
         ? `Applies from ${formatBillingDate(current.currentPeriodEnd)}`
         : 'Resume your subscription to switch';
     }
+    if (subscribed && plan.id !== 'free' && !canChangePlan(current)) {
+      return 'Update your card to change plans';
+    }
     if (current.source === 'grandfathered' && plan.id === 'free') {
       return `Applies after ${formatBillingDate(current.grandfatheredUntil)} unless you subscribe`;
     }
@@ -126,7 +130,12 @@
       <Alert>
         <Info class="h-4 w-4" />
         <AlertDescription>
-          Paid plans are opening soon. Everything on the Free plan keeps working in the meantime.
+          {#if current.source === 'grandfathered'}
+            Paid plans are opening soon. Your organization keeps Pro until
+            {formatBillingDate(current.grandfatheredUntil)} in the meantime.
+          {:else}
+            Paid plans are opening soon. Everything on the Free plan keeps working in the meantime.
+          {/if}
         </AlertDescription>
       </Alert>
     {/if}

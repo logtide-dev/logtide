@@ -3,7 +3,7 @@
   import { browser } from '$app/environment';
   import { organizationStore } from '$lib/stores/organization';
   import { toastStore } from '$lib/stores/toast';
-  import { billingAPI, BillingApiError, type PaidPlanId } from '$lib/api/billing';
+  import { billingAPI, BillingApiError, billingErrorText, type PaidPlanId } from '$lib/api/billing';
   import { getCapabilityUsage, type CapabilityUsage } from '$lib/api/usage';
   import {
     canManageMembers,
@@ -30,7 +30,7 @@
   import PlanPicker from '$lib/components/billing/PlanPicker.svelte';
   import InvoicesCard from '$lib/components/billing/InvoicesCard.svelte';
   import ChangePlanDialog from '$lib/components/billing/ChangePlanDialog.svelte';
-  import { billingErrorMessage, formatBillingDate, isCustomPlan, TELEMETRY_QUOTA } from '$lib/utils/billing';
+  import { asSentence, formatBillingDate, isCustomPlan, TELEMETRY_QUOTA } from '$lib/utils/billing';
   import { capBarColor, capPercent, formatBytes } from '$lib/utils/usage-capabilities';
   import Gauge from '@lucide/svelte/icons/gauge';
   import ArrowRight from '@lucide/svelte/icons/arrow-right';
@@ -48,8 +48,9 @@
   const canManage = $derived(currentOrg ? canManageMembers(currentOrg.role) : false);
 
   let overview = $state<BillingOverview | null>(null);
-  let overviewLoading = $state(false);
   let overviewError = $state<string | null>(null);
+  // 404 on the overview: the seam is off (page opened by URL). Not retryable.
+  let billingMissing = $state(false);
   let capabilities = $state<CapabilityUsage[] | null>(null);
 
   let invoices = $state<BillingInvoice[]>([]);
@@ -74,10 +75,6 @@
     }
   });
 
-  function errorText(e: unknown): string {
-    return billingErrorMessage(e instanceof BillingApiError ? e.code : '');
-  }
-
   function isCurrentOrg(orgId: string): boolean {
     return currentOrg?.id === orgId;
   }
@@ -87,7 +84,7 @@
     const seq = ++overviewSeq;
     overview = null;
     overviewError = null;
-    overviewLoading = true;
+    billingMissing = false;
     try {
       // Capabilities decide "custom plan", so they land together with the
       // overview (no flash of the plan picker). Their failure only hides the
@@ -104,9 +101,8 @@
       interval = o.current.interval ?? 'month';
     } catch (e) {
       if (seq !== overviewSeq) return;
-      overviewError = errorText(e);
-    } finally {
-      if (seq === overviewSeq) overviewLoading = false;
+      billingMissing = e instanceof BillingApiError && e.status === 404;
+      overviewError = billingErrorText(e);
     }
   }
 
@@ -120,7 +116,7 @@
       invoices = r.invoices;
     } catch (e) {
       if (seq !== invoicesSeq) return;
-      invoicesError = `Invoices could not be loaded. ${errorText(e)}.`;
+      invoicesError = `Invoices could not be loaded. ${asSentence(billingErrorText(e))}`;
     } finally {
       if (seq === invoicesSeq) invoicesLoading = false;
     }
@@ -168,7 +164,7 @@
       overview = next;
       toastStore.success(`Your subscription ends on ${formatBillingDate(next.current.currentPeriodEnd)}`);
     } catch (e) {
-      toastStore.error(errorText(e));
+      toastStore.error(billingErrorText(e));
     } finally {
       busy = false;
       cancelOpen = false;
@@ -185,7 +181,7 @@
       overview = next;
       toastStore.success(`Your subscription renews on ${formatBillingDate(next.current.currentPeriodEnd)}`);
     } catch (e) {
-      toastStore.error(errorText(e));
+      toastStore.error(billingErrorText(e));
     } finally {
       busy = false;
     }
@@ -208,6 +204,17 @@
         <Button variant="outline" size="sm" class="mt-4" href="/dashboard/settings/usage">View usage</Button>
       </CardContent>
     </Card>
+  {:else if billingMissing}
+    <Card>
+      <CardContent class="py-12 text-center">
+        <CloudOff class="mx-auto h-10 w-10 text-muted-foreground/40" />
+        <p class="mt-3 font-medium">Billing is not available on this instance</p>
+        <p class="mt-1 text-sm text-muted-foreground">
+          Plans and limits on this LogTide instance are managed by its administrator.
+        </p>
+        <Button variant="outline" size="sm" class="mt-4" href="/dashboard/settings/usage">View usage</Button>
+      </CardContent>
+    </Card>
   {:else if overviewError}
     <Card>
       <CardContent class="py-12 text-center">
@@ -216,8 +223,8 @@
         <p class="mt-1 text-sm text-muted-foreground">
           Your plan and limits are not affected. Try again in a moment.
         </p>
-        <Button variant="outline" size="sm" class="mt-4" onclick={retry} disabled={overviewLoading}>
-          <RotateCcw class="mr-1.5 h-4 w-4 {overviewLoading ? 'animate-spin' : ''}" />
+        <Button variant="outline" size="sm" class="mt-4" onclick={retry}>
+          <RotateCcw class="mr-1.5 h-4 w-4" />
           Retry
         </Button>
       </CardContent>

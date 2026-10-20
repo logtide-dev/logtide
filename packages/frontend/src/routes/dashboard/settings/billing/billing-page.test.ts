@@ -90,6 +90,17 @@ const PRO_MONTH: BillingCurrentPlan = {
   pastDueSince: null,
 };
 
+const GRANDFATHERED: BillingCurrentPlan = {
+  plan: 'pro',
+  source: 'grandfathered',
+  interval: null,
+  status: null,
+  currentPeriodEnd: null,
+  cancelAtPeriodEnd: false,
+  grandfatheredUntil: PERIOD_END,
+  pastDueSince: null,
+};
+
 function overview(current: BillingCurrentPlan, extra: Partial<BillingOverview> = {}): BillingOverview {
   return {
     checkoutEnabled: true,
@@ -253,6 +264,7 @@ describe('billing settings page', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Switch to Pro Plus' }));
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText('$70.00')).toBeInTheDocument();
+    expect(within(dialog).getByText(/prorated, after the credit for your unused time/i)).toBeInTheDocument();
     expect(billingAPI.preview).toHaveBeenCalledWith(ORG_ID, 'pro_plus', 'month');
     expect(billingAPI.changePlan).not.toHaveBeenCalled();
 
@@ -281,5 +293,98 @@ describe('billing settings page', () => {
     const buttons = await screen.findAllByRole('button', { name: /^Subscribe/ });
     expect(buttons.length).toBe(2);
     for (const b of buttons) expect(b).toBeDisabled();
+  });
+
+  it('a free immediate change says nothing is due, and a trial says when the first charge happens', async () => {
+    const trialing = { ...PRO_MONTH, status: 'trialing' };
+    billingAPI.getOverview.mockResolvedValue(overview(trialing));
+    billingAPI.preview.mockResolvedValue({ amountDue: 0, currency: 'usd', immediate: true });
+
+    setup('owner');
+
+    // the same plan offers an interval switch once the toggle is on Annual
+    await fireEvent.click(await screen.findByRole('button', { name: 'Annual' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Switch to annual' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Nothing to pay today. The new plan applies right away.')).toBeInTheDocument();
+    expect(within(dialog).getByText(/first charge at the new price is on Jan 17, 2027/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/charged today/i)).toBeNull();
+    expect(billingAPI.preview).toHaveBeenCalledWith(ORG_ID, 'pro', 'year');
+  });
+
+  it('a failed preview offers a retry inside the dialog', async () => {
+    billingAPI.getOverview.mockResolvedValue(overview(PRO_MONTH));
+    billingAPI.preview
+      .mockRejectedValueOnce(new BillingApiError(409, 'billing_busy', 'locked'))
+      .mockResolvedValueOnce({ amountDue: 7000, currency: 'usd', immediate: true });
+
+    setup('owner');
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Switch to Pro Plus' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      await within(dialog).findByText(/Another billing change is in progress. Try again in a moment./)
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /confirm/i })).toBeDisabled();
+
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Retry' }));
+
+    expect(await within(dialog).findByText('$70.00')).toBeInTheDocument();
+    expect(billingAPI.preview).toHaveBeenCalledTimes(2);
+    expect(within(dialog).getByRole('button', { name: /confirm/i })).not.toBeDisabled();
+  });
+
+  it('a past due subscription cannot change plan but can update the card', async () => {
+    billingAPI.getOverview.mockResolvedValue(overview({ ...PRO_MONTH, status: 'past_due' }));
+
+    setup('owner');
+
+    expect(await screen.findByRole('button', { name: 'Update card' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change plan' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Switch to/ })).toBeNull();
+    expect(screen.getAllByText('Update your card to change plans').length).toBeGreaterThan(0);
+    // cancelling stays possible
+    expect(screen.getByRole('button', { name: 'Cancel subscription' })).toBeInTheDocument();
+  });
+
+  it('an unknown error code shows the server message', async () => {
+    billingAPI.getOverview.mockResolvedValue(overview(PRO_MONTH));
+    billingAPI.preview.mockResolvedValue({ amountDue: 7000, currency: 'usd', immediate: true });
+    billingAPI.changePlan.mockRejectedValue(new BillingApiError(409, 'something_new', 'The billing service explains it.'));
+
+    setup('owner');
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Switch to Pro Plus' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('$70.00');
+    await fireEvent.click(within(dialog).getByRole('button', { name: /confirm/i }));
+
+    expect(await within(dialog).findByText(/The billing service explains it./)).toBeInTheDocument();
+  });
+
+  it('a 404 overview says billing is not available on this instance', async () => {
+    billingAPI.getOverview.mockRejectedValue(new BillingApiError(404, 'http_404', 'Something went wrong with billing'));
+
+    setup('owner');
+
+    expect(await screen.findByText('Billing is not available on this instance')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+  });
+
+  it('opening soon wording follows the current plan', async () => {
+    billingAPI.getOverview.mockResolvedValue(overview(GRANDFATHERED, { checkoutEnabled: false }));
+
+    setup('owner');
+
+    expect(await screen.findByText(/Your organization keeps Pro until Jan 17, 2027/)).toBeInTheDocument();
+    expect(screen.queryByText(/Everything on the Free plan keeps working/)).toBeNull();
+  });
+
+  it('opening soon on the free plan says Free keeps working', async () => {
+    billingAPI.getOverview.mockResolvedValue(overview(FREE, { checkoutEnabled: false }));
+
+    setup('owner');
+
+    expect(await screen.findByText(/Everything on the Free plan keeps working/)).toBeInTheDocument();
   });
 });
