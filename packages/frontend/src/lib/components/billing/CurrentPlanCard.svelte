@@ -5,6 +5,8 @@
   import { Button } from '$lib/components/ui/button';
   import { Separator } from '$lib/components/ui/separator';
   import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
+  import { billingVat } from '$lib/stores/billing-vat';
+  import { displayAmount, vatSuffix } from '$lib/utils/eu-vat';
   import {
     canChangePlan,
     formatCardBrand,
@@ -50,9 +52,9 @@
     }
     const p = planInfo.prices[current.interval];
     return {
-      value: formatMoney(p.amount, p.currency),
+      value: formatMoney(displayAmount(p.amount, $billingVat), p.currency),
       suffix: current.interval === 'year' ? '/ year' : '/ month',
-      note: `${current.interval === 'year' ? 'Billed annually' : 'Billed monthly'}, excluding VAT`,
+      note: `${current.interval === 'year' ? 'Billed annually' : 'Billed monthly'}, ${vatSuffix($billingVat)}`,
     };
   });
 

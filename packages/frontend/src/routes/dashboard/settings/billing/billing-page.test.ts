@@ -35,6 +35,7 @@ import { BillingApiError } from '$lib/api/billing';
 import { authStore } from '$lib/stores/auth';
 import { toastStore } from '$lib/stores/toast';
 import { organizationStore } from '$lib/stores/organization';
+import { billingVat } from '$lib/stores/billing-vat';
 
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
 const PERIOD_END = '2027-01-17T12:00:00.000Z';
@@ -155,6 +156,9 @@ describe('billing settings page', () => {
     vi.restoreAllMocks();
     vi.spyOn(toastStore, 'success').mockImplementation(() => undefined);
     vi.spyOn(toastStore, 'error').mockImplementation(() => undefined);
+    // Deterministic VAT view: business outside the EU unless a test picks otherwise.
+    localStorage.setItem('logtide_billing_vat', JSON.stringify({ audience: 'business', country: 'OUT' }));
+    billingVat.reload();
   });
 
   it('renders current plan, plans and invoices', async () => {
@@ -182,7 +186,7 @@ describe('billing settings page', () => {
     expect(screen.getByRole('button', { name: 'Switch to Pro Plus' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Downgrade to Free' })).toBeInTheDocument();
     expect(
-      screen.getByText('Prices exclude VAT. Tax is calculated at checkout from your billing address.')
+      screen.getByText('Prices exclude taxes. Applicable taxes are calculated at checkout from your billing address.')
     ).toBeInTheDocument();
 
     // Invoices
@@ -460,5 +464,77 @@ describe('billing settings page', () => {
     setup('owner');
 
     expect(await screen.findByText(/Everything on the Free plan keeps working/)).toBeInTheDocument();
+  });
+
+  describe('VAT display toggle', () => {
+    function choose(audience: 'personal' | 'business', country: string) {
+      localStorage.setItem('logtide_billing_vat', JSON.stringify({ audience, country }));
+      billingVat.reload();
+    }
+
+    it('personal in Italy shows prices with 22% VAT', async () => {
+      choose('personal', 'IT');
+      billingAPI.getOverview.mockResolvedValue(overview(PRO_MONTH));
+      setup('owner');
+
+      expect(await screen.findByText('Prices include 22% VAT (Italy). The exact tax is calculated at checkout from your billing address.')).toBeInTheDocument();
+      // plan card (whole-dollar format does not apply to 35.38) and current plan card
+      expect(screen.getAllByText('$35.38').length).toBe(2);
+      expect(screen.getByText('$120.78')).toBeInTheDocument();
+      expect(screen.getByText('Billed monthly, including VAT')).toBeInTheDocument();
+      expect(screen.queryByText('$29')).not.toBeInTheDocument();
+    });
+
+    it('decimal rates keep their decimals', async () => {
+      choose('personal', 'FI');
+      billingAPI.getOverview.mockResolvedValue(overview(FREE));
+      setup('owner');
+      expect(await screen.findByText('Prices include 25.5% VAT (Finland)', { exact: false })).toBeInTheDocument();
+      expect(screen.getByText('$124.25')).toBeInTheDocument();
+    });
+
+    it('switching to Business shows net prices and the reverse-charge note', async () => {
+      choose('personal', 'IT');
+      billingAPI.getOverview.mockResolvedValue(overview(PRO_MONTH));
+      setup('owner');
+      await screen.findByText(/Prices include 22% VAT/);
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Business' }));
+
+      expect(screen.getByText('Prices exclude VAT. EU businesses with a valid VAT ID pay no VAT (reverse charge). Tax is calculated at checkout.')).toBeInTheDocument();
+      expect(screen.getByText('$29')).toBeInTheDocument();
+      expect(screen.getByText('$29.00')).toBeInTheDocument();
+      expect(screen.getByText('Billed monthly, excluding VAT')).toBeInTheDocument();
+      expect(JSON.parse(localStorage.getItem('logtide_billing_vat')!)).toEqual({ audience: 'business', country: 'IT' });
+    });
+
+    it('outside the EU shows the taxes note and net prices', async () => {
+      choose('business', 'OUT');
+      billingAPI.getOverview.mockResolvedValue(overview(FREE));
+      setup('owner');
+      expect(await screen.findByText('Prices exclude taxes. Applicable taxes are calculated at checkout from your billing address.')).toBeInTheDocument();
+      expect(screen.getByText('$29')).toBeInTheDocument();
+    });
+
+    it('annual view shows VAT-inclusive per-month and yearly figures', async () => {
+      choose('personal', 'DE');
+      billingAPI.getOverview.mockResolvedValue(overview(FREE));
+      setup('owner');
+      await screen.findByText('Prices include 19% VAT (Germany)', { exact: false });
+      await fireEvent.click(screen.getByRole('button', { name: 'Annual' }));
+      expect(screen.getByText('Billed annually at $342.72')).toBeInTheDocument();
+      expect(screen.getByText('$28.56')).toBeInTheDocument();
+    });
+
+    it('does not change the real Stripe preview amount', async () => {
+      choose('personal', 'IT');
+      billingAPI.getOverview.mockResolvedValue(overview(PRO_MONTH));
+      billingAPI.preview.mockResolvedValue({ amountDue: 7000, currency: 'usd', immediate: true });
+      setup('owner');
+
+      await fireEvent.click(await screen.findByRole('button', { name: 'Switch to Pro Plus' }));
+      const dialog = await screen.findByRole('dialog');
+      expect(await within(dialog).findByText('$70.00')).toBeInTheDocument();
+    });
   });
 });

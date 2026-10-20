@@ -6,6 +6,9 @@
   import { Button } from '$lib/components/ui/button';
   import { Alert, AlertDescription } from '$lib/components/ui/alert';
   import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
+  import VatToggle from '$lib/components/billing/VatToggle.svelte';
+  import { billingVat } from '$lib/stores/billing-vat';
+  import { displayAmount, vatNote } from '$lib/utils/eu-vat';
   import {
     annualSavingPercent,
     canChangePlan,
@@ -57,9 +60,15 @@
   const subscribed = $derived(current.source === 'subscription');
   const open = $derived(salesOpen({ checkoutEnabled, publishableKey }));
 
+  /** Net monthly price, used to tell upgrades from downgrades. */
   function monthlyPrice(plan: BillingPlanInfo): number {
     if (!plan.prices) return 0;
     return interval === 'year' ? Math.round(plan.prices.year.amount / 12) : plan.prices.month.amount;
+  }
+
+  /** Monthly price as displayed, with VAT when the viewer asked for it. */
+  function shownMonthly(plan: BillingPlanInfo): number {
+    return displayAmount(monthlyPrice(plan), $billingVat);
   }
 
   function currency(plan: BillingPlanInfo): string {
@@ -68,7 +77,7 @@
 
   function billedNote(plan: BillingPlanInfo): string {
     if (!plan.prices) return 'Free forever';
-    if (interval === 'year') return `Billed annually at ${formatPlanPrice(plan.prices.year.amount, plan.prices.year.currency)}`;
+    if (interval === 'year') return `Billed annually at ${formatPlanPrice(displayAmount(plan.prices.year.amount, $billingVat), plan.prices.year.currency)}`;
     return 'Billed monthly';
   }
 
@@ -115,17 +124,20 @@
         </CardTitle>
         <CardDescription>Every plan includes unlimited users. Change or cancel any time.</CardDescription>
       </div>
-      <div class="flex items-center gap-2">
-        <TimeRangeButtons
-          options={INTERVAL_OPTIONS}
-          value={interval}
-          onChange={(v) => {
-            interval = v as BillingInterval;
-          }}
-        />
-        {#if maxSaving > 0}
-          <Badge variant="secondary" class="whitespace-nowrap">Save up to {maxSaving}%</Badge>
-        {/if}
+      <div class="flex flex-col gap-2 sm:items-end">
+        <div class="flex items-center gap-2">
+          <TimeRangeButtons
+            options={INTERVAL_OPTIONS}
+            value={interval}
+            onChange={(v) => {
+              interval = v as BillingInterval;
+            }}
+          />
+          {#if maxSaving > 0}
+            <Badge variant="secondary" class="whitespace-nowrap">Save up to {maxSaving}%</Badge>
+          {/if}
+        </div>
+        <VatToggle />
       </div>
     </div>
   </CardHeader>
@@ -165,7 +177,7 @@
           <p class="mt-1 text-sm text-muted-foreground">{plan.tagline}</p>
 
           <div class="mt-5">
-            <span class="text-3xl font-bold tracking-tight">{formatPlanPrice(monthlyPrice(plan), currency(plan))}</span>
+            <span class="text-3xl font-bold tracking-tight">{formatPlanPrice(shownMonthly(plan), currency(plan))}</span>
             <span class="text-sm text-muted-foreground">/ month</span>
             <p class="mt-1 text-xs text-muted-foreground">{billedNote(plan)}</p>
           </div>
@@ -216,7 +228,7 @@
     </div>
 
     <p class="text-xs text-muted-foreground">
-      Prices exclude VAT. Tax is calculated at checkout from your billing address.
+      {vatNote($billingVat)}
     </p>
   </CardContent>
 </Card>
