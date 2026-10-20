@@ -70,6 +70,13 @@ export class BillingAPI {
       throw new BillingApiError(0, 'billing_unavailable', billingErrorMessage('billing_unavailable'));
     }
 
+    // The core's own rate limit (60 per minute per session): its body is the
+    // framework's, not a billing contract code.
+    if (response.status === 429) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new BillingApiError(429, 'rate_limited', billingErrorMessage('rate_limited'));
+    }
+
     if (!response.ok) {
       const data = (await response.json().catch(() => null)) as
         | { error?: unknown; message?: unknown; hostedInvoiceUrl?: unknown }

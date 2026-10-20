@@ -132,7 +132,8 @@
     phase = 'activating';
     // Stripe client secrets look like `cs_..._secret_...`; the session id is the first part.
     const sessionId = clientSecret.split('_secret_')[0];
-    let waited = 0;
+    // A wall-clock deadline: slow status calls must not stretch the window.
+    const deadline = Date.now() + POLL_FOR_MS;
     while (run === runId) {
       try {
         const status = await billingAPI.getCheckoutStatus(orgId, sessionId);
@@ -149,9 +150,8 @@
       } catch {
         // A hiccup while the webhook is still landing; keep trying until the deadline.
       }
-      if (waited >= POLL_FOR_MS) break;
-      await sleep(POLL_EVERY_MS);
-      waited += POLL_EVERY_MS;
+      if (Date.now() >= deadline) break;
+      await sleep(Math.min(POLL_EVERY_MS, Math.max(0, deadline - Date.now())));
     }
     if (run === runId) phase = 'pending';
   }
@@ -206,7 +206,7 @@
         <div class="flex flex-col items-center gap-3 py-16 text-center">
           <Spinner />
           <p class="font-medium">
-            {kind === 'subscribe' ? 'Payment received, activating your plan' : 'Card received, saving it'}
+            {kind === 'subscribe' ? 'Finishing up, activating your plan' : 'Saving your card'}
           </p>
           <p class="text-sm text-muted-foreground">This usually takes a few seconds.</p>
         </div>
@@ -223,7 +223,11 @@
       {:else if phase === 'pending'}
         <div class="flex flex-col items-center gap-3 py-16 text-center">
           <CircleCheck class="h-10 w-10 text-muted-foreground" />
-          <p class="font-medium">Your payment was received. Your plan will update in a minute.</p>
+          <p class="font-medium">
+            {kind === 'subscribe'
+              ? 'Checkout is complete. Your plan will update in a minute.'
+              : 'Your card was submitted. It will show on the Billing page in a minute.'}
+          </p>
           <p class="text-sm text-muted-foreground">You can close this window; the Billing page refreshes on its own.</p>
         </div>
       {:else if phase === 'error'}

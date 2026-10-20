@@ -24,10 +24,13 @@
     target: { plan: PaidPlanId; interval: BillingInterval } | null;
     current: BillingCurrentPlan;
     plans: BillingPlanInfo[];
-    onChanged: (overview: BillingOverview) => void;
+    /** The change was accepted; `target` is what was asked for (the overview may still show the old plan). */
+    onChanged: (overview: BillingOverview, target: { plan: PaidPlanId; interval: BillingInterval }) => void;
+    /** Confirm failed. The change may still have gone through server side, so the page re-reads its state. */
+    onError?: () => void;
   }
 
-  let { open = $bindable(false), orgId, target, current, plans, onChanged }: Props = $props();
+  let { open = $bindable(false), orgId, target, current, plans, onChanged, onError }: Props = $props();
 
   let preview = $state<BillingPreview | null>(null);
   let previewLoading = $state(false);
@@ -99,17 +102,19 @@
 
   async function confirm() {
     if (!target || submitting) return;
+    const asked = { plan: target.plan, interval: target.interval };
     submitting = true;
     changeError = null;
     actionUrl = null;
     try {
-      const overview = await billingAPI.changePlan(orgId, target.plan, target.interval);
-      onChanged(overview);
+      const overview = await billingAPI.changePlan(orgId, asked.plan, asked.interval);
+      onChanged(overview, asked);
       open = false;
     } catch (e) {
       changeError = billingErrorText(e);
       actionUrl =
         e instanceof BillingApiError && e.code === 'payment_action_required' ? safeExternalUrl(e.hostedInvoiceUrl) : null;
+      onError?.();
     } finally {
       submitting = false;
     }

@@ -137,6 +137,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   same_plan: 'You are already on this plan',
   subscription_not_active: 'Update your payment method before changing plans.',
   billing_busy: 'Another billing change is in progress. Try again in a moment.',
+  rate_limited: 'Too many requests. Try again in a minute.',
   payment_pending:
     'A plan change is waiting for payment. Complete that payment or wait for it to expire before cancelling.',
 };

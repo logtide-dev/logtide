@@ -33,6 +33,7 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 import Page from './+page.svelte';
 import { BillingApiError } from '$lib/api/billing';
 import { authStore } from '$lib/stores/auth';
+import { toastStore } from '$lib/stores/toast';
 import { organizationStore } from '$lib/stores/organization';
 
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
@@ -151,6 +152,9 @@ describe('billing settings page', () => {
     organizationStore.clear();
     billingAPI.getInvoices.mockResolvedValue({ invoices: [] });
     getCapabilityUsage.mockResolvedValue(telemetry(100 * GB));
+    vi.restoreAllMocks();
+    vi.spyOn(toastStore, 'success').mockImplementation(() => undefined);
+    vi.spyOn(toastStore, 'error').mockImplementation(() => undefined);
   });
 
   it('renders current plan, plans and invoices', async () => {
@@ -280,6 +284,45 @@ describe('billing settings page', () => {
     expect(billingAPI.changePlan).toHaveBeenCalledTimes(1);
     // invoices are reloaded after a change (an upgrade creates one)
     await waitFor(() => expect(billingAPI.getInvoices).toHaveBeenCalledTimes(2));
+    expect(toastStore.success).toHaveBeenCalledWith('Your plan is now Pro Plus, billed monthly');
+  });
+
+  it('a change that does not show yet says it was received', async () => {
+    billingAPI.getOverview.mockResolvedValue(overview(PRO_MONTH));
+    billingAPI.preview.mockResolvedValue({ amountDue: 7000, currency: 'usd', immediate: true });
+    // the billing service answered with the plan it could read: still the old one
+    billingAPI.changePlan.mockResolvedValue(overview(PRO_MONTH));
+
+    setup('owner');
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Switch to Pro Plus' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('$70.00');
+    await fireEvent.click(within(dialog).getByRole('button', { name: /confirm/i }));
+
+    await waitFor(() =>
+      expect(toastStore.success).toHaveBeenCalledWith('Plan change received. It can take a minute to show.')
+    );
+    expect(toastStore.success).not.toHaveBeenCalledWith(expect.stringMatching(/^Your plan is now/));
+  });
+
+  it('a failed change refreshes the overview', async () => {
+    billingAPI.getOverview
+      .mockResolvedValueOnce(overview(PRO_MONTH))
+      .mockResolvedValue(overview({ ...PRO_MONTH, plan: 'pro_plus' }));
+    billingAPI.preview.mockResolvedValue({ amountDue: 7000, currency: 'usd', immediate: true });
+    billingAPI.changePlan.mockRejectedValue(new BillingApiError(502, 'billing_unavailable', 'x'));
+
+    setup('owner');
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Switch to Pro Plus' }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('$70.00');
+    await fireEvent.click(within(dialog).getByRole('button', { name: /confirm/i }));
+
+    expect(await within(dialog).findByText(/Billing is temporarily unavailable/)).toBeInTheDocument();
+    // the change may have gone through: the page asks again
+    await waitFor(() => expect(billingAPI.getOverview).toHaveBeenCalledTimes(2));
   });
 
   it('checkout disabled shows opening soon instead of subscribe', async () => {

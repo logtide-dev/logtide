@@ -83,6 +83,17 @@ describe('billingAPI', () => {
     expect(err.code).toBe('billing_unavailable');
   });
 
+  it('maps a 429 from the core to a rate limit message', async () => {
+    fetchMock.mockResolvedValue(
+      json(429, { statusCode: 429, error: 'Too Many Requests', message: 'Rate limit exceeded, retry in 1 minute' })
+    );
+    const err = await api.changePlan(ORG, 'pro_plus', 'month').catch((e) => e);
+    expect(err).toBeInstanceOf(BillingApiError);
+    expect(err.status).toBe(429);
+    expect(err.code).toBe('rate_limited');
+    expect(billingErrorText(err)).toBe('Too many requests. Try again in a minute.');
+  });
+
   it('does not treat a framework error label as a code', async () => {
     fetchMock.mockResolvedValue(json(404, { statusCode: 404, error: 'Not Found', message: 'Route not found' }));
     const err = await api.getOverview(ORG).catch((e) => e);

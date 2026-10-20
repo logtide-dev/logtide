@@ -186,11 +186,16 @@
     }
   }
 
-  function onChanged(next: BillingOverview) {
+  function onChanged(next: BillingOverview, asked: { plan: PaidPlanId; interval: BillingInterval }) {
     overview = next;
     interval = next.current.interval ?? interval;
-    const name = next.plans.find((p) => p.id === next.current.plan)?.name ?? next.current.plan;
-    toastStore.success(`Your plan is now ${name}, billed ${next.current.interval === 'year' ? 'annually' : 'monthly'}`);
+    if (next.current.plan !== asked.plan || next.current.interval !== asked.interval) {
+      // Accepted, but the billing service could not read the new state yet.
+      toastStore.success('Plan change received. It can take a minute to show.');
+    } else {
+      const name = next.plans.find((p) => p.id === next.current.plan)?.name ?? next.current.plan;
+      toastStore.success(`Your plan is now ${name}, billed ${next.current.interval === 'year' ? 'annually' : 'monthly'}`);
+    }
     // An upgrade issues a prorated invoice right away.
     if (currentOrg) void loadInvoices(currentOrg.id);
   }
@@ -373,6 +378,7 @@
       current={overview.current}
       plans={overview.plans}
       {onChanged}
+      onError={refreshOverview}
     />
 
     <AlertDialog bind:open={cancelOpen}>
