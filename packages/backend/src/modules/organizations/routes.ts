@@ -9,6 +9,8 @@ import { withLimitLock } from '../../capabilities/limit-lock.js';
 import { startOfUtcMonth } from '../../capabilities/month.js';
 import { isUpgradeHandoffActive, signUpgradeToken, buildUpgradeUrl } from './upgrade-handoff.js';
 import { termsAcceptanceService } from '../users/terms.js';
+import { isBillingApiActive } from '../billing/seam.js';
+import { billingRoutes } from '../billing/routes.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -74,6 +76,9 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
       throw error;
     }
   });
+
+  // In-app billing proxy, registered only when the billing seam is configured.
+  if (isBillingApiActive()) await fastify.register(billingRoutes);
 
   // Get all organizations for current user
   fastify.get('/', async (request: any, reply) => {

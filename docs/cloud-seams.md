@@ -12,6 +12,8 @@ This page is for operators who run LogTide on behalf of other people (a managed 
 | `LOGTIDE_ADMIN_SERVICE_TOKEN` | unset | Static bearer for a billing service on the entitlements and retention admin routes |
 | `LOGTIDE_UPGRADE_URL` | unset | External billing portal the Upgrade / Manage billing buttons redirect to |
 | `LOGTIDE_UPGRADE_SIGNING_SECRET` | unset | HMAC secret used to sign the handoff token |
+| `LOGTIDE_BILLING_API_URL` | unset | Billing service the in-app Billing page is proxied to |
+| `LOGTIDE_BILLING_API_TOKEN` | unset | Bearer token sent to the billing service |
 | `MAX_ORGANIZATIONS_PER_USER` | unset (unlimited) | Maximum organizations one user may own |
 | `MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH` | unset (unlimited) | Maximum organizations one user may create per UTC calendar month |
 | `REQUIRE_EMAIL_VERIFICATION` | `false` | Require new local users to confirm their email |
@@ -20,7 +22,7 @@ This page is for operators who run LogTide on behalf of other people (a managed 
 | `LOGTIDE_PRIVACY_URL` | unset | Privacy Policy page users must accept |
 | `LOGTIDE_TERMS_VERSION` | unset | Current terms version; changing it asks every user to accept again |
 
-An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all eleven through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
+An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all thirteen through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
 
 ### CAPABILITY_DEFAULTS_JSON
 
@@ -99,6 +101,72 @@ Payload fields:
 A verifier must: split on the single `.`, recompute the HMAC and compare in constant time, parse the payload, check `v === 1`, check all fields, and reject if `exp` is not in the future. The portal should also remember used `nonce` values until `exp` if it wants single-use semantics. The token is passed in a URL, so treat it as short-lived and do not log it.
 
 A complete reference verifier using only Node's `crypto` is in [`docs/examples/verify-handoff.ts`](examples/verify-handoff.ts). Type-check it with `npx tsc -p docs/examples/tsconfig.json`.
+
+### In-app billing (LOGTIDE_BILLING_API_URL and LOGTIDE_BILLING_API_TOKEN)
+
+These two turn on a Billing page (Settings > Billing) whose data comes from an external billing service. LogTide itself holds no billing logic: it checks who the caller is, then forwards the request. They must be set together:
+
+- Only one set aborts startup, with a message naming both variables.
+- `LOGTIDE_BILLING_API_URL` must be an absolute `http` or `https` URL. Plain `http` is accepted for any host because the call is service to service (for example `http://logtide-billing:8090` on a Docker network). Keep it on a private network and never route it over the internet in clear.
+- `LOGTIDE_BILLING_API_TOKEN` must be at least 32 characters. It is sent as a bearer token and must match the token the billing service expects.
+
+When active:
+
+- `GET /api/v1/auth/config` includes `billingEnabled: true` (the key is absent otherwise) and the Usage page links Upgrade / Manage billing to the Billing page instead of the upgrade handoff.
+- The routes below exist under `/api/v1/organizations/:id/billing` (none is registered otherwise). Only owners and admins of the organization may call them: members get `403 { "error": "billing_forbidden" }`, non-members `404`. Request bodies for checkout, preview and change are validated in LogTide against `billingPlanChangeSchema` from `@logtide/shared`; the checkout session id in the path must match `^cs_[A-Za-z0-9_]{1,200}$`. Calls are limited to 60 per minute per session token (the global rate-limit key is a hash of the bearer credential, so two browser sessions of the same user count separately).
+- LogTide forwards each call with `fetch` to `<LOGTIDE_BILLING_API_URL>/api/v1/orgs/:orgId/billing<rest>` with a 15 second timeout. 2xx and 4xx answers from the billing service pass through with their status and body, with one exception: a billing `401` or `403` means the service credentials do not match, so it becomes `502 { "error": "billing_unavailable" }` (passing it on would look like an expired LogTide session and sign the user out). A `503` whose JSON body has `error` exactly `checkout_disabled` or `billing_not_configured` passes through unchanged (status and body), because the Billing page has its own copy for those. Every other 5xx, a redirect, a body that is not JSON, a timeout or a network error becomes `502 { "error": "billing_unavailable" }`; the upstream detail is never passed on.
+
+| LogTide route | Billing service route |
+|---|---|
+| `GET /api/v1/organizations/:id/billing` | `GET /api/v1/orgs/:orgId/billing` |
+| `GET .../billing/invoices` | `GET .../billing/invoices` |
+| `POST .../billing/checkout` | `POST .../billing/checkout` |
+| `GET .../billing/checkout/:sessionId` | `GET .../billing/checkout/:sessionId` |
+| `POST .../billing/preview` | `POST .../billing/preview` |
+| `POST .../billing/change` | `POST .../billing/change` |
+| `POST .../billing/cancel` | `POST .../billing/cancel` |
+| `POST .../billing/resume` | `POST .../billing/resume` |
+| `POST .../billing/payment-method` | `POST .../billing/payment-method` |
+
+#### HTTP contract (billing service side, v1)
+
+Every request carries `Authorization: Bearer <LOGTIDE_BILLING_API_TOKEN>` (compare in constant time), `X-LogTide-User-Id`, `X-LogTide-User-Email` (percent-encoded with `encodeURIComponent`, because header values must be ASCII and email addresses need not be; decode it with `decodeURIComponent` and answer `400 bad_caller` when that fails) and `X-LogTide-User-Role` (`owner` or `admin`; anything else must be answered with 403). `:orgId` is a UUID. Errors on 4xx are `{ "error": "<code>", "message": "<human text>" }`. The TypeScript types are exported from `@logtide/shared` (`BillingOverview`, `BillingInvoice`, `BillingCheckoutSession`, `BillingCheckoutStatus`, `BillingPreview`).
+
+`GET /api/v1/orgs/:orgId/billing` returns `BillingOverview`:
+
+```ts
+{
+  checkoutEnabled: boolean,
+  publishableKey: string | null,            // Stripe pk_, null when not configured
+  current: {
+    plan: 'free' | 'pro' | 'pro_plus',
+    source: 'free' | 'subscription' | 'grandfathered',
+    interval: 'month' | 'year' | null,
+    status: string | null,                  // Stripe status when source = subscription
+    currentPeriodEnd: string | null,        // ISO
+    cancelAtPeriodEnd: boolean,
+    grandfatheredUntil: string | null,      // ISO, when a grant exists (may coexist with a subscription)
+    pastDueSince: string | null
+  },
+  paymentMethod: { brand: string, last4: string, expMonth: number, expYear: number } | null,
+  plans: Array<{
+    id: 'free' | 'pro' | 'pro_plus',
+    name: string, tagline: string,
+    prices: { month: { amount: number, currency: string }, year: { amount: number, currency: string } } | null,  // minor units; null for free
+    highlights: string[]
+  }>
+}
+```
+
+- `GET .../invoices` returns `{ invoices: Array<{ id, number, createdAt, total, currency, status, hostedInvoiceUrl, invoicePdf }> }` (latest 24, only for the organization's customer; an empty list when there is no customer).
+- `POST .../checkout` with `{ plan, interval }` (`plan` is `pro` or `pro_plus`, `interval` is `month` or `year`) returns `{ clientSecret, publishableKey }` for an embedded Stripe Checkout session. Errors: `503 checkout_disabled` when paid plans are switched off, `409 subscription_exists` when the organization already has a live subscription, `503 billing_not_configured` when the price or publishable key is missing. A grandfathered organization that picks Pro is not charged until its grant ends; picking Pro Plus is charged immediately.
+- `GET .../checkout/:sessionId` returns `{ status: 'open' | 'complete' | 'expired', mode: 'subscription' | 'setup' }`. It answers 404 unless the session belongs to `:orgId`. When the session is `complete` it must apply the same work as the webhook (idempotently), so the plan is active as soon as the browser asks.
+- `POST .../preview` with `{ plan, interval }` returns `{ amountDue, currency, immediate }` (minor units). `409 no_subscription` when there is nothing to change, `409 subscription_not_active` unless the subscription is active or trialing in Stripe, `400 same_plan` when plan and interval are unchanged.
+- `POST .../change` with `{ plan, interval }` returns `BillingOverview` after the change. Upgrades are invoiced immediately and apply once paid; downgrades are credited on the next invoice. `402 payment_action_required` with `{ hostedInvoiceUrl }` when the payment needs customer action, and also when an earlier change is still waiting for its payment (the URL is that invoice, `null` when there is none; no second change is made). `409 subscription_not_active` unless the subscription is active or trialing in Stripe.
+- `POST .../cancel` and `POST .../resume` return `BillingOverview` after setting or clearing cancel at period end. Both are idempotent; `409 no_subscription` when there is no subscription. Cancel answers `409 payment_pending` while a plan change is waiting for its payment.
+- `POST .../payment-method` returns `{ clientSecret, publishableKey }` for an embedded session in setup mode, used to replace the card. `409 no_customer` when the organization never subscribed, `503 billing_not_configured` when the publishable key is missing.
+
+Mutating routes must be serialized per organization on the billing side so a double click cannot subscribe or change twice. Once Stripe accepted a change, cancel or resume, the route must not report a failure: if the local sync or read fails afterwards it still answers with an overview (the webhook brings it up to date). When that overview still shows the old plan, the Billing page says the change was received and can take a minute to show.
 
 ### MAX_ORGANIZATIONS_PER_USER
 
