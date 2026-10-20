@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { browser } from '$app/environment';
+  import { goto } from '$app/navigation';
   import { organizationStore } from '$lib/stores/organization';
   import { getUsage, getUsageBreakdown, getStorageUsage, getCapabilityUsage, type UsageRecord, type UsageBreakdown, type StorageUsageResponse, type CapabilityUsage } from '$lib/api/usage';
   import {
@@ -58,6 +59,8 @@
   let lastLoadedDays = $state<number | null>(null);
 
   let upgradeEnabled = $state(false);
+  // In-app billing: the buttons open the Billing page instead of the handoff.
+  let billingEnabled = $state(false);
   let handoffBusy = $state<'upgrade' | 'manage' | null>(null);
   let handoffError = $state('');
 
@@ -65,16 +68,22 @@
     try {
       const cfg = await authAPI.getAuthConfig();
       upgradeEnabled = cfg.upgradeEnabled === true;
+      billingEnabled = cfg.billingEnabled === true;
     } catch {
       upgradeEnabled = false;
+      billingEnabled = false;
     }
   });
 
-  let showUpgradeCta = $derived(canShowUpgradeCta(upgradeEnabled, currentOrg?.role));
+  let showUpgradeCta = $derived(canShowUpgradeCta(upgradeEnabled || billingEnabled, currentOrg?.role));
   let atLimit = $derived(anyCapabilityAtLimit(capabilities));
 
   async function startHandoff(intent: 'upgrade' | 'manage') {
     if (!currentOrg || handoffBusy) return;
+    if (billingEnabled) {
+      void goto('/dashboard/settings/billing');
+      return;
+    }
     handoffBusy = intent;
     handoffError = '';
     try {
