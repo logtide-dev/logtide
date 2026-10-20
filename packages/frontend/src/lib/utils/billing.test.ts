@@ -240,6 +240,9 @@ describe('billingErrorMessage', () => {
   it('maps plan-change refusals', () => {
     expect(billingErrorMessage('subscription_not_active')).toBe('Update your payment method before changing plans.');
     expect(billingErrorMessage('billing_busy')).toBe('Another billing change is in progress. Try again in a moment.');
+    expect(billingErrorMessage('payment_pending')).toBe(
+      'A plan change is waiting for payment. Complete that payment or wait for it to expire before cancelling.'
+    );
   });
 
   it('falls back to a generic message', () => {
