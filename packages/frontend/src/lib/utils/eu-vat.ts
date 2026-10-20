@@ -80,9 +80,20 @@ export function priceWithVatMinor(amountMinor: number, vatPercent: number): numb
   return Math.round((amountMinor * (100 + vatPercent)) / 100);
 }
 
-/** EU country code for an IANA time zone, or 'OUT' when unknown. */
-export function guessCountry(timeZone: string | undefined): string {
+/** True for the 27 EU member state codes. */
+export function isEuCountry(code: string): boolean {
+  return Object.prototype.hasOwnProperty.call(EU_COUNTRIES, code);
+}
+
+/**
+ * EU country code for the viewer, or 'OUT'. Same order as the pricing page on
+ * logtide.dev: IANA time zone first, then the region of the browser language
+ * (e.g. 'it-IT' -> IT) when it is an EU country.
+ */
+export function guessCountry(timeZone: string | undefined, language?: string): string {
   if (timeZone && TIMEZONE_COUNTRY[timeZone]) return TIMEZONE_COUNTRY[timeZone];
+  const region = (language || '').split('-')[1]?.toUpperCase();
+  if (region && isEuCountry(region)) return region;
   return 'OUT';
 }
 
@@ -114,7 +125,7 @@ export function vatNote(view: VatView): string {
   if (rate !== null) {
     return `Prices include ${formatVatRate(rate)}% VAT (${EU_COUNTRIES[view.country].name}). The exact tax is calculated at checkout from your billing address.`;
   }
-  if (view.country === 'OUT' || !isEuCountry(view.country)) {
+  if (!isEuCountry(view.country)) {
     return 'Prices exclude taxes. Applicable taxes are calculated at checkout from your billing address.';
   }
   return 'Prices exclude VAT. EU businesses with a valid VAT ID pay no VAT (reverse charge). Tax is calculated at checkout.';
@@ -123,9 +134,4 @@ export function vatNote(view: VatView): string {
 /** Short suffix for the Current plan card sub-line. */
 export function vatSuffix(view: VatView): string {
   return displayVatRate(view) !== null ? 'including VAT' : 'excluding VAT';
-}
-
-/** True for the 27 EU member state codes. */
-export function isEuCountry(code: string): boolean {
-  return Object.prototype.hasOwnProperty.call(EU_COUNTRIES, code);
 }

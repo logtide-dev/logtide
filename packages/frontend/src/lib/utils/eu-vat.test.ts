@@ -25,6 +25,17 @@ describe('eu-vat', () => {
     expect(guessCountry(undefined)).toBe('OUT');
   });
 
+  it('unknown time zone falls back to navigator.language region', () => {
+    expect(guessCountry('Etc/Unknown', 'it-IT')).toBe('IT');
+    expect(guessCountry(undefined, 'de-DE')).toBe('DE');
+    expect(guessCountry('Europe/Rome', 'de-DE')).toBe('IT');
+  });
+
+  it('non-EU language region gives OUT', () => {
+    expect(guessCountry('America/New_York', 'en-US')).toBe('OUT');
+    expect(guessCountry(undefined, 'en')).toBe('OUT');
+  });
+
   it('formats decimal rates without trailing zeros', () => {
     expect(formatVatRate(25.5)).toBe('25.5');
     expect(formatVatRate(22)).toBe('22');

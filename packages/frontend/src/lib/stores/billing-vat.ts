@@ -17,7 +17,13 @@ export interface BillingVatView {
 
 function browserGuess(): string {
   try {
-    return guessCountry(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    let timeZone: string | undefined;
+    try {
+      timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      // no Intl time zone: language only
+    }
+    return guessCountry(timeZone, typeof navigator === 'undefined' ? undefined : navigator.language);
   } catch {
     return 'OUT';
   }
@@ -78,7 +84,7 @@ function createStore() {
     setCountry(country: string) {
       update({ ...current, country });
     },
-    /** Re-read storage (tests). */
+    /** Test-only: re-read storage after a test seeds localStorage. */
     reload() {
       current = load();
       set(current);

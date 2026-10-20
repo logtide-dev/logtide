@@ -43,6 +43,21 @@ describe('billingVat store', () => {
     expect((await fresh()).get().country).toBe('FR');
   });
 
+  it('unknown time zone uses navigator.language for the default', async () => {
+    mockTz('Etc/Unknown');
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('it-IT');
+    expect((await fresh()).get()).toEqual({ audience: 'personal', country: 'IT' });
+  });
+
+  it('personal while OUT uses the language region when the time zone is unknown', async () => {
+    mockTz('America/New_York');
+    localStorage.setItem(KEY, JSON.stringify({ audience: 'business', country: 'OUT' }));
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('fr-FR');
+    const s = await fresh();
+    s.setAudience('personal');
+    expect(s.get().country).toBe('FR');
+  });
+
   it('persists changes', async () => {
     mockTz('Europe/Rome');
     const s = await fresh();
