@@ -71,6 +71,10 @@ import type {
   OperationStat,
   LatencyHistogramParams,
   LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
+  SessionSummary,
 } from '../../core/types.js';
 import { FACETS_DEFAULT_LIMIT, LATENCY_HISTOGRAM_BOUNDS_MS, OPERATION_STATS_DEFAULT_LIMIT } from '../../core/constants.js';
 import {
@@ -78,8 +82,10 @@ import {
   normalizeDiscoverParams,
   normalizeFacetsParams,
   normalizeHistogramParams,
+  normalizeListSessionsParams,
   normalizeOperationStatsParams,
 } from '../../core/normalize.js';
+import { decodeSessionCursor, encodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
 import { assembleFacets, histogramRowsToResult, type FacetRow, type HistogramRow } from './log-analytics.js';
 import {
@@ -526,6 +532,33 @@ export class TimescaleEngine extends StorageEngine {
     const native = this.translator.translateDiscoverKeys(normalized);
     const result = await this.runQuery(native.query as string, native.parameters);
     return result.rows.map((row) => ({ key: row.key as string, occurrences: Number(row.occurrences) }));
+  }
+
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    // RangeError for a bad limit, range or cursor before any query; the
+    // limit is clamped to SESSIONS_MAX_LIMIT.
+    const normalized = normalizeListSessionsParams(params);
+    const cursor = normalized.cursor !== undefined ? decodeSessionCursor(normalized.cursor) : null;
+    const native = this.translator.translateListSessions(normalized, normalized.limit, cursor);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    const sessions: SessionSummary[] = result.rows.slice(0, normalized.limit).map((row) => ({
+      sessionId: row.session_id as string,
+      service: row.service as string,
+      firstEvent: row.first_event as Date,
+      lastEvent: row.last_event as Date,
+      eventCount: Number(row.event_count),
+      errorCount: Number(row.error_count),
+    }));
+    if (result.rows.length <= normalized.limit) return { sessions };
+    const last = sessions[sessions.length - 1];
+    return { sessions, nextCursor: encodeSessionCursor(last.lastEvent, last.sessionId) };
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    assertTimeRange(params.from, params.to);
+    const native = this.translator.translateHasSessions(params);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    return result.rows.length > 0;
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {

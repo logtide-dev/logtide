@@ -215,3 +215,52 @@ describe('translateDiscoverKeys', () => {
     expect(sql).toContain('ORDER BY occurrences DESC, k.key COLLATE "C" ASC LIMIT 500');
   });
 });
+
+describe('translateListSessions', () => {
+  const translator = new TimescaleQueryTranslator('public', 'logs');
+  const params = { projectId: 'p1', from: at('10:00:00'), to: at('11:00:00'), limit: 10 };
+
+  it('empty session ids are excluded and the project is always scoped', () => {
+    const r = translator.translateListSessions(params, 10, null);
+    const sql = r.query as string;
+    expect(sql).toContain("FROM public.logs WHERE project_id = $1 AND time >= $2 AND time <= $3 AND session_id IS NOT NULL AND session_id <> ''");
+    expect(sql).toContain('GROUP BY session_id');
+    expect(sql).not.toContain('HAVING');
+    expect(r.parameters).toEqual(['p1', params.from, params.to, 11]);
+  });
+
+  it('fetches one extra row to know whether more pages exist', () => {
+    expect(translator.translateListSessions(params, 200, null).parameters?.at(-1)).toBe(201);
+  });
+
+  it('filters the service before grouping and keeps the byte-order smallest service', () => {
+    const r = translator.translateListSessions({ ...params, service: 'api' }, 10, null);
+    const sql = r.query as string;
+    expect(sql).toContain("session_id <> '' AND service = $4 GROUP BY");
+    expect(sql).toContain('MIN(service COLLATE "C") AS service');
+    expect(sql).toContain("COUNT(*) FILTER (WHERE level IN ('error', 'critical'))");
+    expect(r.parameters).toEqual(['p1', params.from, params.to, 'api', 11]);
+  });
+
+  it('orders and continues at millisecond precision, ties by session id in byte order', () => {
+    const cursor = { lastEvent: at('10:05:00'), sessionId: 's-1' };
+    const r = translator.translateListSessions(params, 10, cursor);
+    const sql = r.query as string;
+    expect(sql).toContain(
+      `HAVING date_trunc('milliseconds', MAX(time)) < $4 OR (date_trunc('milliseconds', MAX(time)) = $4 AND session_id COLLATE "C" > $5)`,
+    );
+    expect(sql).toContain(`ORDER BY date_trunc('milliseconds', MAX(time)) DESC, session_id COLLATE "C" ASC LIMIT $6`);
+    expect(r.parameters).toEqual(['p1', params.from, params.to, cursor.lastEvent, 's-1', 11]);
+  });
+});
+
+describe('translateHasSessions', () => {
+  it('is a LIMIT 1 probe without grouping', () => {
+    const translator = new TimescaleQueryTranslator('public', 'logs');
+    const r = translator.translateHasSessions({ projectId: 'p1', from: at('10:00:00'), to: at('11:00:00') });
+    expect(r.query).toBe(
+      "SELECT 1 FROM public.logs WHERE project_id = $1 AND time >= $2 AND time <= $3 AND session_id IS NOT NULL AND session_id <> '' LIMIT 1",
+    );
+    expect(r.parameters).toEqual(['p1', at('10:00:00'), at('11:00:00')]);
+  });
+});

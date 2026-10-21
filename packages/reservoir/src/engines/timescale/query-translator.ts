@@ -7,6 +7,8 @@ import type {
   DeleteByTimeRangeParams,
   DiscoverMetadataKeysParams,
   DistinctParams,
+  HasSessionsParams,
+  ListSessionsParams,
   LogFacetsParams,
   LogFilterParams,
   LogHistogramParams,
@@ -301,6 +303,57 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     return {
       query,
       parameters: [projects, params.from, params.to, params.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE],
+    };
+  }
+
+  /**
+   * Sessions of one project (S14, F3 contract): rows with a non-empty
+   * session id in the window (and service, before grouping), grouped by
+   * session id, ordered by last event desc then session id in byte order.
+   * The last event is compared and ordered at millisecond precision, the
+   * precision of the cursor, so a page never skips a row whose last event
+   * differs from the cursor only below the millisecond. Fetches `limit + 1`
+   * groups so the caller knows whether another page exists.
+   */
+  translateListSessions(
+    params: Pick<ListSessionsParams, 'projectId' | 'from' | 'to' | 'service'>,
+    limit: number,
+    cursor: { lastEvent: Date; sessionId: string } | null,
+  ): NativeQuery {
+    const { conditions, values } = this.sessionConditions(params);
+    let idx = values.length + 1;
+    if (params.service !== undefined) {
+      conditions.push(`service = $${idx++}`);
+      values.push(params.service);
+    }
+    const lastMs = "date_trunc('milliseconds', MAX(time))";
+    let having = '';
+    if (cursor) {
+      having = ` HAVING ${lastMs} < $${idx} OR (${lastMs} = $${idx} AND session_id COLLATE "C" > $${idx + 1})`;
+      values.push(cursor.lastEvent, cursor.sessionId);
+      idx += 2;
+    }
+    values.push(limit + 1);
+    const query =
+      `SELECT session_id, MIN(service COLLATE "C") AS service, ` +
+      `date_trunc('milliseconds', MIN(time)) AS first_event, ${lastMs} AS last_event, ` +
+      `COUNT(*)::bigint AS event_count, ` +
+      `(COUNT(*) FILTER (WHERE level IN ('error', 'critical')))::bigint AS error_count ` +
+      `FROM ${this.table} WHERE ${conditions.join(' AND ')} GROUP BY session_id${having} ` +
+      `ORDER BY ${lastMs} DESC, session_id COLLATE "C" ASC LIMIT $${idx}`;
+    return { query, parameters: values };
+  }
+
+  /** Whether the project has one log with a non-empty session id in the window (`LIMIT 1`, no grouping). */
+  translateHasSessions(params: HasSessionsParams): NativeQuery {
+    const { conditions, values } = this.sessionConditions(params);
+    return { query: `SELECT 1 FROM ${this.table} WHERE ${conditions.join(' AND ')} LIMIT 1`, parameters: values };
+  }
+
+  private sessionConditions(params: { projectId: string; from: Date; to: Date }): { conditions: string[]; values: unknown[] } {
+    return {
+      conditions: ['project_id = $1', 'time >= $2', 'time <= $3', 'session_id IS NOT NULL', "session_id <> ''"],
+      values: [params.projectId, params.from, params.to],
     };
   }
 

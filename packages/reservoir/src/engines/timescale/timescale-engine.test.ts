@@ -20,6 +20,7 @@ vi.mock('pg', () => {
 
 import { TimescaleEngine } from './timescale-engine.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
+import { decodeSessionCursor, encodeSessionCursor } from '../../core/aggregation-helpers.js';
 
 const config: StorageConfig = {
   host: 'localhost',
@@ -542,6 +543,68 @@ describe('TimescaleEngine', () => {
       await engine.connect();
       await expect(engine.discoverMetadataKeys({ projectId: 'proj-1', from: to, to: from })).rejects.toBeInstanceOf(RangeError);
       expect(mockQuery).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listSessions / hasSessions', () => {
+    const from = new Date('2026-01-05T10:00:00Z');
+    const to = new Date('2026-01-05T11:00:00Z');
+    const row = (sessionId: string, last: string) => ({
+      session_id: sessionId,
+      service: 'api',
+      first_event: new Date('2026-01-05T10:00:00Z'),
+      last_event: new Date(last),
+      event_count: '3',
+      error_count: '1',
+    });
+
+    it('returns limit rows and a cursor at the last one when more exist', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [row('s1', '2026-01-05T10:05:00.123Z'), row('s2', '2026-01-05T10:05:00.123Z'), row('s3', '2026-01-05T10:01:00Z')],
+      });
+      await engine.connect();
+      const result = await engine.listSessions({ projectId: 'proj-1', from, to, limit: 2 });
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['s1', 's2']);
+      expect(result.sessions[0]).toEqual({
+        sessionId: 's1', service: 'api', firstEvent: new Date('2026-01-05T10:00:00Z'),
+        lastEvent: new Date('2026-01-05T10:05:00.123Z'), eventCount: 3, errorCount: 1,
+      });
+      expect(decodeSessionCursor(result.nextCursor!)).toEqual({ lastEvent: new Date('2026-01-05T10:05:00.123Z'), sessionId: 's2' });
+      expect((mockQuery.mock.calls[0][1] as unknown[]).at(-1)).toBe(3);
+    });
+
+    it('a short page has no cursor; a cursor continues after its row', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [row('s3', '2026-01-05T10:01:00Z')] });
+      await engine.connect();
+      const cursor = encodeSessionCursor(new Date('2026-01-05T10:05:00.123Z'), 's2');
+      const result = await engine.listSessions({ projectId: 'proj-1', from, to, limit: 2, cursor });
+      expect(result).toEqual({ sessions: [expect.objectContaining({ sessionId: 's3' })] });
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(params).toContainEqual(new Date('2026-01-05T10:05:00.123Z'));
+      expect(params).toContain('s2');
+    });
+
+    it('limit clamps to the sessions maximum and fetches one extra row', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      await engine.listSessions({ projectId: 'proj-1', from, to, limit: 9999 });
+      expect((mockQuery.mock.calls[0][1] as unknown[]).at(-1)).toBe(201);
+    });
+
+    it('rejects an undecodable cursor and a bad limit before querying', async () => {
+      await engine.connect();
+      await expect(engine.listSessions({ projectId: 'proj-1', from, to, limit: 2, cursor: '%%%' })).rejects.toBeInstanceOf(RangeError);
+      await expect(engine.listSessions({ projectId: 'proj-1', from, to, limit: 0 })).rejects.toBeInstanceOf(RangeError);
+      await expect(engine.hasSessions({ projectId: 'proj-1', from: to, to: from })).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('hasSessions is true when the probe finds a row', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }).mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      expect(await engine.hasSessions({ projectId: 'proj-1', from, to })).toBe(true);
+      expect(await engine.hasSessions({ projectId: 'proj-1', from, to })).toBe(false);
+      expect(mockQuery.mock.calls[0][0] as string).toContain('LIMIT 1');
     });
   });
 

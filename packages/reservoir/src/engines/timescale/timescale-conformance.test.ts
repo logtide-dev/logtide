@@ -27,6 +27,8 @@ import {
   type ConformanceTarget,
 } from '../../conformance/index.js';
 import type {
+  ListSessionsParams,
+  ListSessionsResult,
   LogRecord,
   MetadataFilter,
   OperationStatsParams,
@@ -567,6 +569,67 @@ describeTimescaleSpecifics(
       expect(loop[5]).toBe(1);
       expect(loop.reduce((a, b) => a + b, 0)).toBe(1);
       expect((await subject().getLatencyHistogram({ ...scope, service: 'svc-p', operation: 'missing' })).counts).toEqual(zeros);
+    });
+  },
+);
+
+/** A log of the specifics project `minute` minutes after SPECIFICS_BASE. */
+const sessionLog = (minute: number, sessionId: string | undefined, level: LogRecord['level'], service = 'api'): LogRecord => ({
+  time: new Date(SPECIFICS_BASE + minute * 60_000),
+  projectId: SPECIFICS_PROJECT,
+  service,
+  level,
+  message: `session ${sessionId ?? 'none'} at ${minute}`,
+  metadata: {},
+  ...(sessionId !== undefined ? { sessionId } : {}),
+});
+
+describeTimescaleSpecifics(
+  'timescale session specifics',
+  'reservoir_ts_sessions',
+  [
+    sessionLog(2, 's1', 'info'),
+    sessionLog(3, 's1', 'error', 'Zeta'),
+    sessionLog(5, 's1', 'info'),
+    sessionLog(4, 's2', 'critical', 'web'),
+    sessionLog(5, 's2', 'info'),
+    sessionLog(1, 's3', 'warn'),
+    sessionLog(6, '', 'error'),
+    sessionLog(7, undefined, 'error'),
+  ],
+  (subject) => {
+    const minute = (d: Date) => (d.getTime() - SPECIFICS_BASE) / 60_000;
+    const rows = (result: ListSessionsResult) =>
+      result.sessions.map((s) => [s.sessionId, s.service, minute(s.firstEvent), minute(s.lastEvent), s.eventCount, s.errorCount]);
+    const list = (params: Partial<ListSessionsParams>) =>
+      subject().listSessions({ projectId: SPECIFICS_PROJECT, ...SPECIFICS_WINDOW, limit: 10, ...params });
+
+    it('pages by last event, ties by session id, with a cursor while more exist', async () => {
+      const first = await list({ limit: 2 });
+      expect(rows(first)).toEqual([
+        ['s1', 'Zeta', 2, 5, 3, 1],
+        ['s2', 'api', 4, 5, 2, 1],
+      ]);
+      expect(typeof first.nextCursor).toBe('string');
+      const second = await list({ limit: 2, cursor: first.nextCursor });
+      expect(rows(second)).toEqual([['s3', 'api', 1, 1, 1, 0]]);
+      expect(second.nextCursor).toBeUndefined();
+    });
+
+    it('the service filter keeps only that service\'s events', async () => {
+      expect(rows(await list({ service: 'api' }))).toEqual([
+        ['s1', 'api', 2, 5, 2, 0],
+        ['s2', 'api', 5, 5, 1, 0],
+        ['s3', 'api', 1, 1, 1, 0],
+      ]);
+      expect(rows(await list({ service: 'web' }))).toEqual([['s2', 'web', 4, 4, 1, 1]]);
+    });
+
+    it('hasSessions ignores empty and missing session ids', async () => {
+      expect(await subject().hasSessions({ projectId: SPECIFICS_PROJECT, ...SPECIFICS_WINDOW })).toBe(true);
+      const onlySessionless = { from: new Date(SPECIFICS_BASE + 6 * 60_000), to: new Date(SPECIFICS_BASE + 7 * 60_000) };
+      expect(await subject().hasSessions({ projectId: SPECIFICS_PROJECT, ...onlySessionless })).toBe(false);
+      expect(await list(onlySessionless)).toEqual({ sessions: [] });
     });
   },
 );
