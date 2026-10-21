@@ -59,7 +59,7 @@ function createNotificationChannelsStore() {
         const channels = await notificationChannelsAPI.list(organizationId, { enabledOnly });
         update((s) => ({ ...s, channels, loading: false }));
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Failed to load channels';
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load destinations';
         update((s) => ({ ...s, channels: [], loading: false, error: errorMessage }));
       }
     },

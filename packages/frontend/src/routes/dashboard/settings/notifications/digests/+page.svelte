@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { organizationStore } from '$lib/stores/organization';
   import { toastStore } from '$lib/stores/toast';
+  import Timestamp from '$lib/components/app/Timestamp.svelte';
   import {
     digestsAPI,
     type DigestConfig,
@@ -344,7 +345,7 @@
 
             {#if config?.last_sent_at}
               <p class="text-xs text-muted-foreground">
-                Last sent: {new Date(config.last_sent_at).toLocaleString()}
+                Last sent: <Timestamp value={config.last_sent_at} precision="minute" />
               </p>
             {/if}
           </div>
@@ -451,11 +452,11 @@
                       <Button
                         variant="ghost"
                         size="sm"
-                        class="text-destructive"
+                        class="text-destructive-text"
                         aria-label={`Remove ${recipient.email}`}
                         onclick={() => removeRecipient(recipient)}
                       >
-                        <Trash2 class="w-4 h-4" />
+                        <Trash2 class="w-4 h-4" aria-hidden="true" />
                       </Button>
                     </div>
                   {/if}
