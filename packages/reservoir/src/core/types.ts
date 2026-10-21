@@ -5,7 +5,7 @@
  * They align with @logtide/shared types but are designed to be storage-agnostic.
  */
 
-import type { LogLevel, SpanKind, SpanStatusCode, MetadataFilter } from '@logtide/shared';
+import type { LogLevel, SpanKind, SpanStatusCode, MetadataFilter, LogSearchQuery } from '@logtide/shared';
 export type { LogLevel, SpanKind, SpanStatusCode, MetadataFilter };
 
 /** Sentinel for log queries that intentionally span all projects (admin / platform). */
@@ -60,22 +60,57 @@ export interface Filter {
   value: string | number | boolean | Date | (string | number | boolean)[];
 }
 
-/** Parameters for querying logs */
-export interface QueryParams {
+/**
+ * Free-text part of a parsed log query (spec 6.4). Words match whole tokens
+ * of `message` case-insensitively, phrases are case-insensitive substrings:
+ * every term of `all`, at least one term of each `anyOf` group, no term of
+ * `none`.
+ */
+export type TextQuery = LogSearchQuery['text'];
+
+/**
+ * Exclusions on typed fields. A log is dropped when its value is in the list;
+ * `hostname` exclusions keep logs that have no hostname.
+ */
+export interface LogExclude {
+  service?: string[];
+  level?: LogLevel[];
+  hostname?: string[];
+}
+
+/**
+ * The filter part shared by `query`, `count`, `countEstimate`, `histogram`
+ * and `facets`. Every filter ANDs with the others.
+ */
+export interface LogFilterParams {
   projectId: string | string[] | GlobalScope;
   service?: string | string[];
   level?: LogLevel | LogLevel[];
   hostname?: string | string[];
   traceId?: string;
   sessionId?: string;
+  spanId?: string;
   from: Date;
   to: Date;
   fromExclusive?: boolean; // time > from (instead of >=)
   toExclusive?: boolean;   // time < to (instead of <=)
+  /** @deprecated converted to `textQuery` by the client; engines read `textQuery` */
   search?: string;
+  /** @deprecated converted to `textQuery` by the client */
   searchMode?: SearchMode;
-  filters?: Filter[];
+  textQuery?: TextQuery;
+  exclude?: LogExclude;
   metadataFilters?: MetadataFilter[];
+  /**
+   * Set by `mergeCompiledSearch` when the filters cannot match any log (empty
+   * intersection). Answered by the client, never sent to engines.
+   */
+  matchNothing?: boolean;
+}
+
+/** Parameters for querying logs */
+export interface QueryParams extends LogFilterParams {
+  filters?: Filter[];
   limit?: number;
   offset?: number;
   cursor?: string;
@@ -191,21 +226,8 @@ export interface GetByIdsParams {
 }
 
 /** Parameters for counting logs */
-export interface CountParams {
-  projectId: string | string[] | GlobalScope;
-  service?: string | string[];
-  level?: LogLevel | LogLevel[];
-  hostname?: string | string[];
-  traceId?: string;
-  sessionId?: string;
-  from: Date;
-  to: Date;
-  fromExclusive?: boolean;
-  toExclusive?: boolean;
-  search?: string;
-  searchMode?: SearchMode;
+export interface CountParams extends LogFilterParams {
   filters?: Filter[];
-  metadataFilters?: MetadataFilter[];
 }
 
 /** Result of a count query */
@@ -328,6 +350,12 @@ export interface TraceRecord {
   error: boolean;
 }
 
+/**
+ * Span sort keys. `'duration'` is the 1.6 alias the client maps to
+ * `'duration_ms'`; engines receive the column names.
+ */
+export type SpanSortBy = 'start_time' | 'duration' | 'end_time' | 'duration_ms' | 'service_name' | 'operation_name';
+
 /** Parameters for querying spans */
 export interface SpanQueryParams {
   organizationId?: string | string[];
@@ -335,15 +363,20 @@ export interface SpanQueryParams {
   traceId?: string | string[];
   serviceName?: string | string[];
   operationName?: string | string[];
+  /** Single-value alias of `operationName`; the client maps it (both set and different is an error). */
+  operation?: string;
   kind?: SpanKind | SpanKind[];
   statusCode?: SpanStatusCode | SpanStatusCode[];
+  /** Filters over span `attributes`, with the metadata filter semantics of logs. */
+  attributeFilters?: MetadataFilter[];
   from: Date;
   to: Date;
   fromExclusive?: boolean;
   toExclusive?: boolean;
   limit?: number;
   offset?: number;
-  sortBy?: string;
+  /** Default `start_time` ascending. */
+  sortBy?: SpanSortBy;
   sortOrder?: 'asc' | 'desc';
 }
 
@@ -357,16 +390,28 @@ export interface SpanQueryResult {
   executionTimeMs?: number;
 }
 
+export type TraceSortBy = 'start_time' | 'duration';
+
 /** Parameters for querying traces */
 export interface TraceQueryParams {
   organizationId?: string | string[];
   projectId?: string | string[];
+  /** Trace-level service (the trace's `serviceName`). */
   serviceName?: string | string[];
   error?: boolean;
   from: Date;
   to: Date;
   minDurationMs?: number;
   maxDurationMs?: number;
+  /**
+   * `operation` and `attributeFilters` keep traces with at least one span
+   * matching the operation and all attribute filters together.
+   */
+  operation?: string;
+  attributeFilters?: MetadataFilter[];
+  /** Default `start_time` descending. */
+  sortBy?: TraceSortBy;
+  sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
 }
@@ -639,4 +684,163 @@ export interface MetricsOverviewResult {
     metrics: MetricOverviewItem[];
   }>;
   executionTimeMs?: number;
+}
+
+// ============================================================================
+// 1.6 contract: log histogram, facets, metadata keys (spec 6.4)
+// ============================================================================
+
+/**
+ * Log volume over time. Buckets are aligned to multiples of `bucketSeconds`
+ * since the Unix epoch (UTC) and zero-filled across the filter's range.
+ */
+export interface LogHistogramParams extends LogFilterParams {
+  /** Positive integer; at most MAX_HISTOGRAM_BUCKETS buckets in the range. */
+  bucketSeconds: number;
+}
+
+export interface LogHistogramBucket {
+  /** Bucket start. */
+  time: Date;
+  total: number;
+  /** Levels with a zero count are omitted. */
+  byLevel: Partial<Record<LogLevel, number>>;
+}
+
+export interface LogHistogramResult {
+  buckets: LogHistogramBucket[];
+  bucketSeconds: number;
+}
+
+export type LogFacetField = { builtin: 'level' | 'service' | 'hostname' } | { metadata: string };
+
+/** Top values per field over the logs matching every filter (including one on the faceted field). */
+export interface LogFacetsParams extends LogFilterParams {
+  /** 1 to FACETS_MAX_FIELDS fields, no duplicates. */
+  fields: LogFacetField[];
+  /** Values per field, default FACETS_DEFAULT_LIMIT, clamped to 1..FACETS_MAX_LIMIT. */
+  limit?: number;
+}
+
+export interface LogFacet {
+  /** `'level' | 'service' | 'hostname'` or `'metadata.<key>'`. */
+  field: string;
+  /** Count desc, then value byte order; values are text forms, empty strings skipped. */
+  values: { value: string; count: number }[];
+  /** Matching logs with a present value that is not in `values`. */
+  otherCount: number;
+}
+
+export interface LogFacetsResult {
+  /** One entry per requested field, in request order. */
+  facets: LogFacet[];
+}
+
+/** Metadata keys seen in the most recent `sampleSize` logs of the range. */
+export interface DiscoverMetadataKeysParams {
+  projectId: string | string[];
+  from: Date;
+  to: Date;
+  /** Default DISCOVER_DEFAULT_SAMPLE_SIZE, clamped to 1..DISCOVER_MAX_SAMPLE_SIZE. */
+  sampleSize?: number;
+}
+
+export interface MetadataKeyOccurrence {
+  /** Top-level key, or `parent.child` for one nested level. */
+  key: string;
+  /** Number of sampled logs that have the key. */
+  occurrences: number;
+}
+
+// ============================================================================
+// 1.6 contract: operation stats and latency histogram (spec 6.4)
+// ============================================================================
+
+/**
+ * Per-operation stats over entry spans: spans whose kind is in `kinds`
+ * (default DEFAULT_OPERATION_KINDS). With `kinds` omitted and no such span in
+ * scope, the root spans of the same scope are used instead.
+ */
+export interface OperationStatsParams {
+  projectId: string;
+  service?: string;
+  from: Date;
+  to: Date;
+  kinds?: SpanKind[];
+  /** Default OPERATION_STATS_DEFAULT_LIMIT, clamped to 1..OPERATION_STATS_MAX_LIMIT. */
+  limit?: number;
+}
+
+export interface OperationStat {
+  service: string;
+  operation: string;
+  count: number;
+  /** Spans with status code ERROR. */
+  errorCount: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+}
+
+/** Latency distribution of the same entry spans as getOperationStats. */
+export interface LatencyHistogramParams {
+  projectId: string;
+  service?: string;
+  operation?: string;
+  from: Date;
+  to: Date;
+}
+
+export interface LatencyHistogramResult {
+  /** LATENCY_HISTOGRAM_BOUNDS_MS. */
+  bounds: number[];
+  /**
+   * `bounds.length + 1` counts, upper-inclusive: `counts[i]` holds spans with
+   * `bounds[i - 1] < duration <= bounds[i]`, the last one `> 60000` ms.
+   */
+  counts: number[];
+}
+
+// ============================================================================
+// 1.6 contract: sessions (orchestrator addition)
+// ============================================================================
+
+/**
+ * Sessions of a project: logs in range with a non-empty session id, grouped
+ * by session id, ordered by last event desc then session id byte order.
+ */
+export interface ListSessionsParams {
+  projectId: string;
+  from: Date;
+  to: Date;
+  /** Positive integer, clamped to SESSIONS_MAX_LIMIT. */
+  limit: number;
+  /** `nextCursor` of the previous page. */
+  cursor?: string;
+  /** Applied to events before grouping. */
+  service?: string;
+}
+
+export interface SessionSummary {
+  sessionId: string;
+  /** Byte-order smallest service among the grouped events. */
+  service: string;
+  firstEvent: Date;
+  lastEvent: Date;
+  eventCount: number;
+  /** Events with level error or critical. */
+  errorCount: number;
+}
+
+export interface ListSessionsResult {
+  sessions: SessionSummary[];
+  /** Present only when more rows exist. */
+  nextCursor?: string;
+}
+
+export interface HasSessionsParams {
+  projectId: string;
+  from: Date;
+  to: Date;
 }

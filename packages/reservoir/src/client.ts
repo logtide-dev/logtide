@@ -46,6 +46,19 @@ import type {
   DeleteMetricsByTimeRangeParams,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
 } from './core/types.js';
 import type { StorageEngine } from './core/storage-engine.js';
 import type { IReservoir } from './core/reservoir-interface.js';
@@ -166,6 +179,31 @@ export class Reservoir implements IReservoir {
     return this.engine.deleteByTimeRange(params);
   }
 
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    this.ensureInitialized();
+    return this.engine.histogram(params);
+  }
+
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    this.ensureInitialized();
+    return this.engine.facets(params);
+  }
+
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    this.ensureInitialized();
+    return this.engine.discoverMetadataKeys(params);
+  }
+
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    this.ensureInitialized();
+    return this.engine.listSessions(params);
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    this.ensureInitialized();
+    return this.engine.hasSessions(params);
+  }
+
   // =========================================================================
   // Span & Trace Operations
   // =========================================================================
@@ -231,6 +269,16 @@ export class Reservoir implements IReservoir {
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {
     this.ensureInitialized();
     return this.engine.deleteSpansByTimeRange(params);
+  }
+
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    this.ensureInitialized();
+    return this.engine.getOperationStats(params);
+  }
+
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    this.ensureInitialized();
+    return this.engine.getLatencyHistogram(params);
   }
 
   // =========================================================================
