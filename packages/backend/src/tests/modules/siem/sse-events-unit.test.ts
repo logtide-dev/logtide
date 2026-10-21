@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     getDetectionEvents: vi.fn(),
-    listIncidents: vi.fn(),
-    getIncident: vi.fn(),
+    listUpdatedSince: vi.fn(),
+    getItem: vi.fn(),
     getUserOrganizations: vi.fn(),
     getUserById: vi.fn(),
     validateSession: vi.fn(),
@@ -16,12 +16,12 @@ vi.mock('../../../database/index.js', () => ({ db: {} }));
 
 vi.mock('../../../modules/siem/service.js', () => ({
     SiemService: vi.fn(function () {
-        return {
-            getDetectionEvents: mocks.getDetectionEvents,
-            listIncidents: mocks.listIncidents,
-            getIncident: mocks.getIncident,
-        };
+        return { getDetectionEvents: mocks.getDetectionEvents };
     }),
+}));
+
+vi.mock('../../../modules/incidents/service.js', () => ({
+    incidentsService: { listUpdatedSince: mocks.listUpdatedSince, getItem: mocks.getItem },
 }));
 
 vi.mock('../../../modules/organizations/service.js', () => ({
@@ -48,7 +48,7 @@ vi.mock('../../../modules/streaming/stream-ticket-service.js', () => ({
     streamTicketService: { consumeTicket: mocks.consumeTicket },
 }));
 
-import { registerSiemSseRoutes } from '../../../modules/siem/sse-events.js';
+import { registerSiemSseRoutes, INCIDENT_STREAM_OVERLAP_MS } from '../../../modules/siem/sse-events.js';
 
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
 const PROJECT_ID = '22222222-2222-4222-8222-222222222222';
@@ -116,6 +116,15 @@ function events(reply: any): any[] {
         .map((w: string) => JSON.parse(w.slice(6).trim()));
 }
 
+function incidentEvents(reply: any): any[] {
+    return events(reply).filter((e) => e.type.startsWith('incident_'));
+}
+
+/** A list item as the incidents service returns it (every row carries updatedAt). */
+function item(id: string, createdAt: string, updatedAt: string) {
+    return { id, createdAt, updatedAt, source: 'alert', status: 'open' };
+}
+
 describe('SIEM SSE route (unit)', () => {
     let handler: Handler;
 
@@ -125,8 +134,8 @@ describe('SIEM SSE route (unit)', () => {
         mocks.validateSession.mockResolvedValue(USER);
         mocks.getUserOrganizations.mockResolvedValue([{ id: ORG_ID }]);
         mocks.getDetectionEvents.mockResolvedValue([]);
-        mocks.listIncidents.mockResolvedValue({ incidents: [] });
-        mocks.getIncident.mockResolvedValue(null);
+        mocks.listUpdatedSince.mockResolvedValue([]);
+        mocks.getItem.mockResolvedValue(null);
         handler = (await captureHandler()).handler;
     });
 
@@ -139,12 +148,20 @@ describe('SIEM SSE route (unit)', () => {
         const { path, opts } = await captureHandler();
         expect(path).toBe('/api/v1/siem/events');
         expect(opts.config.rateLimit.max).toBe(10);
+        expect(opts.schema.querystring.properties.source).toEqual({ type: 'array', items: { type: 'string' } });
     });
 
     describe('authentication', () => {
         it('returns 400 with validation details for an invalid organizationId', async () => {
             const reply = makeReply();
             await handler(makeRequest({ organizationId: 'nope', token: 't' }), reply);
+            expect(reply.statusCode).toBe(400);
+            expect(reply.payload.error).toBe('Validation error');
+        });
+
+        it('returns 400 for an unknown source', async () => {
+            const reply = makeReply();
+            await handler(makeRequest({ organizationId: ORG_ID, source: 'alert,bogus', token: 't' }), reply);
             expect(reply.statusCode).toBe(400);
             expect(reply.payload.error).toBe('Validation error');
         });
@@ -290,67 +307,179 @@ describe('SIEM SSE route (unit)', () => {
             );
         });
 
-        it('classifies incidents as created or updated and only emits changes', async () => {
+        it('does not re-send the detection that sits at the cursor', async () => {
             const reply = makeReply();
             await handler(makeRequest({ organizationId: ORG_ID, token: 't' }), reply);
 
-            mocks.listIncidents.mockResolvedValueOnce({
-                incidents: [
-                    // created after the cursor, no updatedAt -> created
-                    { id: 'new', createdAt: '2026-10-01T12:00:10.000Z' },
-                    // created before, updated after -> updated
-                    {
-                        id: 'upd',
-                        createdAt: '2026-10-01T10:00:00.000Z',
-                        updatedAt: '2026-10-01T12:00:20.000Z',
-                    },
-                    // untouched since before the cursor -> not emitted
-                    {
-                        id: 'stale',
-                        createdAt: '2026-10-01T09:00:00.000Z',
-                        updatedAt: '2026-10-01T11:00:00.000Z',
-                    },
-                ],
+            const d1 = { id: 'd1', time: '2026-10-01T12:00:05.000Z' };
+            mocks.getDetectionEvents.mockResolvedValueOnce([d1]);
+            mocks.getDetectionEvents.mockResolvedValueOnce([d1]);
+            // A second detection with the same timestamp is still new
+            mocks.getDetectionEvents.mockResolvedValueOnce([{ id: 'd2', time: '2026-10-01T12:00:05.000Z' }, d1]);
+            await vi.advanceTimersByTimeAsync(6000);
+
+            const sent = events(reply).filter((e) => e.type === 'detection_created');
+            expect(sent.map((e) => e.data.id)).toEqual(['d1', 'd2']);
+            expect(mocks.getDetectionEvents.mock.calls.map((c) => c[0].startTime)).toEqual([
+                new Date('2026-10-01T12:00:00.000Z'),
+                new Date('2026-10-01T12:00:05.000Z'),
+                new Date('2026-10-01T12:00:05.000Z'),
+            ]);
+        });
+
+        it('polls every source with the overlap window', async () => {
+            expect(INCIDENT_STREAM_OVERLAP_MS).toBe(5000);
+            const reply = makeReply();
+            await handler(makeRequest({ organizationId: ORG_ID, token: 't' }), reply);
+
+            await vi.advanceTimersByTimeAsync(2000);
+            expect(mocks.listUpdatedSince).toHaveBeenCalledWith({
+                organizationId: ORG_ID,
+                projectId: undefined,
+                sources: undefined,
+                since: new Date('2026-10-01T11:59:55.000Z'),
+                limit: 100,
             });
+            expect(mocks.getDetectionEvents).toHaveBeenCalledTimes(1);
+            expect(mocks.getItem).not.toHaveBeenCalled();
+        });
+
+        it('classifies incidents as created or updated and only emits changes', async () => {
+            const reply = makeReply();
+            await handler(makeRequest({ organizationId: ORG_ID, projectId: PROJECT_ID, token: 't' }), reply);
+
+            mocks.listUpdatedSince.mockResolvedValueOnce([
+                // untouched since before the connection window -> not emitted
+                item('stale', '2026-10-01T09:00:00.000Z', '2026-10-01T11:00:00.000Z'),
+                // created after the connection -> created
+                item('new', '2026-10-01T12:00:10.000Z', '2026-10-01T12:00:10.000Z'),
+                // created before, updated after -> updated
+                item('upd', '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:20.000Z'),
+            ]);
             await vi.advanceTimersByTimeAsync(2000);
 
-            const incidentEvents = events(reply).filter((e) => e.type.startsWith('incident_'));
-            expect(incidentEvents.map((e) => [e.type, e.data.id])).toEqual([
+            expect(incidentEvents(reply).map((e) => [e.type, e.data.id])).toEqual([
                 ['incident_created', 'new'],
                 ['incident_updated', 'upd'],
             ]);
-            expect(mocks.getIncident).not.toHaveBeenCalled();
+            expect(mocks.listUpdatedSince.mock.calls[0][0].projectId).toBe(PROJECT_ID);
 
-            // Same incidents again: cursor advanced to 12:00:20, nothing re-emitted
-            mocks.listIncidents.mockResolvedValueOnce({
-                incidents: [{ id: 'upd', createdAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T12:00:20.000Z' }],
-            });
+            // Same rows again inside the overlap: nothing re-emitted; a newer
+            // change of an incident already announced is an update
+            mocks.listUpdatedSince.mockResolvedValueOnce([
+                item('new', '2026-10-01T12:00:10.000Z', '2026-10-01T12:00:10.000Z'),
+                item('upd', '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:20.000Z'),
+                item('new', '2026-10-01T12:00:10.000Z', '2026-10-01T12:00:22.000Z'),
+            ]);
             await vi.advanceTimersByTimeAsync(2000);
-            expect(events(reply).filter((e) => e.type.startsWith('incident_'))).toHaveLength(2);
+            expect(mocks.listUpdatedSince.mock.calls[1][0].since).toEqual(new Date('2026-10-01T12:00:15.000Z'));
+            expect(incidentEvents(reply).map((e) => [e.type, e.data.id])).toEqual([
+                ['incident_created', 'new'],
+                ['incident_updated', 'upd'],
+                ['incident_updated', 'new'],
+            ]);
         });
 
-        it('watches a single incident and emits only when it changes', async () => {
+        it('delivers an update committed late inside the overlap window exactly once', async () => {
+            const reply = makeReply();
+            await handler(makeRequest({ organizationId: ORG_ID, token: 't' }), reply);
+
+            const x = item('x', '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:20.000Z');
+            const y = item('y', '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:17.000Z');
+            mocks.listUpdatedSince.mockResolvedValueOnce([x]);
+            await vi.advanceTimersByTimeAsync(2000);
+            mocks.listUpdatedSince.mockResolvedValueOnce([y, x]);
+            await vi.advanceTimersByTimeAsync(2000);
+            mocks.listUpdatedSince.mockResolvedValueOnce([y, x]);
+            await vi.advanceTimersByTimeAsync(2000);
+
+            expect(mocks.listUpdatedSince.mock.calls[1][0].since).toEqual(new Date('2026-10-01T12:00:15.000Z'));
+            expect(incidentEvents(reply).map((e) => e.data.id)).toEqual(['x', 'y']);
+        });
+
+        it('announces an incident created after connecting only once, even after its window passed', async () => {
+            const reply = makeReply();
+            await handler(makeRequest({ organizationId: ORG_ID, token: 't' }), reply);
+
+            mocks.listUpdatedSince.mockResolvedValueOnce([
+                item('n', '2026-10-01T12:00:10.000Z', '2026-10-01T12:00:10.000Z'),
+            ]);
+            await vi.advanceTimersByTimeAsync(2000);
+            // Another incident moves the cursor well past n
+            mocks.listUpdatedSince.mockResolvedValueOnce([
+                item('z', '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:40.000Z'),
+            ]);
+            await vi.advanceTimersByTimeAsync(2000);
+            mocks.listUpdatedSince.mockResolvedValueOnce([
+                item('n', '2026-10-01T12:00:10.000Z', '2026-10-01T12:00:45.000Z'),
+            ]);
+            await vi.advanceTimersByTimeAsync(2000);
+
+            expect(incidentEvents(reply).map((e) => [e.type, e.data.id])).toEqual([
+                ['incident_created', 'n'],
+                ['incident_updated', 'z'],
+                ['incident_updated', 'n'],
+            ]);
+        });
+
+        it('keeps making progress when a full page changes inside the overlap window', async () => {
+            const reply = makeReply();
+            await handler(makeRequest({ organizationId: ORG_ID, token: 't' }), reply);
+
+            const burst = Array.from({ length: 100 }, (_, i) =>
+                item(`b${i}`, '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:10.000Z'),
+            );
+            mocks.listUpdatedSince.mockResolvedValueOnce(burst);
+            mocks.listUpdatedSince.mockResolvedValueOnce(burst);
+            mocks.listUpdatedSince.mockResolvedValueOnce([
+                item('after', '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:11.000Z'),
+            ]);
+            await vi.advanceTimersByTimeAsync(8000);
+
+            const since = mocks.listUpdatedSince.mock.calls.map((c) => c[0].since);
+            expect(since.slice(0, 4)).toEqual([
+                new Date('2026-10-01T11:59:55.000Z'),
+                // full page: continue after it instead of re-reading the overlap
+                new Date('2026-10-01T12:00:10.000Z'),
+                // full page with nothing newer than the window start: step past it
+                new Date('2026-10-01T12:00:10.001Z'),
+                // page no longer full: back to the overlap window
+                new Date('2026-10-01T12:00:06.000Z'),
+            ]);
+            const ids = incidentEvents(reply).map((e) => e.data.id);
+            expect(ids).toHaveLength(101);
+            expect(ids[100]).toBe('after');
+        });
+
+        it('passes the source filter and skips detections without sigma', async () => {
+            const reply = makeReply();
+            await handler(makeRequest({ organizationId: ORG_ID, source: 'alert,monitor', token: 't' }), reply);
+            await vi.advanceTimersByTimeAsync(2000);
+            expect(mocks.listUpdatedSince.mock.calls[0][0].sources).toEqual(['alert', 'monitor']);
+            expect(mocks.getDetectionEvents).not.toHaveBeenCalled();
+
+            const withSigma = makeReply();
+            await handler(makeRequest({ organizationId: ORG_ID, source: 'sigma', token: 't' }), withSigma);
+            await vi.advanceTimersByTimeAsync(2000);
+            expect(mocks.getDetectionEvents).toHaveBeenCalled();
+            expect(mocks.listUpdatedSince.mock.calls.at(-1)![0].sources).toEqual(['sigma']);
+        });
+
+        it('watches a single incident through getItem', async () => {
             const reply = makeReply();
             await handler(makeRequest({ organizationId: ORG_ID, incidentId: INCIDENT_ID, token: 't' }), reply);
 
             // Tick 1: incident not found
             await vi.advanceTimersByTimeAsync(2000);
-            expect(mocks.getIncident).toHaveBeenCalledWith(INCIDENT_ID, ORG_ID);
-            expect(mocks.listIncidents).not.toHaveBeenCalled();
+            expect(mocks.getItem).toHaveBeenCalledWith(INCIDENT_ID, ORG_ID);
+            expect(mocks.listUpdatedSince).not.toHaveBeenCalled();
 
-            // Tick 2: updated after cursor
-            mocks.getIncident.mockResolvedValueOnce({
-                id: INCIDENT_ID,
-                createdAt: '2026-10-01T10:00:00.000Z',
-                updatedAt: '2026-10-01T12:00:30.000Z',
-            });
+            // Tick 2: updated after the cursor
+            mocks.getItem.mockResolvedValueOnce(item(INCIDENT_ID, '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:30.000Z'));
             await vi.advanceTimersByTimeAsync(2000);
 
-            // Tick 3: same timestamp, no updatedAt fallback to createdAt (older) -> no emit
-            mocks.getIncident.mockResolvedValueOnce({
-                id: INCIDENT_ID,
-                createdAt: '2026-10-01T10:00:00.000Z',
-            });
+            // Tick 3: same timestamp -> no emit
+            mocks.getItem.mockResolvedValueOnce(item(INCIDENT_ID, '2026-10-01T10:00:00.000Z', '2026-10-01T12:00:30.000Z'));
             await vi.advanceTimersByTimeAsync(2000);
 
             const updated = events(reply).filter((e) => e.type === 'incident_updated');
