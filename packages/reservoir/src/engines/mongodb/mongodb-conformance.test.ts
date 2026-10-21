@@ -17,7 +17,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MongoClient } from 'mongodb';
 import { createConformanceReservoir, describeReservoirConformance, isConformanceRequired, resolveSubject } from '../../conformance/index.js';
 import type { Reservoir } from '../../client.js';
-import type { LogRecord, QueryParams, StorageConfig, TextQuery } from '../../core/types.js';
+import type { LogRecord, MetadataFilter, QueryParams, StorageConfig, TextQuery } from '../../core/types.js';
 
 const MG_TEST_CONFIG: StorageConfig = {
   host: 'localhost',
@@ -183,6 +183,75 @@ describe('mongodb specifics', () => {
         cursor = page.nextCursor;
       }
       expect(seen.sort()).toEqual(['GET https://api.timeout.com/v1 failed', 'connection refused', 'read /var/log/timeout.log']);
+    });
+  });
+
+  describe('mongodb json specifics', () => {
+    // A to F as in the plan (TS-4 Step 4), plus G (array, env prod) and H ($-prefixed key).
+    const ALL = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    const except = (...ids: string[]) => ALL.filter((id) => !ids.includes(id));
+    const mf = (o: Omit<MetadataFilter, 'include_missing'> & { include_missing?: boolean }): MetadataFilter => o as MetadataFilter;
+    const matching = (...filters: MetadataFilter[]) => messagesFor({ metadataFilters: filters });
+
+    beforeAll(async () => {
+      await seedLogs([
+        { message: 'A', metadata: { 'http.status': 200 } },
+        { message: 'B', metadata: { http: { status: 200 } } },
+        { message: 'C', metadata: { 'http.status': 404, http: { status: 200 } } },
+        { message: 'D', metadata: { status: 500, cached: true, env: 'prod' } },
+        { message: 'E', metadata: { user: { id: 42 }, env: 'dev' } },
+        { message: 'F', metadata: {} },
+        { message: 'G', metadata: { tags: ['a', 'b'], env: 'prod', ratio: 1.5, big: 3_000_000_000 } },
+        { message: 'H', metadata: { $kind: 'odd' } },
+      ]);
+    });
+
+    it('literal dotted keys before nested paths', async () => {
+      expect(await matching(mf({ key: 'http.status', op: 'equals', value: '200' }))).toEqual(['A', 'B']);
+      expect(await matching(mf({ key: 'http.status', op: 'equals', value: '404' }))).toEqual(['C']);
+    });
+
+    it('nested numeric path', async () => {
+      expect(await matching(mf({ key: 'user.id', op: 'equals', value: '42' }))).toEqual(['E']);
+      expect(await matching(mf({ key: 'user.id', op: 'in', values: ['42', '43'] }))).toEqual(['E']);
+      expect(await matching(mf({ key: 'user.id', op: 'exists' }))).toEqual(['E']);
+      expect(await matching(mf({ key: 'user.id', op: 'contains', value: '4' }))).toEqual(['E']);
+    });
+
+    it('numbers and booleans match by text', async () => {
+      expect(await matching(mf({ key: 'status', op: 'equals', value: '500' }))).toEqual(['D']);
+      expect(await matching(mf({ key: 'cached', op: 'equals', value: 'true' }))).toEqual(['D']);
+      expect(await matching(mf({ key: 'status', op: 'in', values: ['500', '501'] }))).toEqual(['D']);
+      expect(await matching(mf({ key: 'status', op: 'contains', value: '50' }))).toEqual(['D']);
+      expect(await matching(mf({ key: 'ratio', op: 'equals', value: '1.5' }))).toEqual(['G']);
+      expect(await matching(mf({ key: 'big', op: 'equals', value: '3000000000' }))).toEqual(['G']);
+      expect(await matching(mf({ key: 'status', op: 'equals', value: '0500' }))).toEqual([]);
+    });
+
+    it('negated clauses keep logs without the key', async () => {
+      expect(await matching(mf({ key: 'env', op: 'not_equals', value: 'prod', include_missing: true }))).toEqual(['A', 'B', 'C', 'E', 'F', 'H']);
+      expect(await matching(mf({ key: 'env', op: 'not_in', values: ['prod', 'dev'], include_missing: true }))).toEqual(['A', 'B', 'C', 'F', 'H']);
+      expect(await matching(mf({ key: 'user.id', op: 'not_equals', value: '42', include_missing: true }))).toEqual(except('E'));
+      expect(await matching(mf({ key: 'env', op: 'not_exists' }))).toEqual(['A', 'B', 'C', 'F', 'H']);
+      expect(await matching(mf({ key: 'http.status', op: 'not_exists' }))).toEqual(except('A', 'B', 'C'));
+    });
+
+    it('include_missing false requires the key to resolve', async () => {
+      expect(await matching(mf({ key: 'env', op: 'not_equals', value: 'prod', include_missing: false }))).toEqual(['E']);
+      expect(await matching(mf({ key: 'user.id', op: 'not_equals', value: '7', include_missing: false }))).toEqual(['E']);
+    });
+
+    it('arrays never equal a scalar and have no text', async () => {
+      expect(await matching(mf({ key: 'tags', op: 'equals', value: 'a' }))).toEqual([]);
+      expect(await matching(mf({ key: 'tags', op: 'in', values: ['a', 'b'] }))).toEqual([]);
+      expect(await matching(mf({ key: 'tags', op: 'contains', value: 'a' }))).toEqual([]);
+      expect(await matching(mf({ key: 'tags', op: 'exists' }))).toEqual(['G']);
+      expect(await matching(mf({ key: 'tags', op: 'not_equals', value: 'a', include_missing: true }))).toEqual(ALL);
+    });
+
+    it('a $-prefixed key matches its literal value', async () => {
+      expect(await matching(mf({ key: '$kind', op: 'equals', value: 'odd' }))).toEqual(['H']);
+      expect(await matching(mf({ key: '$kind', op: 'not_equals', value: 'odd', include_missing: true }))).toEqual(except('H'));
     });
   });
 });

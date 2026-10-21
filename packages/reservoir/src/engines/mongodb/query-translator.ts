@@ -9,12 +9,12 @@ import type {
   DistinctParams,
   LogExclude,
   LogFilterParams,
-  MetadataFilter,
   QueryParams,
   TopValuesParams,
 } from '../../core/types.js';
 
-import { compileTextQuery, escapeRegex, resolveTextQuery } from './text-query.js';
+import { compileTextQuery, resolveTextQuery } from './text-query.js';
+import { compileJsonFilters } from './json-path.js';
 
 /** Interval to milliseconds for $dateTrunc fallback */
 const INTERVAL_MS: Record<AggregationInterval, number> = {
@@ -162,8 +162,10 @@ export class MongoDBQueryTranslator extends QueryTranslator {
     const text = resolveTextQuery(params);
     if (text) and.push(...compileTextQuery(text));
 
+    // One clause per filter (repeated keys AND instead of overwriting), with
+    // the dot-path and text-form rules of json-path.ts.
     if (params.metadataFilters && params.metadataFilters.length > 0) {
-      and.push(...this.buildMetadataClauses(params.metadataFilters));
+      and.push(...compileJsonFilters(params.metadataFilters, 'metadata'));
     }
 
     if (params.exclude) {
@@ -172,35 +174,6 @@ export class MongoDBQueryTranslator extends QueryTranslator {
 
     if (and.length > 0) filter.$and = and;
     return filter;
-  }
-
-  /**
-   * Translate metadata filters into MongoDB clauses over the `metadata` subdocument.
-   * Each filter becomes its own clause keyed on `metadata.<key>` so that repeated keys
-   * are AND'd rather than overwritten.
-   */
-  private buildMetadataClauses(filters: MetadataFilter[]): Record<string, unknown>[] {
-    return filters.map((f) => {
-      const field = `metadata.${f.key}`;
-      switch (f.op) {
-        case 'equals':
-          return { [field]: f.value };
-        case 'not_equals':
-          // Bare $ne already matches missing fields; require $exists when missing must be excluded.
-          return { [field]: f.include_missing ? { $ne: f.value } : { $exists: true, $ne: f.value } };
-        case 'in':
-          return { [field]: { $in: f.values } };
-        case 'not_in':
-          // Bare $nin already matches missing fields; require $exists when missing must be excluded.
-          return { [field]: f.include_missing ? { $nin: f.values } : { $exists: true, $nin: f.values } };
-        case 'exists':
-          return { [field]: { $exists: true } };
-        case 'not_exists':
-          return { [field]: { $exists: false } };
-        case 'contains':
-          return { [field]: { $regex: escapeRegex(f.value ?? ''), $options: 'i' } };
-      }
-    });
   }
 
   /**
