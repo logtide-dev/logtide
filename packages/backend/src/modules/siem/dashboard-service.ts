@@ -321,6 +321,8 @@ export class SiemDashboardService {
         ),
       ])
       .where('organization_id', '=', filters.organizationId)
+      // Security totals: alert and uptime incidents live in the same table.
+      .where('source', 'in', ['sigma', 'manual'])
       .where('created_at', '>=', startTime)
       .where('created_at', '<=', endTime);
 
