@@ -202,9 +202,12 @@ export class TimescaleEngine extends StorageEngine {
         metadata JSONB DEFAULT '{}',
         trace_id TEXT,
         span_id TEXT,
+        session_id TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    // Tables created before session_id existed (same as backend migration 029).
+    await pool.query(`ALTER TABLE ${s}.${t} ADD COLUMN IF NOT EXISTS session_id TEXT`);
 
     // hypertable (ignore error if already exists)
     try {
@@ -219,6 +222,7 @@ export class TimescaleEngine extends StorageEngine {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_level_time ON ${s}.${t} (level, time DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_trace_id ON ${s}.${t} (trace_id) WHERE trace_id IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_span_id ON ${s}.${t} (span_id) WHERE span_id IS NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_session_id ON ${s}.${t} (session_id) WHERE session_id IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_fulltext ON ${s}.${t} USING GIN (to_tsvector('english', message))`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_composite ON ${s}.${t} (project_id, time DESC, id DESC)`);
 
@@ -236,6 +240,73 @@ export class TimescaleEngine extends StorageEngine {
     } catch {
       // compression not available
     }
+
+    await this.initializeSpanTables(pool, s);
+  }
+
+  /**
+   * Standalone span and trace tables, shaped like backend migration 003 but
+   * without the organization/project foreign keys (no tenant tables here)
+   * and without retention or compression policies. The backend runs with
+   * `skipInitialize` and its own migrations, so this only serves
+   * standalone installs and tests.
+   */
+  private async initializeSpanTables(pool: pg.Pool, s: string): Promise<void> {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.traces (
+        trace_id TEXT NOT NULL,
+        organization_id TEXT,
+        project_id TEXT NOT NULL,
+        service_name TEXT NOT NULL,
+        root_service_name TEXT,
+        root_operation_name TEXT,
+        start_time TIMESTAMPTZ NOT NULL,
+        end_time TIMESTAMPTZ NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        span_count INTEGER NOT NULL DEFAULT 0,
+        error BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (trace_id, project_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_traces_project_time ON ${s}.traces (project_id, start_time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_traces_service ON ${s}.traces (service_name, start_time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_traces_duration ON ${s}.traces (duration_ms DESC)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.spans (
+        time TIMESTAMPTZ NOT NULL,
+        span_id TEXT NOT NULL,
+        trace_id TEXT NOT NULL,
+        parent_span_id TEXT,
+        organization_id TEXT,
+        project_id TEXT NOT NULL,
+        service_name TEXT NOT NULL,
+        operation_name TEXT NOT NULL,
+        start_time TIMESTAMPTZ NOT NULL,
+        end_time TIMESTAMPTZ NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        kind TEXT,
+        status_code TEXT,
+        status_message TEXT,
+        attributes JSONB,
+        events JSONB,
+        links JSONB,
+        resource_attributes JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (time, span_id)
+      )
+    `);
+    try {
+      await pool.query(`SELECT create_hypertable('${s}.spans', 'time', if_not_exists => TRUE)`);
+    } catch {
+      // not a TimescaleDB instance or already a hypertable
+    }
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_trace_id ON ${s}.spans (trace_id, time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_parent ON ${s}.spans (parent_span_id, time DESC) WHERE parent_span_id IS NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_project_time ON ${s}.spans (project_id, time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_service ON ${s}.spans (service_name, time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_operation ON ${s}.spans (operation_name, time DESC)`);
   }
 
   async migrate(_version: string): Promise<void> {

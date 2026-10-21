@@ -137,6 +137,40 @@ describe('TimescaleEngine', () => {
       expect(calls.some((q) => q.includes('idx_logs_span_id'))).toBe(true);
     });
 
+    it('adds session_id column and index for standalone installs', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+      await engine.connect();
+      await engine.initialize();
+      const calls = mockQuery.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((q) => q.includes('ADD COLUMN IF NOT EXISTS session_id TEXT'))).toBe(true);
+      expect(calls.some((q) => q.includes('idx_logs_session_id'))).toBe(true);
+    });
+
+    it('creates the spans hypertable and the traces table for standalone installs', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+      await engine.connect();
+      await engine.initialize();
+      const calls = mockQuery.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((q) => q.includes('CREATE TABLE IF NOT EXISTS public.spans'))).toBe(true);
+      expect(calls.some((q) => q.includes("create_hypertable('public.spans'"))).toBe(true);
+      expect(calls.some((q) => q.includes('CREATE TABLE IF NOT EXISTS public.traces'))).toBe(true);
+      expect(calls.some((q) => q.includes('PRIMARY KEY (trace_id, project_id)'))).toBe(true);
+      for (const index of [
+        'idx_spans_trace_id', 'idx_spans_project_time', 'idx_spans_service', 'idx_spans_operation', 'idx_spans_parent',
+        'idx_traces_project_time', 'idx_traces_service', 'idx_traces_duration',
+      ]) {
+        expect(calls.some((q) => q.includes(index)), index).toBe(true);
+      }
+    });
+
+    it('does not add retention policies to the standalone span tables', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+      await engine.connect();
+      await engine.initialize();
+      const calls = mockQuery.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((q) => q.includes('add_retention_policy'))).toBe(false);
+    });
+
     it('skips initialization when skipInitialize is set', async () => {
       const skipEngine = new TimescaleEngine(config, { skipInitialize: true });
       await skipEngine.connect();
