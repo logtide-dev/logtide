@@ -1,5 +1,6 @@
 import type { Severity, IncidentStatus } from '../constants/siem-constants.js';
 import type { ErrorGroupStatus } from '../constants/exception-constants.js';
+import type { IncidentSource } from '../constants/monitoring-constants.js';
 
 export function getSeverityColor(severity: Severity): string {
   switch (severity) {
@@ -57,13 +58,28 @@ export function getIncidentStatusLabel(status: IncidentStatus): string {
     case 'open':
       return 'Open';
     case 'investigating':
-      return 'Investigating';
+      return 'Acknowledged';
     case 'resolved':
       return 'Resolved';
     case 'false_positive':
-      return 'False Positive';
+      return 'False positive';
     default:
       return status;
+  }
+}
+
+export function getIncidentSourceLabel(source: IncidentSource): string {
+  switch (source) {
+    case 'sigma':
+      return 'Security';
+    case 'alert':
+      return 'Alert';
+    case 'monitor':
+      return 'Uptime';
+    case 'manual':
+      return 'Manual';
+    default:
+      return source;
   }
 }
 

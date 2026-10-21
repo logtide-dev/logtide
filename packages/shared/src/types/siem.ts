@@ -62,6 +62,13 @@ export interface Incident {
   geoData: Record<string, unknown> | null;
   source: IncidentSource;
   monitorId: string | null;
+  /** Alert rule behind an `alert` incident; null for every other source or after the rule was deleted. */
+  alertRuleId: string | null;
+  acknowledgedAt: Date | string | null;
+  acknowledgedBy: string | null;
+  resolvedBy: string | null;
+  /** Time of the newest event behind the incident (detection, alert trigger, monitor check). */
+  lastEventAt: Date | string;
   createdAt: Date | string;
   updatedAt: Date | string;
   resolvedAt: Date | string | null;

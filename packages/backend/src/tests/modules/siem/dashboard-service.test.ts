@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../../database/index.js';
 import { SiemService } from '../../../modules/siem/service.js';
 import { SiemDashboardService } from '../../../modules/siem/dashboard-service.js';
-import { createTestContext, createTestLog } from '../../helpers/factories.js';
+import { createTestAlertRule, createTestContext, createTestLog } from '../../helpers/factories.js';
+import { createTestMonitor, insertIncident } from '../incidents/fixtures.js';
 
 const siemService = new SiemService(db);
 const dashboardService = new SiemDashboardService(db);
@@ -491,5 +492,39 @@ describe('SIEM Dashboard Service', () => {
         });
 
         expect(stats30d.totalDetections).toBe(2);
+    });
+
+    it('counts only sigma and manual incidents in the security totals', async () => {
+        const { organization, project } = await createTestContext();
+        const rule = await createTestAlertRule({ organizationId: organization.id, projectId: project.id });
+        const monitor = await createTestMonitor({ organizationId: organization.id, projectId: project.id });
+
+        // Aged explicitly: the window end is the node clock, created_at would
+        // otherwise be the database clock, which can run slightly ahead.
+        const base = {
+            organizationId: organization.id,
+            projectId: project.id,
+            severity: 'critical' as const,
+            createdAt: new Date(Date.now() - 60 * 60 * 1000),
+        };
+        await insertIncident({ ...base, source: 'sigma' });
+        await insertIncident({ ...base, source: 'manual' });
+        await insertIncident({ ...base, source: 'alert', alertRuleId: rule.id });
+        await insertIncident({ ...base, source: 'monitor', monitorId: monitor.id });
+
+        const stats = await dashboardService.getDashboardStats({
+            organizationId: organization.id,
+            timeRange: '24h',
+        });
+        expect(stats.totalIncidents).toBe(2);
+        expect(stats.openIncidents).toBe(2);
+        expect(stats.criticalIncidents).toBe(2);
+
+        const byProject = await dashboardService.getDashboardStats({
+            organizationId: organization.id,
+            projectId: project.id,
+            timeRange: '24h',
+        });
+        expect(byProject.totalIncidents).toBe(2);
     });
 });

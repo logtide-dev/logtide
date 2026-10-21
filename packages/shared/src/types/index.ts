@@ -152,3 +152,6 @@ export interface AlertRule {
   created_at: Date;
   updated_at: Date;
 }
+
+// Re-export incident types (1.6 F4)
+export * from './incident.js';
