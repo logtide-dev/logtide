@@ -403,3 +403,43 @@ describe('clickhouse apm specifics: entry spans', () => {
     expect(edge.p95Ms).toBeCloseTo(108000, 6);
   });
 });
+
+describe('clickhouse session specifics', () => {
+  const project = '00000000-0000-4000-8000-00000000c307';
+  const minute = (n: number) => new Date(SPECIFICS_FROM.getTime() + n * 60_000);
+  const subject = useSpecifics(project, [
+    { message: 's3 only', time: minute(1), sessionId: 's3' },
+    { message: 's1 start', time: minute(2), sessionId: 's1' },
+    { message: 's1 error', time: minute(3), sessionId: 's1', level: 'error' },
+    { message: 's2 critical', time: minute(4), sessionId: 's2', level: 'critical', service: 'web' },
+    { message: 's1 end', time: minute(5), sessionId: 's1' },
+    { message: 's2 end', time: minute(5), sessionId: 's2' },
+    { message: 'empty session', time: minute(6), sessionId: '' },
+    { message: 'no session', time: minute(7) },
+  ]);
+  const window = { projectId: project, from: SPECIFICS_FROM, to: SPECIFICS_TO };
+  const summary = (s: { sessionId: string; service: string; firstEvent: Date; lastEvent: Date; eventCount: number; errorCount: number }) =>
+    [s.sessionId, s.service, s.firstEvent.toISOString(), s.lastEvent.toISOString(), s.eventCount, s.errorCount];
+
+  it('pages sessions by last event, ties by session id, with a cursor', async () => {
+    const first = await subject().listSessions({ ...window, limit: 2 });
+    expect(first.sessions.map(summary)).toEqual([
+      ['s1', 'api', minute(2).toISOString(), minute(5).toISOString(), 3, 1],
+      ['s2', 'api', minute(4).toISOString(), minute(5).toISOString(), 2, 1],
+    ]);
+    expect(typeof first.nextCursor).toBe('string');
+    const second = await subject().listSessions({ ...window, limit: 2, cursor: first.nextCursor });
+    expect(second.sessions.map(summary)).toEqual([['s3', 'api', minute(1).toISOString(), minute(1).toISOString(), 1, 0]]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
+  it('the service filter keeps only that service events', async () => {
+    const result = await subject().listSessions({ ...window, limit: 10, service: 'web' });
+    expect(result.sessions.map(summary)).toEqual([['s2', 'web', minute(4).toISOString(), minute(4).toISOString(), 1, 1]]);
+  });
+
+  it('presence ignores empty session ids', async () => {
+    expect(await subject().hasSessions(window)).toBe(true);
+    expect(await subject().hasSessions({ projectId: project, from: minute(6), to: minute(7) })).toBe(false);
+  });
+});

@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ClickHouseClient } from '@clickhouse/client';
-import { assembleFacets, assembleHistogram, translateDiscoverKeys } from './log-analytics.js';
+import {
+  assembleFacets,
+  assembleHistogram,
+  translateDiscoverKeys,
+  translateHasSessions,
+  translateListSessions,
+} from './log-analytics.js';
+import { decodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { ClickHouseQueryTranslator } from './query-translator.js';
 import { ClickHouseEngine } from './clickhouse-engine.js';
 import type { LogFacetField, LogFacetsParams, LogHistogramParams } from '../../core/types.js';
@@ -255,5 +262,88 @@ describe('clickhouse metadata key discovery', () => {
     const { engine, query } = stubEngine();
     await expect(engine.discoverMetadataKeys({ ...discoverBase, from: discoverBase.to, to: discoverBase.from })).rejects.toBeInstanceOf(RangeError);
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe('clickhouse sessions', () => {
+  const sessionBase = {
+    projectId: '00000000-0000-0000-0000-000000000001',
+    from: at('2026-01-01T10:00:00.000Z'),
+    to: at('2026-01-01T11:00:00.000Z'),
+    limit: 2,
+  };
+  const row = (sessionId: string, lastIso: string, extra: Record<string, unknown> = {}) => ({
+    session_id: sessionId,
+    min_service: 'api',
+    first_ms: String(at('2026-01-01T10:00:00.000Z').getTime()),
+    last_ms: String(at(lastIso).getTime()),
+    event_count: '3',
+    error_count: '1',
+    ...extra,
+  });
+
+  it('limit clamps to 200 and fetches one extra row', async () => {
+    const { engine, query } = stubEngine();
+    await engine.listSessions({ ...sessionBase, limit: 9999 });
+    expect(lastCall(query).query_params.p_limit).toBe(201);
+    await engine.listSessions(sessionBase);
+    expect(lastCall(query).query_params.p_limit).toBe(3);
+  });
+
+  it('empty session ids are excluded and the project and window are always scoped', () => {
+    const native = translateListSessions({ ...sessionBase, service: 'api' }, 2, null);
+    const query = native.query as string;
+    expect(query).toContain(
+      'FROM logs PREWHERE project_id = {p_pid:String} AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)}',
+    );
+    expect(query).toContain("WHERE session_id IS NOT NULL AND session_id != '' AND service = {p_service:String}");
+    expect(query).toContain('min(toString(service)) AS min_service');
+    expect(query).toContain("countIf(level IN ('error', 'critical')) AS error_count");
+    expect(query).toContain('GROUP BY session_id ORDER BY last_ms DESC, session_id ASC LIMIT {p_limit:UInt32}');
+    expect(query).not.toContain('HAVING');
+    expect((native.parameters as Record<string, unknown>[])[0]).toMatchObject({ p_service: 'api', p_limit: 3 });
+  });
+
+  it('a cursor continues strictly after its row at millisecond precision', () => {
+    const last = at('2026-01-01T10:05:00.123Z');
+    const native = translateListSessions(sessionBase, 2, { lastEvent: last, sessionId: 's-1' });
+    expect(native.query).toContain('HAVING last_ms < {p_cms:Int64} OR (last_ms = {p_cms:Int64} AND session_id > {p_csid:String})');
+    expect((native.parameters as Record<string, unknown>[])[0]).toMatchObject({ p_cms: last.getTime(), p_csid: 's-1' });
+  });
+
+  it('the engine returns a cursor only when more rows exist, and it round-trips', async () => {
+    const more = stubEngine([row('s1', '2026-01-01T10:05:00.000Z'), row('s2', '2026-01-01T10:05:00.000Z'), row('s3', '2026-01-01T10:01:00.000Z')]);
+    const page = await more.engine.listSessions(sessionBase);
+    expect(page.sessions.map((s) => s.sessionId)).toEqual(['s1', 's2']);
+    expect(page.sessions[0]).toEqual({
+      sessionId: 's1',
+      service: 'api',
+      firstEvent: at('2026-01-01T10:00:00.000Z'),
+      lastEvent: at('2026-01-01T10:05:00.000Z'),
+      eventCount: 3,
+      errorCount: 1,
+    });
+    expect(decodeSessionCursor(page.nextCursor!)).toEqual({ lastEvent: at('2026-01-01T10:05:00.000Z'), sessionId: 's2' });
+
+    await more.engine.listSessions({ ...sessionBase, cursor: page.nextCursor });
+    expect(lastCall(more.query).query_params).toMatchObject({ p_csid: 's2', p_cms: at('2026-01-01T10:05:00.000Z').getTime() });
+
+    const last = stubEngine([row('s3', '2026-01-01T10:01:00.000Z')]);
+    expect((await last.engine.listSessions(sessionBase)).nextCursor).toBeUndefined();
+  });
+
+  it('an invalid cursor rejects with RangeError before querying', async () => {
+    const { engine, query } = stubEngine();
+    await expect(engine.listSessions({ ...sessionBase, cursor: '%%%' })).rejects.toBeInstanceOf(RangeError);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('presence is a LIMIT 1 probe without grouping', async () => {
+    const native = translateHasSessions(sessionBase);
+    expect(native.query).toBe(
+      "SELECT 1 FROM logs PREWHERE project_id = {p_pid:String} AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} WHERE session_id IS NOT NULL AND session_id != '' LIMIT 1",
+    );
+    expect((await stubEngine([{ '1': 1 }]).engine.hasSessions(sessionBase))).toBe(true);
+    expect((await stubEngine([]).engine.hasSessions(sessionBase))).toBe(false);
   });
 });

@@ -98,11 +98,29 @@ import type {
   OperationStat,
   LatencyHistogramParams,
   LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
 } from '../../core/types.js';
 import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
-import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
+import {
+  assertTimeRange,
+  normalizeDiscoverParams,
+  normalizeFacetsParams,
+  normalizeHistogramParams,
+  normalizeListSessionsParams,
+} from '../../core/normalize.js';
+import { decodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { ClickHouseQueryTranslator, toDateTime64 } from './query-translator.js';
-import { assembleFacets, assembleHistogram, assembleMetadataKeys, translateDiscoverKeys } from './log-analytics.js';
+import {
+  assembleFacets,
+  assembleHistogram,
+  assembleMetadataKeys,
+  assembleSessions,
+  translateDiscoverKeys,
+  translateHasSessions,
+  translateListSessions,
+} from './log-analytics.js';
 import {
   assembleLatencyHistogram,
   assembleOperationStats,
@@ -763,6 +781,20 @@ export class ClickHouseEngine extends StorageEngine {
       'discover-keys',
     );
     return assembleMetadataKeys((await resultSet.json()) as Record<string, unknown>[]);
+  }
+
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    // Validates the window, clamps the limit and rejects an invalid cursor
+    // before any query (the client already did, but the engine may be called directly).
+    const normalized = normalizeListSessionsParams(params);
+    const cursor = normalized.cursor !== undefined ? decodeSessionCursor(normalized.cursor) : null;
+    const rows = await this.runNative(translateListSessions(normalized, normalized.limit, cursor, this.tableName), 'list-sessions');
+    return assembleSessions(rows, normalized.limit);
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    assertTimeRange(params.from, params.to);
+    return this.hasRows(translateHasSessions(params, this.tableName));
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {
