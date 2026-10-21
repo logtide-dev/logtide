@@ -12,6 +12,7 @@
   import { toastStore } from "$lib/stores/toast";
   import { timeRangeStore } from "$lib/stores/time-range";
   import type { Project, MetadataFilterInput } from "@logtide/shared";
+  import { parseLogQuery } from "@logtide/shared";
   import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import Input from "$lib/components/ui/input/input.svelte";
@@ -690,6 +691,13 @@
   });
 
   let paginatedLogs = $derived(logs);
+
+  // Message marks follow the parsed query; substring mode keeps its old behaviour (no marks).
+  let highlightQuery = $derived.by(() => {
+    if (searchMode !== "fulltext" || !searchQuery.trim()) return null;
+    const parsed = parseLogQuery(searchQuery);
+    return parsed.ok ? parsed.query : null;
+  });
   let effectiveTotalLogs = $derived(totalLogs > 0 ? totalLogs : logs.length);
   let totalPages = $derived(totalLogs > 0 ? Math.ceil(totalLogs / pageSize) : 0);
 
@@ -1829,8 +1837,7 @@
                 {rowDensity}
                 selectedIndex={selectedLogIndex}
                 {expandedRows}
-                {searchQuery}
-                {searchMode}
+                {highlightQuery}
                 onToggleRow={toggleRow}
                 onOpenContext={openContextDialog}
                 onFilterService={(service) => {

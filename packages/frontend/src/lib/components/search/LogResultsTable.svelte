@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import type { LogEntry, SearchMode } from "$lib/api/logs";
-  import { resolveMetadataPath, formatMetadataCell } from "@logtide/shared";
+  import type { LogEntry } from "$lib/api/logs";
+  import { resolveMetadataPath, formatMetadataCell, type LogSearchQuery } from "@logtide/shared";
   import { formatTimeAgo } from "$lib/utils/datetime";
   import Button from "$lib/components/ui/button/button.svelte";
   import { Badge } from "$lib/components/ui/badge";
@@ -13,7 +13,7 @@
     TableHeader,
     TableRow,
   } from "$lib/components/ui/table";
-  import { highlightSegments } from "./highlight";
+  import { messageHighlights } from "./query-highlight";
 
   interface Props {
     logs: LogEntry[];
@@ -22,8 +22,7 @@
     rowDensity: "comfortable" | "compact";
     selectedIndex: number;
     expandedRows: Set<number>;
-    searchQuery: string;
-    searchMode: SearchMode;
+    highlightQuery: LogSearchQuery | null;
     onToggleRow: (index: number) => void;
     onOpenContext: (log: LogEntry) => void;
     onFilterService: (value: string) => void;
@@ -39,8 +38,7 @@
     rowDensity,
     selectedIndex,
     expandedRows,
-    searchQuery,
-    searchMode,
+    highlightQuery,
     onToggleRow,
     onOpenContext,
     onFilterService,
@@ -147,7 +145,7 @@
             </button>
           </TableCell>
           <TableCell class="max-w-md truncate">
-            {#each highlightSegments(log.message, searchQuery, searchMode) as seg}
+            {#each messageHighlights(log.message, highlightQuery) as seg}
               {#if seg.match}<mark
                   class="rounded-sm bg-yellow-200 text-inherit dark:bg-yellow-500/40"
                   >{seg.text}</mark

@@ -16,7 +16,7 @@ import {
 
 function parsed(r: string) {
   const res = parseLogQuery(r);
-  if (!res.ok) throw new Error(`expected ${JSON.stringify(r)} to parse: ${res.error.message}`);
+  if (res.ok === false) throw new Error(`expected ${JSON.stringify(r)} to parse: ${res.error.message}`);
   return res.query;
 }
 

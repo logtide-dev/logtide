@@ -4,6 +4,7 @@ import { createRawSnippet } from 'svelte';
 import LogResultsTable from './LogResultsTable.svelte';
 import { makeLog, resetLogIds } from './test-fixtures';
 import type { LogEntry } from '$lib/api/logs';
+import { parseLogQuery } from '@logtide/shared';
 
 const details = createRawSnippet((log: () => LogEntry, index: () => number) => ({
   render: () => `<div data-testid="details">Details ${index()} ${log().message}</div>`,
@@ -17,8 +18,7 @@ function props(overrides: Record<string, unknown> = {}) {
     rowDensity: 'comfortable' as const,
     selectedIndex: -1,
     expandedRows: new Set<number>(),
-    searchQuery: '',
-    searchMode: 'fulltext' as const,
+    highlightQuery: null,
     onToggleRow: vi.fn(),
     onOpenContext: vi.fn(),
     onFilterService: vi.fn(),
@@ -54,6 +54,16 @@ describe('LogResultsTable', () => {
   it('does not render the details snippet for collapsed rows', () => {
     render(LogResultsTable, props());
     expect(screen.queryByTestId('details')).toBeNull();
+  });
+
+  it('highlights query words in the message', () => {
+    const res = parseLogQuery('timeout -db');
+    if (res.ok === false) throw new Error(res.error.message);
+    const { container } = render(
+      LogResultsTable,
+      props({ logs: [makeLog({ message: 'db timeout after 30s' })], highlightQuery: res.query }),
+    );
+    expect([...container.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['timeout']);
   });
 
   it('shows a dash for a missing custom column value', () => {
