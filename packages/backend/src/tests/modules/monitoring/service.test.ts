@@ -2,6 +2,17 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { MonitorService } from '../../../modules/monitoring/service.js';
 import { createTestContext } from '../../helpers/index.js';
 import { db } from '../../../database/index.js';
+import { monitorNotificationQueue } from '../../../queue/jobs/monitor-notification.js';
+import { insertIncident } from '../incidents/fixtures.js';
+
+// F4 seam: the shared incidents service is mocked (its own suite covers it)
+const { openOrUpdateFromSource, resolveFromSource } = vi.hoisted(() => ({
+  openOrUpdateFromSource: vi.fn(),
+  resolveFromSource: vi.fn(),
+}));
+vi.mock('../../../modules/incidents/service.js', () => ({
+  incidentsService: { openOrUpdateFromSource, resolveFromSource },
+}));
 
 // Mock the notification queue to avoid real BullMQ connections
 vi.mock('../../../queue/jobs/monitor-notification.js', () => ({
@@ -666,5 +677,284 @@ describe('MonitorService ssl and dns (W12)', () => {
 
     const list = await service.listMonitors(ctx.organization.id);
     expect(list[0].groupName).toBe('Core');
+  });
+});
+
+// ===========================================================================
+// W12: monitors open and resolve shared incidents (F4 seam)
+// ===========================================================================
+describe('MonitorService incidents (W12)', () => {
+  let checker: typeof import('../../../modules/monitoring/checker.js');
+
+  beforeEach(async () => {
+    checker = await import('../../../modules/monitoring/checker.js');
+    vi.mocked(checker.runHttpCheck).mockReset();
+    vi.mocked(checker.runHttpCheck).mockResolvedValue({ status: 'up', responseTimeMs: 50, statusCode: 200, errorCode: null });
+    openOrUpdateFromSource.mockReset();
+    resolveFromSource.mockReset().mockResolvedValue(null);
+    vi.mocked(monitorNotificationQueue.add).mockClear();
+  });
+
+  async function makeMonitor(overrides: Record<string, unknown> = {}) {
+    const created = await service.createMonitor({
+      organizationId: ctx.organization.id,
+      projectId: ctx.project.id,
+      name: 'API Health',
+      type: 'http',
+      target: 'https://example.com/health',
+      failureThreshold: 1,
+      severity: 'critical',
+      ...overrides,
+    });
+    return created;
+  }
+
+  async function runWith(monitorId: string, status: 'up' | 'down') {
+    vi.mocked(checker.runHttpCheck).mockResolvedValueOnce(
+      status === 'down'
+        ? { status: 'down', responseTimeMs: 120, statusCode: 503, errorCode: 'http_error' }
+        : { status: 'up', responseTimeMs: 40, statusCode: 200, errorCode: null }
+    );
+    const m = (await service.getMonitor(monitorId, ctx.organization.id))!;
+    await service.runCheck(m);
+    return (await service.getMonitor(monitorId, ctx.organization.id))!;
+  }
+
+  async function realIncident(monitorId: string, status: 'open' | 'resolved' = 'open') {
+    return insertIncident({
+      organizationId: ctx.organization.id,
+      projectId: ctx.project.id,
+      source: 'monitor',
+      monitorId,
+      status,
+    });
+  }
+
+  const queueCalls = (name: string) =>
+    vi.mocked(monitorNotificationQueue.add).mock.calls.filter((c) => c[0] === name);
+
+  it('opens a monitor incident when the failure threshold is reached', async () => {
+    const m = await makeMonitor({ failureThreshold: 2 });
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+
+    await runWith(m.id, 'down');
+    expect(openOrUpdateFromSource).not.toHaveBeenCalled();
+    await runWith(m.id, 'down');
+
+    expect(openOrUpdateFromSource).toHaveBeenCalledTimes(1);
+    expect(openOrUpdateFromSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        source: 'monitor',
+        sourceId: m.id,
+        severity: 'critical',
+        title: 'Monitor down: API Health',
+        occurredAt: expect.any(Date),
+        metadata: expect.objectContaining({
+          monitorId: m.id,
+          monitorName: 'API Health',
+          monitorType: 'http',
+          target: 'https://example.com/health',
+          errorCode: 'http_error',
+          statusCode: 503,
+          responseTimeMs: 120,
+          consecutiveFailures: 2,
+          link: `/dashboard/uptime/${m.id}`,
+        }),
+      })
+    );
+  });
+
+  it('stores the incident id in monitor_status and passes it to the notification queue', async () => {
+    const m = await makeMonitor();
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+
+    const after = await runWith(m.id, 'down');
+
+    expect(after.status!.incidentId).toBe(incident.id);
+    expect(queueCalls('monitor-down')).toHaveLength(1);
+    expect(queueCalls('monitor-down')[0][1]).toMatchObject({ monitorId: m.id, incidentId: incident.id });
+  });
+
+  it('does not open an incident before the threshold (threshold 3, one failure)', async () => {
+    const m = await makeMonitor({ failureThreshold: 3 });
+    await runWith(m.id, 'down');
+    expect(openOrUpdateFromSource).not.toHaveBeenCalled();
+    expect(queueCalls('monitor-down')).toHaveLength(0);
+  });
+
+  it('does not open a second incident on further failures', async () => {
+    const m = await makeMonitor();
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+
+    await runWith(m.id, 'down');
+    await runWith(m.id, 'down');
+    await runWith(m.id, 'down');
+
+    expect(openOrUpdateFromSource).toHaveBeenCalledTimes(1);
+    expect(queueCalls('monitor-down')).toHaveLength(1);
+  });
+
+  it('uses displayName in the title when set', async () => {
+    const m = await makeMonitor({ displayName: 'Public API' });
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+
+    await runWith(m.id, 'down');
+
+    expect(openOrUpdateFromSource).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Monitor down: Public API' })
+    );
+  });
+
+  it('resolves on recovery when autoResolve is true (reason recovered) and clears incident_id', async () => {
+    const m = await makeMonitor({ autoResolve: true });
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+
+    await runWith(m.id, 'down');
+    const after = await runWith(m.id, 'up');
+
+    expect(resolveFromSource).toHaveBeenCalledTimes(1);
+    expect(resolveFromSource).toHaveBeenCalledWith({
+      organizationId: ctx.organization.id,
+      source: 'monitor',
+      sourceId: m.id,
+      resolvedAt: expect.any(Date),
+      reason: 'recovered',
+    });
+    expect(after.status!.incidentId).toBeNull();
+    expect(queueCalls('monitor-recovered')).toHaveLength(1);
+  });
+
+  it('keeps the incident open and incident_id when autoResolve is false but still queues the recovery notification', async () => {
+    const m = await makeMonitor({ autoResolve: false });
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+
+    await runWith(m.id, 'down');
+    const after = await runWith(m.id, 'up');
+
+    expect(resolveFromSource).not.toHaveBeenCalled();
+    expect(after.status!.incidentId).toBe(incident.id);
+    expect(queueCalls('monitor-recovered')).toHaveLength(1);
+    expect(queueCalls('monitor-recovered')[0][1]).toMatchObject({ incidentId: incident.id });
+  });
+
+  it('does not queue a recovery notification or resolve when the threshold was never reached', async () => {
+    const m = await makeMonitor({ failureThreshold: 3 });
+
+    await runWith(m.id, 'down');
+    const after = await runWith(m.id, 'up');
+
+    expect(after.status!.status).toBe('up');
+    expect(queueCalls('monitor-recovered')).toHaveLength(0);
+    expect(resolveFromSource).not.toHaveBeenCalled();
+    expect(openOrUpdateFromSource).not.toHaveBeenCalled();
+  });
+
+  it('a rejecting incidents service does not stop the state machine', async () => {
+    const m = await makeMonitor();
+    openOrUpdateFromSource.mockRejectedValue(new Error('incident service down'));
+
+    const after = await runWith(m.id, 'down');
+
+    expect(after.status!.status).toBe('down');
+    expect(after.status!.incidentId).toBeNull();
+    expect(queueCalls('monitor-down')).toHaveLength(1);
+    expect(queueCalls('monitor-down')[0][1]).toMatchObject({ incidentId: null });
+  });
+
+  it('a rejecting resolve keeps the incident id and still marks the monitor up', async () => {
+    const m = await makeMonitor();
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+    resolveFromSource.mockRejectedValue(new Error('incident service down'));
+
+    await runWith(m.id, 'down');
+    const after = await runWith(m.id, 'up');
+
+    expect(after.status!.status).toBe('up');
+    expect(after.status!.incidentId).toBe(incident.id);
+    expect(queueCalls('monitor-recovered')).toHaveLength(1);
+  });
+
+  it('deleting a monitor with an open incident resolves it with reason manual', async () => {
+    const m = await makeMonitor();
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+    await runWith(m.id, 'down');
+
+    await service.deleteMonitor(m.id, ctx.organization.id);
+
+    expect(resolveFromSource).toHaveBeenCalledWith({
+      organizationId: ctx.organization.id,
+      source: 'monitor',
+      sourceId: m.id,
+      resolvedAt: expect.any(Date),
+      reason: 'manual',
+    });
+    expect(await service.getMonitor(m.id, ctx.organization.id)).toBeNull();
+  });
+
+  it('deleting a monitor of another organization resolves nothing and deletes nothing', async () => {
+    const m = await makeMonitor();
+    const other = await createTestContext();
+
+    await service.deleteMonitor(m.id, other.organization.id);
+
+    expect(resolveFromSource).not.toHaveBeenCalled();
+    expect(await service.getMonitor(m.id, ctx.organization.id)).not.toBeNull();
+  });
+
+  it('disabling a monitor resolves its incident with reason manual and clears the status', async () => {
+    const m = await makeMonitor();
+    const incident = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValue({ incident: { id: incident.id }, created: true });
+    await runWith(m.id, 'down');
+
+    await service.updateMonitor(m.id, ctx.organization.id, { enabled: false });
+
+    expect(resolveFromSource).toHaveBeenCalledWith({
+      organizationId: ctx.organization.id,
+      source: 'monitor',
+      sourceId: m.id,
+      resolvedAt: expect.any(Date),
+      reason: 'manual',
+    });
+    const after = (await service.getMonitor(m.id, ctx.organization.id))!;
+    expect(after.enabled).toBe(false);
+    expect(after.status!.incidentId).toBeNull();
+    expect(after.status!.consecutiveFailures).toBe(0);
+  });
+
+  it('updating without disabling does not resolve anything', async () => {
+    const m = await makeMonitor();
+    await service.updateMonitor(m.id, ctx.organization.id, { name: 'Renamed' });
+    await service.updateMonitor(m.id, ctx.organization.id, { enabled: true });
+    expect(resolveFromSource).not.toHaveBeenCalled();
+  });
+
+  it('down, up, down opens a new incident for the second outage', async () => {
+    const m = await makeMonitor({ autoResolve: true });
+    const first = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValueOnce({ incident: { id: first.id }, created: true });
+
+    await runWith(m.id, 'down');
+    await runWith(m.id, 'up');
+
+    await db.updateTable('incidents').set({ status: 'resolved' }).where('id', '=', first.id).where('organization_id', '=', ctx.organization.id).execute();
+    const second = await realIncident(m.id);
+    openOrUpdateFromSource.mockResolvedValueOnce({ incident: { id: second.id }, created: true });
+
+    const after = await runWith(m.id, 'down');
+
+    expect(openOrUpdateFromSource).toHaveBeenCalledTimes(2);
+    expect(after.status!.incidentId).toBe(second.id);
+    expect(queueCalls('monitor-down')).toHaveLength(2);
   });
 });

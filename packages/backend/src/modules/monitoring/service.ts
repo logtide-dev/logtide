@@ -32,6 +32,9 @@ import {
 } from './checker.js';
 import { reservoir } from '../../database/reservoir.js';
 import { config } from '../../config/index.js';
+import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
+import { incidentsService } from '../incidents/service.js';
 
 const MAX_CONCURRENT_CHECKS = 20;
 
@@ -185,6 +188,25 @@ export class MonitorService {
     organizationId: string,
     input: UpdateMonitorInput
   ): Promise<Monitor | null> {
+    // Disabling a monitor ends its outage: resolve the shared incident first and
+    // reset the check state so a re-enabled monitor starts a fresh evaluation.
+    if (input.enabled === false) {
+      const current = await this.db
+        .selectFrom('monitors')
+        .select(['id', 'organization_id', 'enabled'])
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (current?.enabled) {
+        await this.resolveMonitorIncident({ id, organizationId }, new Date(), 'manual');
+        await this.db
+          .updateTable('monitor_status')
+          .set({ incident_id: null, consecutive_failures: 0 })
+          .where('monitor_id', '=', id)
+          .execute();
+      }
+    }
+
     const row = await this.db
       .updateTable('monitors')
       .set({
@@ -214,6 +236,18 @@ export class MonitorService {
   }
 
   async deleteMonitor(id: string, organizationId: string): Promise<void> {
+    // Resolve the open incident (reason manual) before the monitor row goes away.
+    // Scoped by organization: a monitor of another tenant resolves nothing.
+    const existing = await this.db
+      .selectFrom('monitors')
+      .select('id')
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    if (existing) {
+      await this.resolveMonitorIncident({ id, organizationId }, new Date(), 'manual');
+    }
+
     await this.db
       .deleteFrom('monitors')
       .where('id', '=', id)
@@ -705,7 +739,17 @@ export class MonitorService {
         newFailures >= monitor.failureThreshold &&
         prevConsecutiveFailures < monitor.failureThreshold
       ) {
-        await this.notifyMonitorDown(monitor, result, newFailures);
+        // One incident per outage: opened exactly at the threshold crossing, never
+        // on further failures. A failing incidents service must not break the loop.
+        const incidentId = await this.openMonitorIncident(monitor, result, newFailures, now);
+        if (incidentId) {
+          await this.db
+            .updateTable('monitor_status')
+            .set({ incident_id: incidentId })
+            .where('monitor_id', '=', monitor.id)
+            .execute();
+        }
+        await this.notifyMonitorDown(monitor, result, newFailures, incidentId);
       }
 
       if (statusChanged) {
@@ -715,9 +759,22 @@ export class MonitorService {
       const newSuccesses = (currentStatusData.consecutiveSuccesses ?? 0) + 1;
       const statusChanged = prevStatus !== 'up';
 
+      // A recovery only counts as one when the outage was ever reported, i.e. the
+      // failure threshold was reached (otherwise no down notice or incident exists).
+      const outageReported =
+        prevStatus === 'down' && prevConsecutiveFailures >= monitor.failureThreshold;
+
+      // Resolve the incident on recovery when auto-resolve is on. When the resolve
+      // call fails the incident id is kept so the UI still links to the open incident.
+      let clearIncidentId = false;
+      if (outageReported && monitor.autoResolve) {
+        clearIncidentId = await this.resolveMonitorIncident(monitor, now, 'recovered');
+      }
+
       await this.db
         .updateTable('monitor_status')
         .set({
+          ...(clearIncidentId && { incident_id: null }),
           status: 'up',
           consecutive_failures: 0,
           consecutive_successes: newSuccesses,
@@ -732,8 +789,12 @@ export class MonitorService {
         .execute();
 
       // Send recovery notification when transitioning from down → up
-      if (prevStatus === 'down') {
-        await this.notifyMonitorRecovered(monitor, currentStatusData.lastStatusChangeAt);
+      if (outageReported) {
+        await this.notifyMonitorRecovered(
+          monitor,
+          currentStatusData.lastStatusChangeAt,
+          currentStatusData.incidentId
+        );
       }
 
       if (statusChanged) {
@@ -742,7 +803,85 @@ export class MonitorService {
     }
   }
 
-  private async notifyMonitorDown(monitor: Monitor, result: CheckResult, consecutiveFailures: number): Promise<void> {
+  /**
+   * Open (or refresh) the shared incident for this outage. Returns the incident id,
+   * or null when the incidents service failed; the check loop carries on either way.
+   */
+  private async openMonitorIncident(
+    monitor: Monitor,
+    result: CheckResult,
+    consecutiveFailures: number,
+    occurredAt: Date
+  ): Promise<string | null> {
+    const label = monitor.displayName ?? monitor.name;
+    try {
+      const { incident } = await incidentsService.openOrUpdateFromSource({
+        organizationId: monitor.organizationId,
+        projectId: monitor.projectId,
+        source: 'monitor',
+        sourceId: monitor.id,
+        title: `Monitor down: ${label}`,
+        description: `${label} is not responding${result.errorCode ? ` (${result.errorCode})` : ''}`,
+        severity: monitor.severity,
+        occurredAt,
+        metadata: {
+          monitorId: monitor.id,
+          monitorName: monitor.name,
+          monitorType: monitor.type,
+          target: monitor.target,
+          errorCode: result.errorCode,
+          statusCode: result.statusCode,
+          responseTimeMs: result.responseTimeMs,
+          consecutiveFailures,
+          link: `/dashboard/uptime/${monitor.id}`,
+        },
+      });
+      return incident.id;
+    } catch (err) {
+      this.logIncidentFailure(`open incident for monitor ${monitor.id}`, err);
+      return null;
+    }
+  }
+
+  /**
+   * Resolve the monitor's active incident. Returns true when the call succeeded
+   * (also when there was nothing to resolve), false when the service failed.
+   */
+  private async resolveMonitorIncident(
+    monitor: Pick<Monitor, 'id' | 'organizationId'>,
+    resolvedAt: Date,
+    reason: 'recovered' | 'manual'
+  ): Promise<boolean> {
+    try {
+      await incidentsService.resolveFromSource({
+        organizationId: monitor.organizationId,
+        source: 'monitor',
+        sourceId: monitor.id,
+        resolvedAt,
+        reason,
+      });
+      return true;
+    } catch (err) {
+      this.logIncidentFailure(`resolve incident for monitor ${monitor.id}`, err);
+      return false;
+    }
+  }
+
+  private logIncidentFailure(action: string, err: unknown): void {
+    console.error(`[MonitorService] Failed to ${action}:`, err);
+    if (isInternalLoggingEnabled()) {
+      hub.captureLog('error', `Failed to ${action}`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async notifyMonitorDown(
+    monitor: Monitor,
+    result: CheckResult,
+    consecutiveFailures: number,
+    incidentId: string | null = null
+  ): Promise<void> {
     try {
       await monitorNotificationQueue.add('monitor-down', {
         monitorId: monitor.id,
@@ -755,6 +894,7 @@ export class MonitorService {
         errorCode: result.errorCode,
         responseTimeMs: result.responseTimeMs,
         consecutiveFailures,
+        incidentId,
       });
       console.log(`[MonitorService] Queued down notification for monitor "${monitor.name}"`);
     } catch (err) {
@@ -762,7 +902,11 @@ export class MonitorService {
     }
   }
 
-  private async notifyMonitorRecovered(monitor: Monitor, downtimeStart: Date | null): Promise<void> {
+  private async notifyMonitorRecovered(
+    monitor: Monitor,
+    downtimeStart: Date | null,
+    incidentId: string | null = null
+  ): Promise<void> {
     try {
       let downtimeDuration: string | null = null;
       if (downtimeStart) {
@@ -782,6 +926,7 @@ export class MonitorService {
         severity: monitor.severity,
         target: monitor.target,
         downtimeDuration,
+        incidentId,
       });
       console.log(`[MonitorService] Queued recovery notification for monitor "${monitor.name}"`);
     } catch (err) {

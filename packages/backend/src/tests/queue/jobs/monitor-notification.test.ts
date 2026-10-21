@@ -156,7 +156,7 @@ describe('Monitor webhook envelope', () => {
     expect(envelope.type).toBe('monitor.status_changed');
   });
 
-  it('monitor notification links to /dashboard/uptime', async () => {
+  it('falls back to /dashboard/uptime/<monitorId> without an incident', async () => {
     const owner = await createTestUser({ name: 'Monitor Owner 3' });
     const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 3' });
 
@@ -182,10 +182,86 @@ describe('Monitor webhook envelope', () => {
 
     expect(createNotificationMock).toHaveBeenCalled();
     const notif = createNotificationMock.mock.calls[0][0];
-    expect(notif.metadata.link).toBe('/dashboard/uptime');
+    expect(notif.metadata.link).toBe('/dashboard/uptime/mon-003');
 
     const envelope = parseWebhookEvent(monitorEnqueueMock.mock.calls[0][0].payload);
     const link = (envelope.data as Record<string, unknown>).link as string;
-    expect(link.endsWith('/dashboard/uptime')).toBe(true);
+    expect(link.endsWith('/dashboard/uptime/mon-003')).toBe(true);
+    expect((envelope.data as Record<string, unknown>).incident_id ?? null).toBeNull();
+  });
+
+  it('webhook envelope carries incident_id and a /dashboard/incidents/<id> link', async () => {
+    const owner = await createTestUser({ name: 'Monitor Owner 4' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 4' });
+
+    mockGetMonitorChannels.mockResolvedValueOnce([{
+      id: '00000000-0000-0000-0000-000000000043',
+      type: 'webhook',
+      enabled: true,
+      config: { url: 'https://hooks.example.com/monitor4' },
+    }]);
+
+    const incidentId = '11111111-1111-4111-8111-111111111111';
+    const job = {
+      data: {
+        monitorId: 'mon-004',
+        monitorName: 'Incident Link',
+        organizationId: org.id,
+        projectId: '00000000-0000-0000-0000-000000000000',
+        status: 'down',
+        severity: 'high',
+        incidentId,
+      } as MonitorNotificationJob,
+    } as Job<MonitorNotificationJob>;
+
+    await processMonitorNotification(job);
+
+    const envelope = parseWebhookEvent(monitorEnqueueMock.mock.calls[0][0].payload);
+    const d = envelope.data as Record<string, unknown>;
+    expect(d.incident_id).toBe(incidentId);
+    expect((d.link as string).endsWith(`/dashboard/incidents/${incidentId}`)).toBe(true);
+  });
+
+  it('in-app notification metadata link follows the same rule', async () => {
+    const owner = await createTestUser({ name: 'Monitor Owner 5' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 5' });
+    const incidentId = '22222222-2222-4222-8222-222222222222';
+
+    await processMonitorNotification({
+      data: {
+        monitorId: 'mon-005',
+        monitorName: 'In-app Link',
+        organizationId: org.id,
+        projectId: '00000000-0000-0000-0000-000000000000',
+        status: 'down',
+        severity: 'high',
+        incidentId,
+      } as MonitorNotificationJob,
+    } as Job<MonitorNotificationJob>);
+
+    expect(createNotificationMock).toHaveBeenCalled();
+    const notif = createNotificationMock.mock.calls[0][0];
+    expect(notif.metadata.link).toBe(`/dashboard/incidents/${incidentId}`);
+    expect(notif.metadata.incidentId).toBe(incidentId);
+  });
+
+  it('recovery notifications link to the incident too', async () => {
+    const owner = await createTestUser({ name: 'Monitor Owner 6' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 6' });
+    const incidentId = '33333333-3333-4333-8333-333333333333';
+
+    await processMonitorNotification({
+      data: {
+        monitorId: 'mon-006',
+        monitorName: 'Recovered Link',
+        organizationId: org.id,
+        projectId: '00000000-0000-0000-0000-000000000000',
+        status: 'up',
+        severity: 'high',
+        incidentId,
+      } as MonitorNotificationJob,
+    } as Job<MonitorNotificationJob>);
+
+    expect(createNotificationMock.mock.calls[0][0].metadata.link).toBe(`/dashboard/incidents/${incidentId}`);
   });
 });
