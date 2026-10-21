@@ -15,6 +15,8 @@ import type { CountParams, EngineType, LogRecord, QueryParams, SpanRecord, Trace
 import { CORPUS_LOGS, CORPUS_SPANS, CORPUS_TRACES, PROJECT_A, WINDOW } from './corpus.js';
 import { createConformanceReservoir, isConformanceRequired, resolveSubject } from './targets.js';
 import { describeBaselineConformance } from './suites/baseline.js';
+import { describeTextQueryConformance } from './suites/text-query.js';
+import { describeFilterConformance } from './suites/filters.js';
 
 export type ConformanceEngine = EngineType | 'reference';
 
@@ -121,6 +123,42 @@ export function logCaseParams(kase: Pick<LogCase, 'q' | 'params' | 'projectIds' 
   return mergeCompiledSearch(base, compileLogSearch(parsed.query));
 }
 
+export interface LogCaseMismatch {
+  /** Returned ids that are not expected (nor allowed by `timescaleMayAlsoMatch` on TimescaleDB). */
+  unexpected: string[];
+  /** Expected ids that were not returned. */
+  missing: string[];
+  /** Ids returned more than once. */
+  duplicated: string[];
+}
+
+const NO_MISMATCH: LogCaseMismatch = { unexpected: [], missing: [], duplicated: [] };
+
+/**
+ * Compares returned fixture ids with a case. `timescaleMayAlsoMatch` is
+ * honoured only for the `timescale` engine (spec 5.3 stemming); every other
+ * engine must return exactly `expected`.
+ */
+export function logCaseMismatch(
+  engine: ConformanceEngine,
+  kase: Pick<LogCase, 'expected' | 'timescaleMayAlsoMatch'>,
+  actualIds: string[],
+): LogCaseMismatch {
+  const allowed = new Set(kase.expected);
+  if (engine === 'timescale') for (const id of kase.timescaleMayAlsoMatch ?? []) allowed.add(id);
+  const seen = new Set<string>();
+  const duplicated = new Set<string>();
+  for (const id of actualIds) {
+    if (seen.has(id)) duplicated.add(id);
+    seen.add(id);
+  }
+  return {
+    unexpected: [...seen].filter((id) => !allowed.has(id)).sort(),
+    missing: kase.expected.filter((id) => !seen.has(id)).sort(),
+    duplicated: [...duplicated].sort(),
+  };
+}
+
 /** One `it` per case: query ids (as a set) and count must agree with `expected`. */
 export function runLogCases(ctx: ConformanceContext, cases: LogCase[]): void {
   for (const kase of cases) {
@@ -128,15 +166,7 @@ export function runLogCases(ctx: ConformanceContext, cases: LogCase[]): void {
       const subject = ctx.subject();
       const params = logCaseParams(kase);
       const result = await subject.query({ ...params, limit: 1000, sortOrder: 'asc' } as QueryParams);
-      const actual = logIdsOf(result.logs).sort();
-      const expected = [...kase.expected].sort();
-      if (ctx.engine === 'timescale' && kase.timescaleMayAlsoMatch) {
-        const allowed = new Set([...expected, ...kase.timescaleMayAlsoMatch]);
-        expect(actual.filter((id) => !allowed.has(id)), 'ids outside expected + timescaleMayAlsoMatch').toEqual([]);
-        expect(expected.filter((id) => !actual.includes(id)), 'expected ids missing').toEqual([]);
-      } else {
-        expect(actual).toEqual(expected);
-      }
+      expect(logCaseMismatch(ctx.engine, kase, logIdsOf(result.logs))).toEqual(NO_MISMATCH);
       const { count } = await subject.count(params as CountParams);
       expect(count, 'count equals the number of returned logs').toBe(result.logs.length);
     });
@@ -179,5 +209,7 @@ export function describeReservoirConformance(engine: ConformanceEngine, options:
     };
 
     describeBaselineConformance(ctx);
+    describeTextQueryConformance(ctx);
+    describeFilterConformance(ctx);
   });
 }

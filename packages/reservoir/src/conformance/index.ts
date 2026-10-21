@@ -36,3 +36,5 @@ export * from './targets.js';
 export * from './harness.js';
 export { ReferenceEngine, createReferenceReservoir } from './reference-engine.js';
 export { describeBaselineConformance } from './suites/baseline.js';
+export { describeTextQueryConformance, TEXT_QUERY_CASES } from './suites/text-query.js';
+export { describeFilterConformance, FILTER_CASES } from './suites/filters.js';
