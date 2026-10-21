@@ -1,29 +1,46 @@
 import { browser } from '$app/environment';
+import { levelTone, severityTone, stateTone } from './severity';
+
+/** Chart hex for a log level (single source: the severity module). */
+export function levelColor(level: string): string {
+  return levelTone(level).chart;
+}
+
+/** Chart hex for a SIEM severity. */
+export function severityColor(sev: string): string {
+  return severityTone(sev).chart;
+}
+
+/** Chart hex for a state (open, resolved, up, down, ...). */
+export function stateColor(state: string): string {
+  return stateTone(state).chart;
+}
 
 /**
  * Chart color palette - semantic colors that work in both light and dark modes.
- * These colors are chosen for WCAG AA compliance (4.5:1 contrast ratio).
+ * The red/amber/green/purple/blue/gray hexes come from the severity module so
+ * charts and badges share one palette.
  */
 export const chartColors = {
   // Series colors - used for data visualization
   series: {
-    blue: '#3b82f6',      // Blue-500 - primary data
-    red: '#ef4444',       // Red-500 - errors, destructive
-    amber: '#f59e0b',     // Amber-500 - warnings
-    green: '#10b981',     // Emerald-500 - success, info
-    purple: '#a855f7',    // Purple-500 - severity critical
-    orange: '#f97316',    // Orange-500 - severity high
-    yellow: '#eab308',    // Yellow-500 - severity medium
-    gray: '#6b7280',      // Gray-500 - informational
+    blue: levelColor('info'),
+    red: levelColor('error'),
+    amber: levelColor('warn'),
+    green: stateColor('ok'),
+    purple: levelColor('critical'),
+    orange: '#f97316',    // Orange-500 - not part of the severity palette
+    yellow: '#eab308',    // Yellow-500 - not part of the severity palette
+    gray: levelColor('debug'),
   },
 
   // Severity colors (for SIEM)
   severity: {
-    critical: '#a855f7',  // Purple
-    high: '#ef4444',      // Red
-    medium: '#f97316',    // Orange
-    low: '#eab308',       // Yellow
-    informational: '#3b82f6', // Blue
+    critical: severityColor('critical'),
+    high: severityColor('high'),
+    medium: severityColor('medium'),
+    low: severityColor('low'),
+    informational: severityColor('informational'),
   },
 
   // Gradient stops for heatmaps
@@ -35,9 +52,20 @@ export const chartColors = {
   },
 } as const;
 
+/** Read a CSS variable (HSL triplet) from the root and wrap it as hsl(...). */
+function cssColor(name: string, fallback: string): string {
+  try {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return raw ? `hsl(${raw})` : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * Get theme-aware colors for ECharts based on current document theme.
- * Reads CSS variables from the document root.
+ * Tooltip colours read the CSS variables from the document root, falling back
+ * to fixed values when they are empty (jsdom, SSR).
  */
 export function getEChartsTheme() {
   if (!browser) {
@@ -49,6 +77,8 @@ export function getEChartsTheme() {
       backgroundColor: 'transparent',
       tooltipBackground: '#18181b',
       tooltipBorder: '#27272a',
+      tooltipText: '#fafafa',
+      mutedText: '#a1a1aa',
       isDark: true,
     };
   }
@@ -57,7 +87,7 @@ export function getEChartsTheme() {
 
   return {
     // Text colors
-    textColor: isDark ? '#a1a1aa' : '#71717a',
+    textColor: cssColor('--muted-foreground', isDark ? '#a1a1aa' : '#71717a'),
 
     // Axis and grid lines
     axisLineColor: isDark ? '#27272a' : '#e4e4e7',
@@ -65,8 +95,10 @@ export function getEChartsTheme() {
 
     // Backgrounds
     backgroundColor: 'transparent',
-    tooltipBackground: isDark ? '#18181b' : '#ffffff',
-    tooltipBorder: isDark ? '#27272a' : '#e4e4e7',
+    tooltipBackground: cssColor('--popover', isDark ? '#18181b' : '#ffffff'),
+    tooltipBorder: cssColor('--border', isDark ? '#27272a' : '#e4e4e7'),
+    tooltipText: cssColor('--popover-foreground', isDark ? '#fafafa' : '#18181b'),
+    mutedText: cssColor('--muted-foreground', isDark ? '#a1a1aa' : '#71717a'),
 
     // Theme indicator
     isDark,
@@ -107,7 +139,7 @@ export function getTooltipStyle() {
     backgroundColor: theme.tooltipBackground,
     borderColor: theme.tooltipBorder,
     textStyle: {
-      color: theme.isDark ? '#fafafa' : '#18181b',
+      color: theme.tooltipText,
     },
   };
 }

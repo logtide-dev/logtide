@@ -14,7 +14,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'tests/guards/**/*.guard.ts'],
     setupFiles: ['./src/test-setup.ts'],
   },
   resolve: {
