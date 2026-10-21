@@ -8,6 +8,8 @@ vi.mock('$lib/api/receivers', () => ({
 import CreateReceiverDialog from './CreateReceiverDialog.svelte';
 import ReceiverEventsDialog from './ReceiverEventsDialog.svelte';
 
+const dashPattern = new RegExp('[' + String.fromCharCode(0x2013, 0x2014) + ']');
+
 describe('inbound webhook copy', () => {
 	it('names the create dialog Inbound webhook everywhere', () => {
 		render(CreateReceiverDialog, { onSubmit: vi.fn(), open: true });
@@ -18,7 +20,7 @@ describe('inbound webhook copy', () => {
 		).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Create inbound webhook' })).toBeInTheDocument();
 		expect(screen.queryByText(/Receiver/)).toBeNull();
-		expect(document.body.textContent).not.toMatch(/[–—]/);
+		expect(document.body.textContent).not.toMatch(dashPattern);
 	});
 
 	it('names the events dialog Inbound webhook events', async () => {
@@ -30,6 +32,6 @@ describe('inbound webhook copy', () => {
 
 		expect(await screen.findByText(/^Inbound webhook events/)).toBeInTheDocument();
 		expect(screen.queryByText(/Receiver/)).toBeNull();
-		expect(document.body.textContent).not.toMatch(/[–—]/);
+		expect(document.body.textContent).not.toMatch(dashPattern);
 	});
 });
