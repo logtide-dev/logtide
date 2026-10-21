@@ -83,11 +83,14 @@ export function describeBaselineConformance(ctx: ConformanceContext): void {
       expect(span.parentSpanId).toBe(corpusSpan('PAGE-3').spanId);
     });
 
-    it('B08 span operation alias and duration sort work through the client', async () => {
-      const subject = ctx.subject();
-      const byOperation = await subject.querySpans({ projectId: PROJECT_A, ...WINDOW, operation: 'POST /orders', limit: 1000 });
+    // B08 is two cases so the alias and the sort report independently.
+    it('B08 span operation alias works through the client', async () => {
+      const byOperation = await ctx.subject().querySpans({ projectId: PROJECT_A, ...WINDOW, operation: 'POST /orders', limit: 1000 });
       expect(spanIdsOf(byOperation.spans).sort()).toEqual([...POSTS].sort());
-      const slowest = await subject.querySpans({
+    });
+
+    it('B08b span duration sort works through the client', async () => {
+      const slowest = await ctx.subject().querySpans({
         projectId: PROJECT_A, ...WINDOW, serviceName: 'api', kind: 'SERVER', sortBy: 'duration', sortOrder: 'desc', limit: 3,
       });
       expect(spanIdsOf(slowest.spans)).toEqual(['POST-10', 'POST-9', 'POST-8']);

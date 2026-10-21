@@ -138,6 +138,26 @@ export function isConformanceRequired(env: NodeJS.ProcessEnv = process.env): boo
   return env.RESERVOIR_CONFORMANCE_REQUIRED === '1';
 }
 
+/**
+ * Engines listed in RESERVOIR_CONFORMANCE_ENGINES (comma separated, spaces
+ * ignored, duplicates dropped, order kept). An unknown name throws, so a typo
+ * fails at collection instead of silently running nothing.
+ */
+export function parseConformanceEngines(env: NodeJS.ProcessEnv = process.env): EngineType[] {
+  const engines: EngineType[] = [];
+  for (const raw of (env.RESERVOIR_CONFORMANCE_ENGINES ?? '').split(',')) {
+    const name = raw.trim();
+    if (name === '') continue;
+    if (!Object.prototype.hasOwnProperty.call(CONFORMANCE_ENV, name)) {
+      throw new ConformanceConfigError(
+        `Unknown engine "${name}" in RESERVOIR_CONFORMANCE_ENGINES (use ${Object.keys(CONFORMANCE_ENV).join(', ')})`,
+      );
+    }
+    if (!engines.includes(name as EngineType)) engines.push(name as EngineType);
+  }
+  return engines;
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {

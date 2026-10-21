@@ -24,12 +24,28 @@
 // 4. From packages/reservoir, e.g.
 //    RESERVOIR_CONFORMANCE_REQUIRED=1 RESERVOIR_CLICKHOUSE_URL=http://default:@localhost:18123/ux16_rch \
 //      npx vitest run src/engines/clickhouse/clickhouse-conformance.test.ts
-// 5. The in-memory reference engine runs the whole suite in CI without
+//    Master plan databases: ux16_rts (Timescale, RESERVOIR_TIMESCALE_URL
+//    database), ux16_rch (ClickHouse), ux16_rmg (MongoDB).
+// 5. Ad hoc or Wave D runs without engine files:
+//    RESERVOIR_CONFORMANCE_ENGINES=timescale,clickhouse,mongodb RESERVOIR_CONFORMANCE_REQUIRED=1 \
+//      npx vitest run src/conformance/live.test.ts
+//    (any subset; an unknown name fails at collection; unset, the file skips).
+//    Add `-t baseline` (or another describe name) to run one capability.
+// 6. The in-memory reference engine runs the whole suite in CI without
 //    databases: `npx vitest run src/conformance/conformance.test.ts`.
+// 7. Known blocker until R-TS lands: TimescaleEngine.initialize() creates no
+//    session_id column and no spans/traces tables, so Timescale seeding fails
+//    loudly; ClickHouse and MongoDB seed and pass the baseline today.
+//
+// Capabilities (one describe each, in this order): baseline, text query,
+// direct filters, field clauses, histogram, facets, metadata keys, operation
+// stats, latency histogram, span and trace queries, sessions.
 //
 // Ownership: F3 owns the suite and the corpus. Engine workstreams may add
 // cases and fix harness code, never weaken, delete or loosen an expectation
-// (including widening `timescaleMayAlsoMatch` or a tolerance).
+// (including widening `timescaleMayAlsoMatch` or a tolerance); a failing
+// expectation is fixed in the engine, and any relaxation needs orchestrator
+// approval.
 
 export * from './corpus.js';
 export * from './targets.js';

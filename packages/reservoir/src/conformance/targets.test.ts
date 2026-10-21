@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   resolveConformanceTarget,
   isConformanceRequired,
+  parseConformanceEngines,
   probeConformanceTarget,
   createConformanceReservoir,
   resolveSubject,
@@ -162,4 +163,21 @@ it('error classes carry their names', () => {
   expect(unavailable.name).toBe('ConformanceUnavailableError');
   expect(unavailable.url).toBe('u');
   expect(new ConformanceConfigError('y').name).toBe('ConformanceConfigError');
+});
+
+describe('parseConformanceEngines', () => {
+  it('is empty without the variable', () => {
+    expect(parseConformanceEngines({})).toEqual([]);
+    expect(parseConformanceEngines({ RESERVOIR_CONFORMANCE_ENGINES: '' })).toEqual([]);
+    expect(parseConformanceEngines({ RESERVOIR_CONFORMANCE_ENGINES: ' , ' })).toEqual([]);
+  });
+  it('reads a comma list, trims, dedupes and keeps order', () => {
+    expect(parseConformanceEngines({ RESERVOIR_CONFORMANCE_ENGINES: 'clickhouse, mongodb,clickhouse ,timescale' }))
+      .toEqual(['clickhouse', 'mongodb', 'timescale']);
+  });
+  it('throws on an unknown engine name', () => {
+    expect(() => parseConformanceEngines({ RESERVOIR_CONFORMANCE_ENGINES: 'clickhouse,postgres' })).toThrow(ConformanceConfigError);
+    expect(() => parseConformanceEngines({ RESERVOIR_CONFORMANCE_ENGINES: 'reference' })).toThrow('Unknown engine "reference"');
+    expect(() => parseConformanceEngines({ RESERVOIR_CONFORMANCE_ENGINES: 'ClickHouse' })).toThrow(ConformanceConfigError);
+  });
 });
