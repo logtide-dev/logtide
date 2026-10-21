@@ -24,8 +24,7 @@ import type {
   NotificationEventType,
   NotificationRoutingPreview,
 } from '@logtide/shared';
-import { isSmtpConfigured } from '../../config/index.js';
-import { notificationChannelsService } from './service.js';
+import { resolveChannelsForEvent, toPreview } from './resolver.js';
 
 export interface RoutingPreviewInput {
   organizationId: string;
@@ -42,35 +41,11 @@ export const ROUTING_DISPATCH_GAPS: readonly string[] = [
 export async function resolveRoutingPreview(
   input: RoutingPreviewInput
 ): Promise<NotificationRoutingPreview> {
-  const { organizationId, eventType } = input;
-  const requested = new Set(input.channelIds ?? []);
-
-  let chosen: Array<{ id: string; name: string; type: string }> = [];
-
-  if (requested.size > 0) {
-    // Enabled channels of THIS organization only: foreign, disabled and
-    // unknown ids are dropped silently.
-    const channels = await notificationChannelsService.getChannels(organizationId, {
-      enabledOnly: true,
-    });
-    chosen = channels.filter((c) => requested.has(c.id));
-  }
-
-  if (chosen.length === 0) {
-    chosen = await notificationChannelsService.getOrganizationDefaults(
-      organizationId,
-      eventType
-    );
-  }
-
-  const destinations = chosen
-    .map((c) => ({ id: c.id, name: c.name, type: c.type as string }))
-    .sort((a, b) =>
-      a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-    );
-
-  return {
-    destinations,
-    fallback: destinations.length === 0 && isSmtpConfigured() ? 'owners_admins_email' : null,
-  };
+  // The same resolution the notification jobs use (resolver.ts).
+  const routing = await resolveChannelsForEvent({
+    organizationId: input.organizationId,
+    eventType: input.eventType,
+    explicitChannelIds: input.channelIds,
+  });
+  return toPreview(routing);
 }

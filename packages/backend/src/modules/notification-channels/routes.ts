@@ -431,6 +431,34 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
   });
 
   // ============================================================================
+  // ROUTING OVERRIDES
+  // ============================================================================
+
+  /**
+   * GET /api/v1/notification-channels/overrides
+   * Rules that carry their own destinations (any member)
+   */
+  fastify.get('/overrides', async (request: any, reply) => {
+    try {
+      const { organizationId } = orgQuerySchema.parse(request.query);
+
+      const isMember = await checkOrganizationMembership(request.user.id, organizationId);
+      if (!isMember) {
+        return reply.status(403).send({ error: 'Not a member of this organization' });
+      }
+
+      const overrides = await notificationChannelsService.getRoutingOverrides(organizationId);
+      return reply.send({ overrides });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'organizationId is required' });
+      }
+      console.error(error, 'Failed to get routing overrides');
+      return reply.status(500).send({ error: 'Failed to get overrides' });
+    }
+  });
+
+  // ============================================================================
   // ORGANIZATION DEFAULTS
   // ============================================================================
 
