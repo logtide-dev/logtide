@@ -40,4 +40,17 @@ describe('CustomRangeEditor', () => {
     expect(getByRole('alert').textContent).toBe('Enter a valid date and time');
     expect(onApply).not.toHaveBeenCalled();
   });
+
+  it('calendar and inputs are labelled', () => {
+    const { container, getByLabelText } = setup('UTC');
+    expect(getByLabelText('From')).toBeTruthy();
+    expect(getByLabelText('To')).toBeTruthy();
+    const buttons = Array.from(container.querySelectorAll('button'));
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const b of buttons) {
+      const name = (b.textContent ?? '').trim() || b.getAttribute('aria-label') || '';
+      expect(name, b.outerHTML.slice(0, 120)).not.toBe('');
+    }
+    expect(container.querySelector('[role="application"], [role="grid"]')).toBeTruthy();
+  });
 });
