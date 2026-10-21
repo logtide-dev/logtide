@@ -143,6 +143,9 @@ const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low', 'informational'] as
 /** A capability at or above this share of its limit is worth warning about. */
 const QUOTA_WARNING_THRESHOLD = 0.8;
 
+/** Incident sources that count as security incidents in the digest. */
+const SECURITY_INCIDENT_SOURCES = ['sigma', 'manual'];
+
 let emailTransporter: Transporter | null = null;
 
 function getEmailTransporter(): Transporter | null {
@@ -460,6 +463,8 @@ export class DigestGeneratorService {
       .select((eb) => eb.fn.countAll<number>().as('count'))
       .where('organization_id', '=', organizationId)
       .where('status', 'in', ['open', 'investigating'])
+      // Alert and uptime incidents (F4) are not security incidents
+      .where('source', 'in', SECURITY_INCIDENT_SOURCES)
       .executeTakeFirst();
 
     return {
@@ -878,6 +883,7 @@ export class DigestGeneratorService {
       .where('organization_id', '=', organizationId)
       .where('created_at', '>=', period.from)
       .where('created_at', '<', period.to)
+      .where('source', 'in', SECURITY_INCIDENT_SOURCES)
       .groupBy('severity')
       .execute();
 
@@ -887,6 +893,7 @@ export class DigestGeneratorService {
       .where('organization_id', '=', organizationId)
       .where('resolved_at', '>=', period.from)
       .where('resolved_at', '<', period.to)
+      .where('source', 'in', SECURITY_INCIDENT_SOURCES)
       .executeTakeFirst();
 
     // Only mitre_techniques is unnested here. Unnesting mitre_techniques and
