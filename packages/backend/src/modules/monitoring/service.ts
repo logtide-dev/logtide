@@ -12,17 +12,42 @@ import type {
   UpdateMonitorInput,
   CheckResult,
   HttpConfig,
+  SslCheckConfig,
+  DnsCheckConfig,
   PublicStatusPage,
   PublicMonitorStatus,
   PublicStatusIncident,
   PublicMaintenance,
   MonitorCurrentStatus,
 } from './types.js';
-import { runHttpCheck, runTcpCheck, runHeartbeatCheck, runLogHeartbeatCheck, parseTcpTarget } from './checker.js';
+import {
+  runHttpCheck,
+  runTcpCheck,
+  runHeartbeatCheck,
+  runLogHeartbeatCheck,
+  runSslCheck,
+  runDnsCheck,
+  parseTcpTarget,
+  parseHostPort,
+} from './checker.js';
 import { reservoir } from '../../database/reservoir.js';
 import { config } from '../../config/index.js';
 
 const MAX_CONCURRENT_CHECKS = 20;
+
+/** JSONB columns arrive parsed from pg, but tolerate a string and anything that is not an object. */
+function parseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (value === null || value === undefined) return null;
+  let v = value;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
 
 // Row type returned by the monitors LEFT JOIN monitor_status query
 interface MonitorWithStatusRow {
@@ -40,6 +65,10 @@ interface MonitorWithStatusRow {
   enabled: boolean;
   http_config: unknown;
   severity: Severity;
+  display_name?: string | null;
+  group_name?: string | null;
+  display_order?: number | null;
+  check_config?: unknown;
   created_at: Date;
   updated_at: Date;
   // Joined from monitor_status (aliased or direct)
@@ -51,6 +80,7 @@ interface MonitorWithStatusRow {
   ms_response_time_ms?: number | null;
   last_error_code?: string | null;
   incident_id?: string | null;
+  ms_detail?: unknown;
   ms_updated_at?: Date | null;
 }
 
@@ -77,6 +107,7 @@ export class MonitorService {
         'monitor_status.response_time_ms as ms_response_time_ms',
         'monitor_status.last_error_code',
         'monitor_status.incident_id',
+        'monitor_status.detail as ms_detail',
         'monitor_status.updated_at as ms_updated_at',
       ])
       .where('monitors.organization_id', '=', organizationId);
@@ -103,6 +134,7 @@ export class MonitorService {
         'monitor_status.response_time_ms as ms_response_time_ms',
         'monitor_status.last_error_code',
         'monitor_status.incident_id',
+        'monitor_status.detail as ms_detail',
         'monitor_status.updated_at as ms_updated_at',
       ])
       .where('monitors.id', '=', id)
@@ -130,6 +162,10 @@ export class MonitorService {
           enabled: input.enabled ?? true,
           http_config: input.httpConfig ? (JSON.stringify(input.httpConfig) as unknown as null) : null,
           severity: input.severity ?? 'high',
+          display_name: input.displayName ?? null,
+          group_name: input.groupName ?? null,
+          display_order: input.displayOrder ?? 0,
+          check_config: input.checkConfig ? (JSON.stringify(input.checkConfig) as unknown as null) : null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -162,6 +198,10 @@ export class MonitorService {
         ...(input.enabled !== undefined && { enabled: input.enabled }),
         ...(input.httpConfig !== undefined && { http_config: input.httpConfig ? (JSON.stringify(input.httpConfig) as unknown as null) : null }),
         ...(input.severity !== undefined && { severity: input.severity }),
+        ...(input.displayName !== undefined && { display_name: input.displayName }),
+        ...(input.groupName !== undefined && { group_name: input.groupName }),
+        ...(input.displayOrder !== undefined && { display_order: input.displayOrder }),
+        ...(input.checkConfig !== undefined && { check_config: input.checkConfig ? (JSON.stringify(input.checkConfig) as unknown as null) : null }),
         updated_at: new Date(),
       })
       .where('id', '=', id)
@@ -482,6 +522,7 @@ export class MonitorService {
         'monitor_status.response_time_ms as ms_response_time_ms',
         'monitor_status.last_error_code',
         'monitor_status.incident_id',
+        'monitor_status.detail as ms_detail',
         'monitor_status.updated_at as ms_updated_at',
       ])
       .where('monitors.enabled', '=', true)
@@ -526,6 +567,18 @@ export class MonitorService {
       } else if (monitor.type === 'tcp') {
         const { host, port } = parseTcpTarget(monitor.target!);
         result = await runTcpCheck(host, port, monitor.timeoutSeconds, allowPrivate);
+      } else if (monitor.type === 'ssl') {
+        const { host, port } = parseHostPort(monitor.target!, 443);
+        const sslConfig = monitor.checkConfig as SslCheckConfig | null;
+        result = await runSslCheck(host, port, monitor.timeoutSeconds, sslConfig?.warnDays ?? 14, allowPrivate);
+      } else if (monitor.type === 'dns') {
+        const dnsConfig = monitor.checkConfig as DnsCheckConfig | null;
+        result = await runDnsCheck(
+          monitor.target!,
+          dnsConfig?.recordType ?? 'A',
+          dnsConfig?.expectedValue,
+          monitor.timeoutSeconds
+        );
       } else if (monitor.type === 'log_heartbeat') {
         const graceSeconds = monitor.gracePeriodSeconds ?? Math.round(monitor.intervalSeconds * 1.5);
         result = await runLogHeartbeatCheck(monitor.target!, monitor.projectId, graceSeconds, reservoir);
@@ -592,6 +645,7 @@ export class MonitorService {
           responseTimeMs: row.response_time_ms ?? null,
           lastErrorCode: row.last_error_code ?? null,
           incidentId: row.incident_id ?? null,
+          detail: parseJsonObject(row.detail),
           updatedAt: row.updated_at,
         };
       } else {
@@ -614,6 +668,7 @@ export class MonitorService {
           responseTimeMs: null,
           lastErrorCode: null,
           incidentId: null,
+          detail: null,
           updatedAt: new Date(),
         };
       }
@@ -622,6 +677,7 @@ export class MonitorService {
     const prevConsecutiveFailures = currentStatusData.consecutiveFailures;
     const prevStatus = currentStatusData.status as 'up' | 'down' | 'unknown';
     const now = new Date();
+    const detailJson = result.detail ? (JSON.stringify(result.detail) as unknown as null) : null;
 
     if (result.status === 'down') {
       const newFailures = prevConsecutiveFailures + 1;
@@ -637,6 +693,7 @@ export class MonitorService {
           last_status_change_at: statusChanged ? now : currentStatusData.lastStatusChangeAt,
           last_error_code: result.errorCode,
           response_time_ms: result.responseTimeMs,
+          detail: detailJson,
           updated_at: now,
         })
         .where('monitor_id', '=', monitor.id)
@@ -668,6 +725,7 @@ export class MonitorService {
           last_status_change_at: statusChanged ? now : currentStatusData.lastStatusChangeAt,
           last_error_code: null,
           response_time_ms: result.responseTimeMs,
+          detail: detailJson,
           updated_at: now,
         })
         .where('monitor_id', '=', monitor.id)
@@ -752,6 +810,10 @@ export class MonitorService {
       enabled: row.enabled,
       httpConfig: row.http_config ? (typeof row.http_config === 'string' ? JSON.parse(row.http_config) : row.http_config) : null,
       severity: (row.severity ?? 'high') as Severity,
+      displayName: row.display_name ?? null,
+      groupName: row.group_name ?? null,
+      displayOrder: row.display_order ?? 0,
+      checkConfig: parseJsonObject(row.check_config) as Monitor['checkConfig'],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       status: hasStatus
@@ -765,6 +827,7 @@ export class MonitorService {
             responseTimeMs: row.ms_response_time_ms ?? null,
             lastErrorCode: row.last_error_code ?? null,
             incidentId: row.incident_id ?? null,
+            detail: parseJsonObject(row.ms_detail),
             updatedAt: row.ms_updated_at ?? row.updated_at,
           }
         : undefined,

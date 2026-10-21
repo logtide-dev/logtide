@@ -56,6 +56,10 @@ export interface Monitor {
   enabled: boolean;
   httpConfig: HttpConfig | null;
   severity: Severity;
+  displayName: string | null;
+  groupName: string | null;
+  displayOrder: number;
+  checkConfig: SslCheckConfig | DnsCheckConfig | null;
   status?: MonitorCurrentStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -71,6 +75,8 @@ export interface MonitorCurrentStatus {
   responseTimeMs: number | null;
   lastErrorCode: string | null;
   incidentId: string | null;
+  /** Last-check facts: ssl certificate or dns records. Null when the last check had none. */
+  detail: Record<string, unknown> | null;
   updatedAt: Date;
 }
 
@@ -107,6 +113,10 @@ export interface CreateMonitorInput {
   enabled?: boolean;
   httpConfig?: HttpConfig | null;
   severity?: string;
+  displayName?: string | null;
+  groupName?: string | null;
+  displayOrder?: number;
+  checkConfig?: SslCheckConfig | DnsCheckConfig | null;
 }
 
 export interface UpdateMonitorInput {
@@ -120,6 +130,10 @@ export interface UpdateMonitorInput {
   enabled?: boolean;
   httpConfig?: HttpConfig | null;
   severity?: string;
+  displayName?: string | null;
+  groupName?: string | null;
+  displayOrder?: number;
+  checkConfig?: SslCheckConfig | DnsCheckConfig | null;
 }
 
 export interface PublicMonitorStatus {

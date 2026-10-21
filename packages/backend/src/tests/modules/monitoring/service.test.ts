@@ -18,13 +18,21 @@ vi.mock('../../../modules/maintenances/service.js', () => ({
 }));
 
 // Mock checker functions
-vi.mock('../../../modules/monitoring/checker.js', () => ({
-  runHttpCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 50, statusCode: 200, errorCode: null }),
-  runTcpCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 10, statusCode: null, errorCode: null }),
-  runHeartbeatCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: null, statusCode: null, errorCode: null }),
-  runLogHeartbeatCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: null, statusCode: null, errorCode: null }),
-  parseTcpTarget: vi.fn().mockReturnValue({ host: 'localhost', port: 5432 }),
-}));
+vi.mock('../../../modules/monitoring/checker.js', async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return {
+    runHttpCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 50, statusCode: 200, errorCode: null }),
+    runTcpCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 10, statusCode: null, errorCode: null }),
+    runHeartbeatCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: null, statusCode: null, errorCode: null }),
+    runLogHeartbeatCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: null, statusCode: null, errorCode: null }),
+    runSslCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 30, statusCode: null, errorCode: null }),
+    runDnsCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 5, statusCode: null, errorCode: null }),
+    parseTcpTarget: vi.fn().mockReturnValue({ host: 'localhost', port: 5432 }),
+    // pure helpers stay real so target validation is exercised
+    parseHostPort: actual.parseHostPort,
+    isValidDnsHostname: actual.isValidDnsHostname,
+  };
+});
 
 // Mock reservoir
 vi.mock('../../../database/reservoir.js', () => ({
@@ -573,5 +581,90 @@ describe('MonitorService.runAllDueChecks', () => {
     // Monitor should not have been checked
     const monitors = await service.listMonitors(ctx.organization.id);
     expect(monitors[0].status?.lastCheckedAt).toBeNull();
+  });
+});
+
+describe('MonitorService ssl and dns (W12)', () => {
+  it('runCheck stores ssl detail in monitor_status.detail', async () => {
+    const checker = await import('../../../modules/monitoring/checker.js');
+    const detail = { expiresAt: '2030-01-01T00:00:00.000Z', daysRemaining: 40, issuer: 'Test CA', subject: 'example.com' };
+    vi.mocked(checker.runSslCheck).mockResolvedValueOnce({
+      status: 'up',
+      responseTimeMs: 42,
+      statusCode: null,
+      errorCode: null,
+      detail,
+    });
+
+    const m = await service.createMonitor({
+      organizationId: ctx.organization.id,
+      projectId: ctx.project.id,
+      name: 'Cert',
+      type: 'ssl',
+      target: 'example.com:8443',
+      checkConfig: { warnDays: 21 },
+    });
+    await service.runCheck(m);
+
+    expect(checker.runSslCheck).toHaveBeenLastCalledWith('example.com', 8443, m.timeoutSeconds, 21, expect.any(Boolean));
+    const fetched = await service.getMonitor(m.id, ctx.organization.id);
+    expect(fetched!.status!.detail).toEqual(detail);
+    expect(fetched!.checkConfig).toEqual({ warnDays: 21 });
+  });
+
+  it('clears the stored detail when a later check returns none', async () => {
+    const checker = await import('../../../modules/monitoring/checker.js');
+    vi.mocked(checker.runSslCheck).mockResolvedValueOnce({
+      status: 'up', responseTimeMs: 1, statusCode: null, errorCode: null, detail: { daysRemaining: 5 },
+    });
+    const m = await service.createMonitor({
+      organizationId: ctx.organization.id,
+      projectId: ctx.project.id,
+      name: 'Cert 2',
+      type: 'ssl',
+      target: 'example.com',
+    });
+    await service.runCheck(m);
+    vi.mocked(checker.runSslCheck).mockResolvedValueOnce({
+      status: 'down', responseTimeMs: 1, statusCode: null, errorCode: 'timeout',
+    });
+    await service.runCheck((await service.getMonitor(m.id, ctx.organization.id))!);
+    const fetched = await service.getMonitor(m.id, ctx.organization.id);
+    expect(fetched!.status!.detail).toBeNull();
+  });
+
+  it('runCheck dispatches dns monitors to runDnsCheck with the stored checkConfig', async () => {
+    const checker = await import('../../../modules/monitoring/checker.js');
+    const m = await service.createMonitor({
+      organizationId: ctx.organization.id,
+      projectId: ctx.project.id,
+      name: 'MX record',
+      type: 'dns',
+      target: 'example.com',
+      checkConfig: { recordType: 'MX', expectedValue: 'mx.example.com' },
+    });
+    await service.runCheck(m);
+    expect(checker.runDnsCheck).toHaveBeenLastCalledWith('example.com', 'MX', 'mx.example.com', m.timeoutSeconds);
+  });
+
+  it('maps display fields on create, list and update', async () => {
+    const m = await service.createMonitor({
+      organizationId: ctx.organization.id,
+      projectId: ctx.project.id,
+      name: 'Raw name',
+      type: 'heartbeat',
+      displayName: 'Pretty name',
+      groupName: 'Core',
+      displayOrder: 2,
+    });
+    expect(m).toMatchObject({ displayName: 'Pretty name', groupName: 'Core', displayOrder: 2 });
+
+    const updated = await service.updateMonitor(m.id, ctx.organization.id, { displayName: null, displayOrder: 5 });
+    expect(updated!.displayName).toBeNull();
+    expect(updated!.displayOrder).toBe(5);
+    expect(updated!.groupName).toBe('Core');
+
+    const list = await service.listMonitors(ctx.organization.id);
+    expect(list[0].groupName).toBe('Core');
   });
 });
