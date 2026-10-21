@@ -28,16 +28,9 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
-  import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-  } from '$lib/components/ui/alert-dialog';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
+  import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import Fingerprint from '@lucide/svelte/icons/fingerprint';
   import Plus from '@lucide/svelte/icons/plus';
@@ -50,6 +43,7 @@
 
   let token: string | null = null;
   let currentOrg = $state<any>(null);
+  let canEdit = $derived(currentOrg?.role === 'owner' || currentOrg?.role === 'admin');
 
   let loading = $state(true);
   let customPatterns = $state<IdentifierPattern[]>([]);
@@ -64,7 +58,6 @@
   let editingPattern = $state<IdentifierPattern | null>(null);
   let isCreating = $state(false);
   let saving = $state(false);
-  let deleting = $state(false);
 
   // Form fields
   let formName = $state('');
@@ -110,7 +103,7 @@
       defaultPatterns = data.defaults;
     } catch (e) {
       console.error('Failed to load patterns:', e);
-      toastStore.error('Failed to load identifier patterns');
+      toastStore.error('Could not load identifier patterns');
     } finally {
       loading = false;
     }
@@ -156,13 +149,13 @@
 
   async function handleSave() {
     if (!formName || !formDisplayName || !formPattern) {
-      toastStore.error('Please fill in all required fields');
+      toastStore.error('Fill in all required fields');
       return;
     }
 
     // Validate pattern name format
     if (!/^[a-z][a-z0-9_]*$/.test(formName)) {
-      toastStore.error('Pattern name must start with a letter and contain only lowercase letters, numbers, and underscores');
+      toastStore.error('Pattern name must start with a letter and contain only lowercase letters, numbers and underscores');
       return;
     }
 
@@ -183,7 +176,7 @@
           priority: formPriority,
           enabled: formEnabled,
         });
-        toastStore.success('Pattern created successfully');
+        toastStore.success('Pattern created');
       } else if (editingPattern?.id) {
         await patternsAPI.updatePattern(editingPattern.id, {
           displayName: formDisplayName,
@@ -193,13 +186,13 @@
           priority: formPriority,
           enabled: formEnabled,
         });
-        toastStore.success('Pattern updated successfully');
+        toastStore.success('Pattern updated');
       }
 
       editDialogOpen = false;
       await loadPatterns();
     } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : 'Failed to save pattern';
+      const errorMsg = e instanceof Error ? e.message : 'Could not save pattern';
       toastStore.error(errorMsg);
     } finally {
       saving = false;
@@ -209,18 +202,15 @@
   async function handleDelete() {
     if (!editingPattern?.id) return;
 
-    deleting = true;
     try {
       await patternsAPI.deletePattern(editingPattern.id);
       toastStore.success('Pattern deleted');
-      deleteDialogOpen = false;
       editingPattern = null;
       await loadPatterns();
     } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : 'Failed to delete pattern';
+      const errorMsg = e instanceof Error ? e.message : 'Could not delete pattern';
       toastStore.error(errorMsg);
-    } finally {
-      deleting = false;
+      throw e;
     }
   }
 
@@ -233,14 +223,14 @@
       });
       await loadPatterns();
     } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : 'Failed to update pattern';
+      const errorMsg = e instanceof Error ? e.message : 'Could not update pattern';
       toastStore.error(errorMsg);
     }
   }
 
   async function handleTest() {
     if (!testPattern || !testText) {
-      toastStore.error('Please enter both a pattern and test text');
+      toastStore.error('Enter both a pattern and test text');
       return;
     }
 
@@ -262,16 +252,26 @@
 </script>
 
 <svelte:head>
-  <title>Identifier Patterns - LogTide</title>
+  <title>Identifier extraction - LogTide</title>
 </svelte:head>
 
+<PageHeader
+  title="Identifier extraction"
+  appliesTo="organization"
+  description="Define patterns that turn request ids, order numbers and similar values in log messages into clickable identifiers."
+/>
+
 <div class="space-y-6">
+  {#if !canEdit}
+    <ReadOnlyNotice what="identifier extraction patterns" />
+  {/if}
+
   <!-- Custom Patterns -->
   <Card>
     <CardHeader>
       <div class="flex items-center justify-between">
         <div>
-          <CardTitle>Custom Patterns</CardTitle>
+          <CardTitle>Custom patterns</CardTitle>
           <CardDescription>
             Organization-specific patterns for your unique identifier formats
           </CardDescription>
@@ -279,12 +279,14 @@
         <div class="flex gap-2">
           <Button variant="outline" onclick={() => openTestDialog()} class="gap-2">
             <FlaskConical class="w-4 h-4" />
-            Test Pattern
+            Test pattern
           </Button>
-          <Button onclick={openCreateDialog} class="gap-2">
-            <Plus class="w-4 h-4" />
-            Add Pattern
-          </Button>
+          {#if canEdit}
+            <Button onclick={openCreateDialog} class="gap-2">
+              <Plus class="w-4 h-4" />
+              Add pattern
+            </Button>
+          {/if}
         </div>
       </div>
     </CardHeader>
@@ -298,12 +300,14 @@
         <div class="text-center py-8 border-2 border-dashed rounded-lg">
           <Fingerprint class="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <p class="text-sm text-muted-foreground mb-4">
-            No custom patterns yet. Create one to extract your application-specific identifiers.
+            No custom patterns yet.{canEdit ? ' Create one to extract your application-specific identifiers.' : ''}
           </p>
-          <Button onclick={openCreateDialog} variant="outline" class="gap-2">
-            <Plus class="w-4 h-4" />
-            Create Your First Pattern
-          </Button>
+          {#if canEdit}
+            <Button onclick={openCreateDialog} variant="outline" class="gap-2">
+              <Plus class="w-4 h-4" />
+              Create your first pattern
+            </Button>
+          {/if}
         </div>
       {:else}
         <div class="rounded-md border">
@@ -312,7 +316,7 @@
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Pattern</TableHead>
-                <TableHead>Field Names</TableHead>
+                <TableHead>Field names</TableHead>
                 <TableHead>Priority</TableHead>
                 <TableHead>Enabled</TableHead>
                 <TableHead class="w-[100px]">Actions</TableHead>
@@ -348,6 +352,8 @@
                   <TableCell>
                     <Switch
                       checked={pattern.enabled}
+                      disabled={!canEdit}
+                      aria-label={`Enable ${pattern.displayName}`}
                       onCheckedChange={() => handleToggleEnabled(pattern)}
                     />
                   </TableCell>
@@ -359,27 +365,32 @@
                         class="h-8 w-8"
                         onclick={() => openTestDialog(pattern.pattern)}
                         title="Test pattern"
+                        aria-label={`Test ${pattern.displayName}`}
                       >
                         <FlaskConical class="w-4 h-4" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        class="h-8 w-8"
-                        onclick={() => openEditDialog(pattern)}
-                        title="Edit pattern"
-                      >
-                        <Pencil class="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        class="h-8 w-8 text-destructive hover:text-destructive"
-                        onclick={() => openDeleteDialog(pattern)}
-                        title="Delete pattern"
-                      >
-                        <Trash2 class="w-4 h-4" />
-                      </Button>
+                      {#if canEdit}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          class="h-8 w-8"
+                          onclick={() => openEditDialog(pattern)}
+                          title="Edit pattern"
+                          aria-label={`Edit ${pattern.displayName}`}
+                        >
+                          <Pencil class="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          class="h-8 w-8 text-destructive hover:text-destructive"
+                          onclick={() => openDeleteDialog(pattern)}
+                          title="Delete pattern"
+                          aria-label={`Delete ${pattern.displayName}`}
+                        >
+                          <Trash2 class="w-4 h-4" />
+                        </Button>
+                      {/if}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -396,7 +407,7 @@
     <CardHeader>
       <CardTitle class="flex items-center gap-2">
         <Lock class="w-4 h-4" />
-        Built-in Patterns
+        Built-in patterns
       </CardTitle>
       <CardDescription>
         These patterns are always active and cannot be modified. They cover common identifier formats.
@@ -414,7 +425,7 @@
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Pattern</TableHead>
-                <TableHead>Field Names</TableHead>
+                <TableHead>Field names</TableHead>
                 <TableHead>Priority</TableHead>
               </TableRow>
             </TableHeader>
@@ -456,7 +467,7 @@
 <Dialog bind:open={editDialogOpen}>
   <DialogContent class="max-w-lg">
     <DialogHeader>
-      <DialogTitle>{isCreating ? 'Create Pattern' : 'Edit Pattern'}</DialogTitle>
+      <DialogTitle>{isCreating ? 'Create pattern' : 'Edit pattern'}</DialogTitle>
       <DialogDescription>
         {isCreating
           ? 'Define a new pattern to extract identifiers from your logs.'
@@ -477,13 +488,13 @@
             required
           />
           <p class="text-xs text-muted-foreground">
-            Lowercase letters, numbers, and underscores only. Must start with a letter.
+            Lowercase letters, numbers and underscores only. Must start with a letter.
           </p>
         </div>
       {/if}
 
       <div class="space-y-2">
-        <Label for="pattern-display-name">Display Name *</Label>
+        <Label for="pattern-display-name">Display name *</Label>
         <Input
           id="pattern-display-name"
           type="text"
@@ -506,7 +517,7 @@
       </div>
 
       <div class="space-y-2">
-        <Label for="pattern-regex">Regex Pattern *</Label>
+        <Label for="pattern-regex">Regex pattern *</Label>
         <Input
           id="pattern-regex"
           type="text"
@@ -522,7 +533,7 @@
       </div>
 
       <div class="space-y-2">
-        <Label for="pattern-fields">Field Names</Label>
+        <Label for="pattern-fields">Field names</Label>
         <Input
           id="pattern-fields"
           type="text"
@@ -563,43 +574,27 @@
           Cancel
         </Button>
         <Button type="submit" disabled={saving}>
-          {saving ? 'Saving...' : isCreating ? 'Create Pattern' : 'Save Changes'}
+          {saving ? 'Saving...' : isCreating ? 'Create pattern' : 'Save changes'}
         </Button>
       </DialogFooter>
     </form>
   </DialogContent>
 </Dialog>
 
-<!-- Delete Confirmation Dialog -->
-<AlertDialog bind:open={deleteDialogOpen}>
-  <AlertDialogContent>
-    <AlertDialogHeader>
-      <AlertDialogTitle>Delete Pattern?</AlertDialogTitle>
-      <AlertDialogDescription>
-        Are you sure you want to delete the pattern <strong>{editingPattern?.displayName}</strong>?
-        This action cannot be undone. Existing extracted identifiers will not be affected.
-      </AlertDialogDescription>
-    </AlertDialogHeader>
-    <AlertDialogFooter>
-      <AlertDialogCancel onclick={() => { deleteDialogOpen = false; editingPattern = null; }}>
-        Cancel
-      </AlertDialogCancel>
-      <AlertDialogAction
-        onclick={handleDelete}
-        class="bg-destructive hover:bg-destructive/90"
-        disabled={deleting}
-      >
-        {deleting ? 'Deleting...' : 'Delete Pattern'}
-      </AlertDialogAction>
-    </AlertDialogFooter>
-  </AlertDialogContent>
-</AlertDialog>
+<!-- Delete confirmation -->
+<ConfirmDialog
+  bind:open={deleteDialogOpen}
+  title="Delete pattern"
+  description={`Delete the pattern ${editingPattern?.displayName ?? ''}? Existing extracted identifiers will not be affected. This cannot be undone.`}
+  confirmLabel="Delete pattern"
+  onConfirm={handleDelete}
+/>
 
 <!-- Test Pattern Dialog -->
 <Dialog bind:open={testDialogOpen}>
   <DialogContent class="max-w-2xl">
     <DialogHeader>
-      <DialogTitle>Test Pattern</DialogTitle>
+      <DialogTitle>Test pattern</DialogTitle>
       <DialogDescription>
         Enter a regex pattern and sample text to see what matches.
       </DialogDescription>
@@ -607,7 +602,7 @@
 
     <div class="space-y-4">
       <div class="space-y-2">
-        <Label for="test-pattern">Regex Pattern</Label>
+        <Label for="test-pattern">Regex pattern</Label>
         <Input
           id="test-pattern"
           type="text"
@@ -619,7 +614,7 @@
       </div>
 
       <div class="space-y-2">
-        <Label for="test-text">Sample Text</Label>
+        <Label for="test-text">Sample text</Label>
         <Textarea
           id="test-text"
           placeholder="Enter log message or metadata text to test against..."
@@ -632,7 +627,7 @@
 
       <Button onclick={handleTest} disabled={testing || !testPattern || !testText} class="w-full gap-2">
         <FlaskConical class="w-4 h-4" />
-        {testing ? 'Testing...' : 'Run Test'}
+        {testing ? 'Testing...' : 'Run test'}
       </Button>
 
       {#if testResults.length > 0}
@@ -641,8 +636,8 @@
           <div class="bg-muted rounded-md p-3 space-y-2 max-h-[200px] overflow-y-auto">
             {#each testResults as match, i}
               <div class="flex items-center gap-2">
-                <Check class="w-4 h-4 text-green-500 flex-shrink-0" />
-                <code class="text-sm bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded">{match}</code>
+                <Check class="w-4 h-4 text-success-text flex-shrink-0" />
+                <code class="text-sm bg-success/10 text-success-text px-2 py-1 rounded">{match}</code>
               </div>
             {/each}
           </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { browser } from '$app/environment';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
   import { organizationStore } from '$lib/stores/organization';
   import { toastStore } from '$lib/stores/toast';
   import { billingAPI, BillingApiError, billingErrorText, type PaidPlanId } from '$lib/api/billing';
@@ -237,6 +238,8 @@
 <svelte:head>
   <title>Billing - LogTide</title>
 </svelte:head>
+
+<PageHeader title="Billing" appliesTo="organization" />
 
 <div class="space-y-6">
   {#if currentOrg && !canManage}
