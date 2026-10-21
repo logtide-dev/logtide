@@ -27,7 +27,13 @@ import type { Database, IncidentsTable } from '../../database/types.js';
 import { withIncidentActor } from './actor.js';
 import { mapIncidentListRow, mapIncidentRow } from './mappers.js';
 import { planStatusChange } from './status.js';
-import { IncidentError, type IncidentListFilters, type IncidentRow } from './types.js';
+import {
+  IncidentError,
+  type IncidentListFilters,
+  type IncidentRow,
+  type OpenOrUpdateFromSourceInput,
+  type ResolveFromSourceInput,
+} from './types.js';
 
 type Executor = Kysely<Database> | Transaction<Database>;
 
@@ -44,6 +50,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 const DEFAULT_LIST_LIMIT = 50;
 const DEFAULT_UPDATED_SINCE_LIMIT = 100;
+
+/** Escalate-only severity for the ON CONFLICT path (same order as `higherSeverity`). */
+const ESCALATED_SEVERITY = sql<Severity>`case when array_position(array['informational','low','medium','high','critical'], excluded.severity) > array_position(array['informational','low','medium','high','critical'], incidents.severity) then excluded.severity else incidents.severity end`;
 
 const SEVERITY_RANK = sql<number>`case incidents.severity when 'critical' then 5 when 'high' then 4 when 'medium' then 3 when 'low' then 2 else 1 end`;
 
@@ -485,6 +494,157 @@ export class IncidentsService {
         .returningAll()
         .executeTakeFirstOrThrow();
       return mapIncidentRow(updated);
+    });
+  }
+
+  // ==========================================================================
+  // SOURCE LIFECYCLE (alert rules, monitors)
+  // ==========================================================================
+
+  /**
+   * Opens an incident for an alert rule or a monitor, or updates the active
+   * one (open or acknowledged) of that source. Contract for alert evaluation
+   * and monitor checks:
+   * - Call it on state transitions (ok to firing, up to down) and on
+   *   renotify only, not on every evaluation: each call writes one history
+   *   row (`created` or `source_event`, metadata IncidentSourceEventMetadata
+   *   with `data` = `metadata ?? null`, no user). An escalation also gets the
+   *   trigger's `severity_change` row.
+   * - Create: status open, `alert_rule_id` (source alert) or `monitor_id`
+   *   (source monitor) = `sourceId`, the other one null,
+   *   `last_event_at = time_window_start = time_window_end = occurredAt`.
+   * - Update: `last_event_at` and `time_window_end` only move forward,
+   *   severity only escalates; title, description, status and assignee stay.
+   * - At most one active incident per source is a database guarantee
+   *   (partial unique indexes of migration 062 + INSERT ... ON CONFLICT), so
+   *   concurrent callers all get the same incident and exactly one gets
+   *   `created: true`. A resolved incident is never reopened: the next call
+   *   opens a new one.
+   * - The source (and the project, when given) must belong to
+   *   `organizationId`, otherwise IncidentError('source_not_found') is thrown
+   *   and nothing is written.
+   * - Never sends an "incident created" notification (the source
+   *   notification already went out).
+   */
+  async openOrUpdateFromSource(
+    input: OpenOrUpdateFromSourceInput
+  ): Promise<{ incident: IncidentRow; created: boolean }> {
+    const notFound = () => new IncidentError('source_not_found', 'Incident source not found');
+    if (!UUID_RE.test(input.sourceId) || (input.projectId !== null && !UUID_RE.test(input.projectId))) {
+      throw notFound();
+    }
+
+    return withIncidentActor(this.db, { userId: null, reason: 'source_event' }, async (trx) => {
+      const owned =
+        input.source === 'alert'
+          ? await trx
+              .selectFrom('alert_rules')
+              .select('id')
+              .where('id', '=', input.sourceId)
+              .where('organization_id', '=', input.organizationId)
+              .executeTakeFirst()
+          : await trx
+              .selectFrom('monitors')
+              .select('id')
+              .where('id', '=', input.sourceId)
+              .where('organization_id', '=', input.organizationId)
+              .executeTakeFirst();
+      if (!owned) throw notFound();
+
+      if (input.projectId !== null) {
+        const project = await trx
+          .selectFrom('projects')
+          .select('id')
+          .where('id', '=', input.projectId)
+          .where('organization_id', '=', input.organizationId)
+          .executeTakeFirst();
+        if (!project) throw notFound();
+      }
+
+      const target = input.source === 'alert' ? 'alert_rule_id' : 'monitor_id';
+      const row = await trx
+        .insertInto('incidents')
+        .values({
+          organization_id: input.organizationId,
+          project_id: input.projectId,
+          title: input.title,
+          description: input.description ?? null,
+          severity: input.severity,
+          status: 'open',
+          source: input.source,
+          alert_rule_id: input.source === 'alert' ? input.sourceId : null,
+          monitor_id: input.source === 'monitor' ? input.sourceId : null,
+          time_window_start: input.occurredAt,
+          time_window_end: input.occurredAt,
+          last_event_at: input.occurredAt,
+        })
+        .onConflict((oc) =>
+          oc
+            // Literal predicate (no bind parameters) matching the partial
+            // unique index, so Postgres can infer it as the arbiter.
+            .columns(['source', target])
+            .where(sql<SqlBool>`${sql.ref(target)} is not null and status in ('open', 'investigating')`)
+            .doUpdateSet({
+              last_event_at: sql`greatest(incidents.last_event_at, excluded.last_event_at)`,
+              time_window_end: sql`greatest(coalesce(incidents.time_window_end, excluded.time_window_end), excluded.time_window_end)`,
+              severity: ESCALATED_SEVERITY,
+            })
+            .where(sql<SqlBool>`incidents.organization_id = excluded.organization_id`)
+        )
+        .returningAll()
+        .returning(sql<boolean>`(xmax = 0)`.as('inserted'))
+        .executeTakeFirst();
+      // Only reachable if the same source id were active in another
+      // organization, which the ownership check above rules out.
+      if (!row) throw notFound();
+
+      const { inserted, ...incidentRow } = row;
+      const metadata: IncidentSourceEventMetadata = {
+        source: input.source,
+        sourceId: input.sourceId,
+        occurredAt: input.occurredAt.toISOString(),
+        data: input.metadata ?? null,
+      };
+      await trx
+        .insertInto('incident_history')
+        .values({
+          incident_id: incidentRow.id,
+          user_id: null,
+          action: inserted ? 'created' : 'source_event',
+          field_name: null,
+          old_value: null,
+          new_value: null,
+          metadata: { ...metadata },
+        })
+        .execute();
+
+      return { incident: mapIncidentRow(incidentRow), created: inserted === true };
+    });
+  }
+
+  /**
+   * Resolves the active (open or acknowledged) incident of an alert rule or
+   * a monitor: status resolved, `resolved_at = resolvedAt`, no resolver; the
+   * history row carries `metadata.reason`. Returns null when nothing was
+   * active (idempotent). Use reason `manual` when the source stops being
+   * evaluated because a user disabled or deleted it (call it before the
+   * delete: the incident keeps its row but loses the source id).
+   */
+  async resolveFromSource(input: ResolveFromSourceInput): Promise<IncidentRow | null> {
+    if (!UUID_RE.test(input.sourceId)) return null;
+    const column = input.source === 'alert' ? 'alert_rule_id' : 'monitor_id';
+
+    return withIncidentActor(this.db, { userId: null, reason: input.reason }, async (trx) => {
+      const row = await trx
+        .updateTable('incidents')
+        .set({ status: 'resolved', resolved_at: input.resolvedAt, resolved_by: null })
+        .where('organization_id', '=', input.organizationId)
+        .where('source', '=', input.source)
+        .where(column, '=', input.sourceId)
+        .where('status', 'in', ['open', 'investigating'])
+        .returningAll()
+        .executeTakeFirst();
+      return row ? mapIncidentRow(row) : null;
     });
   }
 }

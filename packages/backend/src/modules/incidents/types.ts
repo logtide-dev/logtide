@@ -27,6 +27,31 @@ export interface IncidentListFilters {
   offset?: number;
 }
 
+/** Input of `incidentsService.openOrUpdateFromSource` (spec 6.5). */
+export interface OpenOrUpdateFromSourceInput {
+  organizationId: string;
+  projectId: string | null;
+  source: 'alert' | 'monitor';
+  /** Alert rule id for source alert, monitor id for source monitor. */
+  sourceId: string;
+  title: string;
+  description?: string;
+  severity: Severity;
+  occurredAt: Date;
+  /** Stored as `data` of the history row (shown as the alert trigger or monitor check detail). */
+  metadata?: Record<string, unknown>;
+}
+
+/** Input of `incidentsService.resolveFromSource` (spec 6.5). */
+export interface ResolveFromSourceInput {
+  organizationId: string;
+  source: 'alert' | 'monitor';
+  sourceId: string;
+  resolvedAt: Date;
+  /** `recovered`: the source is healthy again; `manual`: a user disabled or deleted the rule or monitor. */
+  reason: 'recovered' | 'manual';
+}
+
 export type IncidentErrorCode = 'invalid_transition' | 'invalid_assignee' | 'source_not_found';
 
 const STATUS_BY_CODE: Record<IncidentErrorCode, 400 | 404 | 409> = {
