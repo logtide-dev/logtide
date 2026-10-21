@@ -10,8 +10,24 @@ const STORAGE_KEY = 'logtide_display_prefs';
 export interface DisplayPreferences {
   /** true renders 12-hour AM/PM clocks, false renders 24-hour ones. */
   hour12: boolean;
-  /** IANA zone name, or null for the browser timezone. */
+  /**
+   * `null` or `'browser'` mean the browser timezone, `'UTC'` is UTC, anything
+   * else is an IANA zone name. Interpret it with resolveTimeZone().
+   */
   timeZone: string | null;
+}
+
+/** Explicit spelling of the browser timezone (null is the legacy spelling). */
+export const BROWSER_TIME_ZONE = 'browser';
+
+/**
+ * The single interpreter of the timeZone preference: returns undefined for the
+ * browser zone (null, 'browser' or empty) and the zone string otherwise, ready
+ * to pass as Intl's timeZone option.
+ */
+export function resolveTimeZone(timeZone: string | null | undefined): string | undefined {
+  if (!timeZone || timeZone === BROWSER_TIME_ZONE) return undefined;
+  return timeZone;
 }
 
 export const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = {

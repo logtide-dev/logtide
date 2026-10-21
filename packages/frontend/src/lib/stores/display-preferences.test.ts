@@ -13,6 +13,25 @@ async function freshStore() {
   return mod.displayPreferences;
 }
 
+describe('resolveTimeZone', () => {
+  it('treats null, browser and empty as the browser zone', async () => {
+    vi.resetModules();
+    const { resolveTimeZone, BROWSER_TIME_ZONE } = await import('./display-preferences.js');
+    expect(BROWSER_TIME_ZONE).toBe('browser');
+    expect(resolveTimeZone(null)).toBeUndefined();
+    expect(resolveTimeZone(undefined)).toBeUndefined();
+    expect(resolveTimeZone('browser')).toBeUndefined();
+    expect(resolveTimeZone('')).toBeUndefined();
+  });
+
+  it('passes real zones through', async () => {
+    vi.resetModules();
+    const { resolveTimeZone } = await import('./display-preferences.js');
+    expect(resolveTimeZone('UTC')).toBe('UTC');
+    expect(resolveTimeZone('Europe/Rome')).toBe('Europe/Rome');
+  });
+});
+
 describe('displayPreferences', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -39,6 +58,12 @@ describe('displayPreferences', () => {
 
     const reloaded = await freshStore();
     expect(reloaded.get()).toEqual({ hour12: true, timeZone: 'America/Los_Angeles' });
+  });
+
+  it('loads a persisted browser zone as is', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ hour12: true, timeZone: 'browser' }));
+    const store = await freshStore();
+    expect(store.get()).toEqual({ hour12: true, timeZone: 'browser' });
   });
 
   it('falls back to defaults on corrupted JSON', async () => {
