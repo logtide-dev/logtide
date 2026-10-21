@@ -124,6 +124,8 @@ export {
   compareByteOrder,
 } from './core/aggregation-helpers.js';
 export { legacySearchToTextQuery, isEmptyTextQuery } from './core/text-query.js';
+export { compileLogSearch, mergeCompiledSearch } from './core/log-search.js';
+export type { CompiledLogSearch } from './core/log-search.js';
 
 // Factory and client
 export { StorageEngineFactory } from './factory.js';
