@@ -366,7 +366,35 @@ describe('TimescaleEngine', () => {
       });
 
       const sql = mockQuery.mock.calls[0][0] as string;
-      expect(sql).toContain("to_tsvector('english', message) @@ plainto_tsquery('english'");
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      // Legacy fulltext search is the AND of its words, one term per word.
+      expect(sql.match(/plainto_tsquery\('english', \$\d+\)/g)).toHaveLength(2);
+      expect(sql.match(/message ~\* \$\d+/g)).toHaveLength(2);
+      expect(params).toContain('error');
+      expect(params).toContain('message');
+      expect(params).not.toContain('error message');
+      expect(params).toContain('\\merror\\M');
+      expect(params).toContain('\\mmessage\\M');
+    });
+
+    it('reads textQuery instead of a legacy search passed next to it', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.query({
+        projectId: 'proj-1',
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+        search: 'ignored',
+        textQuery: { all: [{ kind: 'phrase', value: 'refused by' }], anyOf: [], none: [] },
+      });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toContain('message ILIKE $');
+      expect(sql).not.toContain('plainto_tsquery');
+      expect(params).toContain('%refused by%');
+      expect(params).not.toContain('ignored');
     });
 
     it('handles substring search', async () => {

@@ -11,6 +11,7 @@ import type {
   QueryParams,
   TopValuesParams,
 } from '../../core/types.js';
+import { compileTextQuery, resolveTextQuery } from './text-query.js';
 
 const INTERVAL_MAP: Record<AggregationInterval, string> = {
   '1m': '1 minute',
@@ -23,10 +24,6 @@ const INTERVAL_MAP: Record<AggregationInterval, string> = {
 };
 
 const HOSTNAME_EXPR = "metadata->>'hostname'";
-
-function escapeIlike(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-}
 
 export class TimescaleQueryTranslator extends QueryTranslator {
   private schema: string;
@@ -88,15 +85,10 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     conditions.push(`time ${params.toExclusive ? '<' : '<='} $${idx++}`);
     values.push(params.to);
 
-    if (params.search) {
-      if (params.searchMode === 'substring') {
-        conditions.push(`message ILIKE $${idx++}`);
-        values.push(`%${escapeIlike(params.search)}%`);
-      } else {
-        conditions.push(`to_tsvector('english', message) @@ plainto_tsquery('english', $${idx++})`);
-        values.push(params.search);
-      }
-    }
+    const text = compileTextQuery(resolveTextQuery(params), idx);
+    conditions.push(...text.conditions);
+    values.push(...text.values);
+    idx = text.nextIdx;
 
     if (params.metadataFilters && params.metadataFilters.length > 0) {
       idx = this.pushMetadataFilters(conditions, values, idx, params.metadataFilters);
