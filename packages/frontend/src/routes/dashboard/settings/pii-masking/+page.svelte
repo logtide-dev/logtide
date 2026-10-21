@@ -37,7 +37,8 @@
   import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
   import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
   import { organizationStore } from '$lib/stores/organization';
-  import { projectsAPI, type Project } from '$lib/api/projects';
+  import { projectsAPI } from '$lib/api/projects';
+  import type { Project } from '@logtide/shared';
   import Spinner from '$lib/components/Spinner.svelte';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import Plus from '@lucide/svelte/icons/plus';
