@@ -77,7 +77,8 @@ function partsOf(d: Date, options: Intl.DateTimeFormatOptions): Parts {
   return out;
 }
 
-const ALL_PARTS: Intl.DateTimeFormatOptions = {
+// fractionalSecondDigits is missing from the ES2020 lib typings.
+const ALL_PARTS = {
   year: 'numeric',
   month: 'short',
   day: 'numeric',
@@ -85,7 +86,7 @@ const ALL_PARTS: Intl.DateTimeFormatOptions = {
   minute: '2-digit',
   second: '2-digit',
   fractionalSecondDigits: 3,
-};
+} as Intl.DateTimeFormatOptions;
 
 function allParts(d: Date): Parts {
   const hour12 = displayPreferences.get().hour12;
@@ -95,7 +96,7 @@ function allParts(d: Date): Parts {
 function timeText(p: Parts, precision: TimestampPrecision, hour12: boolean): string {
   let text = `${p.hour}:${p.minute}`;
   if (precision !== 'minute') text += `:${p.second}`;
-  if (precision === 'ms') text += `.${p.fractionalSecond}`;
+  if (precision === 'ms') text += `.${(p as Record<string, string | undefined>).fractionalSecond}`;
   if (hour12) text += ` ${p.dayPeriod ?? ''}`.trimEnd();
   return plain(text);
 }
