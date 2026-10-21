@@ -14,15 +14,7 @@ import type {
   TopValuesParams,
 } from '../../core/types.js';
 
-/** Escape special regex characters in user-provided search strings */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Check if search string contains special characters unsuitable for $text search */
-function hasSpecialChars(search: string): boolean {
-  return /[^a-zA-Z0-9\s]/.test(search);
-}
+import { compileTextQuery, escapeRegex, resolveTextQuery } from './text-query.js';
 
 /** Interval to milliseconds for $dateTrunc fallback */
 const INTERVAL_MS: Record<AggregationInterval, number> = {
@@ -167,21 +159,8 @@ export class MongoDBQueryTranslator extends QueryTranslator {
       filter.span_id = params.spanId;
     }
 
-    if ('search' in params && params.search) {
-      const search = params.search;
-      const searchMode = 'searchMode' in params ? params.searchMode : undefined;
-
-      if (searchMode === 'substring') {
-        // Always regex for explicit substring mode
-        filter.message = { $regex: escapeRegex(search), $options: 'i' };
-      } else if (hasSpecialChars(search)) {
-        // Special chars - regex fallback (same as ClickHouse's positionCaseInsensitive)
-        filter.message = { $regex: escapeRegex(search), $options: 'i' };
-      } else {
-        // Clean search term - use $text index for performance
-        filter.$text = { $search: search };
-      }
-    }
+    const text = resolveTextQuery(params);
+    if (text) and.push(...compileTextQuery(text));
 
     if (params.metadataFilters && params.metadataFilters.length > 0) {
       and.push(...this.buildMetadataClauses(params.metadataFilters));
