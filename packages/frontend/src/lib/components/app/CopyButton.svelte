@@ -7,9 +7,11 @@
   interface Props {
     value: string;
     label?: string;
+    /** Accessible name for the icon-only variant (defaults to Copy). */
+    ariaLabel?: string;
   }
 
-  let { value, label }: Props = $props();
+  let { value, label, ariaLabel }: Props = $props();
 
   let copied = $state(false);
 
@@ -26,7 +28,7 @@
     if (ok) copied = true;
   }
 
-  const name = $derived(copied ? 'Copied' : (label ?? 'Copy'));
+  const name = $derived(copied ? 'Copied' : (label ?? ariaLabel ?? 'Copy'));
 </script>
 
 {#if label}
