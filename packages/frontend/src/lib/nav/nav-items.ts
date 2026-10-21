@@ -7,6 +7,8 @@
 export interface NavItem {
   id: string;
   label: string;
+  /** Unambiguous name for the command palette when the sidebar label relies on its section (e.g. Overview) */
+  paletteLabel?: string;
   href: string;
   /** Full key sequence, e.g. 'g l' */
   shortcut?: string;
@@ -60,11 +62,12 @@ export const NAV_SECTIONS: NavSection[] = [
       {
         id: 'security-overview',
         label: 'Overview',
+        paletteLabel: 'Security overview',
         href: '/dashboard/security',
         shortcut: 'g r',
         exact: true,
       },
-      { id: 'security-rules', label: 'Rules', href: '/dashboard/security/rules' },
+      { id: 'security-rules', label: 'Rules', paletteLabel: 'Detection rules', href: '/dashboard/security/rules' },
     ],
   },
   {
