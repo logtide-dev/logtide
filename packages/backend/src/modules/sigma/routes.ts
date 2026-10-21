@@ -11,6 +11,8 @@ import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { sigmaRuleRoutes } from './rule-routes.js';
+import { ruleManagementService } from './rule-management-service.js';
+import { ruleListQuerySchema } from './rule-query.js';
 
 const sigmaService = new SigmaService();
 const organizationsService = new OrganizationsService();
@@ -161,11 +163,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       },
     },
     async (request: any, reply) => {
-      const schema = z.object({
-        organizationId: z.string().uuid(),
-      });
-
-      const query = schema.parse(request.query);
+      const query = ruleListQuerySchema.parse(request.query);
 
       // Verify user is member of organization
       const isMember = await checkOrganizationMembership(
@@ -179,9 +177,11 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const rules = await sigmaService.getSigmaRules(query.organizationId);
+      // Without page/pageSize every rule is returned (legacy callers).
+      // Rules carry hits7d, lastFiredAt, source, packId and exceptionCount.
+      const result = await ruleManagementService.list(query);
 
-      return reply.send({ rules });
+      return reply.send(result);
     }
   );
 

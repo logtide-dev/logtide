@@ -4,6 +4,7 @@ import { createExceptionSchema } from '@logtide/shared';
 import { context } from '@logtide/shared/context';
 import { SigmaService } from './service.js';
 import { sigmaExceptionsService } from './exceptions-service.js';
+import { ruleManagementService } from './rule-management-service.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { auditLogService } from '../audit-log/service.js';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
@@ -25,6 +26,17 @@ const orgQuery = z.object({ organizationId: z.string().uuid() });
 const ruleParams = z.object({ id: z.string().uuid() });
 const exceptionParams = z.object({ id: z.string().uuid(), exceptionId: z.string().uuid() });
 const createBody = createExceptionSchema.extend({ organizationId: z.string().uuid() });
+const bulkBody = z.object({
+  organizationId: z.string().uuid(),
+  ids: z.array(z.string().uuid()).min(1).max(200),
+  action: z.enum(['enable', 'disable', 'delete']),
+});
+
+const BULK_AUDIT_ACTION = {
+  enable: 'rule.enabled',
+  disable: 'rule.disabled',
+  delete: 'rule.deleted',
+} as const;
 
 /**
  * Detection rule management endpoints (exceptions, bulk, detail extras,
@@ -44,6 +56,37 @@ export async function sigmaRuleRoutes(fastify: FastifyInstance) {
     const rule = await sigmaService.getSigmaRuleById(ruleId, organizationId);
     return rule !== null && rule !== undefined;
   }
+
+  // -------------------------------------------------------------------------
+  // Bulk actions
+  // -------------------------------------------------------------------------
+
+  fastify.post(
+    '/api/v1/sigma/rules/bulk',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    async (request: any, reply) => {
+      const body = bulkBody.parse(request.body);
+
+      const denied = await requireMember(request, reply, body.organizationId);
+      if (denied) return denied;
+
+      // CapabilityError (enable over sigma.max_active_rules) propagates to the
+      // global handler; nothing is changed in that case.
+      const affected = await ruleManagementService.bulk(body.organizationId, body.ids, body.action);
+
+      if (affected > 0) {
+        await auditLogService.record({
+          action: BULK_AUDIT_ACTION[body.action],
+          target: { type: 'sigma_rule', id: null },
+          organizationId: body.organizationId,
+          actor: auditActor(request),
+          metadata: { count: affected, bulk: true },
+        });
+      }
+
+      return reply.send({ affected });
+    }
+  );
 
   // -------------------------------------------------------------------------
   // Exceptions
