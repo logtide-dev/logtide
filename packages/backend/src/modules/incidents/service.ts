@@ -3,7 +3,15 @@
  * alert, monitor, manual). Imports nothing from `queue/` or Fastify so that
  * worker code (alert evaluation, monitor checks) can import it directly.
  */
-import { expressionBuilder, sql, type Expression, type Kysely, type SqlBool, type Transaction } from 'kysely';
+import {
+  expressionBuilder,
+  sql,
+  type Expression,
+  type Kysely,
+  type SqlBool,
+  type Transaction,
+  type Updateable,
+} from 'kysely';
 import type {
   IncidentComment,
   IncidentHistoryEntry,
@@ -11,13 +19,28 @@ import type {
   IncidentSource,
   IncidentSourceEvent,
   IncidentSourceEventMetadata,
+  IncidentStatus,
+  Severity,
 } from '@logtide/shared';
 import { db } from '../../database/connection.js';
-import type { Database } from '../../database/types.js';
-import { mapIncidentListRow } from './mappers.js';
-import type { IncidentListFilters } from './types.js';
+import type { Database, IncidentsTable } from '../../database/types.js';
+import { withIncidentActor } from './actor.js';
+import { mapIncidentListRow, mapIncidentRow } from './mappers.js';
+import { planStatusChange } from './status.js';
+import { IncidentError, type IncidentListFilters, type IncidentRow } from './types.js';
 
 type Executor = Kysely<Database> | Transaction<Database>;
+
+export interface IncidentPatch {
+  status?: IncidentStatus;
+  /** null unassigns. */
+  assigneeId?: string | null;
+  severity?: Severity;
+  title?: string;
+  description?: string | null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const DEFAULT_LIST_LIMIT = 50;
 const DEFAULT_UPDATED_SINCE_LIMIT = 100;
@@ -344,6 +367,125 @@ export class IncidentsService {
       (a, b) => Date.parse(b.event.time) - Date.parse(a.event.time) || b.createdAt - a.createdAt
     );
     return events.map((e) => e.event);
+  }
+
+  // ==========================================================================
+  // WRITE SIDE (user actions)
+  // ==========================================================================
+
+  /** Throws IncidentError('invalid_assignee') unless the user is a member of the organization. */
+  async assertAssignableUser(organizationId: string, userId: string): Promise<void> {
+    const member = UUID_RE.test(userId)
+      ? await this.db
+          .selectFrom('organization_members')
+          .select('id')
+          .where('organization_id', '=', organizationId)
+          .where('user_id', '=', userId)
+          .executeTakeFirst()
+      : undefined;
+    if (!member) {
+      throw new IncidentError('invalid_assignee', 'Assignee is not a member of this organization');
+    }
+  }
+
+  /**
+   * Applies a user patch. History rows name `actorId` (null = no user).
+   * Returns null when the incident is not in the organization. Throws
+   * IncidentError `invalid_transition` for false positive on a non-security
+   * incident and `invalid_assignee` for an assignee outside the organization;
+   * nothing is written in either case.
+   */
+  async update(
+    id: string,
+    organizationId: string,
+    patch: IncidentPatch,
+    actorId: string | null
+  ): Promise<IncidentListItem | null> {
+    if (patch.assigneeId) {
+      await this.assertAssignableUser(organizationId, patch.assigneeId);
+    }
+
+    const found = await withIncidentActor(this.db, { userId: actorId }, async (trx) => {
+      const current = await trx
+        .selectFrom('incidents')
+        .select(['id', 'status', 'source'])
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!current) return false;
+
+      const set: Updateable<IncidentsTable> = {};
+      if (patch.status !== undefined) {
+        const plan = planStatusChange(
+          { status: current.status, source: current.source as IncidentSource },
+          patch.status,
+          actorId,
+          new Date()
+        );
+        if (!plan.ok) {
+          throw new IncidentError('invalid_transition', 'False positive applies to security incidents only');
+        }
+        Object.assign(set, plan.set);
+      }
+      if (patch.title !== undefined) set.title = patch.title;
+      if (patch.description !== undefined) set.description = patch.description;
+      if (patch.severity !== undefined) set.severity = patch.severity;
+      if (patch.assigneeId !== undefined) set.assignee_id = patch.assigneeId;
+
+      if (Object.keys(set).length > 0) {
+        await trx
+          .updateTable('incidents')
+          .set(set)
+          .where('id', '=', id)
+          .where('organization_id', '=', organizationId)
+          .execute();
+      }
+      return true;
+    });
+
+    return found ? this.getItem(id, organizationId) : null;
+  }
+
+  /**
+   * Acknowledges an open incident (status investigating, shown as
+   * Acknowledged) on behalf of `userId`. Already acknowledged: returned
+   * unchanged. Resolved or false positive: IncidentError
+   * `invalid_transition`. Not in the organization: null.
+   */
+  async acknowledge(id: string, organizationId: string, userId: string): Promise<IncidentRow | null> {
+    return withIncidentActor(this.db, { userId }, async (trx) => {
+      const current = await trx
+        .selectFrom('incidents')
+        .selectAll()
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!current) return null;
+      if (current.status === 'investigating') return mapIncidentRow(current);
+      if (current.status !== 'open') {
+        throw new IncidentError('invalid_transition', 'Only open incidents can be acknowledged');
+      }
+
+      const plan = planStatusChange(
+        { status: current.status, source: current.source as IncidentSource },
+        'investigating',
+        userId,
+        new Date()
+      );
+      if (!plan.ok) {
+        throw new IncidentError('invalid_transition', 'Only open incidents can be acknowledged');
+      }
+      const updated = await trx
+        .updateTable('incidents')
+        .set(plan.set)
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return mapIncidentRow(updated);
+    });
   }
 }
 
