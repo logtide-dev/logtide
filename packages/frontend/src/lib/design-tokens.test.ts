@@ -129,3 +129,28 @@ describe('tailwind mapping', () => {
     expect(colors.destructive.text).toBe(hsl('destructive-text'));
   });
 });
+
+describe('fonts', () => {
+  const fam = (config as any).theme.extend.fontFamily;
+  it('uses self-hosted Inter and JetBrains Mono', () => {
+    expect(fam.sans[0]).toBe('"Inter Variable"');
+    expect(fam.mono[0]).toBe('"JetBrains Mono"');
+  });
+  it('pins the font packages exactly', () => {
+    expect(pkg.dependencies['@fontsource-variable/inter']).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(pkg.dependencies['@fontsource/jetbrains-mono']).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+  it('imports the fonts first in app.css', () => {
+    const stmts = css
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    expect(stmts.slice(0, 4)).toEqual([
+      "@import '@fontsource-variable/inter/index.css';",
+      "@import '@fontsource/jetbrains-mono/400.css';",
+      "@import '@fontsource/jetbrains-mono/500.css';",
+      "@import '@fontsource/jetbrains-mono/600.css';",
+    ]);
+  });
+});

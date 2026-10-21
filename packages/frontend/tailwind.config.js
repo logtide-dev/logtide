@@ -81,7 +81,8 @@ const config = {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        sans: [...fontFamily.sans],
+        sans: ['"Inter Variable"', 'Inter', ...fontFamily.sans],
+        mono: ['"JetBrains Mono"', ...fontFamily.mono],
       },
     },
   },
