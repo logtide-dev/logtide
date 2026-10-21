@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
@@ -195,7 +196,7 @@
     }
 
     function formatDate(dateString: string) {
-        return new Date(dateString).toLocaleString('en-US');
+        return formatTimestamp(dateString, { precision: 'minute' });
     }
 
     function loadAll() {
@@ -303,7 +304,7 @@
 
         <Card>
             <CardHeader>
-                <CardTitle>Log Retention Policy</CardTitle>
+                <CardTitle>Log retention policy</CardTitle>
                 <CardDescription>
                     Configure how long logs are retained for this organization
                 </CardDescription>
@@ -312,7 +313,7 @@
                 <div class="space-y-4">
                     <div class="flex items-end gap-4">
                         <div class="space-y-2">
-                            <Label for="retention-days">Retention Period (days)</Label>
+                            <Label for="retention-days">Retention period (days)</Label>
                             <Input
                                 id="retention-days"
                                 type="number"
@@ -324,7 +325,7 @@
                             />
                         </div>
                         <div class="space-y-2">
-                            <Label for="audit-retention-days">Audit Retention (days)</Label>
+                            <Label for="audit-retention-days">Audit retention (days)</Label>
                             <Input
                                 id="audit-retention-days"
                                 type="number"

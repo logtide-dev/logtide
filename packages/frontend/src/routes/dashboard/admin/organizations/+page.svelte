@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount } from "svelte";
     import { adminAPI, type OrganizationBasic } from "$lib/api/admin";
@@ -109,8 +110,7 @@
     }
 
     function formatDate(dateString: string | Date) {
-        const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
-        return date.toLocaleString('en-US');
+        return formatTimestamp(dateString, { precision: 'minute' });
     }
 
     onMount(() => {

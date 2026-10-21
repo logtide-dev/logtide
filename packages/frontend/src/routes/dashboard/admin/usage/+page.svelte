@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatDateShort } from '$lib/utils/datetime';
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount, untrack } from 'svelte';
     import { get } from 'svelte/store';
@@ -169,7 +170,7 @@
 
     function formatDate(iso: string): string {
         if (!iso) return '';
-        return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return formatDateShort(iso);
     }
 
     function formatTypeQty(type: string, qty: number): string {

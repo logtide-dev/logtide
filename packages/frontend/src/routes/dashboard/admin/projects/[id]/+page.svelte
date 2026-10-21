@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
@@ -63,16 +64,11 @@
     }
 
     function formatDate(date: string) {
-        return new Date(date).toLocaleString('en-US', {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit"
-        });
+        return formatTimestamp(date, { precision: 'minute' });
     }
 
     function formatNumber(num: number) {
-        return new Intl.NumberFormat(undefined).format(num);
+        return new Intl.NumberFormat('en-US').format(num);
     }
 
     onMount(() => {
@@ -123,7 +119,7 @@
                 <CardHeader
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
-                    <CardTitle class="text-sm font-medium">Total Logs</CardTitle
+                    <CardTitle class="text-sm font-medium">Total logs</CardTitle
                     >
                     <Database class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
@@ -165,7 +161,7 @@
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
                     <CardTitle class="text-sm font-medium"
-                        >Alert Rules</CardTitle
+                        >Alert rules</CardTitle
                     >
                     <Bell class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
@@ -184,7 +180,7 @@
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
                     <CardTitle class="text-sm font-medium"
-                        >Sigma Rules</CardTitle
+                        >Sigma rules</CardTitle
                     >
                     <Shield class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
@@ -213,11 +209,11 @@
                     <Table.Root>
                         <Table.Header>
                             <Table.Row>
-                                <Table.Head>Key Name</Table.Head>
+                                <Table.Head>Key name</Table.Head>
                                 <Table.Head>Type</Table.Head>
                                 <Table.Head>Origins</Table.Head>
                                 <Table.Head>Created</Table.Head>
-                                <Table.Head>Last Used</Table.Head>
+                                <Table.Head>Last used</Table.Head>
                                 <Table.Head>Status</Table.Head>
                             </Table.Row>
                         </Table.Header>
@@ -229,7 +225,7 @@
                                     </Table.Cell>
                                     <Table.Cell>
                                         {#if apiKey.type === 'full'}
-                                            <Badge variant="default">Full Access</Badge>
+                                            <Badge variant="default">Full access</Badge>
                                         {:else}
                                             <Badge variant="secondary">Write-Only</Badge>
                                         {/if}
@@ -277,7 +273,7 @@
         <!-- Alert Rules Section -->
         <Card>
             <CardHeader>
-                <CardTitle>Alert Rules</CardTitle>
+                <CardTitle>Alert rules</CardTitle>
             </CardHeader>
             <CardContent>
                 {#if project.alertRules.length === 0}
@@ -288,7 +284,7 @@
                     <Table.Root>
                         <Table.Header>
                             <Table.Row>
-                                <Table.Head>Rule Name</Table.Head>
+                                <Table.Head>Rule name</Table.Head>
                                 <Table.Head>Status</Table.Head>
                                 <Table.Head>Created</Table.Head>
                             </Table.Row>
@@ -326,7 +322,7 @@
         <!-- Sigma Rules Section -->
         <Card>
             <CardHeader>
-                <CardTitle>Sigma Rules</CardTitle>
+                <CardTitle>Sigma rules</CardTitle>
             </CardHeader>
             <CardContent>
                 {#if project.sigmaRules.length === 0}
@@ -337,7 +333,7 @@
                     <Table.Root>
                         <Table.Header>
                             <Table.Row>
-                                <Table.Head>Rule Title</Table.Head>
+                                <Table.Head>Rule title</Table.Head>
                                 <Table.Head>Level</Table.Head>
                                 <Table.Head>Status</Table.Head>
                                 <Table.Head>Created</Table.Head>
@@ -393,12 +389,12 @@
         <!-- Danger Zone -->
         <Card class="border-destructive">
             <CardHeader>
-                <CardTitle class="text-destructive">Danger Zone</CardTitle>
+                <CardTitle class="text-destructive">Danger zone</CardTitle>
             </CardHeader>
             <CardContent>
                 <div class="flex items-center justify-between">
                     <div>
-                        <h4 class="font-semibold">Delete Project</h4>
+                        <h4 class="font-semibold">Delete project</h4>
                         <p class="text-sm text-muted-foreground mt-1">
                             This will permanently delete the project, all logs,
                             API keys, alert rules, and sigma rules. This action

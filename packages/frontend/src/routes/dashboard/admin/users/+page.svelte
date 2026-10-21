@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount } from "svelte";
     import { adminAPI, type UserBasic } from "$lib/api/admin";
@@ -103,7 +104,7 @@
                 password: createForm.password,
                 is_admin: createForm.is_admin,
             });
-            toastStore.success(`User ${email} created successfully`);
+            toastStore.success(`User ${email} created`);
             showCreateDialog = false;
             resetCreateForm();
             page = 1;
@@ -180,7 +181,7 @@
 
     function formatDate(dateString: string | null) {
         if (!dateString) return "Never";
-        return new Date(dateString).toLocaleString('en-US');
+        return formatTimestamp(dateString, { precision: 'minute' });
     }
 
     onMount(() => {
@@ -253,7 +254,7 @@
                                 <TableHead>Name</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead>Role</TableHead>
-                                <TableHead>Last Login</TableHead>
+                                <TableHead>Last login</TableHead>
                                 <TableHead>Created</TableHead>
                                 <TableHead class="text-right">Actions</TableHead
                                 >

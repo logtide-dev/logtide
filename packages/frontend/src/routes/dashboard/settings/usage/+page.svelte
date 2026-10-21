@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatDateShort } from '$lib/utils/datetime';
   import { onMount, onDestroy } from 'svelte';
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
@@ -181,8 +182,7 @@
 
   function formatDate(iso: string): string {
     if (!iso) return '';
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatDateShort(iso);
   }
 
   function formatTypeQty(type: string, qty: number): string {

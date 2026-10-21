@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatDateShort } from "$lib/utils/datetime";
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
@@ -91,12 +92,7 @@
     }
 
     function formatDate(dateStr: string | Date) {
-        const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-        return date.toLocaleDateString('en-US', {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-        });
+        return formatDateShort(dateStr);
     }
 
     function formatNumber(num: number) {
@@ -140,7 +136,7 @@
             <CardHeader
                 class="flex flex-row items-center justify-between space-y-0 pb-2"
             >
-                <CardTitle class="text-sm font-medium">Total Projects</CardTitle
+                <CardTitle class="text-sm font-medium">Total projects</CardTitle
                 >
                 <FolderKanban class="h-4 w-4 text-muted-foreground" />
             </CardHeader>
@@ -156,7 +152,7 @@
             <CardHeader
                 class="flex flex-row items-center justify-between space-y-0 pb-2"
             >
-                <CardTitle class="text-sm font-medium">Total Logs</CardTitle>
+                <CardTitle class="text-sm font-medium">Total logs</CardTitle>
                 <Database class="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -176,7 +172,7 @@
                 class="flex flex-row items-center justify-between space-y-0 pb-2"
             >
                 <CardTitle class="text-sm font-medium"
-                    >Active API Keys</CardTitle
+                    >Active API keys</CardTitle
                 >
                 <Key class="h-4 w-4 text-muted-foreground" />
             </CardHeader>
@@ -236,7 +232,7 @@
                 <Table.Root>
                     <Table.Header>
                         <Table.Row>
-                            <Table.Head>Project Name</Table.Head>
+                            <Table.Head>Project name</Table.Head>
                             <Table.Head>Organization</Table.Head>
                             <Table.Head class="text-right">Logs</Table.Head>
                             <Table.Head class="text-right">API Keys</Table.Head>

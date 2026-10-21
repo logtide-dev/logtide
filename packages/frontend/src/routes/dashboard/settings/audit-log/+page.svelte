@@ -46,12 +46,12 @@
 		{
 			value: 'log_access',
 			label: 'Log access',
-			color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+			color: 'bg-info/15 text-info-text',
 		},
 		{
 			value: 'config_change',
 			label: 'Config change',
-			color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+			color: 'bg-warning/15 text-warning-text',
 		},
 		{
 			value: 'user_management',
@@ -61,7 +61,7 @@
 		{
 			value: 'data_modification',
 			label: 'Data modification',
-			color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+			color: 'bg-destructive/15 text-destructive-text',
 		},
 	];
 
@@ -465,13 +465,13 @@
 										<TableCell class="text-sm">
 											{#if entry.actor_type === 'apiKey'}
 												<span class="text-muted-foreground">{entry.actor_id ? entry.actor_id.slice(0, 8) + '\u2026' : 'api key'}</span>
-												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">api key</span>
+												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-warning/15 text-warning-text">api key</span>
 											{:else if entry.actor_type === 'system'}
 												<span class="text-muted-foreground">system</span>
 												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">system</span>
 											{:else}
 												{entry.user_email ?? '-'}
-												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">user</span>
+												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-info/15 text-info-text">user</span>
 											{/if}
 										</TableCell>
 										<TableCell>
@@ -486,9 +486,9 @@
 										</TableCell>
 										<TableCell>
 											{#if entry.outcome === 'failure'}
-												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">failure</span>
+												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-destructive/15 text-destructive-text">failure</span>
 											{:else}
-												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">success</span>
+												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-success/15 text-success-text">success</span>
 											{/if}
 										</TableCell>
 										<TableCell class="text-sm">

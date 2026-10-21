@@ -212,7 +212,7 @@
         </div>
       {:else if phase === 'done'}
         <div class="flex flex-col items-center gap-3 py-16 text-center">
-          <CircleCheck class="h-10 w-10 text-green-600" />
+          <CircleCheck class="h-10 w-10 text-success-text" />
           <p class="font-medium">
             {kind === 'subscribe' ? `Your plan is active. Welcome to ${planName}.` : 'Your payment card was updated.'}
           </p>
@@ -228,7 +228,7 @@
               ? 'Checkout is complete. Your plan will update in a minute.'
               : 'Your card was submitted. It will show on the Billing page in a minute.'}
           </p>
-          <p class="text-sm text-muted-foreground">You can close this window; the Billing page refreshes on its own.</p>
+          <p class="text-sm text-muted-foreground">You can close this window; the billing page refreshes on its own.</p>
         </div>
       {:else if phase === 'error'}
         <div class="space-y-4 py-4">

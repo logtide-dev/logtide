@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
@@ -189,7 +190,7 @@
 
     function formatDate(dateString: string | null) {
         if (!dateString) return "Never";
-        return new Date(dateString).toLocaleString('en-US');
+        return formatTimestamp(dateString, { precision: 'minute' });
     }
 
     onMount(() => {
@@ -239,7 +240,7 @@
                     <CardHeader>
                         <div class="flex items-center justify-between">
                             <div>
-                                <CardTitle>User Information</CardTitle>
+                                <CardTitle>User information</CardTitle>
                                 <CardDescription
                                     >Basic user details and status</CardDescription
                                 >
@@ -294,7 +295,7 @@
                             </div>
                             <div class="space-y-2">
                                 <Label class="text-muted-foreground"
-                                    >Last Login</Label
+                                    >Last login</Label
                                 >
                                 <p class="text-sm">
                                     {formatDate(user.last_login)}
@@ -302,7 +303,7 @@
                             </div>
                             <div class="space-y-2">
                                 <Label class="text-muted-foreground"
-                                    >Last Updated</Label
+                                    >Last updated</Label
                                 >
                                 <p class="text-sm">
                                     {formatDate(user.updated_at)}
@@ -310,7 +311,7 @@
                             </div>
                             <div class="space-y-2">
                                 <Label class="text-muted-foreground"
-                                    >Active Sessions</Label
+                                    >Active sessions</Label
                                 >
                                 <p class="font-medium">{user.activeSessions}</p>
                             </div>

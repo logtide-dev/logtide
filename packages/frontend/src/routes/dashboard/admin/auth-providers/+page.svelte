@@ -167,7 +167,7 @@
         config,
       });
 
-      toastStore.success('Provider created successfully');
+      toastStore.success('Provider created');
       showCreateDialog = false;
       resetCreateForm();
       await loadProviders();
@@ -274,7 +274,7 @@
         config,
       });
 
-      toastStore.success('Provider updated successfully');
+      toastStore.success('Provider updated');
       showEditDialog = false;
       editingProvider = null;
       resetCreateForm();
@@ -358,7 +358,7 @@
                     title={provider.enabled ? 'Disable' : 'Enable'}
                   >
                     {#if provider.enabled}
-                      <Check class="h-4 w-4 text-green-500" />
+                      <Check class="h-4 w-4 text-success-text" />
                     {:else}
                       <X class="h-4 w-4 text-muted-foreground" />
                     {/if}
@@ -386,7 +386,7 @@
 <Dialog.Root bind:open={showCreateDialog}>
   <Dialog.Content class="max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Add Authentication Provider</Dialog.Title>
+      <Dialog.Title>Add authentication provider</Dialog.Title>
       <Dialog.Description>
         Configure a new SSO provider for user authentication
       </Dialog.Description>
@@ -394,7 +394,7 @@
 
     <div class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="type">Provider Type</Label>
+        <Label for="type">Provider type</Label>
         <select
           id="type"
           bind:value={createForm.type}
@@ -406,7 +406,7 @@
       </div>
 
       <div class="space-y-2">
-        <Label for="name">Display Name</Label>
+        <Label for="name">Display name</Label>
         <Input
           id="name"
           placeholder="e.g., Authentik SSO"
@@ -448,7 +448,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="clientSecret">Client Secret</Label>
+            <Label for="clientSecret">Client secret</Label>
             <Input
               id="clientSecret"
               type="password"
@@ -481,7 +481,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapBindDn">Bind DN (Service Account)</Label>
+            <Label for="ldapBindDn">Bind DN (service account)</Label>
             <Input
               id="ldapBindDn"
               placeholder="CN=Service,OU=Users,DC=example,DC=com"
@@ -490,7 +490,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapBindPassword">Bind Password</Label>
+            <Label for="ldapBindPassword">Bind password</Label>
             <Input
               id="ldapBindPassword"
               type="password"
@@ -500,7 +500,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapSearchBase">Search Base DN</Label>
+            <Label for="ldapSearchBase">Search base DN</Label>
             <Input
               id="ldapSearchBase"
               placeholder="OU=Users,DC=example,DC=com"
@@ -509,7 +509,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapSearchFilter">Search Filter</Label>
+            <Label for="ldapSearchFilter">Search filter</Label>
             <Input
               id="ldapSearchFilter"
               placeholder={'(uid={{username}})'}
@@ -547,7 +547,7 @@
 
     <div class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="edit-name">Display Name</Label>
+        <Label for="edit-name">Display name</Label>
         <Input
           id="edit-name"
           placeholder="e.g., Authentik SSO"
@@ -584,7 +584,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-clientSecret">Client Secret</Label>
+            <Label for="edit-clientSecret">Client secret</Label>
             <Input
               id="edit-clientSecret"
               type="password"
@@ -617,7 +617,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapBindDn">Bind DN (Service Account)</Label>
+            <Label for="edit-ldapBindDn">Bind DN (service account)</Label>
             <Input
               id="edit-ldapBindDn"
               placeholder="CN=Service,OU=Users,DC=example,DC=com"
@@ -626,7 +626,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapBindPassword">Bind Password</Label>
+            <Label for="edit-ldapBindPassword">Bind password</Label>
             <Input
               id="edit-ldapBindPassword"
               type="password"
@@ -636,7 +636,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapSearchBase">Search Base DN</Label>
+            <Label for="edit-ldapSearchBase">Search base DN</Label>
             <Input
               id="edit-ldapSearchBase"
               placeholder="OU=Users,DC=example,DC=com"
@@ -645,7 +645,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapSearchFilter">Search Filter</Label>
+            <Label for="edit-ldapSearchFilter">Search filter</Label>
             <Input
               id="edit-ldapSearchFilter"
               placeholder={'(uid={{username}})'}
