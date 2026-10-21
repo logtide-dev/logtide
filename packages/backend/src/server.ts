@@ -24,6 +24,7 @@ import dashboardRoutes from './modules/dashboard/routes.js';
 import { sigmaRoutes } from './modules/sigma/routes.js';
 import { siemRoutes } from './modules/siem/routes.js';
 import { registerSiemSseRoutes } from './modules/siem/sse-events.js';
+import { incidentsRoutes } from './modules/incidents/routes.js';
 import { adminRoutes } from './modules/admin/index.js';
 import { publicAuthRoutes, authenticatedAuthRoutes, adminAuthRoutes } from './modules/auth/external-routes.js';
 import { otlpRoutes, otlpTraceRoutes, otlpMetricRoutes } from './modules/otlp/index.js';
@@ -208,6 +209,7 @@ export async function build(opts = {}) {
   await fastify.register(sigmaRoutes);
   await fastify.register(siemRoutes);
   await fastify.register(registerSiemSseRoutes);
+  await fastify.register(incidentsRoutes);
   await fastify.register(exceptionsRoutes);
   await fastify.register(apiKeysRoutes, { prefix: '/api/v1/projects' });
   await fastify.register(receiversRoutes, { prefix: '/api/v1/projects' });
