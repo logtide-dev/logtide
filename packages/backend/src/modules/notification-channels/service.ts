@@ -17,6 +17,7 @@ import type {
 import type { NotificationProvider } from './providers/interface.js';
 import { EmailProvider } from './providers/email-provider.js';
 import { WebhookProvider } from './providers/webhook-provider.js';
+import { PagerDutyProvider } from './providers/pagerduty-provider.js';
 
 export class NotificationChannelsService {
   private providers: Map<NotificationChannelType, NotificationProvider>;
@@ -25,6 +26,7 @@ export class NotificationChannelsService {
     this.providers = new Map();
     this.providers.set('email', new EmailProvider());
     this.providers.set('webhook', new WebhookProvider());
+    this.providers.set('pagerduty', new PagerDutyProvider());
   }
 
   // ============================================================================

@@ -174,5 +174,11 @@ export function redactDeliveryForApi<T extends DeliveryRow | undefined>(row: T):
   const metadata = row.metadata as Record<string, unknown> | null;
   if (!metadata) return row;
   const { signingSecret: _s, headers: _h, ...safe } = metadata;
+  // PagerDuty bodies carry the integration routing key, which is a credential.
+  const payload = safe.payload;
+  if (payload && typeof payload === 'object' && 'routing_key' in payload) {
+    const { routing_key: _r, ...payloadSafe } = payload as Record<string, unknown>;
+    safe.payload = payloadSafe;
+  }
   return { ...row, metadata: safe };
 }
