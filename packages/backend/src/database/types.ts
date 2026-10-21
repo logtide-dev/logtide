@@ -298,6 +298,9 @@ export interface SigmaRulesTable {
   last_synced_at: Timestamp | null;
   // Detection routing category
   category: Generated<PackCategory>;
+  // W10: original rule text and last time the rule produced a kept match
+  raw_yaml: string | null;
+  last_fired_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -1289,4 +1292,27 @@ export interface Database {
   // Inbound webhook receivers (#155)
   receivers: ReceiversTable;
   receiver_events: ReceiverEventsTable;
+  // W10: sigma exceptions
+  sigma_rule_exceptions: SigmaRuleExceptionsTable;
+}
+
+// ============================================================================
+// W10: sigma exceptions
+// ============================================================================
+export interface SigmaRuleExceptionsTable {
+  id: Generated<string>;
+  organization_id: string;
+  sigma_rule_id: string;
+  conditions: ColumnType<
+    Array<{ field: string; operator: 'equals' | 'contains' | 'in'; values: string[] }>,
+    string,
+    string
+  >;
+  reason: string | null;
+  expires_at: Timestamp | null;
+  // BIGINT comes back from pg as a string
+  hit_count: Generated<string>;
+  last_hit_at: Timestamp | null;
+  created_by: string | null;
+  created_at: Generated<Timestamp>;
 }

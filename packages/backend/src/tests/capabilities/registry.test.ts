@@ -60,6 +60,12 @@ describe('capability registry', () => {
     expect(CAPABILITIES['telemetry.max_bytes_monthly'].kind).toBe('quota');
   });
 
+  it('sigma.exceptions.max_per_rule is a limit with unlimited default', () => {
+    const def = CAPABILITIES['sigma.exceptions.max_per_rule'];
+    expect(def.kind).toBe('limit');
+    if (def.kind === 'limit') expect(def.defaultLimit).toBeNull();
+  });
+
   it('defaults every quota to null (unlimited) so OSS never blocks', () => {
     const quotas: CapabilityName[] = [
       'ingestion.max_bytes_monthly',
