@@ -1,11 +1,23 @@
 // ============================================================================
-// ClickHouse APM queries: span and trace filters and sorting (plan S12)
+// ClickHouse APM queries (plan S10, S11, S12)
 // ============================================================================
 // Span and trace WHERE builders shared by the page and count queries, so both
-// always apply the same filter. Every value is a query parameter; sort columns
-// come from allowlists.
+// always apply the same filter, plus the entry span queries behind operation
+// stats and the latency histogram. Every value is a query parameter; sort
+// columns come from allowlists.
 
-import type { MetadataFilter, SpanQueryParams, TraceQueryParams } from '../../core/types.js';
+import { DEFAULT_OPERATION_KINDS, LATENCY_HISTOGRAM_BOUNDS_MS, OPERATION_STATS_DEFAULT_LIMIT } from '../../core/constants.js';
+import { normalizeOperationStatsParams } from '../../core/normalize.js';
+import type { NativeQuery } from '../../core/query-translator.js';
+import type {
+  LatencyHistogramResult,
+  MetadataFilter,
+  OperationStat,
+  OperationStatsParams,
+  SpanKind,
+  SpanQueryParams,
+  TraceQueryParams,
+} from '../../core/types.js';
 import { compileJsonFilters } from './json-path.js';
 import { toDateTime64 } from './query-translator.js';
 
@@ -178,4 +190,136 @@ export function traceOrderSql(params: Pick<TraceQueryParams, 'sortBy' | 'sortOrd
   const column = params.sortBy === 'duration' ? 'duration_ms' : 'start_time';
   const direction = String(params.sortOrder ?? '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   return `ORDER BY ${column} ${direction}, trace_id ASC`;
+}
+
+// ----------------------------------------------------------------------------
+// Entry spans: operation stats and latency histogram (plan S10, S11)
+// ----------------------------------------------------------------------------
+
+/** How entry spans are selected: by kind, or the root spans of the scope. */
+export type EntryMode = 'kinds' | 'root';
+
+/** Validated scope of getOperationStats and getLatencyHistogram. */
+export interface EntryScope {
+  projectId: string;
+  from: Date;
+  to: Date;
+  service?: string;
+  /** Latency histogram only; applied after the entry selection. */
+  operation?: string;
+  kinds: SpanKind[];
+  /** Explicit kinds never fall back to root spans. */
+  kindsExplicit: boolean;
+  limit: number;
+}
+
+/**
+ * Validates through the shared normalizer (time range, limit default and
+ * clamp, non-empty known kinds) and fills the default entry kinds.
+ */
+export function normalizeEntryParams(params: OperationStatsParams & { operation?: string }): EntryScope {
+  const normalized = normalizeOperationStatsParams(params);
+  return {
+    projectId: normalized.projectId,
+    from: normalized.from,
+    to: normalized.to,
+    ...(normalized.service !== undefined ? { service: normalized.service } : {}),
+    ...(params.operation !== undefined ? { operation: params.operation } : {}),
+    kinds: normalized.kinds ? [...normalized.kinds] : [...DEFAULT_OPERATION_KINDS],
+    kindsExplicit: normalized.kinds !== undefined,
+    limit: normalized.limit ?? OPERATION_STATS_DEFAULT_LIMIT,
+  };
+}
+
+/** Project, window on `time` (the span start, partition key) and optional service. */
+function entryScopeConditions(scope: EntryScope, queryParams: Record<string, unknown>): string[] {
+  queryParams.p_pid = scope.projectId;
+  queryParams.p_from = toDateTime64(scope.from);
+  queryParams.p_to = toDateTime64(scope.to);
+  const conditions = ['project_id = {p_pid:String}', 'time >= {p_from:DateTime64(3)}', 'time <= {p_to:DateTime64(3)}'];
+  if (scope.service !== undefined) {
+    conditions.push('service_name = {p_service:String}');
+    queryParams.p_service = scope.service;
+  }
+  return conditions;
+}
+
+function entryModeCondition(scope: EntryScope, mode: EntryMode, queryParams: Record<string, unknown>): string {
+  if (mode === 'root') return "(parent_span_id IS NULL OR parent_span_id = '')";
+  queryParams.p_kinds = [...scope.kinds];
+  return 'kind IN {p_kinds:Array(String)}';
+}
+
+/**
+ * `LIMIT 1` probe over the scope (never the operation): `'kinds'` looks for
+ * an entry span, `'any-kind'` for any span with a kind. The root fallback
+ * applies only when kinds were omitted and no span in scope has a kind.
+ */
+export function entryProbeSql(scope: EntryScope, probe: 'kinds' | 'any-kind'): NativeQuery {
+  const queryParams: Record<string, unknown> = {};
+  const conditions = entryScopeConditions(scope, queryParams);
+  conditions.push(probe === 'kinds' ? entryModeCondition(scope, 'kinds', queryParams) : "kind IS NOT NULL AND kind != ''");
+  return { query: `SELECT 1 FROM spans WHERE ${conditions.join(' AND ')} LIMIT 1`, parameters: [queryParams] };
+}
+
+/**
+ * Per (service, operation) count, errors, average and percentiles over the
+ * entry spans; `quantiles` interpolates linearly (exact below 8,192 values
+ * per group, a reservoir sample above). Busiest operations first.
+ */
+export function operationStatsSql(scope: EntryScope, mode: EntryMode): NativeQuery {
+  const queryParams: Record<string, unknown> = { p_limit: scope.limit };
+  const conditions = [...entryScopeConditions(scope, queryParams), entryModeCondition(scope, mode, queryParams)];
+  const query =
+    `SELECT service_name AS service, operation_name AS operation, count() AS n,` +
+    ` countIf(status_code = 'ERROR') AS error_count, avg(duration_ms) AS avg_ms,` +
+    ` quantiles(0.5, 0.95, 0.99)(duration_ms) AS p` +
+    ` FROM spans WHERE ${conditions.join(' AND ')}` +
+    ` GROUP BY service_name, operation_name ORDER BY n DESC, service_name ASC, operation_name ASC LIMIT {p_limit:UInt32}`;
+  return { query, parameters: [queryParams] };
+}
+
+/** `operationStatsSql` rows to the contract shape. */
+export function assembleOperationStats(rows: Record<string, unknown>[]): OperationStat[] {
+  return rows.map((row) => {
+    const p = Array.isArray(row.p) ? row.p.map(Number) : [];
+    return {
+      service: String(row.service),
+      operation: String(row.operation),
+      count: Number(row.n),
+      errorCount: Number(row.error_count),
+      avgMs: Number(row.avg_ms),
+      p50Ms: p[0] ?? 0,
+      p95Ms: p[1] ?? 0,
+      p99Ms: p[2] ?? 0,
+    };
+  });
+}
+
+/**
+ * Entry span counts per latency bucket. The bucket index is the number of
+ * bounds below the duration, so bucket i holds `bounds[i - 1] < d <= bounds[i]`
+ * and the last one durations above the last bound (upper-inclusive).
+ */
+export function latencyHistogramSql(scope: EntryScope, mode: EntryMode): NativeQuery {
+  const queryParams: Record<string, unknown> = { p_bounds: [...LATENCY_HISTOGRAM_BOUNDS_MS] };
+  const conditions = [...entryScopeConditions(scope, queryParams), entryModeCondition(scope, mode, queryParams)];
+  if (scope.operation !== undefined) {
+    conditions.push('operation_name = {p_op:String}');
+    queryParams.p_op = scope.operation;
+  }
+  const query =
+    `SELECT arrayCount(b -> b < duration_ms, {p_bounds:Array(UInt32)}) AS bucket, count() AS n` +
+    ` FROM spans WHERE ${conditions.join(' AND ')} GROUP BY bucket`;
+  return { query, parameters: [queryParams] };
+}
+
+/** `latencyHistogramSql` rows to `bounds.length + 1` zero-filled counts. */
+export function assembleLatencyHistogram(rows: Record<string, unknown>[]): LatencyHistogramResult {
+  const counts = Array.from({ length: LATENCY_HISTOGRAM_BOUNDS_MS.length + 1 }, () => 0);
+  for (const row of rows) {
+    const bucket = Number(row.bucket);
+    if (Number.isInteger(bucket) && bucket >= 0 && bucket < counts.length) counts[bucket] += Number(row.n);
+  }
+  return { bounds: [...LATENCY_HISTOGRAM_BOUNDS_MS], counts };
 }

@@ -1,14 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ClickHouseClient } from '@clickhouse/client';
 import {
+  assembleLatencyHistogram,
   buildSpanConditions,
   buildTraceConditions,
+  entryProbeSql,
+  latencyHistogramSql,
+  normalizeEntryParams,
+  operationStatsSql,
   routeAttributeFilters,
   spanOrderSql,
   traceOrderSql,
   traceSpanMatchSql,
 } from './apm-queries.js';
 import { ClickHouseEngine } from './clickhouse-engine.js';
+import { LATENCY_HISTOGRAM_BOUNDS_MS } from '../../core/constants.js';
 import type { MetadataFilter, SpanQueryParams, TraceQueryParams } from '../../core/types.js';
 
 const from = new Date('2026-01-01T10:00:00.000Z');
@@ -139,5 +145,110 @@ describe('clickhouse trace conditions', () => {
     expect(whereOf(page.query)).toBe(whereOf(count.query));
     expect(page.query).toContain('ORDER BY duration_ms DESC, trace_id ASC LIMIT {p_limit:UInt32} OFFSET {p_offset:UInt32}');
     expect(page.query_params).toMatchObject({ p_op: 'GET /x', p_limit: 3, p_offset: 0 });
+  });
+});
+
+const statsBase = { projectId: 'p1', from, to };
+
+describe('clickhouse operation stats sql', () => {
+  it('kinds default to SERVER and CONSUMER', () => {
+    const native = operationStatsSql(normalizeEntryParams(statsBase), 'kinds');
+    expect(native.query).toContain('kind IN {p_kinds:Array(String)}');
+    expect(native.parameters[0]).toMatchObject({ p_kinds: ['SERVER', 'CONSUMER'], p_pid: 'p1', p_limit: 100 });
+    const explicit = operationStatsSql(normalizeEntryParams({ ...statsBase, kinds: ['CLIENT'] }), 'kinds');
+    expect(explicit.parameters[0]).toMatchObject({ p_kinds: ['CLIENT'] });
+  });
+
+  it('limit defaults to 100 and clamps to 1..500', () => {
+    expect(normalizeEntryParams(statsBase).limit).toBe(100);
+    expect(normalizeEntryParams({ ...statsBase, limit: 9999 }).limit).toBe(500);
+    expect(normalizeEntryParams({ ...statsBase, limit: 0 }).limit).toBe(1);
+  });
+
+  it('scope is the project, the window on time and the service', () => {
+    const native = operationStatsSql(normalizeEntryParams({ ...statsBase, service: 'api' }), 'kinds');
+    expect(native.query).toContain(
+      "WHERE project_id = {p_pid:String} AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} AND service_name = {p_service:String}",
+    );
+    expect(native.parameters[0]).toMatchObject({ p_service: 'api' });
+  });
+
+  it("root mode selects parent_span_id IS NULL OR parent_span_id = ''", () => {
+    const native = operationStatsSql(normalizeEntryParams(statsBase), 'root');
+    expect(native.query).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+    expect(native.query).not.toContain('kind IN');
+  });
+
+  it('stats aggregate per operation and order by count then names', () => {
+    const query = operationStatsSql(normalizeEntryParams(statsBase), 'kinds').query;
+    expect(query).toContain("countIf(status_code = 'ERROR') AS error_count");
+    expect(query).toContain('avg(duration_ms) AS avg_ms');
+    expect(query).toContain('quantiles(0.5, 0.95, 0.99)(duration_ms) AS p');
+    expect(query).toContain('GROUP BY service_name, operation_name ORDER BY n DESC, service_name ASC, operation_name ASC LIMIT {p_limit:UInt32}');
+  });
+
+  it('the kind probe looks for any span with a kind in scope', () => {
+    const native = entryProbeSql(normalizeEntryParams({ ...statsBase, service: 'api' }), 'any-kind');
+    expect(native.query).toMatch(/^SELECT 1 FROM spans WHERE project_id = \{p_pid:String\} .* AND kind IS NOT NULL AND kind != '' LIMIT 1$/);
+    expect(entryProbeSql(normalizeEntryParams(statsBase), 'kinds').query).toContain('kind IN {p_kinds:Array(String)} LIMIT 1');
+  });
+
+  it('latency buckets count the bounds below each duration', () => {
+    const native = latencyHistogramSql(normalizeEntryParams({ ...statsBase, operation: 'GET /x' }), 'kinds');
+    expect(native.query).toContain('arrayCount(b -> b < duration_ms, {p_bounds:Array(UInt32)}) AS bucket');
+    expect(native.query).toContain('operation_name = {p_op:String}');
+    expect(native.parameters[0]).toMatchObject({ p_bounds: [...LATENCY_HISTOGRAM_BOUNDS_MS], p_op: 'GET /x' });
+    expect(assembleLatencyHistogram([{ bucket: 0, n: '2' }, { bucket: 16, n: '1' }]).counts).toEqual([2, ...Array(15).fill(0), 1]);
+  });
+});
+
+describe('clickhouse operation stats and latency engine flow', () => {
+  const statRow = { service: 'api', operation: 'GET /x', n: '3', error_count: '1', avg_ms: 20, p: [10, 30, 40] };
+
+  it('maps rows and skips the probe when entry spans exist', async () => {
+    const { engine, calls } = stubEngine([[statRow]]);
+    expect(await engine.getOperationStats(statsBase)).toEqual([
+      { service: 'api', operation: 'GET /x', count: 3, errorCount: 1, avgMs: 20, p50Ms: 10, p95Ms: 30, p99Ms: 40 },
+    ]);
+    expect(calls()).toHaveLength(1);
+  });
+
+  it('falls back to root spans only when no span in scope has a kind', async () => {
+    const none = stubEngine([[], [], [statRow]]);
+    expect(await none.engine.getOperationStats(statsBase)).toHaveLength(1);
+    expect(none.calls().map((c) => c.query)).toEqual([
+      expect.stringContaining('kind IN {p_kinds:Array(String)}'),
+      expect.stringContaining("kind IS NOT NULL AND kind != '' LIMIT 1"),
+      expect.stringContaining("(parent_span_id IS NULL OR parent_span_id = '')"),
+    ]);
+    const someKind = stubEngine([[], [{ '1': 1 }]]);
+    expect(await someKind.engine.getOperationStats(statsBase)).toEqual([]);
+    expect(someKind.calls()).toHaveLength(2);
+  });
+
+  it('explicit kinds never fall back and an empty kinds list is rejected', async () => {
+    const { engine, calls } = stubEngine([[]]);
+    expect(await engine.getOperationStats({ ...statsBase, kinds: ['SERVER'] })).toEqual([]);
+    expect(calls()).toHaveLength(1);
+    await expect(engine.getOperationStats({ ...statsBase, kinds: [] })).rejects.toBeInstanceOf(RangeError);
+  });
+
+  it('latency decides the fallback before the operation filter', async () => {
+    const entries = stubEngine([[{ '1': 1 }], [{ bucket: 3, n: '2' }]]);
+    const result = await entries.engine.getLatencyHistogram({ ...statsBase, operation: 'GET /x' });
+    expect(result.bounds).toEqual([...LATENCY_HISTOGRAM_BOUNDS_MS]);
+    expect(result.counts[3]).toBe(2);
+    const [probe, histogram] = entries.calls();
+    expect(probe.query).not.toContain('operation_name');
+    expect(histogram.query).toContain('kind IN {p_kinds:Array(String)}');
+    expect(histogram.query).toContain('operation_name = {p_op:String}');
+
+    const roots = stubEngine([[], [], [{ bucket: 0, n: '1' }]]);
+    expect((await roots.engine.getLatencyHistogram(statsBase)).counts[0]).toBe(1);
+    expect(roots.calls()[2].query).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+
+    const internalOnly = stubEngine([[], [{ '1': 1 }]]);
+    expect((await internalOnly.engine.getLatencyHistogram(statsBase)).counts).toEqual(Array(17).fill(0));
+    expect(internalOnly.calls()).toHaveLength(2);
   });
 });

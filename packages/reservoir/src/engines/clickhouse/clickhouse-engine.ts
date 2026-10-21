@@ -94,12 +94,29 @@ import type {
   LogFacetsResult,
   DiscoverMetadataKeysParams,
   MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
 } from '../../core/types.js';
 import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
 import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
 import { ClickHouseQueryTranslator, toDateTime64 } from './query-translator.js';
 import { assembleFacets, assembleHistogram, assembleMetadataKeys, translateDiscoverKeys } from './log-analytics.js';
-import { buildSpanConditions, buildTraceConditions, spanOrderSql, traceOrderSql } from './apm-queries.js';
+import {
+  assembleLatencyHistogram,
+  assembleOperationStats,
+  buildSpanConditions,
+  buildTraceConditions,
+  entryProbeSql,
+  latencyHistogramSql,
+  normalizeEntryParams,
+  operationStatsSql,
+  spanOrderSql,
+  traceOrderSql,
+  type EntryMode,
+} from './apm-queries.js';
+import type { NativeQuery } from '../../core/query-translator.js';
 
 export interface ClickHouseEngineOptions {
   /** Use an existing ClickHouse client instead of creating a new one */
@@ -1046,6 +1063,44 @@ export class ClickHouseEngine extends StorageEngine {
       offset,
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    const scope = normalizeEntryParams(params);
+    let rows = await this.runNative(operationStatsSql(scope, 'kinds'), 'operation-stats');
+    if (rows.length === 0 && !scope.kindsExplicit && !(await this.hasRows(entryProbeSql(scope, 'any-kind')))) {
+      rows = await this.runNative(operationStatsSql(scope, 'root'), 'operation-stats');
+    }
+    return assembleOperationStats(rows);
+  }
+
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    // The entry selection is decided for the project and service scope, before
+    // the operation filter, exactly as in getOperationStats.
+    const scope = normalizeEntryParams(params);
+    let mode: EntryMode | null = 'kinds';
+    if (!(await this.hasRows(entryProbeSql(scope, 'kinds')))) {
+      mode = (await this.hasRows(entryProbeSql(scope, 'any-kind'))) ? null : 'root';
+    }
+    if (mode === null) return assembleLatencyHistogram([]);
+    return assembleLatencyHistogram(await this.runNative(latencyHistogramSql(scope, mode), 'latency-histogram'));
+  }
+
+  /** Runs a translated query and returns its JSONEachRow rows. */
+  private async runNative(native: NativeQuery, op: string): Promise<Record<string, unknown>[]> {
+    const resultSet = await this.runQuery(
+      {
+        query: native.query as string,
+        query_params: (native.parameters as Record<string, unknown>[])[0],
+        format: 'JSONEachRow',
+      },
+      op,
+    );
+    return (await resultSet.json()) as Record<string, unknown>[];
+  }
+
+  private async hasRows(native: NativeQuery): Promise<boolean> {
+    return (await this.runNative(native, 'probe')).length > 0;
   }
 
   async getSpansByTraceId(traceId: string, projectId: string): Promise<SpanRecord[]> {

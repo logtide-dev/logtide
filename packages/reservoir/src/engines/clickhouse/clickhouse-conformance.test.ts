@@ -358,3 +358,48 @@ describe('clickhouse apm specifics: span and trace filters', () => {
     expect(result.total).toBe(3);
   });
 });
+
+describe('clickhouse apm specifics: entry spans', () => {
+  const project = '00000000-0000-4000-8000-00000000c306';
+  const trace = (n: number) => `c306000000000000000000000000000${n}`;
+  const span = (n: number) => `c30600000000000${n.toString(16)}`;
+  const spans = [
+    // nokind: a root and a child, no span has a kind.
+    { traceId: trace(1), spanId: span(1), service: 'nokind', operation: 'run', durationMs: 30, second: 1 },
+    { traceId: trace(1), spanId: span(2), parentSpanId: span(1), service: 'nokind', operation: 'step', durationMs: 10, second: 2 },
+    // mixed: the same shape plus one INTERNAL span, so no root fallback.
+    { traceId: trace(2), spanId: span(3), service: 'mixed', operation: 'run', durationMs: 30, second: 3 },
+    { traceId: trace(2), spanId: span(4), parentSpanId: span(3), service: 'mixed', operation: 'step', durationMs: 10, second: 4 },
+    { traceId: trace(2), spanId: span(5), parentSpanId: span(3), service: 'mixed', operation: 'loop', durationMs: 5, second: 5, kind: 'INTERNAL' as const },
+    // lat: server spans at the bucket edges.
+    ...[0, 1, 59999, 60000, 120000].map((durationMs, i) => ({
+      traceId: trace(3), spanId: span(6 + i), service: 'lat', operation: 'edge', durationMs, second: 10 + i, kind: 'SERVER' as const,
+    })),
+  ].map((s) => specificSpan(project, s));
+  const subject = useSpecificSpans(spans, tracesOf(spans));
+  const window = { projectId: project, from: SPECIFICS_FROM, to: SPECIFICS_TO };
+
+  it('falls back to root spans only when no span in scope has a kind', async () => {
+    const nokind = await subject().getOperationStats({ ...window, service: 'nokind' });
+    expect(nokind.map((r) => [r.operation, r.count, r.avgMs])).toEqual([['run', 1, 30]]);
+    expect(await subject().getOperationStats({ ...window, service: 'mixed' })).toEqual([]);
+    const latency = await subject().getLatencyHistogram({ ...window, service: 'mixed' });
+    expect(latency.counts).toEqual(Array(17).fill(0));
+  });
+
+  it('latency buckets clamp at 1 ms and put durations above 60 s in the overflow bucket', async () => {
+    const { bounds, counts } = await subject().getLatencyHistogram({ ...window, service: 'lat' });
+    expect(bounds).toHaveLength(16);
+    expect(counts).toHaveLength(17);
+    expect(counts[0]).toBe(2);
+    expect(counts[15]).toBe(2);
+    expect(counts[16]).toBe(1);
+    expect(counts.reduce((a, b) => a + b, 0)).toBe(5);
+  });
+
+  it('percentiles interpolate between the closest durations', async () => {
+    const [edge] = await subject().getOperationStats({ ...window, service: 'lat' });
+    expect([edge.count, edge.p50Ms]).toEqual([5, 59999]);
+    expect(edge.p95Ms).toBeCloseTo(108000, 6);
+  });
+});
