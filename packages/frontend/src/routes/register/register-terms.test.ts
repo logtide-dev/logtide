@@ -29,11 +29,10 @@ async function fillForm() {
   await fireEvent.input(await screen.findByLabelText('Name'), { target: { value: 'Jane' } });
   await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'jane@example.com' } });
   await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'password123' } });
-  await fireEvent.input(screen.getByLabelText('Confirm Password'), { target: { value: 'password123' } });
 }
 
 function submitButton(): HTMLButtonElement {
-  return screen.getByRole('button', { name: 'Create account with Email' }) as HTMLButtonElement;
+  return screen.getByRole('button', { name: 'Create account' }) as HTMLButtonElement;
 }
 
 describe('/register terms checkbox', () => {
