@@ -63,10 +63,13 @@ import type {
   MetricsOverviewResult,
   LogHistogramParams,
   LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
 } from '../../core/types.js';
-import { normalizeHistogramParams } from '../../core/normalize.js';
+import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
+import { normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
-import { histogramRowsToResult, type HistogramRow } from './log-analytics.js';
+import { assembleFacets, histogramRowsToResult, type FacetRow, type HistogramRow } from './log-analytics.js';
 
 const { Pool } = pg;
 
@@ -482,6 +485,15 @@ export class TimescaleEngine extends StorageEngine {
     const native = this.translator.translateHistogram(normalized);
     const result = await this.runQuery(native.query as string, native.parameters);
     return histogramRowsToResult(normalized, result.rows as HistogramRow[]);
+  }
+
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    // Same reason as histogram: RangeError (fields, keys, range) before any query.
+    const normalized = normalizeFacetsParams(params);
+    const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
+    const native = this.translator.translateFacets(normalized, limit);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    return assembleFacets(normalized.fields, result.rows as FacetRow[], limit);
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {

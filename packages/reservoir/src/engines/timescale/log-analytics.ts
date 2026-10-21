@@ -5,8 +5,14 @@
 // this module turns grouped rows into contract results with the helpers
 // every engine shares, so zero filling and ordering cannot drift.
 
-import { zeroFillHistogram } from '../../core/aggregation-helpers.js';
-import type { LogHistogramParams, LogHistogramResult, LogLevel } from '../../core/types.js';
+import { buildFacet, zeroFillHistogram } from '../../core/aggregation-helpers.js';
+import type {
+  LogFacetField,
+  LogFacetsResult,
+  LogHistogramParams,
+  LogHistogramResult,
+  LogLevel,
+} from '../../core/types.js';
 
 /** One `(bucket start in epoch seconds, level, count)` row of translateHistogram. */
 export interface HistogramRow {
@@ -32,4 +38,39 @@ export function histogramRowsToResult(
       count: Number(row.n),
     })),
   );
+}
+
+/** One `(field index, value, count, present total)` row of translateFacets. */
+export interface FacetRow {
+  /** Position of the field in the request, never a user string. */
+  f: number | string;
+  v: string;
+  /** pg returns bigint as a string. */
+  cnt: number | string;
+  /** Matching logs with a present value for the field. */
+  total: number | string;
+}
+
+/**
+ * Facets in request order (S8) from translateFacets rows: count desc, then
+ * byte order, `otherCount` = present total minus the returned counts. A
+ * field without rows has no present value: `values: []`, `otherCount: 0`.
+ */
+export function assembleFacets(fields: LogFacetField[], rows: FacetRow[], limit: number): LogFacetsResult {
+  const perField = new Map<number, { top: { value: string; count: number }[]; total: number }>();
+  for (const row of rows) {
+    const f = Number(row.f);
+    let entry = perField.get(f);
+    if (!entry) {
+      entry = { top: [], total: Number(row.total) };
+      perField.set(f, entry);
+    }
+    entry.top.push({ value: row.v, count: Number(row.cnt) });
+  }
+  return {
+    facets: fields.map((field, f) => {
+      const entry = perField.get(f);
+      return buildFacet(field, entry?.top ?? [], entry?.total ?? 0, limit);
+    }),
+  };
 }

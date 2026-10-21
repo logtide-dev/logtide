@@ -471,6 +471,48 @@ describe('TimescaleEngine', () => {
     });
   });
 
+  describe('facets', () => {
+    const from = new Date('2026-01-05T10:00:00Z');
+    const to = new Date('2026-01-05T10:20:00Z');
+    const lastParam = () => (mockQuery.mock.calls.at(-1) as [string, unknown[]])[1].at(-1);
+
+    it('limit defaults to 10 and clamps to 1..50', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      await engine.facets({ projectId: 'proj-1', from, to, fields: [{ builtin: 'level' }] });
+      expect(lastParam()).toBe(10);
+      await engine.facets({ projectId: 'proj-1', from, to, fields: [{ builtin: 'level' }], limit: 0 });
+      expect(lastParam()).toBe(1);
+      await engine.facets({ projectId: 'proj-1', from, to, fields: [{ builtin: 'level' }], limit: 99 });
+      expect(lastParam()).toBe(50);
+    });
+
+    it('rejects more than 20 fields before querying', async () => {
+      await engine.connect();
+      const fields = Array.from({ length: 21 }, (_, i) => ({ metadata: `k${i}` }));
+      await expect(engine.facets({ projectId: 'proj-1', from, to, fields })).rejects.toBeInstanceOf(RangeError);
+      await expect(engine.facets({ projectId: 'proj-1', from, to, fields: [] })).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('maps rows to facets in request order', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          { f: 1, v: 'api', cnt: '3', total: '4' },
+          { f: 0, v: 'error', cnt: '2', total: '2' },
+        ],
+      });
+      await engine.connect();
+      const result = await engine.facets({
+        projectId: 'proj-1', from, to, fields: [{ builtin: 'level' }, { builtin: 'service' }], limit: 1,
+      });
+      expect(result.facets).toEqual([
+        { field: 'level', values: [{ value: 'error', count: 2 }], otherCount: 0 },
+        { field: 'service', values: [{ value: 'api', count: 3 }], otherCount: 1 },
+      ]);
+    });
+  });
+
   describe('countEstimate', () => {
     const countParams = {
       projectId: 'proj-1',

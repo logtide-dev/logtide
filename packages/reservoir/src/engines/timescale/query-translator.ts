@@ -6,13 +6,14 @@ import type {
   CountParams,
   DeleteByTimeRangeParams,
   DistinctParams,
+  LogFacetsParams,
   LogFilterParams,
   LogHistogramParams,
   QueryParams,
   TopValuesParams,
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
-import { compileJsonFilters } from './json-path.js';
+import { compileJsonFilters, jsonValueExpr, scalarTextExpr } from './json-path.js';
 
 const INTERVAL_MAP: Record<AggregationInterval, string> = {
   '1m': '1 minute',
@@ -25,6 +26,13 @@ const INTERVAL_MAP: Record<AggregationInterval, string> = {
 };
 
 const HOSTNAME_EXPR = "metadata->>'hostname'";
+
+/** SQL of the built-in facet fields; anything else is rejected, never interpolated. */
+const FACET_BUILTIN_EXPR: Record<string, string> = {
+  level: 'level',
+  service: 'service',
+  hostname: HOSTNAME_EXPR,
+};
 
 export class TimescaleQueryTranslator extends QueryTranslator {
   private schema: string;
@@ -212,6 +220,53 @@ export class TimescaleQueryTranslator extends QueryTranslator {
       `SELECT (floor(extract(epoch FROM time) / $1) * $1)::bigint AS bucket_s, level, COUNT(*)::int AS n ` +
       `FROM ${this.table} WHERE ${conditions.join(' AND ')} GROUP BY 1, 2`;
     return { query, parameters: [params.bucketSeconds, ...values] };
+  }
+
+  /**
+   * Top values per facet field in one pass over the filtered logs (S8). Each
+   * field is a `(position, text value)` pair of a LATERAL VALUES list, so
+   * one scan feeds every field; metadata keys and dotted paths are bound
+   * parameters and resolve like metadata filters (literal key first, then
+   * the nested path), with the scalar text form of numbers and booleans.
+   * Per field: values ranked by count desc, then byte order, cut to the
+   * last parameter `limit`, plus the field's present total.
+   */
+  translateFacets(params: LogFacetsParams, limit: number): NativeQuery {
+    const { conditions, values, nextIdx } = this.buildLogConditions(params, 1);
+    let idx = nextIdx;
+    const pairs = params.fields.map((field, position) => {
+      let expr: string;
+      if ('builtin' in field) {
+        if (!Object.hasOwn(FACET_BUILTIN_EXPR, field.builtin)) {
+          throw new Error(`Unknown facet field ${String(field.builtin)}`);
+        }
+        expr = FACET_BUILTIN_EXPR[field.builtin];
+      } else {
+        const keyIdx = idx++;
+        values.push(field.metadata);
+        let pathIdx: number | null = null;
+        if (field.metadata.includes('.')) {
+          pathIdx = idx++;
+          values.push(field.metadata.split('.'));
+        }
+        expr = scalarTextExpr(jsonValueExpr('metadata', keyIdx, pathIdx));
+      }
+      return `(${position}, ${expr})`;
+    });
+    const limitIdx = idx++;
+    values.push(limit);
+
+    const query =
+      `WITH base AS (SELECT level, service, metadata FROM ${this.table} WHERE ${conditions.join(' AND ')}) ` +
+      `SELECT f, v, cnt, total FROM (` +
+      `SELECT kv.f, kv.v, COUNT(*)::bigint AS cnt, ` +
+      `(SUM(COUNT(*)) OVER (PARTITION BY kv.f))::bigint AS total, ` +
+      `ROW_NUMBER() OVER (PARTITION BY kv.f ORDER BY COUNT(*) DESC, kv.v COLLATE "C" ASC) AS rn ` +
+      `FROM base CROSS JOIN LATERAL (VALUES ${pairs.join(', ')}) AS kv(f, v) ` +
+      `WHERE kv.v IS NOT NULL AND kv.v <> '' ` +
+      `GROUP BY kv.f, kv.v) r ` +
+      `WHERE rn <= $${limitIdx} ORDER BY f, rn`;
+    return { query, parameters: values };
   }
 
   translateDistinct(params: DistinctParams): NativeQuery {

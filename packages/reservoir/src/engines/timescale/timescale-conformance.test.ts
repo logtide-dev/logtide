@@ -259,3 +259,53 @@ describeTimescaleSpecifics(
     });
   },
 );
+
+describeTimescaleSpecifics(
+  'timescale facets specifics',
+  'reservoir_ts_facets',
+  specificsLogs([
+    { message: 'A', metadata: { code: 500 } },
+    { message: 'B', metadata: { code: '500' } },
+    { message: 'C', metadata: { code: { a: 1 } } },
+    { message: 'D', metadata: { ok: true } },
+    { message: 'E', metadata: { code: '', http: { method: 'GET' } } },
+    { message: 'F', metadata: { 'http.method': 'POST', http: { method: 'GET' } } },
+  ]),
+  (subject) => {
+    it('numeric and boolean metadata facet as text, objects excluded', async () => {
+      const { facets } = await subject().facets({
+        projectId: SPECIFICS_PROJECT,
+        ...SPECIFICS_WINDOW,
+        fields: [{ metadata: 'code' }, { metadata: 'ok' }],
+      });
+      expect(facets).toEqual([
+        { field: 'metadata.code', values: [{ value: '500', count: 2 }], otherCount: 0 },
+        { field: 'metadata.ok', values: [{ value: 'true', count: 1 }], otherCount: 0 },
+      ]);
+    });
+
+    it('a dotted key prefers the literal key, then the nested path', async () => {
+      const { facets } = await subject().facets({
+        projectId: SPECIFICS_PROJECT,
+        ...SPECIFICS_WINDOW,
+        fields: [{ metadata: 'http.method' }],
+        limit: 1,
+      });
+      expect(facets).toEqual([{ field: 'metadata.http.method', values: [{ value: 'GET', count: 1 }], otherCount: 1 }]);
+    });
+
+    it('the log filter applies to facets', async () => {
+      const { facets } = await subject().facets({
+        projectId: SPECIFICS_PROJECT,
+        ...SPECIFICS_WINDOW,
+        fields: [{ builtin: 'service' }, { metadata: 'code' }],
+        metadataFilters: [{ key: 'code', op: 'equals', value: '500', include_missing: false }],
+        textQuery: { all: [], anyOf: [], none: [{ kind: 'phrase', value: 'B' }] },
+      });
+      expect(facets).toEqual([
+        { field: 'service', values: [{ value: 'api', count: 1 }], otherCount: 0 },
+        { field: 'metadata.code', values: [{ value: '500', count: 1 }], otherCount: 0 },
+      ]);
+    });
+  },
+);
