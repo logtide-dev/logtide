@@ -5,5 +5,6 @@ export { incidentsService, IncidentsService } from './service.js';
 export type { IncidentPatch } from './service.js';
 export * from './types.js';
 export { planStatusChange, higherSeverity } from './status.js';
-export { incidentsRoutes, registerIncidentRoutes, listParam } from './routes.js';
+export { incidentsRoutes, registerIncidentRoutes } from './routes.js';
+export { listParam } from './query-params.js';
 export type { IncidentRouteOptions } from './routes.js';

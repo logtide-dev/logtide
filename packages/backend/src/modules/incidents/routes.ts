@@ -23,6 +23,7 @@ import { auditLogService } from '../audit-log/service.js';
 import type { AuditAction } from '../audit-log/actions.js';
 import { SiemService } from '../siem/service.js';
 import { incidentsService } from './service.js';
+import { listParam } from './query-params.js';
 import { IncidentError, type IncidentListFilters } from './types.js';
 
 const siemService = new SiemService(db);
@@ -31,23 +32,6 @@ const organizationsService = new OrganizationsService();
 export interface IncidentRouteOptions {
   basePath: '/api/v1/incidents' | '/api/v1/siem/incidents';
   defaultSort: IncidentSortKey;
-}
-
-/**
- * Query values that accept repeated keys (`?a=x&a=y`) and comma lists
- * (`?a=x,y`) alike; an empty list means no filter.
- */
-export function listParam<T extends z.ZodTypeAny>(schema: T) {
-  return z.preprocess(
-    (v) =>
-      v === undefined
-        ? undefined
-        : (Array.isArray(v) ? v : [v])
-            .flatMap((s) => String(s).split(','))
-            .map((s) => s.trim())
-            .filter(Boolean),
-    z.array(schema).optional()
-  );
 }
 
 const ASSIGNEE_KEYWORDS = ['me', 'unassigned', 'anyone'] as const;
