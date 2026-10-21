@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ClickHouseClient } from '@clickhouse/client';
-import { assembleHistogram } from './log-analytics.js';
+import { assembleFacets, assembleHistogram } from './log-analytics.js';
 import { ClickHouseQueryTranslator } from './query-translator.js';
 import { ClickHouseEngine } from './clickhouse-engine.js';
-import type { LogHistogramParams } from '../../core/types.js';
+import type { LogFacetField, LogFacetsParams, LogHistogramParams } from '../../core/types.js';
 
 const at = (iso: string) => new Date(iso);
 const ms = (iso: string) => String(at(iso).getTime());
@@ -105,5 +105,102 @@ describe('clickhouse histogram', () => {
     const args = query.mock.calls[0][0] as { query: string; query_params: Record<string, unknown> };
     expect(args.query).toContain('match(message, {p_tq1:String})');
     expect(args.query_params.p_tq0).toBe('%timeout%');
+  });
+});
+
+const facetBase: LogFacetsParams = {
+  projectId: '00000000-0000-0000-0000-000000000001',
+  from: at('2026-01-01T10:00:00.000Z'),
+  to: at('2026-01-01T11:00:00.000Z'),
+  fields: [{ builtin: 'level' }],
+};
+
+function lastCall(query: ReturnType<typeof stubEngine>['query']) {
+  return query.mock.calls.at(-1)![0] as { query: string; query_params: Record<string, unknown> };
+}
+
+describe('clickhouse facets', () => {
+  it('limit defaults to 10 and clamps to 1..50', async () => {
+    const { engine, query } = stubEngine();
+    await engine.facets(facetBase);
+    expect(lastCall(query).query_params.p_limit).toBe(10);
+    await engine.facets({ ...facetBase, limit: 0 });
+    expect(lastCall(query).query_params.p_limit).toBe(1);
+    await engine.facets({ ...facetBase, limit: 99 });
+    expect(lastCall(query).query_params.p_limit).toBe(50);
+  });
+
+  it('rejects more than 20 fields before querying', async () => {
+    const { engine, query } = stubEngine();
+    const fields: LogFacetField[] = Array.from({ length: 21 }, (_, i) => ({ metadata: `k${i}` }));
+    await expect(engine.facets({ ...facetBase, fields })).rejects.toBeInstanceOf(RangeError);
+    await expect(engine.facets({ ...facetBase, fields: [] })).rejects.toBeInstanceOf(RangeError);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('otherCount is the field total minus returned counts', () => {
+    const result = assembleFacets([{ builtin: 'service' }], [
+      { f: 0, v: 'api', cnt: '4', total: '10' },
+      { f: 0, v: 'auth', cnt: '3', total: '10' },
+    ], 10);
+    expect(result.facets).toEqual([
+      { field: 'service', values: [{ value: 'api', count: 4 }, { value: 'auth', count: 3 }], otherCount: 3 },
+    ]);
+  });
+
+  it('keeps request order and labels', () => {
+    const result = assembleFacets([{ builtin: 'service' }, { metadata: 'region' }, { builtin: 'level' }], [
+      { f: 2, v: 'error', cnt: '2', total: '2' },
+      { f: 0, v: 'api', cnt: '1', total: '1' },
+      { f: 1, v: 'eu', cnt: '1', total: '1' },
+    ], 10);
+    expect(result.facets.map((f) => f.field)).toEqual(['service', 'metadata.region', 'level']);
+    expect(result.facets[2].values).toEqual([{ value: 'error', count: 2 }]);
+  });
+
+  it('a field without values returns an empty list', () => {
+    const result = assembleFacets([{ builtin: 'level' }, { metadata: 'missing' }], [
+      { f: 0, v: 'info', cnt: '1', total: '1' },
+    ], 10);
+    expect(result.facets[1]).toEqual({ field: 'metadata.missing', values: [], otherCount: 0 });
+  });
+
+  it('ties break in byte order and each field keeps its own top values', () => {
+    const translator = new ClickHouseQueryTranslator('logs');
+    const native = translator.translateFacets({ ...facetBase, fields: [{ builtin: 'hostname' }, { metadata: 'http.method' }] }, 5);
+    const query = native.query as string;
+    const params = (native.parameters as Record<string, unknown>[])[0];
+    expect(query).toContain('sum(count()) OVER (PARTITION BY f) AS total');
+    expect(query).toContain('ORDER BY f ASC, cnt DESC, v ASC LIMIT {p_limit:UInt32} BY f');
+    expect(query).toContain('(0, toNullable(hostname))');
+    expect(query).toContain('(1, multiIf(');
+    expect(query).toContain('if(JSONHas(metadata, {p_fk1:String})');
+    expect(query).toContain("WHERE v IS NOT NULL AND v != ''");
+    expect(params).toMatchObject({ p_limit: 5, p_fk1: 'http.method', p_fk1s0: 'http', p_fk1s1: 'method' });
+  });
+
+  it('facets reuse the log filter', () => {
+    const translator = new ClickHouseQueryTranslator('logs');
+    const native = translator.translateFacets({
+      ...facetBase,
+      textQuery: { all: [{ kind: 'phrase', value: 'refused' }], anyOf: [], none: [] },
+      metadataFilters: [{ key: 'env', op: 'equals', value: 'prod', include_missing: false }],
+    }, 10);
+    const query = native.query as string;
+    expect(query).toContain(' PREWHERE project_id = {p_project_id:String} AND time >= {p_from:DateTime64(3)}');
+    expect(query).toContain('lowerUTF8(message) LIKE {p_tq0:String}');
+    expect(query).toContain('JSONExtractRaw(metadata, {p_mfk0:String})');
+  });
+
+  it('the engine maps rows to facets in request order', async () => {
+    const { engine } = stubEngine([
+      { f: 1, v: 'api', cnt: '3', total: '5' },
+      { f: 0, v: 'error', cnt: '2', total: '2' },
+    ]);
+    const result = await engine.facets({ ...facetBase, fields: [{ builtin: 'level' }, { builtin: 'service' }], limit: 1 });
+    expect(result.facets).toEqual([
+      { field: 'level', values: [{ value: 'error', count: 2 }], otherCount: 0 },
+      { field: 'service', values: [{ value: 'api', count: 3 }], otherCount: 2 },
+    ]);
   });
 });

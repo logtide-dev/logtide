@@ -189,3 +189,26 @@ describe('clickhouse json specifics', () => {
     expect(await where(f({ key: 'http.status', op: 'not_in', values: ['404'], include_missing: false }))).toEqual(['A', 'B']);
   });
 });
+
+describe('clickhouse json specifics: facets', () => {
+  const project = '00000000-0000-4000-8000-00000000c303';
+  const subject = useSpecifics(project, [
+    { message: 'number', metadata: { code: 500 } },
+    { message: 'string', metadata: { code: '500' } },
+    { message: 'object', metadata: { code: { a: 1 } } },
+    { message: 'boolean', metadata: { ok: true } },
+  ]);
+
+  it('numeric and boolean metadata facet as text, objects excluded', async () => {
+    const { facets } = await subject().facets({
+      projectId: project,
+      from: SPECIFICS_FROM,
+      to: SPECIFICS_TO,
+      fields: [{ metadata: 'code' }, { metadata: 'ok' }],
+    });
+    expect(facets).toEqual([
+      { field: 'metadata.code', values: [{ value: '500', count: 2 }], otherCount: 0 },
+      { field: 'metadata.ok', values: [{ value: 'true', count: 1 }], otherCount: 0 },
+    ]);
+  });
+});

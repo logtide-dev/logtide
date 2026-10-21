@@ -90,10 +90,13 @@ import type {
   MetricsOverviewResult,
   LogHistogramParams,
   LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
 } from '../../core/types.js';
-import { normalizeHistogramParams } from '../../core/normalize.js';
+import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
+import { normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
 import { ClickHouseQueryTranslator, toDateTime64 } from './query-translator.js';
-import { assembleHistogram } from './log-analytics.js';
+import { assembleFacets, assembleHistogram } from './log-analytics.js';
 
 export interface ClickHouseEngineOptions {
   /** Use an existing ClickHouse client instead of creating a new one */
@@ -709,6 +712,24 @@ export class ClickHouseEngine extends StorageEngine {
     );
     const rows = (await resultSet.json()) as Record<string, unknown>[];
     return assembleHistogram(normalized, rows);
+  }
+
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    // Validates fields and clamps the limit before any query (the client
+    // already did, but the engine may be called directly).
+    const normalized = normalizeFacetsParams(params);
+    const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
+    const native = this.translator.translateFacets(normalized, limit);
+    const resultSet = await this.runQuery(
+      {
+        query: native.query as string,
+        query_params: (native.parameters as Record<string, unknown>[])[0],
+        format: 'JSONEachRow',
+      },
+      'facets',
+    );
+    const rows = (await resultSet.json()) as Record<string, unknown>[];
+    return assembleFacets(normalized.fields, rows, limit);
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {

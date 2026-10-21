@@ -6,6 +6,8 @@ import type {
   CountParams,
   DeleteByTimeRangeParams,
   DistinctParams,
+  LogFacetField,
+  LogFacetsParams,
   LogFilterParams,
   LogHistogramParams,
   MetadataFilter,
@@ -13,7 +15,7 @@ import type {
   TopValuesParams,
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
-import { compileJsonFilters } from './json-path.js';
+import { bindJsonKey, chJsonScalarExpr, compileJsonFilters } from './json-path.js';
 
 /** ClickHouse can't parse 0 as DateTime64(3) - clamp to 1ms after epoch */
 export function toDateTime64(date: Date): number {
@@ -174,6 +176,44 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     const query = `SELECT toStartOfInterval(time, INTERVAL ${interval}) AS bucket, level, count() AS total FROM ${this.tableName}${prewhereClause}${whereClause} GROUP BY bucket, level ORDER BY bucket ASC`;
 
     return { query, parameters: [queryParams] };
+  }
+
+  /**
+   * Top values per facet field in one pass over the filtered logs. Each log
+   * becomes one `(field index, text value)` pair per field (the index is the
+   * position in `fields`, never user text); empty and missing values drop
+   * out. The window sum runs before LIMIT BY, so `total` counts every
+   * present value of the field, not only the returned ones.
+   */
+  translateFacets(params: LogFacetsParams, limit: number): NativeQuery {
+    const { prewhere, where, queryParams } = this.buildLogPredicates(params);
+    const pairs = params.fields.map((field, i) => `(${i}, ${this.facetValueExpr(field, i, queryParams)})`);
+    queryParams.p_limit = limit;
+    const prewhereClause = prewhere.length > 0 ? ` PREWHERE ${prewhere.join(' AND ')}` : '';
+    const whereClause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+    const query =
+      `SELECT kv.1 AS f, kv.2 AS v, count() AS cnt, sum(count()) OVER (PARTITION BY f) AS total` +
+      ` FROM (SELECT [${pairs.join(', ')}] AS kvs FROM ${this.tableName}${prewhereClause}${whereClause})` +
+      ` ARRAY JOIN kvs AS kv` +
+      ` WHERE v IS NOT NULL AND v != ''` +
+      ` GROUP BY f, v ORDER BY f ASC, cnt DESC, v ASC LIMIT {p_limit:UInt32} BY f`;
+    return { query, parameters: [queryParams] };
+  }
+
+  /** Nullable(String) text form of one facet field (scalar text for metadata keys). */
+  private facetValueExpr(field: LogFacetField, index: number, queryParams: Record<string, unknown>): string {
+    if ('builtin' in field) {
+      switch (field.builtin) {
+        case 'level':
+          return 'toNullable(toString(level))';
+        case 'service':
+          return 'toNullable(toString(service))';
+        case 'hostname':
+          return 'toNullable(hostname)';
+      }
+      throw new RangeError(`Unknown facet field ${String((field as { builtin: unknown }).builtin)}`);
+    }
+    return chJsonScalarExpr('metadata', bindJsonKey(field.metadata, `p_fk${index}`, queryParams));
   }
 
   /**

@@ -24,6 +24,28 @@ function checkColumn(column: string): void {
   if (!JSON_COLUMNS.has(column)) throw new Error('Unsupported JSON column');
 }
 
+/**
+ * Binds a key as query parameters: `name` holds the whole key and, for a
+ * dotted key, `<name>s<j>` hold its segments.
+ */
+export function bindJsonKey(key: string, name: string, queryParams: Record<string, unknown>): ChJsonKeyParams {
+  queryParams[name] = key;
+  let segments: string[] | null = null;
+  if (key.includes('.')) {
+    segments = key.split('.').map((segment, j) => {
+      const segmentName = `${name}s${j}`;
+      queryParams[segmentName] = segment;
+      return `{${segmentName}:String}`;
+    });
+  }
+  return { key: `{${name}:String}`, segments };
+}
+
+/** Scalar text (see chScalarTextExpr) of a key resolved against a JSON column. */
+export function chJsonScalarExpr(column: ChJsonColumn, keyParams: ChJsonKeyParams): string {
+  return chScalarTextExpr(chJsonRawExpr(column, keyParams));
+}
+
 /** The raw JSON text of the resolved value, `''` when the key does not resolve. */
 export function chJsonRawExpr(column: ChJsonColumn, keyParams: ChJsonKeyParams): string {
   checkColumn(column);
@@ -60,19 +82,9 @@ export function compileJsonFilters(
 ): string[] {
   checkColumn(column);
   return filters.map((f, i) => {
-    const keyName = `${prefix}k${i}`;
-    queryParams[keyName] = f.key;
-    let segments: string[] | null = null;
-    if (f.key.includes('.')) {
-      segments = f.key.split('.').map((segment, j) => {
-        const name = `${keyName}s${j}`;
-        queryParams[name] = segment;
-        return `{${name}:String}`;
-      });
-    }
-    const keyParams: ChJsonKeyParams = { key: `{${keyName}:String}`, segments };
+    const keyParams = bindJsonKey(f.key, `${prefix}k${i}`, queryParams);
     const exists = chJsonExistsExpr(column, keyParams);
-    const scalar = chScalarTextExpr(chJsonRawExpr(column, keyParams));
+    const scalar = chJsonScalarExpr(column, keyParams);
     const valueName = `${prefix}v${i}`;
     const value = (): string => {
       queryParams[valueName] = f.value ?? '';
