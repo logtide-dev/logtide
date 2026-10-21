@@ -508,7 +508,7 @@ export interface IncidentsTable {
 // SERVICE HEALTH MONITORING TABLES
 // ============================================================================
 
-export type MonitorType = 'http' | 'tcp' | 'heartbeat' | 'log_heartbeat';
+export type MonitorType = 'http' | 'tcp' | 'heartbeat' | 'log_heartbeat' | 'ssl' | 'dns';
 export type MonitorStatusValue = 'up' | 'down' | 'unknown';
 
 export interface MonitorHttpConfig {
@@ -533,6 +533,12 @@ export interface MonitorsTable {
   http_config: MonitorHttpConfig | null;
   severity: Generated<string>;
   grace_period_seconds: number | null;
+  // --- W12 uptime and status page ---
+  display_name: string | null;
+  group_name: string | null;
+  display_order: Generated<number>;
+  check_config: unknown | null;
+  // --- end W12 ---
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -547,6 +553,8 @@ export interface MonitorStatusTable {
   response_time_ms: number | null;
   last_error_code: string | null;
   incident_id: string | null;
+  // W12: last check detail (ssl certificate facts, dns records)
+  detail: unknown | null;
   updated_at: Generated<Timestamp>;
 }
 
@@ -591,6 +599,8 @@ export interface StatusIncidentsTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
+  // W12: the shared incident this status update was published from
+  source_incident_id: string | null;
 }
 
 export interface StatusIncidentUpdatesTable {
@@ -600,6 +610,43 @@ export interface StatusIncidentUpdatesTable {
   message: string;
   created_by: string | null;
   created_at: Generated<Timestamp>;
+}
+
+// --- W12 status page tables ---
+
+export interface StatusPageConfigTable {
+  project_id: string;
+  organization_id: string;
+  title: string | null;
+  description: string | null;
+  logo_url: string | null;
+  accent_color: string | null;
+  show_monitor_types: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface StatusPageSubscribersTable {
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string;
+  email: string;
+  email_normalized: string;
+  confirm_token_hash: string | null;
+  confirm_expires_at: Timestamp | null;
+  confirmed_at: Timestamp | null;
+  last_confirmation_sent_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
+export interface StatusIncidentMonitorsTable {
+  incident_id: string;
+  monitor_id: string;
+}
+
+export interface MaintenanceMonitorsTable {
+  maintenance_id: string;
+  monitor_id: string;
 }
 
 // ============================================================================
@@ -1276,6 +1323,10 @@ export interface Database {
   status_incidents: StatusIncidentsTable;
   status_incident_updates: StatusIncidentUpdatesTable;
   scheduled_maintenances: ScheduledMaintenancesTable;
+  status_page_config: StatusPageConfigTable;
+  status_page_subscribers: StatusPageSubscribersTable;
+  status_incident_monitors: StatusIncidentMonitorsTable;
+  maintenance_monitors: MaintenanceMonitorsTable;
   // Digest email reports
   digest_configs: DigestConfigsTable;
   digest_recipients: DigestRecipientsTable;
