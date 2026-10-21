@@ -1608,6 +1608,9 @@ export class MongoDBEngine extends StorageEngine {
     await safeCreateIndex(col, { project_id: 1, service_name: 1, status_code: 1, time: -1 }, 'idx_span_service_status_time');
     // Serves duration-sorted top-K reads (digest slowest spans)
     await safeCreateIndex(col, { project_id: 1, duration_ms: -1 }, 'idx_span_project_duration');
+    // Serves trace operation matches and operation-filtered latency histograms
+    // (built on the next start; `spans` is a normal collection)
+    await safeCreateIndex(col, { project_id: 1, operation_name: 1, time: -1 }, 'idx_span_operation_time');
   }
 
   private async createTracesIndexes(db: Db): Promise<void> {
