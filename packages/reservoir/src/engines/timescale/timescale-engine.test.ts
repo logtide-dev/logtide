@@ -965,6 +965,45 @@ describe('TimescaleEngine', () => {
         expect(countParams).toContainEqual(expected);
       }
     });
+
+    it('applies attribute filters and the sort to count and page alike', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.querySpans({
+        projectId: 'proj-1',
+        attributeFilters: [{ key: 'resource.service.version', op: 'equals', value: '1.2', include_missing: false }],
+        sortBy: 'duration',
+        sortOrder: 'desc',
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+      });
+
+      const [countSql, countParams] = mockQuery.mock.calls[0] as [string, unknown[]];
+      const [pageSql] = mockQuery.mock.calls[1] as [string, unknown[]];
+      expect(countSql).toContain('resource_attributes ?');
+      expect(countParams).toContain('service.version');
+      expect(pageSql).toContain('resource_attributes ?');
+      expect(pageSql).toContain('ORDER BY duration_ms DESC, span_id ASC');
+    });
+
+    it('falls back to start_time ASC for an unknown sort key', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.querySpans({
+        projectId: 'proj-1',
+        sortBy: 'kind; DROP TABLE spans' as never,
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+      });
+
+      const pageSql = mockQuery.mock.calls[1][0] as string;
+      expect(pageSql).toContain('ORDER BY start_time ASC, span_id ASC');
+      expect(pageSql).not.toContain('DROP');
+    });
   });
 
   describe('getSpansByTraceId', () => {
@@ -1027,6 +1066,48 @@ describe('TimescaleEngine', () => {
       expect(sql).toContain('public.traces');
       expect(sql).toContain('error = $');
       expect(sql).toContain('duration_ms >= $');
+    });
+
+    it('matches operation and attributes on one span; count and page share the WHERE', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.queryTraces({
+        projectId: 'proj-1',
+        serviceName: ['api'],
+        operation: 'GET /x',
+        attributeFilters: [{ key: 'http.method', op: 'equals', value: 'GET', include_missing: false }],
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+        sortBy: 'duration',
+        sortOrder: 'asc',
+        limit: 5,
+      });
+
+      const [countSql, countParams] = mockQuery.mock.calls[0] as [string, unknown[]];
+      const [pageSql, pageParams] = mockQuery.mock.calls[1] as [string, unknown[]];
+      const where = (sql: string) => sql.slice(sql.indexOf('WHERE')).split(/\s+ORDER BY/)[0].trim();
+      expect(where(pageSql)).toBe(where(countSql));
+      expect(countSql).toContain('EXISTS (SELECT 1 FROM public.spans s WHERE s.project_id = traces.project_id');
+      expect(countSql).toContain('s.operation_name = $');
+      // serviceName keeps its trace-level meaning (F3 contract).
+      expect(countSql).toContain('service_name = ANY(');
+      expect(countSql).not.toContain('s.service_name');
+      expect(pageSql).toContain('ORDER BY duration_ms ASC, trace_id ASC');
+      expect(pageParams.slice(0, countParams.length)).toEqual(countParams);
+      expect(pageParams.slice(countParams.length)).toEqual([5, 0]);
+    });
+
+    it('defaults to start_time desc with a trace_id tie-break and no span block', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.queryTraces({ projectId: 'proj-1', from: new Date('2024-01-01'), to: new Date('2024-01-02') });
+
+      expect(mockQuery.mock.calls[0][0] as string).not.toContain('EXISTS');
+      expect(mockQuery.mock.calls[1][0] as string).toContain('ORDER BY start_time DESC, trace_id ASC');
     });
   });
 

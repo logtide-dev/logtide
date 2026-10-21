@@ -33,7 +33,7 @@ describe('compileJsonFilters', () => {
       [mf({ key: 'env', op: 'not_in', values: ['a'], include_missing: true }), '(metadata->>$1 IS NULL OR metadata->>$1 <> ALL($2))'],
       [mf({ key: 'env', op: 'not_in', values: ['a'] }), '(metadata ? $1 AND metadata->>$1 <> ALL($2))'],
       [mf({ key: 'env', op: 'exists' }), '(metadata ? $1)'],
-      [mf({ key: 'env', op: 'not_exists', include_missing: true }), '(NOT (metadata ? $1))'],
+      [mf({ key: 'env', op: 'not_exists', include_missing: true }), '(metadata IS NULL OR NOT (metadata ? $1))'],
       [mf({ key: 'env', op: 'contains', value: 'x' }), '(metadata->>$1 ILIKE $2)'],
     ];
     for (const [filter, sql] of shapes) {
@@ -51,8 +51,16 @@ describe('compileJsonFilters', () => {
   it('dotted exists checks both forms', () => {
     expect(compileJsonFilters([mf({ key: 'user.id', op: 'exists' })], 'metadata', 1).conditions).toEqual([`(${DOTTED_EXISTS})`]);
     expect(compileJsonFilters([mf({ key: 'user.id', op: 'not_exists', include_missing: true })], 'metadata', 1).conditions).toEqual([
-      `(NOT ${DOTTED_EXISTS})`,
+      `(metadata IS NULL OR NOT ${DOTTED_EXISTS})`,
     ]);
+  });
+
+  it('not_exists matches a record whose JSON column is NULL', () => {
+    // `col ? key` is NULL on a NULL column; logs and spans without metadata or attributes store NULL.
+    for (const key of ['env', 'user.id']) {
+      const [sql] = compileJsonFilters([mf({ key, op: 'not_exists', include_missing: true })], 'attributes', 1).conditions;
+      expect(sql.startsWith('(attributes IS NULL OR NOT ')).toBe(true);
+    }
   });
 
   it('negated dotted clauses match when the key does not resolve', () => {

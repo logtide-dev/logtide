@@ -72,6 +72,7 @@ import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
 import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
 import { assembleFacets, histogramRowsToResult, type FacetRow, type HistogramRow } from './log-analytics.js';
+import { buildSpanConditions, spanOrderSql, traceOrderSql, traceSpanMatchSql } from './apm-queries.js';
 
 const { Pool } = pg;
 
@@ -795,56 +796,13 @@ export class TimescaleEngine extends StorageEngine {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    // Time range
-    conditions.push(`time ${params.fromExclusive ? '>' : '>='} $${idx++}`);
-    values.push(params.from);
-    conditions.push(`time ${params.toExclusive ? '<' : '<='} $${idx++}`);
-    values.push(params.to);
-
-    // Filters
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      conditions.push(`project_id = ANY($${idx++})`);
-      values.push(pids);
-    }
-    if (params.traceId) {
-      const tids = Array.isArray(params.traceId) ? params.traceId : [params.traceId];
-      conditions.push(`trace_id = ANY($${idx++})`);
-      values.push(tids);
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      conditions.push(`service_name = ANY($${idx++})`);
-      values.push(svc);
-    }
-    if (params.operationName) {
-      // The client maps the 1.6 `operation` alias onto operationName.
-      const ops = Array.isArray(params.operationName) ? params.operationName : [params.operationName];
-      conditions.push(`operation_name = ANY($${idx++})`);
-      values.push(ops);
-    }
-    if (params.kind) {
-      const k = Array.isArray(params.kind) ? params.kind : [params.kind];
-      conditions.push(`kind = ANY($${idx++})`);
-      values.push(k);
-    }
-    if (params.statusCode) {
-      const sc = Array.isArray(params.statusCode) ? params.statusCode : [params.statusCode];
-      conditions.push(`status_code = ANY($${idx++})`);
-      values.push(sc);
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    // Allowlist to prevent SQL injection via user-controlled sort parameters
-    const ALLOWED_SORT_COLUMNS = new Set(['start_time', 'end_time', 'duration_ms', 'service_name', 'operation_name']);
-    const ALLOWED_SORT_ORDERS = new Set(['asc', 'desc']);
-    const sortBy = ALLOWED_SORT_COLUMNS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
-    const sortOrder = ALLOWED_SORT_ORDERS.has((params.sortOrder ?? '').toLowerCase()) ? params.sortOrder!.toUpperCase() : 'ASC';
+    // The client maps the 1.6 `operation` alias onto operationName; a
+    // direct caller passing both gets both conditions (S12).
+    const { conditions, values, nextIdx } = buildSpanConditions(params, 1);
+    let idx = nextIdx;
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    // Sort keys come from an allowlist, never from the caller's string.
+    const orderBy = spanOrderSql(params);
 
     const countResult = await this.runQuery(
       `SELECT COUNT(*)::int AS count FROM ${s}.spans ${where}`,
@@ -854,7 +812,7 @@ export class TimescaleEngine extends StorageEngine {
 
     const result = await this.runQuery(
       `SELECT * FROM ${s}.spans ${where}
-       ORDER BY ${sortBy} ${sortOrder}
+       ${orderBy}
        LIMIT $${idx++} OFFSET $${idx++}`,
       [...values, limit, offset],
     );
@@ -915,6 +873,12 @@ export class TimescaleEngine extends StorageEngine {
       conditions.push(`duration_ms <= $${idx++}`);
       values.push(params.maxDurationMs);
     }
+    const spanMatch = traceSpanMatchSql(params, idx, s);
+    if (spanMatch.condition) {
+      conditions.push(spanMatch.condition);
+      values.push(...spanMatch.values);
+      idx = spanMatch.nextIdx;
+    }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -926,7 +890,7 @@ export class TimescaleEngine extends StorageEngine {
 
     const result = await this.runQuery(
       `SELECT * FROM ${s}.traces ${where}
-       ORDER BY start_time DESC
+       ${traceOrderSql(params)}
        LIMIT $${idx++} OFFSET $${idx++}`,
       [...values, limit, offset],
     );

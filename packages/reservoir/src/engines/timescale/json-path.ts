@@ -104,7 +104,9 @@ export function compileJsonFilters(
         conditions.push(`(${exists})`);
         break;
       case 'not_exists':
-        conditions.push(pathIdx === null ? `(NOT (${exists}))` : `(NOT ${exists})`);
+        // `col ? key` is NULL on a NULL column (logs without metadata, spans
+        // without attributes), and NOT NULL would drop the record.
+        conditions.push(pathIdx === null ? `(${column} IS NULL OR NOT (${exists}))` : `(${column} IS NULL OR NOT ${exists})`);
         break;
       case 'contains':
         conditions.push(`(${text} ILIKE ${bind(`%${escapeIlike(f.value ?? '')}%`)})`);

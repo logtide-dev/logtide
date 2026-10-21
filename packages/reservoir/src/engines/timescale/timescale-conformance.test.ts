@@ -26,7 +26,16 @@ import {
   resolveSubject,
   type ConformanceTarget,
 } from '../../conformance/index.js';
-import type { LogRecord, MetadataFilter, QueryParams, TextQuery } from '../../core/types.js';
+import type {
+  LogRecord,
+  MetadataFilter,
+  QueryParams,
+  SpanQueryParams,
+  SpanRecord,
+  TextQuery,
+  TraceQueryParams,
+  TraceRecord,
+} from '../../core/types.js';
 import { TimescaleEngine } from './timescale-engine.js';
 
 export const TS_TEST_URL = 'postgresql://logtide_test:test_password@localhost:5433/ux16_rts';
@@ -112,24 +121,39 @@ function specificsLogs(rows: { message: string; metadata?: Record<string, unknow
   }));
 }
 
+/** Records of an engine-specific describe; a bare array is logs only. */
+interface SpecificsSeed {
+  logs?: LogRecord[];
+  spans?: SpanRecord[];
+  traces?: TraceRecord[];
+}
+
 /**
- * A describe over its own schema and logs. An unreachable server skips the
- * block, or fails it with RESERVOIR_CONFORMANCE_REQUIRED=1.
+ * A describe over its own schema and records. An unreachable server skips
+ * the block, or fails it with RESERVOIR_CONFORMANCE_REQUIRED=1.
  */
 function describeTimescaleSpecifics(
   name: string,
   schema: string,
-  logs: LogRecord[],
+  records: LogRecord[] | SpecificsSeed,
   body: (subject: () => Reservoir) => void,
 ): void {
+  const seed: SpecificsSeed = Array.isArray(records) ? { logs: records } : records;
   describe(name, () => {
     let reservoir: Reservoir | null = null;
 
     beforeAll(async () => {
       reservoir = await resolveSubject('timescale', () => createTimescaleSpecificsReservoir(schema), isConformanceRequired());
       if (!reservoir) return;
-      const result = await reservoir.ingest(logs);
-      if (result.failed > 0) throw new Error(`Seeding ${name} failed: ${JSON.stringify(result.errors ?? [])}`);
+      if (seed.logs?.length) {
+        const result = await reservoir.ingest(seed.logs);
+        if (result.failed > 0) throw new Error(`Seeding ${name} failed: ${JSON.stringify(result.errors ?? [])}`);
+      }
+      if (seed.spans?.length) {
+        const result = await reservoir.ingestSpans(seed.spans);
+        if (result.failed > 0) throw new Error(`Seeding ${name} spans failed: ${JSON.stringify(result.errors ?? [])}`);
+      }
+      for (const trace of seed.traces ?? []) await reservoir.upsertTrace(trace);
     }, 60_000);
 
     beforeEach(({ skip }) => {
@@ -356,6 +380,128 @@ describeTimescaleSpecifics(
     it('a log without metadata still takes a sample slot', async () => {
       expect(await discover([SPECIFICS_PROJECT, KEYS_BARE_PROJECT], 1)).toEqual([]);
       expect(await discover([SPECIFICS_PROJECT, KEYS_OTHER_PROJECT, KEYS_BARE_PROJECT], 2)).toEqual([{ key: 'z', occurrences: 1 }]);
+    });
+
+    it('a log stored without metadata matches not_exists', async () => {
+      const params = {
+        projectId: KEYS_BARE_PROJECT,
+        ...SPECIFICS_WINDOW,
+        metadataFilters: [
+          { key: 'env', op: 'not_exists', include_missing: true },
+          { key: 'http.method', op: 'not_exists', include_missing: true },
+        ] as MetadataFilter[],
+      };
+      expect((await subject().query(params)).logs.map((l) => l.message)).toEqual(['keys 5']);
+      expect((await subject().count(params)).count).toBe(1);
+    });
+  },
+);
+
+/** A span of the specifics project starting `second` seconds after SPECIFICS_BASE. */
+function specificsSpan(
+  spanId: string,
+  traceId: string,
+  second: number,
+  extra: Partial<SpanRecord> & Pick<SpanRecord, 'serviceName' | 'operationName' | 'durationMs'>,
+): SpanRecord {
+  const start = new Date(SPECIFICS_BASE + second * 1000);
+  return {
+    time: start,
+    spanId,
+    traceId,
+    projectId: SPECIFICS_PROJECT,
+    startTime: start,
+    endTime: new Date(start.getTime() + extra.durationMs),
+    statusCode: 'OK',
+    ...extra,
+  };
+}
+
+function specificsTrace(traceId: string, second: number, serviceName: string, durationMs: number, spanCount: number): TraceRecord {
+  const start = new Date(SPECIFICS_BASE + second * 1000);
+  return {
+    traceId,
+    projectId: SPECIFICS_PROJECT,
+    serviceName,
+    rootServiceName: serviceName,
+    startTime: start,
+    endTime: new Date(start.getTime() + durationMs),
+    durationMs,
+    spanCount,
+    error: false,
+  };
+}
+
+describeTimescaleSpecifics(
+  'timescale span specifics',
+  'reservoir_ts_spans',
+  {
+    spans: [
+      specificsSpan('a1', 'ta', 1, {
+        serviceName: 'gateway', operationName: 'route', durationMs: 80, kind: 'SERVER',
+        resourceAttributes: { 'service.version': '1.2' },
+      }),
+      specificsSpan('a2', 'ta', 2, {
+        serviceName: 'api', operationName: 'GET /x', durationMs: 50, kind: 'SERVER', parentSpanId: 'a1',
+        attributes: { 'http.method': 'GET', 'http.status_code': 500 }, resourceAttributes: { service: { version: '2.0' } },
+      }),
+      specificsSpan('b1', 'tb', 3, {
+        serviceName: 'api', operationName: 'GET /x', durationMs: 50, kind: 'SERVER',
+        attributes: { 'http.method': 'POST', 'http.status_code': 200 }, resourceAttributes: { 'service.version': '1.2' },
+      }),
+      specificsSpan('c0', 'tc', 10, { serviceName: 'api', operationName: 'job', durationMs: 20, attributes: {} }),
+      specificsSpan('c2', 'tc', 7200, { serviceName: 'api', operationName: 'late op', durationMs: 5 }),
+    ],
+    traces: [
+      specificsTrace('ta', 1, 'gateway', 80, 2),
+      specificsTrace('tb', 3, 'api', 50, 1),
+      specificsTrace('tc', 10, 'api', 7200 * 1000, 2),
+    ],
+  },
+  (subject) => {
+    const spanIds = async (params: Partial<SpanQueryParams>) =>
+      (await subject().querySpans({ projectId: SPECIFICS_PROJECT, ...SPECIFICS_WINDOW, limit: 100, ...params })).spans.map((s) => s.spanId);
+    const traceIds = async (params: Partial<TraceQueryParams>) =>
+      (await subject().queryTraces({ projectId: SPECIFICS_PROJECT, ...SPECIFICS_WINDOW, limit: 100, ...params })).traces.map((t) => t.traceId);
+    const eq = (key: string, value: string): MetadataFilter => ({ key, op: 'equals', value, include_missing: false });
+
+    it('resource-prefixed keys filter resource attributes, literal key before nested path', async () => {
+      expect(await spanIds({ attributeFilters: [eq('resource.service.version', '1.2')] })).toEqual(['a1', 'b1']);
+      expect(await spanIds({ attributeFilters: [eq('resource.service.version', '2.0')] })).toEqual(['a2']);
+      expect(await spanIds({ attributeFilters: [eq('service.version', '1.2')] })).toEqual([]);
+    });
+
+    it('not_exists matches spans stored without attributes', async () => {
+      expect(await spanIds({ attributeFilters: [{ key: 'http.method', op: 'not_exists', include_missing: true }] })).toEqual(['a1', 'c0']);
+      expect(await spanIds({ attributeFilters: [{ key: 'http.method', op: 'not_equals', value: 'GET', include_missing: true }] })).toEqual([
+        'a1', 'b1', 'c0',
+      ]);
+    });
+
+    it('numeric attributes match by text and the operation alias applies', async () => {
+      expect(await spanIds({ operation: 'GET /x', attributeFilters: [eq('http.status_code', '500')] })).toEqual(['a2']);
+    });
+
+    it('duration sort breaks ties by span id', async () => {
+      expect(await spanIds({ sortBy: 'duration', sortOrder: 'desc' })).toEqual(['a1', 'a2', 'b1', 'c0']);
+      expect(await spanIds({ sortBy: 'duration', sortOrder: 'asc' })).toEqual(['c0', 'a2', 'b1', 'a1']);
+    });
+
+    it('trace serviceName stays trace level when an operation is given', async () => {
+      expect(await traceIds({ serviceName: 'gateway', operation: 'GET /x' })).toEqual(['ta']);
+      expect(await traceIds({ serviceName: 'api', operation: 'route' })).toEqual([]);
+    });
+
+    it('a trace matches a span that starts after the window', async () => {
+      expect(await traceIds({ operation: 'late op' })).toEqual(['tc']);
+      const { total } = await subject().queryTraces({ projectId: SPECIFICS_PROJECT, ...SPECIFICS_WINDOW, operation: 'late op' });
+      expect(total).toBe(1);
+    });
+
+    it('trace attribute filters on resource attributes', async () => {
+      expect(await traceIds({ attributeFilters: [eq('resource.service.version', '1.2')], sortBy: 'start_time', sortOrder: 'asc' })).toEqual([
+        'ta', 'tb',
+      ]);
     });
   },
 );
