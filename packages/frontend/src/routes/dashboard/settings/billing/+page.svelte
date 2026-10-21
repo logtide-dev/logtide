@@ -27,6 +27,7 @@
   } from '$lib/components/ui/alert-dialog';
   import Spinner from '$lib/components/Spinner.svelte';
   import QuotaStateBadge from '$lib/components/QuotaStateBadge.svelte';
+  import { nextQuotaReset } from '$lib/utils/quota';
   import CurrentPlanCard from '$lib/components/billing/CurrentPlanCard.svelte';
   import PlanPicker from '$lib/components/billing/PlanPicker.svelte';
   import InvoicesCard from '$lib/components/billing/InvoicesCard.svelte';
@@ -317,7 +318,7 @@
             <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span class="font-medium">
                 Telemetry (logs, traces and metrics)
-                <QuotaStateBadge state={telemetry.state} />
+                <QuotaStateBadge state={telemetry.state} resetsAt={nextQuotaReset()} />
               </span>
               <span class="whitespace-nowrap text-muted-foreground">
                 {formatBytes(telemetry.current)} / {telemetry.limit === null ? '∞' : formatBytes(telemetry.limit)}
