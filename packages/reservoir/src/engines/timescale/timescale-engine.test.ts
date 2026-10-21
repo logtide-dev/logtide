@@ -809,6 +809,22 @@ describe('TimescaleEngine', () => {
       expect(sql).toContain('service_name = ANY');
       expect(sql).toContain('kind = ANY');
     });
+
+    it('filters operation_name for a string or a list', async () => {
+      mockQuery.mockResolvedValue({ rows: [{ count: 0 }] });
+      await engine.connect();
+
+      await engine.querySpans({ projectId: 'proj-1', operationName: 'GET /x', from: new Date('2024-01-01'), to: new Date('2024-01-02') });
+      await engine.querySpans({ projectId: 'proj-1', operationName: ['GET /x', 'POST /y'], from: new Date('2024-01-01'), to: new Date('2024-01-02') });
+
+      for (const [i, expected] of [[0, ['GET /x']], [2, ['GET /x', 'POST /y']]] as const) {
+        const [countSql, countParams] = mockQuery.mock.calls[i] as [string, unknown[]];
+        const [selectSql] = mockQuery.mock.calls[i + 1] as [string, unknown[]];
+        expect(countSql).toMatch(/operation_name = ANY\(\$\d+\)/);
+        expect(selectSql).toMatch(/operation_name = ANY\(\$\d+\)/);
+        expect(countParams).toContainEqual(expected);
+      }
+    });
   });
 
   describe('getSpansByTraceId', () => {

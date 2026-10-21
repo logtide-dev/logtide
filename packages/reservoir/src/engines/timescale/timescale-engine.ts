@@ -787,6 +787,12 @@ export class TimescaleEngine extends StorageEngine {
       conditions.push(`service_name = ANY($${idx++})`);
       values.push(svc);
     }
+    if (params.operationName) {
+      // The client maps the 1.6 `operation` alias onto operationName.
+      const ops = Array.isArray(params.operationName) ? params.operationName : [params.operationName];
+      conditions.push(`operation_name = ANY($${idx++})`);
+      values.push(ops);
+    }
     if (params.kind) {
       const k = Array.isArray(params.kind) ? params.kind : [params.kind];
       conditions.push(`kind = ANY($${idx++})`);
