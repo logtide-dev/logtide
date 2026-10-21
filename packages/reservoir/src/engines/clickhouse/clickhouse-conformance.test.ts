@@ -15,7 +15,16 @@ import {
   resolveSubject,
 } from '../../conformance/index.js';
 import type { Reservoir } from '../../client.js';
-import type { LogRecord, MetadataFilter, QueryParams, TextQuery } from '../../core/types.js';
+import type {
+  LogRecord,
+  MetadataFilter,
+  QueryParams,
+  SpanKind,
+  SpanRecord,
+  SpanStatusCode,
+  TextQuery,
+  TraceRecord,
+} from '../../core/types.js';
 
 export const CH_TEST_CONFIG = {
   host: 'localhost',
@@ -235,5 +244,117 @@ describe('clickhouse json specifics: metadata keys', () => {
   it('objects expand one level, children with a dot are skipped', async () => {
     const keys = (await discover(3)).map((k) => k.key);
     expect(keys).toEqual(['a', 'b', 'http.method', 'old']);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Span and trace specifics
+// ----------------------------------------------------------------------------
+
+/** Registers hooks that seed spans (and their traces) and returns an accessor for the subject. */
+function useSpecificSpans(spans: SpanRecord[], traces: TraceRecord[]): () => Reservoir {
+  let subject: Reservoir | null = null;
+  beforeAll(async () => {
+    subject = await specificsSubject();
+    if (!subject) return;
+    const result = await subject.ingestSpans(spans);
+    if (result.failed > 0) throw new Error(`Seeding specific spans failed: ${JSON.stringify(result.errors ?? [])}`);
+    for (const trace of traces) await subject.upsertTrace(trace);
+  }, 60_000);
+  beforeEach(({ skip }) => {
+    if (!subject) skip();
+  });
+  return () => {
+    if (!subject) throw new Error('ClickHouse specifics subject is not available');
+    return subject;
+  };
+}
+
+interface SpecificSpan {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  service: string;
+  operation: string;
+  durationMs: number;
+  kind?: SpanKind;
+  status?: SpanStatusCode;
+  second: number;
+  attributes?: Record<string, unknown>;
+  resourceAttributes?: Record<string, unknown>;
+}
+
+function specificSpan(projectId: string, s: SpecificSpan): SpanRecord {
+  const start = new Date(SPECIFICS_FROM.getTime() + s.second * 1000);
+  return {
+    time: start,
+    spanId: s.spanId,
+    traceId: s.traceId,
+    ...(s.parentSpanId !== undefined ? { parentSpanId: s.parentSpanId } : {}),
+    projectId,
+    serviceName: s.service,
+    operationName: s.operation,
+    startTime: start,
+    endTime: new Date(start.getTime() + s.durationMs),
+    durationMs: s.durationMs,
+    ...(s.kind !== undefined ? { kind: s.kind } : {}),
+    statusCode: s.status ?? 'OK',
+    attributes: s.attributes ?? {},
+    ...(s.resourceAttributes !== undefined ? { resourceAttributes: s.resourceAttributes } : {}),
+  };
+}
+
+/** One trace row per distinct trace id; the first span listed for it gives the trace-level service. */
+function tracesOf(spans: SpanRecord[]): TraceRecord[] {
+  const byTrace = new Map<string, SpanRecord[]>();
+  for (const s of spans) byTrace.set(s.traceId, [...(byTrace.get(s.traceId) ?? []), s]);
+  return [...byTrace.values()].map((group) => {
+    const start = Math.min(...group.map((s) => s.startTime.getTime()));
+    const end = Math.max(...group.map((s) => s.endTime.getTime()));
+    return {
+      traceId: group[0].traceId,
+      projectId: group[0].projectId,
+      serviceName: group[0].serviceName,
+      startTime: new Date(start),
+      endTime: new Date(end),
+      durationMs: end - start,
+      spanCount: group.length,
+      error: group.some((s) => s.statusCode === 'ERROR'),
+    };
+  });
+}
+
+describe('clickhouse apm specifics: span and trace filters', () => {
+  const project = '00000000-0000-4000-8000-00000000c305';
+  const T1 = 'c3050000000000000000000000000001';
+  const T2 = 'c3050000000000000000000000000002';
+  const spans = [
+    { traceId: T1, spanId: 'c305000000000a01', service: 'frontend', operation: 'page load', durationMs: 90, second: 1 },
+    { traceId: T1, spanId: 'c305000000000a02', parentSpanId: 'c305000000000a01', service: 'api', operation: 'GET /x', durationMs: 40, second: 2, resourceAttributes: { 'service.version': '1.2' } },
+    { traceId: T2, spanId: 'c305000000000b01', service: 'api', operation: 'GET /y', durationMs: 70, second: 3 },
+    { traceId: T2, spanId: 'c305000000000b02', parentSpanId: 'c305000000000b01', service: 'worker', operation: 'GET /x', durationMs: 20, second: 4, resourceAttributes: { service: { version: '1.3' } } },
+  ].map((s) => specificSpan(project, s));
+  const subject = useSpecificSpans(spans, tracesOf(spans));
+  const window = { projectId: project, from: SPECIFICS_FROM, to: SPECIFICS_TO };
+
+  it('serviceName pairs with the matching span while the span-match block is active', async () => {
+    const paired = await subject().queryTraces({ ...window, serviceName: 'api', operation: 'GET /x' });
+    expect(paired.traces.map((t) => t.traceId)).toEqual([T1]);
+    expect(paired.total).toBe(1);
+    const traceLevel = await subject().queryTraces({ ...window, serviceName: 'api' });
+    expect(traceLevel.traces.map((t) => t.traceId)).toEqual([T2]);
+  });
+
+  it('resource-prefixed attribute filters read the resource attributes', async () => {
+    const literal = await subject().querySpans({ ...window, attributeFilters: [{ key: 'resource.service.version', op: 'equals', value: '1.2', include_missing: false }] });
+    expect(literal.spans.map((s) => s.spanId)).toEqual(['c305000000000a02']);
+    const nested = await subject().querySpans({ ...window, attributeFilters: [{ key: 'resource.service.version', op: 'equals', value: '1.3', include_missing: false }] });
+    expect(nested.spans.map((s) => s.spanId)).toEqual(['c305000000000b02']);
+  });
+
+  it('an operation name list keeps spans of every listed operation', async () => {
+    const result = await subject().querySpans({ ...window, operationName: ['GET /x', 'GET /y'], sortBy: 'duration', sortOrder: 'desc' });
+    expect(result.spans.map((s) => s.spanId)).toEqual(['c305000000000b01', 'c305000000000a02', 'c305000000000b02']);
+    expect(result.total).toBe(3);
   });
 });

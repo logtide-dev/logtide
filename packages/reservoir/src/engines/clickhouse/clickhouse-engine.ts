@@ -99,6 +99,7 @@ import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
 import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
 import { ClickHouseQueryTranslator, toDateTime64 } from './query-translator.js';
 import { assembleFacets, assembleHistogram, assembleMetadataKeys, translateDiscoverKeys } from './log-analytics.js';
+import { buildSpanConditions, buildTraceConditions, spanOrderSql, traceOrderSql } from './apm-queries.js';
 
 export interface ClickHouseEngineOptions {
   /** Use an existing ClickHouse client instead of creating a new one */
@@ -1020,48 +1021,8 @@ export class ClickHouseEngine extends StorageEngine {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
-    const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
-
-    // Time range
-    conditions.push(`time ${params.fromExclusive ? '>' : '>='} {p_from:DateTime64(3)}`);
-    queryParams.p_from = toDateTime64(params.from);
-    conditions.push(`time ${params.toExclusive ? '<' : '<='} {p_to:DateTime64(3)}`);
-    queryParams.p_to = toDateTime64(params.to);
-
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      conditions.push(`project_id IN {p_pids:Array(String)}`);
-      queryParams.p_pids = pids;
-    }
-    if (params.traceId) {
-      const tids = Array.isArray(params.traceId) ? params.traceId : [params.traceId];
-      conditions.push(`trace_id IN {p_tids:Array(String)}`);
-      queryParams.p_tids = tids;
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      conditions.push(`service_name IN {p_svc:Array(String)}`);
-      queryParams.p_svc = svc;
-    }
-    if (params.kind) {
-      const k = Array.isArray(params.kind) ? params.kind : [params.kind];
-      conditions.push(`kind IN {p_kind:Array(String)}`);
-      queryParams.p_kind = k;
-    }
-    if (params.statusCode) {
-      const sc = Array.isArray(params.statusCode) ? params.statusCode : [params.statusCode];
-      conditions.push(`status_code IN {p_sc:Array(String)}`);
-      queryParams.p_sc = sc;
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    // Allowlist to prevent SQL injection via user-controlled sort parameters
-    const ALLOWED_SORT_COLUMNS = new Set(['start_time', 'end_time', 'duration_ms', 'service_name', 'operation_name']);
-    const ALLOWED_SORT_ORDERS = new Set(['asc', 'desc']);
-    const sortBy = ALLOWED_SORT_COLUMNS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
-    const sortOrder = ALLOWED_SORT_ORDERS.has((params.sortOrder ?? '').toLowerCase()) ? params.sortOrder!.toUpperCase() : 'ASC';
+    const where = `WHERE ${buildSpanConditions(params, queryParams).join(' AND ')}`;
 
     const countResult = await this.runQuery({
       query: `SELECT count() AS count FROM spans ${where}`,
@@ -1071,8 +1032,8 @@ export class ClickHouseEngine extends StorageEngine {
     const total = Number((await countResult.json<{ count: string }>())[0]?.count ?? 0);
 
     const resultSet = await this.runQuery({
-      query: `SELECT * FROM spans ${where} ORDER BY ${sortBy} ${sortOrder} LIMIT ${limit} OFFSET ${offset}`,
-      query_params: queryParams,
+      query: `SELECT * FROM spans ${where} ${spanOrderSql(params)} LIMIT {p_limit:UInt32} OFFSET {p_offset:UInt32}`,
+      query_params: { ...queryParams, p_limit: limit, p_offset: offset },
       format: 'JSONEachRow',
     });
     const rows = await resultSet.json<Record<string, unknown>>();
@@ -1102,38 +1063,8 @@ export class ClickHouseEngine extends StorageEngine {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
-    const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
-
-    conditions.push(`start_time >= {p_from:DateTime64(3)}`);
-    queryParams.p_from = toDateTime64(params.from);
-    conditions.push(`start_time <= {p_to:DateTime64(3)}`);
-    queryParams.p_to = toDateTime64(params.to);
-
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      conditions.push(`project_id IN {p_pids:Array(String)}`);
-      queryParams.p_pids = pids;
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      conditions.push(`service_name IN {p_svc:Array(String)}`);
-      queryParams.p_svc = svc;
-    }
-    if (params.error !== undefined) {
-      conditions.push(`error = {p_error:UInt8}`);
-      queryParams.p_error = params.error ? 1 : 0;
-    }
-    if (params.minDurationMs !== undefined) {
-      conditions.push(`duration_ms >= {p_minDur:UInt32}`);
-      queryParams.p_minDur = params.minDurationMs;
-    }
-    if (params.maxDurationMs !== undefined) {
-      conditions.push(`duration_ms <= {p_maxDur:UInt32}`);
-      queryParams.p_maxDur = params.maxDurationMs;
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where = `WHERE ${buildTraceConditions(params, queryParams).join(' AND ')}`;
 
     // Use FINAL to get deduplicated rows from ReplacingMergeTree
     const countResult = await this.runQuery({
@@ -1144,8 +1075,8 @@ export class ClickHouseEngine extends StorageEngine {
     const total = Number((await countResult.json<{ count: string }>())[0]?.count ?? 0);
 
     const resultSet = await this.runQuery({
-      query: `SELECT * FROM traces FINAL ${where} ORDER BY start_time DESC LIMIT ${limit} OFFSET ${offset}`,
-      query_params: queryParams,
+      query: `SELECT * FROM traces FINAL ${where} ${traceOrderSql(params)} LIMIT {p_limit:UInt32} OFFSET {p_offset:UInt32}`,
+      query_params: { ...queryParams, p_limit: limit, p_offset: offset },
       format: 'JSONEachRow',
     });
     const rows = await resultSet.json<Record<string, unknown>>();
