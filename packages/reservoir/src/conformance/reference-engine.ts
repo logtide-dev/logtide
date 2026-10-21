@@ -8,11 +8,12 @@
 // the client contract: `matchNothing` and the span `operation` alias never
 // reach an engine.
 
-import { matchesLogSearch, resolveMetadataPath } from '@logtide/shared';
+import { matchesLogSearch, metadataValueText, resolveMetadataPath } from '@logtide/shared';
 import type { FieldClause, LogSearchQuery } from '@logtide/shared';
 import { Reservoir } from '../client.js';
 import { NotImplementedError } from '../core/errors.js';
-import { compareByteOrder } from '../core/aggregation-helpers.js';
+import { FACETS_DEFAULT_LIMIT, DISCOVER_DEFAULT_SAMPLE_SIZE } from '../core/constants.js';
+import { buildFacet, compareByteOrder, countMetadataKeys, zeroFillHistogram } from '../core/aggregation-helpers.js';
 import type { StorageEngine } from '../core/storage-engine.js';
 import {
   GLOBAL_SCOPE,
@@ -29,11 +30,13 @@ import {
   type LatencyHistogramResult,
   type ListSessionsParams,
   type ListSessionsResult,
+  type LogFacetField,
   type LogFacetsParams,
   type LogFacetsResult,
   type LogFilterParams,
   type LogHistogramParams,
   type LogHistogramResult,
+  type LogLevel,
   type LogRecord,
   type MetadataFilter,
   type MetadataKeyOccurrence,
@@ -122,6 +125,15 @@ function logMatches(log: StoredLogRecord, p: LogFilterParams): boolean {
   // A hostname exclusion keeps logs without a hostname.
   if (ex?.hostname && host !== undefined && ex.hostname.includes(host)) return false;
   return filtersMatch(log.metadata, p.metadataFilters, p.textQuery ?? EMPTY_TEXT, log.message);
+}
+
+/** The text form a facet counts for one log; undefined when the log has none. */
+function facetValue(log: StoredLogRecord, field: LogFacetField): string | undefined {
+  if ('builtin' in field) {
+    if (field.builtin === 'hostname') return hostnameOf(log);
+    return field.builtin === 'level' ? log.level : log.service;
+  }
+  return metadataValueText(resolveMetadataPath(log.metadata, field.metadata));
 }
 
 function compareLogs(a: StoredLogRecord, b: StoredLogRecord): number {
@@ -213,16 +225,44 @@ export class ReferenceEngine {
     return { count: this.matchLogs(params, 'countEstimate').length };
   }
 
-  async histogram(_params: LogHistogramParams): Promise<LogHistogramResult> {
-    throw new NotImplementedError('histogram', NAME);
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    const b = params.bucketSeconds * 1000;
+    const groups = new Map<string, { time: Date; level: LogLevel; count: number }>();
+    for (const log of this.matchLogs(params, 'histogram')) {
+      const start = Math.floor(log.time.getTime() / b) * b;
+      const key = `${start}|${log.level}`;
+      const group = groups.get(key);
+      if (group) group.count++;
+      else groups.set(key, { time: new Date(start), level: log.level, count: 1 });
+    }
+    return zeroFillHistogram(params, [...groups.values()]);
   }
 
-  async facets(_params: LogFacetsParams): Promise<LogFacetsResult> {
-    throw new NotImplementedError('facets', NAME);
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    const rows = this.matchLogs(params, 'facets');
+    const limit = params.limit ?? FACETS_DEFAULT_LIMIT;
+    const facets = params.fields.map((field) => {
+      const counts = new Map<string, number>();
+      let present = 0;
+      for (const log of rows) {
+        const value = facetValue(log, field);
+        if (value === undefined || value === '') continue;
+        present++;
+        counts.set(value, (counts.get(value) ?? 0) + 1);
+      }
+      return buildFacet(field, [...counts].map(([value, count]) => ({ value, count })), present, limit);
+    });
+    return { facets };
   }
 
-  async discoverMetadataKeys(_params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
-    throw new NotImplementedError('discoverMetadataKeys', NAME);
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    assertNoClientOnlyParams(params, 'discoverMetadataKeys');
+    const projects = asList(params.projectId)!;
+    const sample = this.logs
+      .filter((log) => projects.includes(log.projectId) && inRange(log.time.getTime(), params))
+      .sort((a, b) => compareLogs(b, a))
+      .slice(0, params.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE);
+    return countMetadataKeys(sample.map((log) => log.metadata));
   }
 
   async listSessions(_params: ListSessionsParams): Promise<ListSessionsResult> {
