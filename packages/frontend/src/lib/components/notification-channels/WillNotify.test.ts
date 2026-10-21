@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/svelte';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const preview = vi.hoisted(() => vi.fn());
 const orgState = vi.hoisted(() => ({ store: null as any }));
@@ -174,5 +176,62 @@ describe('WillNotify', () => {
     pending.resolve({ destinations: [ops], fallback: null });
     await settle(0);
     expect(screen.queryByTestId('will-notify')).toBeNull();
+  });
+});
+
+describe('WillNotify ui rules', () => {
+  const dir = __dirname;
+  const componentSrc = readFileSync(resolve(dir, 'WillNotify.svelte'), 'utf8');
+  const sources = [
+    componentSrc,
+    readFileSync(resolve(dir, '../../api/notification-routing.ts'), 'utf8'),
+    readFileSync(resolve(dir, 'WillNotify.test.ts'), 'utf8'),
+    readFileSync(resolve(dir, '../../api/notification-routing.test.ts'), 'utf8'),
+  ];
+
+  it('WillNotify copy is sentence case', async () => {
+    const states = [
+      { destinations: [ops], fallback: null },
+      { destinations: [], fallback: 'owners_admins_email' },
+      { destinations: [], fallback: null },
+    ];
+    for (const value of states) {
+      preview.mockResolvedValueOnce(value);
+      render(WillNotify, { props: { eventType: 'alert' } });
+      await settle();
+      const sentence = text() ?? '';
+      expect(sentence).toMatch(/^[A-Z][^A-Z]*/);
+      // no title case words outside product names and parenthesised types
+      const outsideParens = sentence.replace(/\([^)]*\)/g, '').replace(/Ops|Hooks/g, '');
+      expect(outsideParens.slice(1)).not.toMatch(/\b[A-Z][a-z]+/);
+      cleanup();
+    }
+    preview.mockResolvedValueOnce({ destinations: [], fallback: null });
+    render(WillNotify, { props: { eventType: 'alert' } });
+    await settle();
+    expect(screen.getByRole('link').textContent).toBe('Edit routing');
+  });
+
+  it('contains no raw palette classes', () => {
+    expect(componentSrc).not.toMatch(
+      /(text|bg|border)-(red|green|amber|yellow|blue|orange|purple|gray|slate|emerald|rose)-\d/
+    );
+    expect(componentSrc).not.toMatch(/\bbg-[a-z]+-\d/);
+  });
+
+  it('contains no em or en dash characters', () => {
+    const forbidden = [String.fromCharCode(0x2014), String.fromCharCode(0x2013)];
+    for (const src of sources) {
+      for (const ch of forbidden) expect(src.includes(ch)).toBe(false);
+    }
+  });
+
+  it('has no native confirm and no icon-only button', async () => {
+    expect(componentSrc).not.toMatch(/\bconfirm\s*\(/);
+    expect(componentSrc).not.toMatch(/<button/);
+    preview.mockResolvedValue({ destinations: [ops], fallback: null });
+    render(WillNotify, { props: { eventType: 'alert' } });
+    await settle();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
   });
 });
