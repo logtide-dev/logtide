@@ -18,7 +18,7 @@ test.describe('Navigation', () => {
 		await expect(page).toHaveURL(/\/login/);
 
 		// Try to access search without auth
-		await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+		await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
 		await expect(page).toHaveURL(/\/login/);
 
 		// Try to access projects without auth

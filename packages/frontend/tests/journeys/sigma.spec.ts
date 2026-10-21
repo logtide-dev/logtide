@@ -333,7 +333,7 @@ falsepositives:
     await wait(3000);
 
     // Navigate to search and verify page loads
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 

@@ -41,9 +41,12 @@ vi.mock('nodemailer', () => ({
 }));
 
 // Mock notifications service
+const { createNotificationMock } = vi.hoisted(() => ({
+  createNotificationMock: vi.fn(),
+}));
 vi.mock('../../../modules/notifications/service.js', () => ({
   notificationsService: {
-    createNotification: vi.fn().mockResolvedValue({ id: 'notification-id' }),
+    createNotification: createNotificationMock,
   },
 }));
 
@@ -72,6 +75,7 @@ import type { Job } from 'bullmq';
 describe('Monitor webhook envelope', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    createNotificationMock.mockReset().mockResolvedValue({ id: 'notification-id' });
     monitorEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
     mockGetMonitorChannels.mockReset().mockResolvedValue([]);
   });
@@ -150,5 +154,38 @@ describe('Monitor webhook envelope', () => {
     expect(call.eventType).toBe('monitor.status_changed');
     const envelope = parseWebhookEvent(call.payload);
     expect(envelope.type).toBe('monitor.status_changed');
+  });
+
+  it('monitor notification links to /dashboard/uptime', async () => {
+    const owner = await createTestUser({ name: 'Monitor Owner 3' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 3' });
+
+    mockGetMonitorChannels.mockResolvedValueOnce([{
+      id: '00000000-0000-0000-0000-000000000042',
+      type: 'webhook',
+      enabled: true,
+      config: { url: 'https://hooks.example.com/monitor3' },
+    }]);
+
+    const job = {
+      data: {
+        monitorId: 'mon-003',
+        monitorName: 'Link Check',
+        organizationId: org.id,
+        projectId: '00000000-0000-0000-0000-000000000000',
+        status: 'down',
+        severity: 'high',
+      } as MonitorNotificationJob,
+    } as Job<MonitorNotificationJob>;
+
+    await processMonitorNotification(job);
+
+    expect(createNotificationMock).toHaveBeenCalled();
+    const notif = createNotificationMock.mock.calls[0][0];
+    expect(notif.metadata.link).toBe('/dashboard/uptime');
+
+    const envelope = parseWebhookEvent(monitorEnqueueMock.mock.calls[0][0].payload);
+    const link = (envelope.data as Record<string, unknown>).link as string;
+    expect(link.endsWith('/dashboard/uptime')).toBe(true);
   });
 });

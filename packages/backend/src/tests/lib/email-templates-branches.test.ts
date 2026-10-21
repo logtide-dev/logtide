@@ -214,7 +214,7 @@ describe('Email Templates (branches) - Monitor Email', () => {
     expect(result.html).toContain('Response Time');
     expect(result.html).toContain('Consecutive Failures');
     expect(result.html).not.toContain('Downtime Duration');
-    expect(result.html).toContain('https://app.logtide.dev/dashboard/monitoring');
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/uptime');
 
     expect(result.text).toContain('MONITOR DOWN: API <Health>');
     expect(result.text).toContain('API <Health> is not responding.');

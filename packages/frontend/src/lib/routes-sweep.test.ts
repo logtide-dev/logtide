@@ -4,10 +4,10 @@ import { join, relative, sep } from 'node:path';
 
 // Ratchet: no in-app reference to the pre-1.6 routes. Old URLs are only
 // allowed in the redirect handlers and the tests that pin them.
-const OLD_ROUTE = /\/dashboard\/(search|monitoring)\b/;
+const OLD_ROUTE = /\/dashboard(?:\/|\\\/)(search|monitoring)\b/;
 
 const ROOT = process.cwd();
-const SCAN_DIRS = ['src'];
+const SCAN_DIRS = ['src', 'tests'];
 
 const ALLOWLIST = new Set([
   'src/lib/utils/legacy-routes.ts',

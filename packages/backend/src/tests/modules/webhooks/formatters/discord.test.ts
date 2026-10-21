@@ -27,7 +27,7 @@ const monitorDown = envelope('monitor.status_changed', {
   target: 'https://api.example.com/health',
   error_code: 'ECONNREFUSED',
   consecutive_failures: 3,
-  link: 'https://app.logtide.dev/dashboard/monitoring',
+  link: 'https://app.logtide.dev/dashboard/uptime',
 });
 
 describe('formatOutbound', () => {
@@ -42,7 +42,7 @@ describe('formatOutbound', () => {
     expect(embed.title).toBe('Monitor down: api-prod');
     expect(embed.description).toBe('api-prod is not responding (ECONNREFUSED)');
     expect(embed.color).toBe(0xdc2626);
-    expect(embed.url).toBe('https://app.logtide.dev/dashboard/monitoring');
+    expect(embed.url).toBe('https://app.logtide.dev/dashboard/uptime');
     expect(embed.timestamp).toBe('2026-08-10T09:19:12.000Z');
     expect(embed.footer.text).toBe('LogTide - Acme');
     const names = embed.fields.map((f: any) => f.name);
