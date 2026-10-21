@@ -281,6 +281,12 @@ export default async function patternRoutes(fastify: FastifyInstance) {
           error: 'No organization access',
         });
       }
+      if (!(await organizationsService.isOwnerOrAdmin(organizationId, request.user.id))) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only organization owners and admins can change identifier patterns',
+        });
+      }
 
       const { name, displayName, description, pattern, fieldNames, enabled, priority } =
         request.body;
@@ -404,6 +410,12 @@ export default async function patternRoutes(fastify: FastifyInstance) {
           error: 'No organization access',
         });
       }
+      if (!(await organizationsService.isOwnerOrAdmin(organizationId, request.user.id))) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only organization owners and admins can change identifier patterns',
+        });
+      }
 
       // Get existing pattern
       const existing = await db
@@ -517,6 +529,12 @@ export default async function patternRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({
           success: false,
           error: 'No organization access',
+        });
+      }
+      if (!(await organizationsService.isOwnerOrAdmin(organizationId, request.user.id))) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only organization owners and admins can change identifier patterns',
         });
       }
 

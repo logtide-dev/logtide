@@ -92,6 +92,7 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       const orgIdFromQuery = (request.query as any).organizationId;
       const body = importYamlSchema.parse({ organizationId: orgIdFromQuery, ...request.body });
       if (!await checkMembership(request.user.id, body.organizationId)) return reply.status(403).send({ error: 'Forbidden' });
+      if (!await organizationsService.isOwnerOrAdmin(body.organizationId, request.user.id)) return reply.status(403).send({ error: 'Only organization owners and admins can change log pipelines' });
       const pipeline = await pipelineService.importFromYaml(body.yaml, body.organizationId, body.projectId ?? null);
       await auditLogService.record({
         action: 'pipeline.imported',
@@ -113,6 +114,7 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       const orgIdFromQuery = (request.query as any).organizationId;
       const body = createSchema.parse({ organizationId: orgIdFromQuery, ...request.body });
       if (!await checkMembership(request.user.id, body.organizationId)) return reply.status(403).send({ error: 'Forbidden' });
+      if (!await organizationsService.isOwnerOrAdmin(body.organizationId, request.user.id)) return reply.status(403).send({ error: 'Only organization owners and admins can change log pipelines' });
       const pipeline = await pipelineService.create(body as any);
       await auditLogService.record({
         action: 'pipeline.created',
@@ -144,6 +146,7 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       const orgId = (request.query as any).organizationId as string;
       if (!orgId) return reply.status(400).send({ error: 'organizationId required' });
       if (!await checkMembership(request.user.id, orgId)) return reply.status(403).send({ error: 'Forbidden' });
+      if (!await organizationsService.isOwnerOrAdmin(orgId, request.user.id)) return reply.status(403).send({ error: 'Only organization owners and admins can change log pipelines' });
       const body = updateSchema.parse(request.body);
       const pipeline = await pipelineService.update((request.params as any).id, orgId, body as any);
       await auditLogService.record({
@@ -164,6 +167,7 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
     const orgId = (request.query as any).organizationId as string;
     if (!orgId) return reply.status(400).send({ error: 'organizationId required' });
     if (!await checkMembership(request.user.id, orgId)) return reply.status(403).send({ error: 'Forbidden' });
+    if (!await organizationsService.isOwnerOrAdmin(orgId, request.user.id)) return reply.status(403).send({ error: 'Only organization owners and admins can change log pipelines' });
     const pipelineId = (request.params as any).id as string;
     await pipelineService.delete(pipelineId, orgId);
     await auditLogService.record({
