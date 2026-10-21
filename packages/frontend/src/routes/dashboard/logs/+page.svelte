@@ -39,9 +39,9 @@
   import { layoutStore } from "$lib/stores/layout";
   import { createColumnConfigStore } from "$lib/stores/column-config.js";
   import ColumnConfigMenu from "$lib/components/search/ColumnConfigMenu.svelte";
-  import { DEFAULT_BUILTIN_LAYOUT } from "$lib/components/search/builtin-columns";
+  import { DEFAULT_BUILTIN_LAYOUT, visibleColumns } from "$lib/components/search/builtin-columns";
+  import { rowKey } from "$lib/components/search/log-fields";
   import LogResultsTable from "$lib/components/search/LogResultsTable.svelte";
-  import LogRowDetails from "$lib/components/search/LogRowDetails.svelte";
   import Download from "@lucide/svelte/icons/download";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -59,10 +59,9 @@
   let logs = $state<LogEntry[]>([]);
   let totalLogs = $state(0);
   let hasMoreLogs = $state(false);
-  let expandedRows = $state(new Set<number>());
   let isLoading = $state(false);
   let hasLoadedOnce = $state(false);
-  let logsContainer = $state<HTMLDivElement | null>(null);
+  let resultsTable = $state<{ reveal(id: string): void; scrollToTop(): void } | null>(null);
   let selectedLogIndex = $state(-1);
 
   let searchQuery = $state("");
@@ -290,12 +289,12 @@
       {
         id: 'search:expand-log',
         combo: 'enter',
-        label: 'Expand/collapse selected log',
+        label: 'Open log context',
         scope: 'search',
         category: 'actions',
         action: () => {
           if (selectedLogIndex >= 0 && selectedLogIndex < logs.length) {
-            toggleRow(selectedLogIndex);
+            openContextDialog(logs[selectedLogIndex]);
           }
         },
       },
@@ -620,9 +619,8 @@
 
   function scrollToSelectedLog() {
     if (viewMode !== 'table') return;
-    const rows = logsContainer?.querySelectorAll('[data-log-row]');
-    if (!rows || selectedLogIndex < 0 || selectedLogIndex >= rows.length) return;
-    rows[selectedLogIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (selectedLogIndex < 0 || selectedLogIndex >= logs.length) return;
+    resultsTable?.reveal(rowKey(logs[selectedLogIndex], selectedLogIndex));
   }
 
   let availableServices = $state<string[]>([]);
@@ -807,11 +805,7 @@
               const shift = newLogs.length;
               logs = [...newLogs, ...logs].slice(0, liveTailLimit);
               // Prepending shifts every existing row's index by `shift`; remap the
-              // index-keyed UI state so expansion/selection stays on the same logs
-              // instead of jumping to whatever now sits at the old index.
-              expandedRows = new Set(
-                [...expandedRows].map((i) => i + shift).filter((i) => i < logs.length)
-              );
+              // selection so it stays on the same log.
               if (selectedLogIndex >= 0) {
                 const next = selectedLogIndex + shift;
                 selectedLogIndex = next < logs.length ? next : -1;
@@ -839,28 +833,6 @@
       ws.close();
       ws = null;
     }
-  }
-
-  function toggleRow(index: number) {
-    const newSet = new Set(expandedRows);
-    if (newSet.has(index)) {
-      newSet.delete(index);
-    } else {
-      newSet.add(index);
-    }
-    expandedRows = newSet;
-  }
-
-  // Per-row breadcrumbs expand state
-  let expandedBreadcrumbs = $state(new Set<number>());
-  function toggleBreadcrumbs(index: number) {
-    const newSet = new Set(expandedBreadcrumbs);
-    if (newSet.has(index)) {
-      newSet.delete(index);
-    } else {
-      newSet.add(index);
-    }
-    expandedBreadcrumbs = newSet;
   }
 
   function openContextDialog(log: LogEntry) {
@@ -1832,56 +1804,33 @@
             </TableLoadingOverlay>
           {:else}
             <TableLoadingOverlay loading={isLoading}>
-            <div bind:this={logsContainer}>
-              <LogResultsTable
-                logs={paginatedLogs}
-                {projects}
-                {customColumns}
-                {rowDensity}
-                selectedIndex={selectedLogIndex}
-                {expandedRows}
-                {highlightQuery}
-                onToggleRow={toggleRow}
-                onOpenContext={openContextDialog}
-                onFilterService={(service) => {
-                  if (!selectedServices.includes(service)) {
-                    selectedServices = [...selectedServices, service];
-                    applyFilters();
-                  }
-                }}
-                onFilterHost={(hostname) => {
-                  if (hostname && !selectedHostnames.includes(hostname)) {
-                    selectedHostnames = [...selectedHostnames, hostname];
-                    applyFilters();
-                  }
-                }}
-                onFilterLevel={(level) => {
-                  if (!selectedLevels.includes(level)) {
-                    selectedLevels = [...selectedLevels, level];
-                    applyFilters();
-                  }
-                }}
-              >
-                {#snippet details(log: LogEntry, index: number)}
-                  <LogRowDetails
-                    {log}
-                    identifiers={log.id ? (logIdentifiers.get(log.id) ?? []) : []}
-                    breadcrumbsOpen={expandedBreadcrumbs.has(index)}
-                    onToggleBreadcrumbs={() => toggleBreadcrumbs(index)}
-                    onFilterTrace={(id) => {
-                      traceId = id;
-                      applyFilters();
-                    }}
-                    onFilterSession={(id) => {
-                      sessionId = id;
-                      applyFilters();
-                    }}
-                    onOpenCorrelation={(type, value) => openCorrelationDialog(log, type, value)}
-                    onOpenException={() => openExceptionDialog(log)}
-                  />
-                {/snippet}
-              </LogResultsTable>
-            </div>
+            <LogResultsTable
+              bind:this={resultsTable}
+              logs={paginatedLogs}
+              {projects}
+              columns={visibleColumns(DEFAULT_BUILTIN_LAYOUT)}
+              {customColumns}
+              density={rowDensity}
+              selectedId={selectedLogIndex >= 0 && paginatedLogs[selectedLogIndex] ? rowKey(paginatedLogs[selectedLogIndex], selectedLogIndex) : null}
+              {highlightQuery}
+              hasMore={false}
+              loadingMore={false}
+              onSelect={(log) => openContextDialog(log)}
+              onFilter={(key, value) => {
+                if (key === "service" && !selectedServices.includes(value)) {
+                  selectedServices = [...selectedServices, value];
+                  applyFilters();
+                } else if (key === "host" && value && !selectedHostnames.includes(value)) {
+                  selectedHostnames = [...selectedHostnames, value];
+                  applyFilters();
+                } else if (key === "level" && !selectedLevels.includes(value)) {
+                  selectedLevels = [...selectedLevels, value];
+                  applyFilters();
+                }
+              }}
+              onProjectFilter={() => {}}
+              onLoadMore={() => {}}
+            />
 
             {#if !liveTail && logs.length > 0}
               <div class="flex items-center justify-between mt-6 px-2">
