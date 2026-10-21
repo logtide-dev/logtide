@@ -10,6 +10,7 @@ import { auditLogService } from '../audit-log/service.js';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
+import { sigmaRuleRoutes } from './rule-routes.js';
 
 const sigmaService = new SigmaService();
 const organizationsService = new OrganizationsService();
@@ -940,4 +941,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       return reply.send({ tactics });
     }
   );
+
+  // Rule management endpoints (exceptions, bulk, detail, preview)
+  await fastify.register(sigmaRuleRoutes);
 }
