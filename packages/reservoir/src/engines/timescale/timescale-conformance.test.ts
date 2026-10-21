@@ -29,6 +29,7 @@ import {
 import type {
   LogRecord,
   MetadataFilter,
+  OperationStatsParams,
   QueryParams,
   SpanQueryParams,
   SpanRecord,
@@ -502,6 +503,70 @@ describeTimescaleSpecifics(
       expect(await traceIds({ attributeFilters: [eq('resource.service.version', '1.2')], sortBy: 'start_time', sortOrder: 'asc' })).toEqual([
         'ta', 'tb',
       ]);
+    });
+  },
+);
+
+describeTimescaleSpecifics(
+  'timescale apm specifics',
+  'reservoir_ts_apm',
+  {
+    spans: [
+      specificsSpan('ra', 'ta', 1, { serviceName: 'svc-a', operationName: 'page', durationMs: 10 }),
+      specificsSpan('ca', 'ta', 2, { serviceName: 'svc-a', operationName: 'render', durationMs: 5, parentSpanId: 'ra' }),
+      specificsSpan('rb', 'tb', 3, { serviceName: 'svc-b', operationName: 'loop', durationMs: 40, kind: 'INTERNAL' }),
+      specificsSpan('cb', 'tb', 4, { serviceName: 'svc-b', operationName: 'db', durationMs: 7, kind: 'CLIENT', parentSpanId: 'rb' }),
+      ...[0, 1, 59999, 60000, 120000].map((durationMs, i) =>
+        specificsSpan(`l${i}`, `tl${i}`, 10 + i, { serviceName: 'svc-l', operationName: 'GET /l', durationMs, kind: 'SERVER' })),
+      ...[1, 2, 3, 4].map((durationMs, i) =>
+        specificsSpan(`p${i}`, `tp${i}`, 20 + i, {
+          serviceName: 'svc-p', operationName: 'op', durationMs, kind: 'CONSUMER', statusCode: i === 3 ? 'ERROR' : 'OK',
+        })),
+    ],
+  },
+  (subject) => {
+    const scope = { projectId: SPECIFICS_PROJECT, ...SPECIFICS_WINDOW };
+    const names = async (params: Partial<OperationStatsParams>) =>
+      (await subject().getOperationStats({ ...scope, ...params })).map((r) => `${r.service}/${r.operation}`);
+
+    it('falls back to root spans when the scope has no entry span', async () => {
+      expect(await names({ service: 'svc-a' })).toEqual(['svc-a/page']);
+      // INTERNAL and CLIENT spans are not entry spans, so the root answers (F3 contract).
+      expect(await names({ service: 'svc-b' })).toEqual(['svc-b/loop']);
+    });
+
+    it('explicit kinds never fall back', async () => {
+      expect(await names({ service: 'svc-b', kinds: ['CLIENT'] })).toEqual(['svc-b/db']);
+      expect(await names({ service: 'svc-b', kinds: ['SERVER'] })).toEqual([]);
+    });
+
+    it('percentiles are exact percentile_cont values', async () => {
+      const [row] = await subject().getOperationStats({ ...scope, service: 'svc-p' });
+      expect(row).toMatchObject({ service: 'svc-p', operation: 'op', count: 4, errorCount: 1, avgMs: 2.5, p50Ms: 2.5 });
+      expect(row.p95Ms).toBeCloseTo(3.85, 9);
+      expect(row.p99Ms).toBeCloseTo(3.97, 9);
+    });
+
+    it('the project scope only sees entry spans', async () => {
+      expect(await names({})).toEqual(['svc-l/GET /l', 'svc-p/op']);
+    });
+
+    it('latency buckets are upper-inclusive with one overflow bucket', async () => {
+      const { counts } = await subject().getLatencyHistogram({ ...scope, service: 'svc-l' });
+      expect(counts).toHaveLength(17);
+      expect(counts[0]).toBe(2);
+      expect(counts[15]).toBe(2);
+      expect(counts[16]).toBe(1);
+      expect(counts.reduce((a, b) => a + b, 0)).toBe(5);
+    });
+
+    it('the latency root fallback is decided before the operation filter', async () => {
+      const zeros = Array.from({ length: 17 }, () => 0);
+      expect((await subject().getLatencyHistogram({ ...scope, service: 'svc-b', operation: 'db' })).counts).toEqual(zeros);
+      const loop = (await subject().getLatencyHistogram({ ...scope, service: 'svc-b', operation: 'loop' })).counts;
+      expect(loop[5]).toBe(1);
+      expect(loop.reduce((a, b) => a + b, 0)).toBe(1);
+      expect((await subject().getLatencyHistogram({ ...scope, service: 'svc-p', operation: 'missing' })).counts).toEqual(zeros);
     });
   },
 );

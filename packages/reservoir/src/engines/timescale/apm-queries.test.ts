@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildSpanConditions,
+  entryKinds,
+  entryProbeSql,
+  latencyCounts,
+  latencyHistogramSql,
+  operationStatRows,
+  operationStatsSql,
   routeAttributeFilters,
   spanOrderSql,
   traceOrderSql,
@@ -108,5 +114,62 @@ describe('traceOrderSql', () => {
 
   it('sortBy duration asc', () => {
     expect(traceOrderSql({ sortBy: 'duration', sortOrder: 'asc' })).toBe('ORDER BY duration_ms ASC, trace_id ASC');
+  });
+});
+
+describe('entry span queries', () => {
+  const scope = { projectId: 'p1', from, to };
+
+  it('kinds default to SERVER and CONSUMER', () => {
+    expect(entryKinds(undefined)).toEqual(['SERVER', 'CONSUMER']);
+    expect(entryKinds(['CLIENT'])).toEqual(['CLIENT']);
+    const r = operationStatsSql('public', { ...scope, limit: 100 }, 'kinds');
+    expect(r.parameters).toContainEqual(['SERVER', 'CONSUMER']);
+    expect(r.query).toContain('kind = ANY($4)');
+  });
+
+  it('scope is the project, the inclusive window and the optional service', () => {
+    const r = operationStatsSql('public', { ...scope, service: 'api', limit: 7 }, 'kinds');
+    expect(r.query).toContain('FROM public.spans WHERE project_id = $1 AND time >= $2 AND time <= $3 AND service_name = $4 AND kind = ANY($5)');
+    expect(r.parameters).toEqual(['p1', from, to, 'api', ['SERVER', 'CONSUMER'], 7]);
+  });
+
+  it('root mode selects parent_span_id IS NULL OR parent_span_id = \'\'', () => {
+    const r = operationStatsSql('public', { ...scope, limit: 100 }, 'root');
+    expect(r.query).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+    expect(r.query).not.toContain('kind = ANY');
+    expect(r.parameters).toEqual(['p1', from, to, 100]);
+  });
+
+  it('stats use exact percentiles and order by count then names in byte order', () => {
+    const sql = operationStatsSql('public', { ...scope, limit: 100 }, 'kinds').query as string;
+    expect(sql).toContain('percentile_cont(ARRAY[0.5, 0.95, 0.99]) WITHIN GROUP (ORDER BY duration_ms)');
+    expect(sql).toContain("COUNT(*) FILTER (WHERE status_code = 'ERROR')");
+    expect(sql).toContain('GROUP BY service_name, operation_name');
+    expect(sql).toMatch(/ORDER BY cnt DESC, service_name COLLATE "C" ASC, operation_name COLLATE "C" ASC LIMIT \$\d+$/);
+  });
+
+  it('the entry probe looks for one span of the default kinds in scope', () => {
+    const r = entryProbeSql('public', { ...scope, service: 'api' });
+    expect(r.query).toBe('SELECT 1 FROM public.spans WHERE project_id = $1 AND time >= $2 AND time <= $3 AND service_name = $4 AND kind = ANY($5) LIMIT 1');
+    expect(r.parameters).toEqual(['p1', from, to, 'api', ['SERVER', 'CONSUMER']]);
+  });
+
+  it('latency thresholds are the negated bounds, upper-inclusive buckets', () => {
+    const r = latencyHistogramSql('public', { ...scope, operation: 'GET /x' }, 'kinds');
+    expect(r.query).toContain('16 - width_bucket((-duration_ms)::float8, $');
+    expect(r.query).toContain('operation_name = $');
+    expect(r.parameters).toContainEqual([-60000, -30000, -20000, -10000, -5000, -2000, -1000, -500, -200, -100, -50, -20, -10, -5, -2, -1]);
+  });
+
+  it('maps stat rows and bucket rows', () => {
+    expect(
+      operationStatRows([{ service_name: 'api', operation_name: 'GET', cnt: '4', error_count: '1', avg_ms: 2.5, p: [2.5, 3.85, 3.97] }]),
+    ).toEqual([{ service: 'api', operation: 'GET', count: 4, errorCount: 1, avgMs: 2.5, p50Ms: 2.5, p95Ms: 3.85, p99Ms: 3.97 }]);
+    const counts = latencyCounts([{ idx: 0, n: '2' }, { idx: '16', n: 1 }]);
+    expect(counts).toHaveLength(17);
+    expect(counts[0]).toBe(2);
+    expect(counts[16]).toBe(1);
+    expect(counts.slice(1, 16).every((c) => c === 0)).toBe(true);
   });
 });

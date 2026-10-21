@@ -67,12 +67,34 @@ import type {
   LogFacetsResult,
   DiscoverMetadataKeysParams,
   MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
 } from '../../core/types.js';
-import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
-import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
+import { FACETS_DEFAULT_LIMIT, LATENCY_HISTOGRAM_BOUNDS_MS, OPERATION_STATS_DEFAULT_LIMIT } from '../../core/constants.js';
+import {
+  assertTimeRange,
+  normalizeDiscoverParams,
+  normalizeFacetsParams,
+  normalizeHistogramParams,
+  normalizeOperationStatsParams,
+} from '../../core/normalize.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
 import { assembleFacets, histogramRowsToResult, type FacetRow, type HistogramRow } from './log-analytics.js';
-import { buildSpanConditions, spanOrderSql, traceOrderSql, traceSpanMatchSql } from './apm-queries.js';
+import {
+  buildSpanConditions,
+  entryProbeSql,
+  latencyCounts,
+  latencyHistogramSql,
+  operationStatRows,
+  operationStatsSql,
+  spanOrderSql,
+  traceOrderSql,
+  traceSpanMatchSql,
+  type EntryMode,
+  type OperationStatRow,
+} from './apm-queries.js';
 
 const { Pool } = pg;
 
@@ -1030,6 +1052,50 @@ export class TimescaleEngine extends StorageEngine {
       avgLatencyMs: Number(r.avg_latency_ms ?? 0),
       p95LatencyMs: r.p95_latency_ms != null ? Number(r.p95_latency_ms) : null,
     }));
+  }
+
+  /**
+   * Per-operation stats over entry spans (S10, F3 contract). A non-empty
+   * result of the default kinds proves entry spans exist; an empty one
+   * means none are in scope, so the root spans answer instead. Explicit
+   * kinds never fall back.
+   */
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    const normalized = normalizeOperationStatsParams(params);
+    const p = { ...normalized, limit: normalized.limit ?? OPERATION_STATS_DEFAULT_LIMIT };
+    const run = async (mode: EntryMode) => {
+      const native = operationStatsSql(this.schema, p, mode);
+      const result = await this.runQuery(native.query as string, native.parameters);
+      return operationStatRows(result.rows as OperationStatRow[]);
+    };
+    const rows = await run('kinds');
+    if (rows.length > 0 || normalized.kinds !== undefined) return rows;
+    return run('root');
+  }
+
+  /**
+   * Latency distribution of the entry spans of getOperationStats (S11, F3
+   * contract): the population is decided on the project and service scope,
+   * then filtered by operation. Counts prove entry spans exist; with an
+   * operation and no counts, a probe tells "entry spans, none for this
+   * operation" (zeros) from "no entry span at all" (root spans).
+   */
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    assertTimeRange(params.from, params.to);
+    const run = async (mode: EntryMode) => {
+      const native = latencyHistogramSql(this.schema, params, mode);
+      const result = await this.runQuery(native.query as string, native.parameters);
+      return latencyCounts(result.rows as { idx: number | string; n: number | string }[]);
+    };
+    const bounds = [...LATENCY_HISTOGRAM_BOUNDS_MS];
+    const counts = await run('kinds');
+    if (counts.some((n) => n > 0)) return { bounds, counts };
+    if (params.operation !== undefined) {
+      const probe = entryProbeSql(this.schema, params);
+      const found = await this.runQuery(probe.query as string, probe.parameters);
+      if (found.rows.length > 0) return { bounds, counts };
+    }
+    return { bounds, counts: await run('root') };
   }
 
   async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {

@@ -1111,6 +1111,90 @@ describe('TimescaleEngine', () => {
     });
   });
 
+  describe('getOperationStats', () => {
+    const scope = { projectId: 'proj-1', from: new Date('2026-01-05T10:00:00Z'), to: new Date('2026-01-05T12:00:00Z') };
+    const statRow = { service_name: 'api', operation_name: 'GET /x', cnt: '2', error_count: '0', avg_ms: 15, p: [15, 19.5, 19.9] };
+    const sqlOf = (i: number) => mockQuery.mock.calls[i][0] as string;
+
+    it('uses the entry kinds when they have spans', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [statRow] });
+      await engine.connect();
+      const rows = await engine.getOperationStats(scope);
+      expect(rows).toEqual([{ service: 'api', operation: 'GET /x', count: 2, errorCount: 0, avgMs: 15, p50Ms: 15, p95Ms: 19.5, p99Ms: 19.9 }]);
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(sqlOf(0)).toContain('kind = ANY(');
+    });
+
+    it('falls back to root spans when the default kinds have none', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [statRow] });
+      await engine.connect();
+      expect(await engine.getOperationStats(scope)).toHaveLength(1);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(sqlOf(1)).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+    });
+
+    it('explicit kinds never fall back', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      expect(await engine.getOperationStats({ ...scope, kinds: ['CLIENT'] })).toEqual([]);
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockQuery.mock.calls[0][1]).toContainEqual(['CLIENT']);
+    });
+
+    it('limit defaults to 100 and clamps to 500; empty kinds reject before querying', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [statRow] }).mockResolvedValueOnce({ rows: [statRow] });
+      await engine.connect();
+      await engine.getOperationStats(scope);
+      expect((mockQuery.mock.calls[0][1] as unknown[]).at(-1)).toBe(100);
+      await engine.getOperationStats({ ...scope, limit: 9999 });
+      expect((mockQuery.mock.calls[1][1] as unknown[]).at(-1)).toBe(500);
+      await expect(engine.getOperationStats({ ...scope, kinds: [] })).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('getLatencyHistogram', () => {
+    const scope = { projectId: 'proj-1', from: new Date('2026-01-05T10:00:00Z'), to: new Date('2026-01-05T12:00:00Z') };
+    const sqlOf = (i: number) => mockQuery.mock.calls[i][0] as string;
+
+    it('entry spans with counts answer in one query', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ idx: 3, n: '4' }] });
+      await engine.connect();
+      const result = await engine.getLatencyHistogram(scope);
+      expect(result.bounds).toEqual([1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000]);
+      expect(result.counts).toHaveLength(17);
+      expect(result.counts[3]).toBe(4);
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it('no entry span in scope falls back to root spans', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ idx: 16, n: 1 }] });
+      await engine.connect();
+      const result = await engine.getLatencyHistogram(scope);
+      expect(result.counts[16]).toBe(1);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(sqlOf(1)).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+    });
+
+    it('with an operation, the fallback is decided by a probe on the service scope', async () => {
+      // Entry spans exist (probe hit) but none for this operation: zeros, no fallback.
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+      await engine.connect();
+      const zeros = await engine.getLatencyHistogram({ ...scope, operation: 'job loop' });
+      expect(zeros.counts).toEqual(Array.from({ length: 17 }, () => 0));
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(sqlOf(1)).toMatch(/^SELECT 1 FROM public\.spans WHERE .* LIMIT 1$/);
+      expect(sqlOf(1)).not.toContain('operation_name');
+
+      // No entry span at all (probe miss): root spans of that operation.
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ idx: 0, n: 2 }] });
+      const roots = await engine.getLatencyHistogram({ ...scope, operation: 'page load' });
+      expect(roots.counts[0]).toBe(2);
+      expect(sqlOf(4)).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+      expect(sqlOf(4)).toContain('operation_name = $');
+    });
+  });
+
   describe('getTraceById', () => {
     it('returns trace when found', async () => {
       mockQuery.mockResolvedValueOnce({
