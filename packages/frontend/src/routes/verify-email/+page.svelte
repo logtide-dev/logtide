@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { authStore } from '$lib/stores/auth';
   import { authAPI } from '$lib/api/auth';
+  import { OnboardingAPI } from '$lib/api/onboarding';
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
   import MailCheck from '@lucide/svelte/icons/mail-check';
@@ -12,6 +13,9 @@
   let status = $state<'working' | 'done' | 'error'>('working');
   let errorMessage = $state('');
   let signedIn = $derived(!!$authStore.token);
+  // Where the primary action goes once the address is verified. Signed-in
+  // users with unfinished onboarding resume it instead of landing on the dashboard.
+  let continueSetup = $state(false);
 
   onMount(async () => {
     const token = page.url.searchParams.get('token');
@@ -22,7 +26,16 @@
     }
 
     try {
-      await authAPI.verifyEmail(token, $authStore.token);
+      const sessionToken = $authStore.token;
+      await authAPI.verifyEmail(token, sessionToken);
+      if (sessionToken) {
+        try {
+          const onboarding = await new OnboardingAPI(() => sessionToken).getState();
+          continueSetup = !onboarding.tutorialCompleted && !onboarding.tutorialSkipped;
+        } catch {
+          // Falling back to the dashboard is always safe.
+        }
+      }
       status = 'done';
     } catch (e) {
       status = 'error';
@@ -42,7 +55,7 @@
         {#if status === 'working'}
           <MailCheck class="h-6 w-6 text-muted-foreground" />
         {:else if status === 'done'}
-          <CircleCheck class="h-6 w-6 text-green-600" />
+          <CircleCheck class="h-6 w-6 text-success-text" />
         {:else}
           <CircleAlert class="h-6 w-6 text-destructive" />
         {/if}
@@ -68,8 +81,8 @@
     </CardHeader>
     <CardContent class="flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
       {#if status === 'done'}
-        <Button href={signedIn ? '/dashboard' : '/login'}>
-          {signedIn ? 'Go to dashboard' : 'Sign in'}
+        <Button href={!signedIn ? '/login' : continueSetup ? '/onboarding' : '/dashboard'}>
+          {!signedIn ? 'Sign in' : continueSetup ? 'Continue setup' : 'Go to dashboard'}
         </Button>
       {:else if status === 'error'}
         {#if signedIn}
