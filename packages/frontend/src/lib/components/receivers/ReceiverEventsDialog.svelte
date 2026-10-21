@@ -3,6 +3,8 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import { receiversAPI, type Receiver, type ReceiverEvent, type ReceiverEventStatus } from '$lib/api/receivers';
   import { toastStore } from '$lib/stores/toast';
+  import Timestamp from '$lib/components/app/Timestamp.svelte';
+  import { stateTone } from '$lib/utils/severity';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
 
@@ -18,11 +20,11 @@
   let loading = $state(false);
   let expandedId = $state<string | null>(null);
 
-  const STATUS_STYLES: Record<ReceiverEventStatus, string> = {
-    processed: 'bg-green-500/15 text-green-600 dark:text-green-400',
-    skipped: 'bg-secondary text-secondary-foreground',
-    failed: 'bg-destructive/15 text-destructive',
-    pending: 'bg-muted text-muted-foreground'
+  const STATUS_TONES: Record<ReceiverEventStatus, string> = {
+    processed: 'ok',
+    skipped: 'disabled',
+    failed: 'failed',
+    pending: 'pending'
   };
 
   async function loadEvents() {
@@ -32,7 +34,7 @@
       const response = await receiversAPI.listEvents(projectId, receiver.id);
       events = response.events;
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Failed to load receiver events');
+      toastStore.error(e instanceof Error ? e.message : 'Could not load inbound webhook events');
     } finally {
       loading = false;
     }
@@ -50,18 +52,14 @@
   function toggleExpand(id: string) {
     expandedId = expandedId === id ? null : id;
   }
-
-  function formatDate(date: string): string {
-    return new Date(date).toLocaleString('en-US');
-  }
 </script>
 
 <Dialog bind:open>
   <DialogContent class="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
     <DialogHeader>
-      <DialogTitle>Recent Events{receiver ? ` - ${receiver.name}` : ''}</DialogTitle>
+      <DialogTitle>Inbound webhook events{receiver ? `: ${receiver.name}` : ''}</DialogTitle>
       <DialogDescription>
-        The last events received by this webhook, with their normalized output. Only the most recent
+        The last events received by this inbound webhook, with their normalized output. Only the most recent
         100 events are kept.
       </DialogDescription>
     </DialogHeader>
@@ -86,36 +84,36 @@
               onclick={() => toggleExpand(event.id)}
             >
               {#if expandedId === event.id}
-                <ChevronDown class="w-4 h-4 shrink-0 text-muted-foreground" />
+                <ChevronDown class="w-4 h-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               {:else}
-                <ChevronRight class="w-4 h-4 shrink-0 text-muted-foreground" />
+                <ChevronRight class="w-4 h-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               {/if}
               <span
-                class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold {STATUS_STYLES[event.status]}"
+                class="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold {stateTone(STATUS_TONES[event.status]).badge}"
               >
                 {event.status}
               </span>
-              <span class="text-sm text-muted-foreground">{formatDate(event.receivedAt)}</span>
+              <span class="text-sm text-muted-foreground"><Timestamp value={event.receivedAt} precision="second" /></span>
               {#if event.error}
-                <span class="text-xs text-destructive truncate">{event.error}</span>
+                <span class="text-xs text-destructive-text truncate">{event.error}</span>
               {/if}
             </button>
             {#if expandedId === event.id}
               <div class="border-t px-3 py-2 space-y-3">
                 <div>
-                  <p class="text-xs font-medium mb-1">Raw Payload</p>
+                  <p class="text-xs font-medium mb-1">Raw payload</p>
                   <pre class="text-xs bg-muted rounded-md p-2 overflow-x-auto max-h-48">{JSON.stringify(event.rawPayload, null, 2)}</pre>
                 </div>
                 {#if event.normalized}
                   <div>
-                    <p class="text-xs font-medium mb-1">Normalized Logs</p>
+                    <p class="text-xs font-medium mb-1">Normalized logs</p>
                     <pre class="text-xs bg-muted rounded-md p-2 overflow-x-auto max-h-48">{JSON.stringify(event.normalized, null, 2)}</pre>
                   </div>
                 {/if}
                 {#if event.error}
                   <div>
-                    <p class="text-xs font-medium mb-1 text-destructive">Error</p>
-                    <p class="text-xs text-destructive">{event.error}</p>
+                    <p class="text-xs font-medium mb-1 text-destructive-text">Error</p>
+                    <p class="text-xs text-destructive-text">{event.error}</p>
                   </div>
                 {/if}
               </div>

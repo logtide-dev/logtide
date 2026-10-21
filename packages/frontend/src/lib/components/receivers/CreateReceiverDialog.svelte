@@ -81,7 +81,7 @@
         fieldMapping: buildFieldMapping()
       });
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to create receiver';
+      error = e instanceof Error ? e.message : 'Could not create the inbound webhook';
     } finally {
       submitting = false;
     }
@@ -98,7 +98,7 @@
         copied = false;
       }, 2000);
     } else {
-      error = 'Could not copy to clipboard. Please select the URL and copy manually (Ctrl+C / Cmd+C).';
+      error = 'Could not copy to the clipboard. Select the URL and copy it manually (Ctrl+C or Cmd+C).';
     }
   }
 
@@ -130,15 +130,15 @@
   <DialogContent class="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
     {#if !created}
       <DialogHeader>
-        <DialogTitle>Create Webhook Receiver</DialogTitle>
+        <DialogTitle>Create inbound webhook</DialogTitle>
         <DialogDescription>
-          Receive events from an external system and store them as log entries in this project.
+          Inbound webhooks receive events from other tools (GitHub, uptime checkers, generic JSON) and store them as logs.
         </DialogDescription>
       </DialogHeader>
 
       <form onsubmit={handleSubmit} class="space-y-4 py-4">
         <div class="space-y-2">
-          <Label for="receiver-name">Receiver Name</Label>
+          <Label for="receiver-name">Name</Label>
           <Input
             id="receiver-name"
             type="text"
@@ -154,7 +154,7 @@
         </div>
 
         <div class="space-y-2">
-          <Label>Source Type</Label>
+          <Label>Source type</Label>
           <div class="grid grid-cols-3 gap-3">
             {#each ADAPTER_OPTIONS as option (option.value)}
               <button
@@ -174,7 +174,7 @@
         {#if adapterType === 'generic'}
           <div class="space-y-2">
             <Label>
-              Field Mapping
+              Field mapping
               <span class="text-muted-foreground font-normal">(optional, dot paths into the payload)</span>
             </Label>
             <div class="grid grid-cols-2 gap-3">
@@ -196,13 +196,13 @@
               </div>
             </div>
             <p class="text-xs text-muted-foreground">
-              Unmapped fields fall back to sensible defaults; the full payload is always kept in metadata.
+              Unmapped fields fall back to sensible defaults. The full payload is always kept in metadata.
             </p>
           </div>
         {/if}
 
         {#if error}
-          <div class="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+          <div class="text-sm text-destructive-text bg-destructive/10 p-3 rounded-md">
             {error}
           </div>
         {/if}
@@ -217,23 +217,23 @@
               Creating...
             {:else}
               <Plus class="w-4 h-4" />
-              Create Receiver
+              Create inbound webhook
             {/if}
           </Button>
         </DialogFooter>
       </form>
     {:else}
       <DialogHeader>
-        <DialogTitle>Receiver Created</DialogTitle>
+        <DialogTitle>Inbound webhook created</DialogTitle>
         <DialogDescription>Point the external system at this URL to start receiving events.</DialogDescription>
       </DialogHeader>
 
       <div class="space-y-4 py-4">
         <Alert.Root variant="destructive">
-          <Alert.Title>Important: Save this URL now</Alert.Title>
+          <Alert.Title>Save this URL now</Alert.Title>
           <Alert.Description>
-            The URL contains the receiver token and is the only credential the external system needs.
-            This is the only time it will be shown. If you lose it, delete the receiver and create a new one.
+            The URL contains the inbound webhook token and is the only credential the external system needs.
+            This is the only time it will be shown. If you lose it, delete the inbound webhook and create a new one.
           </Alert.Description>
         </Alert.Root>
 
@@ -258,7 +258,7 @@
         </div>
 
         <div class="bg-muted p-3 rounded-md space-y-1">
-          <p class="text-xs font-medium">Usage Example:</p>
+          <p class="text-xs font-medium">Usage example:</p>
           <pre class="text-xs text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all"><code>curl -X POST {ingestUrl} \
   -H "Content-Type: application/json" \
   -d '{`{"message": "deploy finished"}`}'</code></pre>
