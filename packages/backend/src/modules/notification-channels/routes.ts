@@ -7,11 +7,16 @@ import { z } from 'zod';
 import { notificationChannelsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
-import type { NotificationEventType } from '@logtide/shared';
+import type {
+  NotificationEventType,
+  NotificationChannelType,
+  UpdateNotificationChannelInput,
+} from '@logtide/shared';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { auditLogService } from '../audit-log/service.js';
+import { serializeChannel, serializeChannels } from './serialize.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -37,18 +42,44 @@ const webhookConfigSchema = z.object({
     .optional(),
 });
 
-const channelConfigSchema = z.union([emailConfigSchema, webhookConfigSchema]);
-
-const createChannelSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(255),
-  type: z.enum(['email', 'webhook']),
-  config: channelConfigSchema,
-  description: z.string().max(500).optional(),
+const pagerDutyConfigSchema = z.object({
+  routingKey: z.string().min(1, 'Routing key is required'),
 });
+
+// On update a blank or masked routing key means "keep the stored one".
+const pagerDutyUpdateConfigSchema = z.object({ routingKey: z.string().optional() }).strict();
+
+const updateChannelConfigSchema = z.union([
+  emailConfigSchema,
+  webhookConfigSchema,
+  pagerDutyUpdateConfigSchema,
+]);
+
+// Discriminated on type so a webhook body cannot pass as pagerduty.
+const createChannelSchema = z.discriminatedUnion('type', [
+  z.object({
+    name: z.string().min(1, 'Name is required').max(255),
+    type: z.literal('email'),
+    config: emailConfigSchema,
+    description: z.string().max(500).optional(),
+  }),
+  z.object({
+    name: z.string().min(1, 'Name is required').max(255),
+    type: z.literal('webhook'),
+    config: webhookConfigSchema,
+    description: z.string().max(500).optional(),
+  }),
+  z.object({
+    name: z.string().min(1, 'Name is required').max(255),
+    type: z.literal('pagerduty'),
+    config: pagerDutyConfigSchema,
+    description: z.string().max(500).optional(),
+  }),
+]);
 
 const updateChannelSchema = z.object({
   name: z.string().min(1).max(255).optional(),
-  config: channelConfigSchema.optional(),
+  config: updateChannelConfigSchema.optional(),
   description: z.string().max(500).optional().nullable(),
   enabled: z.boolean().optional(),
 });
@@ -103,7 +134,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
     try {
       const { organizationId } = orgQuerySchema.parse(request.query);
       const enabledOnly = request.query.enabled === 'true';
-      const type = request.query.type as 'email' | 'webhook' | undefined;
+      const type = request.query.type as NotificationChannelType | undefined;
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -115,7 +146,8 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         type,
       });
 
-      return reply.send({ channels });
+      const isAdmin = await checkAdminRole(request.user.id, organizationId);
+      return reply.send({ channels: serializeChannels(channels, { isAdmin }) });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'organizationId query parameter is required' });
@@ -144,7 +176,8 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(404).send({ error: 'Channel not found' });
       }
 
-      return reply.send({ channel });
+      const isAdmin = await checkAdminRole(request.user.id, organizationId);
+      return reply.send({ channel: serializeChannel(channel, { isAdmin }) });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Invalid request', details: error.errors });
@@ -195,13 +228,16 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         metadata: { name: channel.name, type: channel.type },
       });
 
-      return reply.status(201).send({ channel });
+      return reply.status(201).send({ channel: serializeChannel(channel, { isAdmin: true }) });
     } catch (error) {
       if (error instanceof CapabilityError) {
         throw error;
       }
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      if (error instanceof Error && error.message.startsWith('Invalid configuration')) {
+        return reply.status(400).send({ error: error.message });
       }
       if (error instanceof Error && error.message.includes('unique')) {
         return reply.status(409).send({ error: 'A channel with this name already exists' });
@@ -231,7 +267,12 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Only admins can update notification channels' });
       }
 
-      const channel = await notificationChannelsService.updateChannel(id, organizationId, body);
+      const channel = await notificationChannelsService.updateChannel(
+        id,
+        organizationId,
+        // a blank pagerduty routing key is filled from the stored one by the service
+        body as UpdateNotificationChannelInput
+      );
 
       await auditLogService.record({
         action: 'channel.updated',
@@ -240,10 +281,13 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         metadata: { name: channel.name, type: channel.type },
       });
 
-      return reply.send({ channel });
+      return reply.send({ channel: serializeChannel(channel, { isAdmin: true }) });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });
+      }
+      if (error instanceof Error && error.message.startsWith('Invalid configuration')) {
+        return reply.status(400).send({ error: error.message });
       }
       if (error instanceof Error && error.message === 'Channel not found') {
         return reply.status(404).send({ error: 'Channel not found' });
@@ -350,8 +394,15 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       }
 
       const defaults = await notificationChannelsService.getAllOrganizationDefaults(organizationId);
+      const isAdmin = await checkAdminRole(request.user.id, organizationId);
+      const serialized = Object.fromEntries(
+        Object.entries(defaults).map(([eventType, list]) => [
+          eventType,
+          serializeChannels(list, { isAdmin }),
+        ])
+      );
 
-      return reply.send({ defaults });
+      return reply.send({ defaults: serialized });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'organizationId is required' });
@@ -380,7 +431,8 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         eventType as NotificationEventType
       );
 
-      return reply.send({ channels });
+      const isAdmin = await checkAdminRole(request.user.id, organizationId);
+      return reply.send({ channels: serializeChannels(channels, { isAdmin }) });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Invalid event type' });
@@ -463,7 +515,8 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         alertRuleId,
         organizationId
       );
-      return reply.send({ channels });
+      const isAdmin = await checkAdminRole(request.user.id, organizationId);
+      return reply.send({ channels: serializeChannels(channels, { isAdmin }) });
     } catch (error) {
       console.error(error, 'Failed to get alert rule channels');
       return reply.status(500).send({ error: 'Failed to get channels' });
@@ -498,7 +551,8 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         sigmaRuleId,
         organizationId
       );
-      return reply.send({ channels });
+      const isAdmin = await checkAdminRole(request.user.id, organizationId);
+      return reply.send({ channels: serializeChannels(channels, { isAdmin }) });
     } catch (error) {
       console.error(error, 'Failed to get sigma rule channels');
       return reply.status(500).send({ error: 'Failed to get channels' });

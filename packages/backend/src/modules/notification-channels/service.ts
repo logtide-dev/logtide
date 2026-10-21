@@ -18,6 +18,7 @@ import type { NotificationProvider } from './providers/interface.js';
 import { EmailProvider } from './providers/email-provider.js';
 import { WebhookProvider } from './providers/webhook-provider.js';
 import { PagerDutyProvider } from './providers/pagerduty-provider.js';
+import { mergeConfigSecrets } from './serialize.js';
 
 export class NotificationChannelsService {
   private providers: Map<NotificationChannelType, NotificationProvider>;
@@ -124,15 +125,19 @@ export class NotificationChannelsService {
     organizationId: string,
     input: UpdateNotificationChannelInput
   ): Promise<NotificationChannel> {
-    // If config is being updated, validate it
+    // If config is being updated, keep stored secrets the caller did not
+    // retype, then validate the merged result.
+    let mergedConfig: ChannelConfig | undefined;
     if (input.config) {
       const existing = await this.getChannel(id, organizationId);
       if (!existing) {
         throw new Error('Channel not found');
       }
 
+      mergedConfig = mergeConfigSecrets(existing.config, input.config);
+
       const provider = this.providers.get(existing.type);
-      if (!provider || !provider.validateConfig(input.config)) {
+      if (!provider || !provider.validateConfig(mergedConfig)) {
         throw new Error(`Invalid configuration for ${existing.type} channel`);
       }
     }
@@ -142,7 +147,7 @@ export class NotificationChannelsService {
     };
 
     if (input.name !== undefined) updateData.name = input.name;
-    if (input.config !== undefined) updateData.config = input.config;
+    if (mergedConfig !== undefined) updateData.config = mergedConfig;
     if (input.description !== undefined) updateData.description = input.description;
     if (input.enabled !== undefined) updateData.enabled = input.enabled;
 
