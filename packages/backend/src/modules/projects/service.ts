@@ -12,6 +12,29 @@ function generateProjectSlug(name: string): string {
 
 export type DataAvailabilityKind = 'logs' | 'traces' | 'metrics';
 
+/**
+ * What a project has received so far, read from Postgres flags only (never the
+ * reservoir). logs/traces/metrics come from projects.has_*_at, which are
+ * LAST-write times refreshed at most every 5 minutes per process, so
+ * lastEventAt (max of the flags) is accurate to about 5 minutes and firstAt
+ * (min of the non-null flags) means "earliest signal timestamp the server
+ * knows", not the true first event.
+ */
+export interface FirstSignal {
+  logs: boolean;
+  traces: boolean;
+  metrics: boolean;
+  errors: boolean;
+  firstAt: string | null;
+  lastEventAt: string | null;
+}
+
+function toTime(ts: Date | string | null): number | null {
+  if (ts === null || ts === undefined) return null;
+  const t = (ts instanceof Date ? ts : new Date(ts)).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
 const DATA_AVAILABILITY_COLUMNS: Record<DataAvailabilityKind, 'has_logs_at' | 'has_traces_at' | 'has_metrics_at'> = {
   logs: 'has_logs_at',
   traces: 'has_traces_at',
@@ -503,6 +526,69 @@ export class ProjectsService {
       traces: projects.filter((p) => isFresh(p.has_traces_at)).map((p) => p.id),
       metrics: projects.filter((p) => isFresh(p.has_metrics_at)).map((p) => p.id),
     };
+  }
+
+  /**
+   * First-signal summary for one project. Returns null when the project does
+   * not exist, is soft-deleted, or the user is not a member of its organization.
+   */
+  async getFirstSignal(projectId: string, userId: string): Promise<FirstSignal | null> {
+    const project = await this.getProjectById(projectId, userId);
+    if (!project || project.deletedAt) return null;
+
+    const flags = await db
+      .selectFrom('projects')
+      .select(['has_logs_at', 'has_traces_at', 'has_metrics_at'])
+      .where('id', '=', projectId)
+      .where('organization_id', '=', project.organizationId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    if (!flags) return null;
+
+    const exception = await db
+      .selectFrom('exceptions')
+      .select('id')
+      .where('organization_id', '=', project.organizationId)
+      .where('project_id', '=', projectId)
+      .limit(1)
+      .executeTakeFirst();
+
+    const times = [flags.has_logs_at, flags.has_traces_at, flags.has_metrics_at]
+      .map(toTime)
+      .filter((t): t is number => t !== null);
+
+    return {
+      logs: flags.has_logs_at !== null,
+      traces: flags.has_traces_at !== null,
+      metrics: flags.has_metrics_at !== null,
+      errors: !!exception,
+      firstAt: times.length ? new Date(Math.min(...times)).toISOString() : null,
+      lastEventAt: times.length ? new Date(Math.max(...times)).toISOString() : null,
+    };
+  }
+
+  /**
+   * Last event time per active project of an organization (max of the data
+   * flags), in one query so project cards need no per-project request.
+   */
+  async getLastEvents(organizationId: string, userId: string): Promise<Record<string, string | null>> {
+    await this.checkOrganizationAccess(organizationId, userId);
+
+    const projects = await db
+      .selectFrom('projects')
+      .select(['id', 'has_logs_at', 'has_traces_at', 'has_metrics_at'])
+      .where('organization_id', '=', organizationId)
+      .where('deleted_at', 'is', null)
+      .execute();
+
+    const result: Record<string, string | null> = {};
+    for (const p of projects) {
+      const times = [p.has_logs_at, p.has_traces_at, p.has_metrics_at]
+        .map(toTime)
+        .filter((t): t is number => t !== null);
+      result[p.id] = times.length ? new Date(Math.max(...times)).toISOString() : null;
+    }
+    return result;
   }
 
   /**
