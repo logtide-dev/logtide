@@ -12,6 +12,7 @@ export * from './detection-pack.js';
 
 // Re-export notification channel types
 export * from './notification-channel.js';
+export * from './notification-routing.js';
 
 // Re-export webhook delivery types
 export * from './webhook-delivery.js';
