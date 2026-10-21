@@ -17,6 +17,7 @@ import { createConformanceReservoir, isConformanceRequired, resolveSubject } fro
 import { describeBaselineConformance } from './suites/baseline.js';
 import { describeTextQueryConformance } from './suites/text-query.js';
 import { describeFilterConformance } from './suites/filters.js';
+import { describeFieldClauseConformance } from './suites/field-clauses.js';
 
 export type ConformanceEngine = EngineType | 'reference';
 
@@ -211,5 +212,6 @@ export function describeReservoirConformance(engine: ConformanceEngine, options:
     describeBaselineConformance(ctx);
     describeTextQueryConformance(ctx);
     describeFilterConformance(ctx);
+    describeFieldClauseConformance(ctx);
   });
 }

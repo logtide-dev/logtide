@@ -20,6 +20,7 @@ import {
   traceIdsOf,
   TEXT_QUERY_CASES,
   FILTER_CASES,
+  FIELD_CLAUSE_CASES,
 } from './index.js';
 
 describe('corpus', () => {
@@ -124,7 +125,7 @@ describe('logCaseParams', () => {
     expect(() => logCaseParams({ q: '"open' })).toThrow('does not parse');
   });
   it('every case id is unique and every q parses', () => {
-    const cases = [...TEXT_QUERY_CASES, ...FILTER_CASES];
+    const cases = [...TEXT_QUERY_CASES, ...FILTER_CASES, ...FIELD_CLAUSE_CASES];
     expect(new Set(cases.map((c) => c.id)).size).toBe(cases.length);
     for (const c of cases) expect(() => logCaseParams(c), c.id).not.toThrow();
   });

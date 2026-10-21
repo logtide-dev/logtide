@@ -38,3 +38,4 @@ export { ReferenceEngine, createReferenceReservoir } from './reference-engine.js
 export { describeBaselineConformance } from './suites/baseline.js';
 export { describeTextQueryConformance, TEXT_QUERY_CASES } from './suites/text-query.js';
 export { describeFilterConformance, FILTER_CASES } from './suites/filters.js';
+export { describeFieldClauseConformance, FIELD_CLAUSE_CASES } from './suites/field-clauses.js';
