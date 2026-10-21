@@ -11,6 +11,10 @@ export type ErrorCode =
   | 'http_error'
   | 'no_heartbeat'
   | 'blocked'
+  | 'cert_expiring'
+  | 'cert_expired'
+  | 'dns_mismatch'
+  | 'dns_no_records'
   | 'unexpected';
 
 // Alias for the database JSONB shape - single source of truth in database/types.ts
@@ -21,6 +25,20 @@ export interface CheckResult {
   responseTimeMs: number | null;
   statusCode: number | null;
   errorCode: ErrorCode | null;
+  /** Last-check facts (ssl certificate, dns records), stored in monitor_status.detail. */
+  detail?: Record<string, unknown>;
+}
+
+export interface SslCheckConfig {
+  /** Down when fewer than this many days remain on the certificate. */
+  warnDays: number;
+}
+
+export type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT';
+
+export interface DnsCheckConfig {
+  recordType: DnsRecordType;
+  expectedValue?: string;
 }
 
 export interface Monitor {
