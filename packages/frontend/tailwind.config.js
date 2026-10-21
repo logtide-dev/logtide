@@ -23,6 +23,7 @@ const config = {
         primary: {
           DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
           foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
+          text: 'hsl(var(--primary-text) / <alpha-value>)',
         },
         secondary: {
           DEFAULT: 'hsl(var(--secondary) / <alpha-value>)',
@@ -31,6 +32,31 @@ const config = {
         destructive: {
           DEFAULT: 'hsl(var(--destructive) / <alpha-value>)',
           foreground: 'hsl(var(--destructive-foreground) / <alpha-value>)',
+          text: 'hsl(var(--destructive-text) / <alpha-value>)',
+        },
+        nav: {
+          active: 'hsl(var(--nav-active) / <alpha-value>)',
+          'active-foreground': 'hsl(var(--nav-active-foreground) / <alpha-value>)',
+        },
+        success: {
+          DEFAULT: 'hsl(var(--success) / <alpha-value>)',
+          foreground: 'hsl(var(--success-foreground) / <alpha-value>)',
+          text: 'hsl(var(--success-text) / <alpha-value>)',
+        },
+        warning: {
+          DEFAULT: 'hsl(var(--warning) / <alpha-value>)',
+          foreground: 'hsl(var(--warning-foreground) / <alpha-value>)',
+          text: 'hsl(var(--warning-text) / <alpha-value>)',
+        },
+        info: {
+          DEFAULT: 'hsl(var(--info) / <alpha-value>)',
+          foreground: 'hsl(var(--info-foreground) / <alpha-value>)',
+          text: 'hsl(var(--info-text) / <alpha-value>)',
+        },
+        critical: {
+          DEFAULT: 'hsl(var(--critical) / <alpha-value>)',
+          foreground: 'hsl(var(--critical-foreground) / <alpha-value>)',
+          text: 'hsl(var(--critical-text) / <alpha-value>)',
         },
         muted: {
           DEFAULT: 'hsl(var(--muted) / <alpha-value>)',
