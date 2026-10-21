@@ -1,43 +1,19 @@
-import { writable } from 'svelte/store';
-import { browser } from '$app/environment';
+import { derived } from 'svelte/store';
+import { scopeStore } from './scope.js';
 
-// Remembers the last project the user looked at, so pages that have a project
-// selector default to the same one across navigations and reloads instead of
-// each falling back to "the first project".
-const STORAGE_KEY = 'logtide_current_project';
+// Deprecated facade, removed in Wave D once pages adopt ScopeBar.
+// The single "current project" is the first project of the shared scope, so
+// unmigrated pages and ScopeBar pages agree on the selection. State and
+// persistence live in scopeStore (key logtide_scope); this store no longer
+// writes its old localStorage key.
 
-function load(): string | null {
-  if (!browser) return null;
-  try {
-    return localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
+const view = derived(scopeStore, ($scope): string | null => $scope.projectIds[0] ?? null);
 
-function createCurrentProjectStore() {
-  // In-memory source of truth, hydrated from localStorage once. get() reads this
-  // so a selection survives within a session even if localStorage is blocked.
-  let current = load();
-  const { subscribe, set } = writable<string | null>(current);
-
-  return {
-    subscribe,
-    set: (projectId: string | null) => {
-      current = projectId;
-      if (browser) {
-        try {
-          if (projectId) localStorage.setItem(STORAGE_KEY, projectId);
-          else localStorage.removeItem(STORAGE_KEY);
-        } catch {
-          // localStorage may be unavailable
-        }
-      }
-      set(projectId);
-    },
-    /** Current value without subscribing. */
-    get: (): string | null => current,
-  };
-}
-
-export const currentProjectStore = createCurrentProjectStore();
+export const currentProjectStore = {
+  subscribe: view.subscribe,
+  set: (projectId: string | null) => {
+    scopeStore.setProjects(projectId ? [projectId] : []);
+  },
+  /** Current value without subscribing. */
+  get: (): string | null => scopeStore.get().projectIds[0] ?? null,
+};
