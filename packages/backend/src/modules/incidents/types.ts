@@ -1,5 +1,6 @@
 import type {
   Incident,
+  IncidentBulkAction,
   IncidentSortKey,
   IncidentSource,
   IncidentStatus,
@@ -52,7 +53,26 @@ export interface ResolveFromSourceInput {
   reason: 'recovered' | 'manual';
 }
 
-export type IncidentErrorCode = 'invalid_transition' | 'invalid_assignee' | 'source_not_found';
+/** Input of `incidentsService.bulk`. */
+export interface IncidentBulkInput {
+  organizationId: string;
+  ids: string[];
+  action: IncidentBulkAction;
+  /** Required for `assign`; null unassigns. */
+  assigneeId?: string | null;
+  /** The user acting; recorded on every history row. */
+  actorId: string;
+}
+
+/** Input of `incidentsService.addComment`. */
+export interface IncidentCommentInput {
+  incidentId: string;
+  organizationId: string;
+  userId: string;
+  comment: string;
+}
+
+export type IncidentErrorCode ='invalid_transition' | 'invalid_assignee' | 'source_not_found';
 
 const STATUS_BY_CODE: Record<IncidentErrorCode, 400 | 404 | 409> = {
   invalid_assignee: 400,

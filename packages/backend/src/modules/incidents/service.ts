@@ -13,6 +13,7 @@ import {
   type Updateable,
 } from 'kysely';
 import type {
+  IncidentBulkResult,
   IncidentComment,
   IncidentHistoryEntry,
   IncidentListItem,
@@ -29,6 +30,8 @@ import { mapIncidentListRow, mapIncidentRow } from './mappers.js';
 import { planStatusChange } from './status.js';
 import {
   IncidentError,
+  type IncidentBulkInput,
+  type IncidentCommentInput,
   type IncidentListFilters,
   type IncidentRow,
   type OpenOrUpdateFromSourceInput,
@@ -65,6 +68,39 @@ function isSourceEventMetadata(value: unknown): value is IncidentSourceEventMeta
     typeof m.occurredAt === 'string' &&
     (m.data === null || m.data === undefined || (typeof m.data === 'object' && !Array.isArray(m.data)))
   );
+}
+
+/**
+ * What a bulk action does to one locked row: the columns to write, `null`
+ * when the row already matches the action (counts as updated, nothing
+ * written), or `invalid` when the action does not apply to its status.
+ */
+function planBulkAction(
+  row: { status: IncidentStatus; source: string; assignee_id: string | null },
+  input: IncidentBulkInput,
+  now: Date
+): Updateable<IncidentsTable> | null | 'invalid' {
+  const current = { status: row.status, source: row.source as IncidentSource };
+  switch (input.action) {
+    case 'acknowledge': {
+      if (row.status === 'investigating') return null;
+      if (row.status !== 'open') return 'invalid';
+      const plan = planStatusChange(current, 'investigating', input.actorId, now);
+      return plan.ok ? plan.set : 'invalid';
+    }
+    case 'resolve': {
+      if (row.status === 'resolved') return null;
+      if (row.status === 'false_positive') return 'invalid';
+      const plan = planStatusChange(current, 'resolved', input.actorId, now);
+      return plan.ok ? plan.set : 'invalid';
+    }
+    case 'assign': {
+      const assigneeId = input.assigneeId ?? null;
+      return row.assignee_id === assigneeId ? null : { assignee_id: assigneeId };
+    }
+    default:
+      return 'invalid';
+  }
 }
 
 export class IncidentsService {
@@ -494,6 +530,134 @@ export class IncidentsService {
         .returningAll()
         .executeTakeFirstOrThrow();
       return mapIncidentRow(updated);
+    });
+  }
+
+  /**
+   * Acknowledges, resolves or assigns several incidents on behalf of
+   * `actorId` in one transaction (rows locked, every history row names the
+   * actor). Duplicate ids are collapsed.
+   * - acknowledge: open becomes acknowledged (stamps who and when); already
+   *   acknowledged counts as updated; resolved and false positive are skipped.
+   * - resolve: open or acknowledged becomes resolved (stamps who and when);
+   *   already resolved counts as updated; false positive is skipped.
+   * - assign: any status; `assigneeId` null unassigns. An assignee outside
+   *   the organization throws IncidentError('invalid_assignee') before
+   *   anything is written.
+   * `updated` holds every incident whose final state matches the action, in
+   * input order; `skipped` the unknown ids and ids of other organizations
+   * (`not_found`) and the ids the action does not apply to
+   * (`invalid_transition`); `changedIds` the rows actually modified (audit).
+   */
+  async bulk(input: IncidentBulkInput): Promise<IncidentBulkResult & { changedIds: string[] }> {
+    if (input.action === 'assign') {
+      if (input.assigneeId === undefined) {
+        throw new TypeError('assigneeId is required for the assign action');
+      }
+      if (input.assigneeId !== null) {
+        await this.assertAssignableUser(input.organizationId, input.assigneeId);
+      }
+    }
+
+    const ids = [...new Set(input.ids)];
+    const candidateIds = ids.filter((id) => UUID_RE.test(id));
+
+    const outcome = await withIncidentActor(this.db, { userId: input.actorId }, async (trx) => {
+      const rows =
+        candidateIds.length === 0
+          ? []
+          : await trx
+              .selectFrom('incidents')
+              .select(['id', 'status', 'source', 'assignee_id'])
+              .where('organization_id', '=', input.organizationId)
+              .where('id', 'in', candidateIds)
+              .orderBy('id')
+              .forUpdate()
+              .execute();
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const now = new Date();
+
+      const updatedIds: string[] = [];
+      const changedIds: string[] = [];
+      const skipped: IncidentBulkResult['skipped'] = [];
+      // Rows that need the same columns written share one UPDATE.
+      const writes = new Map<string, { set: Updateable<IncidentsTable>; ids: string[] }>();
+
+      for (const id of ids) {
+        const row = byId.get(id);
+        if (!row) {
+          skipped.push({ id, reason: 'not_found' });
+          continue;
+        }
+        const set = planBulkAction(row, input, now);
+        if (set === 'invalid') {
+          skipped.push({ id, reason: 'invalid_transition' });
+          continue;
+        }
+        updatedIds.push(id);
+        if (set === null) continue;
+        changedIds.push(id);
+        const key = JSON.stringify(set);
+        const group = writes.get(key);
+        if (group) group.ids.push(id);
+        else writes.set(key, { set, ids: [id] });
+      }
+
+      for (const { set, ids: groupIds } of writes.values()) {
+        await trx
+          .updateTable('incidents')
+          .set(set)
+          .where('organization_id', '=', input.organizationId)
+          .where('id', 'in', groupIds)
+          .execute();
+      }
+      return { updatedIds, changedIds, skipped };
+    });
+
+    const updated = await this.listByIds(input.organizationId, outcome.updatedIds);
+    return { updated, skipped: outcome.skipped, changedIds: outcome.changedIds };
+  }
+
+  /**
+   * Adds a comment by `userId` and touches the incident's `updated_at` so
+   * live detail views get an update. Returns the comment with the author
+   * name and email, or null when the incident is not in the organization.
+   */
+  async addComment(input: IncidentCommentInput): Promise<IncidentComment | null> {
+    if (!UUID_RE.test(input.incidentId)) return null;
+
+    return this.db.transaction().execute(async (trx) => {
+      const touched = await trx
+        .updateTable('incidents')
+        .set({ updated_at: sql`now()` })
+        .where('id', '=', input.incidentId)
+        .where('organization_id', '=', input.organizationId)
+        .returning('id')
+        .executeTakeFirst();
+      if (!touched) return null;
+
+      const row = await trx
+        .insertInto('incident_comments')
+        .values({ incident_id: input.incidentId, user_id: input.userId, comment: input.comment })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      const author = await trx
+        .selectFrom('users')
+        .select(['name', 'email'])
+        .where('id', '=', input.userId)
+        .executeTakeFirst();
+
+      return {
+        id: row.id,
+        incidentId: row.incident_id,
+        userId: row.user_id,
+        comment: row.comment,
+        edited: row.edited,
+        editedAt: row.edited_at,
+        createdAt: row.created_at,
+        userName: author?.name,
+        userEmail: author?.email,
+      };
     });
   }
 
