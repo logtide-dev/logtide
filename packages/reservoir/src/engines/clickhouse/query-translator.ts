@@ -7,6 +7,7 @@ import type {
   DeleteByTimeRangeParams,
   DistinctParams,
   LogFilterParams,
+  LogHistogramParams,
   MetadataFilter,
   QueryParams,
   TopValuesParams,
@@ -172,6 +173,19 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
 
     const query = `SELECT toStartOfInterval(time, INTERVAL ${interval}) AS bucket, level, count() AS total FROM ${this.tableName}${prewhereClause}${whereClause} GROUP BY bucket, level ORDER BY bucket ASC`;
 
+    return { query, parameters: [queryParams] };
+  }
+
+  /**
+   * Log volume per epoch-aligned bucket and level over the full log filter.
+   * Missing buckets are zero-filled by the caller.
+   */
+  translateHistogram(params: LogHistogramParams): NativeQuery {
+    const { prewhere, where, queryParams } = this.buildLogPredicates(params);
+    queryParams.p_bms = params.bucketSeconds * 1000;
+    const prewhereClause = prewhere.length > 0 ? ` PREWHERE ${prewhere.join(' AND ')}` : '';
+    const whereClause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+    const query = `SELECT intDiv(toUnixTimestamp64Milli(time), {p_bms:Int64}) * {p_bms:Int64} AS bucket_ms, level, count() AS n FROM ${this.tableName}${prewhereClause}${whereClause} GROUP BY bucket_ms, level`;
     return { query, parameters: [queryParams] };
   }
 

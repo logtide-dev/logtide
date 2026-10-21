@@ -88,8 +88,12 @@ import type {
   MetricOverviewItem,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
 } from '../../core/types.js';
+import { normalizeHistogramParams } from '../../core/normalize.js';
 import { ClickHouseQueryTranslator, toDateTime64 } from './query-translator.js';
+import { assembleHistogram } from './log-analytics.js';
 
 export interface ClickHouseEngineOptions {
   /** Use an existing ClickHouse client instead of creating a new one */
@@ -688,6 +692,23 @@ export class ClickHouseEngine extends StorageEngine {
     // or complex filtering if possible.
     // For now, exact count is fast enough for ClickHouse on index keys.
     return this.count(params);
+  }
+
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    // Validate (bucket size, bucket count, time range) before any query; the
+    // client already did, but the engine may be called directly.
+    const normalized = normalizeHistogramParams(params);
+    const native = this.translator.translateHistogram(normalized);
+    const resultSet = await this.runQuery(
+      {
+        query: native.query as string,
+        query_params: (native.parameters as Record<string, unknown>[])[0],
+        format: 'JSONEachRow',
+      },
+      'histogram',
+    );
+    const rows = (await resultSet.json()) as Record<string, unknown>[];
+    return assembleHistogram(normalized, rows);
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {
