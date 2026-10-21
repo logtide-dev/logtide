@@ -86,7 +86,21 @@ async function loadOne(provider: PaletteProvider, ctx: PaletteContext): Promise<
   }
 }
 
-export async function loadPaletteGroups(ctx: PaletteContext): Promise<PaletteGroup[]> {
-  const settled = await Promise.all(listPaletteProviders().map((p) => loadOne(p, ctx)));
+/**
+ * Loads every provider in parallel. `onGroup` is called as soon as each provider
+ * settles (so cheap groups can render before slow ones); the returned promise
+ * resolves with all groups in provider order.
+ */
+export async function loadPaletteGroups(
+  ctx: PaletteContext,
+  onGroup?: (group: PaletteGroup) => void
+): Promise<PaletteGroup[]> {
+  const settled = await Promise.all(
+    listPaletteProviders().map(async (p) => {
+      const group = await loadOne(p, ctx);
+      if (group && onGroup && !ctx.signal.aborted) onGroup(group);
+      return group;
+    })
+  );
   return settled.filter((g): g is PaletteGroup => g !== null);
 }

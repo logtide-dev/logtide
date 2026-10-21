@@ -31,6 +31,8 @@ export interface OrgProjectsState {
   projects: Project[];
   lastEventAt: Record<string, string | null>;
   receiving: Set<string>;
+  /** Projects that have trace data (subset of receiving) */
+  withTraces: Set<string>;
   loading: boolean;
   error: string | null;
 }
@@ -41,6 +43,7 @@ function initial(): OrgProjectsState {
     projects: [],
     lastEventAt: {},
     receiving: new Set(),
+    withTraces: new Set(),
     loading: false,
     error: null,
   };
@@ -86,6 +89,7 @@ function createOrgProjectsStore() {
       if (availabilityResult.status === 'fulfilled') {
         const a = availabilityResult.value;
         next.receiving = new Set([...(a.logs ?? []), ...(a.traces ?? []), ...(a.metrics ?? [])]);
+        next.withTraces = new Set(a.traces ?? []);
       }
 
       if (lastEventsResult.status === 'fulfilled') {
