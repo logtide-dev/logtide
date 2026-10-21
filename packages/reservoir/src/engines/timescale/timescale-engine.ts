@@ -172,7 +172,7 @@ export class TimescaleEngine extends StorageEngine {
     if (options.pool) {
       this.pool = options.pool;
     }
-    this.translator = new TimescaleQueryTranslator(this.schema, this.tableName);
+    this.translator = new TimescaleQueryTranslator(this.schema, this.tableName, options.projectIdType);
   }
 
   async connect(): Promise<void> {

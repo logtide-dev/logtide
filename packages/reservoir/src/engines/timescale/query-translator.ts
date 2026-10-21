@@ -44,11 +44,14 @@ const FACET_BUILTIN_EXPR: Record<string, string> = {
 export class TimescaleQueryTranslator extends QueryTranslator {
   private schema: string;
   private tableName: string;
+  /** SQL type of `project_id`, for the casts of project lists that no column types. */
+  private projectIdType: 'text' | 'uuid';
 
-  constructor(schema = 'public', tableName = 'logs') {
+  constructor(schema = 'public', tableName = 'logs', projectIdType: 'text' | 'uuid' = 'text') {
     super();
     this.schema = schema;
     this.tableName = tableName;
+    this.projectIdType = projectIdType === 'uuid' ? 'uuid' : 'text';
   }
 
   private get table(): string {
@@ -284,14 +287,21 @@ export class TimescaleQueryTranslator extends QueryTranslator {
    * A log counts once per key, so a literal `a.b` and a nested `a: { b }`
    * in the same log are one occurrence. The CASE guards are required:
    * jsonb_each errors on anything but an object.
+   *
+   * The sample is the newest `sampleSize` logs of each project (an ordered
+   * scan of the composite project/time/id index, stopped at the limit),
+   * then the newest of those: the same rows as one global top-N, without
+   * the time-index walk over every tenant's logs that `project_id = ANY`
+   * plus `ORDER BY time` gets (an array qual gives no index order).
    */
   translateDiscoverKeys(params: DiscoverMetadataKeysParams): NativeQuery {
-    const projects = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
+    const projects = [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
     this.validateArrayFilter('project_id', projects);
     const query =
       `WITH recent AS (SELECT metadata, row_number() OVER () AS rid FROM (` +
-      `SELECT metadata FROM ${this.table} WHERE project_id = ANY($1) AND time >= $2 AND time <= $3 ` +
-      `ORDER BY time DESC, id DESC LIMIT $4) sample) ` +
+      `SELECT x.metadata FROM unnest($1::${this.projectIdType}[]) AS p(pid) CROSS JOIN LATERAL (` +
+      `SELECT l.metadata, l.time, l.id FROM ${this.table} l WHERE l.project_id = p.pid AND l.time >= $2 AND l.time <= $3 ` +
+      `ORDER BY l.time DESC, l.id DESC LIMIT $4) x ORDER BY x.time DESC, x.id DESC LIMIT $4) sample) ` +
       `SELECT k.key, COUNT(DISTINCT r.rid)::bigint AS occurrences FROM recent r ` +
       `CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(r.metadata) = 'object' THEN r.metadata ELSE '{}'::jsonb END) t ` +
       `CROSS JOIN LATERAL (` +

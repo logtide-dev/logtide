@@ -194,16 +194,32 @@ describe('translateDiscoverKeys', () => {
   const translator = new TimescaleQueryTranslator('public', 'logs');
   const params = { projectId: ['p1', 'p2'], from: at('10:00:00'), to: at('11:00:00'), sampleSize: 250 };
 
-  it('samples the newest logs of the projects and range first', () => {
+  it('samples the newest logs of each project, then the newest of all', () => {
+    // Per project the composite (project_id, time, id) index yields the
+    // order, so a sparse project never walks other tenants' rows.
     const r = translator.translateDiscoverKeys(params);
     const sql = r.query as string;
-    expect(sql).toContain('FROM public.logs WHERE project_id = ANY($1) AND time >= $2 AND time <= $3 ORDER BY time DESC, id DESC LIMIT $4');
+    expect(sql).toContain(
+      'FROM unnest($1::text[]) AS p(pid) CROSS JOIN LATERAL (' +
+        'SELECT l.metadata, l.time, l.id FROM public.logs l WHERE l.project_id = p.pid AND l.time >= $2 AND l.time <= $3 ' +
+        'ORDER BY l.time DESC, l.id DESC LIMIT $4) x ORDER BY x.time DESC, x.id DESC LIMIT $4',
+    );
     expect(r.parameters).toEqual([['p1', 'p2'], params.from, params.to, 250]);
   });
 
   it('a single project is bound as a list', () => {
     const r = translator.translateDiscoverKeys({ ...params, projectId: 'p1' });
     expect(r.parameters?.[0]).toEqual(['p1']);
+  });
+
+  it('a repeated project is sampled once', () => {
+    const r = translator.translateDiscoverKeys({ ...params, projectId: ['p1', 'p2', 'p1'] });
+    expect(r.parameters?.[0]).toEqual(['p1', 'p2']);
+  });
+
+  it('casts the project list to the project id column type', () => {
+    const uuidTranslator = new TimescaleQueryTranslator('public', 'logs', 'uuid');
+    expect(uuidTranslator.translateDiscoverKeys(params).query).toContain('unnest($1::uuid[])');
   });
 
   it('expands one nested level, guards jsonb_each and orders in byte order', () => {

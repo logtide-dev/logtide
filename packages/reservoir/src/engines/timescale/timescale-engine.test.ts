@@ -544,6 +544,14 @@ describe('TimescaleEngine', () => {
       await expect(engine.discoverMetadataKeys({ projectId: 'proj-1', from: to, to: from })).rejects.toBeInstanceOf(RangeError);
       expect(mockQuery).not.toHaveBeenCalled();
     });
+
+    it('casts the project list to uuid for a uuid project column', async () => {
+      const uuidEngine = new TimescaleEngine(config, { projectIdType: 'uuid' });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await uuidEngine.connect();
+      await uuidEngine.discoverMetadataKeys({ projectId: 'proj-1', from, to });
+      expect(String(mockQuery.mock.calls.at(-1)?.[0])).toContain('unnest($1::uuid[])');
+    });
   });
 
   describe('listSessions / hasSessions', () => {
