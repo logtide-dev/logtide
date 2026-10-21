@@ -788,9 +788,10 @@
               newLogs = newLogs.filter((log) => selectedLevels.includes(log.level));
             }
             if (selectedHostnames.length > 1) {
-              newLogs = newLogs.filter((log) =>
-                selectedHostnames.includes(log.metadata?.hostname),
-              );
+              newLogs = newLogs.filter((log) => {
+                const host = log.hostname ?? log.metadata?.hostname;
+                return typeof host === "string" && selectedHostnames.includes(host);
+              });
             }
 
             if (newLogs.length > 0) {

@@ -66,6 +66,13 @@
     }
   }
 
+  // Top-level host first (1.6 payloads), then the legacy metadata.hostname.
+  function hostOf(log: LogEntry): string | null {
+    if (typeof log.hostname === "string" && log.hostname) return log.hostname;
+    const meta = log.metadata?.hostname;
+    return typeof meta === "string" && meta ? meta : null;
+  }
+
   function formatDateTime(dateStr: string): string {
     const date = new Date(dateStr);
     const year = date.getFullYear();
@@ -95,6 +102,7 @@
     </TableHeader>
     <TableBody>
       {#each logs as log, i}
+        {@const hostname = hostOf(log)}
         <TableRow data-log-row class={selectedIndex === i ? 'bg-accent/50 ring-1 ring-primary/30' : ''}>
           <TableCell class="font-mono text-xs">
             <span title={formatTimeAgo(log.time)}>{formatDateTime(log.time)}</span>
@@ -116,16 +124,13 @@
               >
                 <Badge variant="outline">{log.service}</Badge>
               </button>
-              {#if log.metadata?.hostname}
+              {#if hostname}
                 <button
-                  onclick={() => {
-                    const hostname = log.metadata?.hostname;
-                    if (hostname) onFilterHost(hostname);
-                  }}
+                  onclick={() => onFilterHost(hostname)}
                   title="Click to filter by this host"
                   class="text-xs text-muted-foreground font-mono hover:text-foreground transition-colors truncate max-w-[140px]"
                 >
-                  @{log.metadata.hostname}
+                  @{hostname}
                 </button>
               {/if}
             </div>
