@@ -72,7 +72,7 @@ function timeText(d: Date, zone: string, hour12: boolean): string {
         hourCycle: 'h23',
       });
   // Newer ICU uses narrow no-break spaces; keep the label plain ASCII.
-  return fmt.format(d).replace(/[  ]/g, ' ');
+  return fmt.format(d).replace(/[\u202f\u00a0]/g, ' ');
 }
 
 export function formatRangeLabel(from: Date, to: Date, opts?: LabelOptions): string {
