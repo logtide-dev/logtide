@@ -243,16 +243,17 @@ export const CORPUS_SPANS: readonly { readonly id: string; readonly record: Span
   SPAN_ROWS.map((row) => Object.freeze({ id: row.id, record: spanRecord(row) })),
 );
 
+// A trace summary covers its spans the way the ingest path builds it (first
+// span start, last span end), so every engine agrees whether it keeps the
+// upsert payload or recomputes the summary from the spans table.
 interface TraceRow {
   id: string;
   project: string;
   traceId: string;
   service: string;
   rootOperation: string;
-  durationMs: number;
   spanCount: number;
   error: boolean;
-  start: Date;
 }
 
 function buildTraceRows(): TraceRow[] {
@@ -261,22 +262,36 @@ function buildTraceRows(): TraceRow[] {
   for (let n = 0; n < 3; n++) {
     rows.push({
       id: `TF${n + 1}`, project: PROJECT_A, traceId: PAGE_TRACES[n], service: 'frontend', rootOperation: 'page load',
-      durationMs: PAGE_DURATIONS[n], spanCount: pageCounts[n], error: n === 2, start: seconds(n + 1),
+      spanCount: pageCounts[n], error: n === 2,
     });
   }
   for (let k = 1; k <= 10; k++) {
     rows.push({
       id: `TO${pad2(k)}`, project: PROJECT_A, traceId: postTrace(k), service: 'api', rootOperation: 'POST /orders',
-      durationMs: 100 * k, spanCount: 2, error: k >= 9, start: minutes(20 + k),
+      spanCount: 2, error: k >= 9,
     });
   }
-  rows.push({ id: 'TW1', project: PROJECT_A, traceId: TW1, service: 'worker', rootOperation: 'job loop', durationMs: 45, spanCount: 5, error: true, start: minutes(40) });
-  rows.push({ id: 'TB1', project: PROJECT_B, traceId: TB1, service: 'api', rootOperation: 'GET /users', durationMs: 5000, spanCount: 1, error: false, start: minutes(1) });
-  rows.push({ id: 'TX1', project: PROJECT_A, traceId: TX1, service: 'api', rootOperation: 'GET /users', durationMs: 9999, spanCount: 1, error: false, start: minutes(-1440) });
+  rows.push({ id: 'TW1', project: PROJECT_A, traceId: TW1, service: 'worker', rootOperation: 'job loop', spanCount: 5, error: true });
+  rows.push({ id: 'TB1', project: PROJECT_B, traceId: TB1, service: 'api', rootOperation: 'GET /users', spanCount: 1, error: false });
+  rows.push({ id: 'TX1', project: PROJECT_A, traceId: TX1, service: 'api', rootOperation: 'GET /users', spanCount: 1, error: false });
   return rows;
 }
 
+/** First span start and last span end (epoch ms) of a corpus trace. */
+function spanExtent(project: string, traceId: string): { start: number; end: number } {
+  let start = Infinity;
+  let end = -Infinity;
+  for (const s of SPAN_ROWS) {
+    if (s.project !== project || s.traceId !== traceId) continue;
+    start = Math.min(start, s.start.getTime());
+    end = Math.max(end, s.start.getTime() + s.durationMs);
+  }
+  if (start === Infinity) throw new Error(`Corpus trace ${traceId} has no spans`);
+  return { start, end };
+}
+
 function traceRecord(row: TraceRow): TraceRecord {
+  const { start, end } = spanExtent(row.project, row.traceId);
   return {
     traceId: row.traceId,
     organizationId: ORG_ID,
@@ -284,9 +299,9 @@ function traceRecord(row: TraceRow): TraceRecord {
     serviceName: row.service,
     rootServiceName: row.service,
     rootOperationName: row.rootOperation,
-    startTime: new Date(row.start.getTime()),
-    endTime: new Date(row.start.getTime() + row.durationMs),
-    durationMs: row.durationMs,
+    startTime: new Date(start),
+    endTime: new Date(end),
+    durationMs: end - start,
     spanCount: row.spanCount,
     error: row.error,
   };

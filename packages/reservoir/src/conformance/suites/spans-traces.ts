@@ -51,7 +51,7 @@ export function describeSpanTraceQueryConformance(ctx: ConformanceContext): void
     });
 
     it('TQ03 duration descending', async () => {
-      expect(await traces({ sortBy: 'duration', sortOrder: 'desc', limit: 3 })).toEqual(['TF3', 'TF2', 'TO10']);
+      expect(await traces({ sortBy: 'duration', sortOrder: 'desc', limit: 5 })).toEqual(['TF3', 'TF2', 'TF1', 'TW1', 'TO10']);
     });
 
     it('TQ04 start time ascending', async () => {
