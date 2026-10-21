@@ -17,7 +17,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MongoClient } from 'mongodb';
 import { createConformanceReservoir, describeReservoirConformance, isConformanceRequired, resolveSubject } from '../../conformance/index.js';
 import type { Reservoir } from '../../client.js';
-import type { LogRecord, MetadataFilter, QueryParams, StorageConfig, TextQuery } from '../../core/types.js';
+import type { LogRecord, MetadataFilter, QueryParams, SpanKind, SpanRecord, StorageConfig, TextQuery } from '../../core/types.js';
 
 const MG_TEST_CONFIG: StorageConfig = {
   host: 'localhost',
@@ -87,6 +87,46 @@ async function seedLogs(rows: SpecLog[]): Promise<void> {
   }));
   const result = await subject().ingest(records);
   if (result.failed > 0) throw new Error(`Seeding MongoDB specifics failed: ${JSON.stringify(result.errors ?? [])}`);
+}
+
+interface SpecSpan {
+  id: string;
+  durationMs: number;
+  operation?: string;
+  service?: string;
+  kind?: SpanKind;
+  parent?: string;
+  trace?: string;
+  status?: SpanRecord['statusCode'];
+  attributes?: Record<string, unknown>;
+  resourceAttributes?: Record<string, unknown>;
+}
+
+/** Empties the specifics collections, then ingests `rows` as spans one second apart (span id = row id). */
+async function seedSpans(rows: SpecSpan[]): Promise<void> {
+  if (!specifics || !raw) return;
+  const db = raw.db(SPECIFICS_DATABASE);
+  for (const name of ['logs', 'spans', 'traces']) await db.collection(name).deleteMany({});
+  const spans: SpanRecord[] = rows.map((row, i) => {
+    const start = new Date(SPEC_BASE + i * 1000);
+    return {
+      time: start,
+      spanId: row.id,
+      traceId: row.trace ?? `trace-${row.id}`,
+      ...(row.parent !== undefined ? { parentSpanId: row.parent } : {}),
+      projectId: SPEC_PROJECT,
+      serviceName: row.service ?? 'spec',
+      operationName: row.operation ?? 'op',
+      startTime: start,
+      endTime: new Date(start.getTime() + row.durationMs),
+      durationMs: row.durationMs,
+      ...(row.kind !== undefined ? { kind: row.kind } : {}),
+      statusCode: row.status ?? 'OK',
+      attributes: structuredClone(row.attributes ?? {}),
+      ...(row.resourceAttributes !== undefined ? { resourceAttributes: structuredClone(row.resourceAttributes) } : {}),
+    };
+  });
+  await subject().ingestSpans(spans);
 }
 
 /** Messages of the matching specifics logs, sorted. */
@@ -305,6 +345,30 @@ describe('mongodb specifics', () => {
 
     it('object values expand one level, other values count as themselves', async () => {
       expect(await keys(3)).toEqual(['a 3', 'b 1', 'http.method 1', 'http.x.y 1', 'old 1']);
+    });
+  });
+
+  describe('mongodb span specifics', () => {
+    beforeAll(async () => {
+      await seedSpans([
+        { id: 's1', durationMs: 10, operation: 'GET /a', attributes: { 'http.route': '/a' }, resourceAttributes: { service: { version: '1.2' } } },
+        { id: 's2', durationMs: 30, operation: 'GET /a', attributes: { 'http.route': '/a' }, resourceAttributes: { 'service.version': '2.0' } },
+        { id: 's3', durationMs: 30, operation: 'GET /b', attributes: { resource: { service: { version: '1.2' } } } },
+      ]);
+    });
+
+    const spanIds = async (params: Partial<Parameters<Reservoir['querySpans']>[0]>) =>
+      (await subject().querySpans({ projectId: SPEC_PROJECT, ...SPEC_WINDOW, limit: 100, ...params })).spans.map((s) => s.spanId);
+
+    it('resource-prefixed keys filter resource attributes, literal keys first', async () => {
+      const version = (value: string): MetadataFilter => ({ key: 'resource.service.version', op: 'equals', value, include_missing: false });
+      expect(await spanIds({ attributeFilters: [version('1.2')] })).toEqual(['s1']);
+      expect(await spanIds({ attributeFilters: [version('2.0')] })).toEqual(['s2']);
+    });
+
+    it('operationName filters a list and duration ties break by span id', async () => {
+      expect(await spanIds({ operationName: ['GET /a', 'GET /b'], sortBy: 'duration', sortOrder: 'desc' })).toEqual(['s2', 's3', 's1']);
+      expect(await spanIds({ operationName: 'GET /b' })).toEqual(['s3']);
     });
   });
 });

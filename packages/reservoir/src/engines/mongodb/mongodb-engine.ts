@@ -81,6 +81,14 @@ import {
   type FacetRow,
   type HistogramRow,
 } from './log-analytics.js';
+import {
+  buildSpanFilter,
+  buildTraceFilter,
+  isTraceSpanMatchActive,
+  spanSort,
+  traceMatchPipeline,
+  traceSort,
+} from './apm-queries.js';
 
 export interface MongoDBEngineOptions {
   /** Use an existing MongoClient instead of creating a new one */
@@ -714,22 +722,11 @@ export class MongoDBEngine extends StorageEngine {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
-    const filter = this.buildSpanFilter(params);
-    // Same allowlist as the Timescale and ClickHouse engines so callers get the
-    // same ordering on every engine (there it also guards against SQL injection)
-    const ALLOWED_SORT_FIELDS = new Set([
-      'start_time',
-      'end_time',
-      'duration_ms',
-      'service_name',
-      'operation_name',
-    ]);
-    const sortBy = ALLOWED_SORT_FIELDS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
-    const sortOrder = params.sortOrder === 'desc' ? -1 : 1;
+    const filter = buildSpanFilter(params);
 
     const [docs, total] = await Promise.all([
       col.find(filter, { ...ctxOpts(), projection: { _id: 0 } })
-        .sort({ [sortBy]: sortOrder })
+        .sort(spanSort(params))
         .skip(offset)
         .limit(limit)
         .toArray(),
@@ -760,12 +757,31 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.tracesCol();
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
+    const sort = traceSort(params);
 
-    const filter = this.buildTraceFilter(params);
+    if (isTraceSpanMatchActive(params)) {
+      // At least one span of the trace must match the operation and every
+      // attribute filter together: start on spans, join the traces.
+      const [result] = await this.spansCol()
+        .aggregate(traceMatchPipeline(params, sort, offset, limit), { ...ctxOpts(), allowDiskUse: true })
+        .toArray();
+      const total = Number(result?.total?.[0]?.n ?? 0);
+      const page = ((result?.page ?? []) as Document[]).slice(0, limit);
+      return {
+        traces: page.map(mapDocToTraceRecord),
+        total,
+        hasMore: offset + page.length < total,
+        limit,
+        offset,
+        executionTimeMs: Date.now() - start,
+      };
+    }
+
+    const filter = buildTraceFilter(params);
 
     const [docs, total] = await Promise.all([
       col.find(filter, { ...ctxOpts(), projection: { _id: 0 } })
-        .sort({ start_time: -1 })
+        .sort(sort)
         .skip(offset)
         .limit(limit)
         .toArray(),
@@ -1513,70 +1529,6 @@ export class MongoDBEngine extends StorageEngine {
     const exemplarCol = db.collection('metric_exemplars');
     await safeCreateIndex(exemplarCol, { metric_id: 1 }, 'idx_exemplar_metric');
     await safeCreateIndex(exemplarCol, { project_id: 1, time: -1 }, 'idx_exemplar_time');
-  }
-
-  private buildSpanFilter(params: SpanQueryParams): Document {
-    const filter: Document = {};
-
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      filter.project_id = pids.length === 1 ? pids[0] : { $in: pids };
-    }
-
-    const timeFilter: Document = {};
-    timeFilter[params.fromExclusive ? '$gt' : '$gte'] = params.from;
-    timeFilter[params.toExclusive ? '$lt' : '$lte'] = params.to;
-    filter.time = timeFilter;
-
-    if (params.traceId) {
-      const tids = Array.isArray(params.traceId) ? params.traceId : [params.traceId];
-      filter.trace_id = tids.length === 1 ? tids[0] : { $in: tids };
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      filter.service_name = svc.length === 1 ? svc[0] : { $in: svc };
-    }
-    if (params.kind) {
-      const k = Array.isArray(params.kind) ? params.kind : [params.kind];
-      filter.kind = k.length === 1 ? k[0] : { $in: k };
-    }
-    if (params.statusCode) {
-      const sc = Array.isArray(params.statusCode) ? params.statusCode : [params.statusCode];
-      filter.status_code = sc.length === 1 ? sc[0] : { $in: sc };
-    }
-
-    return filter;
-  }
-
-  private buildTraceFilter(params: TraceQueryParams): Document {
-    const filter: Document = {};
-
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      filter.project_id = pids.length === 1 ? pids[0] : { $in: pids };
-    }
-
-    filter.start_time = { $gte: params.from, $lte: params.to };
-
-    if (params.organizationId) {
-      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
-      filter.organization_id = oids.length === 1 ? oids[0] : { $in: oids };
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      filter.service_name = svc.length === 1 ? svc[0] : { $in: svc };
-    }
-    if (params.error !== undefined) {
-      filter.error = params.error;
-    }
-    if (params.minDurationMs !== undefined) {
-      filter.duration_ms = { ...filter.duration_ms, $gte: params.minDurationMs };
-    }
-    if (params.maxDurationMs !== undefined) {
-      filter.duration_ms = { ...filter.duration_ms, $lte: params.maxDurationMs };
-    }
-
-    return filter;
   }
 
   private buildMetricFilter(params: MetricQueryParams): Document {
