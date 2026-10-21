@@ -25,36 +25,26 @@
   const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
   const DropdownMenuGroup = DropdownMenuPrimitive.Group;
   import { Badge } from "$lib/components/ui/badge";
-  import OrganizationSwitcher from "$lib/components/OrganizationSwitcher.svelte";
-  import LayoutDashboard from "@lucide/svelte/icons/layout-dashboard";
-  import FileText from "@lucide/svelte/icons/file-text";
   import FolderKanban from "@lucide/svelte/icons/folder-kanban";
   import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
-  import GitBranch from "@lucide/svelte/icons/git-branch";
-  import Bug from "@lucide/svelte/icons/bug";
   import Bell from "@lucide/svelte/icons/bell";
   import Building2 from "@lucide/svelte/icons/building-2";
   import Settings from "@lucide/svelte/icons/settings";
   import LogOut from "@lucide/svelte/icons/log-out";
   import Menu from "@lucide/svelte/icons/menu";
-  import Shield from "@lucide/svelte/icons/shield";
-  import Book from "@lucide/svelte/icons/book";
-  import Github from "@lucide/svelte/icons/github";
   import X from "@lucide/svelte/icons/x";
   import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
   import PanelLeft from "@lucide/svelte/icons/panel-left";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import Check from "@lucide/svelte/icons/check";
   import SearchIcon from "@lucide/svelte/icons/search";
-  import BarChart3 from "@lucide/svelte/icons/bar-chart-3";
-  import Activity from "@lucide/svelte/icons/activity";
   import { formatTimeAgo } from "$lib/utils/datetime";
   import Footer from "$lib/components/Footer.svelte";
   import EmailVerificationBanner from "$lib/components/EmailVerificationBanner.svelte";
   import TermsAcceptanceModal from "$lib/components/TermsAcceptanceModal.svelte";
   import OnboardingChecklist from "$lib/components/OnboardingChecklist.svelte";
-  import FeatureBadge from "$lib/components/FeatureBadge.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import SidebarNav from "$lib/components/shell/SidebarNav.svelte";
   import { logoPath } from "$lib/utils/theme";
 
 
@@ -220,63 +210,14 @@
   }
 
 
-  interface NavItem {
-    label: string;
-    href: string;
-    icon: typeof LayoutDashboard;
-    external?: boolean;
-    badge?: {
-      id: string;
-      type: 'new' | 'updated' | 'beta';
-      showUntil?: string;
-    };
-  }
+  // Close the drawer on any route change (links, palette, browser back)
+  $effect(() => {
+    void page.url.pathname;
+    mobileMenuOpen = false;
+  });
 
-  interface NavSection {
-    label?: string;
-    items: NavItem[];
-  }
-
-  const navigationSections: NavSection[] = [
-    {
-      items: [
-        { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-      ],
-    },
-    {
-      label: "Observe",
-      items: [
-        { label: "Logs", href: "/dashboard/logs", icon: FileText },
-        { label: "Traces", href: "/dashboard/traces", icon: GitBranch },
-        { label: "Metrics", href: "/dashboard/metrics", icon: BarChart3 },
-        { label: "Errors", href: "/dashboard/errors", icon: Bug },
-      ],
-    },
-    {
-      label: "Detect",
-      items: [
-        { label: "Alerts", href: "/dashboard/alerts", icon: AlertTriangle },
-        { label: "Security", href: "/dashboard/security", icon: Shield },
-        { label: "Monitoring", href: "/dashboard/uptime", icon: Activity },
-      ],
-    },
-    {
-      label: "Manage",
-      items: [
-        { label: "Projects", href: "/dashboard/projects", icon: FolderKanban },
-        { label: "Settings", href: "/dashboard/settings", icon: Settings },
-      ],
-    },
-  ];
-
-  function isActive(href: string): boolean {
-    // Exact match for /dashboard to prevent it being always active
-    if (href === "/dashboard") {
-      return page.url.pathname === href;
-    }
-    return (
-      page.url.pathname === href || page.url.pathname.startsWith(href + "/")
-    );
+  function onWindowKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape" && mobileMenuOpen) mobileMenuOpen = false;
   }
 
   async function handleLogout() {
@@ -316,6 +257,8 @@
   });
 </script>
 
+<svelte:window onkeydown={onWindowKeydown} />
+
 <TooltipPrimitive.Provider>
 <div class="min-h-screen bg-background">
   {#if sidebarVisible}
@@ -334,81 +277,7 @@
 
     <Separator />
 
-    <div class="px-4 py-4 flex">
-      <OrganizationSwitcher />
-    </div>
-
-    <Separator />
-
-    <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
-      {#each navigationSections as section, sectionIdx}
-        {#if sectionIdx > 0}
-          <Separator class="my-2" />
-        {/if}
-        {#if section.label}
-          <p class="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{section.label}</p>
-        {/if}
-        {#each section.items as item}
-          {@const Icon = item.icon}
-          <a
-            href={item.href}
-            target={item.external ? '_blank' : undefined}
-            rel={item.external ? 'noopener noreferrer' : undefined}
-            data-nav-item={item.label.toLowerCase()}
-            class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {item.external
-              ? 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
-              : isActive(item.href)
-              ? 'bg-accent text-accent-foreground'
-              : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
-          >
-            <Icon class="w-4 h-4" />
-            <span class="flex-1">{item.label}</span>
-            {#if item.badge}
-              <FeatureBadge
-                id={item.badge.id}
-                type={item.badge.type}
-                showUntil={item.badge.showUntil}
-              />
-            {/if}
-          </a>
-        {/each}
-      {/each}
-
-      {#if user?.is_admin}
-        <Separator class="my-2" />
-        <a
-          href="/dashboard/admin"
-          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive(
-            '/dashboard/admin',
-          )
-            ? 'bg-accent text-accent-foreground'
-            : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
-        >
-          <Shield class="w-4 h-4" />
-          <span>Admin</span>
-        </a>
-      {/if}
-
-      <Separator class="my-2" />
-      <a
-        href="https://logtide.dev/docs"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-      >
-        <Book class="w-4 h-4" />
-        <span>Docs</span>
-      </a>
-      <a
-        href="https://github.com/logtide-dev/logtide"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-      >
-        <Github class="w-4 h-4" />
-        <span>GitHub</span>
-      </a>
-    </nav>
+    <SidebarNav pathname={page.url.pathname} isAdmin={!!user?.is_admin} />
 
     <!-- Onboarding Checklist -->
     <div class="p-4 border-t border-border">
@@ -417,112 +286,42 @@
   </aside>
   {/if}
 
-  <!-- Mobile Menu Overlay -->
+  <!-- Mobile menu: always rendered so the slide animation plays; hidden and inert when closed -->
   {#if mobileMenuOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div
       class="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 lg:hidden"
-      onclick={() => mobileMenuOpen = false}
-      onkeydown={(e) => e.key === 'Escape' && (mobileMenuOpen = false)}
-      role="button"
-      tabindex="-1"
+      aria-hidden="true"
+      onclick={() => (mobileMenuOpen = false)}
     ></div>
   {/if}
 
-  <!-- Mobile Menu Drawer -->
   <aside
-    class="fixed left-0 top-0 h-screen w-64 flex-col border-r border-border bg-card z-50 lg:hidden transform transition-transform duration-300 ease-in-out {mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}"
-    class:flex={mobileMenuOpen}
-    class:hidden={!mobileMenuOpen}
+    data-drawer
+    aria-hidden={mobileMenuOpen ? undefined : "true"}
+    inert={!mobileMenuOpen}
+    class="fixed left-0 top-0 h-screen w-64 flex flex-col border-r border-border bg-card z-50 lg:hidden transform transition-[transform,visibility] duration-300 ease-in-out {mobileMenuOpen
+      ? 'translate-x-0 visible'
+      : '-translate-x-full invisible pointer-events-none'}"
   >
     <div class="p-6 flex items-center justify-between">
-      <a href="/dashboard" class="flex items-center gap-3 hover:opacity-80 transition-opacity" onclick={() => mobileMenuOpen = false}>
+      <a href="/dashboard" class="flex items-center gap-3 hover:opacity-80 transition-opacity" onclick={() => (mobileMenuOpen = false)}>
         <div class="flex flex-col items-start">
           <img src={$logoPath} alt="LogTide" class="h-14 w-auto" />
         </div>
       </a>
-      <Button variant="ghost" size="icon" onclick={() => mobileMenuOpen = false}>
+      <Button variant="ghost" size="icon" aria-label="Close menu" onclick={() => (mobileMenuOpen = false)}>
         <X class="w-5 h-5" />
       </Button>
     </div>
 
     <Separator />
 
-    <div class="px-4 py-4 flex">
-      <OrganizationSwitcher />
-    </div>
-
-    <Separator />
-
-    <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
-      {#each navigationSections as section, sectionIdx}
-        {#if sectionIdx > 0}
-          <Separator class="my-2" />
-        {/if}
-        {#if section.label}
-          <p class="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{section.label}</p>
-        {/if}
-        {#each section.items as item}
-          {@const Icon = item.icon}
-          <a
-            href={item.href}
-            target={item.external ? '_blank' : undefined}
-            rel={item.external ? 'noopener noreferrer' : undefined}
-            onclick={() => mobileMenuOpen = false}
-            data-nav-item={item.label.toLowerCase()}
-            class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {item.external
-              ? 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
-              : isActive(item.href)
-              ? 'bg-accent text-accent-foreground'
-              : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
-          >
-            <Icon class="w-4 h-4" />
-            <span class="flex-1">{item.label}</span>
-            {#if item.badge}
-              <FeatureBadge
-                id={item.badge.id}
-                type={item.badge.type}
-                showUntil={item.badge.showUntil}
-              />
-            {/if}
-          </a>
-        {/each}
-      {/each}
-
-      {#if user?.is_admin}
-        <Separator class="my-2" />
-        <a
-          href="/dashboard/admin"
-          onclick={() => mobileMenuOpen = false}
-          class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors {isActive('/dashboard/admin')
-            ? 'bg-accent text-accent-foreground'
-            : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'}"
-        >
-          <Shield class="w-4 h-4" />
-          <span>Admin</span>
-        </a>
-      {/if}
-
-      <Separator class="my-2" />
-      <a
-        href="https://logtide.dev/docs"
-        target="_blank"
-        rel="noopener noreferrer"
-        onclick={() => mobileMenuOpen = false}
-        class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-      >
-        <Book class="w-4 h-4" />
-        <span>Docs</span>
-      </a>
-      <a
-        href="https://github.com/logtide-dev/logtide"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground"
-      >
-        <Github class="w-4 h-4" />
-        <span>GitHub</span>
-      </a>
-    </nav>
+    <SidebarNav
+      pathname={page.url.pathname}
+      isAdmin={!!user?.is_admin}
+      onNavigate={() => (mobileMenuOpen = false)}
+    />
 
     <!-- Onboarding Checklist for Mobile -->
     <div class="p-4 border-t border-border">
@@ -535,7 +334,7 @@
       class="h-16 border-b border-border bg-card px-6 flex items-center justify-between"
     >
       <div class="flex items-center gap-4">
-        <Button variant="ghost" size="icon" class="lg:hidden" onclick={() => mobileMenuOpen = true}>
+        <Button variant="ghost" size="icon" class="lg:hidden" aria-label="Open menu" onclick={() => (mobileMenuOpen = true)}>
           <Menu class="w-5 h-5" />
         </Button>
 
@@ -828,6 +627,7 @@
     </header>
 
     <main class="flex-1 overflow-auto bg-background">
+      <!-- SEAM (Wave D): <QuotaBanner /> from W14, props per W14 plan; mount between EmailVerificationBanner and the page content -->
       <EmailVerificationBanner />
       <TermsAcceptanceModal />
       {@render children?.()}
