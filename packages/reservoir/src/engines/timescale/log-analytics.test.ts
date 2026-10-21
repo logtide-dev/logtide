@@ -189,3 +189,29 @@ describe('translateFacets', () => {
     expect(() => translator.translateFacets(bad, 10)).toThrow(/Unknown facet field/);
   });
 });
+
+describe('translateDiscoverKeys', () => {
+  const translator = new TimescaleQueryTranslator('public', 'logs');
+  const params = { projectId: ['p1', 'p2'], from: at('10:00:00'), to: at('11:00:00'), sampleSize: 250 };
+
+  it('samples the newest logs of the projects and range first', () => {
+    const r = translator.translateDiscoverKeys(params);
+    const sql = r.query as string;
+    expect(sql).toContain('FROM public.logs WHERE project_id = ANY($1) AND time >= $2 AND time <= $3 ORDER BY time DESC, id DESC LIMIT $4');
+    expect(r.parameters).toEqual([['p1', 'p2'], params.from, params.to, 250]);
+  });
+
+  it('a single project is bound as a list', () => {
+    const r = translator.translateDiscoverKeys({ ...params, projectId: 'p1' });
+    expect(r.parameters?.[0]).toEqual(['p1']);
+  });
+
+  it('expands one nested level, guards jsonb_each and orders in byte order', () => {
+    const sql = translator.translateDiscoverKeys(params).query as string;
+    expect(sql).toContain(`jsonb_each(CASE WHEN jsonb_typeof(r.metadata) = 'object' THEN r.metadata ELSE '{}'::jsonb END)`);
+    expect(sql).toContain(`jsonb_each(CASE WHEN jsonb_typeof(t.value) = 'object' THEN t.value ELSE '{}'::jsonb END)`);
+    expect(sql).toContain(`WHERE jsonb_typeof(t.value) <> 'object'`);
+    expect(sql).toContain('COUNT(DISTINCT r.rid)');
+    expect(sql).toContain('ORDER BY occurrences DESC, k.key COLLATE "C" ASC LIMIT 500');
+  });
+});

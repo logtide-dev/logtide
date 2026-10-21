@@ -513,6 +513,38 @@ describe('TimescaleEngine', () => {
     });
   });
 
+  describe('discoverMetadataKeys', () => {
+    const from = new Date('2026-01-05T10:00:00Z');
+    const to = new Date('2026-01-05T11:00:00Z');
+    const sampleParam = () => (mockQuery.mock.calls.at(-1) as [string, unknown[]])[1][3];
+
+    it('sample size defaults to 1000 and clamps to 1..5000', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      await engine.discoverMetadataKeys({ projectId: 'proj-1', from, to });
+      expect(sampleParam()).toBe(1000);
+      await engine.discoverMetadataKeys({ projectId: 'proj-1', from, to, sampleSize: 99999 });
+      expect(sampleParam()).toBe(5000);
+      await engine.discoverMetadataKeys({ projectId: 'proj-1', from, to, sampleSize: 0 });
+      expect(sampleParam()).toBe(1);
+    });
+
+    it('maps rows and reads bigint counts', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ key: 'env', occurrences: '12' }, { key: 'http.method', occurrences: 3 }] });
+      await engine.connect();
+      expect(await engine.discoverMetadataKeys({ projectId: 'proj-1', from, to })).toEqual([
+        { key: 'env', occurrences: 12 },
+        { key: 'http.method', occurrences: 3 },
+      ]);
+    });
+
+    it('rejects a reversed range before querying', async () => {
+      await engine.connect();
+      await expect(engine.discoverMetadataKeys({ projectId: 'proj-1', from: to, to: from })).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+  });
+
   describe('countEstimate', () => {
     const countParams = {
       projectId: 'proj-1',

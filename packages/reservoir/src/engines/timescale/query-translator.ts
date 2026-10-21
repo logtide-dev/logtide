@@ -5,6 +5,7 @@ import type {
   AggregationInterval,
   CountParams,
   DeleteByTimeRangeParams,
+  DiscoverMetadataKeysParams,
   DistinctParams,
   LogFacetsParams,
   LogFilterParams,
@@ -14,6 +15,10 @@ import type {
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
 import { compileJsonFilters, jsonValueExpr, scalarTextExpr } from './json-path.js';
+import { DISCOVER_DEFAULT_SAMPLE_SIZE } from '../../core/constants.js';
+
+/** Most keys one discovery call returns (plan S9). */
+const DISCOVER_MAX_KEYS = 500;
 
 const INTERVAL_MAP: Record<AggregationInterval, string> = {
   '1m': '1 minute',
@@ -267,6 +272,36 @@ export class TimescaleQueryTranslator extends QueryTranslator {
       `GROUP BY kv.f, kv.v) r ` +
       `WHERE rn <= $${limitIdx} ORDER BY f, rn`;
     return { query, parameters: values };
+  }
+
+  /**
+   * Metadata key occurrences over the newest `sampleSize` logs (S9, F3
+   * `countMetadataKeys`). Every sampled log takes a slot, whatever its
+   * metadata; a top-level key counts as itself unless its value is an
+   * object, whose children count as `parent.child` instead (one level).
+   * A log counts once per key, so a literal `a.b` and a nested `a: { b }`
+   * in the same log are one occurrence. The CASE guards are required:
+   * jsonb_each errors on anything but an object.
+   */
+  translateDiscoverKeys(params: DiscoverMetadataKeysParams): NativeQuery {
+    const projects = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
+    this.validateArrayFilter('project_id', projects);
+    const query =
+      `WITH recent AS (SELECT metadata, row_number() OVER () AS rid FROM (` +
+      `SELECT metadata FROM ${this.table} WHERE project_id = ANY($1) AND time >= $2 AND time <= $3 ` +
+      `ORDER BY time DESC, id DESC LIMIT $4) sample) ` +
+      `SELECT k.key, COUNT(DISTINCT r.rid)::bigint AS occurrences FROM recent r ` +
+      `CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(r.metadata) = 'object' THEN r.metadata ELSE '{}'::jsonb END) t ` +
+      `CROSS JOIN LATERAL (` +
+      `SELECT t.key AS key WHERE jsonb_typeof(t.value) <> 'object' ` +
+      `UNION ALL ` +
+      `SELECT t.key || '.' || n.key FROM jsonb_each(CASE WHEN jsonb_typeof(t.value) = 'object' THEN t.value ELSE '{}'::jsonb END) n` +
+      `) k ` +
+      `GROUP BY k.key ORDER BY occurrences DESC, k.key COLLATE "C" ASC LIMIT ${DISCOVER_MAX_KEYS}`;
+    return {
+      query,
+      parameters: [projects, params.from, params.to, params.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE],
+    };
   }
 
   translateDistinct(params: DistinctParams): NativeQuery {

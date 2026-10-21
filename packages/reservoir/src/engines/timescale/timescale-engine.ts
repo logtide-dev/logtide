@@ -65,9 +65,11 @@ import type {
   LogHistogramResult,
   LogFacetsParams,
   LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
 } from '../../core/types.js';
 import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
-import { normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
+import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
 import { assembleFacets, histogramRowsToResult, type FacetRow, type HistogramRow } from './log-analytics.js';
 
@@ -494,6 +496,13 @@ export class TimescaleEngine extends StorageEngine {
     const native = this.translator.translateFacets(normalized, limit);
     const result = await this.runQuery(native.query as string, native.parameters);
     return assembleFacets(normalized.fields, result.rows as FacetRow[], limit);
+  }
+
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    const normalized = normalizeDiscoverParams(params);
+    const native = this.translator.translateDiscoverKeys(normalized);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    return result.rows.map((row) => ({ key: row.key as string, occurrences: Number(row.occurrences) }));
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {

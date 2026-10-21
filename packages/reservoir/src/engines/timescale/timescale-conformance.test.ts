@@ -309,3 +309,53 @@ describeTimescaleSpecifics(
     });
   },
 );
+
+const KEYS_OTHER_PROJECT = 'ts-specifics-other';
+const KEYS_BARE_PROJECT = 'ts-specifics-bare';
+const keyLog = (projectId: string, second: number, metadata?: Record<string, unknown>): LogRecord => ({
+  time: new Date(SPECIFICS_BASE + second * 1000),
+  projectId,
+  service: 'api',
+  level: 'info',
+  message: `keys ${second}`,
+  ...(metadata ? { metadata } : {}),
+});
+
+describeTimescaleSpecifics(
+  'timescale metadata keys specifics',
+  'reservoir_ts_keys',
+  [
+    keyLog(SPECIFICS_PROJECT, 1, { a: 1, http: { method: 'GET', 'x.y': 1 } }),
+    keyLog(SPECIFICS_PROJECT, 2, { a: 2, old: true }),
+    keyLog(SPECIFICS_PROJECT, 3, { a: 3, b: null }),
+    keyLog(KEYS_OTHER_PROJECT, 4, { z: 'x', geo: {} }),
+    keyLog(KEYS_BARE_PROJECT, 5),
+  ],
+  (subject) => {
+    const discover = (projectId: string | string[], sampleSize?: number) =>
+      subject().discoverMetadataKeys({ projectId, ...SPECIFICS_WINDOW, ...(sampleSize !== undefined ? { sampleSize } : {}) });
+
+    it('the sample is the newest logs of the project', async () => {
+      expect(await discover(SPECIFICS_PROJECT, 2)).toEqual([
+        { key: 'a', occurrences: 2 },
+        { key: 'b', occurrences: 1 },
+        { key: 'old', occurrences: 1 },
+      ]);
+    });
+
+    it('object values count their children, not themselves', async () => {
+      expect(await discover(SPECIFICS_PROJECT, 3)).toEqual([
+        { key: 'a', occurrences: 3 },
+        { key: 'b', occurrences: 1 },
+        { key: 'http.method', occurrences: 1 },
+        { key: 'http.x.y', occurrences: 1 },
+        { key: 'old', occurrences: 1 },
+      ]);
+    });
+
+    it('a log without metadata still takes a sample slot', async () => {
+      expect(await discover([SPECIFICS_PROJECT, KEYS_BARE_PROJECT], 1)).toEqual([]);
+      expect(await discover([SPECIFICS_PROJECT, KEYS_OTHER_PROJECT, KEYS_BARE_PROJECT], 2)).toEqual([{ key: 'z', occurrences: 1 }]);
+    });
+  },
+);
