@@ -7,11 +7,11 @@ import type {
   DeleteByTimeRangeParams,
   DistinctParams,
   LogFilterParams,
-  MetadataFilter,
   QueryParams,
   TopValuesParams,
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
+import { compileJsonFilters } from './json-path.js';
 
 const INTERVAL_MAP: Record<AggregationInterval, string> = {
   '1m': '1 minute',
@@ -91,7 +91,10 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     idx = text.nextIdx;
 
     if (params.metadataFilters && params.metadataFilters.length > 0) {
-      idx = this.pushMetadataFilters(conditions, values, idx, params.metadataFilters);
+      const json = compileJsonFilters(params.metadataFilters, 'metadata', idx);
+      conditions.push(...json.conditions);
+      values.push(...json.values);
+      idx = json.nextIdx;
     }
 
     const exclude = params.exclude;
@@ -368,76 +371,5 @@ export class TimescaleQueryTranslator extends QueryTranslator {
       values.push(value);
     }
     return idx + 1;
-  }
-
-  /**
-   * Append metadata filter conditions to an existing conditions/values pair.
-   * Returns the updated idx counter.
-   */
-  private pushMetadataFilters(
-    conditions: string[],
-    values: unknown[],
-    idx: number,
-    filters: MetadataFilter[],
-  ): number {
-    function escapeLike(s: string): string {
-      return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-    }
-
-    for (const f of filters) {
-      switch (f.op) {
-        case 'equals': {
-          conditions.push(`(metadata->>$${idx} = $${idx + 1})`);
-          values.push(f.key, f.value);
-          idx += 2;
-          break;
-        }
-        case 'not_equals': {
-          if (f.include_missing) {
-            conditions.push(`(metadata->>$${idx} IS DISTINCT FROM $${idx + 1})`);
-          } else {
-            conditions.push(`(metadata ? $${idx} AND metadata->>$${idx} <> $${idx + 1})`);
-          }
-          values.push(f.key, f.value);
-          idx += 2;
-          break;
-        }
-        case 'in': {
-          conditions.push(`(metadata->>$${idx} = ANY($${idx + 1}))`);
-          values.push(f.key, f.values);
-          idx += 2;
-          break;
-        }
-        case 'not_in': {
-          if (f.include_missing) {
-            conditions.push(`(metadata->>$${idx} IS NULL OR metadata->>$${idx} <> ALL($${idx + 1}))`);
-          } else {
-            conditions.push(`(metadata ? $${idx} AND metadata->>$${idx} <> ALL($${idx + 1}))`);
-          }
-          values.push(f.key, f.values);
-          idx += 2;
-          break;
-        }
-        case 'exists': {
-          conditions.push(`(metadata ? $${idx})`);
-          values.push(f.key);
-          idx += 1;
-          break;
-        }
-        case 'not_exists': {
-          conditions.push(`(NOT (metadata ? $${idx}))`);
-          values.push(f.key);
-          idx += 1;
-          break;
-        }
-        case 'contains': {
-          conditions.push(`(metadata->>$${idx} ILIKE $${idx + 1})`);
-          values.push(f.key, `%${escapeLike(f.value ?? '')}%`);
-          idx += 2;
-          break;
-        }
-      }
-    }
-    return idx;
   }
 }

@@ -26,7 +26,7 @@ import {
   resolveSubject,
   type ConformanceTarget,
 } from '../../conformance/index.js';
-import type { LogRecord, QueryParams, TextQuery } from '../../core/types.js';
+import type { LogRecord, MetadataFilter, QueryParams, TextQuery } from '../../core/types.js';
 import { TimescaleEngine } from './timescale-engine.js';
 
 export const TS_TEST_URL = 'postgresql://logtide_test:test_password@localhost:5433/ux16_rts';
@@ -202,6 +202,60 @@ describeTimescaleSpecifics(
     it('legacy fulltext search goes through the same token rules', async () => {
       expect(await messagesOf(subject(), { search: 'service down' })).toEqual(['service down']);
       expect(await messagesOf(subject(), { search: 'user', searchMode: 'fulltext' })).toEqual(['user id missing']);
+    });
+  },
+);
+
+type FilterInput = Omit<MetadataFilter, 'include_missing'> & { include_missing?: boolean };
+/** Filters as the shared schema emits them: include_missing defaults to true for negative operators. */
+const filters = (...list: FilterInput[]): MetadataFilter[] =>
+  list.map((f) => ({ include_missing: f.op === 'not_equals' || f.op === 'not_in' || f.op === 'not_exists', ...f }) as MetadataFilter);
+
+describeTimescaleSpecifics(
+  'timescale json specifics',
+  'reservoir_ts_json',
+  specificsLogs([
+    { message: 'A', metadata: { 'http.status': 200 } },
+    { message: 'B', metadata: { http: { status: 200 } } },
+    { message: 'C', metadata: { 'http.status': 404, http: { status: 200 } } },
+    { message: 'D', metadata: { status: 500, cached: true, env: 'prod' } },
+    { message: 'E', metadata: { user: { id: 42 }, env: 'dev' } },
+    { message: 'F', metadata: {} },
+  ]),
+  (subject) => {
+    const match = (...list: FilterInput[]) => messagesOf(subject(), { metadataFilters: filters(...list) });
+
+    it('literal dotted keys before nested paths', async () => {
+      expect(await match({ key: 'http.status', op: 'equals', value: '200' })).toEqual(['A', 'B']);
+      expect(await match({ key: 'http.status', op: 'equals', value: '404' })).toEqual(['C']);
+      expect(await match({ key: 'http.status', op: 'exists' })).toEqual(['A', 'B', 'C']);
+    });
+
+    it('nested numeric path', async () => {
+      expect(await match({ key: 'user.id', op: 'equals', value: '42' })).toEqual(['E']);
+      expect(await match({ key: 'user.id', op: 'in', values: ['42', '43'] })).toEqual(['E']);
+      expect(await match({ key: 'user.id', op: 'exists' })).toEqual(['E']);
+      expect(await match({ key: 'user.id', op: 'contains', value: '4' })).toEqual(['E']);
+    });
+
+    it('numbers and booleans match by text', async () => {
+      expect(await match({ key: 'status', op: 'equals', value: '500' })).toEqual(['D']);
+      expect(await match({ key: 'cached', op: 'equals', value: 'true' })).toEqual(['D']);
+      expect(await match({ key: 'status', op: 'in', values: ['500', '501'] })).toEqual(['D']);
+    });
+
+    it('negated clauses keep logs without the key', async () => {
+      expect(await match({ key: 'env', op: 'not_equals', value: 'prod' })).toEqual(['A', 'B', 'C', 'E', 'F']);
+      expect(await match({ key: 'env', op: 'not_in', values: ['prod', 'dev'] })).toEqual(['A', 'B', 'C', 'F']);
+      expect(await match({ key: 'user.id', op: 'not_equals', value: '42' })).toEqual(['A', 'B', 'C', 'D', 'F']);
+      expect(await match({ key: 'user.id', op: 'not_in', values: ['42'] })).toEqual(['A', 'B', 'C', 'D', 'F']);
+      expect(await match({ key: 'env', op: 'not_exists' })).toEqual(['A', 'B', 'C', 'F']);
+      expect(await match({ key: 'http.status', op: 'not_exists' })).toEqual(['D', 'E', 'F']);
+    });
+
+    it('include_missing false requires the key to resolve', async () => {
+      expect(await match({ key: 'env', op: 'not_equals', value: 'prod', include_missing: false })).toEqual(['E']);
+      expect(await match({ key: 'http.status', op: 'not_in', values: ['404'], include_missing: false })).toEqual(['A', 'B']);
     });
   },
 );
