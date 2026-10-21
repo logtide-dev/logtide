@@ -25,6 +25,7 @@ export * from './billing.js';
 // Re-export custom dashboard types
 export * from './dashboard.js';
 export * from './dashboard-migrations.js';
+export * from './time-range.js';
 
 // Re-export schema types
 export type { LogInput, IngestRequest, AlertRuleInput } from '../schemas/index.js';
