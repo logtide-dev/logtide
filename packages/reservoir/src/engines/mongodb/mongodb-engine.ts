@@ -61,8 +61,12 @@ import type {
   MetricOverviewItem,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
 } from '../../core/types.js';
+import { normalizeHistogramParams } from '../../core/normalize.js';
 import { MongoDBQueryTranslator, INTERVAL_MS } from './query-translator.js';
+import { assembleHistogram, histogramPipeline, type HistogramRow } from './log-analytics.js';
 
 export interface MongoDBEngineOptions {
   /** Use an existing MongoClient instead of creating a new one */
@@ -575,6 +579,17 @@ export class MongoDBEngine extends StorageEngine {
         })),
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    // Same validation as the client (bucket size, bucket cap, range), so a
+    // direct engine call cannot build an unbounded zero-filled result.
+    const normalized = normalizeHistogramParams(params);
+    const filter = this.translator.buildLogFilter(normalized);
+    const rows = await this.logsCol()
+      .aggregate(histogramPipeline(filter, normalized.bucketSeconds * 1000), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleHistogram(normalized, rows as HistogramRow[]);
   }
 
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {
