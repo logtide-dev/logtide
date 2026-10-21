@@ -6,6 +6,7 @@ import type {
   CountParams,
   DeleteByTimeRangeParams,
   DistinctParams,
+  LogFilterParams,
   MetadataFilter,
   QueryParams,
   TopValuesParams,
@@ -20,6 +21,8 @@ const INTERVAL_MAP: Record<AggregationInterval, string> = {
   '1d': '1 day',
   '1w': '1 week',
 };
+
+const HOSTNAME_EXPR = "metadata->>'hostname'";
 
 function escapeIlike(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
@@ -39,12 +42,19 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     return `${this.schema}.${this.tableName}`;
   }
 
-  translateQuery(params: QueryParams): NativeQuery {
-    this.validatePagination(params.limit, params.offset);
-
+  /**
+   * The WHERE conditions every log filter consumer shares (query, count,
+   * countEstimate, histogram, facets), in a fixed order: project, service,
+   * level, hostname, traceId, sessionId, spanId, time bounds, text,
+   * metadata, exclude. Values are bound from `startIdx`.
+   */
+  buildLogConditions(
+    params: LogFilterParams,
+    startIdx: number,
+  ): { conditions: string[]; values: unknown[]; nextIdx: number } {
     const conditions: string[] = [];
     const values: unknown[] = [];
-    let idx = 1;
+    let idx = startIdx;
 
     if (params.projectId !== GLOBAL_SCOPE) {
       idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
@@ -55,53 +65,66 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     if (params.level !== undefined) {
       idx = this.pushFilter(conditions, values, idx, 'level', params.level);
     }
-
     if (params.hostname !== undefined) {
+      // Same expression as the backend expression index idx_logs_project_hostname.
       this.validateArrayFilter('hostname', params.hostname);
-      if (Array.isArray(params.hostname)) {
-        conditions.push(`metadata->>'hostname' = ANY($${idx})`);
-        values.push(params.hostname);
-        idx++;
-      } else {
-        conditions.push(`metadata->>'hostname' = $${idx}`);
-        values.push(params.hostname);
-        idx++;
-      }
+      idx = this.pushFilter(conditions, values, idx, HOSTNAME_EXPR, params.hostname);
     }
-
     if (params.traceId !== undefined) {
-      conditions.push(`trace_id = $${idx}`);
+      conditions.push(`trace_id = $${idx++}`);
       values.push(params.traceId);
-      idx++;
     }
     if (params.sessionId !== undefined) {
-      conditions.push(`session_id = $${idx}`);
+      conditions.push(`session_id = $${idx++}`);
       values.push(params.sessionId);
-      idx++;
+    }
+    if (params.spanId !== undefined) {
+      conditions.push(`span_id = $${idx++}`);
+      values.push(params.spanId);
     }
 
-    conditions.push(`time ${params.fromExclusive ? '>' : '>='} $${idx}`);
+    conditions.push(`time ${params.fromExclusive ? '>' : '>='} $${idx++}`);
     values.push(params.from);
-    idx++;
-    conditions.push(`time ${params.toExclusive ? '<' : '<='} $${idx}`);
+    conditions.push(`time ${params.toExclusive ? '<' : '<='} $${idx++}`);
     values.push(params.to);
-    idx++;
 
     if (params.search) {
       if (params.searchMode === 'substring') {
-        conditions.push(`message ILIKE $${idx}`);
+        conditions.push(`message ILIKE $${idx++}`);
         values.push(`%${escapeIlike(params.search)}%`);
-        idx++;
       } else {
-        conditions.push(`to_tsvector('english', message) @@ plainto_tsquery('english', $${idx})`);
+        conditions.push(`to_tsvector('english', message) @@ plainto_tsquery('english', $${idx++})`);
         values.push(params.search);
-        idx++;
       }
     }
 
     if (params.metadataFilters && params.metadataFilters.length > 0) {
       idx = this.pushMetadataFilters(conditions, values, idx, params.metadataFilters);
     }
+
+    const exclude = params.exclude;
+    if (exclude?.service && exclude.service.length > 0) {
+      conditions.push(`service <> ALL($${idx++})`);
+      values.push(exclude.service);
+    }
+    if (exclude?.level && exclude.level.length > 0) {
+      conditions.push(`level <> ALL($${idx++})`);
+      values.push(exclude.level);
+    }
+    if (exclude?.hostname && exclude.hostname.length > 0) {
+      // Logs without a hostname are kept (spec 5.3).
+      conditions.push(`(${HOSTNAME_EXPR} IS NULL OR ${HOSTNAME_EXPR} <> ALL($${idx++}))`);
+      values.push(exclude.hostname);
+    }
+
+    return { conditions, values, nextIdx: idx };
+  }
+
+  translateQuery(params: QueryParams): NativeQuery {
+    this.validatePagination(params.limit, params.offset);
+
+    const { conditions, values, nextIdx } = this.buildLogConditions(params, 1);
+    let idx = nextIdx;
 
     if (params.cursor) {
       try {
@@ -171,116 +194,14 @@ export class TimescaleQueryTranslator extends QueryTranslator {
   }
 
   translateCount(params: CountParams): NativeQuery {
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    if (params.projectId !== GLOBAL_SCOPE) {
-      idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
-    }
-    if (params.service !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'service', params.service);
-    }
-    if (params.level !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'level', params.level);
-    }
-    if (params.hostname !== undefined) {
-      this.validateArrayFilter('hostname', params.hostname);
-      if (Array.isArray(params.hostname)) {
-        conditions.push(`metadata->>'hostname' = ANY($${idx})`);
-        values.push(params.hostname);
-        idx++;
-      } else {
-        conditions.push(`metadata->>'hostname' = $${idx}`);
-        values.push(params.hostname);
-        idx++;
-      }
-    }
-    if (params.traceId !== undefined) {
-      conditions.push(`trace_id = $${idx}`);
-      values.push(params.traceId);
-      idx++;
-    }
-    conditions.push(`time ${params.fromExclusive ? '>' : '>='} $${idx}`);
-    values.push(params.from);
-    idx++;
-    conditions.push(`time ${params.toExclusive ? '<' : '<='} $${idx}`);
-    values.push(params.to);
-
-    if (params.search) {
-      idx++;
-      if (params.searchMode === 'substring') {
-        conditions.push(`message ILIKE $${idx}`);
-        values.push(`%${escapeIlike(params.search)}%`);
-      } else {
-        conditions.push(`to_tsvector('english', message) @@ plainto_tsquery('english', $${idx})`);
-        values.push(params.search);
-      }
-    }
-
-    if (params.metadataFilters && params.metadataFilters.length > 0) {
-      this.pushMetadataFilters(conditions, values, values.length + 1, params.metadataFilters);
-    }
-
-    const where = ` WHERE ${conditions.join(' AND ')}`;
-    const query = `SELECT COUNT(*) AS count FROM ${this.table}${where}`;
+    const { conditions, values } = this.buildLogConditions(params, 1);
+    const query = `SELECT COUNT(*) AS count FROM ${this.table} WHERE ${conditions.join(' AND ')}`;
     return { query, parameters: values };
   }
 
   translateCountEstimate(params: CountParams): NativeQuery {
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    if (params.projectId !== GLOBAL_SCOPE) {
-      idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
-    }
-    if (params.service !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'service', params.service);
-    }
-    if (params.level !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'level', params.level);
-    }
-    if (params.hostname !== undefined) {
-      this.validateArrayFilter('hostname', params.hostname);
-      if (Array.isArray(params.hostname)) {
-        conditions.push(`metadata->>'hostname' = ANY($${idx})`);
-        values.push(params.hostname);
-        idx++;
-      } else {
-        conditions.push(`metadata->>'hostname' = $${idx}`);
-        values.push(params.hostname);
-        idx++;
-      }
-    }
-    if (params.traceId !== undefined) {
-      conditions.push(`trace_id = $${idx}`);
-      values.push(params.traceId);
-      idx++;
-    }
-    conditions.push(`time ${params.fromExclusive ? '>' : '>='} $${idx}`);
-    values.push(params.from);
-    idx++;
-    conditions.push(`time ${params.toExclusive ? '<' : '<='} $${idx}`);
-    values.push(params.to);
-
-    if (params.search) {
-      idx++;
-      if (params.searchMode === 'substring') {
-        conditions.push(`message ILIKE $${idx}`);
-        values.push(`%${escapeIlike(params.search)}%`);
-      } else {
-        conditions.push(`to_tsvector('english', message) @@ plainto_tsquery('english', $${idx})`);
-        values.push(params.search);
-      }
-    }
-
-    if (params.metadataFilters && params.metadataFilters.length > 0) {
-      this.pushMetadataFilters(conditions, values, values.length + 1, params.metadataFilters);
-    }
-
-    const where = ` WHERE ${conditions.join(' AND ')}`;
-    const query = `SELECT 1 FROM ${this.table}${where}`;
+    const { conditions, values } = this.buildLogConditions(params, 1);
+    const query = `SELECT 1 FROM ${this.table} WHERE ${conditions.join(' AND ')}`;
     return { query, parameters: values };
   }
 
