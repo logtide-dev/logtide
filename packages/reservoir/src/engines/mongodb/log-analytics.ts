@@ -1,20 +1,24 @@
 // ============================================================================
-// MongoDB log analytics pipelines (histogram, facets, key discovery; plan S7 to S9)
+// MongoDB log analytics pipelines (histogram, facets, key discovery,
+// sessions; plan S7 to S9, S14)
 // ============================================================================
-// Pipelines start with the shared log filter as their `$match`, so the
-// project/time predicate keeps them on the time-series bucket index; result
-// assembly (zero filling, ordering) is the engine-independent helper code.
+// Pipelines start with a `$match` on project and time (the shared log filter
+// where one applies), so they stay on the time-series bucket index; result
+// assembly (zero filling, ordering, cursors) is the engine-independent helper
+// code.
 
 import type { Document } from 'mongodb';
-import { buildFacet, compareByteOrder, zeroFillHistogram } from '../../core/aggregation-helpers.js';
+import { buildFacet, compareByteOrder, encodeSessionCursor, zeroFillHistogram } from '../../core/aggregation-helpers.js';
 import type {
   DiscoverMetadataKeysParams,
+  ListSessionsResult,
   LogFacetField,
   LogFacetsResult,
   LogHistogramParams,
   LogHistogramResult,
   LogLevel,
   MetadataKeyOccurrence,
+  SessionSummary,
 } from '../../core/types.js';
 import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
 import { toNumber } from './bson-number.js';
@@ -178,4 +182,80 @@ export function assembleMetadataKeys(rows: { _id: unknown; occurrences: unknown 
   return rows
     .map((r) => ({ key: String(r._id), occurrences: toNumber(r.occurrences) }))
     .sort((a, b) => b.occurrences - a.occurrences || compareByteOrder(a.key, b.key));
+}
+
+// ----------------------------------------------------------------------------
+// Sessions
+// ----------------------------------------------------------------------------
+
+interface SessionScope {
+  projectId: string;
+  from: Date;
+  to: Date;
+  service?: string;
+}
+
+/**
+ * Logs of the project in range with a non-empty session id (and the service
+ * when given, applied before grouping). Bounded by the project/time bucket
+ * index of the time-series collection; no new index on `logs`.
+ */
+export function sessionMatch(scope: SessionScope): Document {
+  const match: Document = {
+    project_id: scope.projectId,
+    time: { $gte: scope.from, $lte: scope.to },
+    session_id: { $nin: [null, ''] },
+  };
+  if (scope.service !== undefined) match.service = scope.service;
+  return match;
+}
+
+/**
+ * Sessions grouped by id (byte-order smallest service, first and last event,
+ * events, errors = error + critical), strictly after the cursor row, ordered
+ * by last event desc then session id, `limit + 1` groups so the caller knows
+ * whether another page exists. Dates compare at millisecond precision.
+ */
+export function listSessionsPipeline(
+  scope: SessionScope,
+  limit: number,
+  cursor: { lastEvent: Date; sessionId: string } | null,
+): Document[] {
+  const pipeline: Document[] = [
+    { $match: sessionMatch(scope) },
+    {
+      $group: {
+        _id: '$session_id',
+        service: { $min: '$service' },
+        first: { $min: '$time' },
+        last: { $max: '$time' },
+        eventCount: { $sum: 1 },
+        errorCount: { $sum: { $cond: [{ $in: ['$level', ['error', 'critical']] }, 1, 0] } },
+      },
+    },
+  ];
+  if (cursor) {
+    pipeline.push({
+      $match: { $or: [{ last: { $lt: cursor.lastEvent } }, { last: cursor.lastEvent, _id: { $gt: cursor.sessionId } }] },
+    });
+  }
+  pipeline.push({ $sort: { last: -1, _id: 1 } }, { $limit: limit + 1 });
+  return pipeline;
+}
+
+const asDate = (value: unknown): Date => (value instanceof Date ? value : new Date(value as string));
+
+/** One page of sessions from listSessionsPipeline rows; `nextCursor` only when more rows exist. */
+export function assembleSessions(rows: Document[], limit: number): ListSessionsResult {
+  const sessions: SessionSummary[] = rows.slice(0, limit).map((r) => ({
+    sessionId: String(r._id),
+    service: String(r.service),
+    firstEvent: asDate(r.first),
+    lastEvent: asDate(r.last),
+    eventCount: toNumber(r.eventCount),
+    errorCount: toNumber(r.errorCount),
+  }));
+  if (rows.length <= limit || sessions.length === 0) return { sessions };
+  const tail = sessions[sessions.length - 1];
+  return { sessions, nextCursor: encodeSessionCursor(tail.lastEvent, tail.sessionId) };
 }

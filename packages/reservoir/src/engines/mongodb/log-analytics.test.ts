@@ -1,7 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Long, type Document } from 'mongodb';
-import { assembleFacets, assembleHistogram, discoverKeysPipeline, facetsPipeline, histogramPipeline } from './log-analytics.js';
+import {
+  assembleFacets,
+  assembleHistogram,
+  assembleSessions,
+  discoverKeysPipeline,
+  facetsPipeline,
+  histogramPipeline,
+  listSessionsPipeline,
+} from './log-analytics.js';
 import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
+import { decodeSessionCursor, encodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { MongoDBQueryTranslator } from './query-translator.js';
 import { MongoDBEngine } from './mongodb-engine.js';
 import type { LogFacetField, LogFacetsParams, LogHistogramParams, StorageConfig } from '../../core/types.js';
@@ -282,5 +291,94 @@ describe('discoverKeysPipeline', () => {
   it('a single project is an equality match', () => {
     const single = discoverKeysPipeline({ projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00'), sampleSize: 5 });
     expect((single[0].$match as Document).project_id).toBe(PROJECT);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Sessions
+// ----------------------------------------------------------------------------
+
+describe('listSessionsPipeline', () => {
+  const base = { projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00') };
+
+  it('scopes the project and window and skips empty session ids before grouping', () => {
+    const pipeline = listSessionsPipeline({ ...base, service: 'api' }, 10, null);
+    expect(pipeline[0]).toEqual({
+      $match: { project_id: PROJECT, time: { $gte: at('10:00:00'), $lte: at('11:00:00') }, session_id: { $nin: [null, ''] }, service: 'api' },
+    });
+    expect(pipeline[1]).toEqual({
+      $group: {
+        _id: '$session_id',
+        service: { $min: '$service' },
+        first: { $min: '$time' },
+        last: { $max: '$time' },
+        eventCount: { $sum: 1 },
+        errorCount: { $sum: { $cond: [{ $in: ['$level', ['error', 'critical']] }, 1, 0] } },
+      },
+    });
+  });
+
+  it('orders by last event desc then session id and fetches one extra group', () => {
+    const pipeline = listSessionsPipeline(base, 10, null);
+    expect(pipeline.slice(-2)).toEqual([{ $sort: { last: -1, _id: 1 } }, { $limit: 11 }]);
+  });
+
+  it('a cursor keeps groups strictly after the last row', () => {
+    const lastEvent = at('10:05:00');
+    const pipeline = listSessionsPipeline(base, 10, { lastEvent, sessionId: 's-1' });
+    expect(pipeline[2]).toEqual({ $match: { $or: [{ last: { $lt: lastEvent } }, { last: lastEvent, _id: { $gt: 's-1' } }] } });
+  });
+});
+
+describe('assembleSessions', () => {
+  const group = (id: string, last: string, extra: Partial<Record<string, unknown>> = {}) => ({
+    _id: id, service: 'api', first: at('10:00:00'), last: at(last), eventCount: 2, errorCount: Long.fromNumber(1), ...extra,
+  });
+
+  it('maps groups and returns a cursor only when more exist', () => {
+    const page = assembleSessions([group('s1', '10:05:00'), group('s2', '10:05:00'), group('s3', '10:01:00')], 2);
+    expect(page.sessions).toEqual([
+      { sessionId: 's1', service: 'api', firstEvent: at('10:00:00'), lastEvent: at('10:05:00'), eventCount: 2, errorCount: 1 },
+      { sessionId: 's2', service: 'api', firstEvent: at('10:00:00'), lastEvent: at('10:05:00'), eventCount: 2, errorCount: 1 },
+    ]);
+    expect(decodeSessionCursor(page.nextCursor!)).toEqual({ lastEvent: at('10:05:00'), sessionId: 's2' });
+    expect(assembleSessions([group('s1', '10:05:00')], 2)).toEqual({ sessions: [expect.objectContaining({ sessionId: 's1' })] });
+  });
+});
+
+describe('MongoDBEngine sessions', () => {
+  const base = { projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00') };
+
+  it('limit clamps to 200 and the pipeline fetches one extra group', async () => {
+    const { db, calls } = fakeLogsDb([]);
+    const engine = new MongoDBEngine(config, { db: db as never, skipInitialize: true });
+    expect(await engine.listSessions({ ...base, limit: 9999 })).toEqual({ sessions: [] });
+    expect(calls[0].pipeline.at(-1)).toEqual({ $limit: 201 });
+    expect(calls[0].options.allowDiskUse).toBe(true);
+    expect(db.collection).toHaveBeenCalledWith('logs');
+  });
+
+  it('passes a decoded cursor and rejects an invalid one', async () => {
+    const { db, calls } = fakeLogsDb([]);
+    const engine = new MongoDBEngine(config, { db: db as never, skipInitialize: true });
+    await engine.listSessions({ ...base, limit: 5, cursor: encodeSessionCursor(at('10:05:00'), 's-9') });
+    expect(JSON.stringify(calls[0].pipeline[2])).toContain('"s-9"');
+    await expect(engine.listSessions({ ...base, limit: 5, cursor: 'not a cursor' })).rejects.toBeInstanceOf(RangeError);
+    await expect(engine.listSessions({ ...base, limit: 0 })).rejects.toBeInstanceOf(RangeError);
+  });
+
+  it('hasSessions probes one log with the same match', async () => {
+    const finds: Document[] = [];
+    let answer: Document | null = { _id: 1 };
+    const collection = { findOne: vi.fn(async (filter: Document, options: Document) => { finds.push({ filter, options }); return answer; }) };
+    const engine = new MongoDBEngine(config, { db: { collection: vi.fn(() => collection) } as never, skipInitialize: true });
+    expect(await engine.hasSessions(base)).toBe(true);
+    answer = null;
+    expect(await engine.hasSessions(base)).toBe(false);
+    expect(finds[0]).toMatchObject({
+      filter: { project_id: PROJECT, time: { $gte: at('10:00:00'), $lte: at('11:00:00') }, session_id: { $nin: [null, ''] } },
+      options: { projection: { _id: 1 } },
+    });
+    await expect(engine.hasSessions({ projectId: PROJECT, from: at('11:00:00'), to: at('10:00:00') })).rejects.toBeInstanceOf(RangeError);
   });
 });

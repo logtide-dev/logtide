@@ -71,14 +71,19 @@ import type {
   OperationStat,
   LatencyHistogramParams,
   LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
 } from '../../core/types.js';
 import {
   assertTimeRange,
   normalizeDiscoverParams,
   normalizeFacetsParams,
   normalizeHistogramParams,
+  normalizeListSessionsParams,
   normalizeOperationStatsParams,
 } from '../../core/normalize.js';
+import { decodeSessionCursor } from '../../core/aggregation-helpers.js';
 import {
   DEFAULT_OPERATION_KINDS,
   DISCOVER_DEFAULT_SAMPLE_SIZE,
@@ -90,9 +95,12 @@ import {
   assembleFacets,
   assembleHistogram,
   assembleMetadataKeys,
+  assembleSessions,
   discoverKeysPipeline,
   facetsPipeline,
   histogramPipeline,
+  listSessionsPipeline,
+  sessionMatch,
   type FacetRow,
   type HistogramRow,
 } from './log-analytics.js';
@@ -664,6 +672,22 @@ export class MongoDBEngine extends StorageEngine {
       .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }), { ...ctxOpts(), allowDiskUse: true })
       .toArray();
     return assembleMetadataKeys(rows as { _id: unknown; occurrences: unknown }[]);
+  }
+
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    // Same validation as the client (range, limit clamp, cursor format).
+    const normalized = normalizeListSessionsParams(params);
+    const cursor = normalized.cursor !== undefined ? decodeSessionCursor(normalized.cursor) : null;
+    const rows = await this.logsCol()
+      .aggregate(listSessionsPipeline(normalized, normalized.limit, cursor), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleSessions(rows, normalized.limit);
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    assertTimeRange(params.from, params.to);
+    const doc = await this.logsCol().findOne(sessionMatch(params), { ...ctxOpts(), projection: { _id: 1 } });
+    return doc !== null;
   }
 
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {

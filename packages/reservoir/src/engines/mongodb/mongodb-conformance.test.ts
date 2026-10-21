@@ -65,6 +65,11 @@ const SPEC_WINDOW = { from: new Date(SPEC_BASE - 60_000), to: new Date(SPEC_BASE
 interface SpecLog {
   message: string;
   metadata?: Record<string, unknown>;
+  /** Seconds after SPEC_BASE; default the row index. */
+  at?: number;
+  service?: string;
+  level?: LogRecord['level'];
+  sessionId?: string;
 }
 
 let specifics: Reservoir | null = null;
@@ -81,12 +86,13 @@ async function seedLogs(rows: SpecLog[]): Promise<void> {
   const db = raw.db(SPECIFICS_DATABASE);
   for (const name of ['logs', 'spans', 'traces']) await db.collection(name).deleteMany({});
   const records: LogRecord[] = rows.map((row, i) => ({
-    time: new Date(SPEC_BASE + i * 1000),
+    time: new Date(SPEC_BASE + (row.at ?? i) * 1000),
     projectId: SPEC_PROJECT,
-    service: 'spec',
-    level: 'info',
+    service: row.service ?? 'spec',
+    level: row.level ?? 'info',
     message: row.message,
     metadata: structuredClone(row.metadata ?? {}),
+    ...(row.sessionId !== undefined ? { sessionId: row.sessionId } : {}),
   }));
   const result = await subject().ingest(records);
   if (result.failed > 0) throw new Error(`Seeding MongoDB specifics failed: ${JSON.stringify(result.errors ?? [])}`);
@@ -440,6 +446,49 @@ describe('mongodb specifics', () => {
       } finally {
         await engine.disconnect();
       }
+    });
+  });
+
+  describe('mongodb session specifics', () => {
+    beforeAll(async () => {
+      await seedLogs([
+        { message: 's1 a', at: 60, sessionId: 'sess-1' },
+        { message: 's1 b', at: 120, sessionId: 'sess-1', service: 'web', level: 'error' },
+        { message: 's1 c', at: 300, sessionId: 'sess-1' },
+        { message: 's2 a', at: 200, sessionId: 'sess-2', level: 'critical' },
+        { message: 's2 b', at: 300, sessionId: 'sess-2' },
+        { message: 's3 a', at: 60, sessionId: 'sess-3', level: 'warn' },
+        { message: 'empty id', at: 30, sessionId: '' },
+        { message: 'no id', at: 40 },
+      ]);
+    });
+
+    const sec = (n: number) => new Date(SPEC_BASE + n * 1000);
+    const list = (params: Partial<Parameters<Reservoir['listSessions']>[0]> = {}) =>
+      subject().listSessions({ projectId: SPEC_PROJECT, ...SPEC_WINDOW, limit: 10, ...params });
+
+    it('pages by last event then session id with a cursor', async () => {
+      const first = await list({ limit: 2 });
+      expect(first.sessions).toEqual([
+        { sessionId: 'sess-1', service: 'spec', firstEvent: sec(60), lastEvent: sec(300), eventCount: 3, errorCount: 1 },
+        { sessionId: 'sess-2', service: 'spec', firstEvent: sec(200), lastEvent: sec(300), eventCount: 2, errorCount: 1 },
+      ]);
+      expect(typeof first.nextCursor).toBe('string');
+      const second = await list({ limit: 2, cursor: first.nextCursor });
+      expect(second).toEqual({
+        sessions: [{ sessionId: 'sess-3', service: 'spec', firstEvent: sec(60), lastEvent: sec(60), eventCount: 1, errorCount: 0 }],
+      });
+    });
+
+    it('the service filter keeps only that service', async () => {
+      expect((await list({ service: 'web' })).sessions).toEqual([
+        { sessionId: 'sess-1', service: 'web', firstEvent: sec(120), lastEvent: sec(120), eventCount: 1, errorCount: 1 },
+      ]);
+    });
+
+    it('hasSessions ignores logs without a session id', async () => {
+      expect(await subject().hasSessions({ projectId: SPEC_PROJECT, ...SPEC_WINDOW })).toBe(true);
+      expect(await subject().hasSessions({ projectId: SPEC_PROJECT, from: sec(25), to: sec(45) })).toBe(false);
     });
   });
 });
