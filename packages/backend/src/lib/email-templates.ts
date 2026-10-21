@@ -800,7 +800,7 @@ export interface MonitorEmailData {
 
 export function generateMonitorEmail(data: MonitorEmailData): { html: string; text: string } {
   const frontendUrl = getFrontendUrl();
-  const monitorUrl = `${frontendUrl}/dashboard/monitoring`;
+  const monitorUrl = `${frontendUrl}/dashboard/uptime`;
   const isDown = data.status === 'down';
   const severityLabel = severityLabels[data.severity] || data.severity;
 

@@ -1,11 +1,17 @@
 import { writable } from 'svelte/store';
-import { browser } from '$app/environment';
+import {
+  DEFAULT_RANGE,
+  legacyTimeRangeToRange,
+  rangeToLegacyTimeRange,
+  rangesEqual,
+  scopeStore,
+} from './scope.js';
 
-// Remembers the last time window the user picked, so it carries across the
-// time-driven pages (logs, traces) instead of each resetting to its own default.
-// Consumers validate `type` against what they support and fall back otherwise,
-// since not every page offers the same presets.
-const STORAGE_KEY = 'logtide_time_range';
+// Deprecated facade, removed in Wave D once pages adopt ScopeBar.
+// Maps the shared scope range to the old { type, from, to } shape for pages
+// that have not migrated. Consumers validate `type` against what they support
+// and fall back otherwise. State and persistence live in scopeStore (key
+// logtide_scope); this store no longer writes its old localStorage key.
 
 export interface StoredTimeRange {
   type: string;
@@ -13,42 +19,30 @@ export interface StoredTimeRange {
   to: string;
 }
 
-function load(): StoredTimeRange | null {
-  if (!browser) return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.type === 'string') return parsed as StoredTimeRange;
-    return null;
-  } catch {
-    return null;
+// The exact legacy value last set through this facade. Returned as long as it
+// still maps to the current scope range, so a custom value echoes back
+// unchanged (no round trip through ISO) within the session.
+let lastLegacy: StoredTimeRange | null = null;
+
+function compute(): StoredTimeRange | null {
+  const range = scopeStore.get().range;
+  if (lastLegacy) {
+    const mapped = legacyTimeRangeToRange(lastLegacy);
+    if (mapped && rangesEqual(mapped, range)) return lastLegacy;
   }
+  return rangeToLegacyTimeRange(range);
 }
 
-function createTimeRangeStore() {
-  // Source of truth in memory, hydrated from localStorage once. get() reads this
-  // so the value survives within a session even if localStorage is blocked (a
-  // failed setItem must not make get() return null while subscribers see it).
-  let current = load();
-  const { subscribe, set } = writable<StoredTimeRange | null>(current);
+const view = writable<StoredTimeRange | null>(compute());
+scopeStore.subscribe(() => view.set(compute()));
 
-  return {
-    subscribe,
-    set: (value: StoredTimeRange | null) => {
-      current = value;
-      if (browser) {
-        try {
-          if (value) localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
-          else localStorage.removeItem(STORAGE_KEY);
-        } catch {
-          // localStorage may be unavailable
-        }
-      }
-      set(value);
-    },
-    get: (): StoredTimeRange | null => current,
-  };
-}
-
-export const timeRangeStore = createTimeRangeStore();
+export const timeRangeStore = {
+  subscribe: view.subscribe,
+  set: (value: StoredTimeRange | null) => {
+    lastLegacy = value;
+    scopeStore.setRange((value && legacyTimeRangeToRange(value)) || DEFAULT_RANGE);
+    // The scope may not have changed (equal range), so refresh explicitly.
+    view.set(compute());
+  },
+  get: (): StoredTimeRange | null => compute(),
+};

@@ -363,7 +363,7 @@ test.describe('New User Journey', () => {
     await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 15000 });
 
     // Navigate to search/logs page
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
 
     // Wait for logs to load and verify our log appears

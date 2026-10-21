@@ -41,7 +41,7 @@ test.describe('Metadata Filtering Journey', () => {
       localStorage.setItem('currentOrganizationId', orgId);
     }, organizationId);
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search?projectId=${projectId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs?projectId=${projectId}`);
     await page.waitForLoadState('load');
     await page.waitForSelector('text=prod boom', { timeout: 30000 });
   });

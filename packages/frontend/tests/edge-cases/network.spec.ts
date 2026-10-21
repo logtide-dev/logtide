@@ -80,7 +80,7 @@ test.describe('Network Edge Cases', () => {
   });
 
   test('Search page handles API error gracefully', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
 
     // Intercept logs API to return error
@@ -154,7 +154,7 @@ test.describe('Network Edge Cases', () => {
   });
 
   test('Page recovers after network comes back', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
 
     // Simulate network going offline
@@ -322,7 +322,7 @@ test.describe('Browser Edge Cases', () => {
     await page.waitForLoadState('load');
     await page.waitForTimeout(500);
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(500);
 

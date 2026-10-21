@@ -49,7 +49,7 @@ test.describe('Empty States', () => {
   });
 
   test('Search page shows empty state when no logs match', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(1000);
 

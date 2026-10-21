@@ -1059,7 +1059,7 @@
       params.set("to", new Date(customToTime).toISOString());
     }
     const qs = params.toString();
-    const next = qs ? `/dashboard/search?${qs}` : "/dashboard/search";
+    const next = qs ? `/dashboard/logs?${qs}` : "/dashboard/logs";
     if (page.url.pathname + page.url.search === next) return;
     goto(next, { replaceState: true, keepFocus: true, noScroll: true });
   }

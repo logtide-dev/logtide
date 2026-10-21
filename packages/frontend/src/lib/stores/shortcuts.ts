@@ -246,7 +246,7 @@ function createShortcutsStore() {
           if (searchInput) {
             searchInput.focus();
           } else {
-            goto('/dashboard/search');
+            goto('/dashboard/logs');
           }
         },
       },
@@ -284,7 +284,7 @@ function createShortcutsStore() {
         label: 'Go to Logs',
         scope: 'global',
         category: 'navigation',
-        action: () => goto('/dashboard/search'),
+        action: () => goto('/dashboard/logs'),
       },
       {
         id: 'global:go-alerts',

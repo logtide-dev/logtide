@@ -63,7 +63,7 @@ test.describe('Search Journey', () => {
   });
 
   test('1. User can view the search page with logs', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
 
     // Verify search page elements
@@ -81,7 +81,7 @@ test.describe('Search Journey', () => {
   });
 
   test('2. User can filter logs by search query', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -98,7 +98,7 @@ test.describe('Search Journey', () => {
   });
 
   test('3. User can filter logs by level', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -132,7 +132,7 @@ test.describe('Search Journey', () => {
   });
 
   test('4. User can filter logs by service', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -158,7 +158,7 @@ test.describe('Search Journey', () => {
   });
 
   test('5. User can filter logs by trace ID', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -177,7 +177,7 @@ test.describe('Search Journey', () => {
   });
 
   test('6. User can expand log details', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
@@ -193,7 +193,7 @@ test.describe('Search Journey', () => {
   });
 
   test('7. User can view log context', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
@@ -210,7 +210,7 @@ test.describe('Search Journey', () => {
   });
 
   test('8. User can change time range', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -218,7 +218,7 @@ test.describe('Search Journey', () => {
 
     // Open the Time range pill popover, then click Last Hour inside it.
     await pill.click();
-    const lastHourButton = page.getByRole('button', { name: 'Last Hour', exact: true });
+    const lastHourButton = page.getByRole('button', { name: 'Last hour', exact: true });
     await lastHourButton.waitFor({ state: 'visible' });
     await lastHourButton.click();
     await page.waitForTimeout(2000);
@@ -228,7 +228,7 @@ test.describe('Search Journey', () => {
   });
 
   test('9. User can use custom time range', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -246,7 +246,7 @@ test.describe('Search Journey', () => {
   });
 
   test('10. User can export logs', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
@@ -265,7 +265,7 @@ test.describe('Search Journey', () => {
   });
 
   test('11. User can navigate pagination', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
@@ -288,7 +288,7 @@ test.describe('Search Journey', () => {
   });
 
   test('12. User can click on service badge to filter', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 

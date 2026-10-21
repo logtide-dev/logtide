@@ -352,7 +352,7 @@
                     <Button
                       variant="outline"
                       size="sm"
-                      onclick={() => goto(`/dashboard/search?project=${project.id}`)}
+                      onclick={() => goto(`/dashboard/logs?project=${project.id}`)}
                       class="gap-1"
                     >
                       <FileText class="w-4 h-4" />

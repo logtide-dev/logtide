@@ -296,7 +296,7 @@ test.describe('Traces Journey', () => {
     await expect(page.getByText('Span Details')).toBeVisible();
 
     await page.locator('button:has-text("View Logs for this Trace")').click();
-    await page.waitForURL(/\/dashboard\/search\?.*traceId=/);
+    await page.waitForURL(/\/dashboard\/logs\?.*traceId=/);
     await page.waitForTimeout(2500);
 
     // The seeded correlated logs are shown
@@ -308,7 +308,7 @@ test.describe('Traces Journey', () => {
   });
 
   test('6. A log\'s trace id link navigates back to the trace detail', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search?traceId=${checkoutTraceId}&project=${projectId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs?traceId=${checkoutTraceId}&project=${projectId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2500);
 

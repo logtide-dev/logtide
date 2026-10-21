@@ -135,7 +135,7 @@
   <!-- Header -->
   <div class="flex items-center justify-between">
     <div class="flex items-center gap-4">
-      <Button variant="ghost" size="sm" onclick={() => goto('/dashboard/monitoring')}>
+      <Button variant="ghost" size="sm" onclick={() => goto('/dashboard/uptime')}>
         <ArrowLeft class="h-4 w-4" />
       </Button>
       <h1 class="text-xl font-semibold">{monitor?.name ?? 'Monitor'}</h1>

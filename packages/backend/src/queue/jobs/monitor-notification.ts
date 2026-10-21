@@ -77,7 +77,7 @@ async function sendMonitorWebhook(url: string, job: MonitorNotificationJob, orgN
       response_time_ms: job.responseTimeMs,
       consecutive_failures: job.consecutiveFailures,
       downtime_duration: job.downtimeDuration,
-      link: `${frontendUrl}/dashboard/monitoring`,
+      link: `${frontendUrl}/dashboard/uptime`,
     },
   });
 
@@ -171,7 +171,7 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
         monitorId: data.monitorId,
         status: data.status,
         severity: data.severity,
-        link: '/dashboard/monitoring',
+        link: '/dashboard/uptime',
       },
     }).catch((err) => console.error(`[MonitorNotification] Failed to create notification for ${member.id}:`, err))
   );

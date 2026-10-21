@@ -35,7 +35,7 @@
     }
 
     function goToSearch() {
-        goto("/dashboard/search");
+        goto("/dashboard/logs");
     }
 </script>
 

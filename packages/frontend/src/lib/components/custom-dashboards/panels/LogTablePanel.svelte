@@ -163,7 +163,7 @@
 
   function openLog(row: LogTableRow) {
     if (!row.id || !row.projectId) return;
-    goto(`/dashboard/search?logId=${row.id}&projectId=${row.projectId}`);
+    goto(`/dashboard/logs?logId=${row.id}&projectId=${row.projectId}`);
   }
 </script>
 

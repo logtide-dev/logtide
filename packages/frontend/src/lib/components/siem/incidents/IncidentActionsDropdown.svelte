@@ -86,7 +86,7 @@
 		}
 
 		const queryString = params.toString();
-		goto(`/dashboard/search${queryString ? '?' + queryString : ''}`);
+		goto(`/dashboard/logs${queryString ? '?' + queryString : ''}`);
 	}
 </script>
 

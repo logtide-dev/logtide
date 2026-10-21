@@ -100,7 +100,7 @@ describe('webhookEnvelopeSchema', () => {
         response_time_ms: null,
         consecutive_failures: 3,
         downtime_duration: null,
-        link: 'https://app.logtide.dev/dashboard/monitoring',
+        link: 'https://app.logtide.dev/dashboard/uptime',
       },
     };
     const parsed = webhookEnvelopeSchema.parse(obj);
@@ -248,7 +248,7 @@ describe('monitorStatusChangedDataSchema', () => {
     response_time_ms: null,
     consecutive_failures: 3,
     downtime_duration: null,
-    link: 'https://app.logtide.dev/dashboard/monitoring',
+    link: 'https://app.logtide.dev/dashboard/uptime',
   };
 
   it('parses a valid monitor payload', () => {

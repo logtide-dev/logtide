@@ -529,7 +529,7 @@
 												<Button
 													variant="ghost"
 													size="sm"
-													onclick={() => goto(`/dashboard/search?logId=${log.id}&projectId=${group.projectId}`)}
+													onclick={() => goto(`/dashboard/logs?logId=${log.id}&projectId=${group.projectId}`)}
 												>
 													View Log
 												</Button>

@@ -132,23 +132,23 @@
   }
 
   function handleTotalLogsClick() {
-    goto(`/dashboard/search?${getLast24HoursParams()}`);
+    goto(`/dashboard/logs?${getLast24HoursParams()}`);
   }
 
   function handleErrorRateClick() {
-    goto(`/dashboard/search?level=error,critical&${getLast24HoursParams()}`);
+    goto(`/dashboard/logs?level=error,critical&${getLast24HoursParams()}`);
   }
 
   function handleActiveServicesClick() {
-    goto(`/dashboard/search?${getLast24HoursParams()}`);
+    goto(`/dashboard/logs?${getLast24HoursParams()}`);
   }
 
   function handleThroughputClick() {
-    goto(`/dashboard/search?${getLast24HoursParams()}`);
+    goto(`/dashboard/logs?${getLast24HoursParams()}`);
   }
 
   function handleServiceClick(service: TopService) {
-    goto(`/dashboard/search?service=${encodeURIComponent(service.name)}&${getLast24HoursParams()}`);
+    goto(`/dashboard/logs?service=${encodeURIComponent(service.name)}&${getLast24HoursParams()}`);
   }
 
   function handleErrorClick(err: RecentError) {
@@ -162,7 +162,7 @@
     params.set('to', to.toISOString());
     params.set('project', projectId);
     if (err.traceId) params.set('traceId', err.traceId);
-    goto(`/dashboard/search?${params.toString()}`);
+    goto(`/dashboard/logs?${params.toString()}`);
   }
 </script>
 
