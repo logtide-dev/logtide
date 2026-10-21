@@ -12,6 +12,7 @@ import type {
   TopValuesParams,
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
+import { compileJsonFilters } from './json-path.js';
 
 /** ClickHouse can't parse 0 as DateTime64(3) - clamp to 1ms after epoch */
 export function toDateTime64(date: Date): number {
@@ -335,66 +336,15 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
   }
 
   /**
-   * Translate metadata filters into ClickHouse predicates over the JSON `metadata` column.
-   * JSONExtractString returns '' for missing keys, so JSONHas is used to distinguish
-   * "key absent" from "key present but empty" when include_missing matters.
+   * Metadata filters over the JSON `metadata` column, through the shared key
+   * resolver (literal key, then nested path) and scalar text comparison.
    */
   private pushMetadataFilters(
     conditions: string[],
     queryParams: Record<string, unknown>,
     filters: MetadataFilter[],
   ): void {
-    filters.forEach((f, i) => {
-      const keyParam = `p_mfk${i}`;
-      const valParam = `p_mfv${i}`;
-      queryParams[keyParam] = f.key;
-      const extract = `JSONExtractString(metadata, {${keyParam}:String})`;
-      const has = `JSONHas(metadata, {${keyParam}:String})`;
-
-      switch (f.op) {
-        case 'equals': {
-          conditions.push(`${extract} = {${valParam}:String}`);
-          queryParams[valParam] = f.value;
-          break;
-        }
-        case 'not_equals': {
-          queryParams[valParam] = f.value;
-          if (f.include_missing) {
-            conditions.push(`(${has} = 0 OR ${extract} != {${valParam}:String})`);
-          } else {
-            conditions.push(`(${has} = 1 AND ${extract} != {${valParam}:String})`);
-          }
-          break;
-        }
-        case 'in': {
-          conditions.push(`${extract} IN ({${valParam}:Array(String)})`);
-          queryParams[valParam] = f.values;
-          break;
-        }
-        case 'not_in': {
-          queryParams[valParam] = f.values;
-          if (f.include_missing) {
-            conditions.push(`(${has} = 0 OR ${extract} NOT IN ({${valParam}:Array(String)}))`);
-          } else {
-            conditions.push(`(${has} = 1 AND ${extract} NOT IN ({${valParam}:Array(String)}))`);
-          }
-          break;
-        }
-        case 'exists': {
-          conditions.push(`${has} = 1`);
-          break;
-        }
-        case 'not_exists': {
-          conditions.push(`${has} = 0`);
-          break;
-        }
-        case 'contains': {
-          conditions.push(`positionCaseInsensitive(${extract}, {${valParam}:String}) > 0`);
-          queryParams[valParam] = f.value ?? '';
-          break;
-        }
-      }
-    });
+    conditions.push(...compileJsonFilters(filters, 'metadata', queryParams, 'p_mf'));
   }
 
   private pushClickHouseFilter(

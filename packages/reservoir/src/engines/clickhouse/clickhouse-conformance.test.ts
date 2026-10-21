@@ -15,7 +15,7 @@ import {
   resolveSubject,
 } from '../../conformance/index.js';
 import type { Reservoir } from '../../client.js';
-import type { LogRecord, QueryParams, TextQuery } from '../../core/types.js';
+import type { LogRecord, MetadataFilter, QueryParams, TextQuery } from '../../core/types.js';
 
 export const CH_TEST_CONFIG = {
   host: 'localhost',
@@ -142,5 +142,50 @@ describe('clickhouse text specifics', () => {
   it('legacy search params still work', async () => {
     expect(await messagesOf(subject(), project, { search: 'TIMEOUT log' })).toEqual(['read /var/log/timeout.log']);
     expect(await messagesOf(subject(), project, { search: '(beta)', searchMode: 'substring' })).toEqual(['install c++ (beta) now']);
+  });
+});
+
+describe('clickhouse json specifics', () => {
+  const project = '00000000-0000-4000-8000-00000000c302';
+  const subject = useSpecifics(project, [
+    { message: 'A', metadata: { 'http.status': 200 } },
+    { message: 'B', metadata: { http: { status: 200 } } },
+    { message: 'C', metadata: { 'http.status': 404, http: { status: 200 } } },
+    { message: 'D', metadata: { status: 500, cached: true, env: 'prod' } },
+    { message: 'E', metadata: { user: { id: 42 }, env: 'dev' } },
+    { message: 'F', metadata: {} },
+  ]);
+  const where = (...metadataFilters: MetadataFilter[]) => messagesOf(subject(), project, { metadataFilters });
+  const f = (o: Omit<MetadataFilter, 'include_missing'> & { include_missing?: boolean }): MetadataFilter =>
+    ({ include_missing: o.op === 'not_equals' || o.op === 'not_in' || o.op === 'not_exists', ...o }) as MetadataFilter;
+
+  it('literal dotted keys before nested paths', async () => {
+    expect(await where(f({ key: 'http.status', op: 'equals', value: '200' }))).toEqual(['A', 'B']);
+    expect(await where(f({ key: 'http.status', op: 'equals', value: '404' }))).toEqual(['C']);
+  });
+
+  it('nested numeric path', async () => {
+    expect(await where(f({ key: 'user.id', op: 'equals', value: '42' }))).toEqual(['E']);
+    expect(await where(f({ key: 'user.id', op: 'in', values: ['42', '43'] }))).toEqual(['E']);
+    expect(await where(f({ key: 'user.id', op: 'exists' }))).toEqual(['E']);
+  });
+
+  it('numbers and booleans match by text', async () => {
+    expect(await where(f({ key: 'status', op: 'equals', value: '500' }))).toEqual(['D']);
+    expect(await where(f({ key: 'cached', op: 'equals', value: 'true' }))).toEqual(['D']);
+    expect(await where(f({ key: 'status', op: 'in', values: ['500', '501'] }))).toEqual(['D']);
+    expect(await where(f({ key: 'status', op: 'contains', value: '50' }))).toEqual(['D']);
+  });
+
+  it('negated clauses keep logs without the key', async () => {
+    expect(await where(f({ key: 'env', op: 'not_equals', value: 'prod' }))).toEqual(['A', 'B', 'C', 'E', 'F']);
+    expect(await where(f({ key: 'env', op: 'not_in', values: ['prod', 'dev'] }))).toEqual(['A', 'B', 'C', 'F']);
+    expect(await where(f({ key: 'user.id', op: 'not_equals', value: '42' }))).toEqual(['A', 'B', 'C', 'D', 'F']);
+    expect(await where(f({ key: 'env', op: 'not_exists' }))).toEqual(['A', 'B', 'C', 'F']);
+  });
+
+  it('include_missing false keeps only logs where the key resolves', async () => {
+    expect(await where(f({ key: 'env', op: 'not_equals', value: 'prod', include_missing: false }))).toEqual(['E']);
+    expect(await where(f({ key: 'http.status', op: 'not_in', values: ['404'], include_missing: false }))).toEqual(['A', 'B']);
   });
 });
