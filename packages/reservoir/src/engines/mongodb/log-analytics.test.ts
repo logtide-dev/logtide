@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Long, type Document } from 'mongodb';
-import { assembleFacets, assembleHistogram, facetsPipeline, histogramPipeline } from './log-analytics.js';
+import { assembleFacets, assembleHistogram, discoverKeysPipeline, facetsPipeline, histogramPipeline } from './log-analytics.js';
 import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
 import { MongoDBQueryTranslator } from './query-translator.js';
 import { MongoDBEngine } from './mongodb-engine.js';
@@ -223,5 +223,64 @@ describe('facetsPipeline', () => {
     const json = JSON.stringify((pipeline[1].$project as Document).kv[0].v);
     expect(json).toContain('"$metadata.hostname"');
     expect(json).toContain('"string"');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Metadata key discovery
+// ----------------------------------------------------------------------------
+
+describe('MongoDBEngine.discoverMetadataKeys', () => {
+  const discoverBase = { projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00') };
+  const limitOf = (pipeline: Document[]) => pipeline.find((stage) => '$limit' in stage)!.$limit;
+
+  it('sample size defaults to 1000 and clamps to 1..5000', async () => {
+    const { db, calls } = fakeLogsDb([]);
+    const engine = new MongoDBEngine(config, { db: db as never, skipInitialize: true });
+    await engine.discoverMetadataKeys(discoverBase);
+    await engine.discoverMetadataKeys({ ...discoverBase, sampleSize: 0 });
+    await engine.discoverMetadataKeys({ ...discoverBase, sampleSize: 99_999 });
+    expect(calls.map((c) => limitOf(c.pipeline))).toEqual([1000, 1, 5000]);
+    expect(db.collection).toHaveBeenCalledWith('logs');
+  });
+
+  it('maps rows to keys in occurrence then byte order', async () => {
+    const { db } = fakeLogsDb([
+      { _id: 'b', occurrences: 2 },
+      { _id: 'a', occurrences: Long.fromNumber(2) },
+      { _id: 'z', occurrences: 5 },
+    ]);
+    const engine = new MongoDBEngine(config, { db: db as never, skipInitialize: true });
+    expect(await engine.discoverMetadataKeys(discoverBase)).toEqual([
+      { key: 'z', occurrences: 5 },
+      { key: 'a', occurrences: 2 },
+      { key: 'b', occurrences: 2 },
+    ]);
+  });
+});
+
+describe('discoverKeysPipeline', () => {
+  const pipeline = discoverKeysPipeline({ projectId: [PROJECT, 'p2'], from: at('10:00:00'), to: at('11:00:00'), sampleSize: 50 });
+
+  it('samples the newest logs of the projects in range first', () => {
+    expect(pipeline[0]).toEqual({ $match: { project_id: { $in: [PROJECT, 'p2'] }, time: { $gte: at('10:00:00'), $lte: at('11:00:00') } } });
+    expect(pipeline[1]).toEqual({ $sort: { time: -1, id: -1 } });
+    expect(pipeline[2]).toEqual({ $limit: 50 });
+  });
+
+  it('counts each key once per log, busiest first, at most 500 keys', () => {
+    const json = JSON.stringify(pipeline);
+    expect(json).toContain('"$objectToArray"');
+    expect(json).toContain('"$setUnion"');
+    const tail = pipeline.slice(-4);
+    expect(tail[0]).toEqual({ $unwind: '$keys' });
+    expect(tail[1]).toEqual({ $group: { _id: '$keys', occurrences: { $sum: 1 } } });
+    expect(tail[2]).toEqual({ $sort: { occurrences: -1, _id: 1 } });
+    expect(tail[3]).toEqual({ $limit: 500 });
+  });
+
+  it('a single project is an equality match', () => {
+    const single = discoverKeysPipeline({ projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00'), sampleSize: 5 });
+    expect((single[0].$match as Document).project_id).toBe(PROJECT);
   });
 });

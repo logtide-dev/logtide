@@ -285,4 +285,26 @@ describe('mongodb specifics', () => {
       });
     });
   });
+
+  describe('mongodb metadata keys specifics', () => {
+    beforeAll(async () => {
+      // Oldest first: seedLogs spaces the rows one second apart.
+      await seedLogs([
+        { message: 't1', metadata: { a: 1, http: { method: 'GET', 'x.y': 1 } } },
+        { message: 't2', metadata: { a: 2, old: true } },
+        { message: 't3', metadata: { a: 3, b: null } },
+      ]);
+    });
+
+    const keys = async (sampleSize: number) =>
+      (await subject().discoverMetadataKeys({ projectId: SPEC_PROJECT, ...SPEC_WINDOW, sampleSize })).map((k) => `${k.key} ${k.occurrences}`);
+
+    it('the sample is the newest logs', async () => {
+      expect(await keys(2)).toEqual(['a 2', 'b 1', 'old 1']);
+    });
+
+    it('object values expand one level, other values count as themselves', async () => {
+      expect(await keys(3)).toEqual(['a 3', 'b 1', 'http.method 1', 'http.x.y 1', 'old 1']);
+    });
+  });
 });

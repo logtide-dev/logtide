@@ -65,13 +65,17 @@ import type {
   LogHistogramResult,
   LogFacetsParams,
   LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
 } from '../../core/types.js';
-import { normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
-import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
+import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
+import { DISCOVER_DEFAULT_SAMPLE_SIZE, FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
 import { MongoDBQueryTranslator, INTERVAL_MS } from './query-translator.js';
 import {
   assembleFacets,
   assembleHistogram,
+  assembleMetadataKeys,
+  discoverKeysPipeline,
   facetsPipeline,
   histogramPipeline,
   type FacetRow,
@@ -611,6 +615,15 @@ export class MongoDBEngine extends StorageEngine {
       .aggregate(facetsPipeline(filter, normalized.fields, limit), { ...ctxOpts(), allowDiskUse: true })
       .toArray();
     return assembleFacets(normalized.fields, rows as FacetRow[], limit);
+  }
+
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    const normalized = normalizeDiscoverParams(params);
+    const sampleSize = normalized.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE;
+    const rows = await this.logsCol()
+      .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleMetadataKeys(rows as { _id: unknown; occurrences: unknown }[]);
   }
 
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {

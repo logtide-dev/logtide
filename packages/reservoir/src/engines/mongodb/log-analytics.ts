@@ -1,13 +1,21 @@
 // ============================================================================
-// MongoDB log analytics pipelines (histogram, facets; plan S7, S8)
+// MongoDB log analytics pipelines (histogram, facets, key discovery; plan S7 to S9)
 // ============================================================================
 // Pipelines start with the shared log filter as their `$match`, so the
 // project/time predicate keeps them on the time-series bucket index; result
 // assembly (zero filling, ordering) is the engine-independent helper code.
 
 import type { Document } from 'mongodb';
-import { buildFacet, zeroFillHistogram } from '../../core/aggregation-helpers.js';
-import type { LogFacetField, LogFacetsResult, LogHistogramParams, LogHistogramResult, LogLevel } from '../../core/types.js';
+import { buildFacet, compareByteOrder, zeroFillHistogram } from '../../core/aggregation-helpers.js';
+import type {
+  DiscoverMetadataKeysParams,
+  LogFacetField,
+  LogFacetsResult,
+  LogHistogramParams,
+  LogHistogramResult,
+  LogLevel,
+  MetadataKeyOccurrence,
+} from '../../core/types.js';
 import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
 
 /** BSON numbers may arrive as `Long` (promoteLongs off, or values above 2^53). */
@@ -110,4 +118,71 @@ export function assembleFacets(fields: LogFacetField[], rows: FacetRow[], limit:
       return buildFacet(field, top, toNumber(row.total), limit);
     }),
   };
+}
+
+// ----------------------------------------------------------------------------
+// Metadata key discovery
+// ----------------------------------------------------------------------------
+
+/** Most keys one discovery call returns. */
+export const DISCOVER_MAX_KEYS = 500;
+
+/**
+ * Keys of one log's metadata, as the shared `countMetadataKeys` counts them:
+ * a top-level key whose value is an object contributes `parent.child` per
+ * child (one level), any other top-level key contributes itself; each key
+ * once per log. Non-object metadata contributes nothing.
+ */
+const METADATA_KEYS: Document = {
+  $setUnion: [
+    {
+      $reduce: {
+        input: { $cond: [{ $eq: [{ $type: '$metadata' }, 'object'] }, { $objectToArray: '$metadata' }, []] },
+        initialValue: [],
+        in: {
+          $let: {
+            vars: { e: '$$this' },
+            in: {
+              $concatArrays: [
+                '$$value',
+                {
+                  $cond: [
+                    { $eq: [{ $type: '$$e.v' }, 'object'] },
+                    { $map: { input: { $objectToArray: '$$e.v' }, as: 'c', in: { $concat: ['$$e.k', '.', '$$c.k'] } } },
+                    ['$$e.k'],
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      },
+    },
+  ],
+};
+
+/**
+ * Key occurrences over the most recent `sampleSize` logs of the projects in
+ * range (newest first, id as the tie-break like the other engines), busiest
+ * key first, then key byte order, at most DISCOVER_MAX_KEYS keys.
+ */
+export function discoverKeysPipeline(params: DiscoverMetadataKeysParams & { sampleSize: number }): Document[] {
+  const projects = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
+  return [
+    { $match: { project_id: projects.length === 1 ? projects[0] : { $in: projects }, time: { $gte: params.from, $lte: params.to } } },
+    { $sort: { time: -1, id: -1 } },
+    { $limit: params.sampleSize },
+    { $project: { _id: 0, keys: METADATA_KEYS } },
+    { $unwind: '$keys' },
+    { $group: { _id: '$keys', occurrences: { $sum: 1 } } },
+    { $sort: { occurrences: -1, _id: 1 } },
+    { $limit: DISCOVER_MAX_KEYS },
+  ];
+}
+
+/** Rows of discoverKeysPipeline as key occurrences, in contract order. */
+export function assembleMetadataKeys(rows: { _id: unknown; occurrences: unknown }[]): MetadataKeyOccurrence[] {
+  return rows
+    .map((r) => ({ key: String(r._id), occurrences: toNumber(r.occurrences) }))
+    .sort((a, b) => b.occurrences - a.occurrences || compareByteOrder(a.key, b.key));
 }
