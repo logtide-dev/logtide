@@ -2,6 +2,9 @@ import { SigmaDetectionEngine, type LogEntry } from '../../modules/sigma/detecti
 import { db } from '../../database/connection.js';
 import { createQueue } from '../connection.js';
 import { SiemService } from '../../modules/siem/service.js';
+import { sql } from 'kysely';
+import { sigmaExceptionsService } from '../../modules/sigma/exceptions-service.js';
+import { partitionMatches } from '../../modules/sigma/exceptions.js';
 
 const siemService = new SiemService(db);
 
@@ -42,7 +45,7 @@ export async function processSigmaDetection(job: any) {
     );
 
     // Collect all matches
-    const allMatches: SigmaDetectionMatch[] = [];
+    let allMatches: SigmaDetectionMatch[] = [];
 
     results.forEach((result, logIndex) => {
       if (result.matched) {
@@ -68,6 +71,39 @@ export async function processSigmaDetection(job: any) {
         });
       }
     });
+
+    // Apply per-rule exceptions BEFORE any detection event, incident input or
+    // notification exists. Fails toward alerting: if the exceptions cannot be
+    // loaded, every match is kept.
+    if (allMatches.length > 0) {
+      const now = new Date();
+      let suppressedHits = new Map<string, number>();
+      try {
+        const ruleIds = [...new Set(allMatches.map((m) => m.sigmaRuleId))];
+        const active = await sigmaExceptionsService.loadActiveForRules(
+          data.organizationId,
+          ruleIds,
+          now
+        );
+        if (active.size > 0) {
+          const { kept, suppressed } = partitionMatches(allMatches, data.logs, active, now);
+          allMatches = kept;
+          suppressedHits = suppressed;
+        }
+      } catch (error) {
+        console.error('[SigmaDetection] Error applying rule exceptions, keeping all matches:', error);
+      }
+
+      if (suppressedHits.size > 0) {
+        const total = [...suppressedHits.values()].reduce((a, b) => a + b, 0);
+        console.log(`[SigmaDetection] ${total} matches suppressed by rule exceptions`);
+        try {
+          await sigmaExceptionsService.recordHits(data.organizationId, suppressedHits, now);
+        } catch (error) {
+          console.error('[SigmaDetection] Error recording exception hits:', error);
+        }
+      }
+    }
 
     if (allMatches.length === 0) {
       // No detections — log only when DEBUG_SIGMA is enabled to avoid noisy worker output
@@ -122,6 +158,19 @@ export async function processSigmaDetection(job: any) {
     } catch (error) {
       console.error('[SigmaDetection] Error creating detection events:', error);
       // Continue with notifications even if detection event creation fails
+    }
+
+    // Remember when each rule last produced a kept match (metadata table only)
+    try {
+      const firedRuleIds = [...new Set(allMatches.map((m) => m.sigmaRuleId))];
+      await db
+        .updateTable('sigma_rules')
+        .set({ last_fired_at: sql<Date>`now()` })
+        .where('organization_id', '=', data.organizationId)
+        .where('id', 'in', firedRuleIds)
+        .execute();
+    } catch (error) {
+      console.error('[SigmaDetection] Error updating last_fired_at:', error);
     }
 
     // Group matches by Sigma rule
