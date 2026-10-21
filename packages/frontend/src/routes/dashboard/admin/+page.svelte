@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -202,42 +203,32 @@
 </script>
 
 <svelte:head>
-    <title>Admin Dashboard - LogTide</title>
+    <title>Instance overview - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <!-- Header -->
-    <div class="flex justify-between items-center">
-        <div>
-            <div class="flex items-center gap-2.5">
-                <h1 class="text-2xl font-bold tracking-tight">Admin Dashboard</h1>
-                {#if healthStats?.storageEngine}
-                    <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
-                        {engineLabel}
-                    </span>
-                {/if}
-            </div>
-            <p class="text-sm text-muted-foreground mt-0.5">
-                Platform health, performance & usage overview
-            </p>
-        </div>
-        <div class="flex items-center gap-3">
+<div class="space-y-6">
+    <PageHeader
+        title="Instance overview"
+        appliesTo="instance"
+        description="Platform health, performance and usage"
+    >
+        {#snippet meta()}
+            {#if healthStats?.storageEngine}
+                <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
+                    {engineLabel}
+                </span>
+            {/if}
+        {/snippet}
+        {#snippet actions()}
             <span class="text-xs text-muted-foreground">
                 {lastRefreshed.toLocaleTimeString('en-US')}
             </span>
-            <Button
-                variant="outline"
-                size="sm"
-                onclick={loadData}
-                disabled={loading}
-            >
-                <RefreshCw
-                    class="mr-1.5 h-3.5 w-3.5 {loading ? 'animate-spin' : ''}"
-                />
+            <Button variant="outline" size="sm" onclick={loadData} disabled={loading}>
+                <RefreshCw class="mr-1.5 h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
                 Refresh
             </Button>
-        </div>
-    </div>
+        {/snippet}
+    </PageHeader>
 
     {#if error}
         <div

@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
     import { goto } from "$app/navigation";
@@ -19,16 +20,8 @@
     import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
     import { Separator } from "$lib/components/ui/separator";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
+    import * as Dialog from "$lib/components/ui/dialog";
     import {
         ArrowLeft,
         UserCheck,
@@ -112,6 +105,7 @@
             await loadUser();
         } catch (err: any) {
             error = err.message || "Failed to disable user";
+            throw err;
         } finally {
             actionLoading = false;
         }
@@ -126,6 +120,7 @@
             await loadUser();
         } catch (err: any) {
             error = err.message || "Failed to enable user";
+            throw err;
         } finally {
             actionLoading = false;
         }
@@ -137,10 +132,11 @@
         try {
             await adminAPI.updateUserRole(user.id, true);
             showPromoteAdminDialog = false;
-            toastStore.success("User promoted to admin successfully");
+            toastStore.success("User promoted to admin");
             await loadUser();
         } catch (err: any) {
             error = err.message || "Failed to promote user to admin";
+            throw err;
         } finally {
             actionLoading = false;
         }
@@ -156,6 +152,7 @@
             await loadUser();
         } catch (err: any) {
             error = err.message || "Failed to remove admin role";
+            throw err;
         } finally {
             actionLoading = false;
         }
@@ -182,9 +179,7 @@
             showResetPasswordDialog = false;
             newPassword = "";
             confirmPassword = "";
-            toastStore.success(
-                "Password reset successfully. User will need to log in again.",
-            );
+            toastStore.success("Password reset. The user will need to log in again");
         } catch (err: any) {
             passwordError = err.message || "Failed to reset password";
         } finally {
@@ -203,27 +198,19 @@
 </script>
 
 <svelte:head>
-    <title>{user?.name ?? user?.email ?? 'User'} - Admin - LogTide</title>
+    <title>{user?.name ?? user?.email ?? 'User'} - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex items-center gap-4">
-        <a
-            href="/dashboard/admin/users"
-            class={buttonVariants({
-                variant: "ghost",
-                size: "icon",
-            })}
-        >
-            <ArrowLeft class="h-4 w-4" />
-        </a>
-        <div class="flex-1">
-            <h1 class="text-3xl font-bold">User Details</h1>
-            <p class="text-muted-foreground">
-                View and manage user information
-            </p>
-        </div>
-    </div>
+<div class="space-y-6">
+    <PageHeader
+        title={user?.name ?? user?.email ?? 'User'}
+        appliesTo="instance"
+        description="View and manage user information"
+        breadcrumbs={[
+            { label: 'All users', href: '/dashboard/admin/users' },
+            { label: user?.name ?? user?.email ?? 'User' },
+        ]}
+    />
 
     {#if loading}
         <div class="text-center py-12">
@@ -240,7 +227,7 @@
                             variant: "outline",
                         }) + " mt-4"}
                     >
-                        Back to Users
+                        Back to all users
                     </a>
                 </div>
             </CardContent>
@@ -396,7 +383,7 @@
                                 onclick={() => (showEnableDialog = true)}
                             >
                                 <CheckCircle class="h-4 w-4" />
-                                Enable User
+                                Enable user
                             </Button>
                         {:else}
                             <Button
@@ -405,7 +392,7 @@
                                 onclick={() => (showDisableDialog = true)}
                             >
                                 <Ban class="h-4 w-4" />
-                                Disable User
+                                Disable user
                             </Button>
                         {/if}
 
@@ -417,10 +404,10 @@
                                 class="w-full gap-2"
                                 onclick={() => (showDemoteAdminDialog = true)}
                                 disabled={isOwnProfile}
-                                title={isOwnProfile ? "Cannot remove admin role from yourself" : ""}
+                                title={isOwnProfile ? "You cannot remove the admin role from yourself" : ""}
                             >
                                 <ShieldOff class="h-4 w-4" />
-                                Remove Admin Role
+                                Remove admin role
                             </Button>
                         {:else}
                             <Button
@@ -429,7 +416,7 @@
                                 onclick={() => (showPromoteAdminDialog = true)}
                             >
                                 <Shield class="h-4 w-4" />
-                                Promote to Admin
+                                Promote to admin
                             </Button>
                         {/if}
 
@@ -441,7 +428,7 @@
                             onclick={() => (showResetPasswordDialog = true)}
                         >
                             <Key class="h-4 w-4" />
-                            Reset Password
+                            Reset password
                         </Button>
                     </CardContent>
                 </Card>
@@ -458,55 +445,37 @@
     {/if}
 </div>
 
-<AlertDialog bind:open={showDisableDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Disable User</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to disable this user? They will be
-                immediately logged out and won't be able to log in again until
-                re-enabled.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={disableUser} disabled={actionLoading}>
-                {actionLoading ? "Disabling..." : "Disable User"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDisableDialog}
+    title="Disable user"
+    description="They will be logged out immediately and cannot log in again until the account is re-enabled."
+    confirmLabel="Disable user"
+    busy={actionLoading}
+    onConfirm={disableUser}
+/>
 
-<AlertDialog bind:open={showEnableDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Enable User</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to enable this user? They will be able to
-                log in again.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={enableUser} disabled={actionLoading}>
-                {actionLoading ? "Enabling..." : "Enable User"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showEnableDialog}
+    title="Enable user"
+    description="They will be able to log in again."
+    confirmLabel="Enable user"
+    destructive={false}
+    busy={actionLoading}
+    onConfirm={enableUser}
+/>
 
-<AlertDialog bind:open={showResetPasswordDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Reset Password</AlertDialogTitle>
-            <AlertDialogDescription>
+<Dialog.Root bind:open={showResetPasswordDialog}>
+    <Dialog.Content class="max-w-md">
+        <Dialog.Header>
+            <Dialog.Title>Reset password</Dialog.Title>
+            <Dialog.Description>
                 Set a new password for this user. They will be logged out of all
                 sessions.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
+            </Dialog.Description>
+        </Dialog.Header>
         <div class="space-y-4 py-4">
             <div class="space-y-2">
-                <Label for="new-password">New Password</Label>
+                <Label for="new-password">New password</Label>
                 <Input
                     id="new-password"
                     type="password"
@@ -516,7 +485,7 @@
                 />
             </div>
             <div class="space-y-2">
-                <Label for="confirm-password">Confirm Password</Label>
+                <Label for="confirm-password">Confirm password</Label>
                 <Input
                     id="confirm-password"
                     type="password"
@@ -529,55 +498,41 @@
                 <p class="text-sm text-destructive">{passwordError}</p>
             {/if}
         </div>
-        <AlertDialogFooter>
-            <AlertDialogCancel
+        <Dialog.Footer>
+            <Button
+                variant="outline"
+                disabled={actionLoading}
                 onclick={() => {
+                    showResetPasswordDialog = false;
                     newPassword = "";
                     confirmPassword = "";
                     passwordError = "";
                 }}
             >
                 Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction onclick={resetPassword} disabled={actionLoading}>
-                {actionLoading ? "Resetting..." : "Reset Password"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+            </Button>
+            <Button variant="destructive" onclick={resetPassword} disabled={actionLoading}>
+                {actionLoading ? "Resetting..." : "Reset password"}
+            </Button>
+        </Dialog.Footer>
+    </Dialog.Content>
+</Dialog.Root>
 
-<AlertDialog bind:open={showPromoteAdminDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Promote to Admin</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to promote this user to admin? They will have
-                full access to system settings, user management, and all organizations.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={promoteToAdmin} disabled={actionLoading}>
-                {actionLoading ? "Promoting..." : "Promote to Admin"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showPromoteAdminDialog}
+    title="Promote to admin"
+    description="This user will get full access to instance settings, user management and all organizations."
+    confirmLabel="Promote to admin"
+    destructive={false}
+    busy={actionLoading}
+    onConfirm={promoteToAdmin}
+/>
 
-<AlertDialog bind:open={showDemoteAdminDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Remove Admin Role</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to remove admin privileges from this user?
-                They will lose access to system settings and user management.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={demoteFromAdmin} disabled={actionLoading}>
-                {actionLoading ? "Removing..." : "Remove Admin Role"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDemoteAdminDialog}
+    title="Remove admin role"
+    description="This user will lose access to instance settings and user management."
+    confirmLabel="Remove admin role"
+    busy={actionLoading}
+    onConfirm={demoteFromAdmin}
+/>

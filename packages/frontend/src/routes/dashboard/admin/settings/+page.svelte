@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -166,42 +167,26 @@
 </script>
 
 <svelte:head>
-    <title>Admin Settings - LogTide</title>
+    <title>Instance settings - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-8">
-    <div class="flex justify-between items-center">
-        <div>
-            <h1 class="text-3xl font-bold tracking-tight flex items-center gap-2">
-                <Settings class="h-8 w-8" />
-                System Settings
-            </h1>
-            <p class="text-muted-foreground mt-1">
-                Configure global authentication and security settings
-            </p>
-        </div>
-        <div class="flex items-center gap-4">
-            <Button
-                variant="outline"
-                size="sm"
-                onclick={loadSettings}
-                disabled={loading}
-            >
-                <RefreshCw
-                    class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}"
-                />
+<div class="space-y-8">
+    <PageHeader
+        title="Instance settings"
+        appliesTo="instance"
+        description="Configure global authentication and security settings"
+    >
+        {#snippet actions()}
+            <Button variant="outline" size="sm" onclick={loadSettings} disabled={loading}>
+                <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
                 Refresh
             </Button>
-            <Button
-                size="sm"
-                onclick={saveSettings}
-                disabled={saving || loading}
-            >
+            <Button size="sm" onclick={saveSettings} disabled={saving || loading}>
                 <Save class="mr-2 h-4 w-4" />
-                {saving ? "Saving..." : "Save Changes"}
+                {saving ? "Saving..." : "Save changes"}
             </Button>
-        </div>
-    </div>
+        {/snippet}
+    </PageHeader>
 
     {#if error}
         <div

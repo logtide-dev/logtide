@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount, untrack } from 'svelte';
     import { get } from 'svelte/store';
     import { browser } from '$app/environment';
@@ -179,16 +180,15 @@
 </script>
 
 <svelte:head>
-    <title>Usage - Admin - LogTide</title>
+    <title>Instance usage - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div>
-        <h1 class="text-2xl font-bold tracking-tight">Usage</h1>
-        <p class="text-sm text-muted-foreground mt-0.5">
-            Metering data per organization
-        </p>
-    </div>
+<div class="space-y-6">
+    <PageHeader
+        title="Instance usage"
+        appliesTo="instance"
+        description="Metering data per organization"
+    />
 
     {#if orgsLoading}
         <div class="flex justify-center py-12">

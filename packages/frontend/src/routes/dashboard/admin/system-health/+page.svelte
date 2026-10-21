@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -158,30 +159,27 @@
 </script>
 
 <svelte:head>
-    <title>System Health - LogTide Admin</title>
+    <title>System health - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <!-- Header -->
-    <div class="flex justify-between items-center">
-        <div>
-            <div class="flex items-center gap-2.5">
-                <h1 class="text-2xl font-bold tracking-tight">System Health</h1>
-                {#if healthStats?.storageEngine}
-                    <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
-                        {engineLabel}
-                    </span>
-                {/if}
-            </div>
-            <p class="text-sm text-muted-foreground mt-0.5">
-                {isClickHouse
-                    ? 'PostgreSQL, ClickHouse, compression & infrastructure diagnostics'
-                    : isMongoDB
-                    ? 'MongoDB & infrastructure diagnostics'
-                    : 'Database, compression, aggregates & infrastructure diagnostics'}
-            </p>
-        </div>
-        <div class="flex items-center gap-3">
+<div class="space-y-6">
+    <PageHeader
+        title="System health"
+        appliesTo="instance"
+        description={isClickHouse
+            ? 'PostgreSQL, ClickHouse, compression and infrastructure diagnostics'
+            : isMongoDB
+            ? 'MongoDB and infrastructure diagnostics'
+            : 'Database, compression, aggregates and infrastructure diagnostics'}
+    >
+        {#snippet meta()}
+            {#if healthStats?.storageEngine}
+                <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
+                    {engineLabel}
+                </span>
+            {/if}
+        {/snippet}
+        {#snippet actions()}
             <span class="text-xs text-muted-foreground">
                 {lastRefreshed.toLocaleTimeString('en-US')}
             </span>
@@ -189,8 +187,8 @@
                 <RefreshCw class="mr-1.5 h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
                 Refresh
             </Button>
-        </div>
-    </div>
+        {/snippet}
+    </PageHeader>
 
     {#if error}
         <div class="bg-destructive/15 text-destructive p-4 rounded-md flex items-center gap-2">

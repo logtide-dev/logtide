@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount } from "svelte";
     import { adminAPI, type OrganizationBasic } from "$lib/api/admin";
     import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
@@ -118,18 +119,15 @@
 </script>
 
 <svelte:head>
-    <title>Organizations - Admin - LogTide</title>
+    <title>All organizations - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-3xl font-bold">Organization Management</h1>
-            <p class="text-muted-foreground">
-                Manage all organizations in the system
-            </p>
-        </div>
-    </div>
+<div class="space-y-6">
+    <PageHeader
+        title="All organizations"
+        appliesTo="instance"
+        description="Manage all organizations in the system"
+    />
 
     <Card>
         <CardHeader>

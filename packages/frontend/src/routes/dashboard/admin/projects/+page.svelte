@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -22,16 +23,7 @@
         Trash2,
     } from "@lucide/svelte";
     import { browser } from "$app/environment";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
 
     let projects = $state<ProjectBasic[]>([]);
     let loading = $state(true);
@@ -119,29 +111,22 @@
 </script>
 
 <svelte:head>
-    <title>Projects - Admin - LogTide</title>
+    <title>All projects - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex justify-between items-center">
-        <div>
-            <h1 class="text-3xl font-bold tracking-tight">
-                Projects Management
-            </h1>
-            <p class="text-muted-foreground mt-1">
-                Manage all projects across organizations
-            </p>
-        </div>
-        <Button
-            variant="outline"
-            size="sm"
-            onclick={loadProjects}
-            disabled={loading}
-        >
-            <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
-            Refresh
-        </Button>
-    </div>
+<div class="space-y-6">
+    <PageHeader
+        title="All projects"
+        appliesTo="instance"
+        description="Manage all projects across organizations"
+    >
+        {#snippet actions()}
+            <Button variant="outline" size="sm" onclick={loadProjects} disabled={loading}>
+                <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
+                Refresh
+            </Button>
+        {/snippet}
+    </PageHeader>
 
     {#if error}
         <div class="bg-destructive/15 text-destructive p-4 rounded-md">
@@ -353,20 +338,12 @@
     </Card>
 </div>
 
-<AlertDialog bind:open={showDeleteDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Delete Project</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to delete <strong>{deleteTargetName}</strong>?
-                This will permanently delete all logs, API keys, alert rules, and sigma rules. This action cannot be undone.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Project"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDeleteDialog}
+    title="Delete project"
+    description="This permanently deletes all logs, API keys, alert rules and sigma rules of this project. This cannot be undone."
+    confirmLabel="Delete project"
+    requireText={deleteTargetName}
+    busy={deleting}
+    onConfirm={handleDelete}
+/>

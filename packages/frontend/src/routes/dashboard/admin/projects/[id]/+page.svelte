@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -22,16 +23,7 @@
         Building2,
     } from "@lucide/svelte";
     import { Badge } from "$lib/components/ui/badge";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
     import { goto } from "$app/navigation";
 
     const projectId = $derived(page.params.id);
@@ -91,10 +83,29 @@
 </script>
 
 <svelte:head>
-    <title>{project?.name ?? 'Project'} - Admin - LogTide</title>
+    <title>{project?.name ?? 'Project'} - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
+<div class="space-y-6">
+    <PageHeader
+        title={project?.name ?? 'Project'}
+        appliesTo="instance"
+        description={project ? [project.organization_name, project.description].filter(Boolean).join(' - ') : undefined}
+        breadcrumbs={[
+            { label: 'All projects', href: '/dashboard/admin/projects' },
+            { label: project?.name ?? 'Project' },
+        ]}
+    >
+        {#snippet actions()}
+            {#if project}
+                <Button variant="outline" size="sm" onclick={loadProject} disabled={loading}>
+                    <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
+                    Refresh
+                </Button>
+            {/if}
+        {/snippet}
+    </PageHeader>
+
     {#if loading}
         <div class="flex justify-center p-12">
             <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
@@ -104,46 +115,7 @@
             {error}
         </div>
     {:else if project}
-        <!-- Header -->
-        <div class="flex items-start justify-between">
-            <div class="space-y-1">
-                <a
-                    href="/dashboard/admin/projects"
-                    class={buttonVariants({
-                        variant: "ghost",
-                        size: "sm",
-                    }) + " mb-2"}
-                >
-                    <ArrowLeft class="mr-2 h-4 w-4" />
-                    Back to Projects
-                </a>
-                <h1 class="text-3xl font-bold tracking-tight">
-                    {project.name}
-                </h1>
-                <div class="flex items-center gap-2">
-                    <Building2 class="h-4 w-4 text-muted-foreground" />
-                    <span class="text-muted-foreground">
-                        {project.organization_name}
-                    </span>
-                </div>
-                {#if project.description}
-                    <p class="text-muted-foreground mt-2">
-                        {project.description}
-                    </p>
-                {/if}
-            </div>
-            <Button
-                variant="outline"
-                size="sm"
-                onclick={loadProject}
-                disabled={loading}
-            >
-                <RefreshCw
-                    class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}"
-                />
-                Refresh
-            </Button>
-        </div>
+
 
         <!-- Stats Cards -->
         <div class="grid gap-4 md:grid-cols-4">
@@ -447,20 +419,12 @@
     {/if}
 </div>
 
-<AlertDialog bind:open={showDeleteDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Delete Project</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to delete <strong>{project?.name}</strong>?
-                This will permanently delete all logs, API keys, alert rules, and sigma rules. This action cannot be undone.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Project"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDeleteDialog}
+    title="Delete project"
+    description="This permanently deletes all logs, API keys, alert rules and sigma rules of this project. This cannot be undone."
+    confirmLabel="Delete project"
+    requireText={project?.name ?? ""}
+    busy={deleting}
+    onConfirm={handleDelete}
+/>
