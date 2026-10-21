@@ -39,6 +39,7 @@
   import { layoutStore } from "$lib/stores/layout";
   import { createColumnConfigStore } from "$lib/stores/column-config.js";
   import ColumnConfigMenu from "$lib/components/search/ColumnConfigMenu.svelte";
+  import { DEFAULT_BUILTIN_LAYOUT } from "$lib/components/search/builtin-columns";
   import LogResultsTable from "$lib/components/search/LogResultsTable.svelte";
   import LogRowDetails from "$lib/components/search/LogRowDetails.svelte";
   import Download from "@lucide/svelte/icons/download";
@@ -1790,6 +1791,8 @@
                 <ColumnConfigMenu
                   bind:columns={customColumns}
                   onchange={(cols) => { columnStore?.set(cols); }}
+                  layout={DEFAULT_BUILTIN_LAYOUT}
+                  onLayoutChange={() => {}}
                 />
               {/if}
               {#if liveTail}
