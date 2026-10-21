@@ -33,16 +33,11 @@
     DialogHeader,
     DialogTitle,
   } from '$lib/components/ui/dialog';
-  import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-  } from '$lib/components/ui/alert-dialog';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
+  import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
+  import { organizationStore } from '$lib/stores/organization';
+  import { projectsAPI, type Project } from '$lib/api/projects';
   import Spinner from '$lib/components/Spinner.svelte';
   import ShieldAlert from '@lucide/svelte/icons/shield-alert';
   import Plus from '@lucide/svelte/icons/plus';
@@ -50,8 +45,16 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import FlaskConical from '@lucide/svelte/icons/flask-conical';
   import Lock from '@lucide/svelte/icons/lock';
+  import Info from '@lucide/svelte/icons/info';
 
   let token: string | null = null;
+  let currentOrgId = $state<string | null>(null);
+  let role = $state<string | null>(null);
+  let canEdit = $derived(role === 'owner' || role === 'admin');
+
+  let projects = $state<Project[]>([]);
+  // Empty string means "All projects (organization default)".
+  let selectedProjectId = $state('');
 
   let loading = $state(true);
   let rules = $state<PiiMaskingRule[]>([]);
@@ -108,8 +111,14 @@
     token = state.token;
   });
 
+  const unsubOrgStore = organizationStore.subscribe((state) => {
+    currentOrgId = state.currentOrganization?.id ?? null;
+    role = state.currentOrganization?.role ?? null;
+  });
+
   onDestroy(() => {
     unsubAuthStore();
+    unsubOrgStore();
   });
 
   onMount(async () => {
@@ -117,19 +126,34 @@
       goto('/login');
       return;
     }
+    if (currentOrgId) {
+      projectsAPI
+        .getProjects(currentOrgId)
+        .then((res) => {
+          projects = res.projects;
+        })
+        .catch(() => {
+          projects = [];
+        });
+    }
     await loadRules();
   });
 
   async function loadRules() {
     loading = true;
     try {
-      rules = await piiMaskingAPI.listRules();
+      rules = await piiMaskingAPI.listRules(selectedProjectId || undefined);
     } catch (e) {
       console.error('Failed to load PII masking rules:', e);
-      toastStore.error('Failed to load PII masking rules');
+      toastStore.error('Could not load PII masking rules');
     } finally {
       loading = false;
     }
+  }
+
+  function handleScopeChange(e: Event) {
+    selectedProjectId = (e.currentTarget as HTMLSelectElement).value;
+    void loadRules();
   }
 
   function openCreateDialog() {
@@ -177,19 +201,19 @@
 
       if (isCreating) {
         if (!formName || !formDisplayName) {
-          toastStore.error('Please fill in name and display name');
+          toastStore.error('Enter a name and display name');
           saving = false;
           return;
         }
 
         if (formPatternType === 'custom' && !formRegexPattern.trim()) {
-          toastStore.error('Please provide a regex pattern for a custom rule');
+          toastStore.error('Enter a regex pattern for a custom rule');
           saving = false;
           return;
         }
 
         if (formPatternType === 'field_name' && fieldNames.length === 0) {
-          toastStore.error('Please provide at least one field name');
+          toastStore.error('Enter at least one field name');
           saving = false;
           return;
         }
@@ -204,6 +228,7 @@
           action: formAction,
           priority: formPriority,
           enabled: formEnabled,
+          ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
         });
         toastStore.success('Rule created');
       } else if (editingRule) {
@@ -219,6 +244,7 @@
             action: formAction,
             priority: formPriority,
             enabled: formEnabled,
+            ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
           });
         } else {
           await piiMaskingAPI.updateRule(editingRule.id, {
@@ -237,7 +263,7 @@
       editDialogOpen = false;
       await loadRules();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to save rule';
+      const msg = e instanceof Error ? e.message : 'Could not save rule';
       toastStore.error(msg);
     } finally {
       saving = false;
@@ -255,7 +281,7 @@
       editingRule = null;
       await loadRules();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to delete rule';
+      const msg = e instanceof Error ? e.message : 'Could not delete rule';
       toastStore.error(msg);
     } finally {
       deleting = false;
@@ -274,6 +300,7 @@
           fieldNames: rule.fieldNames.length > 0 ? rule.fieldNames : undefined,
           action: rule.action,
           enabled: !rule.enabled,
+          ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
         });
         // Builtin override changes the ID, need full reload
         await loadRules();
@@ -284,7 +311,7 @@
       }
       toastStore.success(!rule.enabled ? `${rule.displayName} enabled` : `${rule.displayName} disabled`);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to update rule';
+      const msg = e instanceof Error ? e.message : 'Could not update rule';
       toastStore.error(msg);
     }
   }
@@ -301,6 +328,7 @@
           fieldNames: rule.fieldNames.length > 0 ? rule.fieldNames : undefined,
           action: newAction,
           enabled: rule.enabled,
+          ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
         });
         // Builtin override changes the ID, need full reload
         await loadRules();
@@ -311,7 +339,7 @@
       }
       toastStore.success(`${rule.displayName} set to ${newAction}`);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to update action';
+      const msg = e instanceof Error ? e.message : 'Could not update action';
       toastStore.error(msg);
     }
   }
@@ -367,8 +395,8 @@
   };
 
   const patternTypeLabels: Record<PiiPatternType, string> = {
-    custom: 'Custom Regex',
-    field_name: 'Field Names',
+    custom: 'Custom regex',
+    field_name: 'Field names',
     builtin: 'Built-in',
   };
 
@@ -380,26 +408,71 @@
 </script>
 
 <svelte:head>
-  <title>PII Masking - LogTide</title>
+  <title>PII masking - LogTide</title>
 </svelte:head>
 
+<PageHeader
+  title="PII masking"
+  appliesTo="organization"
+  description="Mask sensitive values in logs and spans before they are stored."
+/>
+
 <div class="space-y-6">
+  {#if !canEdit}
+    <ReadOnlyNotice what="PII masking rules" />
+  {/if}
+
+  <div
+    class="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm"
+    data-testid="pii-callouts"
+  >
+    <div class="mb-2 flex items-center gap-2 font-medium">
+      <Info class="h-4 w-4" aria-hidden="true" />
+      How masking works
+    </div>
+    <ul class="list-disc space-y-1 pl-5 text-muted-foreground">
+      <li>Rules apply to new data only. Existing logs are not changed.</li>
+      <li>Rules also cover trace spans.</li>
+      <li>
+        Records whose masking fails are rejected and reported in the ingest response
+        (<code class="font-mono text-xs">rejected</code>), never stored unmasked.
+      </li>
+    </ul>
+  </div>
+
+  <div class="flex flex-wrap items-center gap-3">
+    <Label for="pii-scope">Applies to:</Label>
+    <select
+      id="pii-scope"
+      class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+      value={selectedProjectId}
+      onchange={handleScopeChange}
+    >
+      <option value="">All projects (organization default)</option>
+      {#each projects as project (project.id)}
+        <option value={project.id}>{project.name}</option>
+      {/each}
+    </select>
+  </div>
+
   <!-- Content Patterns -->
   <Card>
     <CardHeader>
       <div class="flex items-center justify-between">
         <div>
           <CardTitle class="flex items-center gap-2">
-            Content Patterns
+            Content patterns
           </CardTitle>
           <CardDescription>
             Regex-based detection of PII in log messages and metadata values
           </CardDescription>
         </div>
-        <Button onclick={openCreateDialog} class="gap-2">
-          <Plus class="w-4 h-4" />
-          Add Rule
-        </Button>
+        {#if canEdit}
+          <Button onclick={openCreateDialog} class="gap-2">
+            <Plus class="w-4 h-4" />
+            Add rule
+          </Button>
+        {/if}
       </div>
     </CardHeader>
     <CardContent>
@@ -415,9 +488,12 @@
               <TableRow>
                 <TableHead>Rule</TableHead>
                 <TableHead>Pattern</TableHead>
+                <TableHead>Scope</TableHead>
                 <TableHead>Action</TableHead>
                 <TableHead>Enabled</TableHead>
-                <TableHead class="w-[80px]">Actions</TableHead>
+                {#if canEdit}
+                  <TableHead class="w-[80px]">Actions</TableHead>
+                {/if}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -449,8 +525,14 @@
                     {/if}
                   </TableCell>
                   <TableCell>
+                    <Badge variant="outline" class="text-xs" data-testid="rule-scope">
+                      {rule.projectId ? 'Project' : 'Organization'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
                     <Select
                       type="single"
+                      disabled={!canEdit}
                       value={rule.action}
                       onValueChange={(v) => { if (v) handleActionChange(rule, v as PiiAction); }}
                     >
@@ -467,33 +549,39 @@
                   <TableCell>
                     <Switch
                       checked={rule.enabled}
+                      disabled={!canEdit}
+                      aria-label={`Enable ${rule.displayName}`}
                       onCheckedChange={() => handleToggleEnabled(rule)}
                     />
                   </TableCell>
-                  <TableCell>
-                    <div class="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        class="h-8 w-8"
-                        onclick={() => openEditDialog(rule)}
-                        title="Edit rule"
-                      >
-                        <Pencil class="w-4 h-4" />
-                      </Button>
-                      {#if !rule.id.startsWith('builtin:')}
+                  {#if canEdit}
+                    <TableCell>
+                      <div class="flex items-center gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
-                          class="h-8 w-8 text-destructive hover:text-destructive"
-                          onclick={() => openDeleteDialog(rule)}
-                          title="Delete rule"
+                          class="h-8 w-8"
+                          onclick={() => openEditDialog(rule)}
+                          title="Edit rule"
+                          aria-label={`Edit ${rule.displayName}`}
                         >
-                          <Trash2 class="w-4 h-4" />
+                          <Pencil class="w-4 h-4" />
                         </Button>
-                      {/if}
-                    </div>
-                  </TableCell>
+                        {#if !rule.id.startsWith('builtin:')}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            class="h-8 w-8 text-destructive hover:text-destructive"
+                            onclick={() => openDeleteDialog(rule)}
+                            title="Delete rule"
+                            aria-label={`Delete ${rule.displayName}`}
+                          >
+                            <Trash2 class="w-4 h-4" />
+                          </Button>
+                        {/if}
+                      </div>
+                    </TableCell>
+                  {/if}
                 </TableRow>
               {/each}
             </TableBody>
@@ -508,7 +596,7 @@
     <CardHeader>
       <CardTitle class="flex items-center gap-2">
         <Lock class="w-4 h-4" />
-        Sensitive Field Names
+        Sensitive field names
       </CardTitle>
       <CardDescription>
         Automatically mask values of metadata fields with sensitive names (password, token, secret, etc.)
@@ -550,8 +638,12 @@
               </div>
             </div>
             <div class="flex items-center gap-4 ml-4">
+              <Badge variant="outline" class="text-xs" data-testid="rule-scope">
+                {rule.projectId ? 'Project' : 'Organization'}
+              </Badge>
               <Select
                 type="single"
+                disabled={!canEdit}
                 value={rule.action}
                 onValueChange={(v) => { if (v) handleActionChange(rule, v as PiiAction); }}
               >
@@ -566,6 +658,8 @@
               </Select>
               <Switch
                 checked={rule.enabled}
+                disabled={!canEdit}
+                aria-label={`Enable ${rule.displayName}`}
                 onCheckedChange={() => handleToggleEnabled(rule)}
               />
             </div>
@@ -580,7 +674,7 @@
     <CardHeader>
       <CardTitle class="flex items-center gap-2">
         <FlaskConical class="w-4 h-4" />
-        Test Masking
+        Test masking
       </CardTitle>
       <CardDescription>
         Preview how your enabled rules mask sample data
@@ -591,7 +685,7 @@
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div class="space-y-4">
             <div class="space-y-2">
-              <Label for="test-message">Sample Message</Label>
+              <Label for="test-message">Sample message</Label>
               <Textarea
                 id="test-message"
                 bind:value={testMessage}
@@ -602,7 +696,7 @@
               />
             </div>
             <div class="space-y-2">
-              <Label for="test-metadata">Sample Metadata (JSON)</Label>
+              <Label for="test-metadata">Sample metadata (JSON)</Label>
               <Textarea
                 id="test-metadata"
                 bind:value={testMetadata}
@@ -614,27 +708,27 @@
             </div>
             <Button onclick={handleTestMasking} disabled={testing} class="w-full gap-2">
               <FlaskConical class="w-4 h-4" />
-              {testing ? 'Testing...' : 'Test Masking'}
+              {testing ? 'Testing...' : 'Test masking'}
             </Button>
           </div>
 
           <div class="space-y-4">
             {#if testResultMessage || testResultMetadata}
               <div class="space-y-2">
-                <Label>Masked Message</Label>
+                <Label>Masked message</Label>
                 <div class="bg-muted rounded-md p-3 font-mono text-sm whitespace-pre-wrap min-h-[60px]">
                   {testResultMessage || '(empty)'}
                 </div>
               </div>
               <div class="space-y-2">
-                <Label>Masked Metadata</Label>
+                <Label>Masked metadata</Label>
                 <div class="bg-muted rounded-md p-3 font-mono text-sm whitespace-pre-wrap min-h-[80px]">
                   {testResultMetadata || '(empty)'}
                 </div>
               </div>
               {#if testMaskedFields.length > 0}
                 <div class="space-y-2">
-                  <Label>Masked Fields ({testMaskedFields.length})</Label>
+                  <Label>Masked fields ({testMaskedFields.length})</Label>
                   <div class="flex flex-wrap gap-1">
                     {#each testMaskedFields as field}
                       <Badge variant="secondary" class="text-xs font-mono">{field}</Badge>
@@ -644,7 +738,7 @@
               {/if}
             {:else}
               <div class="flex items-center justify-center h-full text-muted-foreground text-sm">
-                Click "Test Masking" to preview results
+                Click "Test masking" to preview results
               </div>
             {/if}
           </div>
@@ -658,7 +752,7 @@
 <Dialog bind:open={editDialogOpen}>
   <DialogContent class="max-w-lg">
     <DialogHeader>
-      <DialogTitle>{isCreating ? 'Create Custom Rule' : 'Edit Rule'}</DialogTitle>
+      <DialogTitle>{isCreating ? 'Create custom rule' : 'Edit Rule'}</DialogTitle>
       <DialogDescription>
         {isCreating
           ? 'Define a custom PII masking rule with a regex pattern or field names.'
@@ -685,7 +779,7 @@
       {/if}
 
       <div class="space-y-2">
-        <Label for="rule-display-name">Display Name *</Label>
+        <Label for="rule-display-name">Display name *</Label>
         <Input
           id="rule-display-name"
           type="text"
@@ -709,7 +803,7 @@
 
       {#if isCreating}
         <div class="space-y-2">
-          <Label>Rule Type</Label>
+          <Label>Rule type</Label>
           <Select
             type="single"
             value={formPatternType}
@@ -719,8 +813,8 @@
               <SelectValue>{patternTypeLabels[formPatternType]}</SelectValue>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="custom">Custom Regex</SelectItem>
-              <SelectItem value="field_name">Field Names</SelectItem>
+              <SelectItem value="custom">Custom regex</SelectItem>
+              <SelectItem value="field_name">Field names</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -728,7 +822,7 @@
 
       {#if formPatternType === 'custom' || formPatternType === 'builtin'}
         <div class="space-y-2">
-          <Label for="rule-regex">Regex Pattern</Label>
+          <Label for="rule-regex">Regex pattern</Label>
           <Input
             id="rule-regex"
             type="text"
@@ -742,7 +836,7 @@
 
       {#if formPatternType === 'field_name'}
         <div class="space-y-2">
-          <Label for="rule-fields">Field Names</Label>
+          <Label for="rule-fields">Field names</Label>
           <Input
             id="rule-fields"
             type="text"
@@ -758,7 +852,7 @@
 
       <div class="grid grid-cols-2 gap-4">
         <div class="space-y-2">
-          <Label>Masking Action</Label>
+          <Label>Masking action</Label>
           <Select
             type="single"
             value={formAction}
@@ -800,34 +894,19 @@
           Cancel
         </Button>
         <Button type="submit" disabled={saving}>
-          {saving ? 'Saving...' : isCreating ? 'Create Rule' : 'Save Changes'}
+          {saving ? 'Saving...' : isCreating ? 'Create rule' : 'Save changes'}
         </Button>
       </DialogFooter>
     </form>
   </DialogContent>
 </Dialog>
 
-<!-- Delete Confirmation -->
-<AlertDialog bind:open={deleteDialogOpen}>
-  <AlertDialogContent>
-    <AlertDialogHeader>
-      <AlertDialogTitle>Delete Rule?</AlertDialogTitle>
-      <AlertDialogDescription>
-        Are you sure you want to delete <strong>{editingRule?.displayName}</strong>?
-        This action cannot be undone.
-      </AlertDialogDescription>
-    </AlertDialogHeader>
-    <AlertDialogFooter>
-      <AlertDialogCancel onclick={() => { deleteDialogOpen = false; editingRule = null; }}>
-        Cancel
-      </AlertDialogCancel>
-      <AlertDialogAction
-        onclick={handleDelete}
-        class="bg-destructive hover:bg-destructive/90"
-        disabled={deleting}
-      >
-        {deleting ? 'Deleting...' : 'Delete Rule'}
-      </AlertDialogAction>
-    </AlertDialogFooter>
-  </AlertDialogContent>
-</AlertDialog>
+<!-- Delete confirmation -->
+<ConfirmDialog
+  bind:open={deleteDialogOpen}
+  title="Delete rule"
+  description={`Delete ${editingRule?.displayName ?? 'this rule'}? New data will no longer be masked by it. This cannot be undone.`}
+  confirmLabel="Delete rule"
+  busy={deleting}
+  onConfirm={handleDelete}
+/>
