@@ -8,6 +8,7 @@ import type { Expression, ExpressionBuilder, Kysely, SqlBool } from 'kysely';
 import { sql } from 'kysely';
 import type { Database } from '../../database/types.js';
 import { reservoir } from '../../database/reservoir.js';
+import { ErrorGroupTriageService } from './triage-service.js';
 import type {
   CreateExceptionParams,
   ErrorGroup,
@@ -366,7 +367,8 @@ export class ExceptionService {
   }
 
   /**
-   * Update error group status
+   * Update error group status. Kept for existing callers; the triage service
+   * owns the rules (resolver, regression and ignore fields).
    */
   async updateErrorGroupStatus(
     groupId: string,
@@ -374,22 +376,12 @@ export class ExceptionService {
     status: ErrorGroupStatus,
     resolvedBy?: string
   ): Promise<ErrorGroup | null> {
-    const result = await this.db
-      .updateTable('error_groups')
-      .set({
-        status,
-        resolved_at: status === 'resolved' ? new Date() : null,
-        resolved_by: resolvedBy || null,
-      })
-      .where('id', '=', groupId)
-      .where('organization_id', '=', organizationId)
-      .returningAll()
-      .executeTakeFirst();
-
-    if (!result) return null;
-
-    // Fetch again with project name
-    return this.getErrorGroupById(groupId);
+    return new ErrorGroupTriageService(this.db).updateErrorGroup(
+      groupId,
+      organizationId,
+      { status },
+      resolvedBy ?? null
+    );
   }
 
   /**

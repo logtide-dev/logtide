@@ -9,6 +9,10 @@
  */
 
 export { ExceptionService } from './service.js';
+export {
+  ErrorGroupTriageService,
+  ErrorGroupValidationError,
+} from './triage-service.js';
 export { FingerprintService } from './fingerprint-service.js';
 export { ParserFactory } from './parsers/parser-factory.js';
 export { exceptionsRoutes } from './routes.js';
