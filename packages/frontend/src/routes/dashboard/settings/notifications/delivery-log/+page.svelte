@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import type { Snippet } from 'svelte';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/auth';
@@ -134,13 +135,15 @@
 		return typeof id === 'string' ? (channelNames[id] ?? null) : null;
 	}
 
+	const asCell = (cell: unknown) => cell as Snippet<[WebhookDelivery]>;
+
 	const columns: DataTableColumn<WebhookDelivery>[] = [
-		{ key: 'event', header: 'Event', cell: eventCell },
-		{ key: 'destination', header: 'Destination', cell: destinationCell },
-		{ key: 'status', header: 'Status', cell: statusCell },
-		{ key: 'attempts', header: 'Attempts', cell: attemptsCell },
-		{ key: 'created', header: 'Created', cell: createdCell },
-		{ key: 'actions', header: '', class: 'text-right', cell: actionsCell },
+		{ key: 'event', header: 'Event', cell: asCell(eventCell) },
+		{ key: 'destination', header: 'Destination', cell: asCell(destinationCell) },
+		{ key: 'status', header: 'Status', cell: asCell(statusCell) },
+		{ key: 'attempts', header: 'Attempts', cell: asCell(attemptsCell) },
+		{ key: 'created', header: 'Created', cell: asCell(createdCell) },
+		{ key: 'actions', header: '', class: 'text-right', cell: asCell(actionsCell) },
 	];
 
 	// Total is only known as far as the next page, which is all Pagination needs.
