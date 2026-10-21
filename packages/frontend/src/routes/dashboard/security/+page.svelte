@@ -103,10 +103,10 @@
 			goto(`/dashboard/security/incidents/${event.incidentId}`);
 		} else if (event.logId && event.projectId) {
 			// Navigate to search with the specific log
-			goto(`/dashboard/search?logId=${event.logId}&projectId=${event.projectId}`);
+			goto(`/dashboard/logs?logId=${event.logId}&projectId=${event.projectId}`);
 		} else if (event.logId) {
 			// Navigate to search with just the log ID
-			goto(`/dashboard/search?logId=${event.logId}`);
+			goto(`/dashboard/logs?logId=${event.logId}`);
 		}
 	}
 

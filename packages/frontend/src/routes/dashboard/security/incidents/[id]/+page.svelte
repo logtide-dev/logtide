@@ -160,7 +160,7 @@
 
 	function handleLogClick(logId: string, projectId: string) {
 		// Navigate to log search with the specific log ID and project ID
-		goto(`/dashboard/search?logId=${logId}&projectId=${projectId}`);
+		goto(`/dashboard/logs?logId=${logId}&projectId=${projectId}`);
 	}
 
 	async function handleExportPdf() {

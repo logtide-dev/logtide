@@ -44,13 +44,13 @@
 
   const navItems = [
     { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, shortcut: 'g d' },
-    { label: 'Logs', href: '/dashboard/search', icon: FileText, shortcut: 'g s' },
+    { label: 'Logs', href: '/dashboard/logs', icon: FileText, shortcut: 'g s' },
     { label: 'Traces', href: '/dashboard/traces', icon: GitBranch, shortcut: 'g t' },
     { label: 'Metrics', href: '/dashboard/metrics', icon: BarChart3, shortcut: 'g m' },
     { label: 'Errors', href: '/dashboard/errors', icon: Bug, shortcut: 'g r' },
     { label: 'Alerts', href: '/dashboard/alerts', icon: AlertTriangle, shortcut: 'g a' },
     { label: 'Security', href: '/dashboard/security', icon: Shield, shortcut: 'g e' },
-    { label: 'Monitoring', href: '/dashboard/monitoring', icon: Activity, shortcut: 'g o' },
+    { label: 'Monitoring', href: '/dashboard/uptime', icon: Activity, shortcut: 'g o' },
     { label: 'Projects', href: '/dashboard/projects', icon: FolderKanban, shortcut: 'g p' },
     { label: 'Settings', href: '/dashboard/settings', icon: Settings, shortcut: 'g x' },
   ];
@@ -80,7 +80,7 @@
             <span>Open trace <span class="font-mono">{trimmedQuery}</span></span>
           </Command.Item>
         {/if}
-        <Command.Item value={`search logs ${trimmedQuery}`} onSelect={() => navigate(`/dashboard/search?q=${encodeURIComponent(trimmedQuery)}`)}>
+        <Command.Item value={`search logs ${trimmedQuery}`} onSelect={() => navigate(`/dashboard/logs?q=${encodeURIComponent(trimmedQuery)}`)}>
           <FileText class="w-4 h-4 mr-2 text-muted-foreground" />
           <span>Search logs for "{trimmedQuery}"</span>
         </Command.Item>

@@ -246,7 +246,7 @@
     {
       label: "Observe",
       items: [
-        { label: "Logs", href: "/dashboard/search", icon: FileText },
+        { label: "Logs", href: "/dashboard/logs", icon: FileText },
         { label: "Traces", href: "/dashboard/traces", icon: GitBranch },
         { label: "Metrics", href: "/dashboard/metrics", icon: BarChart3 },
         { label: "Errors", href: "/dashboard/errors", icon: Bug },
@@ -257,7 +257,7 @@
       items: [
         { label: "Alerts", href: "/dashboard/alerts", icon: AlertTriangle },
         { label: "Security", href: "/dashboard/security", icon: Shield },
-        { label: "Monitoring", href: "/dashboard/monitoring", icon: Activity },
+        { label: "Monitoring", href: "/dashboard/uptime", icon: Activity },
       ],
     },
     {

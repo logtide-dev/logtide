@@ -356,7 +356,7 @@
 		if (history.level?.length) {
 			params.set("level", history.level.join(","));
 		}
-		return `/dashboard/search?${params.toString()}`;
+		return `/dashboard/logs?${params.toString()}`;
 	}
 
 	function formatUtcTimestamp(value: string | Date): string {

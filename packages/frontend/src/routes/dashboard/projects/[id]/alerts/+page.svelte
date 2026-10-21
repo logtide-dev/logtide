@@ -523,7 +523,7 @@
 										</div>
 										{#if history.projectId}
 											<a
-												href="/dashboard/search?project={history.projectId}&from={new Date(
+												href="/dashboard/logs?project={history.projectId}&from={new Date(
 													new Date(history.triggeredAt).getTime() - history.timeWindow * 60000
 												).toISOString()}&to={new Date(history.triggeredAt).toISOString()}{history.service ? `&service=${history.service}` : ''}{history.level?.length ? `&level=${history.level.join(',')}` : ''}"
 												class="text-sm text-primary hover:underline flex items-center gap-1"

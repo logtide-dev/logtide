@@ -27,7 +27,7 @@
       icon: Search,
       title: 'Search & Filter',
       description: 'Find any log instantly with powerful filters by service, level, time, and full-text search.',
-      link: '/dashboard/search',
+      link: '/dashboard/logs',
       color: 'bg-purple-500/10 text-purple-500'
     },
     {
@@ -48,7 +48,7 @@
       icon: Radio,
       title: 'Live Tail',
       description: 'Watch logs stream in real-time as they happen. Perfect for debugging.',
-      link: '/dashboard/search?live=true',
+      link: '/dashboard/logs?live=true',
       color: 'bg-green-500/10 text-green-500'
     },
     {
