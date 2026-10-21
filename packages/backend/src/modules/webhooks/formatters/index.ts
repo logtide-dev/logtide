@@ -1,12 +1,14 @@
 import type { OutboundFormatter } from './types.js';
 import { discordFormatter } from './discord.js';
 import { slackFormatter } from './slack.js';
+import { teamsFormatter } from './teams.js';
 
 export type { OutboundFormatter } from './types.js';
 export { discordFormatter } from './discord.js';
 export { slackFormatter } from './slack.js';
+export { teamsFormatter } from './teams.js';
 
-const FORMATTERS: OutboundFormatter[] = [discordFormatter, slackFormatter];
+const FORMATTERS: OutboundFormatter[] = [discordFormatter, slackFormatter, teamsFormatter];
 
 /**
  * Rewrite an outbound body for destinations that refuse the event envelope.
