@@ -46,11 +46,44 @@ import type {
   DeleteMetricsByTimeRangeParams,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
 } from './core/types.js';
 import type { StorageEngine } from './core/storage-engine.js';
 import type { IReservoir } from './core/reservoir-interface.js';
 import { StorageEngineFactory } from './factory.js';
 import type { EngineOptions } from './factory.js';
+import {
+  assertTimeRange,
+  normalizeLogFilter,
+  normalizeHistogramParams,
+  normalizeFacetsParams,
+  normalizeDiscoverParams,
+  normalizeOperationStatsParams,
+  normalizeSpanQueryParams,
+  normalizeTraceQueryParams,
+  normalizeListSessionsParams,
+} from './core/normalize.js';
+import { facetFieldName, zeroFillHistogram } from './core/aggregation-helpers.js';
+
+/** Removes the client-only `matchNothing` flag before params reach an engine. */
+function forEngine<T extends { matchNothing?: boolean }>(params: T): T {
+  if (!('matchNothing' in params)) return params;
+  const out = { ...params };
+  delete out.matchNothing;
+  return out;
+}
 
 /**
  * Reservoir - unified storage client for log management.
@@ -74,15 +107,37 @@ import type { EngineOptions } from './factory.js';
  *   tableName: 'logs',
  * });
  * await reservoir.initialize(); // no-op when skipInitialize is true
+ *
+ * // Wrap an engine built elsewhere (no factory validation)
+ * const reservoir = Reservoir.fromEngine(new ClickHouseEngine(config));
+ * await reservoir.initialize(); // connects and initializes the engine
  * ```
+ *
+ * Log, span, trace and session calls are normalized here once (spec 6.4):
+ * legacy `search`/`searchMode` gain a `textQuery`, defaults and limits are
+ * applied, invalid params reject with RangeError before any engine call, and
+ * filters marked `matchNothing` are answered without the engine. Caller
+ * params are never mutated.
  */
 export class Reservoir implements IReservoir {
   private engine: StorageEngine;
   private initialized = false;
   private initPromise?: Promise<void>;
 
-  constructor(type: EngineType, config: StorageConfig, options?: EngineOptions) {
-    this.engine = StorageEngineFactory.create(type, config, options);
+  constructor(engine: StorageEngine);
+  constructor(type: EngineType, config: StorageConfig, options?: EngineOptions);
+  constructor(typeOrEngine: EngineType | StorageEngine, config?: StorageConfig, options?: EngineOptions) {
+    if (typeof typeOrEngine === 'string') {
+      if (!config) throw new TypeError(`Reservoir needs a storage config for engine type ${typeOrEngine}`);
+      this.engine = StorageEngineFactory.create(typeOrEngine, config, options);
+    } else {
+      this.engine = typeOrEngine;
+    }
+  }
+
+  /** Wraps an already constructed engine; the factory and its config validation are not used. */
+  static fromEngine(engine: StorageEngine): Reservoir {
+    return new Reservoir(engine);
   }
 
   async initialize(): Promise<void> {
@@ -115,7 +170,11 @@ export class Reservoir implements IReservoir {
 
   async query(params: QueryParams): Promise<QueryResult<StoredLogRecord>> {
     this.ensureInitialized();
-    return this.engine.query(params);
+    const normalized = normalizeLogFilter(params);
+    if (normalized.matchNothing) {
+      return { logs: [], total: 0, hasMore: false, limit: params.limit ?? 50, offset: params.offset ?? 0 };
+    }
+    return this.engine.query(forEngine(normalized));
   }
 
   async aggregate(params: AggregateParams): Promise<AggregateResult> {
@@ -143,12 +202,16 @@ export class Reservoir implements IReservoir {
 
   async count(params: CountParams): Promise<CountResult> {
     this.ensureInitialized();
-    return this.engine.count(params);
+    const normalized = normalizeLogFilter(params);
+    if (normalized.matchNothing) return { count: 0 };
+    return this.engine.count(forEngine(normalized));
   }
 
   async countEstimate(params: CountParams): Promise<CountResult> {
     this.ensureInitialized();
-    return this.engine.countEstimate(params);
+    const normalized = normalizeLogFilter(params);
+    if (normalized.matchNothing) return { count: 0 };
+    return this.engine.countEstimate(forEngine(normalized));
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {
@@ -164,6 +227,38 @@ export class Reservoir implements IReservoir {
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {
     this.ensureInitialized();
     return this.engine.deleteByTimeRange(params);
+  }
+
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    this.ensureInitialized();
+    const normalized = normalizeHistogramParams(params);
+    if (normalized.matchNothing) return zeroFillHistogram(normalized, []);
+    return this.engine.histogram(forEngine(normalized));
+  }
+
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    this.ensureInitialized();
+    const normalized = normalizeFacetsParams(params);
+    if (normalized.matchNothing) {
+      return { facets: normalized.fields.map((field) => ({ field: facetFieldName(field), values: [], otherCount: 0 })) };
+    }
+    return this.engine.facets(forEngine(normalized));
+  }
+
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    this.ensureInitialized();
+    return this.engine.discoverMetadataKeys(normalizeDiscoverParams(params));
+  }
+
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    this.ensureInitialized();
+    return this.engine.listSessions(normalizeListSessionsParams(params));
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    this.ensureInitialized();
+    assertTimeRange(params.from, params.to);
+    return this.engine.hasSessions(params);
   }
 
   // =========================================================================
@@ -182,7 +277,7 @@ export class Reservoir implements IReservoir {
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
     this.ensureInitialized();
-    return this.engine.querySpans(params);
+    return this.engine.querySpans(normalizeSpanQueryParams(params));
   }
 
   async getSpansByTraceId(traceId: string, projectId: string): Promise<SpanRecord[]> {
@@ -192,7 +287,7 @@ export class Reservoir implements IReservoir {
 
   async queryTraces(params: TraceQueryParams): Promise<TraceQueryResult> {
     this.ensureInitialized();
-    return this.engine.queryTraces(params);
+    return this.engine.queryTraces(normalizeTraceQueryParams(params));
   }
 
   async getTraceById(traceId: string, projectId: string): Promise<TraceRecord | null> {
@@ -231,6 +326,17 @@ export class Reservoir implements IReservoir {
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {
     this.ensureInitialized();
     return this.engine.deleteSpansByTimeRange(params);
+  }
+
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    this.ensureInitialized();
+    return this.engine.getOperationStats(normalizeOperationStatsParams(params));
+  }
+
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    this.ensureInitialized();
+    assertTimeRange(params.from, params.to);
+    return this.engine.getLatencyHistogram(params);
   }
 
   // =========================================================================

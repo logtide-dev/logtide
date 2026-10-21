@@ -124,6 +124,13 @@ export class ReservoirBuffered implements IReservoir {
   getServiceHealthStats(...args: Parameters<Reservoir['getServiceHealthStats']>): ReturnType<Reservoir['getServiceHealthStats']> { return this.inner.getServiceHealthStats(...args); }
   getSpanTimeseries(...args: Parameters<Reservoir['getSpanTimeseries']>): ReturnType<Reservoir['getSpanTimeseries']> { return this.inner.getSpanTimeseries(...args); }
   deleteSpansByTimeRange(...args: Parameters<Reservoir['deleteSpansByTimeRange']>): ReturnType<Reservoir['deleteSpansByTimeRange']> { return this.inner.deleteSpansByTimeRange(...args); }
+  histogram(...args: Parameters<Reservoir['histogram']>): ReturnType<Reservoir['histogram']> { return this.inner.histogram(...args); }
+  facets(...args: Parameters<Reservoir['facets']>): ReturnType<Reservoir['facets']> { return this.inner.facets(...args); }
+  discoverMetadataKeys(...args: Parameters<Reservoir['discoverMetadataKeys']>): ReturnType<Reservoir['discoverMetadataKeys']> { return this.inner.discoverMetadataKeys(...args); }
+  getOperationStats(...args: Parameters<Reservoir['getOperationStats']>): ReturnType<Reservoir['getOperationStats']> { return this.inner.getOperationStats(...args); }
+  getLatencyHistogram(...args: Parameters<Reservoir['getLatencyHistogram']>): ReturnType<Reservoir['getLatencyHistogram']> { return this.inner.getLatencyHistogram(...args); }
+  listSessions(...args: Parameters<Reservoir['listSessions']>): ReturnType<Reservoir['listSessions']> { return this.inner.listSessions(...args); }
+  hasSessions(...args: Parameters<Reservoir['hasSessions']>): ReturnType<Reservoir['hasSessions']> { return this.inner.hasSessions(...args); }
   queryMetrics(...args: Parameters<Reservoir['queryMetrics']>): ReturnType<Reservoir['queryMetrics']> { return this.inner.queryMetrics(...args); }
   aggregateMetrics(...args: Parameters<Reservoir['aggregateMetrics']>): ReturnType<Reservoir['aggregateMetrics']> { return this.inner.aggregateMetrics(...args); }
   getMetricNames(...args: Parameters<Reservoir['getMetricNames']>): ReturnType<Reservoir['getMetricNames']> { return this.inner.getMetricNames(...args); }
