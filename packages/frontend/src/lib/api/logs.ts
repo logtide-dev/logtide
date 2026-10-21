@@ -3,7 +3,8 @@ import { getAuthToken } from '$lib/utils/auth';
 import { requestStreamTicket } from './stream-tickets';
 import type { LogLevel, MetadataFilterInput } from '@logtide/shared';
 
-interface LogEntry {
+export interface LogEntry {
+  id?: string;
   time: string;
   service: string;
   level: LogLevel;

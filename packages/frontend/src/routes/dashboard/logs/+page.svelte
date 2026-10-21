@@ -8,12 +8,10 @@
   import { shortcutsStore } from "$lib/stores/shortcuts";
   import { checklistStore } from "$lib/stores/checklist";
   import { ProjectsAPI } from "$lib/api/projects";
-  import { logsAPI, type SearchMode } from "$lib/api/logs";
+  import { logsAPI, type LogEntry, type SearchMode } from "$lib/api/logs";
   import { toastStore } from "$lib/stores/toast";
-  import { formatTimeAgo } from "$lib/utils/datetime";
   import { timeRangeStore } from "$lib/stores/time-range";
   import type { Project, MetadataFilterInput } from "@logtide/shared";
-  import { resolveMetadataPath, formatMetadataCell } from "@logtide/shared";
   import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import Input from "$lib/components/ui/input/input.svelte";
@@ -25,20 +23,11 @@
     CardTitle,
   } from "$lib/components/ui/card";
   import { Badge } from "$lib/components/ui/badge";
-  import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-  } from "$lib/components/ui/table";
   import * as Select from "$lib/components/ui/select";
   import * as Popover from "$lib/components/ui/popover";
   import Switch from "$lib/components/ui/switch/switch.svelte";
   import LogContextDialog from "$lib/components/LogContextDialog.svelte";
   import CorrelationTimelineDialog from "$lib/components/CorrelationTimelineDialog.svelte";
-  import IdentifierBadge from "$lib/components/IdentifierBadge.svelte";
   import { ExceptionDetailsDialog } from "$lib/components/exceptions";
   import ExportLogsDialog from "$lib/components/ExportLogsDialog.svelte";
   import { correlationAPI, type IdentifierMatch, type CorrelatedLog } from "$lib/api/correlation";
@@ -49,38 +38,19 @@
   import { layoutStore } from "$lib/stores/layout";
   import { createColumnConfigStore } from "$lib/stores/column-config.js";
   import ColumnConfigMenu from "$lib/components/search/ColumnConfigMenu.svelte";
-  import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
+  import LogResultsTable from "$lib/components/search/LogResultsTable.svelte";
+  import LogRowDetails from "$lib/components/search/LogRowDetails.svelte";
   import Download from "@lucide/svelte/icons/download";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import SearchIcon from "@lucide/svelte/icons/search";
   import Radio from "@lucide/svelte/icons/radio";
-  import Settings2 from "@lucide/svelte/icons/settings-2";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import Rows3 from "@lucide/svelte/icons/rows-3";
   import Table2 from "@lucide/svelte/icons/table-2";
   import WrapText from "@lucide/svelte/icons/wrap-text";
   import Clock from "@lucide/svelte/icons/clock";
-  import ArrowUpRight from "@lucide/svelte/icons/arrow-up-right";
-  import Filter from "@lucide/svelte/icons/filter";
-  import Copy from "@lucide/svelte/icons/copy";
-  import Check from "@lucide/svelte/icons/check";
-  import ListTree from "@lucide/svelte/icons/list-tree";
-  import { copyToClipboard } from "$lib/utils/clipboard";
-  import BreadcrumbTimeline from "$lib/components/BreadcrumbTimeline.svelte";
-
-  interface LogEntry {
-    id?: string;
-    time: string;
-    service: string;
-    level: "debug" | "info" | "warn" | "error" | "critical";
-    message: string;
-    metadata?: Record<string, any>;
-    traceId?: string;
-    sessionId?: string;
-    projectId: string;
-  }
 
   let token = $state<string | null>(null);
   let projects = $state<Project[]>([]);
@@ -883,19 +853,6 @@
     expandedBreadcrumbs = newSet;
   }
 
-  type Breadcrumb = {
-    type: string;
-    category?: string;
-    message: string;
-    level?: string;
-    timestamp: number;
-    data?: Record<string, unknown>;
-  };
-  function getBreadcrumbs(log: LogEntry): Breadcrumb[] {
-    const bc = (log.metadata as Record<string, unknown> | undefined)?.breadcrumbs;
-    return Array.isArray(bc) ? (bc as Breadcrumb[]) : [];
-  }
-
   function openContextDialog(log: LogEntry) {
     selectedLogForContext = log;
     contextDialogOpen = true;
@@ -983,62 +940,6 @@
       setTimeout(() => loadIdentifiersForLogs(logIds), 0);
     }
   });
-
-  function isErrorLevel(level: string): boolean {
-    return level === 'error' || level === 'critical';
-  }
-
-  // Copy-to-clipboard feedback for metadata blocks, keyed per row
-  let copiedMetaKey = $state<string | null>(null);
-  async function copyMetadata(key: string, metadata: unknown) {
-    const ok = await copyToClipboard(JSON.stringify(metadata, null, 2));
-    if (ok) {
-      copiedMetaKey = key;
-      setTimeout(() => {
-        if (copiedMetaKey === key) copiedMetaKey = null;
-      }, 2000);
-    }
-  }
-
-  function getLevelColor(level: LogEntry["level"]): string {
-    switch (level) {
-      case "critical":
-        return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 border-purple-300 dark:border-purple-700";
-      case "error":
-        return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 border-red-300 dark:border-red-700";
-      case "warn":
-        return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 border-yellow-300 dark:border-yellow-700";
-      case "info":
-        return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border-blue-300 dark:border-blue-700";
-      case "debug":
-        return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600";
-      default:
-        return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600";
-    }
-  }
-
-  function escapeRegExp(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  // Split text into segments, marking the parts that match the full-text query.
-  // Rendered as plain text segments (no {@html}), so it never injects markup.
-  function highlightSegments(
-    text: string,
-    query: string,
-  ): Array<{ text: string; match: boolean }> {
-    const value = text ?? "";
-    if (!value || !query || searchMode !== "fulltext")
-      return [{ text: value, match: false }];
-    const terms = query.trim().split(/\s+/).filter(Boolean);
-    if (terms.length === 0) return [{ text: value, match: false }];
-    const re = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
-    const lower = new Set(terms.map((t) => t.toLowerCase()));
-    return value
-      .split(re)
-      .filter((part) => part !== "")
-      .map((part) => ({ text: part, match: lower.has(part.toLowerCase()) }));
-  }
 
   // Reflect the active filters in the URL so a search is shareable/bookmarkable.
   // The read effect above is idempotent (its guards only apply a param when the
@@ -1213,17 +1114,6 @@
     selectedLevels = [];
     metadataFilters = [];
     applyFilters();
-  }
-
-  function formatDateTime(dateStr: string): string {
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const seconds = String(date.getSeconds()).padStart(2, "0");
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   }
 </script>
 
@@ -1930,283 +1820,56 @@
             </TableLoadingOverlay>
           {:else}
             <TableLoadingOverlay loading={isLoading}>
-            <div class="rounded-md border overflow-x-auto" bind:this={logsContainer}>
-              <Table class="w-full {rowDensity === 'compact' ? '[&_td]:py-1 [&_th]:py-1' : ''}">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead class="w-[180px]">Time</TableHead>
-                    <TableHead class="w-[120px]">Project</TableHead>
-                    <TableHead class="w-[150px]">Service</TableHead>
-                    <TableHead class="w-[100px]">Level</TableHead>
-                    <TableHead>Message</TableHead>
-                    {#each customColumns as col (col)}
-                      <TableHead class="w-[120px]">{col}</TableHead>
-                    {/each}
-                    <TableHead class="w-[80px]">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {#each paginatedLogs as log, i}
-                    {@const globalIndex = i}
-                    <TableRow data-log-row class={selectedLogIndex === globalIndex ? 'bg-accent/50 ring-1 ring-primary/30' : ''}>
-                      <TableCell class="font-mono text-xs">
-                        <span title={formatTimeAgo(log.time)}>{formatDateTime(log.time)}</span>
-                      </TableCell>
-                      <TableCell>
-                        <a
-                          href="/dashboard/projects/{log.projectId}"
-                          class="inline-flex items-center rounded-md border border-input bg-background px-2.5 py-0.5 text-xs font-semibold transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                        >
-                          {projects.find((p) => p.id === log.projectId)?.name ||
-                            "Unknown"}
-                        </a>
-                      </TableCell>
-                      <TableCell>
-                        <div class="flex flex-col gap-0.5">
-                          <button
-                            onclick={() => {
-                              if (!selectedServices.includes(log.service)) {
-                                selectedServices = [
-                                  ...selectedServices,
-                                  log.service,
-                                ];
-                                applyFilters();
-                              }
-                            }}
-                            title="Click to filter by this service"
-                            class="hover:opacity-80 transition-opacity"
-                          >
-                            <Badge variant="outline">{log.service}</Badge>
-                          </button>
-                          {#if log.metadata?.hostname}
-                            <button
-                              onclick={() => {
-                                const hostname = log.metadata?.hostname;
-                                if (hostname && !selectedHostnames.includes(hostname)) {
-                                  selectedHostnames = [...selectedHostnames, hostname];
-                                  applyFilters();
-                                }
-                              }}
-                              title="Click to filter by this host"
-                              class="text-xs text-muted-foreground font-mono hover:text-foreground transition-colors truncate max-w-[140px]"
-                            >
-                              @{log.metadata.hostname}
-                            </button>
-                          {/if}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <button
-                          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border uppercase {getLevelColor(
-                            log.level,
-                          )} hover:opacity-80 transition-opacity cursor-pointer"
-                          onclick={() => {
-                            if (!selectedLevels.includes(log.level)) {
-                              selectedLevels = [...selectedLevels, log.level];
-                              applyFilters();
-                            }
-                          }}
-                          title="Click to filter by this level"
-                        >
-                          {log.level}
-                        </button>
-                      </TableCell>
-                      <TableCell class="max-w-md truncate">
-                        {#each highlightSegments(log.message, searchQuery) as seg}
-                          {#if seg.match}<mark
-                              class="rounded-sm bg-yellow-200 text-inherit dark:bg-yellow-500/40"
-                              >{seg.text}</mark
-                            >{:else}{seg.text}{/if}
-                        {/each}
-                      </TableCell>
-                      {#each customColumns as col (col)}
-                        {@const cellValue = resolveMetadataPath(log.metadata, col)}
-                        <TableCell
-                          class="font-mono text-xs max-w-[120px] truncate"
-                          title={cellValue !== undefined && cellValue !== null
-                            ? formatMetadataCell(cellValue)
-                            : undefined}
-                        >
-                          {#if cellValue !== undefined && cellValue !== null}
-                            {formatMetadataCell(cellValue)}
-                          {:else}
-                            <span class="text-muted-foreground">-</span>
-                          {/if}
-                        </TableCell>
-                      {/each}
-                      <TableCell>
-                        <div class="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onclick={() => toggleRow(globalIndex)}
-                          >
-                            {expandedRows.has(globalIndex) ? "Hide" : "Details"}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onclick={() => openContextDialog(log)}
-                            title="View logs before and after this entry"
-                          >
-                            Context
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                    {#if expandedRows.has(globalIndex)}
-                      <TableRow>
-                        <TableCell colspan={6 + customColumns.length} class="bg-muted/50 !p-0">
-                          <div class="p-4 space-y-3 w-0 min-w-full">
-                            <div>
-                              <span class="font-semibold">Full Message:</span>
-                              <div
-                                class="mt-2 p-3 bg-background rounded-md text-sm whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
-                              >
-                                {log.message}
-                              </div>
-                            </div>
-                            {#if log.traceId}
-                              <div class="flex items-center flex-wrap gap-1.5">
-                                <span class="font-semibold">Trace ID:</span>
-                                {#if log.projectId}
-                                  <a
-                                    href="/dashboard/traces/{log.traceId}?projectId={log.projectId}"
-                                    class="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-primary transition-colors hover:bg-primary/10"
-                                    title="Open trace timeline"
-                                  >
-                                    {log.traceId}
-                                    <ArrowUpRight class="h-3 w-3 opacity-60 transition-opacity group-hover:opacity-100" />
-                                  </a>
-                                  <button
-                                    class="inline-flex items-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                                    onclick={() => {
-                                      traceId = log.traceId || "";
-                                      applyFilters();
-                                    }}
-                                    title="Filter by this trace ID"
-                                  >
-                                    <Filter class="h-3 w-3" />
-                                  </button>
-                                {:else}
-                                  <button
-                                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-primary transition-colors hover:bg-primary/10"
-                                    onclick={() => {
-                                      traceId = log.traceId || "";
-                                      applyFilters();
-                                    }}
-                                    title="Filter by this trace ID"
-                                  >
-                                    {log.traceId}
-                                    <Filter class="h-3 w-3 opacity-60" />
-                                  </button>
-                                {/if}
-                              </div>
-                            {/if}
-                            {#if log.sessionId}
-                              <div class="flex items-center flex-wrap gap-1.5">
-                                <span class="font-semibold">Session ID:</span>
-                                <button
-                                  class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-teal-600 transition-colors hover:bg-teal-500/10 dark:text-teal-400"
-                                  onclick={() => {
-                                    sessionId = log.sessionId || "";
-                                    applyFilters();
-                                  }}
-                                  title="Filter by this session ID"
-                                >
-                                  {log.sessionId}
-                                  <Filter class="h-3 w-3 opacity-60" />
-                                </button>
-                              </div>
-                            {/if}
-                            {#if log.id && logIdentifiers.has(log.id) && (logIdentifiers.get(log.id)?.length ?? 0) > 0}
-                              <div>
-                                <span class="font-semibold">Identifiers:</span>
-                                <div class="flex flex-wrap items-center gap-2 mt-2">
-                                  {#each logIdentifiers.get(log.id) ?? [] as identifier}
-                                    <IdentifierBadge
-                                      type={identifier.type}
-                                      value={identifier.value}
-                                      onclick={() => openCorrelationDialog(log, identifier.type, identifier.value)}
-                                    />
-                                  {/each}
-                                  <a
-                                    href="/dashboard/settings/patterns"
-                                    class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-dashed border-muted-foreground/50 text-muted-foreground hover:text-foreground hover:border-foreground/50 transition-colors"
-                                  >
-                                    <Settings2 class="w-3 h-3" />
-                                    <span>Configure</span>
-                                  </a>
-                                </div>
-                              </div>
-                            {/if}
-                            {#if log.metadata}
-                              {@const metaKey = `meta-${log.id ?? globalIndex}`}
-                              <div>
-                                <span class="font-semibold">Metadata:</span>
-                                <div class="relative mt-2">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    class="absolute right-1 top-1 z-10 h-6 w-6 bg-background/80 backdrop-blur hover:bg-accent"
-                                    title="Copy metadata"
-                                    onclick={() => copyMetadata(metaKey, log.metadata)}
-                                  >
-                                    {#if copiedMetaKey === metaKey}
-                                      <Check class="h-3 w-3 text-green-500" />
-                                    {:else}
-                                      <Copy class="h-3 w-3" />
-                                    {/if}
-                                  </Button>
-                                  <div class="p-3 pr-9 bg-background rounded-md max-h-64 overflow-auto">
-                                    <pre class="text-xs w-max">{JSON.stringify(
-                                      log.metadata,
-                                      null,
-                                      2,
-                                    )}</pre>
-                                  </div>
-                                </div>
-                              </div>
-                            {/if}
-                            {#if isErrorLevel(log.level) && log.id}
-                              <div class="pt-2 border-t mt-3">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onclick={() => openExceptionDialog(log)}
-                                  class="gap-2"
-                                >
-                                  <AlertTriangle class="w-4 h-4 text-red-500" />
-                                  View Exception Details
-                                </Button>
-                              </div>
-                            {/if}
-                            {#if getBreadcrumbs(log).length > 0}
-                              {@const crumbs = getBreadcrumbs(log)}
-                              <div class="pt-2 border-t mt-3">
-                                <button
-                                  type="button"
-                                  class="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
-                                  onclick={() => toggleBreadcrumbs(globalIndex)}
-                                >
-                                  <ListTree class="w-4 h-4" />
-                                  Breadcrumbs ({crumbs.length})
-                                  <span class="text-xs ml-auto">{expandedBreadcrumbs.has(globalIndex) ? "▾" : "▸"}</span>
-                                </button>
-                                {#if expandedBreadcrumbs.has(globalIndex)}
-                                  <div class="mt-2 max-h-64 overflow-auto">
-                                    <BreadcrumbTimeline breadcrumbs={crumbs} eventTime={log.time} />
-                                  </div>
-                                {/if}
-                              </div>
-                            {/if}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    {/if}
-                  {/each}
-                </TableBody>
-              </Table>
+            <div bind:this={logsContainer}>
+              <LogResultsTable
+                logs={paginatedLogs}
+                {projects}
+                {customColumns}
+                {rowDensity}
+                selectedIndex={selectedLogIndex}
+                {expandedRows}
+                {searchQuery}
+                {searchMode}
+                onToggleRow={toggleRow}
+                onOpenContext={openContextDialog}
+                onFilterService={(service) => {
+                  if (!selectedServices.includes(service)) {
+                    selectedServices = [...selectedServices, service];
+                    applyFilters();
+                  }
+                }}
+                onFilterHost={(hostname) => {
+                  if (hostname && !selectedHostnames.includes(hostname)) {
+                    selectedHostnames = [...selectedHostnames, hostname];
+                    applyFilters();
+                  }
+                }}
+                onFilterLevel={(level) => {
+                  if (!selectedLevels.includes(level)) {
+                    selectedLevels = [...selectedLevels, level];
+                    applyFilters();
+                  }
+                }}
+              >
+                {#snippet details(log: LogEntry, index: number)}
+                  <LogRowDetails
+                    {log}
+                    identifiers={log.id ? (logIdentifiers.get(log.id) ?? []) : []}
+                    breadcrumbsOpen={expandedBreadcrumbs.has(index)}
+                    onToggleBreadcrumbs={() => toggleBreadcrumbs(index)}
+                    onFilterTrace={(id) => {
+                      traceId = id;
+                      applyFilters();
+                    }}
+                    onFilterSession={(id) => {
+                      sessionId = id;
+                      applyFilters();
+                    }}
+                    onOpenCorrelation={(type, value) => openCorrelationDialog(log, type, value)}
+                    onOpenException={() => openExceptionDialog(log)}
+                  />
+                {/snippet}
+              </LogResultsTable>
             </div>
 
             {#if !liveTail && logs.length > 0}
@@ -2387,3 +2050,4 @@
     openContextDialog(logEntry);
   }}
 />
+
