@@ -492,6 +492,13 @@ export interface IncidentsTable {
   geo_data: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
   source: Generated<string>;
   monitor_id: string | null;
+  // --- 1.6 F4: incidents generalization (migration 062) ---
+  alert_rule_id: string | null;
+  acknowledged_at: Timestamp | null;
+  acknowledged_by: string | null;
+  resolved_by: string | null;
+  last_event_at: Generated<Timestamp>;
+  // --- end F4 ---
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
