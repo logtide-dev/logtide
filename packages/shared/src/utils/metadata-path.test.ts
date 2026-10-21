@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { resolveMetadataPath, formatMetadataCell } from './metadata-path.js';
 
 describe('resolveMetadataPath', () => {
+  it('only follows own properties', () => {
+    expect(resolveMetadataPath({ a: 1 }, 'constructor')).toBeUndefined();
+    expect(resolveMetadataPath({ a: { b: 1 } }, 'a.toString')).toBeUndefined();
+    expect(resolveMetadataPath({ a: 1 }, '__proto__')).toBeUndefined();
+  });
+
   it('returns a top-level key', () => {
     expect(resolveMetadataPath({ http_host: 'a.example.com' }, 'http_host')).toBe('a.example.com');
   });
