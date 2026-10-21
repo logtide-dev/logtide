@@ -67,9 +67,24 @@ import type {
   LogFacetsResult,
   DiscoverMetadataKeysParams,
   MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
 } from '../../core/types.js';
-import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
-import { DISCOVER_DEFAULT_SAMPLE_SIZE, FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
+import {
+  assertTimeRange,
+  normalizeDiscoverParams,
+  normalizeFacetsParams,
+  normalizeHistogramParams,
+  normalizeOperationStatsParams,
+} from '../../core/normalize.js';
+import {
+  DEFAULT_OPERATION_KINDS,
+  DISCOVER_DEFAULT_SAMPLE_SIZE,
+  FACETS_DEFAULT_LIMIT,
+  OPERATION_STATS_DEFAULT_LIMIT,
+} from '../../core/constants.js';
 import { MongoDBQueryTranslator, INTERVAL_MS } from './query-translator.js';
 import {
   assembleFacets,
@@ -82,12 +97,19 @@ import {
   type HistogramRow,
 } from './log-analytics.js';
 import {
+  assembleLatencyHistogram,
+  assembleOperationStats,
   buildSpanFilter,
   buildTraceFilter,
+  entrySpanMatch,
   isTraceSpanMatchActive,
+  latencyHistogramPipeline,
+  operationStatsPipeline,
   spanSort,
   traceMatchPipeline,
   traceSort,
+  type EntryMode,
+  type PercentileStrategy,
 } from './apm-queries.js';
 
 export interface MongoDBEngineOptions {
@@ -103,6 +125,13 @@ export interface MongoDBEngineOptions {
   useTimeSeries?: boolean;
   /** Use an existing Db instance (test/injection) */
   db?: Db;
+  /**
+   * Percentiles of getOperationStats: `'native'` uses `$percentile`
+   * (MongoDB 7.0+), `'buckets'` derives them from latency buckets (any
+   * version, error within one bucket), `'auto'` (default) picks native on
+   * 7.0 and later.
+   */
+  percentileStrategy?: 'auto' | 'native' | 'buckets';
 }
 
 /** Interval to $dateTrunc unit/binSize for MongoDB 5.0+ */
@@ -166,6 +195,8 @@ export class MongoDBEngine extends StorageEngine {
   private options: MongoDBEngineOptions;
   private useTimeSeries = false;
   private useDateTrunc = false;
+  /** Server major version: undefined until known, -1 when it cannot be read. */
+  private serverMajor: number | undefined;
 
   private get tableName(): string {
     return this.options.tableName ?? 'logs';
@@ -263,6 +294,7 @@ export class MongoDBEngine extends StorageEngine {
     try {
       const info = await db.admin().serverInfo();
       const [major] = info.version.split('.').map(Number);
+      this.serverMajor = Number.isFinite(major) ? major : -1;
       this.useDateTrunc = major >= 5;
 
       if (this.options.useTimeSeries !== undefined) {
@@ -998,6 +1030,53 @@ export class MongoDBEngine extends StorageEngine {
 
     const result = await col.deleteMany(filter, { ...ctxOpts() });
     return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
+  }
+
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    // Same validation as the client (range, kinds, limit clamp).
+    const normalized = normalizeOperationStatsParams(params);
+    const limit = normalized.limit ?? OPERATION_STATS_DEFAULT_LIMIT;
+    const strategy = await this.percentileStrategy();
+    const run = async (mode: EntryMode): Promise<OperationStat[]> => {
+      const rows = await this.spansCol()
+        .aggregate(operationStatsPipeline({ ...normalized, limit }, mode, strategy), { ...ctxOpts(), allowDiskUse: true })
+        .toArray();
+      return assembleOperationStats(rows, strategy, limit);
+    };
+    const stats = await run('kinds');
+    // Explicit kinds never fall back; default kinds fall back to root spans.
+    if (stats.length > 0 || normalized.kinds !== undefined) return stats;
+    return run('root');
+  }
+
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    assertTimeRange(params.from, params.to);
+    const col = this.spansCol();
+    // The entry mode is decided on the project and service scope, before the operation filter.
+    const probe = await col.findOne(entrySpanMatch(params, 'kinds', DEFAULT_OPERATION_KINDS), {
+      ...ctxOpts(),
+      projection: { _id: 1 },
+    });
+    const rows = await col
+      .aggregate(latencyHistogramPipeline(params, probe ? 'kinds' : 'root'), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleLatencyHistogram(rows);
+  }
+
+  /** `$percentile` needs MongoDB 7.0; older (or unknown) servers use the bucket strategy. */
+  private async percentileStrategy(): Promise<PercentileStrategy> {
+    const forced = this.options.percentileStrategy;
+    if (forced === 'native' || forced === 'buckets') return forced;
+    if (this.serverMajor === undefined) {
+      try {
+        const info = await this.getDb().admin().serverInfo();
+        const major = Number(String(info.version).split('.')[0]);
+        this.serverMajor = Number.isFinite(major) ? major : -1;
+      } catch {
+        this.serverMajor = -1;
+      }
+    }
+    return this.serverMajor >= 7 ? 'native' : 'buckets';
   }
 
   // =========================================================================

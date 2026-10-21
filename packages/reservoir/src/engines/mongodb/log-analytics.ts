@@ -17,14 +17,7 @@ import type {
   MetadataKeyOccurrence,
 } from '../../core/types.js';
 import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
-
-/** BSON numbers may arrive as `Long` (promoteLongs off, or values above 2^53). */
-function toNumber(value: unknown): number {
-  if (typeof value === 'object' && value !== null && 'toNumber' in value && typeof value.toNumber === 'function') {
-    return Number(value.toNumber());
-  }
-  return Number(value);
-}
+import { toNumber } from './bson-number.js';
 
 /**
  * `(bucket start ms, level) -> count` over the filtered logs. Buckets are

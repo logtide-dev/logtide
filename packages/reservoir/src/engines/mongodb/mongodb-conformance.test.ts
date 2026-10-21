@@ -17,6 +17,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { MongoClient } from 'mongodb';
 import { createConformanceReservoir, describeReservoirConformance, isConformanceRequired, resolveSubject } from '../../conformance/index.js';
 import type { Reservoir } from '../../client.js';
+import { LATENCY_HISTOGRAM_BOUNDS_MS } from '../../core/constants.js';
+import { latencyBucketIndex } from '../../core/aggregation-helpers.js';
+import { MongoDBEngine } from './mongodb-engine.js';
 import type { LogRecord, MetadataFilter, QueryParams, SpanKind, SpanRecord, StorageConfig, TextQuery } from '../../core/types.js';
 
 const MG_TEST_CONFIG: StorageConfig = {
@@ -369,6 +372,74 @@ describe('mongodb specifics', () => {
     it('operationName filters a list and duration ties break by span id', async () => {
       expect(await spanIds({ operationName: ['GET /a', 'GET /b'], sortBy: 'duration', sortOrder: 'desc' })).toEqual(['s2', 's3', 's1']);
       expect(await spanIds({ operationName: 'GET /b' })).toEqual(['s3']);
+    });
+  });
+
+  describe('mongodb apm specifics', () => {
+    const names = async () =>
+      (await subject().getOperationStats({ projectId: SPEC_PROJECT, ...SPEC_WINDOW })).map((r) => `${r.operation} ${r.count}`);
+
+    it('falls back to root spans only when no entry span is in scope', async () => {
+      await seedSpans([
+        { id: 'r1', durationMs: 10, operation: 'root op' },
+        { id: 'c1', durationMs: 5, operation: 'child op', parent: 'r1', trace: 'trace-r1' },
+      ]);
+      expect(await names()).toEqual(['root op 1']);
+      await seedSpans([
+        { id: 'r1', durationMs: 10, operation: 'root op' },
+        { id: 'i1', durationMs: 5, operation: 'internal op', kind: 'INTERNAL' },
+      ]);
+      expect(await names()).toEqual(['internal op 1', 'root op 1']);
+      await seedSpans([
+        { id: 'r1', durationMs: 10, operation: 'root op' },
+        { id: 's1', durationMs: 5, operation: 'server op', kind: 'SERVER', parent: 'r1', trace: 'trace-r1' },
+      ]);
+      expect(await names()).toEqual(['server op 1']);
+    });
+
+    it('latency buckets are upper-inclusive with one overflow bucket', async () => {
+      await seedSpans([0, 1, 59_999, 60_000, 120_000].map((d, i) => ({ id: `l${i}`, durationMs: d, kind: 'SERVER' as const })));
+      const { bounds, counts } = await subject().getLatencyHistogram({ projectId: SPEC_PROJECT, ...SPEC_WINDOW });
+      expect(bounds).toEqual([...LATENCY_HISTOGRAM_BOUNDS_MS]);
+      expect(counts).toHaveLength(17);
+      expect(counts[0]).toBe(2);
+      expect(counts[15]).toBe(2);
+      expect(counts[16]).toBe(1);
+      expect(counts.reduce((a, b) => a + b, 0)).toBe(5);
+    });
+
+    it('buckets strategy returns ordered stats close to the native ones', async () => {
+      const rows: SpecSpan[] = [];
+      for (let d = 1; d <= 200; d++) rows.push({ id: `a${d}`, durationMs: d, operation: 'GET /a', kind: 'SERVER', status: d > 190 ? 'ERROR' : 'OK' });
+      for (let k = 1; k <= 10; k++) rows.push({ id: `b${k}`, durationMs: 100 * k, operation: 'POST /b', kind: 'SERVER' });
+      rows.push({ id: 'c1', durationMs: 5, operation: 'GET /c', kind: 'SERVER' });
+      await seedSpans(rows);
+
+      const params = { projectId: SPEC_PROJECT, ...SPEC_WINDOW };
+      const native = await subject().getOperationStats(params);
+      const engine = new MongoDBEngine({ ...MG_TEST_CONFIG, database: SPECIFICS_DATABASE }, { percentileStrategy: 'buckets', skipInitialize: true });
+      await engine.connect();
+      try {
+        const buckets = await engine.getOperationStats(params);
+        expect(buckets.map((r) => [r.operation, r.count, r.errorCount])).toEqual([
+          ['GET /a', 200, 10],
+          ['POST /b', 10, 0],
+          ['GET /c', 1, 0],
+        ]);
+        expect(buckets.map((r) => r.operation)).toEqual(native.map((r) => r.operation));
+        buckets.forEach((r, i) => {
+          const n = native[i];
+          expect(Math.abs(r.avgMs - n.avgMs)).toBeLessThanOrEqual(0.01);
+          expect(r.p50Ms <= r.p95Ms && r.p95Ms <= r.p99Ms, `${r.operation} ordered percentiles`).toBe(true);
+          for (const key of ['p50Ms', 'p95Ms', 'p99Ms'] as const) {
+            const gap = Math.abs(latencyBucketIndex(r[key]) - latencyBucketIndex(n[key]));
+            expect(gap, `${r.operation} ${key} ${r[key]} vs native ${n[key]}`).toBeLessThanOrEqual(1);
+          }
+        });
+        expect(buckets[2]).toMatchObject({ p50Ms: 5, p95Ms: 5, p99Ms: 5 });
+      } finally {
+        await engine.disconnect();
+      }
     });
   });
 });
