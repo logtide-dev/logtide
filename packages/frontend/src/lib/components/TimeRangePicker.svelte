@@ -1,11 +1,15 @@
 <script lang="ts">
+  import { TIME_RANGE_PRESETS, type TimeRangePreset } from "@logtide/shared";
   import Button from "$lib/components/ui/button/button.svelte";
-  import Input from "$lib/components/ui/input/input.svelte";
   import Label from "$lib/components/ui/label/label.svelte";
+  import * as Popover from "$lib/components/ui/popover";
   import Clock from "@lucide/svelte/icons/clock";
-  import { RangeCalendar } from "$lib/components/ui/range-calendar";
-  import { CalendarDate, type DateValue } from "@internationalized/date";
-  import type { DateRange } from "bits-ui";
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
+  import { displayPreferences } from "$lib/stores/display-preferences";
+  import type { TimeRangeValue } from "$lib/stores/scope-url";
+  import TimeRangePanel from "$lib/components/time-range/TimeRangePanel.svelte";
+  import { rangeLabel } from "$lib/components/time-range/labels";
+  import { fromInputValue, resolveZone, toInputValue } from "$lib/components/time-range/zone";
 
   export type TimeRangeType = "last_hour" | "last_24h" | "last_7d" | "custom";
 
@@ -16,31 +20,73 @@
 
   interface Props {
     /**
-     * Initial time range type. Defaults to "last_24h".
+     * Controlled mode (used by ScopeBar): the current range. When provided the
+     * picker renders a popover button; the legacy props below are ignored.
+     */
+    value?: TimeRangeValue;
+    onValueChange?: (value: TimeRangeValue) => void;
+    presets?: TimeRangePreset[];
+    class?: string;
+    /**
+     * Legacy mode: initial time range type. Defaults to "last_24h".
      */
     initialType?: TimeRangeType;
     /**
-     * Initial custom from time (ISO string or datetime-local format).
+     * Legacy mode: initial custom from time (ISO string or datetime-local format).
      * Only used when initialType is "custom".
      */
     initialCustomFrom?: string;
     /**
-     * Initial custom to time (ISO string or datetime-local format).
+     * Legacy mode: initial custom to time (ISO string or datetime-local format).
      * Only used when initialType is "custom".
      */
     initialCustomTo?: string;
     /**
-     * Called when the time range changes.
+     * Legacy mode: called when the time range changes.
      */
     onchange?: (range: TimeRange) => void;
   }
 
   let {
+    value,
+    onValueChange,
+    presets = [...TIME_RANGE_PRESETS],
+    class: className = "",
     initialType = "last_24h",
     initialCustomFrom = "",
     initialCustomTo = "",
     onchange,
   }: Props = $props();
+
+  // ── Controlled mode ──────────────────────────────────────────────────────
+  let open = $state(false);
+  let zone = $derived(resolveZone($displayPreferences.timeZone));
+  let triggerLabel = $derived(
+    value
+      ? rangeLabel(value, { zone, hour12: $displayPreferences.hour12 })
+      : ""
+  );
+
+  function handleControlledSelect(next: TimeRangeValue) {
+    onValueChange?.(next);
+    if (next.kind === "preset") open = false;
+  }
+
+  // ── Legacy mode ──────────────────────────────────────────────────────────
+  // remove legacy mode in Wave D, once logs, traces and audit-log adopt ScopeBar
+  const LEGACY_PRESETS: TimeRangePreset[] = ["1h", "24h", "7d"];
+  const TYPE_TO_PRESET: Record<Exclude<TimeRangeType, "custom">, TimeRangePreset> = {
+    last_hour: "1h",
+    last_24h: "24h",
+    last_7d: "7d",
+  };
+  const PRESET_TO_TYPE: Partial<Record<TimeRangePreset, Exclude<TimeRangeType, "custom">>> = {
+    "1h": "last_hour",
+    "24h": "last_24h",
+    "7d": "last_7d",
+  };
+  // Legacy strings are browser-local datetime-local values.
+  const browserZone = resolveZone(null);
 
   // svelte-ignore state_referenced_locally
   let timeRangeType = $state<TimeRangeType>(initialType);
@@ -57,12 +103,7 @@
     try {
       const date = new Date(isoString);
       if (isNaN(date.getTime())) return isoString; // Already in correct format or invalid
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const hours = String(date.getHours()).padStart(2, "0");
-      const minutes = String(date.getMinutes()).padStart(2, "0");
-      return `${year}-${month}-${day}T${hours}:${minutes}`;
+      return toInputValue(date, browserZone);
     } catch {
       return "";
     }
@@ -151,113 +192,56 @@
     onchange?.(getTimeRange());
   }
 
-  // ── Custom range as calendar (date) + time input (hour) ──────────────────
-  // customFromTime / customToTime stay the source of truth ("YYYY-MM-DDTHH:mm");
-  // the calendar drives the date part and the time inputs the hour part.
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const datePart = (s: string) => (s ? s.slice(0, 10) : "");
-  const timePart = (s: string) => (s && s.length >= 16 ? s.slice(11, 16) : "00:00");
-  const combine = (d: string, t: string) => (d ? `${d}T${t || "00:00"}` : "");
-
-  function toCalendarDate(s: string): DateValue | undefined {
-    const d = datePart(s);
-    if (!d) return undefined;
-    const [y, m, day] = d.split("-").map(Number);
-    if (!y || !m || !day) return undefined;
-    return new CalendarDate(y, m, day);
-  }
-
-  function dateStr(d: DateValue): string {
-    return `${d.year}-${pad(d.month)}-${pad(d.day)}`;
-  }
-
-  let calendarValue = $derived<DateRange>({
-    start: toCalendarDate(customFromTime),
-    end: toCalendarDate(customToTime),
+  let legacyValue = $derived.by<TimeRangeValue>(() => {
+    if (timeRangeType !== "custom") {
+      return { kind: "preset", preset: TYPE_TO_PRESET[timeRangeType] };
+    }
+    const a = fromInputValue(customFromTime, browserZone);
+    const b = fromInputValue(customToTime, browserZone);
+    if (a && b) return { kind: "custom", from: a.toISOString(), to: b.toISOString() };
+    return { kind: "custom", from: customFromTime, to: customToTime };
   });
 
-  function handleRangeChange(range: DateRange | undefined) {
-    if (!range) return;
-    if (range.start) customFromTime = combine(dateStr(range.start), timePart(customFromTime));
-    if (range.end) customToTime = combine(dateStr(range.end), timePart(customToTime));
-    emitChange();
-  }
-
-  function handleTimeInput(which: "from" | "to", value: string) {
-    if (which === "from") {
-      customFromTime = combine(datePart(customFromTime), value);
-    } else {
-      customToTime = combine(datePart(customToTime), value);
+  function handleLegacySelect(next: TimeRangeValue) {
+    if (next.kind === "preset") {
+      const type = PRESET_TO_TYPE[next.preset];
+      if (type) handleTypeChange(type);
+      return;
     }
+    // Editor applied a range: keep the legacy browser-local strings in sync.
+    timeRangeType = "custom";
+    customFromTime = formatDateForInput(next.from);
+    customToTime = formatDateForInput(next.to);
     emitChange();
   }
 </script>
 
-<div class="space-y-3">
-  <div class="flex items-center gap-2">
-    <Clock class="w-4 h-4 text-muted-foreground" />
-    <Label>Time Range</Label>
-  </div>
-  <div class="flex flex-wrap gap-2">
-    <Button
-      variant={timeRangeType === "last_hour" ? "default" : "outline"}
-      size="sm"
-      onclick={() => handleTypeChange("last_hour")}
-    >
-      Last Hour
-    </Button>
-    <Button
-      variant={timeRangeType === "last_24h" ? "default" : "outline"}
-      size="sm"
-      onclick={() => handleTypeChange("last_24h")}
-    >
-      Last 24 Hours
-    </Button>
-    <Button
-      variant={timeRangeType === "last_7d" ? "default" : "outline"}
-      size="sm"
-      onclick={() => handleTypeChange("last_7d")}
-    >
-      Last 7 Days
-    </Button>
-    <Button
-      variant={timeRangeType === "custom" ? "default" : "outline"}
-      size="sm"
-      onclick={() => handleTypeChange("custom")}
-    >
-      Custom
-    </Button>
-  </div>
-
-  {#if timeRangeType === "custom"}
-    <div class="space-y-3 pt-2">
-      <div class="rounded-md border">
-        <RangeCalendar
-          numberOfMonths={1}
-          value={calendarValue}
-          onValueChange={handleRangeChange}
-        />
-      </div>
-      <div class="grid grid-cols-2 gap-3">
-        <div class="space-y-1.5">
-          <Label for="time-range-from">From time</Label>
-          <Input
-            id="time-range-from"
-            type="time"
-            value={timePart(customFromTime)}
-            onchange={(e) => handleTimeInput("from", (e.currentTarget as HTMLInputElement).value)}
-          />
-        </div>
-        <div class="space-y-1.5">
-          <Label for="time-range-to">To time</Label>
-          <Input
-            id="time-range-to"
-            type="time"
-            value={timePart(customToTime)}
-            onchange={(e) => handleTimeInput("to", (e.currentTarget as HTMLInputElement).value)}
-          />
-        </div>
-      </div>
+{#if value}
+  <Popover.Root bind:open>
+    <Popover.Trigger>
+      {#snippet child({ props })}
+        <Button {...props} type="button" variant="outline" size="sm" class="gap-2 {className}">
+          <Clock class="h-4 w-4 text-muted-foreground" />
+          <span>{triggerLabel}</span>
+          <ChevronDown class="h-4 w-4 opacity-50" />
+        </Button>
+      {/snippet}
+    </Popover.Trigger>
+    <Popover.Content class="w-[320px] max-w-[90vw] p-4" align="end">
+      <TimeRangePanel {value} {presets} {zone} onSelect={handleControlledSelect} />
+    </Popover.Content>
+  </Popover.Root>
+{:else}
+  <div class="space-y-3 {className}">
+    <div class="flex items-center gap-2">
+      <Clock class="w-4 h-4 text-muted-foreground" />
+      <Label>Time range</Label>
     </div>
-  {/if}
-</div>
+    <TimeRangePanel
+      value={legacyValue}
+      presets={LEGACY_PRESETS}
+      zone={browserZone}
+      onSelect={handleLegacySelect}
+    />
+  </div>
+{/if}

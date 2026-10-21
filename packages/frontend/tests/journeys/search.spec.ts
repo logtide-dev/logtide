@@ -218,7 +218,7 @@ test.describe('Search Journey', () => {
 
     // Open the Time range pill popover, then click Last Hour inside it.
     await pill.click();
-    const lastHourButton = page.getByRole('button', { name: 'Last Hour', exact: true });
+    const lastHourButton = page.getByRole('button', { name: 'Last hour', exact: true });
     await lastHourButton.waitFor({ state: 'visible' });
     await lastHourButton.click();
     await page.waitForTimeout(2000);
