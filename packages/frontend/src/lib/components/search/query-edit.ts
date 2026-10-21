@@ -67,7 +67,7 @@ export function quotePhrase(value: string): string {
 }
 
 /** A value inside `key:( ... )`: `OR` and `AND` would read as operators there, so they are quoted. */
-function listValue(value: string): string {
+export function quoteListValue(value: string): string {
   const q = quoteFieldValue(value);
   return q === 'OR' || q === 'AND' ? `"${q}"` : q;
 }
@@ -77,7 +77,7 @@ export function formatFieldClause(key: string, values: string[], negate: boolean
   if (values.length === 0) return '';
   const head = `${negate ? '-' : ''}${key}:`;
   if (values.length === 1) return head + quoteQueryValue(values[0]);
-  return `${head}(${values.map(listValue).join(' OR ')})`;
+  return `${head}(${values.map(quoteListValue).join(' OR ')})`;
 }
 
 /** Appends a clause with one separating space; both sides are trimmed. */
