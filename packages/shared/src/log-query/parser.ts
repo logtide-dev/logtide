@@ -28,7 +28,7 @@ interface ParseError {
   position: number;
 }
 
-type ShapeOp = FieldClause['op'] | 'not_contains';
+export type ShapeOp = FieldClause['op'] | 'not_contains';
 
 const WORD_ONLY = /^[\p{L}\p{N}_]+$/u;
 const EQUALS_ONLY = new Set<BuiltinField>(['traceId', 'sessionId', 'spanId']);
@@ -46,8 +46,11 @@ function textTerm(item: TextItem): TextTerm | null {
   return { kind: WORD_ONLY.test(item.value) ? 'word' : 'phrase', value: item.value };
 }
 
-/** Operator and raw values of one field clause as typed (before built-in rules). */
-function shapeOf(item: FieldItem): { op: ShapeOp; values: string[] } {
+/**
+ * Operator and raw values of one field clause as typed (before built-in rules).
+ * Internal: the query editors classify clauses with it too.
+ */
+export function shapeOf(item: FieldItem): { op: ShapeOp; values: string[] } {
   const v = item.value;
   if (v.kind === 'list') return { op: item.negated ? 'not_in' : 'in', values: v.values.map((x) => x.text) };
   if (v.kind === 'quoted') return { op: item.negated ? 'not_equals' : 'equals', values: [v.text] };
