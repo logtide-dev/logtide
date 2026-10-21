@@ -16,6 +16,7 @@ import type {
 } from './types';
 import { incidentNotificationQueue } from '../../queue/jobs/incident-notification.js';
 import type { EnrichmentService } from './enrichment-service.js';
+import { mapIncidentRow } from '../incidents/mappers.js';
 
 export class SiemService {
   constructor(private db: Kysely<Database>) {}
@@ -155,6 +156,7 @@ export class SiemService {
         mitre_techniques: input.mitreTechniques ?? null,
         source: input.source ?? 'sigma',
         monitor_id: input.monitorId ?? null,
+        ...(input.timeWindowEnd && { last_event_at: input.timeWindowEnd }),
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -593,30 +595,7 @@ export class SiemService {
   }
 
   private mapIncident(row: any): Incident {
-    return {
-      id: row.id,
-      organizationId: row.organization_id,
-      projectId: row.project_id,
-      title: row.title,
-      description: row.description,
-      severity: row.severity,
-      status: row.status,
-      assigneeId: row.assignee_id,
-      traceId: row.trace_id,
-      timeWindowStart: row.time_window_start,
-      timeWindowEnd: row.time_window_end,
-      detectionCount: row.detection_count,
-      affectedServices: row.affected_services,
-      mitreTactics: row.mitre_tactics,
-      mitreTechniques: row.mitre_techniques,
-      ipReputation: row.ip_reputation,
-      geoData: row.geo_data,
-      source: row.source ?? 'sigma',
-      monitorId: row.monitor_id ?? null,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      resolvedAt: row.resolved_at,
-    };
+    return mapIncidentRow(row);
   }
 
   private mapIncidentComment(row: any): IncidentComment {

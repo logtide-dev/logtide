@@ -508,6 +508,58 @@ describe('SIEM Service - Incidents', () => {
         const updated = await siemService.getIncident(incident.id, organization.id);
         expect(updated?.ipReputation).toBeNull();
     });
+
+    it('createIncident sets lastEventAt to timeWindowEnd when given', async () => {
+        const { organization, project } = await createTestContext();
+        const timeWindowEnd = new Date('2026-10-20T08:30:00.000Z');
+        const incident = await siemService.createIncident({
+            organizationId: organization.id,
+            projectId: project.id,
+            title: 'Windowed',
+            severity: 'high',
+            timeWindowStart: new Date('2026-10-20T08:00:00.000Z'),
+            timeWindowEnd,
+        });
+
+        expect(new Date(incident.lastEventAt).getTime()).toBe(timeWindowEnd.getTime());
+        const reloaded = await siemService.getIncident(incident.id, organization.id);
+        expect(new Date(reloaded!.lastEventAt).getTime()).toBe(timeWindowEnd.getTime());
+    });
+
+    it('createIncident defaults lastEventAt to the creation time', async () => {
+        const { organization, project } = await createTestContext();
+        const incident = await siemService.createIncident({
+            organizationId: organization.id,
+            projectId: project.id,
+            title: 'No window',
+            severity: 'low',
+        });
+
+        expect(incident.lastEventAt).toBeDefined();
+        const diff = Math.abs(
+            new Date(incident.lastEventAt).getTime() - new Date(incident.createdAt).getTime()
+        );
+        expect(diff).toBeLessThan(5000);
+    });
+
+    it('createIncident still returns source sigma and null alertRuleId', async () => {
+        const { organization, project } = await createTestContext();
+        const incident = await siemService.createIncident({
+            organizationId: organization.id,
+            projectId: project.id,
+            title: 'Sigma',
+            severity: 'medium',
+        });
+
+        expect(incident).toMatchObject({
+            source: 'sigma',
+            alertRuleId: null,
+            monitorId: null,
+            acknowledgedAt: null,
+            acknowledgedBy: null,
+            resolvedBy: null,
+        });
+    });
 });
 
 describe('SIEM Service - Comments', () => {
