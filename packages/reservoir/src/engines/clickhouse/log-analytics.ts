@@ -7,13 +7,18 @@
 // strings in JSONEachRow, hence `Number()`.
 
 import { buildFacet, zeroFillHistogram } from '../../core/aggregation-helpers.js';
+import { DISCOVER_DEFAULT_SAMPLE_SIZE } from '../../core/constants.js';
+import type { NativeQuery } from '../../core/query-translator.js';
 import type {
+  DiscoverMetadataKeysParams,
   LogFacetField,
   LogFacetsResult,
   LogHistogramParams,
   LogHistogramResult,
   LogLevel,
+  MetadataKeyOccurrence,
 } from '../../core/types.js';
+import { toDateTime64 } from './query-translator.js';
 
 /** Builds the zero-filled histogram from `translateHistogram` rows (`bucket_ms`, `level`, `n`). */
 export function assembleHistogram(
@@ -49,4 +54,39 @@ export function assembleFacets(
     totals[index] = Number(row.total);
   }
   return { facets: fields.map((field, i) => buildFacet(field, top[i], totals[i], limit)) };
+}
+
+/** Most keys one discovery call returns. */
+export const DISCOVER_MAX_KEYS = 500;
+
+/**
+ * Metadata keys of the newest `sampleSize` logs of the projects in range
+ * (plan S9): a top-level key whose value is an object counts as
+ * `parent.child` for each child (children whose own name has a dot are not
+ * addressable and are skipped), any other top-level key counts as itself.
+ * One occurrence per log and key; occurrences desc, then key in byte order.
+ */
+export function translateDiscoverKeys(params: DiscoverMetadataKeysParams, tableName = 'logs'): NativeQuery {
+  const queryParams: Record<string, unknown> = {
+    p_pids: Array.isArray(params.projectId) ? [...params.projectId] : [params.projectId],
+    p_from: toDateTime64(params.from),
+    p_to: toDateTime64(params.to),
+    p_n: params.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE,
+  };
+  const keysOfLog =
+    `arrayDistinct(arrayFlatten(arrayMap(kv -> if(JSONType(kv.2) = 'Object', ` +
+    `arrayMap(c -> concat(kv.1, '.', c), arrayFilter(c -> position(c, '.') = 0, JSONExtractKeys(kv.2))), ` +
+    `[kv.1]), JSONExtractKeysAndValuesRaw(metadata))))`;
+  const sample =
+    `SELECT metadata FROM ${tableName} PREWHERE project_id IN {p_pids:Array(String)}` +
+    ` AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} ORDER BY time DESC LIMIT {p_n:UInt32}`;
+  const query =
+    `SELECT key, count() AS occurrences FROM (SELECT ${keysOfLog} AS keys FROM (${sample}))` +
+    ` ARRAY JOIN keys AS key GROUP BY key ORDER BY occurrences DESC, key ASC LIMIT ${DISCOVER_MAX_KEYS}`;
+  return { query, parameters: [queryParams] };
+}
+
+/** `translateDiscoverKeys` rows to the contract shape. */
+export function assembleMetadataKeys(rows: Record<string, unknown>[]): MetadataKeyOccurrence[] {
+  return rows.map((row) => ({ key: String(row.key), occurrences: Number(row.occurrences) }));
 }

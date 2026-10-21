@@ -212,3 +212,28 @@ describe('clickhouse json specifics: facets', () => {
     ]);
   });
 });
+
+describe('clickhouse json specifics: metadata keys', () => {
+  const project = '00000000-0000-4000-8000-00000000c304';
+  // Seeded oldest first: t1, t2, t3 (newest).
+  const subject = useSpecifics(project, [
+    { message: 't1', metadata: { a: 1, http: { method: 'GET', 'x.y': 1 } } },
+    { message: 't2', metadata: { a: 2, old: true } },
+    { message: 't3', metadata: { a: 3, b: null } },
+  ]);
+  const discover = (sampleSize: number) =>
+    subject().discoverMetadataKeys({ projectId: project, from: SPECIFICS_FROM, to: SPECIFICS_TO, sampleSize });
+
+  it('the sample is the newest logs', async () => {
+    expect(await discover(2)).toEqual([
+      { key: 'a', occurrences: 2 },
+      { key: 'b', occurrences: 1 },
+      { key: 'old', occurrences: 1 },
+    ]);
+  });
+
+  it('objects expand one level, children with a dot are skipped', async () => {
+    const keys = (await discover(3)).map((k) => k.key);
+    expect(keys).toEqual(['a', 'b', 'http.method', 'old']);
+  });
+});

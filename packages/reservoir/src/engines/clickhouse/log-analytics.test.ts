@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ClickHouseClient } from '@clickhouse/client';
-import { assembleFacets, assembleHistogram } from './log-analytics.js';
+import { assembleFacets, assembleHistogram, translateDiscoverKeys } from './log-analytics.js';
 import { ClickHouseQueryTranslator } from './query-translator.js';
 import { ClickHouseEngine } from './clickhouse-engine.js';
 import type { LogFacetField, LogFacetsParams, LogHistogramParams } from '../../core/types.js';
@@ -202,5 +202,58 @@ describe('clickhouse facets', () => {
       { field: 'level', values: [{ value: 'error', count: 2 }], otherCount: 0 },
       { field: 'service', values: [{ value: 'api', count: 3 }], otherCount: 2 },
     ]);
+  });
+});
+
+describe('clickhouse metadata key discovery', () => {
+  const discoverBase = {
+    projectId: '00000000-0000-0000-0000-000000000001',
+    from: at('2026-01-01T10:00:00.000Z'),
+    to: at('2026-01-01T11:00:00.000Z'),
+  };
+
+  it('sample size defaults to 1000 and clamps to 1..5000', async () => {
+    const { engine, query } = stubEngine();
+    await engine.discoverMetadataKeys(discoverBase);
+    expect(lastCall(query).query_params.p_n).toBe(1000);
+    await engine.discoverMetadataKeys({ ...discoverBase, sampleSize: 9999 });
+    expect(lastCall(query).query_params.p_n).toBe(5000);
+    await engine.discoverMetadataKeys({ ...discoverBase, sampleSize: 0 });
+    expect(lastCall(query).query_params.p_n).toBe(1);
+  });
+
+  it('sql reads the newest logs of the listed projects first', () => {
+    const native = translateDiscoverKeys({ ...discoverBase, projectId: ['p1', 'p2'], sampleSize: 10 });
+    const query = native.query as string;
+    const params = (native.parameters as Record<string, unknown>[])[0];
+    expect(query).toContain(
+      'FROM logs PREWHERE project_id IN {p_pids:Array(String)} AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} ORDER BY time DESC LIMIT {p_n:UInt32}',
+    );
+    expect(query).toContain('ORDER BY occurrences DESC, key ASC LIMIT 500');
+    expect(params).toMatchObject({ p_pids: ['p1', 'p2'], p_n: 10 });
+  });
+
+  it('objects expand one level, skipping children with a dot in their name', () => {
+    const query = translateDiscoverKeys({ ...discoverBase, sampleSize: 10 }).query as string;
+    expect(query).toContain("if(JSONType(kv.2) = 'Object'");
+    expect(query).toContain("arrayFilter(c -> position(c, '.') = 0, JSONExtractKeys(kv.2))");
+    expect(query).toContain('arrayDistinct(');
+  });
+
+  it('the engine maps rows to key occurrences', async () => {
+    const { engine } = stubEngine([
+      { key: 'env', occurrences: '3' },
+      { key: 'http.method', occurrences: '1' },
+    ]);
+    expect(await engine.discoverMetadataKeys(discoverBase)).toEqual([
+      { key: 'env', occurrences: 3 },
+      { key: 'http.method', occurrences: 1 },
+    ]);
+  });
+
+  it('rejects a reversed range before querying', async () => {
+    const { engine, query } = stubEngine();
+    await expect(engine.discoverMetadataKeys({ ...discoverBase, from: discoverBase.to, to: discoverBase.from })).rejects.toBeInstanceOf(RangeError);
+    expect(query).not.toHaveBeenCalled();
   });
 });

@@ -92,11 +92,13 @@ import type {
   LogHistogramResult,
   LogFacetsParams,
   LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
 } from '../../core/types.js';
 import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
-import { normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
+import { normalizeDiscoverParams, normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
 import { ClickHouseQueryTranslator, toDateTime64 } from './query-translator.js';
-import { assembleFacets, assembleHistogram } from './log-analytics.js';
+import { assembleFacets, assembleHistogram, assembleMetadataKeys, translateDiscoverKeys } from './log-analytics.js';
 
 export interface ClickHouseEngineOptions {
   /** Use an existing ClickHouse client instead of creating a new one */
@@ -730,6 +732,19 @@ export class ClickHouseEngine extends StorageEngine {
     );
     const rows = (await resultSet.json()) as Record<string, unknown>[];
     return assembleFacets(normalized.fields, rows, limit);
+  }
+
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    const native = translateDiscoverKeys(normalizeDiscoverParams(params), this.tableName);
+    const resultSet = await this.runQuery(
+      {
+        query: native.query as string,
+        query_params: (native.parameters as Record<string, unknown>[])[0],
+        format: 'JSONEachRow',
+      },
+      'discover-keys',
+    );
+    return assembleMetadataKeys((await resultSet.json()) as Record<string, unknown>[]);
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {
