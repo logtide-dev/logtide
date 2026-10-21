@@ -953,3 +953,93 @@ describe('monitor form fields (W12)', () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+// ===========================================================================
+// W12: uptime summary, response times, outages
+// ===========================================================================
+describe('monitor stats routes (W12)', () => {
+  async function createMonitorViaApi() {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/monitors',
+      headers: authHeaders(authToken),
+      payload: { organizationId: ctx.organization.id, projectId: ctx.project.id, name: 'Stats', type: 'heartbeat' },
+    });
+    return JSON.parse(res.payload).monitor.id as string;
+  }
+
+  it('GET uptime-summary returns the four windows', async () => {
+    const id = await createMonitorViaApi();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/uptime-summary?organizationId=${ctx.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(Object.keys(JSON.parse(res.payload).windows).sort()).toEqual(['24h', '30d', '7d', '90d']);
+  });
+
+  it('GET response-times returns bucketSeconds and points', async () => {
+    const id = await createMonitorViaApi();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/response-times?organizationId=${ctx.organization.id}&range=7d`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload)).toEqual({ bucketSeconds: 3600, points: [] });
+  });
+
+  it('response-times rejects an unknown range with 400', async () => {
+    const id = await createMonitorViaApi();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/response-times?organizationId=${ctx.organization.id}&range=1y`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('GET outages returns an empty list for a fresh monitor and clamps the limit', async () => {
+    const id = await createMonitorViaApi();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/outages?organizationId=${ctx.organization.id}&limit=9999`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload)).toEqual({ outages: [] });
+  });
+
+  it('all three return 404 for a monitor of another organization', async () => {
+    const id = await createMonitorViaApi();
+    const other = await createTestContext();
+    const otherSession = await createTestSession(other.user.id);
+    for (const path of ['uptime-summary', 'response-times', 'outages']) {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/monitors/${id}/${path}?organizationId=${other.organization.id}`,
+        headers: authHeaders(otherSession.token),
+      });
+      expect(res.statusCode).toBe(404);
+    }
+  });
+
+  it('returns 403 for a non-member and 400 for a bad id', async () => {
+    const id = await createMonitorViaApi();
+    const other = await createTestContext();
+    const forbidden = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/outages?organizationId=${other.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const bad = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/not-a-uuid/uptime-summary?organizationId=${ctx.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(bad.statusCode).toBe(400);
+  });
+});

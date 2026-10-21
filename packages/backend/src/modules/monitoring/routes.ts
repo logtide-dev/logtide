@@ -339,6 +339,46 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
     return reply.send({ history });
   });
 
+  fastify.get('/:id/uptime-summary', async (request: any, reply) => {
+    const id = parseId(request.params);
+    if (!id) return reply.status(400).send({ error: 'Invalid monitor ID' });
+    const organizationId = parseOrgId((request.query as any).organizationId);
+    if (!organizationId) return reply.status(400).send({ error: 'organizationId required' });
+    if (!(await checkOrgMembership(request.user.id, organizationId))) return reply.status(403).send({ error: 'Forbidden' });
+
+    const summary = await monitorService.getUptimeSummary(id, organizationId);
+    if (!summary) return reply.status(404).send({ error: 'Not found' });
+    return reply.send(summary);
+  });
+
+  fastify.get('/:id/response-times', async (request: any, reply) => {
+    const id = parseId(request.params);
+    if (!id) return reply.status(400).send({ error: 'Invalid monitor ID' });
+    const { organizationId: rawOrgId, range } = request.query as any;
+    const organizationId = parseOrgId(rawOrgId);
+    if (!organizationId) return reply.status(400).send({ error: 'organizationId required' });
+    const parsedRange = z.enum(['24h', '7d', '30d']).safeParse(range ?? '24h');
+    if (!parsedRange.success) return reply.status(400).send({ error: 'range must be 24h, 7d or 30d' });
+    if (!(await checkOrgMembership(request.user.id, organizationId))) return reply.status(403).send({ error: 'Forbidden' });
+
+    const result = await monitorService.getResponseTimes(id, organizationId, parsedRange.data);
+    if (!result) return reply.status(404).send({ error: 'Not found' });
+    return reply.send(result);
+  });
+
+  fastify.get('/:id/outages', async (request: any, reply) => {
+    const id = parseId(request.params);
+    if (!id) return reply.status(400).send({ error: 'Invalid monitor ID' });
+    const { organizationId: rawOrgId, limit } = request.query as any;
+    const organizationId = parseOrgId(rawOrgId);
+    if (!organizationId) return reply.status(400).send({ error: 'organizationId required' });
+    if (!(await checkOrgMembership(request.user.id, organizationId))) return reply.status(403).send({ error: 'Forbidden' });
+
+    const result = await monitorService.getOutages(id, organizationId, parsePositiveInt(limit, 20, 100));
+    if (!result) return reply.status(404).send({ error: 'Not found' });
+    return reply.send(result);
+  });
+
   // ---- Notification channels for monitors ----
 
   fastify.get('/:id/channels', async (request: any, reply) => {

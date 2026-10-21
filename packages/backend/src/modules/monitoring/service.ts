@@ -35,6 +35,12 @@ import { config } from '../../config/index.js';
 import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 import { incidentsService } from '../incidents/service.js';
+import {
+  getUptimeSummary,
+  getResponseTimes,
+  getOutages,
+  type ResponseTimeRange,
+} from './uptime-stats.js';
 
 const MAX_CONCURRENT_CHECKS = 20;
 
@@ -337,6 +343,19 @@ export class MonitorService {
       successfulChecks: r.successful_checks,
       uptimePct: r.uptime_pct ?? 0,
     }));
+  }
+
+  /** Uptime per window (24h, 7d, 30d, 90d). Null when the monitor is not in the organization. */
+  getUptimeSummary(monitorId: string, organizationId: string) {
+    return getUptimeSummary(monitorId, organizationId);
+  }
+
+  getResponseTimes(monitorId: string, organizationId: string, range: ResponseTimeRange) {
+    return getResponseTimes(monitorId, organizationId, range);
+  }
+
+  getOutages(monitorId: string, organizationId: string, limit: number) {
+    return getOutages(monitorId, organizationId, limit);
   }
 
   // ============================================================================
