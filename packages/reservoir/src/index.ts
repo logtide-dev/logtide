@@ -112,6 +112,17 @@ export {
   LATENCY_HISTOGRAM_BOUNDS_MS,
   SESSIONS_MAX_LIMIT,
 } from './core/constants.js';
+export {
+  histogramBucketStarts,
+  zeroFillHistogram,
+  facetFieldName,
+  buildFacet,
+  countMetadataKeys,
+  latencyBucketIndex,
+  encodeSessionCursor,
+  decodeSessionCursor,
+  compareByteOrder,
+} from './core/aggregation-helpers.js';
 
 // Factory and client
 export { StorageEngineFactory } from './factory.js';
