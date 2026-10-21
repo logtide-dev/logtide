@@ -7,6 +7,7 @@
 // name plus `_specifics`) are dropped and recreated per run, so they must match
 // CONFORMANCE_NAMESPACE_PATTERN; shared test databases are refused.
 
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   describeReservoirConformance,
   createConformanceReservoir,
@@ -14,6 +15,7 @@ import {
   resolveSubject,
 } from '../../conformance/index.js';
 import type { Reservoir } from '../../client.js';
+import type { LogRecord, QueryParams, TextQuery } from '../../core/types.js';
 
 export const CH_TEST_CONFIG = {
   host: 'localhost',
@@ -32,13 +34,113 @@ export function createClickHouseSubject(database: string): Promise<Reservoir> {
   return createConformanceReservoir('clickhouse', { ...process.env, RESERVOIR_CLICKHOUSE_URL: chUrl(database) });
 }
 
-/** Like createClickHouseSubject, or null (skip) when the server is unreachable and conformance is not required. */
-export function resolveClickHouseSubject(database: string): Promise<Reservoir | null> {
-  return resolveSubject('clickhouse', () => createClickHouseSubject(database), isConformanceRequired());
-}
-
 export const CH_SPECIFICS_DATABASE = `${CH_TEST_CONFIG.database}_specifics`;
 
 describeReservoirConformance('clickhouse', {
   create: () => createClickHouseSubject(CH_TEST_CONFIG.database),
+});
+
+// ----------------------------------------------------------------------------
+// Engine-specific integration cases (own database, one project per describe)
+// ----------------------------------------------------------------------------
+
+const SPECIFICS_FROM = new Date('2026-02-01T00:00:00.000Z');
+const SPECIFICS_TO = new Date('2026-02-01T01:00:00.000Z');
+
+let specifics: Promise<Reservoir | null> | undefined;
+
+/** The shared specifics subject, created (database reset) on first use. */
+function specificsSubject(): Promise<Reservoir | null> {
+  specifics ??= resolveSubject('clickhouse', () => createClickHouseSubject(CH_SPECIFICS_DATABASE), isConformanceRequired());
+  return specifics;
+}
+
+afterAll(async () => {
+  const subject = specifics ? await specifics.catch(() => null) : null;
+  if (subject) await subject.close();
+});
+
+/**
+ * Registers hooks that seed `messages` (or full records) under `projectId`
+ * and returns an accessor for the subject; tests skip when it is unavailable.
+ */
+function useSpecifics(projectId: string, records: (Partial<LogRecord> & { message: string })[]): () => Reservoir {
+  let subject: Reservoir | null = null;
+  beforeAll(async () => {
+    subject = await specificsSubject();
+    if (!subject) return;
+    const logs: LogRecord[] = records.map((r, i) => ({
+      time: new Date(SPECIFICS_FROM.getTime() + (i + 1) * 1000),
+      projectId,
+      service: 'api',
+      level: 'info',
+      ...r,
+    }));
+    const result = await subject.ingest(logs);
+    if (result.failed > 0) throw new Error(`Seeding specifics failed: ${JSON.stringify(result.errors ?? [])}`);
+  }, 60_000);
+  beforeEach(({ skip }) => {
+    if (!subject) skip();
+  });
+  return () => {
+    if (!subject) throw new Error('ClickHouse specifics subject is not available');
+    return subject;
+  };
+}
+
+async function messagesOf(subject: Reservoir, projectId: string, extra: Partial<QueryParams>): Promise<string[]> {
+  const params = { projectId, from: SPECIFICS_FROM, to: SPECIFICS_TO, limit: 1000, sortOrder: 'asc', ...extra } as QueryParams;
+  const result = await subject.query(params);
+  const { count } = await subject.count(params);
+  expect(count, 'count equals the number of returned logs').toBe(result.logs.length);
+  return result.logs.map((l) => l.message).sort();
+}
+
+const words = (...values: string[]): TextQuery => ({ all: values.map((value) => ({ kind: 'word' as const, value })), anyOf: [], none: [] });
+const phrase = (value: string): TextQuery => ({ all: [{ kind: 'phrase', value }], anyOf: [], none: [] });
+
+describe('clickhouse text specifics', () => {
+  const project = '00000000-0000-4000-8000-00000000c301';
+  const subject = useSpecifics(project, [
+    { message: 'service down' },
+    { message: 'GET https://api.timeout.com/v1 failed' },
+    { message: 'read /var/log/timeout.log' },
+    { message: 'user_id missing' },
+    { message: 'user id missing' },
+    { message: 'connection refused' },
+    { message: 'install c++ (beta) now' },
+    { message: 'Überweisung fehlgeschlagen' },
+    { message: 'Überweisungen offen' },
+  ]);
+
+  it('everyday tokens match whole words', async () => {
+    expect(await messagesOf(subject(), project, { textQuery: words('down') })).toEqual(['service down']);
+    expect(await messagesOf(subject(), project, { textQuery: words('timeout') })).toEqual([
+      'GET https://api.timeout.com/v1 failed',
+      'read /var/log/timeout.log',
+    ]);
+    expect(await messagesOf(subject(), project, { textQuery: words('user_id') })).toEqual(['user_id missing']);
+  });
+
+  it('words are not stemmed', async () => {
+    expect(await messagesOf(subject(), project, { textQuery: words('connections') })).toEqual([]);
+  });
+
+  it('phrase metacharacters match literally', async () => {
+    expect(await messagesOf(subject(), project, { textQuery: phrase('c++ (beta)') })).toEqual(['install c++ (beta) now']);
+    expect(await messagesOf(subject(), project, { textQuery: phrase('c+ (beta)') })).toEqual([]);
+  });
+
+  it('non-English words fold case and match whole tokens', async () => {
+    expect(await messagesOf(subject(), project, { textQuery: words('überweisung') })).toEqual(['Überweisung fehlgeschlagen']);
+    expect(await messagesOf(subject(), project, { textQuery: phrase('ÜBERWEISUNG') })).toEqual([
+      'Überweisung fehlgeschlagen',
+      'Überweisungen offen',
+    ]);
+  });
+
+  it('legacy search params still work', async () => {
+    expect(await messagesOf(subject(), project, { search: 'TIMEOUT log' })).toEqual(['read /var/log/timeout.log']);
+    expect(await messagesOf(subject(), project, { search: '(beta)', searchMode: 'substring' })).toEqual(['install c++ (beta) now']);
+  });
 });

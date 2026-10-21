@@ -11,15 +11,11 @@ import type {
   QueryParams,
   TopValuesParams,
 } from '../../core/types.js';
+import { compileTextQuery, resolveTextQuery } from './text-query.js';
 
 /** ClickHouse can't parse 0 as DateTime64(3) - clamp to 1ms after epoch */
 export function toDateTime64(date: Date): number {
   return Math.max(date.getTime() / 1000, 0.001);
-}
-
-/** hasToken() rejects needles with non-alphanumeric (separator) characters */
-function hasTokenSeparator(search: string): boolean {
-  return /[^a-zA-Z0-9]/.test(search);
 }
 
 const INTERVAL_MAP: Record<AggregationInterval, string> = {
@@ -88,15 +84,8 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
       this.pushClickHouseFilter(where, queryParams, 'hostname', params.hostname);
     }
 
-    if (params.search) {
-      if (params.searchMode === 'substring' || hasTokenSeparator(params.search)) {
-        where.push(`positionCaseInsensitive(message, {p_search:String}) > 0`);
-        queryParams.p_search = params.search;
-      } else {
-        where.push(`hasToken(lower(message), {p_search:String})`);
-        queryParams.p_search = params.search.toLowerCase();
-      }
-    }
+    const text = resolveTextQuery(params);
+    if (text) where.push(...compileTextQuery(text, queryParams));
 
     if (params.metadataFilters && params.metadataFilters.length > 0) {
       this.pushMetadataFilters(where, queryParams, params.metadataFilters);
