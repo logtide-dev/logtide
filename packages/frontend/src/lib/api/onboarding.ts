@@ -1,5 +1,7 @@
 import { getApiBaseUrl } from '$lib/config';
 
+export type OnboardingStep = 'verify-email' | 'workspace' | 'connect' | 'done';
+
 export interface OnboardingState {
   checklistItems: Record<string, boolean>;
   checklistCollapsed: boolean;
@@ -7,6 +9,9 @@ export interface OnboardingState {
   tutorialCompleted: boolean;
   tutorialStep: number;
   tutorialSkipped: boolean;
+  step: OnboardingStep | null;
+  organizationId: string | null;
+  projectId: string | null;
 }
 
 export interface UpdateOnboardingRequest {
@@ -16,6 +21,9 @@ export interface UpdateOnboardingRequest {
   tutorialCompleted?: boolean;
   tutorialStep?: number;
   tutorialSkipped?: boolean;
+  step?: OnboardingStep;
+  organizationId?: string | null;
+  projectId?: string | null;
 }
 
 export class OnboardingAPI {
