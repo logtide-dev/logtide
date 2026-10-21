@@ -11,6 +11,7 @@ import type {
   NotificationEventType,
   NotificationChannelType,
   UpdateNotificationChannelInput,
+  ChannelConfig,
 } from '@logtide/shared';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
@@ -82,6 +83,13 @@ const updateChannelSchema = z.object({
   config: updateChannelConfigSchema.optional(),
   description: z.string().max(500).optional().nullable(),
   enabled: z.boolean().optional(),
+});
+
+const testUnsavedSchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+  channelId: z.string().uuid('Invalid channel ID format').optional(),
+  type: z.enum(['email', 'webhook', 'pagerduty']),
+  config: updateChannelConfigSchema,
 });
 
 const channelIdSchema = z.object({
@@ -336,6 +344,52 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       return reply.status(500).send({ error: 'Failed to delete channel' });
     }
   });
+
+  /**
+   * POST /api/v1/notification-channels/test
+   * Test a destination configuration before it is saved (admin only).
+   * With channelId, blank secrets are filled from the stored channel.
+   */
+  fastify.post(
+    '/test',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request: any, reply) => {
+      try {
+        const body = testUnsavedSchema.parse(request.body);
+
+        const isMember = await checkOrganizationMembership(request.user.id, body.organizationId);
+        if (!isMember) {
+          return reply.status(403).send({ error: 'Not a member of this organization' });
+        }
+
+        const isAdmin = await checkAdminRole(request.user.id, body.organizationId);
+        if (!isAdmin) {
+          return reply.status(403).send({ error: 'Only admins can test notification channels' });
+        }
+
+        const result = await notificationChannelsService.testUnsaved(
+          body.organizationId,
+          body.type,
+          body.config as ChannelConfig,
+          body.channelId
+        );
+
+        return reply.send({ result });
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        }
+        if (error instanceof Error && error.message.startsWith('Invalid configuration')) {
+          return reply.status(400).send({ error: error.message });
+        }
+        if (error instanceof Error && error.message === 'Channel not found') {
+          return reply.status(404).send({ error: 'Channel not found' });
+        }
+        console.error(error, 'Failed to test unsaved notification channel');
+        return reply.status(500).send({ error: 'Failed to test channel' });
+      }
+    }
+  );
 
   /**
    * POST /api/v1/notification-channels/:id/test

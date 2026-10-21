@@ -192,6 +192,41 @@ export class NotificationChannelsService {
     return provider.test(channel.config, organizationId);
   }
 
+  /**
+   * Test a destination configuration that is not saved yet. With channelId the
+   * stored config of that channel (same organization) supplies any secret the
+   * caller left blank, so edit-mode tests work. Nothing is persisted.
+   */
+  async testUnsaved(
+    organizationId: string,
+    type: NotificationChannelType,
+    config: ChannelConfig,
+    channelId?: string
+  ): Promise<DeliveryResult> {
+    const provider = this.providers.get(type);
+    if (!provider) {
+      throw new Error(`Unsupported channel type: ${type}`);
+    }
+
+    let effective = config;
+    if (channelId) {
+      const existing = await this.getChannel(channelId, organizationId);
+      if (!existing) {
+        throw new Error('Channel not found');
+      }
+      if (existing.type !== type) {
+        throw new Error(`Invalid configuration for ${type} channel`);
+      }
+      effective = mergeConfigSecrets(existing.config, config);
+    }
+
+    if (!provider.validateConfig(effective)) {
+      throw new Error(`Invalid configuration for ${type} channel`);
+    }
+
+    return provider.test(effective, organizationId);
+  }
+
   // ============================================================================
   // CHANNEL ASSOCIATIONS (ALERT RULES)
   // ============================================================================
