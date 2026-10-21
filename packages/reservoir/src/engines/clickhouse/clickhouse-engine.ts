@@ -261,6 +261,20 @@ export class ClickHouseEngine extends StorageEngine {
       // index may already exist
     }
 
+    // Lowercase ngram index for the case-insensitive `lowerUTF8(message) LIKE`
+    // predicates of text search (phrases, and the prefilter of word terms).
+    // Deliberately never MATERIALIZEd: parts written after the upgrade get it at
+    // ingest, older parts are still read through the bounded primary-key scan.
+    try {
+      if (!(await this.chObjectExists('index', t, 'idx_message_lower_ngram'))) {
+        await this.runCommand({
+          query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_message_lower_ngram lowerUTF8(message) TYPE ngrambf_v1(3, 32768, 3, 0) GRANULARITY 1`,
+        });
+      }
+    } catch {
+      // index may already exist
+    }
+
     try {
       await this.runCommand({
         query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_trace_id trace_id TYPE bloom_filter(0.01) GRANULARITY 1`,
