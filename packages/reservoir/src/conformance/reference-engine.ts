@@ -11,7 +11,6 @@
 import { matchesLogSearch, metadataValueText, resolveMetadataPath } from '@logtide/shared';
 import type { FieldClause, LogSearchQuery } from '@logtide/shared';
 import { Reservoir } from '../client.js';
-import { NotImplementedError } from '../core/errors.js';
 import {
   DEFAULT_OPERATION_KINDS,
   DISCOVER_DEFAULT_SAMPLE_SIZE,
@@ -23,6 +22,8 @@ import {
   buildFacet,
   compareByteOrder,
   countMetadataKeys,
+  decodeSessionCursor,
+  encodeSessionCursor,
   latencyBucketIndex,
   zeroFillHistogram,
 } from '../core/aggregation-helpers.js';
@@ -56,6 +57,7 @@ import {
   type OperationStatsParams,
   type QueryParams,
   type QueryResult,
+  type SessionSummary,
   type SpanKind,
   type SpanQueryParams,
   type SpanQueryResult,
@@ -287,12 +289,55 @@ export class ReferenceEngine {
     return countMetadataKeys(sample.map((log) => log.metadata));
   }
 
-  async listSessions(_params: ListSessionsParams): Promise<ListSessionsResult> {
-    throw new NotImplementedError('listSessions', NAME);
+  /** Logs of the project in range with a non-empty session id (plan D6). */
+  private sessionLogs(params: { projectId: string; from: Date; to: Date; service?: string }): StoredLogRecord[] {
+    return this.logs.filter((log) =>
+      log.projectId === params.projectId
+      && inRange(log.time.getTime(), params)
+      && typeof log.sessionId === 'string'
+      && log.sessionId !== ''
+      && (params.service === undefined || log.service === params.service));
   }
 
-  async hasSessions(_params: HasSessionsParams): Promise<boolean> {
-    throw new NotImplementedError('hasSessions', NAME);
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    const groups = new Map<string, SessionSummary>();
+    for (const log of this.sessionLogs(params)) {
+      const id = log.sessionId!;
+      const time = log.time.getTime();
+      const isError = log.level === 'error' || log.level === 'critical' ? 1 : 0;
+      const group = groups.get(id);
+      if (!group) {
+        groups.set(id, {
+          sessionId: id, service: log.service, firstEvent: new Date(time), lastEvent: new Date(time), eventCount: 1, errorCount: isError,
+        });
+        continue;
+      }
+      if (compareByteOrder(log.service, group.service) < 0) group.service = log.service;
+      if (time < group.firstEvent.getTime()) group.firstEvent = new Date(time);
+      if (time > group.lastEvent.getTime()) group.lastEvent = new Date(time);
+      group.eventCount++;
+      group.errorCount += isError;
+    }
+    let rows = [...groups.values()].sort((a, b) =>
+      b.lastEvent.getTime() - a.lastEvent.getTime() || compareByteOrder(a.sessionId, b.sessionId));
+    if (params.cursor !== undefined) {
+      const after = decodeSessionCursor(params.cursor);
+      const at = after.lastEvent.getTime();
+      rows = rows.filter((r) => {
+        const last = r.lastEvent.getTime();
+        return last < at || (last === at && compareByteOrder(r.sessionId, after.sessionId) > 0);
+      });
+    }
+    const fetched = rows.slice(0, params.limit + 1);
+    const sessions = fetched.slice(0, params.limit);
+    const tail = sessions[sessions.length - 1];
+    return fetched.length > params.limit
+      ? { sessions, nextCursor: encodeSessionCursor(tail.lastEvent, tail.sessionId) }
+      : { sessions };
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    return this.sessionLogs(params).length > 0;
   }
 
   // --------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import { describeMetadataKeysConformance } from './suites/metadata-keys.js';
 import { describeOperationStatsConformance } from './suites/operation-stats.js';
 import { describeLatencyHistogramConformance } from './suites/latency-histogram.js';
 import { describeSpanTraceQueryConformance } from './suites/spans-traces.js';
+import { describeSessionsConformance } from './suites/sessions.js';
 
 export type ConformanceEngine = EngineType | 'reference';
 
@@ -242,5 +243,6 @@ export function describeReservoirConformance(engine: ConformanceEngine, options:
     describeOperationStatsConformance(ctx);
     describeLatencyHistogramConformance(ctx);
     describeSpanTraceQueryConformance(ctx);
+    describeSessionsConformance(ctx);
   });
 }
