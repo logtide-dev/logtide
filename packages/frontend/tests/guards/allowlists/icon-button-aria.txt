@@ -1,0 +1,19 @@
+# Ratchet allowlist for the icon-button-aria guard. Shrink-only: delete lines for files you fixed, never add one.
+src/lib/components/AppLayout.svelte
+src/lib/components/LogContextDialog.svelte
+src/lib/components/OnboardingChecklist.svelte
+src/lib/components/alerts/AlertPreview.svelte
+src/lib/components/exceptions/StackFrameCard.svelte
+src/lib/components/notification-channels/ChannelsList.svelte
+src/lib/components/pipelines/StepBuilder.svelte
+src/lib/components/siem/incidents/IncidentActionsDropdown.svelte
+src/routes/dashboard/errors/[id]/+page.svelte
+src/routes/dashboard/search/+page.svelte
+src/routes/dashboard/security/incidents/[id]/+page.svelte
+src/routes/dashboard/settings/members/+page.svelte
+src/routes/dashboard/settings/patterns/+page.svelte
+src/routes/dashboard/settings/pii-masking/+page.svelte
+src/routes/dashboard/settings/pipelines/+page.svelte
+src/routes/dashboard/settings/pipelines/[id]/+page.svelte
+src/routes/dashboard/settings/pipelines/new/+page.svelte
+src/routes/dashboard/traces/+page.svelte

@@ -1,0 +1,2 @@
+# Ratchet allowlist for the no-confirm guard. Shrink-only: delete lines for files you fixed, never add one.
+src/routes/dashboard/+page.svelte
