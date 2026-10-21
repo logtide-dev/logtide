@@ -6,6 +6,7 @@ import type {
   CountParams,
   DeleteByTimeRangeParams,
   DistinctParams,
+  LogFilterParams,
   MetadataFilter,
   QueryParams,
   TopValuesParams,
@@ -39,14 +40,22 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     this.tableName = tableName;
   }
 
-  translateQuery(params: QueryParams): NativeQuery {
-    this.validatePagination(params.limit, params.offset);
-
+  /**
+   * The one log filter used by query, count, histogram and facets.
+   * PREWHERE: project, time bounds, traceId, sessionId, spanId (primary key
+   * and bloom filter indexes). WHERE: service, level, hostname, text,
+   * metadata, exclude. Hostname include and exclude read the materialized
+   * `hostname` column (same value as JSONExtractString(metadata, 'hostname')).
+   */
+  buildLogPredicates(params: LogFilterParams): {
+    prewhere: string[];
+    where: string[];
+    queryParams: Record<string, unknown>;
+  } {
     const prewhere: string[] = [];
-    const conditions: string[] = [];
+    const where: string[] = [];
     const queryParams: Record<string, unknown> = {};
 
-    // High-selectivity filters go in PREWHERE
     if (params.projectId !== GLOBAL_SCOPE) {
       this.pushClickHouseFilter(prewhere, queryParams, 'project_id', params.projectId);
     }
@@ -64,39 +73,53 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
       prewhere.push(`session_id = {p_session_id:String}`);
       queryParams.p_session_id = params.sessionId;
     }
+    if (params.spanId !== undefined) {
+      prewhere.push(`span_id = {p_span_id:String}`);
+      queryParams.p_span_id = params.spanId;
+    }
 
-    // Lower-selectivity filters go in WHERE
     if (params.service !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
+      this.pushClickHouseFilter(where, queryParams, 'service', params.service);
     }
     if (params.level !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'level', params.level);
+      this.pushClickHouseFilter(where, queryParams, 'level', params.level);
     }
-
     if (params.hostname !== undefined) {
-      this.validateArrayFilter('hostname', params.hostname);
-      if (Array.isArray(params.hostname)) {
-        conditions.push(`JSONExtractString(metadata, 'hostname') IN {p_hostname:Array(String)}`);
-        queryParams.p_hostname = params.hostname;
-      } else {
-        conditions.push(`JSONExtractString(metadata, 'hostname') = {p_hostname:String}`);
-        queryParams.p_hostname = params.hostname;
-      }
+      this.pushClickHouseFilter(where, queryParams, 'hostname', params.hostname);
     }
 
     if (params.search) {
       if (params.searchMode === 'substring' || hasTokenSeparator(params.search)) {
-        conditions.push(`positionCaseInsensitive(message, {p_search:String}) > 0`);
+        where.push(`positionCaseInsensitive(message, {p_search:String}) > 0`);
         queryParams.p_search = params.search;
       } else {
-        conditions.push(`hasToken(lower(message), {p_search:String})`);
+        where.push(`hasToken(lower(message), {p_search:String})`);
         queryParams.p_search = params.search.toLowerCase();
       }
     }
 
     if (params.metadataFilters && params.metadataFilters.length > 0) {
-      this.pushMetadataFilters(conditions, queryParams, params.metadataFilters);
+      this.pushMetadataFilters(where, queryParams, params.metadataFilters);
     }
+
+    const exclude = params.exclude;
+    if (exclude) {
+      for (const column of ['service', 'level', 'hostname'] as const) {
+        const values = exclude[column];
+        if (values === undefined || values.length === 0) continue;
+        const name = `p_ex_${column}`;
+        where.push(`${column} NOT IN {${name}:Array(String)}`);
+        queryParams[name] = [...values];
+      }
+    }
+
+    return { prewhere, where, queryParams };
+  }
+
+  translateQuery(params: QueryParams): NativeQuery {
+    this.validatePagination(params.limit, params.offset);
+
+    const { prewhere, where: conditions, queryParams } = this.buildLogPredicates(params);
 
     if (params.cursor) {
       try {
@@ -163,57 +186,7 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
   }
 
   translateCount(params: CountParams): NativeQuery {
-    const prewhere: string[] = [];
-    const conditions: string[] = [];
-    const queryParams: Record<string, unknown> = {};
-
-    if (params.projectId !== GLOBAL_SCOPE) {
-      this.pushClickHouseFilter(prewhere, queryParams, 'project_id', params.projectId);
-    }
-
-    prewhere.push(`time ${params.fromExclusive ? '>' : '>='} {p_from:DateTime64(3)}`);
-    queryParams.p_from = toDateTime64(params.from);
-    prewhere.push(`time ${params.toExclusive ? '<' : '<='} {p_to:DateTime64(3)}`);
-    queryParams.p_to = toDateTime64(params.to);
-
-    if (params.service !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
-    }
-    if (params.level !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'level', params.level);
-    }
-    if (params.hostname !== undefined) {
-      this.validateArrayFilter('hostname', params.hostname);
-      if (Array.isArray(params.hostname)) {
-        conditions.push(`JSONExtractString(metadata, 'hostname') IN {p_hostname:Array(String)}`);
-        queryParams.p_hostname = params.hostname;
-      } else {
-        conditions.push(`JSONExtractString(metadata, 'hostname') = {p_hostname:String}`);
-        queryParams.p_hostname = params.hostname;
-      }
-    }
-    if (params.traceId !== undefined) {
-      conditions.push(`trace_id = {p_trace_id:String}`);
-      queryParams.p_trace_id = params.traceId;
-    }
-    if (params.sessionId !== undefined) {
-      conditions.push(`session_id = {p_session_id:String}`);
-      queryParams.p_session_id = params.sessionId;
-    }
-
-    if (params.search) {
-      if (params.searchMode === 'substring' || hasTokenSeparator(params.search)) {
-        conditions.push(`positionCaseInsensitive(message, {p_search:String}) > 0`);
-        queryParams.p_search = params.search;
-      } else {
-        conditions.push(`hasToken(lower(message), {p_search:String})`);
-        queryParams.p_search = params.search.toLowerCase();
-      }
-    }
-
-    if (params.metadataFilters && params.metadataFilters.length > 0) {
-      this.pushMetadataFilters(conditions, queryParams, params.metadataFilters);
-    }
+    const { prewhere, where: conditions, queryParams } = this.buildLogPredicates(params);
 
     const prewhereClause = prewhere.length > 0 ? ` PREWHERE ${prewhere.join(' AND ')}` : '';
     const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
