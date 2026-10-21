@@ -8,6 +8,7 @@ import { authenticationService } from '../auth/authentication-service.js';
 import { config } from '../../config/index.js';
 import { isEmailVerificationRequired } from './email-verification-flag.js';
 import { emailVerificationService } from './email-verification.js';
+import { passwordResetService } from './password-reset.js';
 import { getActiveTerms, termsAcceptanceService } from './terms.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
@@ -45,6 +46,15 @@ const verifyEmailSchema = z.object({
 
 const resendVerificationSchema = z.object({
   email: z.string().email().optional(),
+});
+
+const passwordResetRequestSchema = z.object({
+  email: z.string().max(320),
+});
+
+const passwordResetConfirmSchema = z.object({
+  token: z.string().min(1).max(200),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
 });
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -631,4 +641,85 @@ export async function usersRoutes(fastify: FastifyInstance) {
       },
     });
   }
+
+  // Self-service password reset. Both routes answer 404 when SMTP is not
+  // configured or the local provider is off (no way to deliver or use a reset).
+  const resetRateLimit = {
+    rateLimit: {
+      max: config.AUTH_RATE_LIMIT_LOGIN,
+      timeWindow: config.AUTH_RATE_LIMIT_WINDOW,
+      keyGenerator: (request: { ip: string }) => request.ip,
+    },
+  };
+
+  // Always 202 with the same body: unknown, SSO-only, disabled and eligible
+  // accounts are indistinguishable. All lookups, writes and the SMTP send run
+  // after the response so timing never discloses the account.
+  fastify.post('/password-reset/request', {
+    config: resetRateLimit,
+    handler: async (request, reply) => {
+      if (!(await passwordResetService.isAvailable())) {
+        return reply.status(404).send({ error: 'password_reset_unavailable' });
+      }
+
+      const parsed = passwordResetRequestSchema.safeParse(request.body ?? {});
+      if (parsed.success) {
+        void passwordResetService
+          .requestForEmail(parsed.data.email)
+          .catch((error) => logVerificationError('[Auth] Password reset request failed', null, error));
+      }
+
+      return reply.status(202).send({
+        message: 'If an account exists for that address, we sent a link to reset the password.',
+      });
+    },
+  });
+
+  // The token is the credential. When the caller also holds a session, a token
+  // belonging to someone else is rejected without being consumed.
+  fastify.post('/password-reset/confirm', {
+    config: resetRateLimit,
+    handler: async (request, reply) => {
+      if (!(await passwordResetService.isAvailable())) {
+        return reply.status(404).send({ error: 'password_reset_unavailable' });
+      }
+
+      const body = (request.body ?? {}) as { password?: unknown };
+      const parsed = passwordResetConfirmSchema.safeParse(request.body);
+      if (!parsed.success) {
+        // A bad password is a validation problem; anything else is the generic
+        // token error. Neither consumes the token.
+        const passwordIssue = parsed.error.issues.find((i) => i.path[0] === 'password');
+        if (passwordIssue && typeof body.password === 'string') {
+          return reply.status(400).send({ error: 'Validation error', details: [passwordIssue] });
+        }
+        return reply.status(400).send({ error: 'invalid_or_expired_token' });
+      }
+
+      const bearer = request.headers.authorization?.replace('Bearer ', '');
+      const sessionUser = bearer ? await usersService.validateSession(bearer) : null;
+
+      const result = await passwordResetService.confirm(parsed.data.token, parsed.data.password, sessionUser?.id);
+      if (!result.ok) {
+        return reply.status(400).send({ error: 'invalid_or_expired_token' });
+      }
+
+      await usersService.revokeAllSessions(result.userId);
+
+      await auditLogService.record({
+        action: 'user.password_reset_completed',
+        target: { type: 'user', id: result.userId },
+        organizationId: null,
+        actor: { type: 'user', id: result.userId, label: null },
+      });
+      await auditLogService.record({
+        action: 'auth.session_revoked',
+        organizationId: null,
+        actor: { type: 'user', id: result.userId, label: null },
+        metadata: { reason: 'password_reset' },
+      });
+
+      return reply.send({ reset: true });
+    },
+  });
 }

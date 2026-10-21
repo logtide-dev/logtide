@@ -258,6 +258,25 @@ export class UsersService {
   }
 
   /**
+   * Revoke every session of a user (cache entries first, then the rows).
+   * Returns the number of sessions removed.
+   */
+  async revokeAllSessions(userId: string): Promise<number> {
+    const sessions = await db
+      .selectFrom('sessions')
+      .select('token')
+      .where('user_id', '=', userId)
+      .execute();
+
+    for (const s of sessions) {
+      await CacheManager.invalidateSession(s.token);
+    }
+
+    await db.deleteFrom('sessions').where('user_id', '=', userId).execute();
+    return sessions.length;
+  }
+
+  /**
    * Get user by ID
    */
   async getUserById(userId: string): Promise<UserProfile | null> {

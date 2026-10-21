@@ -782,6 +782,48 @@ Sent by LogTide
 }
 
 // ============================================================================
+// PASSWORD RESET
+// ============================================================================
+
+export interface PasswordResetEmailData {
+  name: string;
+  token: string;
+}
+
+export function generatePasswordResetEmail(data: PasswordResetEmailData): { html: string; text: string } {
+  const frontendUrl = getFrontendUrl();
+  const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(data.token)}`;
+
+  const html = baseTemplate(
+    card(`
+      ${header('Reset your password', { text: 'Account', color: colors.info })}
+      ${divider()}
+      ${subtitle(`Hi ${data.name}, we received a request to reset the password of your LogTide account.`)}
+      ${alertBox('This link expires in 1 hour and can be used once.', 'info')}
+      ${cta('Reset password', resetUrl)}
+    `),
+    { preheader: 'Reset your LogTide password' }
+  );
+
+  const text = `
+RESET YOUR PASSWORD
+${'='.repeat(50)}
+
+Hi ${data.name}, we received a request to reset the password of your LogTide account.
+
+Reset password: ${resetUrl}
+
+This link expires in 1 hour and can be used once. If you did not ask for a
+password reset, you can ignore this email and your password stays the same.
+
+--
+Sent by LogTide
+`.trim();
+
+  return { html, text };
+}
+
+// ============================================================================
 // MONITOR NOTIFICATION EMAIL
 // ============================================================================
 
