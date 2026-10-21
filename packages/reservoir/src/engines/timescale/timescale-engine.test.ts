@@ -433,6 +433,44 @@ describe('TimescaleEngine', () => {
     });
   });
 
+  describe('histogram', () => {
+    const from = new Date('2026-01-05T10:00:00Z');
+    const to = new Date('2026-01-05T10:20:00Z');
+
+    it('maps grouped rows into zero-filled epoch-aligned buckets', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          { bucket_s: String(from.getTime() / 1000), level: 'info', n: 3 },
+          { bucket_s: String(from.getTime() / 1000 + 1200), level: 'error', n: 1 },
+        ],
+      });
+      await engine.connect();
+
+      const result = await engine.histogram({ projectId: 'proj-1', from, to, bucketSeconds: 600 });
+
+      expect(result.bucketSeconds).toBe(600);
+      expect(result.buckets.map((b) => [b.time.toISOString(), b.total, b.byLevel])).toEqual([
+        ['2026-01-05T10:00:00.000Z', 3, { info: 3 }],
+        ['2026-01-05T10:10:00.000Z', 0, {}],
+        ['2026-01-05T10:20:00.000Z', 1, { error: 1 }],
+      ]);
+      const [sql, params] = mockQuery.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain('AS bucket_s');
+      expect(sql).toContain('FROM public.logs WHERE project_id = $2');
+      expect(params[0]).toBe(600);
+    });
+
+    it('rejects invalid bucket sizes and oversized ranges before querying', async () => {
+      await engine.connect();
+      await expect(engine.histogram({ projectId: 'proj-1', from, to, bucketSeconds: 0 })).rejects.toBeInstanceOf(RangeError);
+      await expect(engine.histogram({ projectId: 'proj-1', from, to, bucketSeconds: 1.5 })).rejects.toBeInstanceOf(RangeError);
+      await expect(
+        engine.histogram({ projectId: 'proj-1', from: new Date(0), to, bucketSeconds: 1 }),
+      ).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+  });
+
   describe('countEstimate', () => {
     const countParams = {
       projectId: 'proj-1',

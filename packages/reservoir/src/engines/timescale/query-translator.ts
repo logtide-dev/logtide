@@ -7,6 +7,7 @@ import type {
   DeleteByTimeRangeParams,
   DistinctParams,
   LogFilterParams,
+  LogHistogramParams,
   QueryParams,
   TopValuesParams,
 } from '../../core/types.js';
@@ -198,6 +199,19 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     const { conditions, values } = this.buildLogConditions(params, 1);
     const query = `SELECT 1 FROM ${this.table} WHERE ${conditions.join(' AND ')}`;
     return { query, parameters: values };
+  }
+
+  /**
+   * Log counts per (bucket, level). Buckets start at multiples of
+   * `bucketSeconds` since the Unix epoch (time_bucket would align some sizes
+   * to its own origin instead). `$1` is the bucket size.
+   */
+  translateHistogram(params: LogHistogramParams): NativeQuery {
+    const { conditions, values } = this.buildLogConditions(params, 2);
+    const query =
+      `SELECT (floor(extract(epoch FROM time) / $1) * $1)::bigint AS bucket_s, level, COUNT(*)::int AS n ` +
+      `FROM ${this.table} WHERE ${conditions.join(' AND ')} GROUP BY 1, 2`;
+    return { query, parameters: [params.bucketSeconds, ...values] };
   }
 
   translateDistinct(params: DistinctParams): NativeQuery {

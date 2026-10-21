@@ -61,8 +61,12 @@ import type {
   MetricOverviewItem,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
 } from '../../core/types.js';
+import { normalizeHistogramParams } from '../../core/normalize.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
+import { histogramRowsToResult, type HistogramRow } from './log-analytics.js';
 
 const { Pool } = pg;
 
@@ -469,6 +473,15 @@ export class TimescaleEngine extends StorageEngine {
       count: estimate,
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    // The client validates too; repeat it so direct engine callers get the
+    // same RangeError before any query (bucket size, bucket count, range).
+    const normalized = normalizeHistogramParams(params);
+    const native = this.translator.translateHistogram(normalized);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    return histogramRowsToResult(normalized, result.rows as HistogramRow[]);
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {
