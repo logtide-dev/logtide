@@ -41,6 +41,8 @@ export async function insertIncident(input: {
   assigneeId?: string | null;
   lastEventAt?: Date;
   createdAt?: Date;
+  /** Explicit updated_at (the insert does not fire the update trigger). */
+  updatedAt?: Date;
 }): Promise<Selectable<IncidentsTable>> {
   return db
     .insertInto('incidents')
@@ -57,6 +59,7 @@ export async function insertIncident(input: {
       monitor_id: input.monitorId ?? null,
       ...(input.lastEventAt !== undefined && { last_event_at: input.lastEventAt }),
       ...(input.createdAt !== undefined && { created_at: input.createdAt }),
+      ...(input.updatedAt !== undefined && { updated_at: input.updatedAt }),
     })
     .returningAll()
     .executeTakeFirstOrThrow();
