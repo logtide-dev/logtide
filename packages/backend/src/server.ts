@@ -52,6 +52,7 @@ import { bootstrapService } from './modules/bootstrap/index.js';
 import { assertTermsCompatibleWithAuthMode } from './modules/users/terms.js';
 import { runDataAvailabilityBackfill } from './modules/projects/data-availability-backfill.js';
 import { notificationChannelsRoutes } from './modules/notification-channels/index.js';
+import { notificationRoutingRoutes } from './modules/notification-channels/routing-preview.routes.js';
 import { digestsRoutes } from './modules/digests/routes.js';
 import { digestsPublicRoutes } from './modules/digests/public-routes.js';
 import { webhookDeliveriesRoutes } from './modules/webhooks/routes.js';
@@ -198,6 +199,7 @@ export async function build(opts = {}) {
   await fastify.register(projectsRoutes, { prefix: '/api/v1/projects' });
   await fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   await fastify.register(notificationChannelsRoutes, { prefix: '/api/v1/notification-channels' });
+  await fastify.register(notificationRoutingRoutes, { prefix: '/api/v1/notification-routing' });
   await fastify.register(digestsRoutes, { prefix: '/api/v1/digests' });
   // Public one-click unsubscribe: the URL token is the credential, no auth (#154)
   await fastify.register(digestsPublicRoutes, { prefix: '/api/v1/digests' });
