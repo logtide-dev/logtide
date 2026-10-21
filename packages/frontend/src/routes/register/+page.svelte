@@ -162,9 +162,9 @@
     });
 
     if (isLocalRegistration || response.isNewUser) {
-      toastStore.success('Welcome to LogTide! Your account has been created.');
+      toastStore.success('Account created');
     } else {
-      toastStore.success('Welcome back!');
+      toastStore.success('Welcome back');
     }
 
     // If there's a redirect URL (e.g., invitation), go there; otherwise go to onboarding

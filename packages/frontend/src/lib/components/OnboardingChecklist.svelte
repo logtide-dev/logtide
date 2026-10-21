@@ -60,7 +60,7 @@
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           <Rocket class="w-4 h-4 text-primary" />
-          <CardTitle class="text-sm font-medium">Getting Started</CardTitle>
+          <CardTitle class="text-sm font-medium">Getting started</CardTitle>
         </div>
         <div class="flex items-center gap-1">
           <Button
@@ -104,7 +104,7 @@
                 class="w-full flex items-start gap-2 p-2 rounded-md text-left transition-colors hover:bg-primary/10 group"
               >
                 {#if item.completed}
-                  <CheckCircle2 class="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                  <CheckCircle2 class="w-4 h-4 text-success-text mt-0.5 flex-shrink-0" />
                 {:else}
                   <Circle class="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
                 {/if}
@@ -128,14 +128,14 @@
     {/if}
   </Card>
 {:else if complete && !checklistState.dismissed}
-  <Card class="border-green-500/20 bg-green-500/5">
+  <Card class="border-success/20 bg-success/5">
     <CardContent class="py-4">
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
-          <CheckCircle2 class="w-5 h-5 text-green-500" />
+        <div class="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
+          <CheckCircle2 class="w-5 h-5 text-success-text" />
         </div>
         <div class="flex-1">
-          <p class="text-sm font-medium text-green-600 dark:text-green-400">Setup Complete!</p>
+          <p class="text-sm font-medium text-success-text">Setup complete</p>
           <p class="text-xs text-muted-foreground">You've completed all getting started tasks</p>
         </div>
         <Button
@@ -143,6 +143,7 @@
           size="icon"
           class="h-6 w-6 text-muted-foreground hover:text-foreground"
           onclick={dismiss}
+          aria-label="Dismiss checklist"
         >
           <X class="w-4 h-4" />
         </Button>
