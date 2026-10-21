@@ -997,7 +997,7 @@
                   <td class="px-4 py-3">
                     <button
                       class="font-medium hover:text-primary hover:underline text-left"
-                      onclick={() => goto(`/dashboard/monitoring/${monitor.id}`)}
+                      onclick={() => goto(`/dashboard/uptime/${monitor.id}`)}
                     >
                       {monitor.name}
                     </button>
@@ -1087,7 +1087,7 @@
                         <Button
                           variant="ghost"
                           size="sm"
-                          onclick={() => goto(`/dashboard/monitoring/${monitor.id}`)}
+                          onclick={() => goto(`/dashboard/uptime/${monitor.id}`)}
                           title="View details"
                         >
                           <ChevronRight class="h-4 w-4" />
