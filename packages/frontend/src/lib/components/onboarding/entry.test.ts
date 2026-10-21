@@ -8,7 +8,9 @@ const base: EntryInput = {
   server: { step: null, organizationId: null, projectId: null, completed: false, skipped: false },
 };
 
-function input(over: Partial<EntryInput> & { server?: Partial<EntryInput['server']> } = {}): EntryInput {
+function input(
+  over: Partial<Omit<EntryInput, 'server'>> & { server?: Partial<EntryInput['server']> } = {}
+): EntryInput {
   return { ...base, ...over, server: { ...base.server, ...(over.server ?? {}) } };
 }
 
