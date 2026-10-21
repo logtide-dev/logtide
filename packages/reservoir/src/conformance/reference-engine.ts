@@ -12,8 +12,20 @@ import { matchesLogSearch, metadataValueText, resolveMetadataPath } from '@logti
 import type { FieldClause, LogSearchQuery } from '@logtide/shared';
 import { Reservoir } from '../client.js';
 import { NotImplementedError } from '../core/errors.js';
-import { FACETS_DEFAULT_LIMIT, DISCOVER_DEFAULT_SAMPLE_SIZE } from '../core/constants.js';
-import { buildFacet, compareByteOrder, countMetadataKeys, zeroFillHistogram } from '../core/aggregation-helpers.js';
+import {
+  DEFAULT_OPERATION_KINDS,
+  DISCOVER_DEFAULT_SAMPLE_SIZE,
+  FACETS_DEFAULT_LIMIT,
+  LATENCY_HISTOGRAM_BOUNDS_MS,
+  OPERATION_STATS_DEFAULT_LIMIT,
+} from '../core/constants.js';
+import {
+  buildFacet,
+  compareByteOrder,
+  countMetadataKeys,
+  latencyBucketIndex,
+  zeroFillHistogram,
+} from '../core/aggregation-helpers.js';
 import type { StorageEngine } from '../core/storage-engine.js';
 import {
   GLOBAL_SCOPE,
@@ -44,6 +56,7 @@ import {
   type OperationStatsParams,
   type QueryParams,
   type QueryResult,
+  type SpanKind,
   type SpanQueryParams,
   type SpanQueryResult,
   type SpanRecord,
@@ -151,6 +164,15 @@ const SPAN_SORT_KEYS: Record<string, (s: SpanRecord) => number | string> = {
 function compareValues(a: number | string, b: number | string): number {
   if (typeof a === 'number' && typeof b === 'number') return a - b;
   return compareByteOrder(String(a), String(b));
+}
+
+/** PostgreSQL `percentile_cont`: linear interpolation over the sorted values. */
+function percentileCont(sorted: number[], fraction: number): number {
+  if (sorted.length === 0) return 0;
+  const position = fraction * (sorted.length - 1);
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
 }
 
 function page<T>(rows: T[], limit: number | undefined, offset: number | undefined) {
@@ -343,12 +365,58 @@ export class ReferenceEngine {
     return { traces: structuredClone(traces), ...rest };
   }
 
-  async getOperationStats(_params: OperationStatsParams): Promise<OperationStat[]> {
-    throw new NotImplementedError('getOperationStats', NAME);
+  /**
+   * Entry spans of the project (and service) in range: kinds in `kinds`
+   * (default DEFAULT_OPERATION_KINDS); with `kinds` omitted and no such span
+   * in that scope, the root spans of the same scope (plan D6).
+   */
+  private entrySpans(params: { projectId: string; service?: string; from: Date; to: Date; kinds?: SpanKind[] }): SpanRecord[] {
+    const scope = this.spans.filter((s) =>
+      s.projectId === params.projectId
+      && (params.service === undefined || s.serviceName === params.service)
+      && inRange(s.time.getTime(), params));
+    const kinds: readonly SpanKind[] = params.kinds ?? DEFAULT_OPERATION_KINDS;
+    const entries = scope.filter((s) => s.kind !== undefined && kinds.includes(s.kind));
+    if (entries.length > 0 || params.kinds !== undefined) return entries;
+    return scope.filter((s) => !s.parentSpanId);
   }
 
-  async getLatencyHistogram(_params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
-    throw new NotImplementedError('getLatencyHistogram', NAME);
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    const groups = new Map<string, { service: string; operation: string; durations: number[]; errorCount: number }>();
+    for (const span of this.entrySpans(params)) {
+      const key = JSON.stringify([span.serviceName, span.operationName]);
+      let group = groups.get(key);
+      if (!group) {
+        group = { service: span.serviceName, operation: span.operationName, durations: [], errorCount: 0 };
+        groups.set(key, group);
+      }
+      group.durations.push(span.durationMs);
+      if (span.statusCode === 'ERROR') group.errorCount++;
+    }
+    const rows: OperationStat[] = [...groups.values()].map((g) => {
+      const sorted = [...g.durations].sort((a, b) => a - b);
+      return {
+        service: g.service,
+        operation: g.operation,
+        count: sorted.length,
+        errorCount: g.errorCount,
+        avgMs: sorted.reduce((sum, d) => sum + d, 0) / sorted.length,
+        p50Ms: percentileCont(sorted, 0.5),
+        p95Ms: percentileCont(sorted, 0.95),
+        p99Ms: percentileCont(sorted, 0.99),
+      };
+    });
+    rows.sort((a, b) => b.count - a.count || compareByteOrder(a.service, b.service) || compareByteOrder(a.operation, b.operation));
+    return rows.slice(0, params.limit ?? OPERATION_STATS_DEFAULT_LIMIT);
+  }
+
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    const counts = Array.from({ length: LATENCY_HISTOGRAM_BOUNDS_MS.length + 1 }, () => 0);
+    for (const span of this.entrySpans(params)) {
+      if (params.operation !== undefined && span.operationName !== params.operation) continue;
+      counts[latencyBucketIndex(span.durationMs)]++;
+    }
+    return { bounds: [...LATENCY_HISTOGRAM_BOUNDS_MS], counts };
   }
 }
 

@@ -21,6 +21,9 @@ import { describeFieldClauseConformance } from './suites/field-clauses.js';
 import { describeHistogramConformance } from './suites/histogram.js';
 import { describeFacetsConformance } from './suites/facets.js';
 import { describeMetadataKeysConformance } from './suites/metadata-keys.js';
+import { describeOperationStatsConformance } from './suites/operation-stats.js';
+import { describeLatencyHistogramConformance } from './suites/latency-histogram.js';
+import { describeSpanTraceQueryConformance } from './suites/spans-traces.js';
 
 export type ConformanceEngine = EngineType | 'reference';
 
@@ -163,6 +166,23 @@ export function logCaseMismatch(
   };
 }
 
+/**
+ * Asserts `|actual - expected| <= tol` (approximate percentiles and floating
+ * point averages). Tolerances are part of the contract: never widen one to
+ * make an engine pass.
+ */
+export function expectMs(actual: number, expected: number, tol: number, label = 'value'): void {
+  expect(
+    Number.isFinite(actual) && Math.abs(actual - expected) <= tol,
+    `${label}: ${actual} is not within ${tol} of ${expected}`,
+  ).toBe(true);
+}
+
+/** Asserts `low <= actual <= high`. */
+export function expectBetween(actual: number, low: number, high: number, label = 'value'): void {
+  expect(Number.isFinite(actual) && actual >= low && actual <= high, `${label}: ${actual} is not in [${low}, ${high}]`).toBe(true);
+}
+
 /** One `it` per case: query ids (as a set) and count must agree with `expected`. */
 export function runLogCases(ctx: ConformanceContext, cases: LogCase[]): void {
   for (const kase of cases) {
@@ -219,5 +239,8 @@ export function describeReservoirConformance(engine: ConformanceEngine, options:
     describeHistogramConformance(ctx);
     describeFacetsConformance(ctx);
     describeMetadataKeysConformance(ctx);
+    describeOperationStatsConformance(ctx);
+    describeLatencyHistogramConformance(ctx);
+    describeSpanTraceQueryConformance(ctx);
   });
 }

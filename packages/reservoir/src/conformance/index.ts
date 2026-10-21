@@ -42,3 +42,6 @@ export { describeFieldClauseConformance, FIELD_CLAUSE_CASES } from './suites/fie
 export { describeHistogramConformance } from './suites/histogram.js';
 export { describeFacetsConformance } from './suites/facets.js';
 export { describeMetadataKeysConformance } from './suites/metadata-keys.js';
+export { describeOperationStatsConformance } from './suites/operation-stats.js';
+export { describeLatencyHistogramConformance } from './suites/latency-histogram.js';
+export { describeSpanTraceQueryConformance } from './suites/spans-traces.js';
