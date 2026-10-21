@@ -123,6 +123,7 @@ export {
   decodeSessionCursor,
   compareByteOrder,
 } from './core/aggregation-helpers.js';
+export { legacySearchToTextQuery, isEmptyTextQuery } from './core/text-query.js';
 
 // Factory and client
 export { StorageEngineFactory } from './factory.js';
