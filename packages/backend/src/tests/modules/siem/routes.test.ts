@@ -618,6 +618,131 @@ describe('SIEM Routes', () => {
     });
 
     // ==========================================================================
+    // INCIDENTS ALIAS (1.6): served by the incidents module
+    // ==========================================================================
+
+    describe('/api/v1/siem/incidents as an alias of /api/v1/incidents', () => {
+        it('GET /api/v1/siem/incidents accepts the source filter', async () => {
+            const sigma = await createTestIncident(testOrganization.id, testProject.id);
+            const alert = await db
+                .insertInto('incidents')
+                .values({
+                    organization_id: testOrganization.id,
+                    project_id: testProject.id,
+                    title: 'Alert incident',
+                    severity: 'high',
+                    status: 'open',
+                    source: 'alert',
+                })
+                .returningAll()
+                .executeTakeFirstOrThrow();
+
+            const all = await app.inject({
+                method: 'GET',
+                url: `/api/v1/siem/incidents?organizationId=${testOrganization.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            expect(all.json().total).toBe(2);
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/siem/incidents?organizationId=${testOrganization.id}&source=sigma`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.payload);
+            expect(body.total).toBe(1);
+            expect(body.incidents.map((i: any) => i.id)).toEqual([sigma.id]);
+            expect(body.incidents.map((i: any) => i.id)).not.toContain(alert.id);
+        });
+
+        it('PATCH /api/v1/siem/incidents/:id stamps acknowledgedBy', async () => {
+            const incident = await createTestIncident(testOrganization.id, testProject.id);
+
+            const response = await app.inject({
+                method: 'PATCH',
+                url: `/api/v1/siem/incidents/${incident.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { organizationId: testOrganization.id, status: 'investigating' },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.payload);
+            expect(body.status).toBe('investigating');
+            expect(body.acknowledgedBy).toBe(testUser.id);
+            expect(body.acknowledgedAt).not.toBeNull();
+        });
+
+        it('PATCH /api/v1/siem/incidents/:id answers 404 for an unknown id', async () => {
+            const response = await app.inject({
+                method: 'PATCH',
+                url: `/api/v1/siem/incidents/${crypto.randomUUID()}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { organizationId: testOrganization.id, status: 'resolved' },
+            });
+
+            expect(response.statusCode).toBe(404);
+            expect(JSON.parse(response.payload)).toEqual({ error: 'Incident not found' });
+        });
+
+        it('GET /api/v1/siem/incidents/:id/history is served by the alias', async () => {
+            const incident = await createTestIncident(testOrganization.id, testProject.id);
+            await app.inject({
+                method: 'PATCH',
+                url: `/api/v1/siem/incidents/${incident.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { organizationId: testOrganization.id, status: 'resolved' },
+            });
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/siem/incidents/${incident.id}/history?organizationId=${testOrganization.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.payload);
+            expect(body.history).toEqual([
+                expect.objectContaining({ action: 'status_change', newValue: 'resolved', userId: testUser.id }),
+            ]);
+        });
+
+        it('keeps created_at as the default order of the legacy list', async () => {
+            const now = Date.now();
+            const older = await db
+                .insertInto('incidents')
+                .values({
+                    organization_id: testOrganization.id,
+                    title: 'Older',
+                    severity: 'high',
+                    created_at: new Date(now - 2 * 60_000),
+                    last_event_at: new Date(now - 10_000),
+                })
+                .returningAll()
+                .executeTakeFirstOrThrow();
+            const newer = await db
+                .insertInto('incidents')
+                .values({
+                    organization_id: testOrganization.id,
+                    title: 'Newer',
+                    severity: 'high',
+                    created_at: new Date(now - 60_000),
+                    last_event_at: new Date(now - 5 * 60_000),
+                })
+                .returningAll()
+                .executeTakeFirstOrThrow();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/siem/incidents?organizationId=${testOrganization.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            expect(response.json().incidents.map((i: any) => i.id)).toEqual([newer.id, older.id]);
+        });
+    });
+
+    // ==========================================================================
     // ENRICHMENT TESTS
     // ==========================================================================
 

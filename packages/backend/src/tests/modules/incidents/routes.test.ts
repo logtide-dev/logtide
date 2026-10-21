@@ -483,6 +483,23 @@ describe('incidents REST API', () => {
     expect(missing.statusCode).toBe(404);
   });
 
+  it('legacy alias returns the same items as /api/v1/incidents with sort=created_at', async () => {
+    const s = await setup();
+    await seedEverySource(s);
+    await insertIncident({ organizationId: s.orgId, assigneeId: s.member.id, title: 'assigned' });
+
+    const canonical = await get(`/api/v1/incidents?organizationId=${s.orgId}&sort=created_at`, s.token);
+    const legacy = await get(`/api/v1/siem/incidents?organizationId=${s.orgId}`, s.token);
+    expect(legacy.statusCode).toBe(200);
+    expect(legacy.json()).toEqual(canonical.json());
+    expect(legacy.json().total).toBe(5);
+
+    const filtered = '&source=alert,monitor&status=open';
+    expect((await get(`/api/v1/siem/incidents?organizationId=${s.orgId}${filtered}`, s.token)).json()).toEqual(
+      (await get(`/api/v1/incidents?organizationId=${s.orgId}${filtered}&sort=created_at`, s.token)).json()
+    );
+  });
+
   it('records an audit entry for PATCH', async () => {
     const s = await setup();
     const inc = await insertIncident({ organizationId: s.orgId });
