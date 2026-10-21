@@ -136,10 +136,14 @@ describe('MongoDBQueryTranslator', () => {
         cursor,
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.$or).toEqual([
-        { time: { $lt: cursorTime } },
-        { time: cursorTime, id: { $lt: 'uuid-123' } },
-      ]);
+      // The cursor clause lives in the shared $and list, never at the top level.
+      expect(filter.$or).toBeUndefined();
+      expect(filter.$and).toEqual([{
+        $or: [
+          { time: { $lt: cursorTime } },
+          { time: cursorTime, id: { $lt: 'uuid-123' } },
+        ],
+      }]);
     });
 
     it('handles cursor pagination (asc)', () => {
@@ -154,10 +158,12 @@ describe('MongoDBQueryTranslator', () => {
         sortOrder: 'asc',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.$or).toEqual([
-        { time: { $gt: cursorTime } },
-        { time: cursorTime, id: { $gt: 'uuid-123' } },
-      ]);
+      expect(filter.$and).toEqual([{
+        $or: [
+          { time: { $gt: cursorTime } },
+          { time: cursorTime, id: { $gt: 'uuid-123' } },
+        ],
+      }]);
     });
 
     it('ignores invalid cursor', () => {
@@ -169,6 +175,7 @@ describe('MongoDBQueryTranslator', () => {
       });
       const filter = native.query as Record<string, unknown>;
       expect(filter.$or).toBeUndefined();
+      expect(filter.$and).toBeUndefined();
     });
 
     it('sets sort direction based on sortOrder', () => {

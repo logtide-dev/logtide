@@ -1,3 +1,4 @@
+import type { Document } from 'mongodb';
 import { QueryTranslator, type NativeQuery } from '../../core/query-translator.js';
 import { GLOBAL_SCOPE } from '../../core/types.js';
 import type {
@@ -6,6 +7,8 @@ import type {
   CountParams,
   DeleteByTimeRangeParams,
   DistinctParams,
+  LogExclude,
+  LogFilterParams,
   MetadataFilter,
   QueryParams,
   TopValuesParams,
@@ -40,39 +43,35 @@ export class MongoDBQueryTranslator extends QueryTranslator {
   translateQuery(params: QueryParams): NativeQuery {
     this.validatePagination(params.limit, params.offset);
 
-    const filter = this.buildLogFilter(params);
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
     const sortDir = params.sortOrder === 'asc' ? 1 : -1;
     const sort = { time: sortDir, id: sortDir };
-
-    // Cursor-based pagination
-    if (params.cursor) {
-      try {
-        const decoded = Buffer.from(params.cursor, 'base64').toString('utf-8');
-        const commaIdx = decoded.indexOf(',');
-        if (commaIdx > 0) {
-          const cursorTime = decoded.slice(0, commaIdx);
-          const cursorId = decoded.slice(commaIdx + 1);
-          const parsedTime = new Date(cursorTime);
-          if (cursorId && !isNaN(parsedTime.getTime())) {
-            const op = params.sortOrder === 'asc' ? '$gt' : '$lt';
-            filter.$or = [
-              { time: { [op]: parsedTime } },
-              { time: parsedTime, id: { [op]: cursorId } },
-            ];
-          }
-        }
-      } catch {
-        // invalid cursor - skip
-      }
-    }
+    const cursor = this.cursorClause(params.cursor, params.sortOrder);
+    const filter = this.composeLogFilter(params, cursor ? [cursor] : []);
 
     return {
       query: filter,
       parameters: [],
       metadata: { limit, offset, sort },
     };
+  }
+
+  /** Keyset pagination clause for a `<iso time>,<id>` cursor; null when absent or undecodable. */
+  private cursorClause(cursor: string | undefined, sortOrder: QueryParams['sortOrder']): Document | null {
+    if (!cursor) return null;
+    try {
+      const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+      const commaIdx = decoded.indexOf(',');
+      if (commaIdx <= 0) return null;
+      const parsedTime = new Date(decoded.slice(0, commaIdx));
+      const cursorId = decoded.slice(commaIdx + 1);
+      if (!cursorId || isNaN(parsedTime.getTime())) return null;
+      const op = sortOrder === 'asc' ? '$gt' : '$lt';
+      return { $or: [{ time: { [op]: parsedTime } }, { time: parsedTime, id: { [op]: cursorId } }] };
+    } catch {
+      return null;
+    }
   }
 
   translateAggregate(params: AggregateParams): NativeQuery {
@@ -144,22 +143,28 @@ export class MongoDBQueryTranslator extends QueryTranslator {
   }
 
   /**
-   * Build a MongoDB filter for log queries (shared by query, count, countEstimate).
-   * Includes search and hostname filters.
+   * The log filter shared by query, count, countEstimate, histogram and
+   * facets: equality fields at the top level plus ONE `$and` list that
+   * receives every compound clause (cursor, text, metadata, exclude), so no
+   * clause can overwrite another (an OR group next to a cursor `$or`, an
+   * include next to an exclude on the same field).
    */
-  private buildLogFilter(params: QueryParams | CountParams): Record<string, unknown> {
-    const filter = this.buildBaseFilter(params);
+  buildLogFilter(params: LogFilterParams): Document {
+    return this.composeLogFilter(params, []);
+  }
 
-    if ('hostname' in params && params.hostname !== undefined) {
-      this.validateArrayFilter('hostname', params.hostname);
-      filter['metadata.hostname'] = this.toMongoFilter(params.hostname);
-    }
+  private composeLogFilter(params: LogFilterParams, leading: Document[]): Document {
+    const filter: Document = this.buildBaseFilter(params);
+    const and: Document[] = [...leading];
 
-    if ('traceId' in params && params.traceId !== undefined) {
+    if (params.traceId !== undefined) {
       filter.trace_id = params.traceId;
     }
-    if ('sessionId' in params && params.sessionId !== undefined) {
+    if (params.sessionId !== undefined) {
       filter.session_id = params.sessionId;
+    }
+    if (params.spanId !== undefined) {
+      filter.span_id = params.spanId;
     }
 
     if ('search' in params && params.search) {
@@ -178,14 +183,15 @@ export class MongoDBQueryTranslator extends QueryTranslator {
       }
     }
 
-    if ('metadataFilters' in params && params.metadataFilters && params.metadataFilters.length > 0) {
-      const clauses = this.buildMetadataClauses(params.metadataFilters);
-      if (clauses.length > 0) {
-        // Use $and so multiple filters on the same metadata key don't overwrite each other.
-        filter.$and = clauses;
-      }
+    if (params.metadataFilters && params.metadataFilters.length > 0) {
+      and.push(...this.buildMetadataClauses(params.metadataFilters));
     }
 
+    if (params.exclude) {
+      and.push(...excludeClauses(params.exclude));
+    }
+
+    if (and.length > 0) filter.$and = and;
     return filter;
   }
 
@@ -219,7 +225,7 @@ export class MongoDBQueryTranslator extends QueryTranslator {
   }
 
   /**
-   * Build base filter with projectId, time range, service, level.
+   * Build base filter with projectId, time range, service, level, hostname.
    * Shared across query, aggregate, count, distinct, topValues.
    * When projectId === GLOBAL_SCOPE the project_id filter is omitted (admin queries).
    */
@@ -227,6 +233,7 @@ export class MongoDBQueryTranslator extends QueryTranslator {
     projectId: string | string[] | typeof GLOBAL_SCOPE;
     service?: string | string[];
     level?: string | string[];
+    hostname?: string | string[];
     from: Date;
     to: Date;
     fromExclusive?: boolean;
@@ -250,6 +257,11 @@ export class MongoDBQueryTranslator extends QueryTranslator {
     if (params.level !== undefined) {
       filter.level = this.toMongoFilter(params.level);
     }
+    // Ingestion stores the hostname in metadata.hostname (indexed with project and time).
+    if (params.hostname !== undefined) {
+      this.validateArrayFilter('hostname', params.hostname);
+      filter['metadata.hostname'] = this.toMongoFilter(params.hostname);
+    }
 
     return filter;
   }
@@ -270,6 +282,19 @@ export class MongoDBQueryTranslator extends QueryTranslator {
   private resolveMongoField(field: string): string {
     return field;
   }
+}
+
+/**
+ * Typed-field exclusions as `$nin` clauses. A bare `$nin` also matches
+ * documents without the field, so logs without a hostname are kept; empty
+ * lists add nothing.
+ */
+function excludeClauses(exclude: LogExclude): Document[] {
+  const out: Document[] = [];
+  if (exclude.service && exclude.service.length > 0) out.push({ service: { $nin: exclude.service } });
+  if (exclude.level && exclude.level.length > 0) out.push({ level: { $nin: exclude.level } });
+  if (exclude.hostname && exclude.hostname.length > 0) out.push({ 'metadata.hostname': { $nin: exclude.hostname } });
+  return out;
 }
 
 export { INTERVAL_MS };
