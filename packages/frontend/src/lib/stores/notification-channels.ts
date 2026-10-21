@@ -5,6 +5,8 @@ import {
   type CreateNotificationChannelInput,
   type UpdateNotificationChannelInput,
   type NotificationEventType,
+  type RoutingOverride,
+  type TestUnsavedInput,
 } from '$lib/api/notification-channels';
 
 // ============================================================================
@@ -17,6 +19,8 @@ export interface NotificationChannelsState {
   error: string | null;
   defaults: Record<NotificationEventType, NotificationChannel[]>;
   defaultsLoading: boolean;
+  overrides: RoutingOverride[];
+  overridesLoading: boolean;
 }
 
 const initialState: NotificationChannelsState = {
@@ -31,6 +35,8 @@ const initialState: NotificationChannelsState = {
     monitoring: [],
   },
   defaultsLoading: false,
+  overrides: [],
+  overridesLoading: false,
 };
 
 // ============================================================================
@@ -99,6 +105,28 @@ function createNotificationChannelsStore() {
      */
     async test(id: string, organizationId: string) {
       return notificationChannelsAPI.test(id, organizationId);
+    },
+
+    /**
+     * Test a destination before it is saved
+     */
+    async testUnsaved(input: TestUnsavedInput) {
+      return notificationChannelsAPI.testUnsaved(input);
+    },
+
+    /**
+     * Load the rules that override the default routing
+     */
+    async loadOverrides(organizationId: string) {
+      update((s) => ({ ...s, overridesLoading: true }));
+
+      try {
+        const overrides = await notificationChannelsAPI.getOverrides(organizationId);
+        update((s) => ({ ...s, overrides, overridesLoading: false }));
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load overrides';
+        update((s) => ({ ...s, overrides: [], overridesLoading: false, error: errorMessage }));
+      }
     },
 
     /**

@@ -6,9 +6,34 @@ import type {
   ChannelConfig,
   EmailChannelConfig,
   WebhookChannelConfig,
+  PagerDutyChannelConfig,
+  ChannelDisplayType,
 } from '@logtide/shared';
 
-export type { NotificationChannelType, NotificationEventType, ChannelConfig, EmailChannelConfig, WebhookChannelConfig };
+export type {
+  NotificationChannelType,
+  NotificationEventType,
+  ChannelConfig,
+  EmailChannelConfig,
+  WebhookChannelConfig,
+  PagerDutyChannelConfig,
+  ChannelDisplayType,
+};
+
+export interface RoutingOverride {
+  eventType: NotificationEventType;
+  kind: 'alert_rule' | 'sigma_rule' | 'monitor' | 'error_group';
+  id: string;
+  name: string;
+  channels: { id: string; name: string; type: ChannelDisplayType }[];
+}
+
+export interface TestUnsavedInput {
+  organizationId: string;
+  channelId?: string;
+  type: NotificationChannelType;
+  config: ChannelConfig;
+}
 
 export interface NotificationChannel {
   id: string;
@@ -170,6 +195,43 @@ export const notificationChannelsAPI = {
 
     const data = await response.json();
     return data.result;
+  },
+
+  /**
+   * Test a destination configuration before it is saved. In edit mode pass
+   * channelId so blank secrets fall back to the stored ones.
+   */
+  async testUnsaved(input: TestUnsavedInput): Promise<TestChannelResult> {
+    const response = await fetchWithAuth(`${getApiUrl()}/api/v1/notification-channels/test`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to test destination' }));
+      throw new Error(error.error || 'Failed to test destination');
+    }
+
+    const data = await response.json();
+    return data.result;
+  },
+
+  /**
+   * Rules, monitors and error groups that override the default routing
+   */
+  async getOverrides(organizationId: string): Promise<RoutingOverride[]> {
+    const params = new URLSearchParams({ organizationId });
+    const response = await fetchWithAuth(
+      `${getApiUrl()}/api/v1/notification-channels/overrides?${params}`
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to fetch overrides' }));
+      throw new Error(error.error || 'Failed to fetch overrides');
+    }
+
+    const data = await response.json();
+    return data.overrides;
   },
 
   /**
