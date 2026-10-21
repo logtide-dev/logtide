@@ -1,9 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Long, type Document } from 'mongodb';
-import { assembleHistogram, histogramPipeline } from './log-analytics.js';
+import { assembleFacets, assembleHistogram, facetsPipeline, histogramPipeline } from './log-analytics.js';
+import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
 import { MongoDBQueryTranslator } from './query-translator.js';
 import { MongoDBEngine } from './mongodb-engine.js';
-import type { LogHistogramParams, StorageConfig } from '../../core/types.js';
+import type { LogFacetField, LogFacetsParams, LogHistogramParams, StorageConfig } from '../../core/types.js';
 
 const at = (iso: string) => new Date(`2026-01-05T${iso}Z`);
 const row = (iso: string, level: string, n: number) => ({ _id: { b: at(iso).getTime(), level }, n });
@@ -105,5 +106,122 @@ describe('histogramPipeline', () => {
     expect(group).toContain('"$mod":[{"$toLong":"$time"},300000]');
     expect(group).toContain('"level":"$level"');
     expect(JSON.stringify(pipeline)).not.toContain('$dateTrunc');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Facets
+// ----------------------------------------------------------------------------
+
+/** A fake logs collection that records aggregate calls and answers with `rows`. */
+function fakeLogsDb(rows: Document[]) {
+  const calls: { pipeline: Document[]; options: Record<string, unknown> }[] = [];
+  const collection = {
+    aggregate: vi.fn((pipeline: Document[], options: Record<string, unknown>) => {
+      calls.push({ pipeline, options });
+      return { toArray: async () => rows };
+    }),
+  };
+  const db = { collection: vi.fn(() => collection) };
+  return { db, calls };
+}
+
+const facetBase: LogFacetsParams = { projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00'), fields: [{ builtin: 'level' }] };
+
+function topNOf(pipeline: Document[]): Document {
+  const group = pipeline.find((stage) => stage.$group && JSON.stringify(stage).includes('$topN'));
+  expect(group, 'a $group stage with $topN').toBeDefined();
+  return group!.$group.values.$topN as Document;
+}
+
+describe('MongoDBEngine.facets validation', () => {
+  it('limit defaults to 10 and clamps to 1..50', async () => {
+    const { db, calls } = fakeLogsDb([]);
+    const engine = new MongoDBEngine(config, { db: db as never, skipInitialize: true });
+    await engine.facets(facetBase);
+    await engine.facets({ ...facetBase, limit: 0 });
+    await engine.facets({ ...facetBase, limit: 99 });
+    expect(calls.map((c) => topNOf(c.pipeline).n)).toEqual([10, 1, 50]);
+    expect(calls.every((c) => c.options.allowDiskUse === true)).toBe(true);
+    expect(db.collection).toHaveBeenCalledWith('logs');
+  });
+
+  it('rejects no fields and more than 20 fields', async () => {
+    const engine = new MongoDBEngine(config, { db: fakeLogsDb([]).db as never, skipInitialize: true });
+    await expect(engine.facets({ ...facetBase, fields: [] })).rejects.toBeInstanceOf(RangeError);
+    const fields = Array.from({ length: 21 }, (_, i) => ({ metadata: `k${i}` }));
+    await expect(engine.facets({ ...facetBase, fields })).rejects.toBeInstanceOf(RangeError);
+  });
+
+  it('answers from the grouped rows in request order', async () => {
+    const { db } = fakeLogsDb([{ _id: 1, total: 3, values: [{ v: 'eu', c: 3 }] }]);
+    const engine = new MongoDBEngine(config, { db: db as never, skipInitialize: true });
+    const result = await engine.facets({ ...facetBase, fields: [{ builtin: 'service' }, { metadata: 'region' }] });
+    expect(result.facets).toEqual([
+      { field: 'service', values: [], otherCount: 0 },
+      { field: 'metadata.region', values: [{ value: 'eu', count: 3 }], otherCount: 0 },
+    ]);
+  });
+});
+
+describe('assembleFacets', () => {
+  it('otherCount is the field total minus returned counts', () => {
+    const result = assembleFacets([{ builtin: 'service' }], [{ _id: 0, total: 10, values: [{ v: 'api', c: 4 }, { v: 'auth', c: 3 }] }], 2);
+    expect(result.facets[0]).toEqual({ field: 'service', values: [{ value: 'api', count: 4 }, { value: 'auth', count: 3 }], otherCount: 3 });
+  });
+
+  it('keeps request order and labels', () => {
+    const fields: LogFacetField[] = [{ builtin: 'service' }, { metadata: 'region' }, { builtin: 'level' }];
+    const rows = [
+      { _id: 2, total: 1, values: [{ v: 'info', c: 1 }] },
+      { _id: 0, total: 1, values: [{ v: 'api', c: 1 }] },
+      { _id: 1, total: 1, values: [{ v: 'eu', c: 1 }] },
+    ];
+    expect(assembleFacets(fields, rows, 10).facets.map((f) => f.field)).toEqual(['service', 'metadata.region', 'level']);
+  });
+
+  it('a field without values returns an empty list', () => {
+    expect(assembleFacets([{ metadata: 'nothing' }], [], 10).facets).toEqual([{ field: 'metadata.nothing', values: [], otherCount: 0 }]);
+  });
+
+  it('accepts counts returned as BSON longs', () => {
+    const rows = [{ _id: Long.fromNumber(0), total: Long.fromNumber(9), values: [{ v: 'api', c: Long.fromNumber(9) }] }];
+    expect(assembleFacets([{ builtin: 'service' }], rows, 10).facets[0]).toEqual({ field: 'service', values: [{ value: 'api', count: 9 }], otherCount: 0 });
+  });
+});
+
+describe('facetsPipeline', () => {
+  const translator = new MongoDBQueryTranslator();
+  const filter = translator.buildLogFilter({ projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00'), service: 'api' });
+
+  it('starts with the shared log filter and counts each field once per log', () => {
+    const pipeline = facetsPipeline(filter, [{ builtin: 'level' }, { builtin: 'service' }], 10);
+    expect(pipeline[0]).toEqual({ $match: filter });
+    const project = pipeline[1].$project as Document;
+    expect(project.kv).toEqual([
+      { f: { $literal: 0 }, v: '$level' },
+      { f: { $literal: 1 }, v: '$service' },
+    ]);
+    expect(pipeline[2]).toEqual({ $unwind: '$kv' });
+    expect(pipeline[3]).toEqual({ $match: { 'kv.v': { $nin: [null, ''] } } });
+  });
+
+  it('ties break in byte order after the count', () => {
+    const topN = topNOf(facetsPipeline(filter, [{ builtin: 'service' }], 3));
+    expect(topN.sortBy).toEqual({ count: -1, '_id.v': 1 });
+    expect(topN.n).toBe(3);
+  });
+
+  it('metadata fields facet by the text form of the resolved key', () => {
+    const pipeline = facetsPipeline(filter, [{ metadata: 'http.method' }], 10);
+    const v = (pipeline[1].$project as Document).kv[0].v;
+    expect(v).toEqual(scalarTextExpr(resolvedValueExpr('metadata', 'http.method')));
+  });
+
+  it('hostname facets only string hostnames from metadata', () => {
+    const pipeline = facetsPipeline(filter, [{ builtin: 'hostname' }], 10);
+    const json = JSON.stringify((pipeline[1].$project as Document).kv[0].v);
+    expect(json).toContain('"$metadata.hostname"');
+    expect(json).toContain('"string"');
   });
 });

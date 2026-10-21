@@ -253,5 +253,36 @@ describe('mongodb specifics', () => {
       expect(await matching(mf({ key: '$kind', op: 'equals', value: 'odd' }))).toEqual(['H']);
       expect(await matching(mf({ key: '$kind', op: 'not_equals', value: 'odd', include_missing: true }))).toEqual(except('H'));
     });
+
+    describe('facets', () => {
+      beforeAll(async () => {
+        await seedLogs([
+          { message: 'n', metadata: { code: 500, hostname: 'h1' } },
+          { message: 's', metadata: { code: '500', hostname: 'h1' } },
+          { message: 'o', metadata: { code: { a: 1 }, hostname: 42 } },
+          { message: 'b', metadata: { ok: true, 'http.method': 'GET', http: { method: 'POST' } } },
+          { message: 'e', metadata: { code: '', ok: false, http: { method: 'PUT' } } },
+        ]);
+      });
+
+      it('numeric and boolean metadata facet as text, objects excluded', async () => {
+        const { facets } = await subject().facets({
+          projectId: SPEC_PROJECT,
+          ...SPEC_WINDOW,
+          fields: [{ metadata: 'code' }, { metadata: 'ok' }, { metadata: 'http.method' }, { builtin: 'hostname' }],
+        });
+        expect(facets).toEqual([
+          { field: 'metadata.code', values: [{ value: '500', count: 2 }], otherCount: 0 },
+          { field: 'metadata.ok', values: [{ value: 'false', count: 1 }, { value: 'true', count: 1 }], otherCount: 0 },
+          { field: 'metadata.http.method', values: [{ value: 'GET', count: 1 }, { value: 'PUT', count: 1 }], otherCount: 0 },
+          { field: 'hostname', values: [{ value: 'h1', count: 2 }], otherCount: 0 },
+        ]);
+      });
+
+      it('a limit keeps the top values and counts the rest', async () => {
+        const { facets } = await subject().facets({ projectId: SPEC_PROJECT, ...SPEC_WINDOW, fields: [{ metadata: 'ok' }], limit: 1 });
+        expect(facets).toEqual([{ field: 'metadata.ok', values: [{ value: 'false', count: 1 }], otherCount: 1 }]);
+      });
+    });
   });
 });

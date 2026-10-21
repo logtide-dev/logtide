@@ -63,10 +63,20 @@ import type {
   MetricsOverviewResult,
   LogHistogramParams,
   LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
 } from '../../core/types.js';
-import { normalizeHistogramParams } from '../../core/normalize.js';
+import { normalizeFacetsParams, normalizeHistogramParams } from '../../core/normalize.js';
+import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
 import { MongoDBQueryTranslator, INTERVAL_MS } from './query-translator.js';
-import { assembleHistogram, histogramPipeline, type HistogramRow } from './log-analytics.js';
+import {
+  assembleFacets,
+  assembleHistogram,
+  facetsPipeline,
+  histogramPipeline,
+  type FacetRow,
+  type HistogramRow,
+} from './log-analytics.js';
 
 export interface MongoDBEngineOptions {
   /** Use an existing MongoClient instead of creating a new one */
@@ -590,6 +600,17 @@ export class MongoDBEngine extends StorageEngine {
       .aggregate(histogramPipeline(filter, normalized.bucketSeconds * 1000), { ...ctxOpts(), allowDiskUse: true })
       .toArray();
     return assembleHistogram(normalized, rows as HistogramRow[]);
+  }
+
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    // Same validation as the client (field list, keys, limit clamp).
+    const normalized = normalizeFacetsParams(params);
+    const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
+    const filter = this.translator.buildLogFilter(normalized);
+    const rows = await this.logsCol()
+      .aggregate(facetsPipeline(filter, normalized.fields, limit), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleFacets(normalized.fields, rows as FacetRow[], limit);
   }
 
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {
