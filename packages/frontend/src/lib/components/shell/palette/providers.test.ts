@@ -88,7 +88,7 @@ describe('default palette providers', () => {
   it('links entities to their pages', async () => {
     expect((await group('dashboards')).items[0].href).toBe('/dashboard?id=d-uuid-1');
     expect((await group('monitors')).items[0].href).toBe('/dashboard/uptime/m1');
-    expect((await group('alert-rules')).items[0].href).toBe('/dashboard/alerts?rule=r1');
+    expect((await group('alert-rules')).items[0].href).toBe('/dashboard/alerts?edit=r1');
     expect((await group('incidents')).items[0].href).toBe('/dashboard/incidents/i1');
     expect((await group('projects')).items[0].href).toBe('/dashboard/projects/p1/overview');
   });

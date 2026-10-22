@@ -225,7 +225,7 @@ export function registerDefaultPaletteProviders(): void {
         id: `alert-rule:${r.id}`,
         label: r.name,
         icon: icon(AlertTriangle),
-        href: `/dashboard/alerts?rule=${encodeURIComponent(r.id)}`,
+        href: `/dashboard/alerts?edit=${encodeURIComponent(r.id)}`,
       }));
     },
   });
