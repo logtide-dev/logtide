@@ -3,6 +3,9 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
+const usage = vi.hoisted(() => ({ getCapabilityUsage: vi.fn() }));
+vi.mock('$lib/api/usage', () => ({ getCapabilityUsage: usage.getCapabilityUsage }));
+
 vi.mock('$lib/api/notifications', () => ({
   NotificationsAPI: class {
     async getNotifications() {
@@ -25,6 +28,8 @@ vi.mock('$lib/api/projects', () => ({
 
 import AppLayout from './AppLayout.svelte';
 import { authStore } from '$lib/stores/auth';
+import { organizationStore } from '$lib/stores/organization';
+import { goto } from '$app/navigation';
 import { page } from '$app/state';
 
 const SECTION_LABELS = ['Dashboards', 'Logs', 'Traces', 'Metrics', 'Errors', 'Sessions', 'Web vitals', 'Incidents', 'Alerts', 'Uptime', 'Overview', 'Rules', 'Projects', 'Settings', 'Docs', 'GitHub'];
@@ -41,6 +46,9 @@ describe('AppLayout shell', () => {
 
   afterEach(() => {
     authStore.clearAuth();
+    organizationStore.setCurrentOrganization(null);
+    usage.getCapabilityUsage.mockReset();
+    vi.mocked(goto).mockClear();
   });
 
   it('renders the same nav labels in the desktop sidebar and the drawer', () => {
@@ -92,5 +100,48 @@ describe('AppLayout shell', () => {
     const { container } = render(AppLayout);
     const desktop = container.querySelector('aside:not([data-drawer])')!;
     expect(desktop.querySelector('[data-nav-item="admin"]')).not.toBeNull();
+  });
+
+  function setOrg(role: 'owner' | 'admin' | 'member') {
+    organizationStore.setCurrentOrganization({ id: 'o1', name: 'Org', slug: 'org', role } as never);
+  }
+
+  const blockedUsage = {
+    capabilities: [
+      { capability: 'ingestion.max_events_monthly', kind: 'quota', current: 10, limit: 5, description: '', state: 'blocked' },
+    ],
+  };
+
+  it('mounts the quota banner for an owner', async () => {
+    usage.getCapabilityUsage.mockResolvedValue(blockedUsage);
+    setOrg('owner');
+    render(AppLayout);
+    expect(await screen.findByTestId('quota-banner')).toBeTruthy();
+    expect(usage.getCapabilityUsage).toHaveBeenCalledWith('o1');
+  });
+
+  it('mounts the quota banner for an admin', async () => {
+    usage.getCapabilityUsage.mockResolvedValue(blockedUsage);
+    setOrg('admin');
+    render(AppLayout);
+    expect(await screen.findByTestId('quota-banner')).toBeTruthy();
+  });
+
+  it('does not show the quota banner to a member', async () => {
+    usage.getCapabilityUsage.mockResolvedValue(blockedUsage);
+    setOrg('member');
+    render(AppLayout);
+    await Promise.resolve();
+    expect(screen.queryByTestId('quota-banner')).toBeNull();
+    expect(usage.getCapabilityUsage).not.toHaveBeenCalled();
+  });
+
+  it('opens account settings at the profile page', async () => {
+    render(AppLayout);
+    const trigger = screen.getByRole('button', { name: 'Account menu' });
+    await fireEvent.pointerDown(trigger, { button: 0, pointerType: 'mouse' });
+    await fireEvent.click(trigger);
+    await fireEvent.click(await screen.findByText('Account settings'));
+    expect(goto).toHaveBeenCalledWith('/dashboard/settings/account/profile');
   });
 });

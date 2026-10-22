@@ -41,6 +41,7 @@
   import { formatRelative } from "$lib/utils/datetime";
   import Footer from "$lib/components/Footer.svelte";
   import EmailVerificationBanner from "$lib/components/EmailVerificationBanner.svelte";
+  import QuotaBanner from "$lib/components/QuotaBanner.svelte";
   import TermsAcceptanceModal from "$lib/components/TermsAcceptanceModal.svelte";
   import OnboardingChecklist from "$lib/components/OnboardingChecklist.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
@@ -602,7 +603,7 @@
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem
-                onclick={() => goto("/dashboard/account")}
+                onclick={() => goto("/dashboard/settings/account/profile")}
                 class="cursor-pointer"
               >
                 <Settings class="w-4 h-4 mr-2" />
@@ -630,8 +631,10 @@
     </header>
 
     <main class="flex-1 overflow-auto bg-background">
-      <!-- SEAM (Wave D): <QuotaBanner /> from W14, props per W14 plan; mount between EmailVerificationBanner and the page content -->
       <EmailVerificationBanner />
+      {#if $currentOrganization}
+        <QuotaBanner organizationId={$currentOrganization.id} role={$currentOrganization.role} />
+      {/if}
       <TermsAcceptanceModal />
       {@render children?.()}
     </main>
