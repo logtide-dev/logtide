@@ -16,6 +16,9 @@ import type {
   MetricAggregationFn,
 } from '@logtide/reservoir';
 
+/** Cap on attribute keys used to split a counter into series for `rate`. */
+const MAX_RATE_SERIES_KEYS = 10;
+
 export class MetricsService {
   async ingestMetrics(
     records: MetricRecord[],
@@ -154,6 +157,25 @@ export class MetricsService {
     const combos = expandAttributeFilters(attributes);
     const multiKeys = Object.keys(attributes).filter((k) => attributes[k].length > 1);
 
+    // Rate needs `last` per FULL series. The engines take `last` over every row
+    // of a bucket that shares the groupBy labels, so group by every attribute
+    // key of the metric (the requested groupBy first) and sum the per-series
+    // rates back into the requested groups afterwards.
+    let engineGroupBy = params.groupBy;
+    if (isRate) {
+      const labelKeys = await reservoir.getMetricLabelKeys({
+        projectId: params.projectId,
+        metricName: params.metricName,
+        from: params.from,
+        to: params.to,
+      });
+      const merged = [...(params.groupBy ?? [])];
+      for (const k of labelKeys?.keys ?? []) {
+        if (!merged.includes(k)) merged.push(k);
+      }
+      engineGroupBy = merged.length > 0 ? merged.slice(0, MAX_RATE_SERIES_KEYS) : undefined;
+    }
+
     const results = await Promise.all(
       combos.map(async (combo) => {
         const result = await reservoir.aggregateMetrics({
@@ -163,7 +185,7 @@ export class MetricsService {
           to: params.to,
           interval,
           aggregation,
-          groupBy: params.groupBy,
+          groupBy: engineGroupBy,
           attributes: Object.keys(combo).length > 0 ? combo : undefined,
           serviceName: params.serviceName,
         });
@@ -180,7 +202,7 @@ export class MetricsService {
       }
     }
 
-    if (isRate) timeseries = toRateSeries(timeseries, bucketSeconds);
+    if (isRate) timeseries = toRateSeries(timeseries, bucketSeconds, { groupBy: [...(params.groupBy ?? []), ...multiKeys] });
     const capped = capSeries(timeseries);
 
     const first = results[0]?.result;

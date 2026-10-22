@@ -588,6 +588,31 @@ describe('MetricsService.aggregateWithOptions', () => {
     expect(result.timeseries[0].value).toBe(1);
   });
 
+  it('rate groups by every label key of the metric and sums into the requested group', async () => {
+    mockGetMetricLabelKeys.mockResolvedValueOnce({ keys: ['route', 'env'] });
+    mockAggregateMetrics.mockResolvedValueOnce({
+      metricName: 'requests_total',
+      metricType: 'sum',
+      timeseries: [
+        { bucket: new Date('2025-01-01T00:00:00Z'), value: 1000000, labels: { env: 'p', route: '/a' } },
+        { bucket: new Date('2025-01-01T00:00:00Z'), value: 50, labels: { env: 'p', route: '/b' } },
+        { bucket: new Date('2025-01-01T00:15:00Z'), value: 1000900, labels: { env: 'p', route: '/a' } },
+        { bucket: new Date('2025-01-01T00:15:00Z'), value: 950, labels: { env: 'p', route: '/b' } },
+      ],
+    });
+
+    const result = await service.aggregateWithOptions({
+      ...base, interval: '15m', aggregation: 'rate', groupBy: ['env'],
+    });
+
+    expect(mockAggregateMetrics).toHaveBeenCalledWith(
+      expect.objectContaining({ aggregation: 'last', groupBy: ['env', 'route'] }),
+    );
+    expect(result.timeseries).toHaveLength(1);
+    expect(result.timeseries[0].value).toBe(2);
+    expect(result.timeseries[0].labels).toEqual({ env: 'p' });
+  });
+
   it('interval=auto returns resolved interval', async () => {
     mockAggregateMetrics.mockResolvedValueOnce({ metricName: 'm', metricType: 'gauge', timeseries: [] });
 
