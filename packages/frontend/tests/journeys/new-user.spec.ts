@@ -59,38 +59,16 @@ test.describe('New User Journey', () => {
     // Should be on onboarding page
     await expect(page).toHaveURL(/onboarding|create-organization/, { timeout: 15000 });
 
-    // Handle welcome step if present - click "Start the Tutorial" to proceed
-    const startButton = page.locator('button:has-text("Start the Tutorial")');
-    if (await startButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await startButton.click();
-      await page.waitForTimeout(500);
-    }
+    // Workspace step creates the organization and the first project together
+    await expect(page.locator('input#org-name')).toBeVisible({ timeout: 10000 });
+    await page.locator('input#org-name').fill(`Test Org ${Date.now()}`);
+    await page.locator('input#project-name').fill(`Test Project ${Date.now()}`);
+    await page.getByRole('button', { name: 'Create workspace' }).click();
 
-    // Now should be on organization creation step
-    // Wait for org-name input to be visible
-    const orgInput = page.locator('input#org-name');
-    await expect(orgInput).toBeVisible({ timeout: 10000 });
-
-    // Fill organization form
-    const orgName = `Test Org ${Date.now()}`;
-    await orgInput.fill(orgName);
-
-    // Submit form
-    await page.locator('button[type="submit"]').click();
-
-    // After org creation, the onboarding continues to project creation step
-    // We need to skip the tutorial to get to the dashboard for this test flow
-    await page.waitForTimeout(1000);
-
-    // Check if we're still in onboarding (need to skip to get to dashboard)
-    if (page.url().includes('onboarding')) {
-      // Look for skip button to exit onboarding and go to dashboard
-      const skipButton = page.locator('button:has-text("Skip for now"), button:has-text("Skip tutorial")');
-      if (await skipButton.first().isVisible({ timeout: 3000 }).catch(() => false)) {
-        await skipButton.first().click();
-        await page.waitForTimeout(500);
-      }
-    }
+    // Connect step: skip the first signal wait to reach the end of onboarding
+    await expect(page.getByRole('heading', { name: 'Connect your first app' })).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Skip for now' }).click();
+    await expect(page.getByRole('heading', { name: "You're all set" })).toBeVisible({ timeout: 10000 });
 
     // Should now be on dashboard, projects, or still completing onboarding
     await expect(page).toHaveURL(/dashboard|projects|onboarding/, { timeout: 15000 });
@@ -129,30 +107,10 @@ test.describe('New User Journey', () => {
     // Wait for redirect (could be dashboard, projects, or onboarding)
     await page.waitForURL(/dashboard|projects|onboarding/, { timeout: 15000 });
 
-    // If redirected to onboarding, handle it appropriately
+    // Onboarding finished in the previous test, so the dashboard is the landing page.
+    // If we are still on onboarding, leave through the done step.
     if (page.url().includes('onboarding')) {
-      // Check if we're on project creation step (after org was created in test 3)
-      const projectInput = page.locator('input#project-name');
-      if (await projectInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-        // We're on project step - create project here
-        await projectInput.fill(`Test Project ${Date.now()}`);
-        await page.locator('button[type="submit"]').click();
-        await page.waitForTimeout(1000);
-
-        // Skip remaining steps
-        const skipButton = page.locator('button:has-text("Skip for now"), button:has-text("Skip tutorial")');
-        if (await skipButton.first().isVisible({ timeout: 3000 }).catch(() => false)) {
-          await skipButton.first().click();
-        }
-      } else {
-        // Try to skip onboarding
-        const skipButton = page.locator('button:has-text("Skip for now"), button:has-text("Skip tutorial")');
-        if (await skipButton.first().isVisible({ timeout: 3000 }).catch(() => false)) {
-          await skipButton.first().click();
-        }
-      }
-
-      await page.waitForURL(/dashboard/, { timeout: 10000 }).catch(() => {});
+      await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
     }
 
     // Navigate to projects page

@@ -4,7 +4,8 @@ import { projectsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { auditLogService } from '../audit-log/index.js';
 import { reservoir } from '../../database/reservoir.js';
-import { db } from '../../database/connection.js';
+import { metadataFilterSchema } from '@logtide/shared';
+import { sessionsService } from '../sessions/service.js';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
@@ -153,40 +154,28 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         return reply.send(cached);
       }
 
-      // PERFORMANCE: Checking 7 days of raw logs for strings and sessions is extremely slow
-      // on high-volume projects.
-      // Optimization:
-      // 1. Check a much shorter window (last 24h) - if they have data, it's likely recent.
-      // 2. Use the most efficient query possible.
+      // Both probes go through the storage engine (reservoir) so ClickHouse and
+      // MongoDB projects are answered from their own store. Short 24h window:
+      // if a project has data it is almost certainly recent.
       const recentWindow = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const now = new Date();
 
-      // Check for web vitals and sessions in parallel
-      const [webVitalsResult, sessionsResult] = await Promise.all([
-        // Substring search on 24h is much faster than 7 days
+      const [webVitalsResult, hasSessions] = await Promise.all([
+        // Web vitals records are identified by the performance.metric metadata key
         reservoir.query({
           projectId: id,
           from: recentWindow,
           to: now,
-          search: 'Web Vital:',
-          searchMode: 'substring',
+          metadataFilters: [metadataFilterSchema.parse({ key: 'performance.metric', op: 'exists' })],
           limit: 1,
         }).catch(() => ({ logs: [] })),
 
-        // Efficient check for existence of a session_id
-        db.selectFrom('logs')
-          .select('id')
-          .where('project_id', '=', id)
-          .where('session_id', 'is not', null)
-          .where('time', '>=', recentWindow)
-          .limit(1)
-          .executeTakeFirst()
-          .catch(() => null),
+        sessionsService.hasRecentSessions(id).catch(() => false),
       ]);
 
       const capabilities = {
         hasWebVitals: webVitalsResult.logs.length > 0,
-        hasSessions: !!sessionsResult,
+        hasSessions,
       };
 
       // Cache for 30 minutes (capabilities don't change often)
