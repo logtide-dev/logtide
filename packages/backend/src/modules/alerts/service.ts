@@ -1,9 +1,18 @@
-import { sql } from 'kysely';
+import { sql, type Selectable } from 'kysely';
 import { db } from '../../database/connection.js';
 import type { LogLevel, MetadataFilter } from '@logtide/shared';
-import type { AlertType, AlertRuleState, BaselineType, BaselineMetadata } from '../../database/types.js';
+import type {
+  AlertRulesTable,
+  AlertType,
+  AlertRuleState,
+  BaselineType,
+  BaselineMetadata,
+} from '../../database/types.js';
 import { baselineCalculator } from './baseline-calculator.js';
-import { normalizeAlertQuery } from './alert-query.js';
+import { compileAlertQuery, filterToReservoirParams, normalizeAlertQuery } from './alert-query.js';
+import { decideThreshold, type LifecycleDecision, type LifecycleSnapshot } from './lifecycle.js';
+import { openAlertIncident, resolveAlertIncident } from './incident-sync.js';
+import type { AlertEvaluationResult, AlertNotificationKind } from './types.js';
 import { reservoir } from '../../database/reservoir.js';
 import { hooks, HookRejectionError } from '../../hooks/index.js';
 
@@ -156,6 +165,17 @@ export interface UpdateAlertRuleInput {
 
 function toDateOrNull(value: Date | string | null | undefined): Date | null {
   return value == null ? null : new Date(value);
+}
+
+/** The lifecycle columns of a stored rule, as the state machine reads them. */
+function lifecycleSnapshot(rule: Selectable<AlertRulesTable>): LifecycleSnapshot {
+  return {
+    state: rule.state ?? 'ok',
+    lastTriggeredAt: toDateOrNull(rule.last_triggered_at),
+    lastNotifiedAt: toDateOrNull(rule.last_notified_at),
+    snoozedUntil: toDateOrNull(rule.snoozed_until),
+    renotifyMinutes: rule.renotify_minutes != null ? Number(rule.renotify_minutes) : null,
+  };
 }
 
 export class AlertsService {
@@ -313,12 +333,23 @@ export class AlertsService {
   }
 
   /**
-   * Check alert rules and trigger if threshold is met
+   * Evaluate every enabled rule once and apply the lifecycle state machine
+   * (`lifecycle.ts`). Returns the notifications to enqueue: `triggered` and
+   * `renotify` (one alert_history row each) and `resolved`. Steady firing,
+   * snoozed transitions and lost compare-and-sets return nothing.
+   *
+   * `now` is the run's clock: every window, comparison and lifecycle write of
+   * the run uses it (tests pass it explicitly).
+   *
+   * A rule whose evaluation fails (stored query no longer parses, engine
+   * error) is skipped with its state and `last_evaluated_at` untouched and
+   * never blocks the other rules of the run.
    *
    * PERFORMANCE: Pre-fetches all org->projects mappings in one query
    * instead of querying per rule (N+1 fix).
    */
-  async checkAlertRules() {
+  async checkAlertRules(options: { now?: Date } = {}): Promise<AlertEvaluationResult[]> {
+    const now = options.now ?? new Date();
     const rules = await db
       .selectFrom('alert_rules')
       .selectAll()
@@ -346,7 +377,8 @@ export class AlertsService {
       }
     }
 
-    const triggeredAlerts = [];
+    const results: AlertEvaluationResult[] = [];
+    const evaluated: Array<{ id: string; organization_id: string }> = [];
 
     for (const rule of rules) {
       // Lifecycle hook (#216): rejection (or a broken hook) skips THIS rule
@@ -368,108 +400,212 @@ export class AlertsService {
         }
       }
 
-      const triggered = await this.checkRule(rule, orgProjectsMap);
-      if (triggered) {
-        triggeredAlerts.push(triggered);
+      try {
+        const result = await this.checkRule(rule, orgProjectsMap, now);
+        evaluated.push(rule);
+        if (result) results.push(result);
+      } catch (err) {
+        console.error(`[Alerts] Rule ${rule.id} skipped, evaluation failed:`, err);
       }
     }
 
-    return triggeredAlerts;
+    await this.markEvaluated(evaluated, now);
+
+    return results;
   }
 
   /**
-   * Check a single rule
+   * `last_evaluated_at = now` for the rules evaluated in this run, in
+   * batches. A failure is logged and never drops the run's notifications
+   * (their transitions are already committed).
+   */
+  private async markEvaluated(rules: Array<{ id: string; organization_id: string }>, now: Date): Promise<void> {
+    const BATCH = 1000;
+    for (let i = 0; i < rules.length; i += BATCH) {
+      const batch = rules.slice(i, i + BATCH);
+      try {
+        await db
+          .updateTable('alert_rules')
+          .set({ last_evaluated_at: now })
+          .where('organization_id', 'in', [...new Set(batch.map((r) => r.organization_id))])
+          .where('id', 'in', batch.map((r) => r.id))
+          .execute();
+      } catch (err) {
+        console.error('[Alerts] Failed to record last_evaluated_at:', err);
+      }
+    }
+  }
+
+  /**
+   * Evaluate a single rule and apply its lifecycle decision.
    *
    * PERFORMANCE: Uses pre-fetched orgProjectsMap instead of querying per rule
    */
-  private async checkRule(rule: any, orgProjectsMap: Map<string, string[]>) {
+  private async checkRule(
+    rule: Selectable<AlertRulesTable>,
+    orgProjectsMap: Map<string, string[]>,
+    now: Date
+  ): Promise<AlertEvaluationResult | null> {
     // Dispatch to rate-of-change logic if applicable
     if (rule.alert_type === 'rate_of_change') {
-      return this.checkRateOfChangeRule(rule, orgProjectsMap);
+      return this.checkRateOfChangeRule(rule, orgProjectsMap) as Promise<AlertEvaluationResult | null>;
     }
 
-    // Get the last trigger time for this rule
-    const lastTrigger = await db
-      .selectFrom('alert_history')
-      .select(['triggered_at'])
-      .where('rule_id', '=', rule.id)
-      .orderBy('triggered_at', 'desc')
-      .executeTakeFirst();
-
-    // Determine the time window for counting logs
-    const timeWindow = new Date(Date.now() - rule.time_window * 60 * 1000);
-
-    // If there's a last trigger, only count logs AFTER it
-    // This prevents re-triggering on the same logs
-    const fromTime = lastTrigger
-      ? new Date(Math.max(new Date(lastTrigger.triggered_at).getTime(), timeWindow.getTime()))
-      : timeWindow;
-
-    // Determine project scope
-    let projectId: string | string[];
-    if (rule.project_id) {
-      projectId = rule.project_id;
-    } else {
-      const projectIds = orgProjectsMap.get(rule.organization_id) || [];
-      if (projectIds.length === 0) return null;
-      projectId = projectIds;
-    }
-
-    // Count NEW logs (after last trigger or within time window)
-    // Use fromTime + 1ms to simulate exclusive bound (time > fromTime)
-    const serviceFilter = rule.service ? [rule.service, 'unknown'] : undefined;
-    const exclusiveFrom = new Date(fromTime.getTime() + 1);
-    const metadataFilters = (rule.metadata_filters ?? []) as MetadataFilter[];
-
-    const countResult = await reservoir.count({
-      projectId,
-      from: exclusiveFrom,
-      to: new Date(),
+    const compiled = compileAlertQuery({
+      query: rule.query,
       level: rule.level,
-      service: serviceFilter,
-      ...(metadataFilters.length > 0 ? { metadataFilters } : {}),
+      service: rule.service,
+      metadataFilters: (rule.metadata_filters ?? []) as MetadataFilter[],
     });
-    const count = countResult.count;
+    if (!compiled.ok) {
+      // A stored query that a newer grammar rejects: skip the rule (state kept).
+      throw new Error(
+        `Stored query no longer parses at position ${compiled.error.position}: ${compiled.error.message}`
+      );
+    }
 
-    if (count >= rule.threshold) {
-      // Record alert trigger
-      const historyRecord = await db
+    // Sliding window [now - time_window, now]: the lifecycle state, not a
+    // "logs since the last trigger" exclusion, prevents duplicate notifications.
+    // An org-wide rule of an organization without projects counts 0 (so a
+    // firing rule resolves).
+    const projectIds = rule.project_id ? [rule.project_id] : (orgProjectsMap.get(rule.organization_id) ?? []);
+    let count = 0;
+    if (projectIds.length > 0) {
+      const countResult = await reservoir.count({
+        projectId: rule.project_id ? rule.project_id : projectIds,
+        from: new Date(now.getTime() - rule.time_window * 60_000),
+        to: now,
+        ...filterToReservoirParams(compiled.filter),
+      });
+      count = countResult.count;
+    }
+
+    const decision = decideThreshold(lifecycleSnapshot(rule), count >= rule.threshold, now);
+    return this.applyDecision(rule, decision, { now, logCount: count, baselineMetadata: null });
+  }
+
+  /**
+   * Apply a lifecycle decision with a compare-and-set: the UPDATE only
+   * matches when the rule is still enabled and its lifecycle columns are the
+   * ones this evaluation read, so of two concurrent evaluators exactly one
+   * wins a transition or a notification. The alert_history row (one per
+   * notification) is written in the same transaction. Only the winner fires
+   * the hook, syncs the incident and returns a result.
+   */
+  private async applyDecision(
+    rule: Selectable<AlertRulesTable>,
+    decision: LifecycleDecision,
+    ctx: { now: Date; logCount: number; baselineMetadata: BaselineMetadata | null }
+  ): Promise<AlertEvaluationResult | null> {
+    if (decision.type === 'none') return null;
+    const { now } = ctx;
+
+    const set: { last_evaluated_at: Date; state?: AlertRuleState; last_triggered_at?: Date; last_notified_at?: Date } = {
+      last_evaluated_at: now,
+    };
+    if (decision.type === 'fire') {
+      set.state = 'firing';
+      set.last_triggered_at = now;
+      if (decision.notification) set.last_notified_at = now;
+    } else if (decision.type === 'notify') {
+      set.last_notified_at = now;
+    } else {
+      set.state = 'ok'; // last_triggered_at is kept (start of the last episode)
+    }
+
+    const historyKind: AlertNotificationKind | null =
+      decision.notification === 'triggered' || decision.notification === 'renotify' ? decision.notification : null;
+
+    const won = await db.transaction().execute(async (trx) => {
+      const updated = await trx
+        .updateTable('alert_rules')
+        .set(set)
+        .where('id', '=', rule.id)
+        .where('organization_id', '=', rule.organization_id)
+        .where('enabled', '=', true)
+        .where('state', '=', rule.state)
+        .where(sql`date_trunc('milliseconds', last_triggered_at)`, 'is not distinct from', rule.last_triggered_at)
+        .where(sql`date_trunc('milliseconds', last_notified_at)`, 'is not distinct from', rule.last_notified_at)
+        .where(sql`date_trunc('milliseconds', snoozed_until)`, 'is not distinct from', rule.snoozed_until)
+        .returning('id')
+        .executeTakeFirst();
+      if (!updated) return null;
+      if (!historyKind) return { historyId: null as string | null };
+
+      const history = await trx
         .insertInto('alert_history')
         .values({
           rule_id: rule.id,
-          triggered_at: new Date(),
-          log_count: count,
+          triggered_at: now,
+          log_count: ctx.logCount,
+          baseline_metadata: ctx.baselineMetadata,
         })
         .returning(['id'])
         .executeTakeFirstOrThrow();
+      return { historyId: history.id as string | null };
+    });
+    if (!won) return null;
 
-      if (hooks.hasHandlers('afterAlertTriggered')) {
-        void hooks.runAfter('afterAlertTriggered', {
-          organizationId: rule.organization_id,
-          projectId: rule.project_id ?? null,
-          ruleId: rule.id,
-          ruleName: rule.name,
-          historyId: historyRecord.id,
-          logCount: count,
-          baselineMetadata: null,
-        });
-      }
+    const historyId = won.historyId;
+    if (historyId && hooks.hasHandlers('afterAlertTriggered')) {
+      void hooks.runAfter('afterAlertTriggered', {
+        organizationId: rule.organization_id,
+        projectId: rule.project_id ?? null,
+        ruleId: rule.id,
+        ruleName: rule.name,
+        historyId,
+        logCount: ctx.logCount,
+        baselineMetadata: ctx.baselineMetadata as unknown as Record<string, unknown> | null,
+      });
+    }
 
+    // Start of the firing episode: this run for a transition, else the stored one.
+    const firingSince = (decision.type === 'fire' ? now : (toDateOrNull(rule.last_triggered_at) ?? now)).toISOString();
+
+    if (decision.type === 'resolve') {
+      const incidentId = await resolveAlertIncident(rule, 'recovered', now);
+      if (decision.notification !== 'resolved') return null;
       return {
-        historyId: historyRecord.id,
+        kind: 'resolved',
         rule_id: rule.id,
         rule_name: rule.name,
         organization_id: rule.organization_id,
-        project_id: rule.project_id,
-        log_count: count,
+        project_id: rule.project_id ?? null,
+        alert_type: rule.alert_type,
+        log_count: ctx.logCount,
         threshold: rule.threshold,
         time_window: rule.time_window,
-        email_recipients: rule.email_recipients,
-        webhook_url: rule.webhook_url,
+        firing_since: firingSince,
+        resolved_at: now.toISOString(),
+        incident_id: incidentId,
       };
     }
 
-    return null;
+    const incidentId = await openAlertIncident(rule, {
+      now,
+      logCount: ctx.logCount,
+      historyId,
+      notification: historyKind,
+      baselineMetadata: ctx.baselineMetadata,
+    });
+    if (!historyKind || !historyId) return null;
+
+    return {
+      historyId,
+      rule_id: rule.id,
+      rule_name: rule.name,
+      organization_id: rule.organization_id,
+      project_id: rule.project_id ?? null,
+      log_count: ctx.logCount,
+      threshold: rule.threshold,
+      time_window: rule.time_window,
+      email_recipients: rule.email_recipients,
+      webhook_url: rule.webhook_url,
+      ...(ctx.baselineMetadata ? { baseline_metadata: ctx.baselineMetadata } : {}),
+      kind: historyKind,
+      firing_since: firingSince,
+      incident_id: incidentId,
+    };
   }
 
   /**

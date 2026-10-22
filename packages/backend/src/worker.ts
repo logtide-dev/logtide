@@ -402,10 +402,14 @@ async function checkAlerts() {
         const notificationQueue = createQueue('alert-notifications');
 
         for (const alert of triggeredAlerts) {
-          // Dedup by the alert_history id so an overlapping evaluation that
-          // re-enqueues the same trigger does not send duplicate notifications.
-          await notificationQueue.add('send-notification', alert, {
-            jobKey: `alert-notif-${alert.historyId}`,
+          // One key per notification, colon-free for both queue adapters:
+          // the alert_history id, or the rule plus the start of the episode
+          // for a resolution (one per episode).
+          const resolved = alert.kind === 'resolved';
+          await notificationQueue.add(resolved ? 'send-resolved' : 'send-notification', alert, {
+            jobKey: resolved
+              ? `alert-resolved-${alert.rule_id}-${Date.parse(alert.firing_since)}`
+              : `alert-notif-${alert.historyId}`,
           });
 
           if (isInternalLoggingEnabled()) {
