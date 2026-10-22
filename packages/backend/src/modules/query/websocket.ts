@@ -3,12 +3,19 @@ import { db } from '../../database/index.js';
 import { reservoir } from '../../database/reservoir.js';
 import type { LogLevel } from '@logtide/shared';
 import {
+  createLiveTailFilter,
   notificationManager,
+  type LiveTailLog,
   type LogNotificationEvent,
   type LogSubscriber,
 } from '../streaming/index.js';
 import { randomUUID } from 'crypto';
 import { verifyProjectAccess } from '../auth/verify-project-access.js';
+import { buildLogFilter, LogQueryError, type SearchMode } from './build-log-filter.js';
+import { mapApiLog } from './service.js';
+
+const asList = <T>(value: T | T[] | undefined): T[] | undefined =>
+  value === undefined ? undefined : Array.isArray(value) ? value : [value];
 
 /**
  * WebSocket routes for real-time log streaming.
@@ -27,12 +34,14 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
     // project-membership check (DB), so cap the connection attempt rate per client.
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (socket, req: any) => {
-    const { projectId, service, level, hostname, token } = req.query as {
+    const { projectId, service, level, hostname, token, q, searchMode } = req.query as {
       projectId: string;
       service?: string | string[];
       level?: LogLevel | LogLevel[];
       hostname?: string | string[];
       token?: string;
+      q?: string | string[];
+      searchMode?: string | string[];
     };
 
     if (!projectId) {
@@ -87,17 +96,9 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
     const subscriberId = randomUUID();
 
     // Parse filter arrays
-    const serviceFilter = service
-      ? Array.isArray(service)
-        ? service
-        : [service]
-      : undefined;
-    const levelFilter = level ? (Array.isArray(level) ? level : [level]) : undefined;
-    const hostnameFilter = hostname
-      ? Array.isArray(hostname)
-        ? hostname
-        : [hostname]
-      : undefined;
+    const serviceFilter = asList(service);
+    const levelFilter = asList(level);
+    const hostnameFilter = asList(hostname);
 
     // Track socket state for safe sending
     let isSocketOpen = true;
@@ -115,6 +116,47 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
         return false;
       }
     };
+
+    // Compile q with the same parser and limits as the REST endpoints, so the
+    // socket reports the same error text. A query that does not compile closes
+    // the socket: it never falls back to streaming unfiltered logs.
+    const rejectQuery = (error: string, position: number) => {
+      safeSend(JSON.stringify({ type: 'error', error, position }));
+      socket.close(1008, 'Invalid query');
+    };
+    if (q !== undefined && typeof q !== 'string') {
+      rejectQuery('q must be a single string', 0);
+      return;
+    }
+    if (searchMode !== undefined && searchMode !== 'fulltext' && searchMode !== 'substring') {
+      rejectQuery('searchMode must be fulltext or substring', 0);
+      return;
+    }
+
+    let matchesFilters: (log: LiveTailLog) => boolean;
+    try {
+      const built = buildLogFilter({
+        q,
+        searchMode: searchMode as SearchMode | undefined,
+        service: serviceFilter,
+        level: levelFilter,
+        hostname: hostnameFilter,
+      });
+      matchesFilters = createLiveTailFilter({
+        services: serviceFilter,
+        levels: levelFilter,
+        hostnames: hostnameFilter,
+        query: built.query,
+      });
+    } catch (err) {
+      if (err instanceof LogQueryError) {
+        rejectQuery(err.message, err.position);
+        return;
+      }
+      console.error(`[WebSocket:${subscriberId}] Query compile error:`, err);
+      socket.close(1011, 'Internal Server Error');
+      return;
+    }
 
     // Define subscriber for PostgreSQL LISTEN/NOTIFY
     const subscriber: LogSubscriber = {
@@ -142,46 +184,15 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
             return;
           }
 
-          // Apply client-side filters (service, level, hostname)
-          type WsLog = { id: string; time: Date; projectId: string; service: string; level: LogLevel; message: string; metadata?: Record<string, unknown>; traceId?: string; spanId?: string };
-          const filteredLogs = logs.filter((log: WsLog) => {
-            // Service filter
-            if (serviceFilter && !serviceFilter.includes(log.service)) {
-              return false;
-            }
-
-            // Level filter
-            if (levelFilter && !levelFilter.includes(log.level)) {
-              return false;
-            }
-
-            // Hostname filter (from metadata.hostname)
-            if (hostnameFilter) {
-              const logHostname = (log.metadata as Record<string, unknown> | undefined)?.hostname as string | undefined;
-              if (!logHostname || !hostnameFilter.includes(logHostname)) {
-                return false;
-              }
-            }
-
-            return true;
-          });
+          // Server-side filters: legacy service / level / hostname lists AND q
+          const filteredLogs = logs.filter((log) => matchesFilters(log));
 
           if (filteredLogs.length === 0) {
             return;
           }
 
-          // Transform to API format (reservoir returns camelCase)
-          const apiLogs = filteredLogs.map((log: WsLog) => ({
-            id: log.id,
-            time: log.time,
-            projectId: log.projectId,
-            service: log.service,
-            level: log.level,
-            message: log.message,
-            metadata: log.metadata,
-            traceId: log.traceId,
-            spanId: log.spanId,
-          }));
+          // Same payload as the REST endpoints (hostname, spanId, sessionId included)
+          const apiLogs = filteredLogs.map(mapApiLog);
 
           // Send to WebSocket client (safe send checks socket state)
           safeSend(JSON.stringify({ type: 'logs', logs: apiLogs }));
