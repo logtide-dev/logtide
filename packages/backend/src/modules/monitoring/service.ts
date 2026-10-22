@@ -707,7 +707,9 @@ export class MonitorService {
           monitor.target!,
           dnsConfig?.recordType ?? 'A',
           dnsConfig?.expectedValue,
-          monitor.timeoutSeconds
+          monitor.timeoutSeconds,
+          undefined,
+          allowPrivate
         );
       } else if (monitor.type === 'log_heartbeat') {
         const graceSeconds = monitor.gracePeriodSeconds ?? Math.round(monitor.intervalSeconds * 1.5);

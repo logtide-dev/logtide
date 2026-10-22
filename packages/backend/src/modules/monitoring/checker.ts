@@ -6,7 +6,7 @@ import isSafeRegex from 'safe-regex2';
 import type { Database } from '../../database/types.js';
 import type { IReservoir } from '@logtide/reservoir';
 import type { CheckResult, HttpConfig, ErrorCode, DnsCheckConfig } from './types.js';
-import { safeFetch, resolveAndValidateHost, SsrfBlockedError } from '../../utils/ssrf-guard.js';
+import { safeFetch, resolveAndValidateHost, isBlockedAddress, SsrfBlockedError } from '../../utils/ssrf-guard.js';
 
 /**
  * HTTP/HTTPS health check.
@@ -424,9 +424,35 @@ function normalizeDnsRecords(recordType: DnsCheckConfig['recordType'], answer: u
   }
 }
 
+const INTERNAL_DNS_SUFFIXES = [
+  '.local',
+  '.localhost',
+  '.internal',
+  '.lan',
+  '.localdomain',
+  '.home.arpa',
+  '.intranet',
+  '.corp',
+  '.svc',
+];
+
+/**
+ * True for names that only make sense on the backend's own network: single
+ * label names (Docker and Kubernetes service names) and well-known internal
+ * suffixes. The system resolver answers for those, so a tenant could read
+ * internal addresses through a DNS monitor.
+ */
+export function isInternalDnsName(hostname: string): boolean {
+  const name = stripDot(hostname.trim());
+  if (!name.includes('.')) return true;
+  return INTERNAL_DNS_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
+
 /**
  * DNS record check. Queries only the configured resolver and never connects
- * to the answers, so no SSRF surface exists beyond the hostname pattern.
+ * to the answers. Unless allowPrivate is set (MONITOR_ALLOW_PRIVATE_TARGETS),
+ * internal names are refused and A/AAAA answers in private ranges are never
+ * stored, like the guard on HTTP, TCP and SSL monitors.
  */
 export async function runDnsCheck(
   hostname: string,
@@ -434,16 +460,28 @@ export async function runDnsCheck(
   expectedValue: string | undefined,
   timeoutSeconds: number,
   resolverFactory: (timeoutMs: number) => DnsResolverLike = (timeoutMs) =>
-    new dns.promises.Resolver({ timeout: timeoutMs, tries: 1 })
+    new dns.promises.Resolver({ timeout: timeoutMs, tries: 1 }),
+  allowPrivate = false
 ): Promise<CheckResult> {
   const start = Date.now();
   const name = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
+
+  if (!allowPrivate && isInternalDnsName(name)) {
+    return { status: 'down', responseTimeMs: Date.now() - start, statusCode: null, errorCode: 'blocked' };
+  }
 
   try {
     const resolver = resolverFactory(Math.max(1, Math.round(timeoutSeconds * 1000)));
     const answer = await (resolver.resolve as (n: string, t: string) => Promise<unknown>)(name, recordType);
     const responseTimeMs = Date.now() - start;
     const records = normalizeDnsRecords(recordType, answer);
+    if (
+      !allowPrivate &&
+      (recordType === 'A' || recordType === 'AAAA') &&
+      records.some((r) => isBlockedAddress(r))
+    ) {
+      return { status: 'down', responseTimeMs, statusCode: null, errorCode: 'blocked' };
+    }
     const detail = { records: records.slice(0, 20) };
 
     if (records.length === 0) {

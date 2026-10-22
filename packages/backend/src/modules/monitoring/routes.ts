@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { MONITOR_TYPES } from '@logtide/shared';
 import { MonitorService } from './service.js';
-import { parseTcpTarget, parseHostPort, isValidDnsHostname } from './checker.js';
+import { parseTcpTarget, parseHostPort, isValidDnsHostname, isInternalDnsName } from './checker.js';
 import type { SslCheckConfig, DnsCheckConfig, UpdateMonitorInput } from './types.js';
 import { authenticate } from '../auth/middleware.js';
 import { db } from '../../database/index.js';
@@ -66,8 +66,13 @@ async function validateMonitorTarget(
     } else if (type === 'ssl') {
       const { host } = parseHostPort(target, 443);
       await resolveAndValidateHost(host, allowPrivate);
+    } else if (type === 'dns') {
+      // No connection is made, but the system resolver answers for internal
+      // names (Docker and Kubernetes services), which would leak addresses.
+      if (!allowPrivate && isInternalDnsName(target)) {
+        return 'Internal hostnames are not allowed for DNS monitors';
+      }
     }
-    // dns monitors only query the configured resolver and never connect to answers
     return null;
   } catch (err) {
     if (err instanceof SsrfBlockedError) return err.message;

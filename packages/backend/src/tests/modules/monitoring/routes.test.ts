@@ -26,6 +26,7 @@ vi.mock('../../../modules/monitoring/checker.js', async (importOriginal) => {
     // pure helpers stay real so target validation is exercised
     parseHostPort: actual.parseHostPort,
     isValidDnsHostname: actual.isValidDnsHostname,
+    isInternalDnsName: actual.isInternalDnsName,
   };
 });
 vi.mock('../../../database/reservoir.js', () => ({ reservoir: {} }));
@@ -870,6 +871,14 @@ describe('monitor form fields (W12)', () => {
   it('rejects a dns target that is an IP address', async () => {
     expect((await create({ type: 'dns', target: '10.0.0.1', checkConfig: { recordType: 'A' } })).statusCode).toBe(400);
     expect((await create({ type: 'dns', target: 'example.com:53', checkConfig: { recordType: 'A' } })).statusCode).toBe(400);
+  });
+
+  it('rejects dns monitors for internal hostnames', async () => {
+    for (const target of ['postgres', 'logtide-billing', 'kubernetes.default.svc', 'db.internal']) {
+      const res = await create({ type: 'dns', target, checkConfig: { recordType: 'A' } });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toMatch(/internal/i);
+    }
   });
 
   it('update validates checkConfig against the existing monitor type', async () => {

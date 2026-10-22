@@ -851,8 +851,34 @@ describe('runDnsCheck', () => {
   it('caps the stored records at 20 entries', async () => {
     const many = Array.from({ length: 30 }, (_, i) => `10.0.0.${i}`);
     const r = resolverReturning(many);
-    const result = await runDnsCheck('example.com', 'A', undefined, 5, r.factory);
+    const result = await runDnsCheck('example.com', 'A', undefined, 5, r.factory, true);
     expect((result.detail as any).records).toHaveLength(20);
+  });
+
+  it('refuses single-label and internal-suffix names without asking the resolver', async () => {
+    for (const name of ['postgres', 'logtide-billing', 'kubernetes.default.svc', 'db.internal', 'host.local']) {
+      const r = resolverReturning(['172.18.0.2']);
+      const result = await runDnsCheck(name, 'A', undefined, 5, r.factory);
+      expect(result.status).toBe('down');
+      expect(result.errorCode).toBe('blocked');
+      expect(result.detail).toBeUndefined();
+      expect(r.resolve).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not store A/AAAA answers in private ranges', async () => {
+    const a = await runDnsCheck('example.com', 'A', undefined, 5, resolverReturning(['93.184.216.34', '10.0.0.5']).factory);
+    expect(a.errorCode).toBe('blocked');
+    expect(a.detail).toBeUndefined();
+    const aaaa = await runDnsCheck('example.com', 'AAAA', undefined, 5, resolverReturning(['fd00::1']).factory);
+    expect(aaaa.errorCode).toBe('blocked');
+  });
+
+  it('allows internal names and private answers when MONITOR_ALLOW_PRIVATE_TARGETS is on', async () => {
+    const r = resolverReturning(['172.18.0.2']);
+    const result = await runDnsCheck('postgres', 'A', undefined, 5, r.factory, true);
+    expect(result.status).toBe('up');
+    expect(result.detail).toEqual({ records: ['172.18.0.2'] });
   });
 });
 
