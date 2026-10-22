@@ -2,7 +2,7 @@
   // Logs explorer (spec 5.4). The page owns the explorer state: the committed
   // query, the scope (shared scope store), a run window frozen at query time,
   // the loaded rows and the cursor. Every filter is a clause of `q`, so the URL,
-  // the export and the details actions all carry exactly the same query.
+  // saved searches, the export and the alert pre-fill carry the same query.
   import { onMount, onDestroy, tick } from "svelte";
   import { get, type Writable } from "svelte/store";
   import { goto, afterNavigate } from "$app/navigation";
@@ -20,24 +20,44 @@
   import { toastStore } from "$lib/stores/toast";
   import { layoutStore } from "$lib/stores/layout";
   import { displayPreferences } from "$lib/stores/display-preferences";
-  import { scopeStore, resolveRange, type Scope } from "$lib/stores/scope";
+  import {
+    scopeStore,
+    resolveRange,
+    sanitizeRange,
+    type Scope,
+    type TimeRangeValue,
+  } from "$lib/stores/scope";
   import { createColumnConfigStore, type ColumnConfigStore } from "$lib/stores/column-config";
   import { formatRange, formatTimestamp } from "$lib/utils/datetime";
+  import { copyToClipboard } from "$lib/utils/clipboard";
   import { ProjectsAPI } from "$lib/api/projects";
-  import { logsAPI, LogQueryError, type LogEntry } from "$lib/api/logs";
+  import {
+    logsAPI,
+    LogQueryError,
+    type LogEntry,
+    type LogFacet,
+    type LogFieldInfo,
+    type LogHistogramBucket,
+  } from "$lib/api/logs";
   import { correlationAPI, type IdentifierMatch } from "$lib/api/correlation";
+  import type { SavedSearch, SavedSearchState } from "$lib/api/saved-searches";
   import PageHeader from "$lib/components/app/PageHeader.svelte";
   import EmptyState from "$lib/components/app/EmptyState.svelte";
   import ScopeBar from "$lib/components/app/ScopeBar.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
+  import * as Popover from "$lib/components/ui/popover";
   import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
   import EmptyLogs from "$lib/components/EmptyLogs.svelte";
   import TerminalLogView from "$lib/components/TerminalLogView.svelte";
   import LogContextDialog from "$lib/components/LogContextDialog.svelte";
   import CorrelationTimelineDialog from "$lib/components/CorrelationTimelineDialog.svelte";
+  import ExportLogsDialog from "$lib/components/ExportLogsDialog.svelte";
   import LogQueryBar from "$lib/components/search/LogQueryBar.svelte";
   import LogResultsTable from "$lib/components/search/LogResultsTable.svelte";
   import LogDetailsPanel from "$lib/components/search/LogDetailsPanel.svelte";
+  import LogVolumeHistogram from "$lib/components/search/LogVolumeHistogram.svelte";
+  import FacetSidebar from "$lib/components/search/FacetSidebar.svelte";
+  import SavedSearchesMenu from "$lib/components/search/SavedSearchesMenu.svelte";
   import ColumnConfigMenu from "$lib/components/search/ColumnConfigMenu.svelte";
   import {
     DEFAULT_BUILTIN_LAYOUT,
@@ -49,13 +69,36 @@
   import { resolveResultsState } from "$lib/components/search/results-state";
   import { activeProjectKey, rowKey } from "$lib/components/search/log-fields";
   import { isQueryableKey, toggleFieldValue } from "$lib/components/search/query-edit";
+  import { pickBucketSeconds } from "$lib/components/search/histogram";
+  import {
+    BUILTIN_FACET_KEYS,
+    FACET_VALUE_LIMIT,
+    facetCandidates,
+    selectMetadataFacetKeys,
+  } from "$lib/components/search/facet-keys";
+  import { createFacetPinsStore, type FacetPinsStore } from "$lib/components/search/facet-pins";
+  import {
+    clearRecentSearches,
+    createRecentRecorder,
+    loadRecentSearches,
+    recentLabel,
+    recordRecentSearch,
+    type RecentSearch,
+  } from "$lib/components/search/recent-searches";
   import {
     LOGS_PATH,
+    LOG_LINK_WINDOW_MS,
+    alertPrefillUrl,
     buildExplorerUrl,
     parseExplorerUrl,
+    toSavedState,
     type ExplorerState,
     type ExplorerView,
   } from "$lib/components/search/explorer-url";
+  import BellPlus from "@lucide/svelte/icons/bell-plus";
+  import Download from "@lucide/svelte/icons/download";
+  import Ellipsis from "@lucide/svelte/icons/ellipsis";
+  import Link from "@lucide/svelte/icons/link";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import Rows3 from "@lucide/svelte/icons/rows-3";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
@@ -64,8 +107,11 @@
 
   const PAGE_SIZE = 50;
   const MAX_LOADED_ROWS = 5000;
+  /** Extra pages a `logId` link loads while looking for its log. */
+  const MAX_LINK_PAGES = 10;
   const VIEW_KEY = "logtide_view_mode";
   const DENSITY_KEY = "logtide_row_density";
+  const FACETS_COLLAPSED_KEY = "logtide_facets_collapsed";
   const RESULTS_HEIGHT = "max(420px, calc(100dvh - 22rem))";
 
   /** One query execution: the window is resolved once and reused by every page of it. */
@@ -73,6 +119,7 @@
     q: string;
     query: LogSearchQuery;
     projectIds: string[];
+    range: TimeRangeValue;
     from: Date;
     to: Date;
     asOf: Date;
@@ -81,6 +128,8 @@
 
   const projectsAPI = new ProjectsAPI(() => get(authStore).token);
   const logsGuard = createRequestGuard();
+  const histogramGuard = createRequestGuard();
+  const facetsGuard = createRequestGuard();
 
   let projects = $state.raw<Project[]>([]);
   let projectsFailed = $state(false);
@@ -102,6 +151,19 @@
   let queryError = $state<{ message: string; position: number } | null>(null);
   let capped = $state(false);
 
+  let histogramBuckets = $state.raw<LogHistogramBucket[]>([]);
+  let histogramBucketSeconds = $state(60);
+  let histogramTotal = $state<number | null>(null);
+  let histogramLoading = $state(false);
+  let histogramError = $state<string | null>(null);
+
+  let facets = $state.raw<LogFacet[]>([]);
+  let facetsLoading = $state(false);
+  let facetsError = $state<string | null>(null);
+  let facetsCollapsed = $state(false);
+  let discovered = $state.raw<LogFieldInfo[]>([]);
+  let pinnedKeys = $state.raw<string[]>([]);
+
   let selectedId = $state<string | null>(null);
   let detailsLog = $state.raw<LogEntry | null>(null);
   let logId = $state<string | null>(null);
@@ -109,6 +171,7 @@
   let savedId = $state<string | null>(null);
   let centerOnId = $state<string | null>(null);
   let identifiers = $state.raw<Map<string, IdentifierMatch[]>>(new Map());
+  let recent = $state.raw<RecentSearch[]>([]);
 
   let density = $state<"comfortable" | "compact">("comfortable");
   let terminalWrap = $state(true);
@@ -116,6 +179,8 @@
   let containerPadding = $state("px-6 py-8");
   let resultsTable = $state<{ reveal(id: string): void; scrollToTop(): void } | null>(null);
 
+  let moreOpen = $state(false);
+  let exportOpen = $state(false);
   let contextOpen = $state(false);
   let contextLog = $state.raw<LogEntry | null>(null);
   let correlation = $state.raw<{ log: LogEntry; type: string; value: string } | null>(null);
@@ -128,14 +193,20 @@
   let orgId: string | null = null;
   let lastWrittenUrl: string | null = null;
   let scopeKeySeen = scopeKey(scopeStore.get());
+  let fieldsKey: string | null = null;
   let projectsSeq = 0;
+  let runSeq = 0;
   const identifierRequests = new Set<string>();
   const builtinStores = new Map<string, Writable<BuiltinColumnLayout>>();
   const columnStores = new Map<string, ColumnConfigStore>();
+  const pinStores = new Map<string, FacetPinsStore>();
+  const recorder = createRecentRecorder((state) => {
+    recent = recordRecentSearch(state);
+  });
 
   const scopeProjects = $derived(projects.map((p) => ({ id: p.id, name: p.name })));
   const resolvedIds = $derived(resolveIds(scope.projectIds, projects));
-  const projectKey = $derived(activeProjectKey(resolvedIds) ?? "all");
+  const projectKey = $derived(keyFor(resolvedIds));
   const selectedIndex = $derived(
     selectedId === null ? -1 : rows.findIndex((log, i) => rowKey(log, i) === selectedId),
   );
@@ -155,8 +226,9 @@
       everReceivedLogs,
     }),
   );
+  const shownTotal = $derived(histogramTotal ?? total);
   const countText = $derived.by(() => {
-    const n = total ?? rows.length;
+    const n = shownTotal ?? rows.length;
     return `${n.toLocaleString("en-US")} ${n === 1 ? "log" : "logs"}`;
   });
   const asOfText = $derived.by(() => {
@@ -173,9 +245,32 @@
     return run.preset ? `the ${TIME_RANGE_LABELS[run.preset].toLowerCase()}` : formatRange(run.from, run.to);
   });
   const hasMore = $derived(nextCursor !== null && !capped);
+  const discoveredKeys = $derived(discovered.map((f) => f.key));
+  const candidateKeys = $derived(facetCandidates(discovered));
+  const savedState = $derived(toSavedState(currentState(), customColumns));
+  const exportScope = $derived(
+    run
+      ? { q: run.q, projectIds: run.projectIds, from: run.from.toISOString(), to: run.to.toISOString() }
+      : { q: "", projectIds: [], from: new Date(0).toISOString(), to: new Date(0).toISOString() },
+  );
+  const canExport = $derived(run !== null && rows.length > 0);
+  const gridClass = $derived(
+    detailsLog
+      ? facetsCollapsed
+        ? "lg:grid-cols-[2.5rem_minmax(0,1fr)] xl:grid-cols-[2.5rem_minmax(0,1fr)_26rem]"
+        : "lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_26rem]"
+      : facetsCollapsed
+        ? "lg:grid-cols-[2.5rem_minmax(0,1fr)]"
+        : "lg:grid-cols-[16rem_minmax(0,1fr)]",
+  );
 
   function scopeKey(s: Scope): string {
     return JSON.stringify([s.projectIds, s.range]);
+  }
+
+  /** Per-project settings (columns, pins) follow the first scoped project. */
+  function keyFor(ids: string[]): string {
+    return activeProjectKey(ids) ?? "all";
   }
 
   /** Scope ids present in the organization, or every project when none is. */
@@ -195,9 +290,10 @@
 
   /** Changes the scope without the store subscription starting another run. */
   function setScope(next: Scope) {
-    scopeKeySeen = scopeKey(next);
-    scope = next;
-    scopeStore.set(next);
+    const normalized: Scope = { projectIds: normalizeIds(next.projectIds), range: next.range };
+    scopeKeySeen = scopeKey(normalized);
+    scope = normalized;
+    scopeStore.set(normalized);
   }
 
   function builtinStoreFor(key: string): Writable<BuiltinColumnLayout> {
@@ -218,8 +314,18 @@
     return store;
   }
 
+  function pinStoreFor(key: string): FacetPinsStore {
+    let store = pinStores.get(key);
+    if (!store) {
+      store = createFacetPinsStore(key);
+      pinStores.set(key, store);
+    }
+    return store;
+  }
+
   $effect(() => builtinStoreFor(projectKey).subscribe((value) => (layout = value)));
   $effect(() => columnStoreFor(projectKey).subscribe((value) => (customColumns = value)));
+  $effect(() => pinStoreFor(projectKey).subscribe((value) => (pinnedKeys = value)));
   $effect(() => layoutStore.subscribe((s) => (terminalWrap = s.terminalWrapEnabled)));
   $effect(() => layoutStore.maxWidthClass.subscribe((v) => (maxWidthClass = v)));
   $effect(() => layoutStore.containerPadding.subscribe((v) => (containerPadding = v)));
@@ -255,13 +361,17 @@
     return e instanceof Error && e.message ? e.message : "The request failed";
   }
 
-  /** Runs the committed query over a window frozen now; resolves true when page 1 was applied. */
-  async function startRun(): Promise<boolean> {
+  /**
+   * Runs the committed query over a window frozen now; resolves true when page 1
+   * was applied. Histogram and facets of the same window load alongside.
+   */
+  async function startRun(opts: { submitted?: boolean } = {}): Promise<boolean> {
     const parsed = parseLogQuery(q);
     if (parsed.ok === false) {
       queryError = { message: parsed.error.message, position: parsed.error.position };
       return false;
     }
+    runSeq += 1;
     queryError = null;
     hasRun = true;
     error = null;
@@ -275,6 +385,7 @@
       q,
       query: parsed.query,
       projectIds: ids,
+      range: scope.range,
       from,
       to,
       asOf,
@@ -284,6 +395,8 @@
     const token = logsGuard.begin();
 
     if (projectsFailed) {
+      histogramGuard.invalidate();
+      facetsGuard.invalidate();
       rows = [];
       total = null;
       loading = false;
@@ -291,12 +404,16 @@
       return false;
     }
     if (ids.length === 0) {
+      histogramGuard.invalidate();
+      facetsGuard.invalidate();
       rows = [];
       total = 0;
       loading = false;
       return true;
     }
 
+    void loadHistogram(r);
+    void loadFacets(r);
     loading = true;
     try {
       const res = await logsAPI.getLogs({
@@ -310,6 +427,7 @@
       rows = Array.isArray(res.logs) ? res.logs : [];
       total = typeof res.total === "number" ? res.total : null;
       nextCursor = cursorOf(res);
+      if (!opts.submitted) recorder.loaded(toSavedState(currentState(), customColumns));
       return true;
     } catch (e) {
       if (!logsGuard.isCurrent(token)) return false;
@@ -324,6 +442,74 @@
       return false;
     } finally {
       if (logsGuard.isCurrent(token)) loading = false;
+    }
+  }
+
+  async function loadHistogram(r: Run) {
+    const token = histogramGuard.begin();
+    const bucketSeconds = pickBucketSeconds(r.to.getTime() - r.from.getTime());
+    histogramLoading = true;
+    histogramError = null;
+    histogramTotal = null;
+    try {
+      const res = await logsAPI.getHistogram({
+        projectId: r.projectIds,
+        q: r.q || undefined,
+        from: r.from.toISOString(),
+        to: r.to.toISOString(),
+        bucketSeconds,
+      });
+      if (!histogramGuard.isCurrent(token)) return;
+      histogramBuckets = Array.isArray(res.buckets) ? res.buckets : [];
+      histogramBucketSeconds = typeof res.bucketSeconds === "number" ? res.bucketSeconds : bucketSeconds;
+      histogramTotal = typeof res.total === "number" ? res.total : null;
+    } catch (e) {
+      if (!histogramGuard.isCurrent(token)) return;
+      histogramBuckets = [];
+      histogramError = errorText(e);
+    } finally {
+      if (histogramGuard.isCurrent(token)) histogramLoading = false;
+    }
+  }
+
+  /** Facet counts for the run; discovered fields are re-read only when projects or range change. */
+  async function loadFacets(r: Run) {
+    const token = facetsGuard.begin();
+    const key = JSON.stringify([r.projectIds, r.range]);
+    facetsLoading = true;
+    facetsError = null;
+    try {
+      if (key !== fieldsKey) {
+        let fields: LogFieldInfo[] = [];
+        try {
+          fields = await logsAPI.getFields({
+            projectId: r.projectIds,
+            from: r.from.toISOString(),
+            to: r.to.toISOString(),
+          });
+        } catch {
+          fields = [];
+        }
+        if (!facetsGuard.isCurrent(token)) return;
+        discovered = Array.isArray(fields) ? fields : [];
+        fieldsKey = key;
+      }
+      const pins = get(pinStoreFor(keyFor(r.projectIds)));
+      const res = await logsAPI.getFacets({
+        projectId: r.projectIds,
+        q: r.q || undefined,
+        from: r.from.toISOString(),
+        to: r.to.toISOString(),
+        fields: [...BUILTIN_FACET_KEYS, ...selectMetadataFacetKeys(pins, discovered)],
+        limit: FACET_VALUE_LIMIT,
+      });
+      if (!facetsGuard.isCurrent(token)) return;
+      facets = Array.isArray(res) ? res : [];
+    } catch (e) {
+      if (!facetsGuard.isCurrent(token)) return;
+      facetsError = errorText(e);
+    } finally {
+      if (facetsGuard.isCurrent(token)) facetsLoading = false;
     }
   }
 
@@ -377,7 +563,9 @@
 
   function handleSubmit(next: string) {
     q = next.trim();
-    void startRun();
+    const parsed = parseLogQuery(q);
+    if (parsed.ok) recorder.submit(toSavedState(currentState(), customColumns));
+    void startRun({ submitted: true });
     writeUrl();
   }
 
@@ -409,6 +597,24 @@
     scopeStore.setProjects([projectId]);
   }
 
+  function selectHistogramRange(from: Date, to: Date) {
+    scopeStore.setRange({ kind: "custom", from: from.toISOString(), to: to.toISOString() });
+  }
+
+  function pinFacet(key: string) {
+    pinStoreFor(projectKey).pin(key);
+    if (run) void loadFacets(run);
+  }
+
+  function unpinFacet(key: string) {
+    pinStoreFor(projectKey).unpin(key);
+    if (run) void loadFacets(run);
+  }
+
+  function valuesFor(key: string): string[] {
+    return facets.find((f) => f.field === key)?.values.map((v) => v.value) ?? [];
+  }
+
   function setView(next: ExplorerView) {
     if (view === next) return;
     view = next;
@@ -424,6 +630,15 @@
     density = density === "comfortable" ? "compact" : "comfortable";
     try {
       localStorage.setItem(DENSITY_KEY, density);
+    } catch {
+      // storage blocked
+    }
+  }
+
+  function setFacetsCollapsed(next: boolean) {
+    facetsCollapsed = next;
+    try {
+      localStorage.setItem(FACETS_COLLAPSED_KEY, String(next));
     } catch {
       // storage blocked
     }
@@ -453,11 +668,17 @@
     const index = rows.indexOf(log);
     if (index >= 0) selectedId = rowKey(log, index);
     detailsLog = log;
+    logId = log.id ?? null;
+    logProjectId = log.id ? log.projectId : null;
     if (log.id) void loadIdentifiers(log.id);
+    writeUrl();
   }
 
   function closeDetails() {
     detailsLog = null;
+    logId = null;
+    logProjectId = null;
+    writeUrl();
   }
 
   function toggleSelectedDetails() {
@@ -489,8 +710,156 @@
     contextLog = null;
   }
 
+  function linkWindow(time: string): TimeRangeValue | null {
+    const t = Date.parse(time);
+    if (Number.isNaN(t)) return null;
+    return {
+      kind: "custom",
+      from: new Date(t - LOG_LINK_WINDOW_MS).toISOString(),
+      to: new Date(t + LOG_LINK_WINDOW_MS).toISOString(),
+    };
+  }
+
+  /**
+   * Runs the current state and loads more pages (at most MAX_LINK_PAGES) until
+   * the log with `id` is present; then selects, centres and opens it. When it
+   * never shows up, the details panel opens on `fallback` with a notice.
+   */
+  async function focusLog(id: string, fallback: LogEntry) {
+    const ok = await startRun();
+    const mine = runSeq;
+    if (!ok) {
+      if (mine === runSeq && !error) openDetails(fallback);
+      return;
+    }
+    let pages = 0;
+    while (mine === runSeq && !rows.some((r) => r.id === id) && nextCursor && pages < MAX_LINK_PAGES) {
+      pages += 1;
+      if (!(await loadMore())) break;
+    }
+    if (mine !== runSeq) return;
+    const index = rows.findIndex((r) => r.id === id);
+    if (index >= 0) {
+      const log = rows[index];
+      const key = rowKey(log, index);
+      selectedId = key;
+      centerOnId = key;
+      openDetails(log);
+    } else {
+      openDetails(fallback);
+      toastStore.info("This log is outside the current results");
+    }
+  }
+
+  /** `logId` deep link: fetch the log, frame its window when the link has none, find it. */
+  async function openLogLink(id: string, projectId: string | null, hasRange: boolean) {
+    const mine = runSeq;
+    const pid = projectId ?? resolvedIds[0] ?? null;
+    let found: LogEntry | null = null;
+    if (pid) {
+      try {
+        const res = await logsAPI.getLogById(id, pid);
+        found = res?.log ?? null;
+      } catch {
+        found = null;
+      }
+    }
+    // Another run started meanwhile (scope or query change): that one wins.
+    if (mine !== runSeq) return;
+    if (!found) {
+      toastStore.error("Log not found");
+      logId = null;
+      logProjectId = null;
+      void startRun();
+      writeUrl();
+      return;
+    }
+    if (!hasRange) {
+      const range = linkWindow(found.time);
+      if (range) setScope({ projectIds: scope.projectIds, range });
+    }
+    await focusLog(id, found);
+  }
+
+  /** A context row: the explorer around that log, in its project, without a query. */
+  function openAround(log: LogEntry) {
+    closeContext();
+    const range = linkWindow(log.time);
+    if (!range) return;
+    setScope({ projectIds: [log.projectId], range });
+    q = "";
+    draftQ = "";
+    savedId = null;
+    if (log.id) void focusLog(log.id, log);
+    else void startRun();
+    writeUrl();
+  }
+
   function searchRange(preset: TimeRangePreset) {
     scopeStore.setRange({ kind: "preset", preset });
+  }
+
+  function rangeOfState(state: SavedSearchState): TimeRangeValue {
+    if (state.range) {
+      const preset = sanitizeRange({ kind: "preset", preset: state.range });
+      if (preset) return preset;
+    }
+    if (state.from && state.to) {
+      const custom = sanitizeRange({ kind: "custom", from: state.from, to: state.to });
+      if (custom) return custom;
+    }
+    return scope.range;
+  }
+
+  function applySearchState(state: SavedSearchState) {
+    q = typeof state.q === "string" ? state.q.trim() : "";
+    draftQ = q;
+    setScope({
+      projectIds: Array.isArray(state.projectIds) ? state.projectIds : [],
+      range: rangeOfState(state),
+    });
+    if (state.view === "table" || state.view === "terminal") view = state.view;
+    detailsLog = null;
+    logId = null;
+    logProjectId = null;
+    selectedId = null;
+  }
+
+  function applyRecent(entry: RecentSearch) {
+    applySearchState(entry);
+    savedId = null;
+    void startRun();
+    writeUrl();
+  }
+
+  function clearRecent() {
+    clearRecentSearches();
+    recent = [];
+  }
+
+  function applySaved(saved: SavedSearch) {
+    applySearchState(saved.state);
+    if (Array.isArray(saved.state.columns)) columnStoreFor(projectKey).set([...saved.state.columns]);
+    savedId = saved.id;
+    void startRun();
+    writeUrl();
+  }
+
+  async function copyLink() {
+    moreOpen = false;
+    const href = new URL(buildExplorerUrl(currentState()), location.origin).href;
+    if (await copyToClipboard(href)) toastStore.success("Link copied");
+    else toastStore.error("Could not copy the link");
+  }
+
+  function createAlert() {
+    moreOpen = false;
+    goto(alertPrefillUrl({ q, scopeProjectIds: scope.projectIds }));
+  }
+
+  function openExport() {
+    moreOpen = false;
+    exportOpen = true;
   }
 
   /** Applies a logs URL (first load or a link from another page) and runs it. */
@@ -498,19 +867,20 @@
     initialized = true;
     const parsed = parseExplorerUrl(url);
     setScope({
-      projectIds: parsed.scope.projectIds ? normalizeIds(parsed.scope.projectIds) : scope.projectIds,
+      projectIds: parsed.scope.projectIds ?? scope.projectIds,
       range: parsed.scope.range ?? scope.range,
     });
     q = parsed.q;
     draftQ = parsed.q;
     if (parsed.view) view = parsed.view;
     savedId = parsed.savedId;
-    logId = null;
-    logProjectId = null;
+    logId = parsed.logId;
+    logProjectId = parsed.logProjectId;
     detailsLog = null;
     selectedId = null;
     centerOnId = null;
-    void startRun();
+    if (parsed.logId) void openLogLink(parsed.logId, parsed.logProjectId, parsed.scope.range !== undefined);
+    else void startRun();
     writeUrl();
   }
 
@@ -559,7 +929,11 @@
   }
 
   function resetResults() {
+    runSeq += 1;
     logsGuard.invalidate();
+    histogramGuard.invalidate();
+    facetsGuard.invalidate();
+    recorder.cancel();
     rows = [];
     total = null;
     nextCursor = null;
@@ -569,6 +943,15 @@
     loadingMore = false;
     error = null;
     capped = false;
+    histogramBuckets = [];
+    histogramTotal = null;
+    histogramLoading = false;
+    histogramError = null;
+    facets = [];
+    facetsLoading = false;
+    facetsError = null;
+    discovered = [];
+    fieldsKey = null;
     selectedId = null;
     detailsLog = null;
     centerOnId = null;
@@ -590,6 +973,9 @@
         applyUrl(page.url);
         return;
       }
+      logId = null;
+      logProjectId = null;
+      savedId = null;
       void startRun();
       writeUrl();
     });
@@ -661,9 +1047,11 @@
     try {
       const savedDensity = localStorage.getItem(DENSITY_KEY);
       if (savedDensity === "compact" || savedDensity === "comfortable") density = savedDensity;
+      facetsCollapsed = localStorage.getItem(FACETS_COLLAPSED_KEY) === "true";
     } catch {
       // storage blocked
     }
+    recent = loadRecentSearches();
   }
 
   onMount(() => {
@@ -678,7 +1066,11 @@
   });
 
   onDestroy(() => {
+    runSeq += 1;
     logsGuard.invalidate();
+    histogramGuard.invalidate();
+    facetsGuard.invalidate();
+    recorder.cancel();
     shortcutsStore.unregisterScope("search");
   });
 </script>
@@ -694,19 +1086,127 @@
     {/snippet}
   </PageHeader>
 
-  <div class="mb-4 flex flex-wrap items-start gap-2">
-    <div class="min-w-[280px] flex-1">
-      <LogQueryBar
-        bind:value={draftQ}
-        fields={[]}
-        valuesFor={() => []}
-        serverError={queryError}
-        onSubmit={handleSubmit}
+  <div class="mb-4 space-y-2">
+    <div class="flex flex-wrap items-start gap-2">
+      <div class="min-w-[280px] flex-1">
+        <LogQueryBar
+          bind:value={draftQ}
+          fields={discoveredKeys}
+          {valuesFor}
+          serverError={queryError}
+          onSubmit={handleSubmit}
+          onEdit={() => recorder.cancel()}
+        />
+      </div>
+      <SavedSearchesMenu
+        organizationId={$currentOrganization?.id ?? ""}
+        currentUserId={$authStore.user?.id ?? null}
+        currentState={savedState}
+        openSavedId={savedId}
+        onOpen={applySaved}
+        onSaved={(saved) => {
+          savedId = saved.id;
+          writeUrl();
+        }}
+        onDeleted={(id) => {
+          if (savedId !== id) return;
+          savedId = null;
+          writeUrl();
+        }}
       />
+      <Popover.Root bind:open={moreOpen}>
+        <Popover.Trigger>
+          {#snippet child({ props })}
+            <Button {...props} variant="outline" size="icon" class="size-9" aria-label="More actions" title="More actions">
+              <Ellipsis class="size-4" />
+            </Button>
+          {/snippet}
+        </Popover.Trigger>
+        <Popover.Content class="w-48 p-1" align="end">
+          <div class="flex flex-col">
+            <button
+              type="button"
+              class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+              onclick={copyLink}
+            >
+              <Link class="size-4 text-muted-foreground" />
+              Copy link
+            </button>
+            <button
+              type="button"
+              class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+              onclick={createAlert}
+            >
+              <BellPlus class="size-4 text-muted-foreground" />
+              Create alert
+            </button>
+            <button
+              type="button"
+              class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+              disabled={!canExport}
+              onclick={openExport}
+            >
+              <Download class="size-4 text-muted-foreground" />
+              Export
+            </button>
+          </div>
+        </Popover.Content>
+      </Popover.Root>
     </div>
+
+    {#if recent.length > 0 && draftQ.trim() === ""}
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="text-xs text-muted-foreground">Recent:</span>
+        {#each recent as entry, i (i)}
+          <button
+            type="button"
+            class="inline-flex max-w-[16rem] items-center truncate rounded-full border bg-background px-2.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+            title={entry.q}
+            onclick={() => applyRecent(entry)}
+          >
+            {recentLabel(entry)}
+          </button>
+        {/each}
+        <button
+          type="button"
+          class="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          aria-label="Clear recent searches"
+          onclick={clearRecent}
+        >
+          Clear
+        </button>
+      </div>
+    {/if}
   </div>
 
-  <div class="grid items-start gap-4 {detailsLog ? 'xl:grid-cols-[minmax(0,1fr)_26rem]' : ''}">
+  {#if hasRun && resultsState !== "onboarding"}
+    <div class="mb-4 rounded-lg border bg-card p-3 text-card-foreground">
+      <LogVolumeHistogram
+        buckets={histogramBuckets}
+        bucketSeconds={histogramBucketSeconds}
+        total={histogramTotal}
+        loading={histogramLoading}
+        error={histogramError}
+        onRangeSelect={selectHistogramRange}
+        onRetry={() => run && void loadHistogram(run)}
+      />
+    </div>
+  {/if}
+
+  <div class="grid items-start gap-4 {gridClass}">
+    <FacetSidebar
+      {facets}
+      loading={facetsLoading}
+      error={facetsError}
+      {q}
+      {pinnedKeys}
+      {candidateKeys}
+      bind:collapsed={() => facetsCollapsed, (next) => setFacetsCollapsed(next)}
+      onToggle={applyFieldToggle}
+      onPin={pinFacet}
+      onUnpin={unpinFacet}
+    />
+
     <section aria-label="Results" class="min-w-0 rounded-lg border bg-card text-card-foreground">
       <div class="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <div class="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -862,9 +1362,9 @@
           identifiers={(detailsLog.id && identifiers.get(detailsLog.id)) || []}
           organizationId={$currentOrganization?.id ?? ""}
           onClose={closeDetails}
-          onFilter={() => {}}
+          onFilter={(key, value, negate) => applyFieldToggle(key, value, negate ? "exclude" : "include")}
           onProjectFilter={filterProject}
-          onAddColumn={() => {}}
+          onAddColumn={(path) => columnStoreFor(projectKey).add(path)}
           onOpenContext={(log) => openContext(log)}
           onOpenCorrelation={(log, type, value) => (correlation = { log, type, value })}
         />
@@ -879,6 +1379,7 @@
   organizationId={$currentOrganization?.id ?? ""}
   selectedLog={contextLog}
   onClose={closeContext}
+  onOpenAround={openAround}
 />
 
 <CorrelationTimelineDialog
@@ -901,4 +1402,12 @@
       projectId: correlated.projectId || "",
     });
   }}
+/>
+
+<ExportLogsDialog
+  bind:open={exportOpen}
+  totalLogs={shownTotal ?? rows.length}
+  scope={exportScope}
+  projects={scopeProjects}
+  {customColumns}
 />

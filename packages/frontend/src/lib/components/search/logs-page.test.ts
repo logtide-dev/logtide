@@ -18,7 +18,8 @@ const h = vi.hoisted(() => {
       },
       off: () => {},
     }),
-    convertFromPixel: (_finder: unknown, x: number) => x,
+    // One pixel is one second after 10:00:00 UTC (histogram buckets start there).
+    convertFromPixel: (_finder: unknown, x: number) => Date.UTC(2026, 9, 21, 10, 0, 0) + x * 1000,
     containPixel: () => true,
   };
   return {
@@ -352,9 +353,10 @@ describe('logs page: scope, url, window, states, shortcuts', () => {
 
   it('shows Results as of and Refresh re-runs with a new window', async () => {
     h.getLogs.mockResolvedValue(response(logsList(3)));
+    h.getHistogram.mockResolvedValue({ buckets: [], bucketSeconds: 60, total: 3, from: '', to: '' });
     await renderPage();
     expect(await screen.findByText('Results as of 10:42:13')).toBeInTheDocument();
-    expect(screen.getByText('3 logs')).toBeInTheDocument();
+    expect(screen.getAllByText('3 logs').length).toBeGreaterThan(0);
     vi.setSystemTime(new Date(NOW.getTime() + 60_000));
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh results' }));
     await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(2));
@@ -446,5 +448,293 @@ describe('logs page: scope, url, window, states, shortcuts', () => {
     expect(toast).toHaveBeenCalledWith('Could not load more logs');
     expect(rowMessages()[0]).toBe('row-0');
     expect(screen.queryByText('Could not load logs')).toBeNull();
+  });
+});
+
+function savedSearch(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 's1',
+    organizationId: 'org-1',
+    createdBy: 'u1',
+    createdByName: 'Ada',
+    name: 'Errors',
+    visibility: 'private',
+    state: { q: 'level:error', projectIds: ['p2'], range: '24h', view: 'terminal', columns: ['user.id'] },
+    canEdit: true,
+    createdAt: '2026-10-20T10:00:00.000Z',
+    updatedAt: '2026-10-20T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+async function openMoreActions() {
+  await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+  await settle();
+}
+
+async function openFirstRowDetails() {
+  await waitFor(() => expect(document.querySelectorAll('[data-log-row]').length).toBeGreaterThan(0));
+  await fireEvent.click(document.querySelector('[data-log-row]') as HTMLElement);
+  await settle();
+  return screen.getByRole('complementary', { name: 'Log details' });
+}
+
+describe('logs page: histogram, facets, details, links, saved and recent searches', () => {
+  it('a histogram selection sets a custom range and re-runs', async () => {
+    const base = Date.UTC(2026, 9, 21, 10, 0, 0);
+    h.getHistogram.mockResolvedValue({
+      buckets: Array.from({ length: 10 }, (_, i) => ({
+        time: new Date(base + i * 60_000).toISOString(),
+        total: 2,
+        byLevel: { info: 2 },
+      })),
+      bucketSeconds: 60,
+      total: 1234,
+      from: '2026-10-21T09:42:13.000Z',
+      to: '2026-10-21T10:42:13.000Z',
+    });
+    h.getLogs.mockResolvedValue(response(logsList(3), { total: 3 }));
+    await renderPage();
+    await waitFor(() => expect(h.getHistogram).toHaveBeenCalledTimes(1));
+    expect(h.getHistogram.mock.calls[0][0]).toMatchObject({
+      projectId: ['p1', 'p2'],
+      from: '2026-10-21T09:42:13.000Z',
+      to: '2026-10-21T10:42:13.000Z',
+      bucketSeconds: 60,
+    });
+    // the header prefers the histogram total over the page total
+    expect(await screen.findAllByText('1,234 logs')).not.toHaveLength(0);
+
+    h.zr.mousedown?.({ offsetX: 30, offsetY: 20 });
+    h.zr.mouseup?.({ offsetX: 31, offsetY: 20 });
+    await settle();
+    expect(scopeStore.get().range).toEqual({
+      kind: 'custom',
+      from: '2026-10-21T10:00:00.000Z',
+      to: '2026-10-21T10:01:00.000Z',
+    });
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(2));
+    expect(logsCall()).toMatchObject({ from: '2026-10-21T10:00:00.000Z', to: '2026-10-21T10:01:00.000Z' });
+    expect(lastGotoUrl().searchParams.get('from')).toBe('2026-10-21T10:00:00.000Z');
+  });
+
+  it('a facet click adds the clause, re-runs and updates the url', async () => {
+    h.getFacets.mockResolvedValue([
+      { field: 'level', values: [{ value: 'error', count: 3 }], otherCount: 0 },
+      { field: 'service', values: [{ value: 'api', count: 5 }], otherCount: 0 },
+    ]);
+    await renderPage();
+    await waitFor(() => expect(h.getFacets).toHaveBeenCalledTimes(1));
+    expect(h.getFacets.mock.calls[0][0]).toMatchObject({ fields: ['level', 'service', 'host'], limit: 10 });
+    await fireEvent.click(await screen.findByRole('button', { name: 'service api (5 logs)' }));
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(2));
+    expect(logsCall()).toMatchObject({ q: 'service:api' });
+    expect(lastGotoUrl().searchParams.get('q')).toBe('service:api');
+    expect(queryInput().value).toBe('service:api');
+  });
+
+  it('details Exclude adds a negated metadata clause', async () => {
+    h.getLogs.mockResolvedValue(response([makeLog({ metadata: { user: { id: 42 } } })]));
+    await renderPage();
+    const details = await openFirstRowDetails();
+    await fireEvent.click(within(details).getByRole('button', { name: 'stub exclude' }));
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(2));
+    expect(logsCall()).toMatchObject({ q: '-user.id:42' });
+  });
+
+  it('refuses an unqueryable key with a toast', async () => {
+    const toast = vi.spyOn(toastStore, 'error').mockImplementation(() => {});
+    h.getFacets.mockResolvedValue([{ field: 'user name', values: [{ value: 'ada', count: 1 }], otherCount: 0 }]);
+    await renderPage();
+    await fireEvent.click(await screen.findByRole('button', { name: 'user name ada (1 log)' }));
+    await settle();
+    expect(toast).toHaveBeenCalledWith('This field cannot be used in a query');
+    expect(h.getLogs).toHaveBeenCalledTimes(1);
+  });
+
+  it('details Add as column adds a custom column for the active project', async () => {
+    h.getLogs.mockResolvedValue(response([makeLog({ metadata: { user: { id: 42 } } })]));
+    await renderPage();
+    const details = await openFirstRowDetails();
+    await fireEvent.click(within(details).getByRole('button', { name: 'stub add column' }));
+    await settle();
+    expect(screen.getByRole('columnheader', { name: 'user.id' })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('logtide:columns:p1') ?? '[]')).toEqual(['user.id']);
+  });
+
+  it('opening details writes logId and closing removes it', async () => {
+    h.getLogs.mockResolvedValue(response([makeLog({ id: 'abc', projectId: 'p2' })]));
+    await renderPage();
+    const details = await openFirstRowDetails();
+    expect(lastGotoUrl().searchParams.get('logId')).toBe('abc');
+    expect(lastGotoUrl().searchParams.get('logProject')).toBe('p2');
+    await fireEvent.click(within(details).getByRole('button', { name: 'Close log details' }));
+    await settle();
+    expect(lastGotoUrl().searchParams.has('logId')).toBe(false);
+    expect(lastGotoUrl().searchParams.has('logProject')).toBe(false);
+  });
+
+  it('opens a logId link, loads until the log is present and selects it', async () => {
+    const target = makeLog({ id: 'target', time: '2026-10-21T10:30:00.000Z', message: 'the one' });
+    h.getLogById.mockResolvedValue({ log: target });
+    h.getLogs
+      .mockResolvedValueOnce(response(logsList(50, 'first'), { total: 60, hasMore: true, nextCursor: 'c1' }))
+      .mockResolvedValueOnce(response([...logsList(5, 'second'), target], { total: 60, hasMore: false }));
+    await renderPage('/dashboard/logs?logId=target&project=p1');
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(2));
+    expect(h.getLogById).toHaveBeenCalledWith('target', 'p1');
+    expect(logsCall(0)).toMatchObject({
+      projectId: ['p1'],
+      from: '2026-10-21T10:25:00.000Z',
+      to: '2026-10-21T10:35:00.000Z',
+    });
+    expect(logsCall(1)).toMatchObject({ cursor: 'c1' });
+    await waitFor(() => {
+      const row = document.querySelector('[data-log-id="target"]');
+      expect(row?.getAttribute('aria-selected')).toBe('true');
+    });
+    const details = screen.getByRole('complementary', { name: 'Log details' });
+    expect(within(details).getByText('the one')).toBeInTheDocument();
+  });
+
+  it('opens the details panel with a notice when the log is outside the results', async () => {
+    const info = vi.spyOn(toastStore, 'info').mockImplementation(() => {});
+    const target = makeLog({ id: 'far', time: '2026-10-21T10:30:00.000Z', message: 'far away' });
+    h.getLogById.mockResolvedValue({ log: target });
+    h.getLogs.mockResolvedValue(response(logsList(3)));
+    await renderPage('/dashboard/logs?logId=far&project=p1&range=1h');
+    await waitFor(() => expect(info).toHaveBeenCalledWith('This log is outside the current results'));
+    expect(logsCall(0)).toMatchObject({ from: '2026-10-21T09:42:13.000Z' });
+    const details = screen.getByRole('complementary', { name: 'Log details' });
+    expect(within(details).getByText('far away')).toBeInTheDocument();
+  });
+
+  it('says so when a logId link points to a missing log', async () => {
+    const error = vi.spyOn(toastStore, 'error').mockImplementation(() => {});
+    h.getLogById.mockResolvedValue(null);
+    await renderPage('/dashboard/logs?logId=gone&project=p1');
+    await waitFor(() => expect(error).toHaveBeenCalledWith('Log not found'));
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    expect(lastGotoUrl().searchParams.has('logId')).toBe(false);
+  });
+
+  it('Create alert opens the alert builder with the pre-fill params', async () => {
+    await renderPage('/dashboard/logs?q=level:error&project=p1&range=1h');
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    await openMoreActions();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create alert' }));
+    const url = lastGotoUrl();
+    expect(url.pathname).toBe('/dashboard/alerts');
+    expect(url.searchParams.get('create')).toBe('1');
+    expect(url.searchParams.get('query')).toBe('level:error');
+    expect(url.searchParams.get('projectId')).toBe('p1');
+  });
+
+  it('Copy link copies the canonical url', async () => {
+    const success = vi.spyOn(toastStore, 'success').mockImplementation(() => {});
+    await renderPage('/dashboard/logs?q=timeout');
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    await openMoreActions();
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+    await settle();
+    expect(h.copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = new URL(String(h.copyToClipboard.mock.calls[0][0]));
+    expect(copied.origin).toBe(location.origin);
+    expect(copied.pathname).toBe('/dashboard/logs');
+    expect(copied.searchParams.get('q')).toBe('timeout');
+    expect(copied.searchParams.get('range')).toBe('1h');
+    expect(success).toHaveBeenCalledWith('Link copied');
+  });
+
+  it('Export opens with the active query and scope and is disabled without rows', async () => {
+    await renderPage('/dashboard/logs?q=timeout');
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    await openMoreActions();
+    expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled();
+  });
+
+  it('opening a saved search applies its state and writes saved', async () => {
+    h.saved.list.mockResolvedValue([savedSearch()]);
+    await renderPage();
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    await fireEvent.click(screen.getByRole('button', { name: 'Saved searches' }));
+    await fireEvent.click(await screen.findByRole('button', { name: /^Errors/ }));
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(2));
+    expect(logsCall()).toMatchObject({
+      q: 'level:error',
+      projectId: ['p2'],
+      from: '2026-10-20T10:42:13.000Z',
+      to: '2026-10-21T10:42:13.000Z',
+    });
+    const url = lastGotoUrl();
+    expect(url.searchParams.get('saved')).toBe('s1');
+    expect(url.searchParams.get('view')).toBe('terminal');
+    expect(url.searchParams.get('project')).toBe('p2');
+    expect(JSON.parse(localStorage.getItem('logtide:columns:p2') ?? '[]')).toEqual(['user.id']);
+    expect(queryInput().value).toBe('level:error');
+  });
+
+  it('records a recent search on Enter', async () => {
+    await renderPage();
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    await submitQuery('timeout');
+    const stored = JSON.parse(localStorage.getItem('logtide_recent_searches_v2') ?? '[]');
+    expect(stored[0]).toMatchObject({ q: 'timeout', projectIds: [], range: '1h' });
+
+    await fireEvent.input(queryInput(), { target: { value: '' } });
+    await settle();
+    const chip = screen.getByRole('button', { name: 'timeout' });
+    expect(chip.getAttribute('title')).toBe('timeout');
+    scopeStore.setRange({ kind: 'preset', preset: '24h' });
+    await settle();
+    await fireEvent.input(queryInput(), { target: { value: '' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'timeout' }));
+    await waitFor(() => expect(logsCall()).toMatchObject({ q: 'timeout', from: '2026-10-21T09:42:13.000Z' }));
+    expect(scopeStore.get().range).toEqual({ kind: 'preset', preset: '1h' });
+  });
+
+  it('loads discovered fields only when the scope changes', async () => {
+    h.getFields.mockResolvedValue([{ key: 'user.id', occurrences: 9 }]);
+    await renderPage();
+    await waitFor(() => expect(h.getFacets).toHaveBeenCalledTimes(1));
+    expect(h.getFields).toHaveBeenCalledTimes(1);
+    expect(h.getFields.mock.calls[0][0]).toEqual({
+      projectId: ['p1', 'p2'],
+      from: '2026-10-21T09:42:13.000Z',
+      to: '2026-10-21T10:42:13.000Z',
+    });
+    expect(h.getFacets.mock.calls[0][0]).toMatchObject({ fields: ['level', 'service', 'host', 'user.id'] });
+
+    await submitQuery('timeout');
+    await waitFor(() => expect(h.getFacets).toHaveBeenCalledTimes(2));
+    expect(h.getFields).toHaveBeenCalledTimes(1);
+
+    scopeStore.setRange({ kind: 'preset', preset: '24h' });
+    await waitFor(() => expect(h.getFields).toHaveBeenCalledTimes(2));
+  });
+
+  it('a context row opens the explorer around that log', async () => {
+    const reference = makeLog({ id: 'ref', projectId: 'p1' });
+    const neighbour = makeLog({ id: 'ctx', projectId: 'p2', time: '2026-10-21T10:00:00.000Z', message: 'neighbour row' });
+    h.getLogs.mockResolvedValue(response([reference]));
+    h.getLogContext.mockResolvedValue({
+      before: [neighbour],
+      current: reference,
+      after: [],
+      applied: { service: null, hostname: null },
+    });
+    await renderPage('/dashboard/logs?q=timeout');
+    const details = await openFirstRowDetails();
+    await fireEvent.click(within(details).getByRole('button', { name: /View context/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: /neighbour row/ }));
+    await waitFor(() =>
+      expect(logsCall()).toMatchObject({
+        projectId: ['p2'],
+        from: '2026-10-21T09:55:00.000Z',
+        to: '2026-10-21T10:05:00.000Z',
+      }),
+    );
+    expect(logsCall().q).toBeUndefined();
+    expect(scopeStore.get().projectIds).toEqual(['p2']);
   });
 });
