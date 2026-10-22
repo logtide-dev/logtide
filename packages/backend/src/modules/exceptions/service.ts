@@ -363,9 +363,8 @@ export class ExceptionService {
     }
     // Final tie-breaker so pages never repeat or skip rows sharing a timestamp
     query = query.orderBy('error_groups.id', 'asc');
-    // tenant-scope-ok: organization_id is applied by buildErrorGroupConditions, shared with the data query
-
     const countResult = await this.db
+    // tenant-scope-ok: organization_id is applied by buildErrorGroupConditions, shared with the data query
       .selectFrom('error_groups')
       .select(sql<number>`count(*)::int`.as('count'))
       .where((eb) => eb.and(buildErrorGroupConditions(eb as unknown as ErrorGroupEb, filters)))
