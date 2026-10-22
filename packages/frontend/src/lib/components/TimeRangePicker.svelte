@@ -42,9 +42,9 @@
   <Popover.Trigger>
     {#snippet child({ props })}
       <Button {...props} type="button" variant="outline" size="sm" class="gap-2 {className}">
-        <Clock class="h-4 w-4 text-muted-foreground" />
-        <span>{triggerLabel}</span>
-        <ChevronDown class="h-4 w-4 opacity-50" />
+        <Clock class="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span class="min-w-0 flex-1 truncate text-left md:flex-none">{triggerLabel}</span>
+        <ChevronDown class="h-4 w-4 shrink-0 opacity-50" />
       </Button>
     {/snippet}
   </Popover.Trigger>

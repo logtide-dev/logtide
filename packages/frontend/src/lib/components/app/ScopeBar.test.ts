@@ -277,3 +277,14 @@ describe('ScopeBar', () => {
     expect(container).toBeTruthy();
   });
 });
+
+describe('ScopeBar phone layout', () => {
+  it('stacks full width triggers with 44px height below md', async () => {
+    const { container } = render(ScopeBar, { props: { mode: 'multi', projects: [{ id: 'a', name: 'Alpha' }] } });
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain('max-md:grid-cols-1');
+    const trigger = screen.getByRole('button', { name: /All projects/ });
+    expect(trigger.className).toContain('max-md:h-11');
+    expect(trigger.className).toContain('max-md:w-full');
+  });
+});

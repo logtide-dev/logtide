@@ -156,22 +156,32 @@
   });
 
   const rowBase =
-    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted";
+    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 max-md:min-h-11 text-left text-sm hover:bg-muted";
 </script>
 
-<div class="flex flex-wrap items-center gap-2">
+<div
+  class="flex flex-wrap items-center gap-2 max-md:grid max-md:w-full {showProjects && showTime
+    ? 'max-md:grid-cols-1 min-[480px]:max-md:grid-cols-2'
+    : 'max-md:grid-cols-1'}"
+>
   {#if showProjects}
     <Popover.Root bind:open={projectsOpen}>
       <Popover.Trigger>
         {#snippet child({ props })}
-          <Button {...props} type="button" variant="outline" size="sm" class="gap-2">
-            <FolderOpen class="h-4 w-4 text-muted-foreground" />
-            <span>{projectLabel}</span>
-            <ChevronDown class="h-4 w-4 opacity-50" />
+          <Button
+            {...props}
+            type="button"
+            variant="outline"
+            size="sm"
+            class="gap-2 max-md:h-11 max-md:w-full max-md:min-w-0 max-md:justify-start"
+          >
+            <FolderOpen class="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span class="min-w-0 flex-1 truncate text-left">{projectLabel}</span>
+            <ChevronDown class="h-4 w-4 shrink-0 opacity-50" />
           </Button>
         {/snippet}
       </Popover.Trigger>
-      <Popover.Content class="w-[260px] p-2" align="start">
+      <Popover.Content class="w-[260px] p-2 max-md:w-[calc(100vw-1.5rem)]" align="start">
         {#if projects.length > FILTER_THRESHOLD}
           <Input
             type="text"
@@ -245,17 +255,22 @@
         size="sm"
         disabled
         aria-disabled="true"
-        class="gap-2 opacity-60"
+        class="gap-2 opacity-60 max-md:h-11 max-md:w-full max-md:min-w-0 max-md:justify-start"
       >
-        <Clock class="h-4 w-4 text-muted-foreground" />
-        <span>{disabledTimeLabel}</span>
+        <Clock class="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span class="min-w-0 truncate">{disabledTimeLabel}</span>
       </Button>
     {:else}
-      <TimeRangePicker value={$scopeStore.range} onValueChange={handleRange} {presets} />
+      <TimeRangePicker
+        value={$scopeStore.range}
+        onValueChange={handleRange}
+        {presets}
+        class="max-md:h-11 max-md:w-full max-md:min-w-0 max-md:justify-start"
+      />
     {/if}
     <span
       data-testid="scope-zone"
-      class="text-xs text-muted-foreground {hideZoneOnMobile ? 'hidden md:inline' : ''}"
+      class="text-xs text-muted-foreground max-md:col-span-full {hideZoneOnMobile ? 'hidden md:inline' : ''}"
       title="Times are shown in this time zone"
     >
       {zoneText}

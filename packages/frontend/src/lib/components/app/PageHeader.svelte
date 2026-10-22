@@ -64,7 +64,7 @@
       {/if}
     </div>
     {#if actions}
-      <div class="flex flex-wrap items-center justify-end gap-2">
+      <div class="flex flex-wrap items-center justify-end gap-2 max-md:w-full">
         {@render actions()}
       </div>
     {/if}
