@@ -13,6 +13,11 @@ describe('mobile table columns', () => {
       expect(incidents).toMatch(new RegExp(`key: '${k}'[^\n]*hidden md:table-cell`));
     }
   });
+  it('incidents keeps project, age and last event on one line', () => {
+    for (const k of ['project', 'age', 'lastEvent']) {
+      expect(incidents).toMatch(new RegExp(`key: '${k}'[^\n]*whitespace-nowrap`));
+    }
+  });
   it('alerts hides the wide columns below lg', () => {
     for (const k of ['lastTriggered', 'triggers', 'notify']) {
       expect(alerts).toMatch(new RegExp(`key: '${k}'[^\n]*hidden[^\n]*lg:table-cell`));

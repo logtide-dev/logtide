@@ -58,10 +58,10 @@
 		{ key: 'severity', header: 'Severity', cell: asCell(severityCell) },
 		{ key: 'title', header: 'Title', class: 'min-w-[11rem] md:min-w-[16rem]', cell: asCell(titleCell) },
 		{ key: 'source', header: 'Source', class: 'hidden md:table-cell', cell: asCell(sourceCell) },
-		{ key: 'project', header: 'Project', class: 'hidden md:table-cell', cell: asCell(projectCell) },
+		{ key: 'project', header: 'Project', class: 'hidden whitespace-nowrap md:table-cell', cell: asCell(projectCell) },
 		{ key: 'assignee', header: 'Assignee', class: 'hidden md:table-cell', cell: asCell(assigneeCell) },
-		{ key: 'age', header: 'Age', class: 'hidden md:table-cell', cell: asCell(ageCell) },
-		{ key: 'lastEvent', header: 'Last event', class: 'hidden md:table-cell', cell: asCell(lastEventCell) },
+		{ key: 'age', header: 'Age', class: 'hidden whitespace-nowrap md:table-cell', cell: asCell(ageCell) },
+		{ key: 'lastEvent', header: 'Last event', class: 'hidden whitespace-nowrap md:table-cell', cell: asCell(lastEventCell) },
 	];
 </script>
 
