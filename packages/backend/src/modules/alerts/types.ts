@@ -34,6 +34,10 @@ export interface AlertNotificationData {
   kind?: AlertNotificationKind;
   /** Which routing applies: Sigma detections carry 'sigma'; absent means 'alert'. */
   event_type?: 'alert' | 'sigma';
+  /** Sigma jobs only: rule level, used by the detection email. */
+  rule_level?: string;
+  /** Sigma jobs only: service of the first matching log. */
+  service?: string;
   /** ISO start of the firing episode (the rule's last_triggered_at). */
   firing_since?: string;
   incident_id?: string | null;

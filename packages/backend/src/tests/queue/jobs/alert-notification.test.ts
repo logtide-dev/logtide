@@ -1168,6 +1168,45 @@ describe('Alert Notification Job', () => {
             });
         }
 
+        it('sends the detection email and links the webhook to the sigma rule', async () => {
+            const { organization, project } = await createTestContext();
+            const ruleId = '00000000-0000-0000-0000-0000000000aa';
+            mockGetSigmaRuleChannels.mockResolvedValue([
+                emailChannel('c-sigma', 'sigma-rule@example.com'),
+                { id: 'c-hook', type: 'webhook', enabled: true, config: { url: 'https://hooks.example.com/sigma' } },
+            ]);
+
+            await processAlertNotification({
+                data: {
+                    historyId: null as unknown as string,
+                    kind: 'triggered',
+                    event_type: 'sigma',
+                    rule_id: ruleId,
+                    rule_name: '[Sigma] Suspicious login',
+                    rule_level: 'high',
+                    service: 'auth-api',
+                    organization_id: organization.id,
+                    project_id: project.id,
+                    log_count: 3,
+                    threshold: 1,
+                    time_window: 1,
+                    email_recipients: [],
+                    webhook_url: null,
+                } as never,
+            });
+
+            const mail = sendMailMock.mock.calls[0][0];
+            expect(mail.subject).toBe('[Detection] Suspicious login (high)');
+            expect(mail.text).toContain('SIGMA DETECTION: Suspicious login');
+            expect(mail.text).toContain('Service: auth-api');
+            expect(mail.html).not.toContain('threshold');
+            expect(mail.html).not.toContain('View Alert History');
+
+            const hook = enqueueMock.mock.calls[0][0];
+            const link = (hook.payload as { data: { link: string } }).data.link;
+            expect(link).toBe(`https://app.logtide.dev/dashboard/security/rules/${ruleId}`);
+        });
+
         it('delivers to the sigma rule channel and not to the alert defaults', async () => {
             const { organization, project } = await createTestContext();
             mockGetSigmaRuleChannels.mockResolvedValue([emailChannel('c-sigma', 'sigma-rule@example.com')]);
