@@ -20,6 +20,7 @@ vi.mock('pg', () => {
 
 import { TimescaleEngine } from './timescale-engine.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
+import { decodeSessionCursor, encodeSessionCursor } from '../../core/aggregation-helpers.js';
 
 const config: StorageConfig = {
   host: 'localhost',
@@ -135,6 +136,40 @@ describe('TimescaleEngine', () => {
       expect(calls.some((q) => q.includes('idx_logs_fulltext'))).toBe(true);
       expect(calls.some((q) => q.includes('idx_logs_composite'))).toBe(true);
       expect(calls.some((q) => q.includes('idx_logs_span_id'))).toBe(true);
+    });
+
+    it('adds session_id column and index for standalone installs', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+      await engine.connect();
+      await engine.initialize();
+      const calls = mockQuery.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((q) => q.includes('ADD COLUMN IF NOT EXISTS session_id TEXT'))).toBe(true);
+      expect(calls.some((q) => q.includes('idx_logs_session_id'))).toBe(true);
+    });
+
+    it('creates the spans hypertable and the traces table for standalone installs', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+      await engine.connect();
+      await engine.initialize();
+      const calls = mockQuery.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((q) => q.includes('CREATE TABLE IF NOT EXISTS public.spans'))).toBe(true);
+      expect(calls.some((q) => q.includes("create_hypertable('public.spans'"))).toBe(true);
+      expect(calls.some((q) => q.includes('CREATE TABLE IF NOT EXISTS public.traces'))).toBe(true);
+      expect(calls.some((q) => q.includes('PRIMARY KEY (trace_id, project_id)'))).toBe(true);
+      for (const index of [
+        'idx_spans_trace_id', 'idx_spans_project_time', 'idx_spans_service', 'idx_spans_operation', 'idx_spans_parent',
+        'idx_traces_project_time', 'idx_traces_service', 'idx_traces_duration',
+      ]) {
+        expect(calls.some((q) => q.includes(index)), index).toBe(true);
+      }
+    });
+
+    it('does not add retention policies to the standalone span tables', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+      await engine.connect();
+      await engine.initialize();
+      const calls = mockQuery.mock.calls.map((c) => String(c[0]));
+      expect(calls.some((q) => q.includes('add_retention_policy'))).toBe(false);
     });
 
     it('skips initialization when skipInitialize is set', async () => {
@@ -332,7 +367,35 @@ describe('TimescaleEngine', () => {
       });
 
       const sql = mockQuery.mock.calls[0][0] as string;
-      expect(sql).toContain("to_tsvector('english', message) @@ plainto_tsquery('english'");
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      // Legacy fulltext search is the AND of its words, one term per word.
+      expect(sql.match(/plainto_tsquery\('english', \$\d+\)/g)).toHaveLength(2);
+      expect(sql.match(/message ~\* \$\d+/g)).toHaveLength(2);
+      expect(params).toContain('error');
+      expect(params).toContain('message');
+      expect(params).not.toContain('error message');
+      expect(params).toContain('\\merror\\M');
+      expect(params).toContain('\\mmessage\\M');
+    });
+
+    it('reads textQuery instead of a legacy search passed next to it', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.query({
+        projectId: 'proj-1',
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+        search: 'ignored',
+        textQuery: { all: [{ kind: 'phrase', value: 'refused by' }], anyOf: [], none: [] },
+      });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toContain('message ILIKE $');
+      expect(sql).not.toContain('plainto_tsquery');
+      expect(params).toContain('%refused by%');
+      expect(params).not.toContain('ignored');
     });
 
     it('handles substring search', async () => {
@@ -368,6 +431,188 @@ describe('TimescaleEngine', () => {
 
       const sql = mockQuery.mock.calls[0][0] as string;
       expect(sql).toContain('(time, id) <');
+    });
+  });
+
+  describe('histogram', () => {
+    const from = new Date('2026-01-05T10:00:00Z');
+    const to = new Date('2026-01-05T10:20:00Z');
+
+    it('maps grouped rows into zero-filled epoch-aligned buckets', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          { bucket_s: String(from.getTime() / 1000), level: 'info', n: 3 },
+          { bucket_s: String(from.getTime() / 1000 + 1200), level: 'error', n: 1 },
+        ],
+      });
+      await engine.connect();
+
+      const result = await engine.histogram({ projectId: 'proj-1', from, to, bucketSeconds: 600 });
+
+      expect(result.bucketSeconds).toBe(600);
+      expect(result.buckets.map((b) => [b.time.toISOString(), b.total, b.byLevel])).toEqual([
+        ['2026-01-05T10:00:00.000Z', 3, { info: 3 }],
+        ['2026-01-05T10:10:00.000Z', 0, {}],
+        ['2026-01-05T10:20:00.000Z', 1, { error: 1 }],
+      ]);
+      const [sql, params] = mockQuery.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain('AS bucket_s');
+      expect(sql).toContain('FROM public.logs WHERE project_id = $2');
+      expect(params[0]).toBe(600);
+    });
+
+    it('rejects invalid bucket sizes and oversized ranges before querying', async () => {
+      await engine.connect();
+      await expect(engine.histogram({ projectId: 'proj-1', from, to, bucketSeconds: 0 })).rejects.toBeInstanceOf(RangeError);
+      await expect(engine.histogram({ projectId: 'proj-1', from, to, bucketSeconds: 1.5 })).rejects.toBeInstanceOf(RangeError);
+      await expect(
+        engine.histogram({ projectId: 'proj-1', from: new Date(0), to, bucketSeconds: 1 }),
+      ).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('facets', () => {
+    const from = new Date('2026-01-05T10:00:00Z');
+    const to = new Date('2026-01-05T10:20:00Z');
+    const lastParam = () => (mockQuery.mock.calls.at(-1) as [string, unknown[]])[1].at(-1);
+
+    it('limit defaults to 10 and clamps to 1..50', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      await engine.facets({ projectId: 'proj-1', from, to, fields: [{ builtin: 'level' }] });
+      expect(lastParam()).toBe(10);
+      await engine.facets({ projectId: 'proj-1', from, to, fields: [{ builtin: 'level' }], limit: 0 });
+      expect(lastParam()).toBe(1);
+      await engine.facets({ projectId: 'proj-1', from, to, fields: [{ builtin: 'level' }], limit: 99 });
+      expect(lastParam()).toBe(50);
+    });
+
+    it('rejects more than 20 fields before querying', async () => {
+      await engine.connect();
+      const fields = Array.from({ length: 21 }, (_, i) => ({ metadata: `k${i}` }));
+      await expect(engine.facets({ projectId: 'proj-1', from, to, fields })).rejects.toBeInstanceOf(RangeError);
+      await expect(engine.facets({ projectId: 'proj-1', from, to, fields: [] })).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('maps rows to facets in request order', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          { f: 1, v: 'api', cnt: '3', total: '4' },
+          { f: 0, v: 'error', cnt: '2', total: '2' },
+        ],
+      });
+      await engine.connect();
+      const result = await engine.facets({
+        projectId: 'proj-1', from, to, fields: [{ builtin: 'level' }, { builtin: 'service' }], limit: 1,
+      });
+      expect(result.facets).toEqual([
+        { field: 'level', values: [{ value: 'error', count: 2 }], otherCount: 0 },
+        { field: 'service', values: [{ value: 'api', count: 3 }], otherCount: 1 },
+      ]);
+    });
+  });
+
+  describe('discoverMetadataKeys', () => {
+    const from = new Date('2026-01-05T10:00:00Z');
+    const to = new Date('2026-01-05T11:00:00Z');
+    const sampleParam = () => (mockQuery.mock.calls.at(-1) as [string, unknown[]])[1][3];
+
+    it('sample size defaults to 1000 and clamps to 1..5000', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      await engine.discoverMetadataKeys({ projectId: 'proj-1', from, to });
+      expect(sampleParam()).toBe(1000);
+      await engine.discoverMetadataKeys({ projectId: 'proj-1', from, to, sampleSize: 99999 });
+      expect(sampleParam()).toBe(5000);
+      await engine.discoverMetadataKeys({ projectId: 'proj-1', from, to, sampleSize: 0 });
+      expect(sampleParam()).toBe(1);
+    });
+
+    it('maps rows and reads bigint counts', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ key: 'env', occurrences: '12' }, { key: 'http.method', occurrences: 3 }] });
+      await engine.connect();
+      expect(await engine.discoverMetadataKeys({ projectId: 'proj-1', from, to })).toEqual([
+        { key: 'env', occurrences: 12 },
+        { key: 'http.method', occurrences: 3 },
+      ]);
+    });
+
+    it('rejects a reversed range before querying', async () => {
+      await engine.connect();
+      await expect(engine.discoverMetadataKeys({ projectId: 'proj-1', from: to, to: from })).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('casts the project list to uuid for a uuid project column', async () => {
+      const uuidEngine = new TimescaleEngine(config, { projectIdType: 'uuid' });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await uuidEngine.connect();
+      await uuidEngine.discoverMetadataKeys({ projectId: 'proj-1', from, to });
+      expect(String(mockQuery.mock.calls.at(-1)?.[0])).toContain('unnest($1::uuid[])');
+    });
+  });
+
+  describe('listSessions / hasSessions', () => {
+    const from = new Date('2026-01-05T10:00:00Z');
+    const to = new Date('2026-01-05T11:00:00Z');
+    const row = (sessionId: string, last: string) => ({
+      session_id: sessionId,
+      service: 'api',
+      first_event: new Date('2026-01-05T10:00:00Z'),
+      last_event: new Date(last),
+      event_count: '3',
+      error_count: '1',
+    });
+
+    it('returns limit rows and a cursor at the last one when more exist', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [row('s1', '2026-01-05T10:05:00.123Z'), row('s2', '2026-01-05T10:05:00.123Z'), row('s3', '2026-01-05T10:01:00Z')],
+      });
+      await engine.connect();
+      const result = await engine.listSessions({ projectId: 'proj-1', from, to, limit: 2 });
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(['s1', 's2']);
+      expect(result.sessions[0]).toEqual({
+        sessionId: 's1', service: 'api', firstEvent: new Date('2026-01-05T10:00:00Z'),
+        lastEvent: new Date('2026-01-05T10:05:00.123Z'), eventCount: 3, errorCount: 1,
+      });
+      expect(decodeSessionCursor(result.nextCursor!)).toEqual({ lastEvent: new Date('2026-01-05T10:05:00.123Z'), sessionId: 's2' });
+      expect((mockQuery.mock.calls[0][1] as unknown[]).at(-1)).toBe(3);
+    });
+
+    it('a short page has no cursor; a cursor continues after its row', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [row('s3', '2026-01-05T10:01:00Z')] });
+      await engine.connect();
+      const cursor = encodeSessionCursor(new Date('2026-01-05T10:05:00.123Z'), 's2');
+      const result = await engine.listSessions({ projectId: 'proj-1', from, to, limit: 2, cursor });
+      expect(result).toEqual({ sessions: [expect.objectContaining({ sessionId: 's3' })] });
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(params).toContainEqual(new Date('2026-01-05T10:05:00.123Z'));
+      expect(params).toContain('s2');
+    });
+
+    it('limit clamps to the sessions maximum and fetches one extra row', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      await engine.listSessions({ projectId: 'proj-1', from, to, limit: 9999 });
+      expect((mockQuery.mock.calls[0][1] as unknown[]).at(-1)).toBe(201);
+    });
+
+    it('rejects an undecodable cursor and a bad limit before querying', async () => {
+      await engine.connect();
+      await expect(engine.listSessions({ projectId: 'proj-1', from, to, limit: 2, cursor: '%%%' })).rejects.toBeInstanceOf(RangeError);
+      await expect(engine.listSessions({ projectId: 'proj-1', from, to, limit: 0 })).rejects.toBeInstanceOf(RangeError);
+      await expect(engine.hasSessions({ projectId: 'proj-1', from: to, to: from })).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('hasSessions is true when the probe finds a row', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] }).mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      expect(await engine.hasSessions({ projectId: 'proj-1', from, to })).toBe(true);
+      expect(await engine.hasSessions({ projectId: 'proj-1', from, to })).toBe(false);
+      expect(mockQuery.mock.calls[0][0] as string).toContain('LIMIT 1');
     });
   });
 
@@ -775,6 +1020,61 @@ describe('TimescaleEngine', () => {
       expect(sql).toContain('service_name = ANY');
       expect(sql).toContain('kind = ANY');
     });
+
+    it('filters operation_name for a string or a list', async () => {
+      mockQuery.mockResolvedValue({ rows: [{ count: 0 }] });
+      await engine.connect();
+
+      await engine.querySpans({ projectId: 'proj-1', operationName: 'GET /x', from: new Date('2024-01-01'), to: new Date('2024-01-02') });
+      await engine.querySpans({ projectId: 'proj-1', operationName: ['GET /x', 'POST /y'], from: new Date('2024-01-01'), to: new Date('2024-01-02') });
+
+      for (const [i, expected] of [[0, ['GET /x']], [2, ['GET /x', 'POST /y']]] as const) {
+        const [countSql, countParams] = mockQuery.mock.calls[i] as [string, unknown[]];
+        const [selectSql] = mockQuery.mock.calls[i + 1] as [string, unknown[]];
+        expect(countSql).toMatch(/operation_name = ANY\(\$\d+\)/);
+        expect(selectSql).toMatch(/operation_name = ANY\(\$\d+\)/);
+        expect(countParams).toContainEqual(expected);
+      }
+    });
+
+    it('applies attribute filters and the sort to count and page alike', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.querySpans({
+        projectId: 'proj-1',
+        attributeFilters: [{ key: 'resource.service.version', op: 'equals', value: '1.2', include_missing: false }],
+        sortBy: 'duration',
+        sortOrder: 'desc',
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+      });
+
+      const [countSql, countParams] = mockQuery.mock.calls[0] as [string, unknown[]];
+      const [pageSql] = mockQuery.mock.calls[1] as [string, unknown[]];
+      expect(countSql).toContain('resource_attributes ?');
+      expect(countParams).toContain('service.version');
+      expect(pageSql).toContain('resource_attributes ?');
+      expect(pageSql).toContain('ORDER BY duration_ms DESC, span_id ASC');
+    });
+
+    it('falls back to start_time ASC for an unknown sort key', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.querySpans({
+        projectId: 'proj-1',
+        sortBy: 'kind; DROP TABLE spans' as never,
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+      });
+
+      const pageSql = mockQuery.mock.calls[1][0] as string;
+      expect(pageSql).toContain('ORDER BY start_time ASC, span_id ASC');
+      expect(pageSql).not.toContain('DROP');
+    });
   });
 
   describe('getSpansByTraceId', () => {
@@ -837,6 +1137,132 @@ describe('TimescaleEngine', () => {
       expect(sql).toContain('public.traces');
       expect(sql).toContain('error = $');
       expect(sql).toContain('duration_ms >= $');
+    });
+
+    it('matches operation and attributes on one span; count and page share the WHERE', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.queryTraces({
+        projectId: 'proj-1',
+        serviceName: ['api'],
+        operation: 'GET /x',
+        attributeFilters: [{ key: 'http.method', op: 'equals', value: 'GET', include_missing: false }],
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+        sortBy: 'duration',
+        sortOrder: 'asc',
+        limit: 5,
+      });
+
+      const [countSql, countParams] = mockQuery.mock.calls[0] as [string, unknown[]];
+      const [pageSql, pageParams] = mockQuery.mock.calls[1] as [string, unknown[]];
+      const where = (sql: string) => sql.slice(sql.indexOf('WHERE')).split(/\s+ORDER BY/)[0].trim();
+      expect(where(pageSql)).toBe(where(countSql));
+      expect(countSql).toContain('EXISTS (SELECT 1 FROM public.spans s WHERE s.project_id = traces.project_id');
+      expect(countSql).toContain('s.operation_name = $');
+      // serviceName keeps its trace-level meaning (F3 contract).
+      expect(countSql).toContain('service_name = ANY(');
+      expect(countSql).not.toContain('s.service_name');
+      expect(pageSql).toContain('ORDER BY duration_ms ASC, trace_id ASC');
+      expect(pageParams.slice(0, countParams.length)).toEqual(countParams);
+      expect(pageParams.slice(countParams.length)).toEqual([5, 0]);
+    });
+
+    it('defaults to start_time desc with a trace_id tie-break and no span block', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.queryTraces({ projectId: 'proj-1', from: new Date('2024-01-01'), to: new Date('2024-01-02') });
+
+      expect(mockQuery.mock.calls[0][0] as string).not.toContain('EXISTS');
+      expect(mockQuery.mock.calls[1][0] as string).toContain('ORDER BY start_time DESC, trace_id ASC');
+    });
+  });
+
+  describe('getOperationStats', () => {
+    const scope = { projectId: 'proj-1', from: new Date('2026-01-05T10:00:00Z'), to: new Date('2026-01-05T12:00:00Z') };
+    const statRow = { service_name: 'api', operation_name: 'GET /x', cnt: '2', error_count: '0', avg_ms: 15, p: [15, 19.5, 19.9] };
+    const sqlOf = (i: number) => mockQuery.mock.calls[i][0] as string;
+
+    it('uses the entry kinds when they have spans', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [statRow] });
+      await engine.connect();
+      const rows = await engine.getOperationStats(scope);
+      expect(rows).toEqual([{ service: 'api', operation: 'GET /x', count: 2, errorCount: 0, avgMs: 15, p50Ms: 15, p95Ms: 19.5, p99Ms: 19.9 }]);
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(sqlOf(0)).toContain('kind = ANY(');
+    });
+
+    it('falls back to root spans when the default kinds have none', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [statRow] });
+      await engine.connect();
+      expect(await engine.getOperationStats(scope)).toHaveLength(1);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(sqlOf(1)).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+    });
+
+    it('explicit kinds never fall back', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      expect(await engine.getOperationStats({ ...scope, kinds: ['CLIENT'] })).toEqual([]);
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockQuery.mock.calls[0][1]).toContainEqual(['CLIENT']);
+    });
+
+    it('limit defaults to 100 and clamps to 500; empty kinds reject before querying', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [statRow] }).mockResolvedValueOnce({ rows: [statRow] });
+      await engine.connect();
+      await engine.getOperationStats(scope);
+      expect((mockQuery.mock.calls[0][1] as unknown[]).at(-1)).toBe(100);
+      await engine.getOperationStats({ ...scope, limit: 9999 });
+      expect((mockQuery.mock.calls[1][1] as unknown[]).at(-1)).toBe(500);
+      await expect(engine.getOperationStats({ ...scope, kinds: [] })).rejects.toBeInstanceOf(RangeError);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('getLatencyHistogram', () => {
+    const scope = { projectId: 'proj-1', from: new Date('2026-01-05T10:00:00Z'), to: new Date('2026-01-05T12:00:00Z') };
+    const sqlOf = (i: number) => mockQuery.mock.calls[i][0] as string;
+
+    it('entry spans with counts answer in one query', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ idx: 3, n: '4' }] });
+      await engine.connect();
+      const result = await engine.getLatencyHistogram(scope);
+      expect(result.bounds).toEqual([1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000]);
+      expect(result.counts).toHaveLength(17);
+      expect(result.counts[3]).toBe(4);
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it('no entry span in scope falls back to root spans', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ idx: 16, n: 1 }] });
+      await engine.connect();
+      const result = await engine.getLatencyHistogram(scope);
+      expect(result.counts[16]).toBe(1);
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(sqlOf(1)).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+    });
+
+    it('with an operation, the fallback is decided by a probe on the service scope', async () => {
+      // Entry spans exist (probe hit) but none for this operation: zeros, no fallback.
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+      await engine.connect();
+      const zeros = await engine.getLatencyHistogram({ ...scope, operation: 'job loop' });
+      expect(zeros.counts).toEqual(Array.from({ length: 17 }, () => 0));
+      expect(mockQuery).toHaveBeenCalledTimes(2);
+      expect(sqlOf(1)).toMatch(/^SELECT 1 FROM public\.spans WHERE .* LIMIT 1$/);
+      expect(sqlOf(1)).not.toContain('operation_name');
+
+      // No entry span at all (probe miss): root spans of that operation.
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ idx: 0, n: 2 }] });
+      const roots = await engine.getLatencyHistogram({ ...scope, operation: 'page load' });
+      expect(roots.counts[0]).toBe(2);
+      expect(sqlOf(4)).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+      expect(sqlOf(4)).toContain('operation_name = $');
     });
   });
 
