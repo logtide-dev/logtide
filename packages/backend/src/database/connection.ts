@@ -1,20 +1,20 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
-import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Database } from './types.js';
 import { currentOrNull } from '@logtide/shared/context';
 import { formatContextComment } from '../context/kysely-plugin.js';
 import { TenantScopeGuardPlugin } from './tenant-scope-guard.js';
+import { loadTestEnv } from '../config/load-test-env.js';
 
 const { Pool } = pg;
 
-// Load .env.test if NODE_ENV=test (override any existing env vars)
+// Load .env.test if NODE_ENV=test (overrides existing env vars except the storage engine ones)
 if (process.env.NODE_ENV === 'test') {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  dotenv.config({ path: path.resolve(__dirname, '../../.env.test'), override: true });
+  loadTestEnv(path.resolve(__dirname, '../../.env.test'));
 }
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost:5432/logtide';

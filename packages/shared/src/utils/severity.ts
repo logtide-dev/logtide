@@ -9,9 +9,9 @@ export function getSeverityColor(severity: Severity): string {
     case 'high':
       return '#ef4444';
     case 'medium':
-      return '#f97316';
+      return '#f59e0b';
     case 'low':
-      return '#eab308';
+      return '#6b7280';
     case 'informational':
       return '#3b82f6';
     default:
@@ -86,9 +86,9 @@ export function getIncidentSourceLabel(source: IncidentSource): string {
 export function getIncidentStatusColor(status: IncidentStatus): string {
   switch (status) {
     case 'open':
-      return '#ef4444';
+      return '#6b7280';
     case 'investigating':
-      return '#f97316';
+      return '#f59e0b';
     case 'resolved':
       return '#22c55e';
     case 'false_positive':

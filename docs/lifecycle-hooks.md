@@ -13,7 +13,7 @@ Nothing is registered by default. In an OSS deployment with no external modules 
 | Phase | When it runs | Code path |
 |---|---|---|
 | `beforeIngest` | After auth, PII masking and quota checks; after records are converted to reservoir format; immediately before `reservoir.ingestReturning`. | `IngestionService.ingestLogs` in `modules/ingestion/service.ts`. Covers both HTTP ingest (`POST /api/v1/logs`) and OTLP log ingestion, since both go through this method. |
-| `beforeQuery` | At the top of `QueryService.queryLogs`, after request parsing and access checks in the route, before the cache key is built. | `QueryService.queryLogs` in `modules/query/service.ts`. Covers only the main log query path; stats, histogram, trace and context endpoints are not covered in v1 (see limitations). |
+| `beforeQuery` | At the top of `QueryService.queryLogs`, after request parsing and access checks in the route, before the cache key is built. | `QueryService.queryLogs` in `modules/query/service.ts`. Every log read path goes through it: search, count, histogram, facets and field discovery (and the SSE live tail, which polls search). Trace and log-context endpoints are not covered (see limitations). |
 | `beforeAlertEvaluation` | Once per rule, inside the alert evaluation loop, before `checkRule` is called. | `AlertsService.checkAlertRules` in `modules/alerts/service.ts`. |
 | `beforeWebhookDispatch` | Immediately before the outbound `safeFetch` call, after headers and payload are fully assembled. | `WebhookProvider.send` in `modules/notification-channels/providers/webhook-provider.ts` (notification channel path) AND `sendWebhookNotification` in `queue/jobs/alert-notification.ts` (legacy alert-rule `webhook_url` path). Both paths are covered. |
 | `afterIngest` | After the batch finishes processing, including paths where nothing was written (all records rejected or hook-filtered). | `IngestionService.ingestLogs` in `modules/ingestion/service.ts`. Covers both HTTP and OTLP ingest paths. |
@@ -341,7 +341,7 @@ Throwing `HookRejectionError` from an external module surfaces a clean 4xx with 
 
 ## v1 Limitations
 
-- `beforeQuery` covers only `QueryService.queryLogs`. It does not intercept the stats, histogram, trace correlation or log-context endpoints.
+- `beforeQuery` runs once per log read request (search, count, histogram, facets, field discovery), so a hook that forces a filter narrows all of them alike. It does not intercept the trace correlation or log-context endpoints.
 - `beforeQuery` also fires inside the SSE live-tail polling loop (`GET /api/v1/logs/stream`), which calls `queryService.queryLogs` on a `setInterval` at roughly 1-second intervals for each connected client. Hooks fire once per poll tick. A rejection or unexpected hook error inside the interval catches the error, terminates the stream (`reply.raw.end()`), and gives the client no visible error reason (only the server-sent `error` event console-logged server-side). `beforeQuery` handlers must be cheap and idempotent to avoid degrading live-tail for every connected viewer.
 - `eventCount` and `byteSize` on `BeforeIngestContext` are pre-hook snapshots. They are not recomputed after `records` is mutated, filtered or replaced. If you need the post-mutation count, use `ctx.records.length` directly.
 - No timeout is enforced on handlers. This is intentional in v1 to avoid surprising registered handlers; it may be added in a future version with an opt-in per-handler budget.

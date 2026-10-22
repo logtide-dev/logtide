@@ -1,4 +1,5 @@
-import type { DisplayPreferences } from '$lib/stores/display-preferences';
+import { displayPreferences, resolveTimeZone, type DisplayPreferences } from '$lib/stores/display-preferences';
+import { formatTimestamp as formatInstant, type TimestampOptions } from '$lib/utils/datetime';
 
 // Single formatter for dashboard timestamps, so the viewer's clock preference
 // (12h/24h + explicit IANA timezone, issue #297) applies everywhere at once.
@@ -26,11 +27,32 @@ function normalize(value: string): string {
   return value.replace(/[\u202f\u00a0]/g, ' ');
 }
 
+// Styles that datetime.ts can express. monthDay is a date without a clock,
+// which datetime.ts has no option for, so it stays on the local path.
+const DELEGATED: Partial<Record<TimestampStyle, TimestampOptions>> = {
+  time: { precision: 'minute', withDate: false },
+  timeSeconds: { precision: 'second', withDate: false },
+  dateTime: { precision: 'minute', withDate: true },
+};
+
+// datetime.ts always reads the live display preferences, so delegation is only
+// correct when the caller's prefs are those (the dashboard panels pass
+// $displayPreferences). Explicit prefs that differ keep the local Intl path.
+function matchesLivePrefs(prefs: DisplayPreferences): boolean {
+  const live = displayPreferences.get();
+  return live.hour12 === prefs.hour12 && resolveTimeZone(live.timeZone) === resolveTimeZone(prefs.timeZone);
+}
+
 export function formatTimestamp(
   time: string | number | Date,
   style: TimestampStyle,
   prefs: DisplayPreferences
 ): string {
+  const delegated = DELEGATED[style];
+  if (delegated && matchesLivePrefs(prefs)) {
+    const instant = time instanceof Date ? time : new Date(time);
+    if (!isNaN(instant.getTime())) return formatInstant(instant, delegated);
+  }
   const date = time instanceof Date ? time : new Date(time);
   const clock = style === 'monthDay' ? {} : prefs.hour12 ? CLOCK_12 : CLOCK_24;
   const opts: Intl.DateTimeFormatOptions = { ...STYLE_OPTIONS[style], ...clock };

@@ -149,7 +149,7 @@ function baseTemplate(content: string, options: BaseEmailOptions = {}): string {
               <p style="margin: 0; font-size: 11px; color: ${colors.textLight};">
                 ${unsubscribeUrl
                   ? `<a href="${unsubscribeUrl}" style="color: ${colors.textMuted}; text-decoration: underline;">Unsubscribe from these reports</a>`
-                  : `<a href="${frontendUrl}/dashboard/settings/channels" style="color: ${colors.textMuted}; text-decoration: underline;">Manage notification settings</a>`}
+                  : `<a href="${frontendUrl}/dashboard/settings/notifications/destinations" style="color: ${colors.textMuted}; text-decoration: underline;">Manage notification settings</a>`}
               </p>
             </td>
           </tr>
@@ -386,7 +386,7 @@ View details: ${dashboardUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
     return { html, text };
@@ -435,7 +435,7 @@ View details: ${dashboardUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };
@@ -525,7 +525,7 @@ View details: ${errorUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };
@@ -605,7 +605,7 @@ View details: ${incidentUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };
@@ -675,7 +675,7 @@ View details: ${detectionUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };
@@ -928,7 +928,7 @@ View details: ${monitorUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };

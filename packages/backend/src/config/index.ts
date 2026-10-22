@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { z } from 'zod';
 import { applyDefaultOverrides } from '../capabilities/registry.js';
+import { loadTestEnv } from './load-test-env.js';
 
 // Load environment variables
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -10,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Load .env.test first if NODE_ENV=test
 if (process.env.NODE_ENV === 'test') {
   const envTestPath = path.resolve(__dirname, '../../.env.test');
-  dotenv.config({ path: envTestPath, override: true });
+  loadTestEnv(envTestPath);
 } else {
   // Load .env from project root for development/production
   const envPath = path.resolve(__dirname, '../../../../.env');
