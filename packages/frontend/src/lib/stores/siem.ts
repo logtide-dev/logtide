@@ -40,7 +40,7 @@ export interface RealtimeOptions {
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_BASE_MS = 1000;
+const RECONNECT_BASE_MS = 3000;
 
 const initialState: SiemState = {
 	// Dashboard
