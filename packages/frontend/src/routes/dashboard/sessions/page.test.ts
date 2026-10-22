@@ -105,6 +105,18 @@ describe('sessions page', () => {
     expect(h.goto).toHaveBeenCalledWith('/dashboard/sessions/sess-1?project=p1');
   });
 
+  it('offers to keep searching when a filtered page is empty but more remain', async () => {
+    visit('?errors=1');
+    h.listSessions
+      .mockResolvedValueOnce({ sessions: [], nextCursor: 'CUR1' })
+      .mockResolvedValueOnce({ sessions: [session('s-late', { errorCount: 2 })] });
+    render(SessionsPage);
+    expect(await screen.findByText('No sessions match these filters')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep searching' }));
+    expect(await screen.findByText('s-late')).toBeInTheDocument();
+    expect(h.listSessions.mock.calls[1][0].cursor).toBe('CUR1');
+  });
+
   it('next and previous follow the cursor', async () => {
     h.listSessions
       .mockResolvedValueOnce({ sessions: [session('s-a')], nextCursor: 'CUR1' })
