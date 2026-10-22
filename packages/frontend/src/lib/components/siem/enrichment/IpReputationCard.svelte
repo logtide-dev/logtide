@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import { Badge } from '$lib/components/ui/badge';
+	import { formatDateShort } from '$lib/utils/datetime';
 	import Shield from '@lucide/svelte/icons/shield';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 	import CheckCircle2 from '@lucide/svelte/icons/check-circle-2';
@@ -74,7 +75,7 @@
 		if (diffMins < 60) return `${diffMins}m ago`;
 		if (diffHours < 24) return `${diffHours}h ago`;
 		if (diffDays < 7) return `${diffDays}d ago`;
-		return date.toLocaleDateString('en-US');
+		return formatDateShort(date);
 	}
 
 	function toggleExpand(ip: string) {
