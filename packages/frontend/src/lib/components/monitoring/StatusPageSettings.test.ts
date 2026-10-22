@@ -21,6 +21,7 @@ vi.mock('$lib/stores/toast', () => ({
 }));
 
 import StatusPageSettings from './StatusPageSettings.svelte';
+import { organizationStore } from '$lib/stores/organization';
 import type { Monitor } from '$lib/api/monitoring';
 import type { Project } from '@logtide/shared';
 
@@ -69,7 +70,18 @@ function renderSettings(props: { project?: Project; monitors?: Monitor[] } = {})
   });
 }
 
+function setRole(role: 'owner' | 'admin' | 'member') {
+  organizationStore.clear();
+  organizationStore.setCurrentOrganization({
+    id: 'org-1',
+    name: 'Acme',
+    slug: 'acme',
+    role,
+  } as never);
+}
+
 beforeEach(() => {
+  setRole('owner');
   api.getStatusPageConfig.mockReset().mockResolvedValue({ config: CONFIG, subscriptionsAvailable: true });
   api.updateStatusPageConfig.mockReset().mockResolvedValue({ config: CONFIG });
   api.updateStatusPageComponents.mockReset().mockResolvedValue({ ok: true });
@@ -86,6 +98,25 @@ async function ready() {
 }
 
 describe('StatusPageSettings', () => {
+  it('members get a read-only page: notice, disabled inputs and save, no subscribers card', async () => {
+    setRole('member');
+    renderSettings();
+    await screen.findByLabelText('Title');
+    expect(screen.getByTestId('read-only-notice')).toHaveTextContent('the status page settings');
+    expect(screen.getByLabelText('Title')).toBeDisabled();
+    expect(screen.getByLabelText('Accent colour')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(screen.queryByText('Subscribers')).not.toBeInTheDocument();
+    expect(api.listStatusSubscribers).not.toHaveBeenCalled();
+  });
+
+  it('admins and owners get no read-only notice', async () => {
+    setRole('admin');
+    renderSettings();
+    await ready();
+    expect(screen.queryByTestId('read-only-notice')).not.toBeInTheDocument();
+  });
+
   it('branding rejects an http logo URL and a malformed accent inline and disables save', async () => {
     renderSettings();
     await ready();

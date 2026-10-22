@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
+import { createHash } from 'node:crypto';
 import { db } from '../../../database/index.js';
 import { contextPlugin } from '../../../context/index.js';
 import { capabilities } from '../../../capabilities/index.js';
-import { publicStatusRoutes } from '../../../modules/monitoring/routes.js';
+import { publicStatusRoutes, settleSubscribeWork } from '../../../modules/monitoring/routes.js';
 import { createTestContext, createTestProject } from '../../helpers/factories.js';
 
 vi.mock('../../../lib/mailer.js', () => ({
@@ -33,13 +34,25 @@ async function publicProject(organizationId: string, userId: string) {
   return project;
 }
 
-function subscribe(orgSlug: string, projectSlug: string, email: string) {
+async function subscribe(orgSlug: string, projectSlug: string, email: string) {
   ipSeq += 1;
-  return app.inject({
+  const res = await app.inject({
     method: 'POST',
     url: `/status/${orgSlug}/${projectSlug}/subscribe`,
     payload: { email },
     remoteAddress: `10.1.${Math.floor(ipSeq / 250)}.${(ipSeq % 250) + 1}`,
+  });
+  await settleSubscribeWork();
+  return res;
+}
+
+async function confirmToken(orgSlug: string, projectSlug: string, token: string) {
+  ipSeq += 1;
+  return app.inject({
+    method: 'POST',
+    url: `/status/${orgSlug}/${projectSlug}/subscribe/confirm`,
+    payload: { token },
+    remoteAddress: `10.2.${Math.floor(ipSeq / 250)}.${(ipSeq % 250) + 1}`,
   });
 }
 
@@ -75,17 +88,59 @@ describe('status_page.subscribers.max enforcement', () => {
     await db.updateTable('projects').set({ status_page_visibility: 'public' }).where('id', '=', ctx.project.id).execute();
   });
 
-  it('blocks subscribe at the org-wide limit across projects', async () => {
+  it('at the org-wide limit across projects, subscribe answers 202 without a limit message, row or mail', async () => {
     await setLimit(ctx.organization.id, 2);
     const second = await publicProject(ctx.organization.id, ctx.user.id);
     await seedSubscriber(ctx.organization.id, ctx.project.id, 'one@example.com', true);
-    await seedSubscriber(ctx.organization.id, ctx.project.id, 'two@example.com', false); // pending counts
+    await seedSubscriber(ctx.organization.id, ctx.project.id, 'two@example.com', true);
 
     const res = await subscribe(ctx.organization.slug, second.slug, 'three@example.com');
-    expect(res.statusCode).toBe(403);
-    expect(res.json().code).toBe('capability.status_page.subscribers.max.limit_reached');
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ ok: true });
+    expect(res.payload).not.toMatch(/limit|capability/i);
     const rows = await db.selectFrom('status_page_subscribers').select('id').where('organization_id', '=', ctx.organization.id).execute();
     expect(rows).toHaveLength(2);
+  });
+
+  it('unconfirmed addresses never fill the quota', async () => {
+    await setLimit(ctx.organization.id, 2);
+    await seedSubscriber(ctx.organization.id, ctx.project.id, 'one@example.com', true);
+    for (let i = 0; i < 5; i++) {
+      await seedSubscriber(ctx.organization.id, ctx.project.id, `fake${i}@example.com`, false);
+    }
+    const res = await subscribe(ctx.organization.slug, ctx.project.slug, 'real@example.com');
+    expect(res.statusCode).toBe(202);
+    const row = await db
+      .selectFrom('status_page_subscribers')
+      .select('id')
+      .where('email_normalized', '=', 'real@example.com')
+      .executeTakeFirst();
+    expect(row).toBeDefined();
+  });
+
+  it('enforces the limit when the address is confirmed', async () => {
+    await setLimit(ctx.organization.id, 1);
+    const token = 'c'.repeat(43);
+    await db
+      .insertInto('status_page_subscribers')
+      .values({
+        organization_id: ctx.organization.id,
+        project_id: ctx.project.id,
+        email: 'late@example.com',
+        email_normalized: 'late@example.com',
+        confirm_token_hash: createHash('sha256').update(token).digest('hex'),
+        confirm_expires_at: new Date(Date.now() + 3600_000),
+      })
+      .execute();
+    await seedSubscriber(ctx.organization.id, ctx.project.id, 'one@example.com', true);
+
+    const blocked = await confirmToken(ctx.organization.slug, ctx.project.slug, token);
+    expect(blocked.statusCode).toBe(400);
+    expect(blocked.payload).not.toMatch(/limit|capability/i);
+
+    await db.deleteFrom('status_page_subscribers').where('email_normalized', '=', 'one@example.com').execute();
+    const ok = await confirmToken(ctx.organization.slug, ctx.project.slug, token);
+    expect(ok.statusCode).toBe(200);
   });
 
   it('allows subscribe under the limit', async () => {

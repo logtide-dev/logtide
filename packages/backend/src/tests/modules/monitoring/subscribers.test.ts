@@ -4,7 +4,8 @@ import rateLimit from '@fastify/rate-limit';
 import { db } from '../../../database/index.js';
 import { config } from '../../../config/index.js';
 import { contextPlugin } from '../../../context/index.js';
-import { publicStatusRoutes } from '../../../modules/monitoring/routes.js';
+import { publicStatusRoutes, settleSubscribeWork } from '../../../modules/monitoring/routes.js';
+import { rateLimitKeyGenerator } from '../../../server.js';
 import { statusPageRoutes } from '../../../modules/monitoring/status-page-routes.js';
 import {
   makeUnsubscribeToken,
@@ -34,14 +35,18 @@ async function makePublic() {
 }
 
 /** Every call uses a fresh source address so the per-IP limit only bites when asked to. */
-function post(path: string, payload: unknown, ip?: string) {
+async function post(path: string, payload: unknown, ip?: string, headers?: Record<string, string>) {
   ipSeq += 1;
-  return app.inject({
+  const res = await app.inject({
     method: 'POST',
     url: `${base()}${path}`,
     payload: payload as any,
+    headers,
     remoteAddress: ip ?? `10.${Math.floor(ipSeq / 250) % 250}.${ipSeq % 250}.7`,
   });
+  // subscribe does its work after the response; let it finish before asserting
+  await settleSubscribeWork();
+  return res;
 }
 
 function lastToken(): string {
@@ -63,7 +68,9 @@ async function rowFor(email: string) {
 beforeAll(async () => {
   app = Fastify();
   await app.register(contextPlugin);
-  await app.register(rateLimit, { global: false });
+  // Same global key generator as the real server, so the credential-header
+  // bypass is exercised.
+  await app.register(rateLimit, { global: false, keyGenerator: rateLimitKeyGenerator });
   await app.register(publicStatusRoutes, { prefix: '/status' });
   await app.register(statusPageRoutes, { prefix: '/api/v1/status-page' });
   await app.ready();
@@ -178,6 +185,79 @@ describe('subscribe', () => {
     expect(codes[5]).toBe(429);
     // another address is not affected
     expect((await post('/subscribe', { email: 'other@example.com' }, '203.0.113.51')).statusCode).toBe(202);
+  });
+});
+
+describe('subscribe abuse bounds', () => {
+  it('keys the limit on the client address, not on a caller supplied credential header', async () => {
+    const ip = '203.0.113.77';
+    const codes: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      codes.push(
+        (await post('/subscribe', { email: `hdr${i}@example.com` }, ip, { 'x-api-key': `random-${i}` })).statusCode
+      );
+    }
+    expect(codes.slice(0, 5)).toEqual([202, 202, 202, 202, 202]);
+    expect(codes.slice(5)).toEqual([429, 429]);
+  });
+
+  it('applies the same address key to confirm and unsubscribe', async () => {
+    const ip = '203.0.113.78';
+    const codes: number[] = [];
+    for (let i = 0; i < 32; i++) {
+      codes.push((await post('/unsubscribe', { token: 'x' }, ip, { authorization: `Bearer junk-${i}` })).statusCode);
+    }
+    expect(codes.filter((c) => c === 429).length).toBe(2);
+  });
+
+  it('answers before the confirmation mail is sent, so latency does not reveal the address', async () => {
+    sendMail.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve({}), 600)));
+    const started = Date.now();
+    const res = await app.inject({
+      method: 'POST',
+      url: `${base()}/subscribe`,
+      payload: { email: 'slow@example.com' },
+      remoteAddress: '203.0.113.90',
+    });
+    expect(res.statusCode).toBe(202);
+    expect(Date.now() - started).toBeLessThan(450);
+    await settleSubscribeWork();
+    expect(sendMail).toHaveBeenCalledTimes(1);
+  });
+
+  it('mails an address at most 3 times per 24 hours, then again after the window', async () => {
+    const age = (set: Record<string, Date>) =>
+      db.updateTable('status_page_subscribers').set(set).where('project_id', '=', ctx.project.id).execute();
+
+    for (let i = 0; i < 5; i++) {
+      await post('/subscribe', { email: 'victim@example.com' });
+      await age({ last_confirmation_sent_at: new Date(Date.now() - 61_000) });
+    }
+    expect(sendMail).toHaveBeenCalledTimes(3);
+
+    await age({ confirmation_window_started_at: new Date(Date.now() - 25 * 3600_000) });
+    await post('/subscribe', { email: 'victim@example.com' });
+    expect(sendMail).toHaveBeenCalledTimes(4);
+    const row = await rowFor('victim@example.com');
+    expect(row?.confirmation_send_count).toBe(1);
+  });
+
+  it('stops creating pending rows and mails once a page holds 200 unconfirmed addresses', async () => {
+    const values = Array.from({ length: 200 }, (_, i) => ({
+      organization_id: ctx.organization.id,
+      project_id: ctx.project.id,
+      email: `p${i}@example.com`,
+      email_normalized: `p${i}@example.com`,
+      confirm_token_hash: 'a'.repeat(64),
+      confirm_expires_at: new Date(Date.now() + 3600_000),
+    }));
+    await db.insertInto('status_page_subscribers').values(values).execute();
+
+    const res = await post('/subscribe', { email: 'extra@example.com' });
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ ok: true });
+    expect(await rowFor('extra@example.com')).toBeUndefined();
+    expect(sendMail).not.toHaveBeenCalled();
   });
 });
 
@@ -307,6 +387,41 @@ describe('admin list and removal', () => {
     });
     expect(removed.statusCode).toBe(204);
     expect(await rowFor('mia@example.com')).toBeUndefined();
+  });
+
+  it('audits status page config, components and subscriber removal without the address', async () => {
+    const ownerToken = (await createTestSession(ctx.user.id)).token;
+    const put = (url: string, payload: unknown) =>
+      app.inject({ method: 'PUT', url: `/api/v1/status-page${url}`, headers: auth(ownerToken), payload: payload as any });
+
+    expect((await put('/config', { organizationId: ctx.organization.id, projectId: ctx.project.id, title: 'T' })).statusCode).toBe(200);
+    expect((await put('/components', { organizationId: ctx.organization.id, projectId: ctx.project.id, components: [] })).statusCode).toBe(200);
+
+    await post('/subscribe', { email: 'audit-me@example.com' });
+    await post('/subscribe/confirm', { token: lastToken() });
+    const row = await rowFor('audit-me@example.com');
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/status-page/subscribers/${row!.id}?organizationId=${ctx.organization.id}`,
+      headers: auth(ownerToken),
+    });
+    expect(del.statusCode).toBe(204);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('organization_id', '=', ctx.organization.id)
+      .where('action', 'like', 'statuspage.%')
+      .execute();
+    const byAction = Object.fromEntries(rows.map((r) => [r.action, r]));
+    expect(Object.keys(byAction).sort()).toEqual([
+      'statuspage.components_updated',
+      'statuspage.config_updated',
+      'statuspage.subscriber_removed',
+    ]);
+    expect(byAction['statuspage.config_updated'].resource_id).toBe(ctx.project.id);
+    expect(byAction['statuspage.subscriber_removed'].resource_id).toBe(row!.id);
+    expect(JSON.stringify(rows)).not.toContain('audit-me@example.com');
   });
 
   it('plain members cannot list or remove subscribers', async () => {

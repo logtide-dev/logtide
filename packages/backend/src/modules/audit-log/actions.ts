@@ -74,6 +74,10 @@ export const AUDIT_ACTIONS = {
   'channel.created': 'config_change',
   'channel.updated': 'config_change',
   'channel.deleted': 'config_change',
+  // public status page admin writes
+  'statuspage.config_updated': 'config_change',
+  'statuspage.components_updated': 'config_change',
+  'statuspage.subscriber_removed': 'data_modification',
   // email digest reports (#154)
   'digest.config_updated': 'config_change',
   'digest.config_deleted': 'config_change',

@@ -11,6 +11,7 @@ import {
   ComponentsValidationError,
 } from './status-page.js';
 import { statusSubscribersService } from './subscribers.js';
+import { auditLogService } from '../audit-log/service.js';
 
 const uuidSchema = z.string().uuid();
 
@@ -85,6 +86,12 @@ export async function statusPageRoutes(fastify: FastifyInstance) {
     }
 
     const cfg = await statusPageService.upsertConfig(projectId, organizationId, input);
+    await auditLogService.record({
+      action: 'statuspage.config_updated',
+      target: { type: 'project', id: projectId },
+      organizationId,
+      metadata: { fields: Object.keys(input).sort() },
+    });
     return reply.send({ config: cfg });
   });
 
@@ -109,6 +116,12 @@ export async function statusPageRoutes(fastify: FastifyInstance) {
       }
       throw err;
     }
+    await auditLogService.record({
+      action: 'statuspage.components_updated',
+      target: { type: 'project', id: projectId },
+      organizationId,
+      metadata: { componentCount: components.length },
+    });
     return reply.send({ ok: true });
   });
 
@@ -140,6 +153,12 @@ export async function statusPageRoutes(fastify: FastifyInstance) {
     }
     const removed = await statusSubscribersService.remove(request.params.id, organizationId);
     if (!removed) return reply.status(404).send({ error: 'Not found' });
+    // The subscriber id only: the address itself is personal data.
+    await auditLogService.record({
+      action: 'statuspage.subscriber_removed',
+      target: { type: 'status_page_subscriber', id: request.params.id },
+      organizationId,
+    });
     return reply.status(204).send();
   });
 }
