@@ -4,8 +4,9 @@
 // Metadata (logs) and attribute (spans) filters compare the TEXT form of the
 // value the key resolves to, the `resolveMetadataPath` + `metadataValueText`
 // rules of the shared matcher:
-// - a key without `.` is `obj[key]`; a dotted key is the literal key when the
-//   object has it, otherwise the walk through nested objects;
+// - a key without `.` is `obj[key]`; a dotted key resolves through the first
+//   present candidate key sequence of the shared `metadataPathCandidates`
+//   (the literal key first), walked through objects only;
 // - strings are themselves, numbers and booleans their text (`500`, `true`),
 //   null, objects and arrays have no text;
 // - negative operators match records where the key does not resolve, unless
@@ -18,6 +19,7 @@
 // keys (and `$`-prefixed ones, and every `contains`) go through `$expr`.
 
 import type { Document } from 'mongodb';
+import { metadataPathCandidates } from '@logtide/shared';
 import type { MetadataFilter } from '../../core/types.js';
 import { escapeRegex } from './text-query.js';
 
@@ -52,20 +54,21 @@ function fieldOf(input: unknown, name: string): Document {
 
 /**
  * The value `key` resolves to under `root` (S4), as an aggregation
- * expression; missing when it does not resolve. A dotted key takes the
- * literal key when present, otherwise walks the segments through objects.
+ * expression; missing when it does not resolve. A dotted key takes the first
+ * present candidate key sequence of the shared `metadataPathCandidates`
+ * (the literal key first), each walked through objects only.
  */
 export function resolvedValueExpr(root: MgJsonRoot, key: string): Document {
   const ref = rootRef(root);
-  const literal = fieldOf(ref, key);
-  if (!key.includes('.')) return literal;
-  const nested = key.split('.').reduce<unknown>((acc, segment) => fieldOf(acc, segment), ref) as Document;
-  return {
+  const candidates = metadataPathCandidates(key).map(
+    (keys) => keys.reduce<unknown>((acc, k) => fieldOf(acc, k), ref) as Document,
+  );
+  return candidates.reduceRight((rest, candidate) => ({
     $let: {
-      vars: { lit: literal },
-      in: { $cond: [{ $ne: [{ $type: '$$lit' }, 'missing'] }, '$$lit', nested] },
+      vars: { c: candidate },
+      in: { $cond: [{ $ne: [{ $type: '$$c' }, 'missing'] }, '$$c', rest] },
     },
-  };
+  }));
 }
 
 /** S5 text form of `expr`: strings as they are, numbers and booleans via `$toString`, anything else null. */

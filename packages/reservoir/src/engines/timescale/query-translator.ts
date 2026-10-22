@@ -16,7 +16,7 @@ import type {
   TopValuesParams,
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
-import { compileJsonFilters, jsonValueExpr, scalarTextExpr } from './json-path.js';
+import { bindJsonKey, compileJsonFilters, scalarTextExpr } from './json-path.js';
 import { DISCOVER_DEFAULT_SAMPLE_SIZE, DISCOVER_MAX_KEYS } from '../../core/constants.js';
 
 
@@ -250,14 +250,10 @@ export class TimescaleQueryTranslator extends QueryTranslator {
         }
         expr = FACET_BUILTIN_EXPR[field.builtin];
       } else {
-        const keyIdx = idx++;
-        values.push(field.metadata);
-        let pathIdx: number | null = null;
-        if (field.metadata.includes('.')) {
-          pathIdx = idx++;
-          values.push(field.metadata.split('.'));
-        }
-        expr = scalarTextExpr(jsonValueExpr('metadata', keyIdx, pathIdx));
+        const bound = bindJsonKey('metadata', field.metadata, idx);
+        values.push(...bound.values);
+        idx = bound.nextIdx;
+        expr = scalarTextExpr(bound.key.value);
       }
       return `(${position}, ${expr})`;
     });

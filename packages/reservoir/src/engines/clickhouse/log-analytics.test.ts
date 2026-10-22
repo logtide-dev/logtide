@@ -181,7 +181,7 @@ describe('clickhouse facets', () => {
     expect(query).toContain('ORDER BY f ASC, cnt DESC, v ASC LIMIT {p_limit:UInt32} BY f');
     expect(query).toContain('(0, toNullable(hostname))');
     expect(query).toContain('(1, multiIf(');
-    expect(query).toContain('if(JSONHas(metadata, {p_fk1:String})');
+    expect(query).toContain('multiIf(JSONHas(metadata, {p_fk1:String}), JSONExtractRaw(metadata, {p_fk1:String})');
     expect(query).toContain("WHERE v IS NOT NULL AND v != ''");
     expect(params).toMatchObject({ p_limit: 5, p_fk1: 'http.method', p_fk1s0: 'http', p_fk1s1: 'method' });
   });

@@ -1053,9 +1053,9 @@ describe('TimescaleEngine', () => {
 
       const [countSql, countParams] = mockQuery.mock.calls[0] as [string, unknown[]];
       const [pageSql] = mockQuery.mock.calls[1] as [string, unknown[]];
-      expect(countSql).toContain('resource_attributes ?');
-      expect(countParams).toContain('service.version');
-      expect(pageSql).toContain('resource_attributes ?');
+      expect(countSql).toContain('COALESCE(resource_attributes -> (');
+      expect(countParams).toContainEqual(['service.version', 'service', 'version']);
+      expect(pageSql).toContain('COALESCE(resource_attributes -> (');
       expect(pageSql).toContain('ORDER BY duration_ms DESC, span_id ASC');
     });
 

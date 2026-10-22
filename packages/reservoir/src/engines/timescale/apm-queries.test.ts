@@ -49,10 +49,10 @@ describe('buildSpanConditions', () => {
 
   it('attribute filters route resource-prefixed keys to resource_attributes', () => {
     const r = buildSpanConditions({ from, to, attributeFilters: [eq('resource.service.version', '1.2'), eq('http.route', '/x')] }, 1);
-    expect(r.conditions[2]).toContain('attributes ?');
+    expect(r.conditions[2]).toContain('COALESCE(attributes -> ($3::text[])[1]');
     expect(r.conditions[2]).not.toContain('resource_attributes');
-    expect(r.conditions[3]).toContain('resource_attributes ?');
-    expect(r.values).toEqual([from, to, 'http.route', ['http', 'route'], '/x', 'service.version', ['service', 'version'], '1.2']);
+    expect(r.conditions[3]).toContain('COALESCE(resource_attributes -> ($5::text[])[1]');
+    expect(r.values).toEqual([from, to, ['http.route', 'http', 'route'], '/x', ['service.version', 'service', 'version'], '1.2']);
   });
 });
 
@@ -101,7 +101,7 @@ describe('traceSpanMatchSql', () => {
 
   it('attribute filters apply to the same span', () => {
     const r = traceSpanMatchSql({ from, to, attributeFilters: [eq('http.method', 'POST'), eq('resource.env', 'prod')] }, 1, 'public');
-    expect(r.condition).toContain('s.attributes ?');
+    expect(r.condition).toContain('COALESCE(s.attributes -> (');
     expect(r.condition).toContain('s.resource_attributes->>$');
     expect(r.condition?.match(/EXISTS/g)).toHaveLength(1);
   });

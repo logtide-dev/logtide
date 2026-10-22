@@ -15,6 +15,8 @@ export const PROJECT_A = '00000000-0000-4000-8000-0000000000a1';
 export const PROJECT_B = '00000000-0000-4000-8000-0000000000b1';
 /** Metadata key discovery edges only (dotted child keys, the key cap): logs L93 and L94. */
 export const PROJECT_C = '00000000-0000-4000-8000-0000000000c1';
+/** Metadata path resolution edges (OTLP resource and body shapes, literal splits): logs L40 and up. */
+export const PROJECT_D = '00000000-0000-4000-8000-0000000000d1';
 export const ORG_ID = '00000000-0000-4000-8000-0000000000f1';
 
 const BASE_MS = CONFORMANCE_BASE.getTime();
@@ -110,6 +112,14 @@ const LOG_ROWS: LogRow[] = [
   { id: 'L91', project: PROJECT_A, t: -1440, service: 'api', level: 'error', host: 'web-1', message: 'Connection refused by upstream db', meta: prod, sessionId: SESSION_IDS.SESS1 },
   { id: 'L93', project: PROJECT_C, t: 1, service: 'collector', level: 'info', message: 'otel resource keys', meta: { otel: { 'service.name': 'checkout', 'k8s.pod.name': 'pod-1' }, http: { method: 'GET' } } },
   { id: 'L94', project: PROJECT_C, t: 2, service: 'collector', level: 'info', message: 'wide metadata', meta: WIDE_META },
+  // Project D: one metadata shape per log, no hostname.
+  {
+    id: 'L40', project: PROJECT_D, t: 30, service: 'collector', level: 'info', message: 'otel log with a resource and a body',
+    meta: { resource: { 'service.name': 'checkout', 'host.name': 'web-1' }, 'otel.body': { user: { id: 7 }, 'http.route': '/pay' } },
+  },
+  { id: 'L41', project: PROJECT_D, t: 31, service: 'collector', level: 'info', message: 'otel log of another service', meta: { resource: { 'service.name': 'cart', 'host.name': 'web-2' } } },
+  { id: 'L42', project: PROJECT_D, t: 32, service: 'api', level: 'info', message: 'literal child next to a nested path', meta: { a: { 'b.c': 'literal-child', b: { c: 'deep' } } } },
+  { id: 'L43', project: PROJECT_D, t: 33, service: 'api', level: 'info', message: 'dotted parent next to a dotted child', meta: { 'a.b': { c: 'dotted-parent' }, a: { 'b.c': 'dotted-child' } } },
 ];
 
 function logRecord(row: LogRow): LogRecord {

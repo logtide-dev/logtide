@@ -164,13 +164,14 @@ describe('translateFacets', () => {
     const r = translator.translateFacets(base, 10);
     const sql = r.query as string;
     const n = translator.buildLogConditions(base, 1).values.length;
-    expect(r.parameters?.slice(n)).toEqual(['http.method', ['http', 'method'], 'region', 10]);
+    expect(r.parameters?.slice(n)).toEqual([['http.method', 'http', 'method'], 'region', 10]);
     expect(sql).not.toContain('http.method');
     expect(sql).not.toContain("'region'");
-    expect(sql).toContain(`metadata ? $${n + 1}`);
-    expect(sql).toContain(`#> $${n + 2}::text[]`);
+    expect(sql).toContain(`metadata -> ($${n + 1}::text[])[1]`);
+    expect(sql).toContain(`metadata -> ($${n + 1}::text[])[2] -> ($${n + 1}::text[])[3]`);
+    expect(sql).toContain(`metadata->$${n + 2}`);
     expect(sql).toContain(`jsonb_typeof(`);
-    expect(sql).toContain(`rn <= $${n + 4}`);
+    expect(sql).toContain(`rn <= $${n + 3}`);
   });
 
   it('skips empty and missing values and ties break in byte order', () => {

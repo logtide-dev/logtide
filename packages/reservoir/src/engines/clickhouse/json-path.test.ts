@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chJsonExistsExpr, chJsonRawExpr, chScalarTextExpr, compileJsonFilters } from './json-path.js';
+import { bindJsonKey, chJsonExistsExpr, chJsonRawExpr, chScalarTextExpr, compileJsonFilters } from './json-path.js';
 import { ClickHouseQueryTranslator } from './query-translator.js';
 import type { MetadataFilter } from '../../core/types.js';
 
@@ -26,9 +26,28 @@ describe('clickhouse json paths', () => {
   it('dotted key prefers the literal key', () => {
     const r = compile([mf({ key: 'http.status', op: 'equals', value: '200' })]);
     expect(r.conditions[0]).toContain(
-      'if(JSONHas(metadata, {p_mfk0:String}), JSONExtractRaw(metadata, {p_mfk0:String}), JSONExtractRaw(metadata, {p_mfk0s0:String}, {p_mfk0s1:String}))',
+      'multiIf(JSONHas(metadata, {p_mfk0:String}), JSONExtractRaw(metadata, {p_mfk0:String}), JSONExtractRaw(metadata, {p_mfk0s0:String}, {p_mfk0s1:String}))',
     );
     expect(r.queryParams).toEqual({ p_mfk0: 'http.status', p_mfk0s0: 'http', p_mfk0s1: 'status', p_mfv0: '200' });
+  });
+
+  it('a dotted key tries every shared candidate in order, each key string bound once', () => {
+    const queryParams: Record<string, unknown> = {};
+    const key = bindJsonKey('resource.service.name', 'k', queryParams);
+    expect(queryParams).toEqual({
+      k: 'resource.service.name', ks0: 'resource.service', ks1: 'name', ks2: 'resource', ks3: 'service.name', ks4: 'service',
+    });
+    expect(chJsonRawExpr('metadata', key)).toBe(
+      'multiIf(' +
+        'JSONHas(metadata, {k:String}), JSONExtractRaw(metadata, {k:String}), ' +
+        'JSONHas(metadata, {ks0:String}, {ks1:String}), JSONExtractRaw(metadata, {ks0:String}, {ks1:String}), ' +
+        'JSONHas(metadata, {ks2:String}, {ks3:String}), JSONExtractRaw(metadata, {ks2:String}, {ks3:String}), ' +
+        'JSONExtractRaw(metadata, {ks2:String}, {ks4:String}, {ks1:String}))',
+    );
+    expect(chJsonExistsExpr('metadata', key)).toBe(
+      '(JSONHas(metadata, {k:String}) OR JSONHas(metadata, {ks0:String}, {ks1:String}) OR ' +
+        'JSONHas(metadata, {ks2:String}, {ks3:String}) OR JSONHas(metadata, {ks2:String}, {ks4:String}, {ks1:String}))',
+    );
   });
 
   it('numbers compare by text', () => {
@@ -82,15 +101,15 @@ describe('clickhouse json paths', () => {
   it('span columns are supported', () => {
     const r = compile([mf({ key: 'http.method', op: 'equals', value: 'GET' })], 'attributes');
     expect(r.conditions[0]).toContain('JSONHas(attributes, {p_mfk0:String})');
-    expect(chJsonRawExpr('resource_attributes', { key: '{k:String}', segments: null })).toBe('JSONExtractRaw(resource_attributes, {k:String})');
-    expect(chJsonExistsExpr('resource_attributes', { key: '{k:String}', segments: ['{a:String}', '{b:String}'] })).toBe(
+    expect(chJsonRawExpr('resource_attributes', { candidates: [['{k:String}']] })).toBe('JSONExtractRaw(resource_attributes, {k:String})');
+    expect(chJsonExistsExpr('resource_attributes', { candidates: [['{k:String}'], ['{a:String}', '{b:String}']] })).toBe(
       '(JSONHas(resource_attributes, {k:String}) OR JSONHas(resource_attributes, {a:String}, {b:String}))',
     );
   });
 
   it('rejects an unknown column', () => {
     expect(() => compile([mf({ key: 'env', op: 'exists' })], 'message' as 'metadata')).toThrow('Unsupported JSON column');
-    expect(() => chJsonRawExpr('metadata; DROP' as 'metadata', { key: '{k:String}', segments: null })).toThrow('Unsupported JSON column');
+    expect(() => chJsonRawExpr('metadata; DROP' as 'metadata', { candidates: [['{k:String}']] })).toThrow('Unsupported JSON column');
   });
 
   it('the log translator routes metadata filters through the resolver', () => {
@@ -101,7 +120,7 @@ describe('clickhouse json paths', () => {
       to: new Date('2026-01-02T00:00:00Z'),
       metadataFilters: [mf({ key: 'user.id', op: 'equals', value: '42' })],
     });
-    expect(r.query).toContain('if(JSONHas(metadata, {p_mfk0:String})');
+    expect(r.query).toContain('multiIf(JSONHas(metadata, {p_mfk0:String})');
     expect(r.query).not.toContain('JSONExtractString(metadata,');
   });
 });
