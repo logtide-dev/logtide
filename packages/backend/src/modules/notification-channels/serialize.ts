@@ -8,6 +8,7 @@
  * go through this module.
  */
 
+import { getChannelDisplayType } from '@logtide/shared';
 import type {
   ChannelConfig,
   NotificationChannel,
@@ -91,7 +92,12 @@ export function serializeChannel(
   channel: NotificationChannel,
   opts: { isAdmin: boolean }
 ): NotificationChannel {
-  return { ...channel, config: serializeConfig(channel.type, channel.config, opts.isAdmin) };
+  return {
+    ...channel,
+    config: serializeConfig(channel.type, channel.config, opts.isAdmin),
+    // computed from the raw config: members only get a host-only URL
+    displayType: getChannelDisplayType(channel),
+  };
 }
 
 export function serializeChannels(

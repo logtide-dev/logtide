@@ -42,6 +42,8 @@ export interface NotificationChannel {
   type: NotificationChannelType;
   enabled: boolean;
   config: ChannelConfig;
+  /** Server-computed flavor; prefer it over deriving from the (host-only for members) URL. */
+  displayType?: ChannelDisplayType;
   description: string | null;
   createdBy: string | null;
   createdAt: string;

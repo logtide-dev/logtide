@@ -76,13 +76,15 @@ export function getDestinationType(id: DestinationTypeId): DestinationTypeInfo {
 export function displayTypeOf(channel: {
   type: NotificationChannelType;
   config: unknown;
+  displayType?: ChannelDisplayType;
 }): ChannelDisplayType {
-  return getChannelDisplayType(channel);
+  return channel.displayType ?? getChannelDisplayType(channel);
 }
 
 export function destinationLabel(channel: {
   type: NotificationChannelType;
   config: unknown;
+  displayType?: ChannelDisplayType;
 }): string {
   return getDestinationType(displayTypeOf(channel)).label;
 }

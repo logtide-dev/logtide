@@ -1,3 +1,5 @@
+import type { ChannelDisplayType } from '../utils/webhook-flavor.js';
+
 // ============================================================================
 // Notification Channel Types
 // ============================================================================
@@ -75,6 +77,8 @@ export interface NotificationChannel {
   type: NotificationChannelType;
   enabled: boolean;
   config: ChannelConfig;
+  /** Server-computed destination flavor (slack, teams, discord...) from the raw URL; set on API responses. */
+  displayType?: ChannelDisplayType;
   description: string | null;
   createdBy: string | null;
   createdAt: Date;

@@ -89,6 +89,17 @@ describe('serializeChannel', () => {
   });
 });
 
+describe('serializeChannel displayType', () => {
+  it('keeps the slack type for members whose URL is reduced to the host', () => {
+    const out = serializeChannel(
+      channel('webhook', { url: 'https://hooks.slack.com/services/T1/B2/secret' }),
+      { isAdmin: false }
+    );
+    expect((out.config as any).url).toBe('https://hooks.slack.com/...');
+    expect(out.displayType).toBe('slack');
+  });
+});
+
 describe('mergeConfigSecrets', () => {
   const stored = {
     url: 'https://x.example/h',
