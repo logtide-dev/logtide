@@ -1,2389 +1,1613 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
-  import { browser } from "$app/environment";
-  import { goto } from "$app/navigation";
+  // Logs explorer (spec 5.4). The page owns the explorer state: the committed
+  // query, the scope (shared scope store), a run window frozen at query time,
+  // the loaded rows and the cursor. Every filter is a clause of `q`, so the URL,
+  // saved searches, the export and the alert pre-fill carry the same query.
+  import { onMount, onDestroy, tick } from "svelte";
+  import { get, type Writable } from "svelte/store";
+  import { goto, afterNavigate } from "$app/navigation";
   import { page } from "$app/state";
+  import {
+    parseLogQuery,
+    TIME_RANGE_LABELS,
+    type LogSearchQuery,
+    type Project,
+    type TimeRangePreset,
+  } from "@logtide/shared";
   import { currentOrganization } from "$lib/stores/organization";
   import { authStore } from "$lib/stores/auth";
   import { shortcutsStore } from "$lib/stores/shortcuts";
   import { checklistStore } from "$lib/stores/checklist";
-  import { ProjectsAPI } from "$lib/api/projects";
-  import { logsAPI, type SearchMode } from "$lib/api/logs";
   import { toastStore } from "$lib/stores/toast";
-  import { formatTimeAgo } from "$lib/utils/datetime";
-  import { timeRangeStore } from "$lib/stores/time-range";
-  import type { Project, MetadataFilterInput } from "@logtide/shared";
-  import { resolveMetadataPath, formatMetadataCell } from "@logtide/shared";
-  import MetadataFilterBuilder from "$lib/components/alerts/MetadataFilterBuilder.svelte";
+  import { layoutStore } from "$lib/stores/layout";
+  import { displayPreferences } from "$lib/stores/display-preferences";
+  import {
+    scopeStore,
+    resolveRange,
+    sanitizeRange,
+    type Scope,
+    type TimeRangeValue,
+  } from "$lib/stores/scope";
+  import { createColumnConfigStore, type ColumnConfigStore } from "$lib/stores/column-config";
+  import { formatRange, formatTimestamp } from "$lib/utils/datetime";
+  import { copyToClipboard } from "$lib/utils/clipboard";
+  import { ProjectsAPI } from "$lib/api/projects";
+  import {
+    logsAPI,
+    LogQueryError,
+    type LogEntry,
+    type LogFacet,
+    type LogFieldInfo,
+    type LogHistogramBucket,
+  } from "$lib/api/logs";
+  import { correlationAPI, type IdentifierMatch } from "$lib/api/correlation";
+  import type { SavedSearch, SavedSearchState } from "$lib/api/saved-searches";
+  import PageHeader from "$lib/components/app/PageHeader.svelte";
+  import EmptyState from "$lib/components/app/EmptyState.svelte";
+  import ScopeBar from "$lib/components/app/ScopeBar.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
-  import Input from "$lib/components/ui/input/input.svelte";
-  import Label from "$lib/components/ui/label/label.svelte";
-  import {
-    Card,
-    CardContent,
-    CardHeader,
-    CardTitle,
-  } from "$lib/components/ui/card";
-  import { Badge } from "$lib/components/ui/badge";
-  import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-  } from "$lib/components/ui/table";
-  import * as Select from "$lib/components/ui/select";
   import * as Popover from "$lib/components/ui/popover";
-  import Switch from "$lib/components/ui/switch/switch.svelte";
+  import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
+  import EmptyLogs from "$lib/components/EmptyLogs.svelte";
+  import TerminalLogView from "$lib/components/TerminalLogView.svelte";
   import LogContextDialog from "$lib/components/LogContextDialog.svelte";
   import CorrelationTimelineDialog from "$lib/components/CorrelationTimelineDialog.svelte";
-  import IdentifierBadge from "$lib/components/IdentifierBadge.svelte";
-  import { ExceptionDetailsDialog } from "$lib/components/exceptions";
   import ExportLogsDialog from "$lib/components/ExportLogsDialog.svelte";
-  import { correlationAPI, type IdentifierMatch, type CorrelatedLog } from "$lib/api/correlation";
-  import EmptyLogs from "$lib/components/EmptyLogs.svelte";
-  import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
-  import TerminalLogView from "$lib/components/TerminalLogView.svelte";
-  import TimeRangePicker, { type TimeRangeType } from "$lib/components/TimeRangePicker.svelte";
-  import { layoutStore } from "$lib/stores/layout";
-  import { createColumnConfigStore } from "$lib/stores/column-config.js";
+  import LogQueryBar from "$lib/components/search/LogQueryBar.svelte";
+  import LogResultsTable from "$lib/components/search/LogResultsTable.svelte";
+  import LogDetailsPanel from "$lib/components/search/LogDetailsPanel.svelte";
+  import LogVolumeHistogram from "$lib/components/search/LogVolumeHistogram.svelte";
+  import FacetSidebar from "$lib/components/search/FacetSidebar.svelte";
+  import SavedSearchesMenu from "$lib/components/search/SavedSearchesMenu.svelte";
+  import LiveTailControls from "$lib/components/search/LiveTailControls.svelte";
   import ColumnConfigMenu from "$lib/components/search/ColumnConfigMenu.svelte";
-  import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
+  import {
+    LIVE_TAIL_LIMITS,
+    createLiveTail,
+    type LiveTail,
+    type LiveTailSnapshot,
+  } from "$lib/components/search/live-tail";
+  import {
+    DEFAULT_BUILTIN_LAYOUT,
+    createBuiltinColumnsStore,
+    visibleColumns,
+    type BuiltinColumnLayout,
+  } from "$lib/components/search/builtin-columns";
+  import { createRequestGuard } from "$lib/components/search/request-guard";
+  import { resolveResultsState } from "$lib/components/search/results-state";
+  import { activeProjectKey, rowKey } from "$lib/components/search/log-fields";
+  import { isQueryableKey, toggleFieldValue } from "$lib/components/search/query-edit";
+  import { pickBucketSeconds } from "$lib/components/search/histogram";
+  import {
+    BUILTIN_FACET_KEYS,
+    FACET_VALUE_LIMIT,
+    facetCandidates,
+    selectMetadataFacetKeys,
+  } from "$lib/components/search/facet-keys";
+  import { createFacetPinsStore, type FacetPinsStore } from "$lib/components/search/facet-pins";
+  import {
+    clearRecentSearches,
+    createRecentRecorder,
+    loadRecentSearches,
+    recentLabel,
+    recordRecentSearch,
+    type RecentSearch,
+  } from "$lib/components/search/recent-searches";
+  import {
+    LOGS_PATH,
+    LOG_LINK_WINDOW_MS,
+    alertPrefillUrl,
+    buildExplorerUrl,
+    parseExplorerUrl,
+    toSavedState,
+    type ExplorerState,
+    type ExplorerView,
+  } from "$lib/components/search/explorer-url";
+  import BellPlus from "@lucide/svelte/icons/bell-plus";
   import Download from "@lucide/svelte/icons/download";
-  import ChevronLeft from "@lucide/svelte/icons/chevron-left";
-  import ChevronRight from "@lucide/svelte/icons/chevron-right";
-  import ChevronDown from "@lucide/svelte/icons/chevron-down";
-  import SearchIcon from "@lucide/svelte/icons/search";
-  import Radio from "@lucide/svelte/icons/radio";
-  import Settings2 from "@lucide/svelte/icons/settings-2";
-  import SquareTerminal from "@lucide/svelte/icons/square-terminal";
+  import Ellipsis from "@lucide/svelte/icons/ellipsis";
+  import Link from "@lucide/svelte/icons/link";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import Rows3 from "@lucide/svelte/icons/rows-3";
+  import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import Table2 from "@lucide/svelte/icons/table-2";
   import WrapText from "@lucide/svelte/icons/wrap-text";
-  import Clock from "@lucide/svelte/icons/clock";
-  import ArrowUpRight from "@lucide/svelte/icons/arrow-up-right";
-  import Filter from "@lucide/svelte/icons/filter";
-  import Copy from "@lucide/svelte/icons/copy";
-  import Check from "@lucide/svelte/icons/check";
-  import ListTree from "@lucide/svelte/icons/list-tree";
-  import { copyToClipboard } from "$lib/utils/clipboard";
-  import BreadcrumbTimeline from "$lib/components/BreadcrumbTimeline.svelte";
 
-  interface LogEntry {
-    id?: string;
-    time: string;
-    service: string;
-    level: "debug" | "info" | "warn" | "error" | "critical";
-    message: string;
-    metadata?: Record<string, any>;
-    traceId?: string;
-    sessionId?: string;
-    projectId: string;
+  const PAGE_SIZE = 50;
+  const MAX_LOADED_ROWS = 5000;
+  /** Extra pages a `logId` link loads while looking for its log. */
+  const MAX_LINK_PAGES = 10;
+  const VIEW_KEY = "logtide_view_mode";
+  const DENSITY_KEY = "logtide_row_density";
+  const FACETS_COLLAPSED_KEY = "logtide_facets_collapsed";
+  const LIVE_LIMIT_KEY = "logtide_livetail_limit";
+  const DEFAULT_LIVE_LIMIT = 100;
+  const RESULTS_HEIGHT = "max(420px, calc(100dvh - 22rem))";
+
+  /** One query execution: the window is resolved once and reused by every page of it. */
+  interface Run {
+    q: string;
+    query: LogSearchQuery;
+    projectIds: string[];
+    range: TimeRangeValue;
+    from: Date;
+    to: Date;
+    asOf: Date;
+    preset: TimeRangePreset | null;
   }
 
-  let token = $state<string | null>(null);
-  let projects = $state<Project[]>([]);
-  let logs = $state<LogEntry[]>([]);
-  let totalLogs = $state(0);
-  let hasMoreLogs = $state(false);
-  let expandedRows = $state(new Set<number>());
-  let isLoading = $state(false);
-  let hasLoadedOnce = $state(false);
-  let logsContainer = $state<HTMLDivElement | null>(null);
-  let selectedLogIndex = $state(-1);
+  const projectsAPI = new ProjectsAPI(() => get(authStore).token);
+  const logsGuard = createRequestGuard();
+  const histogramGuard = createRequestGuard();
+  const facetsGuard = createRequestGuard();
 
-  let searchQuery = $state("");
-  let searchMode = $state<SearchMode>("fulltext");
-  let traceId = $state("");
-  let sessionId = $state("");
-  let selectedProjects = $state<string[]>([]);
-  let selectedServices = $state<string[]>([]);
-  let selectedHostnames = $state<string[]>([]);
-  let selectedLevels = $state<string[]>([]);
-  let metadataFilters = $state<MetadataFilterInput[]>([]);
-  let liveTail = $state(false);
-  let liveTailConnectionKey = $state<string | null>(null);
-  let liveTailLimit = $state(100);
-  let viewMode = $state<"table" | "terminal">("table");
-  let terminalWrapEnabled = $state(true);
+  let projects = $state.raw<Project[]>([]);
+  let projectsFailed = $state(false);
+  /** Projects that ever received a log (data availability); null while unknown. */
+  let projectsWithLogs = $state.raw<string[] | null>(null);
+  let scope = $state.raw<Scope>(scopeStore.get());
+
+  let q = $state("");
+  let draftQ = $state("");
+  let view = $state<ExplorerView>("table");
+  let rows = $state.raw<LogEntry[]>([]);
+  let total = $state<number | null>(null);
+  let nextCursor = $state<string | null>(null);
+  let run = $state.raw<Run | null>(null);
+  let hasRun = $state(false);
+  let loading = $state(false);
+  let loadingMore = $state(false);
+  let error = $state<string | null>(null);
+  let queryError = $state<{ message: string; position: number } | null>(null);
+  let capped = $state(false);
+
+  let histogramBuckets = $state.raw<LogHistogramBucket[]>([]);
+  let histogramBucketSeconds = $state(60);
+  let histogramTotal = $state<number | null>(null);
+  let histogramLoading = $state(false);
+  let histogramError = $state<string | null>(null);
+
+  let facets = $state.raw<LogFacet[]>([]);
+  let facetsLoading = $state(false);
+  let facetsError = $state<string | null>(null);
+  let facetsCollapsed = $state(false);
+  let discovered = $state.raw<LogFieldInfo[]>([]);
+  let pinnedKeys = $state.raw<string[]>([]);
+
+  let selectedId = $state<string | null>(null);
+  let detailsLog = $state.raw<LogEntry | null>(null);
+  let logId = $state<string | null>(null);
+  let logProjectId = $state<string | null>(null);
+  let savedId = $state<string | null>(null);
+  let centerOnId = $state<string | null>(null);
+  let identifiers = $state.raw<Map<string, IdentifierMatch[]>>(new Map());
+  let recent = $state.raw<RecentSearch[]>([]);
+
+  let live = $state(false);
+  let liveSnap = $state.raw<LiveTailSnapshot | null>(null);
+  let liveLimit = $state(DEFAULT_LIVE_LIMIT);
+
+  let density = $state<"comfortable" | "compact">("comfortable");
+  let terminalWrap = $state(true);
   let maxWidthClass = $state("max-w-7xl");
   let containerPadding = $state("px-6 py-8");
+  let resultsTable = $state<{ reveal(id: string): void; scrollToTop(): void } | null>(null);
+  let terminalView = $state<{ scrollToTop(): void } | null>(null);
 
-  // Custom metadata columns (persisted per project in localStorage)
-  let customColumns = $state<string[]>([]);
+  let moreOpen = $state(false);
+  let exportOpen = $state(false);
+  let contextOpen = $state(false);
+  let contextLog = $state.raw<LogEntry | null>(null);
+  let correlation = $state.raw<{ log: LogEntry; type: string; value: string } | null>(null);
 
-  // Table row density (persisted in localStorage)
-  let rowDensity = $state<"comfortable" | "compact">("comfortable");
-  function toggleDensity() {
-    rowDensity = rowDensity === "comfortable" ? "compact" : "comfortable";
-    if (browser) localStorage.setItem("logtide_row_density", rowDensity);
+  let layout = $state.raw<BuiltinColumnLayout>(DEFAULT_BUILTIN_LAYOUT);
+  let customColumns = $state.raw<string[]>([]);
+
+  // Plain variables: bookkeeping that never renders.
+  let initialized = false;
+  let orgId: string | null = null;
+  let lastWrittenUrl: string | null = null;
+  let scopeKeySeen = scopeKey(scopeStore.get());
+  let fieldsKey: string | null = null;
+  let projectsSeq = 0;
+  let runSeq = 0;
+  let tail: LiveTail | null = null;
+  let liveTried = false;
+  const identifierRequests = new Set<string>();
+  const builtinStores = new Map<string, Writable<BuiltinColumnLayout>>();
+  const columnStores = new Map<string, ColumnConfigStore>();
+  const pinStores = new Map<string, FacetPinsStore>();
+  const recorder = createRecentRecorder((state) => {
+    recent = recordRecentSearch(state);
+  });
+
+  const scopeProjects = $derived(projects.map((p) => ({ id: p.id, name: p.name })));
+  const resolvedIds = $derived(resolveIds(scope.projectIds, projects));
+  const projectKey = $derived(keyFor(resolvedIds));
+  const selectedIndex = $derived(
+    selectedId === null ? -1 : rows.findIndex((log, i) => rowKey(log, i) === selectedId),
+  );
+  const highlightQuery = $derived(run ? run.query : null);
+  const everReceivedLogs = $derived.by(() => {
+    if (projectsWithLogs === null || !run) return null;
+    const withLogs = projectsWithLogs;
+    return run.projectIds.some((id) => withLogs.includes(id));
+  });
+  const resultsState = $derived(
+    resolveResultsState({
+      hasRun,
+      loading,
+      error,
+      rowCount: rows.length,
+      projectCount: projects.length,
+      everReceivedLogs,
+    }),
+  );
+  const shownTotal = $derived(histogramTotal ?? total);
+  const countText = $derived.by(() => {
+    const n = live ? rows.length : (shownTotal ?? rows.length);
+    return `${n.toLocaleString("en-US")} ${n === 1 ? "log" : "logs"}`;
+  });
+  const pendingText = $derived.by(() => {
+    const n = liveSnap?.pendingCount ?? 0;
+    return n === 1 ? "1 new log" : `${n.toLocaleString("en-US")} new logs`;
+  });
+  const showPendingPill = $derived(live && liveSnap !== null && liveSnap.pausedBy !== null && liveSnap.pendingCount > 0);
+  const asOfText = $derived.by(() => {
+    $displayPreferences;
+    return run ? formatTimestamp(run.asOf, { precision: "second", withDate: false }) : "";
+  });
+  const asOfTitle = $derived.by(() => {
+    $displayPreferences;
+    return run ? formatTimestamp(run.asOf, { precision: "second", withDate: true, withZone: true }) : "";
+  });
+  const rangePhrase = $derived.by(() => {
+    $displayPreferences;
+    if (!run) return "";
+    return run.preset ? `the ${TIME_RANGE_LABELS[run.preset].toLowerCase()}` : formatRange(run.from, run.to);
+  });
+  const hasMore = $derived(!live && nextCursor !== null && !capped);
+  const discoveredKeys = $derived(discovered.map((f) => f.key));
+  const candidateKeys = $derived(facetCandidates(discovered));
+  const savedState = $derived(toSavedState(currentState(), customColumns));
+  const exportScope = $derived(
+    run
+      ? { q: run.q, projectIds: run.projectIds, from: run.from.toISOString(), to: run.to.toISOString() }
+      : { q: "", projectIds: [], from: new Date(0).toISOString(), to: new Date(0).toISOString() },
+  );
+  const canExport = $derived(!live && run !== null && rows.length > 0);
+  const gridClass = $derived(
+    detailsLog
+      ? facetsCollapsed
+        ? "lg:grid-cols-[2.5rem_minmax(0,1fr)] xl:grid-cols-[2.5rem_minmax(0,1fr)_26rem]"
+        : "lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_26rem]"
+      : facetsCollapsed
+        ? "lg:grid-cols-[2.5rem_minmax(0,1fr)]"
+        : "lg:grid-cols-[16rem_minmax(0,1fr)]",
+  );
+
+  function scopeKey(s: Scope): string {
+    return JSON.stringify([s.projectIds, s.range]);
   }
 
-  // Recent searches (persisted in localStorage)
-  const RECENT_SEARCHES_KEY = "logtide_recent_searches";
-  let recentSearches = $state<string[]>([]);
-  function addRecentSearch(q: string) {
-    const term = q.trim();
-    if (!term) return;
-    const next = [term, ...recentSearches.filter((s) => s !== term)].slice(0, 8);
-    recentSearches = next;
-    if (browser) localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next));
+  /** Per-project settings (columns, pins) follow the first scoped project. */
+  function keyFor(ids: string[]): string {
+    return activeProjectKey(ids) ?? "all";
   }
-  function applyRecentSearch(term: string) {
-    searchQuery = term;
-    applyFilters();
+
+  /** Scope ids present in the organization, or every project when none is. */
+  function resolveIds(ids: string[], list: Project[]): string[] {
+    const valid = new Set(list.map((p) => p.id));
+    const inOrg = ids.filter((id) => valid.has(id));
+    return inOrg.length > 0 ? inOrg : list.map((p) => p.id);
   }
-  function clearRecentSearches() {
-    recentSearches = [];
-    if (browser) localStorage.removeItem(RECENT_SEARCHES_KEY);
+
+  /** Same rule as the scope bar in multi mode: unknown ids dropped, every project = []. */
+  function normalizeIds(ids: string[]): string[] {
+    if (projects.length === 0) return ids;
+    const valid = new Set(projects.map((p) => p.id));
+    const kept = ids.filter((id) => valid.has(id));
+    return kept.length === projects.length ? [] : kept;
   }
-  // Cache stores per projectId so that any selectedProjects mutation does not
-  // recreate the store (and re-read localStorage) on every dependency change.
-  const columnStoreCache = new Map<
-    string,
-    ReturnType<typeof createColumnConfigStore>
-  >();
-  function getColumnStore(projectId: string) {
-    let store = columnStoreCache.get(projectId);
+
+  /** Changes the scope without the store subscription starting another run. */
+  function setScope(next: Scope) {
+    const normalized: Scope = { projectIds: normalizeIds(next.projectIds), range: next.range };
+    scopeKeySeen = scopeKey(normalized);
+    scope = normalized;
+    scopeStore.set(normalized);
+  }
+
+  function builtinStoreFor(key: string): Writable<BuiltinColumnLayout> {
+    let store = builtinStores.get(key);
     if (!store) {
-      store = createColumnConfigStore(projectId);
-      columnStoreCache.set(projectId, store);
+      store = createBuiltinColumnsStore(key);
+      builtinStores.set(key, store);
     }
     return store;
   }
-  let columnStore = $derived(
-    selectedProjects.length > 0
-      ? getColumnStore(selectedProjects[0])
-      : null
-  );
-  $effect(() => {
-    const store = columnStore;
+
+  function columnStoreFor(key: string): ColumnConfigStore {
+    let store = columnStores.get(key);
     if (!store) {
-      customColumns = [];
-      return;
+      store = createColumnConfigStore(key);
+      columnStores.set(key, store);
     }
-    const unsub = store.subscribe((v) => { customColumns = v; });
-    return unsub;
-  });
-
-  $effect(() => {
-    const unsubscribe = layoutStore.subscribe((state) => {
-      terminalWrapEnabled = state.terminalWrapEnabled;
-    });
-    return unsubscribe;
-  });
-
-  $effect(() => {
-    const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
-      maxWidthClass = value;
-    });
-    return unsubscribe;
-  });
-
-  $effect(() => {
-    const unsubscribe = layoutStore.containerPadding.subscribe((value) => {
-      containerPadding = value;
-    });
-    return unsubscribe;
-  });
-
-  let projectsAPI = $derived(new ProjectsAPI(() => token));
-
-  const unsubAuthStore = authStore.subscribe((state) => {
-    token = state.token;
-  });
-
-  // Time range picker reference and state
-  let timeRangePicker = $state<ReturnType<typeof TimeRangePicker> | null>(null);
-  function initialTimeRange(): { type: TimeRangeType; from: string; to: string } {
-    const stored = browser ? timeRangeStore.get() : null;
-    const t = stored?.type;
-    if (t === "last_hour" || t === "last_24h" || t === "last_7d" || t === "custom") {
-      return { type: t, from: stored?.from ?? "", to: stored?.to ?? "" };
-    }
-    return { type: "last_24h", from: "", to: "" };
-  }
-  const _initialRange = initialTimeRange();
-  let timeRangeType = $state<TimeRangeType>(_initialRange.type);
-  let customFromTime = $state(_initialRange.type === "custom" ? _initialRange.from : "");
-  let customToTime = $state(_initialRange.type === "custom" ? _initialRange.to : "");
-
-  // Helper to get time range from picker or fallback to local state
-  function getTimeRange(): { from: Date; to: Date } {
-    if (timeRangePicker) {
-      return timeRangePicker.getTimeRange();
-    }
-    // Fallback for initial render before picker is mounted
-    const now = new Date();
-    switch (timeRangeType) {
-      case "last_hour":
-        return { from: new Date(now.getTime() - 60 * 60 * 1000), to: now };
-      case "last_24h":
-        return { from: new Date(now.getTime() - 24 * 60 * 60 * 1000), to: now };
-      case "last_7d":
-        return { from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000), to: now };
-      case "custom":
-        const from = customFromTime
-          ? new Date(customFromTime)
-          : new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        const to = customToTime ? new Date(customToTime) : now;
-        return { from, to };
-      default:
-        return { from: new Date(now.getTime() - 24 * 60 * 60 * 1000), to: now };
-    }
+    return store;
   }
 
-  let pageSize = $state(25);
-
-  let lastLoadedOrg = $state<string | null>(null);
-
-  let contextDialogOpen = $state(false);
-  let selectedLogForContext = $state<LogEntry | null>(null);
-  let loadingLogById = $state(false);
-
-  // Exception dialog state
-  let exceptionDialogOpen = $state(false);
-  let selectedLogForException = $state<LogEntry | null>(null);
-
-  // Export dialog state
-  let exportDialogOpen = $state(false);
-
-  // Correlation dialog state
-  let correlationDialogOpen = $state(false);
-  let selectedIdentifierType = $state("");
-  let selectedIdentifierValue = $state("");
-  let selectedLogForCorrelation = $state<LogEntry | null>(null);
-  let logIdentifiers = $state<Map<string, IdentifierMatch[]>>(new Map());
-  let loadingIdentifiers = $state(false);
-
-  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function debouncedSearch() {
-    if (searchDebounceTimer) {
-      clearTimeout(searchDebounceTimer);
+  function pinStoreFor(key: string): FacetPinsStore {
+    let store = pinStores.get(key);
+    if (!store) {
+      store = createFacetPinsStore(key);
+      pinStores.set(key, store);
     }
-    searchDebounceTimer = setTimeout(() => {
-      applyFilters();
-    }, 300);
+    return store;
   }
 
-  onMount(() => {
-    // Register page-specific keyboard shortcuts
-    shortcutsStore.setScope('search');
-    shortcutsStore.register([
-      {
-        id: 'search:focus',
-        combo: '/',
-        label: 'Focus search input',
-        scope: 'search',
-        category: 'search',
-        action: () => {
-          const el = document.getElementById('search') as HTMLInputElement | null;
-          el?.focus();
-        },
-      },
-      {
-        id: 'search:refresh',
-        combo: 'r',
-        label: 'Refresh results',
-        scope: 'search',
-        category: 'actions',
-        action: () => loadLogs(),
-      },
-      {
-        id: 'search:next-log',
-        combo: 'j',
-        label: 'Next log',
-        scope: 'search',
-        category: 'navigation',
-        action: () => {
-          if (logs.length === 0) return;
-          selectedLogIndex = Math.min(selectedLogIndex + 1, logs.length - 1);
-          scrollToSelectedLog();
-        },
-      },
-      {
-        id: 'search:prev-log',
-        combo: 'k',
-        label: 'Previous log',
-        scope: 'search',
-        category: 'navigation',
-        action: () => {
-          if (logs.length === 0) return;
-          selectedLogIndex = Math.max(selectedLogIndex - 1, 0);
-          scrollToSelectedLog();
-        },
-      },
-      {
-        id: 'search:expand-log',
-        combo: 'enter',
-        label: 'Expand/collapse selected log',
-        scope: 'search',
-        category: 'actions',
-        action: () => {
-          if (selectedLogIndex >= 0 && selectedLogIndex < logs.length) {
-            toggleRow(selectedLogIndex);
-          }
-        },
-      },
-    ]);
+  $effect(() => builtinStoreFor(projectKey).subscribe((value) => (layout = value)));
+  $effect(() => columnStoreFor(projectKey).subscribe((value) => (customColumns = value)));
+  $effect(() => pinStoreFor(projectKey).subscribe((value) => (pinnedKeys = value)));
+  $effect(() => layoutStore.subscribe((s) => (terminalWrap = s.terminalWrapEnabled)));
+  $effect(() => layoutStore.maxWidthClass.subscribe((v) => (maxWidthClass = v)));
+  $effect(() => layoutStore.containerPadding.subscribe((v) => (containerPadding = v)));
 
-    // Restore search mode preference from session storage
-    const savedSearchMode = sessionStorage.getItem("logtide_search_mode");
-    if (savedSearchMode === "fulltext" || savedSearchMode === "substring") {
-      searchMode = savedSearchMode;
-    }
-
-    // Restore view mode preference from session storage
-    const savedViewMode = sessionStorage.getItem("logtide_view_mode");
-    if (savedViewMode === "table" || savedViewMode === "terminal") {
-      viewMode = savedViewMode;
-    }
-
-    // Restore row density preference
-    const savedDensity = localStorage.getItem("logtide_row_density");
-    if (savedDensity === "compact" || savedDensity === "comfortable") {
-      rowDensity = savedDensity;
-    }
-
-    // Restore recent searches
-    try {
-      const savedRecent = localStorage.getItem(RECENT_SEARCHES_KEY);
-      if (savedRecent) {
-        const parsed = JSON.parse(savedRecent);
-        if (Array.isArray(parsed)) {
-          recentSearches = parsed.filter((s) => typeof s === "string").slice(0, 8);
-        }
-      }
-    } catch {
-      // ignore malformed storage
-    }
-
-    // Restore live tail limit preference
-    const savedLiveTailLimit = localStorage.getItem("logtide_livetail_limit");
-    if (savedLiveTailLimit) {
-      const parsed = parseInt(savedLiveTailLimit, 10);
-      if (!isNaN(parsed) && parsed >= 50 && parsed <= 1000) {
-        liveTailLimit = parsed;
-      }
-    }
-
-    if ($currentOrganization) {
-      loadProjects();
-    }
-  });
-
-  $effect(() => {
-    if (!$currentOrganization) {
-      projects = [];
-      logs = [];
-      selectedProjects = [];
-      selectedServices = [];
-      availableServices = [];
-      lastLoadedOrg = null;
-      return;
-    }
-
-    if ($currentOrganization.id === lastLoadedOrg) return;
-
-    // Reset selections when org changes
-    selectedProjects = [];
-    selectedServices = [];
-    selectedHostnames = [];
-    availableServices = [];
-    availableHostnames = [];
-    logs = [];
-    hasMoreLogs = false;
-    currentPage = 1;
-
-    loadProjects();
-    lastLoadedOrg = $currentOrganization.id;
-  });
-
-  function formatDateForInput(isoString: string): string {
-    try {
-      const date = new Date(isoString);
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const hours = String(date.getHours()).padStart(2, "0");
-      const minutes = String(date.getMinutes()).padStart(2, "0");
-      return `${year}-${month}-${day}T${hours}:${minutes}`;
-    } catch (e) {
-      return "";
-    }
+  function currentState(): ExplorerState {
+    return {
+      q,
+      projectIds: scope.projectIds,
+      range: scope.range,
+      view,
+      live,
+      logId,
+      logProjectId,
+      savedId,
+    };
   }
 
-  let urlParamsProcessed = $state(false);
-
-  $effect(() => {
-    if (!browser || !page.url.searchParams || urlParamsProcessed) return;
-
-    const params = page.url.searchParams;
-    let shouldLoadLogs = false;
-
-    const projectParam = params.get("project");
-    if (projectParam && selectedProjects.length === 0) {
-      selectedProjects = [projectParam];
-      shouldLoadLogs = true;
-    }
-
-    const serviceParam = params.get("service");
-    if (serviceParam && selectedServices.length === 0) {
-      selectedServices = [serviceParam];
-    }
-
-    const levelParam = params.get("level");
-    if (levelParam && selectedLevels.length === 0) {
-      selectedLevels = levelParam.split(",").filter(Boolean);
-    }
-
-    const traceIdParam = params.get("traceId");
-    if (traceIdParam && !traceId) {
-      traceId = traceIdParam;
-      shouldLoadLogs = true;
-    }
-
-    const sessionIdParam = params.get("sessionId");
-    if (sessionIdParam && !sessionId) {
-      sessionId = sessionIdParam;
-      shouldLoadLogs = true;
-    }
-
-    const qParam = params.get("q");
-    if (qParam && !searchQuery) {
-      searchQuery = qParam;
-      shouldLoadLogs = true;
-    }
-
-    const fromParam = params.get("from");
-    const toParam = params.get("to");
-    if (fromParam && toParam && !customFromTime && !customToTime) {
-      timeRangeType = "custom";
-      customFromTime = formatDateForInput(fromParam);
-      customToTime = formatDateForInput(toParam);
-    }
-
-    if (shouldLoadLogs && selectedProjects.length > 0) {
-      urlParamsProcessed = true;
-      Promise.all([loadServices(), loadHostnames()]).then(() => {
-        // Sync the TimeRangePicker's internal state with URL params before querying
-        if (timeRangePicker && fromParam && toParam) {
-          timeRangePicker.setTimeRange("custom", fromParam, toParam);
-        }
-        loadLogs();
-      });
-    }
-  });
-
-  $effect(() => {
-    if (!browser || !page.url.searchParams) return;
-
-    const params = page.url.searchParams;
-    const logIdParam = params.get("logId");
-    const projectIdParam = params.get("projectId");
-
-    if (logIdParam && projectIdParam && !loadingLogById && !selectedLogForContext) {
-      loadLogById(logIdParam, projectIdParam);
-    }
-  });
-
-  async function loadLogById(logId: string, projectId: string) {
-    loadingLogById = true;
-    try {
-      const result = await logsAPI.getLogById(logId, projectId);
-      if (result && result.log) {
-        selectedLogForContext = result.log as LogEntry;
-        contextDialogOpen = true;
-
-        // Also select the project if not already selected
-        if (!selectedProjects.includes(projectId)) {
-          selectedProjects = [projectId];
-        }
-      } else {
-        toastStore.error("Log not found");
-      }
-    } catch (e) {
-      console.error("Failed to load log by ID:", e);
-      toastStore.error("Failed to load log");
-    } finally {
-      loadingLogById = false;
-    }
-  }
-
-  async function loadProjects() {
-    if (!$currentOrganization) {
-      projects = [];
-      return;
-    }
-
-    try {
-      const [response, availability] = await Promise.all([
-        projectsAPI.getProjects($currentOrganization.id),
-        projectsAPI.getProjectDataAvailability($currentOrganization.id).catch(() => null),
-      ]);
-      const logsProjectIds = availability?.logs;
-      projects = logsProjectIds && logsProjectIds.length > 0
-        ? response.projects.filter((p) => logsProjectIds.includes(p.id))
-        : response.projects;
-
-      if (projects.length > 0 && selectedProjects.length === 0) {
-        selectedProjects = projects.map((p) => p.id);
-        await Promise.all([loadServices(), loadHostnames()]);
-        loadLogs();
-      }
-    } catch (e) {
-      console.error("Failed to load projects:", e);
-      projects = [];
-    }
-  }
-
-  // Pagination state
-  let currentPage = $state(1);
-
-  // Monotonic request counter so a slower earlier loadLogs() cannot overwrite
-  // the results of a newer one when several calls are in flight at once.
-  let loadLogsRequestId = 0;
-
-  async function loadLogs() {
-    if (selectedProjects.length === 0) {
-      logs = [];
-      hasMoreLogs = false;
-      hasLoadedOnce = true;
-      return;
-    }
-
-    const requestId = ++loadLogsRequestId;
-    isLoading = true;
-
-    try {
-      const timeRange = getTimeRange();
-
-      const offset = (currentPage - 1) * pageSize;
-
-      const validMetadataFilters = metadataFilters.filter((f) => f.key.trim().length > 0);
-
-      const response = await logsAPI.getLogs({
-        projectId:
-          selectedProjects.length === 1
-            ? selectedProjects[0]
-            : selectedProjects,
-        service:
-          selectedServices.length > 0
-            ? selectedServices.length === 1
-              ? selectedServices[0]
-              : selectedServices
-            : undefined,
-        level:
-          selectedLevels.length > 0
-            ? selectedLevels.length === 1
-              ? selectedLevels[0]
-              : selectedLevels
-            : undefined,
-        hostname:
-          selectedHostnames.length > 0
-            ? selectedHostnames.length === 1
-              ? selectedHostnames[0]
-              : selectedHostnames
-            : undefined,
-        traceId: traceId || undefined,
-        sessionId: sessionId || undefined,
-        q: searchQuery || undefined,
-        searchMode: searchQuery ? searchMode : undefined,
-        from: timeRange.from.toISOString(),
-        to: timeRange.to.toISOString(),
-        limit: pageSize,
-        offset: offset,
-        metadataFilters: validMetadataFilters.length > 0 ? validMetadataFilters : undefined,
-      });
-
-      // A newer load started while this one was in flight; drop the stale result.
-      if (requestId !== loadLogsRequestId) return;
-
-      logs = response.logs;
-      totalLogs = response.total;
-      hasMoreLogs = response.hasMore ?? (response.logs.length >= pageSize);
-    } catch (e) {
-      if (requestId !== loadLogsRequestId) return;
-      console.error("Failed to load logs:", e);
-      toastStore.error("Failed to load logs. Please try again.");
-      logs = [];
-      hasMoreLogs = false;
-    } finally {
-      if (requestId === loadLogsRequestId) {
-        isLoading = false;
-        hasLoadedOnce = true;
-      }
-    }
-  }
-
-  function goToPage(page: number) {
-    if (page >= 1 && page !== currentPage) {
-      currentPage = page;
-      loadLogs();
-    }
-  }
-
-  function nextPage() {
-    if (hasMoreLogs) {
-      currentPage++;
-      loadLogs();
-    }
-  }
-
-  function previousPage() {
-    if (currentPage > 1) {
-      currentPage--;
-      loadLogs();
-    }
-  }
-
-  onDestroy(() => {
-    unsubAuthStore();
-    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-    stopLiveTail();
-    shortcutsStore.unregisterScope('search');
-  });
-
-  function scrollToSelectedLog() {
-    if (viewMode !== 'table') return;
-    const rows = logsContainer?.querySelectorAll('[data-log-row]');
-    if (!rows || selectedLogIndex < 0 || selectedLogIndex >= rows.length) return;
-    rows[selectedLogIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
-
-  let availableServices = $state<string[]>([]);
-  let isLoadingServices = $state(false);
-  let availableHostnames = $state<string[]>([]);
-  let isLoadingHostnames = $state(false);
-
-  async function loadServices() {
-    if (selectedProjects.length === 0) {
-      availableServices = [];
-      return;
-    }
-
-    isLoadingServices = true;
-    try {
-      const timeRange = getTimeRange();
-      const services = await logsAPI.getServices({
-        projectId: selectedProjects,
-        from: timeRange.from.toISOString(),
-        to: timeRange.to.toISOString(),
-      });
-      availableServices = services;
-      // Note: We intentionally do NOT remove selected services that aren't in the new time range.
-      // This preserves user intent - if they selected "foo", switching time range should still
-      // filter by "foo" (showing 0 results) rather than unexpectedly showing all services.
-    } catch (e) {
-      console.error("Failed to load services:", e);
-      availableServices = [];
-    } finally {
-      isLoadingServices = false;
-    }
-  }
-
-  async function loadHostnames() {
-    if (selectedProjects.length === 0) {
-      availableHostnames = [];
-      return;
-    }
-
-    isLoadingHostnames = true;
-    try {
-      const timeRange = getTimeRange();
-      const hostnames = await logsAPI.getHostnames({
-        projectId: selectedProjects,
-        from: timeRange.from.toISOString(),
-        to: timeRange.to.toISOString(),
-      });
-      availableHostnames = hostnames;
-    } catch (e) {
-      console.error("Failed to load hostnames:", e);
-      availableHostnames = [];
-    } finally {
-      isLoadingHostnames = false;
-    }
-  }
-
-  // Combine available services with selected services (in case selected ones aren't in current time range)
-  let displayedServices = $derived(() => {
-    const combined = new Set([...availableServices, ...selectedServices]);
-    return [...combined].sort((a, b) => a.localeCompare(b));
-  });
-
-  // Combine available hostnames with selected hostnames
-  let displayedHostnames = $derived(() => {
-    const combined = new Set([...availableHostnames, ...selectedHostnames]);
-    return [...combined].sort((a, b) => a.localeCompare(b));
-  });
-
-  let paginatedLogs = $derived(logs);
-  let effectiveTotalLogs = $derived(totalLogs > 0 ? totalLogs : logs.length);
-  let totalPages = $derived(totalLogs > 0 ? Math.ceil(totalLogs / pageSize) : 0);
-
-  // Track when live tail is activated for checklist
-  let hasActivatedLiveTail = $state(false);
-  $effect(() => {
-    if (liveTail && !hasActivatedLiveTail) {
-      hasActivatedLiveTail = true;
-      checklistStore.completeItem('try-live-tail');
-    }
-  });
-
-  $effect(() => {
-    if (liveTail && selectedProjects.length > 1) {
-      const firstProject = selectedProjects[0];
-      selectedProjects = [firstProject];
-      const project = projects.find((p) => p.id === firstProject);
-      toastStore.info(
-        `Live Tail works with one project at a time. Automatically selected: ${project?.name || "Project"}`,
-      );
-      return;
-    }
-
-    if (!liveTail || selectedProjects.length === 0) {
-      const wasLiveTail = liveTailConnectionKey !== null;
-      stopLiveTail();
-      liveTailConnectionKey = null;
-      if (wasLiveTail && selectedProjects.length > 0) {
-        loadLogs();
-      }
-      return;
-    }
-
-    const connectionKey = `${selectedProjects[0]}-${selectedServices.join(",")}-${selectedLevels.join(",")}`;
-
-    if (connectionKey === liveTailConnectionKey) {
-      return;
-    }
-
-    stopLiveTail();
-    startLiveTail();
-    liveTailConnectionKey = connectionKey;
-  });
-
-  let ws: WebSocket | null = null;
-  let liveTailSeq = 0;
-
-  async function startLiveTail() {
-    if (selectedProjects.length !== 1) return; // Live tail only works with single project
-
-    const seq = ++liveTailSeq;
-    try {
-      const socket = await logsAPI.createLogsWebSocket({
-        projectId: selectedProjects[0],
-        service:
-          selectedServices.length === 1 ? selectedServices[0] : undefined,
-        level: selectedLevels.length === 1 ? selectedLevels[0] : undefined,
-        hostname:
-          selectedHostnames.length === 1 ? selectedHostnames[0] : undefined,
-      });
-
-      // A newer start/stop happened while the ticket request was in flight: drop
-      // this now-stale socket instead of leaking it.
-      if (seq !== liveTailSeq) {
-        socket.close();
-        return;
-      }
-
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "logs") {
-            let newLogs: LogEntry[] = data.logs;
-
-            // Client-side filtering for criteria not sent to WS
-            if (searchQuery) {
-              const q = searchQuery.toLowerCase();
-              newLogs = newLogs.filter((log) => {
-                if (log.message?.toLowerCase().includes(q)) return true;
-                if (log.service?.toLowerCase().includes(q)) return true;
-                if (log.metadata && JSON.stringify(log.metadata).toLowerCase().includes(q)) return true;
-                return false;
-              });
-            }
-            if (traceId) {
-              newLogs = newLogs.filter((log) => log.traceId === traceId);
-            }
-            if (sessionId) {
-              newLogs = newLogs.filter((log) => log.sessionId === sessionId);
-            }
-            // The WS only carries a single level/hostname filter (startLiveTail
-            // sends one only when exactly one is selected). When the user picked
-            // multiple, filter the incoming logs client-side so live tail never
-            // shows levels/hosts that were filtered out.
-            if (selectedLevels.length > 1) {
-              newLogs = newLogs.filter((log) => selectedLevels.includes(log.level));
-            }
-            if (selectedHostnames.length > 1) {
-              newLogs = newLogs.filter((log) =>
-                selectedHostnames.includes(log.metadata?.hostname),
-              );
-            }
-
-            if (newLogs.length > 0) {
-              const shift = newLogs.length;
-              logs = [...newLogs, ...logs].slice(0, liveTailLimit);
-              // Prepending shifts every existing row's index by `shift`; remap the
-              // index-keyed UI state so expansion/selection stays on the same logs
-              // instead of jumping to whatever now sits at the old index.
-              expandedRows = new Set(
-                [...expandedRows].map((i) => i + shift).filter((i) => i < logs.length)
-              );
-              if (selectedLogIndex >= 0) {
-                const next = selectedLogIndex + shift;
-                selectedLogIndex = next < logs.length ? next : -1;
-              }
-            }
-          }
-        } catch (e) {
-          console.error("[LiveTail] Error parsing WS message:", e);
-        }
-      };
-
-      socket.onerror = (err) => {
-        console.error("[LiveTail] WebSocket error:", err);
-      };
-
-      ws = socket;
-    } catch (e) {
-      console.error("[LiveTail] Failed to start live tail:", e);
-    }
-  }
-
-  function stopLiveTail() {
-    liveTailSeq++;
-    if (ws) {
-      ws.close();
-      ws = null;
-    }
-  }
-
-  function toggleRow(index: number) {
-    const newSet = new Set(expandedRows);
-    if (newSet.has(index)) {
-      newSet.delete(index);
-    } else {
-      newSet.add(index);
-    }
-    expandedRows = newSet;
-  }
-
-  // Per-row breadcrumbs expand state
-  let expandedBreadcrumbs = $state(new Set<number>());
-  function toggleBreadcrumbs(index: number) {
-    const newSet = new Set(expandedBreadcrumbs);
-    if (newSet.has(index)) {
-      newSet.delete(index);
-    } else {
-      newSet.add(index);
-    }
-    expandedBreadcrumbs = newSet;
-  }
-
-  type Breadcrumb = {
-    type: string;
-    category?: string;
-    message: string;
-    level?: string;
-    timestamp: number;
-    data?: Record<string, unknown>;
-  };
-  function getBreadcrumbs(log: LogEntry): Breadcrumb[] {
-    const bc = (log.metadata as Record<string, unknown> | undefined)?.breadcrumbs;
-    return Array.isArray(bc) ? (bc as Breadcrumb[]) : [];
-  }
-
-  function openContextDialog(log: LogEntry) {
-    selectedLogForContext = log;
-    contextDialogOpen = true;
-  }
-
-  function closeContextDialog() {
-    contextDialogOpen = false;
-    selectedLogForContext = null;
-
-    // Remove URL params to prevent the effect from reopening the modal
-    if (browser && page.url.searchParams.has("logId")) {
-      const url = new URL(page.url);
-      url.searchParams.delete("logId");
-      url.searchParams.delete("projectId");
-      goto(url.pathname + url.search, { replaceState: true });
-    }
-  }
-
-  function openExceptionDialog(log: LogEntry) {
-    selectedLogForException = log;
-    exceptionDialogOpen = true;
-  }
-
-  function closeExceptionDialog() {
-    exceptionDialogOpen = false;
-    selectedLogForException = null;
-  }
-
-  function openCorrelationDialog(log: LogEntry, identifierType: string, identifierValue: string) {
-    selectedLogForCorrelation = log;
-    selectedIdentifierType = identifierType;
-    selectedIdentifierValue = identifierValue;
-    correlationDialogOpen = true;
-  }
-
-  function closeCorrelationDialog() {
-    correlationDialogOpen = false;
-    selectedLogForCorrelation = null;
-    selectedIdentifierType = "";
-    selectedIdentifierValue = "";
-  }
-
-  // Track which log IDs are currently being loaded to prevent duplicate requests
-  let loadingLogIds = new Set<string>();
-
-  async function loadIdentifiersForLogs(logIds: string[]) {
-    if (logIds.length === 0) return;
-
-    // Filter out already loaded AND currently loading identifiers
-    const toLoad = logIds.filter((id) => !logIdentifiers.has(id) && !loadingLogIds.has(id));
-    if (toLoad.length === 0) return;
-
-    // Mark as loading
-    toLoad.forEach(id => loadingLogIds.add(id));
-
-    loadingIdentifiers = true;
-    try {
-      const result = await correlationAPI.getLogIdentifiersBatch(toLoad);
-      const newMap = new Map(logIdentifiers);
-      for (const [logId, identifiers] of Object.entries(result)) {
-        newMap.set(logId, identifiers);
-      }
-      // Also mark logs with no identifiers as loaded (empty array)
-      for (const id of toLoad) {
-        if (!newMap.has(id)) {
-          newMap.set(id, []);
-        }
-      }
-      logIdentifiers = newMap;
-    } catch (e) {
-      console.error("[Correlation] Failed to load identifiers:", e);
-    } finally {
-      // Remove from loading set
-      toLoad.forEach(id => loadingLogIds.delete(id));
-      loadingIdentifiers = false;
-    }
-  }
-
-  // Load identifiers when logs change - use untrack to prevent infinite loop
-  $effect(() => {
-    const currentLogs = logs; // Track only logs
-    if (currentLogs.length > 0) {
-      const logIds = currentLogs.map((log) => log.id).filter((id): id is string => !!id);
-      // Use setTimeout to break out of reactive context
-      setTimeout(() => loadIdentifiersForLogs(logIds), 0);
-    }
-  });
-
-  function isErrorLevel(level: string): boolean {
-    return level === 'error' || level === 'critical';
-  }
-
-  // Copy-to-clipboard feedback for metadata blocks, keyed per row
-  let copiedMetaKey = $state<string | null>(null);
-  async function copyMetadata(key: string, metadata: unknown) {
-    const ok = await copyToClipboard(JSON.stringify(metadata, null, 2));
-    if (ok) {
-      copiedMetaKey = key;
-      setTimeout(() => {
-        if (copiedMetaKey === key) copiedMetaKey = null;
-      }, 2000);
-    }
-  }
-
-  function getLevelColor(level: LogEntry["level"]): string {
-    switch (level) {
-      case "critical":
-        return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200 border-purple-300 dark:border-purple-700";
-      case "error":
-        return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 border-red-300 dark:border-red-700";
-      case "warn":
-        return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 border-yellow-300 dark:border-yellow-700";
-      case "info":
-        return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border-blue-300 dark:border-blue-700";
-      case "debug":
-        return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600";
-      default:
-        return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200 border-gray-300 dark:border-gray-600";
-    }
-  }
-
-  function escapeRegExp(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
-  // Split text into segments, marking the parts that match the full-text query.
-  // Rendered as plain text segments (no {@html}), so it never injects markup.
-  function highlightSegments(
-    text: string,
-    query: string,
-  ): Array<{ text: string; match: boolean }> {
-    const value = text ?? "";
-    if (!value || !query || searchMode !== "fulltext")
-      return [{ text: value, match: false }];
-    const terms = query.trim().split(/\s+/).filter(Boolean);
-    if (terms.length === 0) return [{ text: value, match: false }];
-    const re = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
-    const lower = new Set(terms.map((t) => t.toLowerCase()));
-    return value
-      .split(re)
-      .filter((part) => part !== "")
-      .map((part) => ({ text: part, match: lower.has(part.toLowerCase()) }));
-  }
-
-  // Reflect the active filters in the URL so a search is shareable/bookmarkable.
-  // The read effect above is idempotent (its guards only apply a param when the
-  // matching state is still empty), so re-running it after this write is a no-op.
-  function updateUrl() {
-    if (!browser) return;
-    const params = new URLSearchParams();
-    if (searchQuery.trim()) params.set("q", searchQuery.trim());
-    if (selectedProjects.length === 1) params.set("project", selectedProjects[0]);
-    if (selectedServices.length === 1) params.set("service", selectedServices[0]);
-    if (selectedLevels.length > 0 && selectedLevels.length < 5) {
-      params.set("level", selectedLevels.join(","));
-    }
-    if (traceId.trim()) params.set("traceId", traceId.trim());
-    if (sessionId.trim()) params.set("sessionId", sessionId.trim());
-    if (timeRangeType === "custom" && customFromTime && customToTime) {
-      params.set("from", new Date(customFromTime).toISOString());
-      params.set("to", new Date(customToTime).toISOString());
-    }
-    const qs = params.toString();
-    const next = qs ? `/dashboard/logs?${qs}` : "/dashboard/logs";
-    if (page.url.pathname + page.url.search === next) return;
+  /** Writes the canonical URL of the current state (replaceState, no scroll). */
+  function writeUrl() {
+    if (!initialized) return;
+    const next = buildExplorerUrl(currentState());
+    lastWrittenUrl = next;
+    if (`${page.url.pathname}${page.url.search}` === next) return;
     goto(next, { replaceState: true, keepFocus: true, noScroll: true });
   }
 
-  function applyFilters() {
-    currentPage = 1;
-    addRecentSearch(searchQuery);
-    updateUrl();
-    loadLogs();
+  function cursorOf(res: { hasMore?: boolean; nextCursor?: string }): string | null {
+    if (res.hasMore === false) return null;
+    return res.nextCursor ?? null;
   }
 
-  function changePageSize(newSize: number) {
-    pageSize = newSize;
-    currentPage = 1;
-    loadLogs();
+  function errorText(e: unknown): string {
+    return e instanceof Error && e.message ? e.message : "The request failed";
   }
 
-  async function handleTimeRangeChange() {
-    // Sync page-level state so the chip label and fallback getTimeRange()
-    // stay correct when the time-range popover closes and the picker unmounts.
-    if (timeRangePicker) {
-      timeRangeType = timeRangePicker.getType();
-      const custom = timeRangePicker.getCustomValues();
-      customFromTime = custom.from;
-      customToTime = custom.to;
+  /**
+   * Runs the committed query over a window frozen now; resolves true when page 1
+   * was applied. Histogram and facets of the same window load alongside.
+   */
+  async function startRun(opts: { submitted?: boolean } = {}): Promise<boolean> {
+    const parsed = parseLogQuery(q);
+    if (parsed.ok === false) {
+      queryError = { message: parsed.error.message, position: parsed.error.position };
+      return false;
     }
-    timeRangeStore.set({ type: timeRangeType, from: customFromTime, to: customToTime });
-    await Promise.all([loadServices(), loadHostnames()]);
-    applyFilters();
-  }
+    runSeq += 1;
+    queryError = null;
+    hasRun = true;
+    error = null;
+    capped = false;
+    nextCursor = null;
+    loadingMore = false;
+    const asOf = new Date();
+    const { from, to } = resolveRange(scope.range, asOf);
+    const ids = resolveIds(scope.projectIds, projects);
+    const r: Run = {
+      q,
+      query: parsed.query,
+      projectIds: ids,
+      range: scope.range,
+      from,
+      to,
+      asOf,
+      preset: scope.range.kind === "preset" ? scope.range.preset : null,
+    };
+    run = r;
+    const token = logsGuard.begin();
 
-  // Compute current export filters for the dialog
-  let exportFilters = $derived({
-    projectId:
-      selectedProjects.length === 1
-        ? selectedProjects[0]
-        : selectedProjects,
-    service:
-      selectedServices.length > 0
-        ? selectedServices.length === 1
-          ? selectedServices[0]
-          : selectedServices
-        : undefined,
-    level:
-      selectedLevels.length > 0
-        ? selectedLevels.length === 1
-          ? selectedLevels[0]
-          : selectedLevels
-        : undefined,
-    hostname:
-      selectedHostnames.length > 0
-        ? selectedHostnames.length === 1
-          ? selectedHostnames[0]
-          : selectedHostnames
-        : undefined,
-    traceId: traceId || undefined,
-    sessionId: sessionId || undefined,
-    q: searchQuery || undefined,
-    from: getTimeRange().from.toISOString(),
-    to: getTimeRange().to.toISOString(),
-  });
-
-  const timeRangeLabel = $derived.by(() => {
-    switch (timeRangeType) {
-      case "last_hour": return "Last hour";
-      case "last_24h": return "Last 24 hours";
-      case "last_7d": return "Last 7 days";
-      case "custom": return "Custom range";
-      default: return "Time range";
+    if (projectsFailed) {
+      stopSideRequests();
+      rows = [];
+      total = null;
+      loading = false;
+      error = "Could not load the projects of this organization.";
+      return false;
     }
-  });
-
-  // Label shown inside each filter pill. Short and consistent so the pill
-  // row stays scannable at a glance; truncation keeps ID-like values in bounds.
-  function truncate(s: string, max = 16): string {
-    return s.length > max ? s.slice(0, max - 1) + "\u2026" : s;
-  }
-
-  const projectsPillLabel = $derived.by(() => {
-    if (selectedProjects.length === 0) return "Projects: none";
-    if (projects.length > 0 && selectedProjects.length === projects.length) return "All projects";
-    if (selectedProjects.length === 1) {
-      return `Project: ${truncate(projects.find((p) => p.id === selectedProjects[0])?.name ?? "\u2014")}`;
+    if (ids.length === 0) {
+      stopSideRequests();
+      rows = [];
+      total = 0;
+      loading = false;
+      return true;
     }
-    return `Projects: ${selectedProjects.length}`;
-  });
-  const projectsPillActive = $derived(
-    selectedProjects.length === 0 ||
-    (projects.length > 0 && selectedProjects.length < projects.length)
-  );
 
-  const servicesPillLabel = $derived.by(() => {
-    if (selectedServices.length === 0) return "All services";
-    if (selectedServices.length === 1) return `Service: ${truncate(selectedServices[0])}`;
-    return `Services: ${selectedServices.length}`;
-  });
-  const servicesPillActive = $derived(selectedServices.length > 0);
-
-  const hostsPillLabel = $derived.by(() => {
-    if (selectedHostnames.length === 0) return "All hosts";
-    if (selectedHostnames.length === 1) return `Host: ${truncate(selectedHostnames[0])}`;
-    return `Hosts: ${selectedHostnames.length}`;
-  });
-  const hostsPillActive = $derived(selectedHostnames.length > 0);
-
-  const levelsPillLabel = $derived.by(() => {
-    if (selectedLevels.length === 0 || selectedLevels.length === 5) return "All levels";
-    if (selectedLevels.length === 1) {
-      return `Level: ${selectedLevels[0]}`;
+    void loadHistogram(r);
+    void loadFacets(r);
+    loading = true;
+    try {
+      const res = await logsAPI.getLogs({
+        projectId: ids,
+        q: r.q || undefined,
+        from: from.toISOString(),
+        to: to.toISOString(),
+        limit: PAGE_SIZE,
+      });
+      if (!logsGuard.isCurrent(token)) return false;
+      rows = Array.isArray(res.logs) ? res.logs : [];
+      total = typeof res.total === "number" ? res.total : null;
+      nextCursor = cursorOf(res);
+      if (!opts.submitted) recorder.loaded(toSavedState(currentState(), customColumns));
+      return true;
+    } catch (e) {
+      if (!logsGuard.isCurrent(token)) return false;
+      if (e instanceof LogQueryError) {
+        // The rows of the previous query stay; the bar underlines the clause.
+        queryError = { message: e.message, position: e.position };
+      } else {
+        rows = [];
+        total = null;
+        error = errorText(e);
+      }
+      return false;
+    } finally {
+      if (logsGuard.isCurrent(token)) loading = false;
     }
-    return `Levels: ${selectedLevels.length}`;
+  }
+
+  /** Drops in-flight histogram and facets answers (live tail, empty scope). */
+  function stopSideRequests() {
+    histogramGuard.invalidate();
+    facetsGuard.invalidate();
+    histogramLoading = false;
+    facetsLoading = false;
+  }
+
+  async function loadHistogram(r: Run) {
+    const token = histogramGuard.begin();
+    const bucketSeconds = pickBucketSeconds(r.to.getTime() - r.from.getTime());
+    histogramLoading = true;
+    histogramError = null;
+    histogramTotal = null;
+    try {
+      const res = await logsAPI.getHistogram({
+        projectId: r.projectIds,
+        q: r.q || undefined,
+        from: r.from.toISOString(),
+        to: r.to.toISOString(),
+        bucketSeconds,
+      });
+      if (!histogramGuard.isCurrent(token)) return;
+      histogramBuckets = Array.isArray(res.buckets) ? res.buckets : [];
+      histogramBucketSeconds = typeof res.bucketSeconds === "number" ? res.bucketSeconds : bucketSeconds;
+      histogramTotal = typeof res.total === "number" ? res.total : null;
+    } catch (e) {
+      if (!histogramGuard.isCurrent(token)) return;
+      histogramBuckets = [];
+      histogramError = errorText(e);
+    } finally {
+      if (histogramGuard.isCurrent(token)) histogramLoading = false;
+    }
+  }
+
+  /** Facet counts for the run; discovered fields are re-read only when projects or range change. */
+  async function loadFacets(r: Run) {
+    const token = facetsGuard.begin();
+    const key = JSON.stringify([r.projectIds, r.range]);
+    facetsLoading = true;
+    facetsError = null;
+    try {
+      if (key !== fieldsKey) {
+        let fields: LogFieldInfo[] = [];
+        try {
+          fields = await logsAPI.getFields({
+            projectId: r.projectIds,
+            from: r.from.toISOString(),
+            to: r.to.toISOString(),
+          });
+        } catch {
+          fields = [];
+        }
+        if (!facetsGuard.isCurrent(token)) return;
+        discovered = Array.isArray(fields) ? fields : [];
+        fieldsKey = key;
+      }
+      const pins = get(pinStoreFor(keyFor(r.projectIds)));
+      const res = await logsAPI.getFacets({
+        projectId: r.projectIds,
+        q: r.q || undefined,
+        from: r.from.toISOString(),
+        to: r.to.toISOString(),
+        fields: [...BUILTIN_FACET_KEYS, ...selectMetadataFacetKeys(pins, discovered)],
+        limit: FACET_VALUE_LIMIT,
+      });
+      if (!facetsGuard.isCurrent(token)) return;
+      facets = Array.isArray(res) ? res : [];
+    } catch (e) {
+      if (!facetsGuard.isCurrent(token)) return;
+      facetsError = errorText(e);
+    } finally {
+      if (facetsGuard.isCurrent(token)) facetsLoading = false;
+    }
+  }
+
+  /** Next page of the current run: same window, the cursor of the last page. */
+  async function loadMore(): Promise<boolean> {
+    const r = run;
+    const cursor = nextCursor;
+    if (!r || !cursor || loading || loadingMore || capped) return false;
+    if (rows.length >= MAX_LOADED_ROWS) {
+      capped = true;
+      return false;
+    }
+    const token = logsGuard.current();
+    if (!logsGuard.isCurrent(token)) return false;
+    loadingMore = true;
+    try {
+      const res = await logsAPI.getLogs({
+        projectId: r.projectIds,
+        q: r.q || undefined,
+        from: r.from.toISOString(),
+        to: r.to.toISOString(),
+        limit: PAGE_SIZE,
+        cursor,
+      });
+      if (!logsGuard.isCurrent(token)) return false;
+      const merged = [...rows, ...(Array.isArray(res.logs) ? res.logs : [])];
+      rows = merged.length > MAX_LOADED_ROWS ? merged.slice(0, MAX_LOADED_ROWS) : merged;
+      nextCursor = cursorOf(res);
+      if (nextCursor && rows.length >= MAX_LOADED_ROWS) capped = true;
+      return true;
+    } catch {
+      if (!logsGuard.isCurrent(token)) return false;
+      toastStore.error("Could not load more logs");
+      return false;
+    } finally {
+      if (logsGuard.isCurrent(token)) loadingMore = false;
+    }
+  }
+
+  /** Live tail follows one project: several scoped projects narrow to the first one, with a notice. */
+  function liveProjectId(): string | null {
+    const ids = resolveIds(scope.projectIds, projects);
+    if (ids.length > 1) {
+      const first = ids[0];
+      setScope({ projectIds: [first], range: scope.range });
+      const name = projects.find((p) => p.id === first)?.name ?? first;
+      toastStore.info(`Live tail works with one project at a time. Showing ${name}.`);
+      return first;
+    }
+    return ids[0] ?? null;
+  }
+
+  /** (Re)creates the live tail for the current query and project, seeded with `initial` rows. */
+  function startLive(initial: LogEntry[]) {
+    stopLive();
+    runSeq += 1;
+    logsGuard.invalidate();
+    stopSideRequests();
+    loading = false;
+    loadingMore = false;
+    nextCursor = null;
+    capped = false;
+    error = null;
+    hasRun = true;
+    const parsed = parseLogQuery(q);
+    if (parsed.ok === false) {
+      queryError = { message: parsed.error.message, position: parsed.error.position };
+      return;
+    }
+    queryError = null;
+    const projectId = liveProjectId();
+    if (!projectId) {
+      rows = [];
+      return;
+    }
+    const liveQ = q;
+    const controller = createLiveTail({
+      connect: () => logsAPI.createLogsWebSocket({ projectId, q: liveQ || undefined }),
+      query: parsed.query,
+      limit: liveLimit,
+      onUpdate: (snapshot) => {
+        if (tail !== controller) return;
+        liveSnap = snapshot;
+        rows = snapshot.logs;
+      },
+    });
+    tail = controller;
+    controller.start(initial.filter((log) => log.projectId === projectId));
+  }
+
+  function stopLive() {
+    const current = tail;
+    tail = null;
+    current?.stop();
+    liveSnap = null;
+  }
+
+  function setLive(next: boolean) {
+    if (next === live) return;
+    if (next) {
+      live = true;
+      if (!liveTried) {
+        liveTried = true;
+        void checklistStore.completeItem("try-live-tail");
+      }
+      startLive(rows);
+    } else {
+      stopLive();
+      live = false;
+      void startRun();
+    }
+    writeUrl();
+  }
+
+  function setLiveLimit(next: number) {
+    if (!Number.isFinite(next) || next < LIVE_TAIL_LIMITS[0]) return;
+    liveLimit = Math.min(next, LIVE_TAIL_LIMITS[LIVE_TAIL_LIMITS.length - 1]);
+    try {
+      localStorage.setItem(LIVE_LIMIT_KEY, String(liveLimit));
+    } catch {
+      // storage blocked
+    }
+    tail?.setLimit(liveLimit);
+  }
+
+  /** Auto-pause while the user reads older rows; resume when back at the newest ones. */
+  function handleScrollTop(atTop: boolean) {
+    if (!live || !tail || !liveSnap) return;
+    if (!atTop) {
+      if (!liveSnap.pausedBy) tail.pause("scroll");
+    } else if (liveSnap.pausedBy === "scroll") {
+      tail.resume();
+    }
+  }
+
+  async function showPending() {
+    tail?.resume();
+    await tick();
+    if (view === "table") resultsTable?.scrollToTop();
+    else terminalView?.scrollToTop();
+  }
+
+  /** The query or the scope changed: re-run, or reconnect the live tail with it. */
+  function rerun() {
+    if (live) startLive([]);
+    else void startRun();
+  }
+
+  function refresh() {
+    if (live) tail?.retry();
+    else void startRun();
+  }
+
+  async function retry() {
+    if (projectsFailed && orgId) {
+      const ok = await loadProjects(orgId);
+      if (!ok) return;
+    }
+    void startRun();
+  }
+
+  function handleSubmit(next: string) {
+    q = next.trim();
+    const parsed = parseLogQuery(q);
+    if (parsed.ok) recorder.submit(toSavedState(currentState(), customColumns));
+    if (live) startLive([]);
+    else void startRun({ submitted: true });
+    writeUrl();
+  }
+
+  function clearQuery() {
+    q = "";
+    draftQ = "";
+    rerun();
+    writeUrl();
+  }
+
+  /** Facet, chip and badge clicks: toggle one value of `key` in the committed query. */
+  function applyFieldToggle(key: string, value: string, mode: "include" | "exclude") {
+    if (!isQueryableKey(key)) {
+      toastStore.error("This field cannot be used in a query");
+      return;
+    }
+    const next = toggleFieldValue(q, key, value, mode);
+    if (next === q) {
+      toastStore.error("This filter cannot be combined with the current query");
+      return;
+    }
+    q = next;
+    draftQ = next;
+    rerun();
+    writeUrl();
+  }
+
+  function filterProject(projectId: string) {
+    scopeStore.setProjects([projectId]);
+  }
+
+  function selectHistogramRange(from: Date, to: Date) {
+    scopeStore.setRange({ kind: "custom", from: from.toISOString(), to: to.toISOString() });
+  }
+
+  function pinFacet(key: string) {
+    pinStoreFor(projectKey).pin(key);
+    if (run) void loadFacets(run);
+  }
+
+  function unpinFacet(key: string) {
+    pinStoreFor(projectKey).unpin(key);
+    if (run) void loadFacets(run);
+  }
+
+  function valuesFor(key: string): string[] {
+    return facets.find((f) => f.field === key)?.values.map((v) => v.value) ?? [];
+  }
+
+  function setView(next: ExplorerView) {
+    if (view === next) return;
+    view = next;
+    try {
+      sessionStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // storage blocked: the URL still carries the view
+    }
+    writeUrl();
+  }
+
+  function toggleDensity() {
+    density = density === "comfortable" ? "compact" : "comfortable";
+    try {
+      localStorage.setItem(DENSITY_KEY, density);
+    } catch {
+      // storage blocked
+    }
+  }
+
+  function setFacetsCollapsed(next: boolean) {
+    facetsCollapsed = next;
+    try {
+      localStorage.setItem(FACETS_COLLAPSED_KEY, String(next));
+    } catch {
+      // storage blocked
+    }
+  }
+
+  function sameLog(a: LogEntry | null, b: LogEntry | null): boolean {
+    if (!a || !b) return false;
+    if (a.id && b.id) return a.id === b.id;
+    return a === b;
+  }
+
+  async function loadIdentifiers(id: string) {
+    if (identifiers.has(id) || identifierRequests.has(id)) return;
+    identifierRequests.add(id);
+    let list: IdentifierMatch[] = [];
+    try {
+      list = await correlationAPI.getLogIdentifiers(id);
+    } catch {
+      list = [];
+    } finally {
+      identifierRequests.delete(id);
+    }
+    identifiers = new Map(identifiers).set(id, Array.isArray(list) ? list : []);
+  }
+
+  function openDetails(log: LogEntry) {
+    const index = rows.indexOf(log);
+    if (index >= 0) selectedId = rowKey(log, index);
+    detailsLog = log;
+    logId = log.id ?? null;
+    logProjectId = log.id ? log.projectId : null;
+    if (log.id) void loadIdentifiers(log.id);
+    writeUrl();
+  }
+
+  function closeDetails() {
+    detailsLog = null;
+    logId = null;
+    logProjectId = null;
+    writeUrl();
+  }
+
+  function toggleSelectedDetails() {
+    const index = selectedIndex;
+    if (index < 0) return;
+    const log = rows[index];
+    if (sameLog(detailsLog, log)) closeDetails();
+    else openDetails(log);
+  }
+
+  async function moveSelection(delta: 1 | -1) {
+    if (rows.length === 0) return;
+    const current = selectedIndex;
+    const next = current < 0 ? 0 : Math.min(Math.max(current + delta, 0), rows.length - 1);
+    const key = rowKey(rows[next], next);
+    selectedId = key;
+    if (delta > 0 && rows.length - 1 - next < 5) void loadMore();
+    await tick();
+    if (view === "table") resultsTable?.reveal(key);
+  }
+
+  function openContext(log: LogEntry) {
+    contextLog = log;
+    contextOpen = true;
+  }
+
+  function closeContext() {
+    contextOpen = false;
+    contextLog = null;
+  }
+
+  function linkWindow(time: string): TimeRangeValue | null {
+    const t = Date.parse(time);
+    if (Number.isNaN(t)) return null;
+    return {
+      kind: "custom",
+      from: new Date(t - LOG_LINK_WINDOW_MS).toISOString(),
+      to: new Date(t + LOG_LINK_WINDOW_MS).toISOString(),
+    };
+  }
+
+  /**
+   * Runs the current state and loads more pages (at most MAX_LINK_PAGES) until
+   * the log with `id` is present; then selects, centres and opens it. When it
+   * never shows up, the details panel opens on `fallback` with a notice.
+   */
+  async function focusLog(id: string, fallback: LogEntry) {
+    const ok = await startRun();
+    const mine = runSeq;
+    if (!ok) {
+      if (mine === runSeq && !error) openDetails(fallback);
+      return;
+    }
+    let pages = 0;
+    while (mine === runSeq && !rows.some((r) => r.id === id) && nextCursor && pages < MAX_LINK_PAGES) {
+      pages += 1;
+      if (!(await loadMore())) break;
+    }
+    if (mine !== runSeq) return;
+    const index = rows.findIndex((r) => r.id === id);
+    if (index >= 0) {
+      const log = rows[index];
+      const key = rowKey(log, index);
+      selectedId = key;
+      centerOnId = key;
+      openDetails(log);
+    } else {
+      openDetails(fallback);
+      toastStore.info("This log is outside the current results");
+    }
+  }
+
+  /** `logId` deep link: fetch the log, frame its window when the link has none, find it. */
+  async function openLogLink(id: string, projectId: string | null, hasRange: boolean) {
+    const mine = runSeq;
+    const pid = projectId ?? resolvedIds[0] ?? null;
+    let found: LogEntry | null = null;
+    if (pid) {
+      try {
+        const res = await logsAPI.getLogById(id, pid);
+        found = res?.log ?? null;
+      } catch {
+        found = null;
+      }
+    }
+    // Another run started meanwhile (scope or query change): that one wins.
+    if (mine !== runSeq) return;
+    if (!found) {
+      toastStore.error("Log not found");
+      logId = null;
+      logProjectId = null;
+      void startRun();
+      writeUrl();
+      return;
+    }
+    if (!hasRange) {
+      const range = linkWindow(found.time);
+      if (range) setScope({ projectIds: scope.projectIds, range });
+    }
+    await focusLog(id, found);
+  }
+
+  /** A context row: the explorer around that log, in its project, without a query. */
+  function openAround(log: LogEntry) {
+    closeContext();
+    const range = linkWindow(log.time);
+    if (!range) return;
+    // A window around one log is a static view.
+    if (live) {
+      stopLive();
+      live = false;
+    }
+    setScope({ projectIds: [log.projectId], range });
+    q = "";
+    draftQ = "";
+    savedId = null;
+    if (log.id) void focusLog(log.id, log);
+    else void startRun();
+    writeUrl();
+  }
+
+  function searchRange(preset: TimeRangePreset) {
+    scopeStore.setRange({ kind: "preset", preset });
+  }
+
+  function rangeOfState(state: SavedSearchState): TimeRangeValue {
+    if (state.range) {
+      const preset = sanitizeRange({ kind: "preset", preset: state.range });
+      if (preset) return preset;
+    }
+    if (state.from && state.to) {
+      const custom = sanitizeRange({ kind: "custom", from: state.from, to: state.to });
+      if (custom) return custom;
+    }
+    return scope.range;
+  }
+
+  function applySearchState(state: SavedSearchState) {
+    q = typeof state.q === "string" ? state.q.trim() : "";
+    draftQ = q;
+    setScope({
+      projectIds: Array.isArray(state.projectIds) ? state.projectIds : [],
+      range: rangeOfState(state),
+    });
+    if (state.view === "table" || state.view === "terminal") view = state.view;
+    detailsLog = null;
+    logId = null;
+    logProjectId = null;
+    selectedId = null;
+  }
+
+  function applyRecent(entry: RecentSearch) {
+    applySearchState(entry);
+    savedId = null;
+    rerun();
+    writeUrl();
+  }
+
+  function clearRecent() {
+    clearRecentSearches();
+    recent = [];
+  }
+
+  function applySaved(saved: SavedSearch) {
+    applySearchState(saved.state);
+    if (Array.isArray(saved.state.columns)) columnStoreFor(projectKey).set([...saved.state.columns]);
+    savedId = saved.id;
+    rerun();
+    writeUrl();
+  }
+
+  async function copyLink() {
+    moreOpen = false;
+    const href = new URL(buildExplorerUrl(currentState()), location.origin).href;
+    if (await copyToClipboard(href)) toastStore.success("Link copied");
+    else toastStore.error("Could not copy the link");
+  }
+
+  function createAlert() {
+    moreOpen = false;
+    goto(alertPrefillUrl({ q, scopeProjectIds: scope.projectIds }));
+  }
+
+  function openExport() {
+    moreOpen = false;
+    exportOpen = true;
+  }
+
+  /** Applies a logs URL (first load or a link from another page) and runs it. */
+  function applyUrl(url: URL) {
+    initialized = true;
+    const parsed = parseExplorerUrl(url);
+    setScope({
+      projectIds: parsed.scope.projectIds ?? scope.projectIds,
+      range: parsed.scope.range ?? scope.range,
+    });
+    q = parsed.q;
+    draftQ = parsed.q;
+    if (parsed.view) view = parsed.view;
+    savedId = parsed.savedId;
+    logId = parsed.logId;
+    logProjectId = parsed.logProjectId;
+    detailsLog = null;
+    selectedId = null;
+    centerOnId = null;
+    // A log link is a static view; `live=true` alone starts the live tail (B10).
+    const wantLive = parsed.live && !parsed.logId;
+    if (!wantLive && live) {
+      stopLive();
+      live = false;
+    }
+    if (parsed.logId) {
+      void openLogLink(parsed.logId, parsed.logProjectId, parsed.scope.range !== undefined);
+    } else if (wantLive) {
+      live = true;
+      if (!liveTried) {
+        liveTried = true;
+        void checklistStore.completeItem("try-live-tail");
+      }
+      startLive([]);
+    } else {
+      void startRun();
+    }
+    writeUrl();
+  }
+
+  afterNavigate((nav) => {
+    const url = nav.to?.url;
+    if (!url || !initialized || url.pathname !== LOGS_PATH) return;
+    const path = `${url.pathname}${url.search}`;
+    if (path === lastWrittenUrl) return;
+    const parsed = parseExplorerUrl(url);
+    const candidate: ExplorerState = {
+      q: parsed.q,
+      projectIds: parsed.scope.projectIds ? normalizeIds(parsed.scope.projectIds) : scope.projectIds,
+      range: parsed.scope.range ?? scope.range,
+      view: parsed.view ?? view,
+      live: parsed.live,
+      logId: parsed.logId,
+      logProjectId: parsed.logProjectId,
+      savedId: parsed.savedId,
+    };
+    // Our own writes (and the scope bar's) describe the state already shown.
+    if (!parsed.legacy && buildExplorerUrl(candidate) === buildExplorerUrl(currentState())) {
+      lastWrittenUrl = path;
+      return;
+    }
+    applyUrl(url);
   });
-  const levelsPillActive = $derived(
-    selectedLevels.length > 0 && selectedLevels.length < 5
-  );
 
-  const tracePillLabel = $derived(
-    traceId.trim().length > 0 ? `Trace: ${truncate(traceId, 10)}` : "Trace ID"
-  );
-  const tracePillActive = $derived(traceId.trim().length > 0);
-
-  const sessionPillLabel = $derived(
-    sessionId.trim().length > 0 ? `Session: ${truncate(sessionId, 10)}` : "Session ID"
-  );
-  const sessionPillActive = $derived(sessionId.trim().length > 0);
-
-  const metadataPillCount = $derived(
-    metadataFilters.filter((f) => f.key.trim().length > 0).length
-  );
-  const metadataPillLabel = $derived(
-    metadataPillCount > 0 ? `Metadata: ${metadataPillCount}` : "Metadata"
-  );
-  const metadataPillActive = $derived(metadataPillCount > 0);
-
-  const activeFilterCount = $derived(
-    (projectsPillActive ? 1 : 0) +
-    (servicesPillActive ? 1 : 0) +
-    (hostsPillActive ? 1 : 0) +
-    (levelsPillActive ? 1 : 0) +
-    (tracePillActive ? 1 : 0) +
-    (sessionPillActive ? 1 : 0) +
-    metadataPillCount
-  );
-
-  function clearAllFilters() {
-    traceId = "";
-    sessionId = "";
-    selectedProjects = projects.map((p) => p.id);
-    selectedServices = [];
-    selectedHostnames = [];
-    selectedLevels = [];
-    metadataFilters = [];
-    applyFilters();
+  async function loadProjects(id: string): Promise<boolean> {
+    const seq = ++projectsSeq;
+    try {
+      const [res, availability] = await Promise.all([
+        projectsAPI.getProjects(id),
+        projectsAPI.getProjectDataAvailability(id).catch(() => null),
+      ]);
+      if (seq !== projectsSeq) return false;
+      projects = Array.isArray(res?.projects) ? res.projects : [];
+      projectsWithLogs = Array.isArray(availability?.logs) ? availability.logs : null;
+      projectsFailed = false;
+    } catch {
+      if (seq !== projectsSeq) return false;
+      projects = [];
+      projectsWithLogs = null;
+      projectsFailed = true;
+    }
+    return true;
   }
 
-  function formatDateTime(dateStr: string): string {
-    const date = new Date(dateStr);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const seconds = String(date.getSeconds()).padStart(2, "0");
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  function resetResults() {
+    stopLive();
+    live = false;
+    runSeq += 1;
+    logsGuard.invalidate();
+    histogramGuard.invalidate();
+    facetsGuard.invalidate();
+    recorder.cancel();
+    rows = [];
+    total = null;
+    nextCursor = null;
+    run = null;
+    hasRun = false;
+    loading = false;
+    loadingMore = false;
+    error = null;
+    capped = false;
+    histogramBuckets = [];
+    histogramTotal = null;
+    histogramLoading = false;
+    histogramError = null;
+    facets = [];
+    facetsLoading = false;
+    facetsError = null;
+    discovered = [];
+    fieldsKey = null;
+    selectedId = null;
+    detailsLog = null;
+    centerOnId = null;
+    identifiers = new Map();
   }
+
+  function handleOrg(id: string | null) {
+    if (id === orgId) return;
+    orgId = id;
+    resetResults();
+    if (!id) {
+      projects = [];
+      projectsWithLogs = null;
+      return;
+    }
+    void loadProjects(id).then((ok) => {
+      if (!ok || orgId !== id) return;
+      if (!initialized) {
+        applyUrl(page.url);
+        return;
+      }
+      logId = null;
+      logProjectId = null;
+      savedId = null;
+      void startRun();
+      writeUrl();
+    });
+  }
+
+  function handleScope(next: Scope) {
+    scope = next;
+    const key = scopeKey(next);
+    if (key === scopeKeySeen) return;
+    scopeKeySeen = key;
+    if (!initialized) return;
+    rerun();
+    writeUrl();
+  }
+
+  function registerShortcuts() {
+    shortcutsStore.setScope("search");
+    shortcutsStore.register([
+      {
+        id: "search:focus",
+        combo: "/",
+        label: "Focus search input",
+        scope: "search",
+        category: "search",
+        action: () => document.getElementById("search")?.focus(),
+      },
+      {
+        id: "search:refresh",
+        combo: "r",
+        label: "Refresh results",
+        scope: "search",
+        category: "actions",
+        action: () => refresh(),
+      },
+      {
+        id: "search:next-log",
+        combo: "j",
+        label: "Next log",
+        scope: "search",
+        category: "navigation",
+        action: () => void moveSelection(1),
+      },
+      {
+        id: "search:prev-log",
+        combo: "k",
+        label: "Previous log",
+        scope: "search",
+        category: "navigation",
+        action: () => void moveSelection(-1),
+      },
+      {
+        id: "search:expand-log",
+        combo: "enter",
+        label: "Open or close log details",
+        scope: "search",
+        category: "actions",
+        action: () => toggleSelectedDetails(),
+      },
+    ]);
+  }
+
+  function restorePreferences() {
+    try {
+      const savedView = sessionStorage.getItem(VIEW_KEY);
+      if (savedView === "table" || savedView === "terminal") view = savedView;
+    } catch {
+      // storage blocked
+    }
+    try {
+      const savedDensity = localStorage.getItem(DENSITY_KEY);
+      if (savedDensity === "compact" || savedDensity === "comfortable") density = savedDensity;
+      facetsCollapsed = localStorage.getItem(FACETS_COLLAPSED_KEY) === "true";
+      const savedLimit = Number.parseInt(localStorage.getItem(LIVE_LIMIT_KEY) ?? "", 10);
+      if (Number.isFinite(savedLimit) && savedLimit >= 50 && savedLimit <= 1000) liveLimit = savedLimit;
+    } catch {
+      // storage blocked
+    }
+    recent = loadRecentSearches();
+  }
+
+  onMount(() => {
+    registerShortcuts();
+    restorePreferences();
+    const unsubScope = scopeStore.subscribe(handleScope);
+    const unsubOrg = currentOrganization.subscribe((org) => handleOrg(org?.id ?? null));
+    return () => {
+      unsubOrg();
+      unsubScope();
+    };
+  });
+
+  onDestroy(() => {
+    stopLive();
+    runSeq += 1;
+    logsGuard.invalidate();
+    histogramGuard.invalidate();
+    facetsGuard.invalidate();
+    recorder.cancel();
+    shortcutsStore.unregisterScope("search");
+  });
 </script>
 
 <svelte:head>
-  <title>Search Logs - LogTide</title>
+  <title>Logs - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto {containerPadding} {maxWidthClass}">
-      <div class="mb-6">
-        <div class="flex items-center gap-3 mb-2">
-          <SearchIcon class="w-8 h-8 text-primary" />
-          <h1 class="text-3xl font-bold tracking-tight">Log Search</h1>
-        </div>
-        <p class="text-muted-foreground">
-          Search and filter your application logs
-        </p>
+  <PageHeader title="Logs" description="Search, filter and tail logs across your projects">
+    {#snippet actions()}
+      <ScopeBar mode="multi" projects={scopeProjects} timeDisabled={live} />
+    {/snippet}
+  </PageHeader>
+
+  <div class="mb-4 space-y-2">
+    <div class="flex flex-wrap items-start gap-2">
+      <div class="min-w-[280px] flex-1">
+        <LogQueryBar
+          bind:value={draftQ}
+          fields={discoveredKeys}
+          {valuesFor}
+          serverError={queryError}
+          onSubmit={handleSubmit}
+          onEdit={() => recorder.cancel()}
+        />
       </div>
-
-      <div class="mb-6 rounded-lg border bg-card p-2 sm:p-3 space-y-2">
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="flex gap-2 flex-1 min-w-[280px]">
-            <Input
-              id="search"
-              type="search"
-              placeholder={searchMode === "fulltext" ? "Search words..." : "Find text anywhere..."}
-              bind:value={searchQuery}
-              oninput={debouncedSearch}
-              class="flex-1 h-9"
-            />
-            <Select.Root
-              type="single"
-              value={searchMode}
-              onValueChange={(v) => {
-                if (v && (v === "fulltext" || v === "substring")) {
-                  searchMode = v;
-                  sessionStorage.setItem("logtide_search_mode", searchMode);
-                  if (searchQuery) {
-                    debouncedSearch();
-                  }
-                }
-              }}
-            >
-              <Select.Trigger class="w-[130px] h-9" title="Search mode: Full-text (word-based) or Substring (find anywhere)">
-                {searchMode === "fulltext" ? "Full-text" : "Substring"}
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="fulltext">Full-text</Select.Item>
-                <Select.Item value="substring">Substring</Select.Item>
-              </Select.Content>
-            </Select.Root>
-          </div>
-
-          <Popover.Root>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button {...props} variant="outline" size="sm" class="gap-2" data-testid="filter-pill-time-range">
-                  <Clock class="w-4 h-4" />
-                  <span>{timeRangeLabel}</span>
-                  <ChevronDown class="w-4 h-4 opacity-50" />
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-[320px] max-w-[90vw] p-4" align="end">
-              <TimeRangePicker
-                bind:this={timeRangePicker}
-                initialType={timeRangeType}
-                initialCustomFrom={customFromTime}
-                initialCustomTo={customToTime}
-                onchange={handleTimeRangeChange}
-              />
-            </Popover.Content>
-          </Popover.Root>
-
-          <div class="flex items-center gap-2 ml-auto">
-            <Label for="live-tail" class="m-0 flex items-center gap-1.5 text-sm font-normal cursor-pointer">
-              <Radio
-                class="w-3.5 h-3.5 {liveTail
-                  ? 'text-green-500 animate-pulse'
-                  : 'text-muted-foreground'}"
-              />
-              Live tail
-            </Label>
-            <Switch id="live-tail" bind:checked={liveTail} />
-            {#if liveTail}
-              <Select.Root
-                type="single"
-                value={String(liveTailLimit)}
-                onValueChange={(v) => {
-                  if (v) {
-                    liveTailLimit = parseInt(v, 10);
-                    localStorage.setItem("logtide_livetail_limit", String(liveTailLimit));
-                    if (logs.length > liveTailLimit) {
-                      logs = logs.slice(0, liveTailLimit);
-                    }
-                  }
-                }}
-              >
-                <Select.Trigger class="w-[95px] h-9">
-                  {liveTailLimit}
-                </Select.Trigger>
-                <Select.Content>
-                  <Select.Item value="50">50</Select.Item>
-                  <Select.Item value="100">100</Select.Item>
-                  <Select.Item value="200">200</Select.Item>
-                  <Select.Item value="500">500</Select.Item>
-                  <Select.Item value="1000">1000</Select.Item>
-                </Select.Content>
-              </Select.Root>
-            {/if}
-          </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onclick={() => (exportDialogOpen = true)}
-            disabled={liveTail || logs.length === 0}
-            class="gap-2"
-          >
-            <Download class="w-4 h-4" />
-            <span class="hidden sm:inline">Export</span>
-          </Button>
-        </div>
-
-        {#if recentSearches.length > 0 && !searchQuery.trim()}
-          <div class="flex flex-wrap items-center gap-1.5">
-            <span class="text-xs text-muted-foreground">Recent:</span>
-            {#each recentSearches as term (term)}
-              <button
-                type="button"
-                onclick={() => applyRecentSearch(term)}
-                class="inline-flex items-center rounded-full border bg-background px-2.5 py-0.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors max-w-[200px] truncate"
-                title={term}
-              >
-                {term}
-              </button>
-            {/each}
+      <div class="flex min-h-9 items-center">
+        <LiveTailControls
+          {live}
+          state={liveSnap?.state ?? "disconnected"}
+          pausedBy={liveSnap?.pausedBy ?? null}
+          limit={liveLimit}
+          disabled={projects.length === 0}
+          onToggle={setLive}
+          onPause={() => tail?.pause("manual")}
+          onResume={() => tail?.resume()}
+          onRetry={() => tail?.retry()}
+          onLimitChange={setLiveLimit}
+        />
+      </div>
+      <SavedSearchesMenu
+        organizationId={$currentOrganization?.id ?? ""}
+        currentUserId={$authStore.user?.id ?? null}
+        currentState={savedState}
+        openSavedId={savedId}
+        onOpen={applySaved}
+        onSaved={(saved) => {
+          savedId = saved.id;
+          writeUrl();
+        }}
+        onDeleted={(id) => {
+          if (savedId !== id) return;
+          savedId = null;
+          writeUrl();
+        }}
+      />
+      <Popover.Root bind:open={moreOpen}>
+        <Popover.Trigger>
+          {#snippet child({ props })}
+            <Button {...props} variant="outline" size="icon" class="size-9" aria-label="More actions" title="More actions">
+              <Ellipsis class="size-4" />
+            </Button>
+          {/snippet}
+        </Popover.Trigger>
+        <Popover.Content class="w-48 p-1" align="end">
+          <div class="flex flex-col">
             <button
               type="button"
-              onclick={clearRecentSearches}
-              class="text-xs text-muted-foreground hover:text-foreground underline"
+              class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+              onclick={copyLink}
             >
-              Clear
+              <Link class="size-4 text-muted-foreground" />
+              Copy link
             </button>
-          </div>
-        {/if}
-
-        <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t border-dashed">
-          <Popover.Root>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  variant={projectsPillActive ? "secondary" : "outline"}
-                  size="sm"
-                  class="h-7 gap-1.5 text-xs font-normal"
-                >
-                  <span>{projectsPillLabel}</span>
-                  <ChevronDown class="w-3 h-3 opacity-60" />
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-[280px] max-w-[90vw] p-0" align="start">
-              <div class="p-1.5 border-b">
-                <div class="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="flex-1 h-7 text-xs"
-                    onclick={async () => {
-                      selectedProjects = projects.map((p) => p.id);
-                      await Promise.all([loadServices(), loadHostnames()]);
-                      applyFilters();
-                    }}
-                  >
-                    Select All
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="flex-1 h-7 text-xs"
-                    onclick={() => {
-                      selectedProjects = [];
-                      availableServices = [];
-                      availableHostnames = [];
-                      applyFilters();
-                    }}
-                  >
-                    Clear
-                  </Button>
-                </div>
-              </div>
-              <div class="max-h-[260px] overflow-y-auto p-1.5">
-                <div class="space-y-1">
-                  {#each projects as project}
-                    <label
-                      class="flex items-center gap-2 cursor-pointer hover:bg-accent px-2 py-1 rounded-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        value={project.id}
-                        checked={selectedProjects.includes(project.id)}
-                        onchange={async (e) => {
-                          if (e.currentTarget.checked) {
-                            selectedProjects = [...selectedProjects, project.id];
-                          } else {
-                            selectedProjects = selectedProjects.filter(
-                              (id) => id !== project.id,
-                            );
-                          }
-                          await Promise.all([loadServices(), loadHostnames()]);
-                          applyFilters();
-                        }}
-                        class="h-4 w-4 rounded border-gray-300"
-                      />
-                      <span class="text-sm flex-1">{project.name}</span>
-                    </label>
-                  {/each}
-                </div>
-              </div>
-            </Popover.Content>
-          </Popover.Root>
-
-          <Popover.Root>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  variant={servicesPillActive ? "secondary" : "outline"}
-                  size="sm"
-                  class="h-7 gap-1.5 text-xs font-normal"
-                >
-                  <span>{servicesPillLabel}</span>
-                  <ChevronDown class="w-3 h-3 opacity-60" />
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-[280px] max-w-[90vw] p-0" align="start">
-              <div class="p-1.5 border-b">
-                <div class="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="flex-1 h-7 text-xs"
-                    onclick={() => {
-                      selectedServices = [...availableServices];
-                      applyFilters();
-                    }}
-                  >
-                    Select All
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="flex-1 h-7 text-xs"
-                    onclick={() => {
-                      selectedServices = [];
-                      applyFilters();
-                    }}
-                  >
-                    Clear
-                  </Button>
-                </div>
-              </div>
-              <div class="max-h-[260px] overflow-y-auto p-1.5">
-                {#if isLoadingServices}
-                  <div class="text-center py-4 text-sm text-muted-foreground">
-                    Loading services...
-                  </div>
-                {:else if displayedServices().length === 0}
-                  <div class="text-center py-4 text-sm text-muted-foreground">
-                    No services available
-                  </div>
-                {:else}
-                  <div class="space-y-1">
-                    {#each displayedServices() as service}
-                      {@const hasLogsInTimeRange = availableServices.includes(service)}
-                      <label
-                        class="flex items-center gap-2 cursor-pointer hover:bg-accent px-2 py-1 rounded-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          value={service}
-                          checked={selectedServices.includes(service)}
-                          onchange={(e) => {
-                            if (e.currentTarget.checked) {
-                              selectedServices = [...selectedServices, service];
-                            } else {
-                              selectedServices = selectedServices.filter(
-                                (s) => s !== service,
-                              );
-                            }
-                            applyFilters();
-                          }}
-                          class="h-4 w-4 rounded border-gray-300"
-                        />
-                        <span class="text-sm flex-1 {!hasLogsInTimeRange ? 'text-muted-foreground italic' : ''}">{service}</span>
-                        {#if !hasLogsInTimeRange}
-                          <span class="text-xs text-muted-foreground">(no logs)</span>
-                        {/if}
-                      </label>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            </Popover.Content>
-          </Popover.Root>
-
-          <Popover.Root>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  variant={hostsPillActive ? "secondary" : "outline"}
-                  size="sm"
-                  class="h-7 gap-1.5 text-xs font-normal"
-                >
-                  <span>{hostsPillLabel}</span>
-                  <ChevronDown class="w-3 h-3 opacity-60" />
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-[280px] max-w-[90vw] p-0" align="start">
-              <div class="p-1.5 border-b">
-                <div class="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="flex-1 h-7 text-xs"
-                    onclick={() => {
-                      selectedHostnames = [...availableHostnames];
-                      applyFilters();
-                    }}
-                  >
-                    Select All
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="flex-1 h-7 text-xs"
-                    onclick={() => {
-                      selectedHostnames = [];
-                      applyFilters();
-                    }}
-                  >
-                    Clear
-                  </Button>
-                </div>
-              </div>
-              <div class="max-h-[260px] overflow-y-auto p-1.5">
-                {#if isLoadingHostnames}
-                  <div class="text-center py-4 text-sm text-muted-foreground">
-                    Loading hostnames...
-                  </div>
-                {:else if displayedHostnames().length === 0}
-                  <div class="text-center py-4 text-sm text-muted-foreground">
-                    No hostnames available
-                  </div>
-                {:else}
-                  <div class="space-y-1">
-                    {#each displayedHostnames() as hostname}
-                      {@const hasLogsInTimeRange = availableHostnames.includes(hostname)}
-                      <label
-                        class="flex items-center gap-2 cursor-pointer hover:bg-accent px-2 py-1 rounded-sm"
-                      >
-                        <input
-                          type="checkbox"
-                          value={hostname}
-                          checked={selectedHostnames.includes(hostname)}
-                          onchange={(e) => {
-                            if (e.currentTarget.checked) {
-                              selectedHostnames = [...selectedHostnames, hostname];
-                            } else {
-                              selectedHostnames = selectedHostnames.filter(
-                                (h) => h !== hostname,
-                              );
-                            }
-                            applyFilters();
-                          }}
-                          class="h-4 w-4 rounded border-gray-300"
-                        />
-                        <span class="text-sm flex-1 font-mono {!hasLogsInTimeRange ? 'text-muted-foreground italic' : ''}">{hostname}</span>
-                        {#if !hasLogsInTimeRange}
-                          <span class="text-xs text-muted-foreground">(no logs)</span>
-                        {/if}
-                      </label>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            </Popover.Content>
-          </Popover.Root>
-
-          <Popover.Root>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  variant={levelsPillActive ? "secondary" : "outline"}
-                  size="sm"
-                  class="h-7 gap-1.5 text-xs font-normal"
-                >
-                  <span>{levelsPillLabel}</span>
-                  <ChevronDown class="w-3 h-3 opacity-60" />
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-[240px] max-w-[90vw] p-0" align="start">
-              <div class="p-1.5 border-b">
-                <div class="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="flex-1 h-7 text-xs"
-                    onclick={() => {
-                      selectedLevels = ["debug", "info", "warn", "error", "critical"];
-                      applyFilters();
-                    }}
-                  >
-                    Select All
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    class="flex-1 h-7 text-xs"
-                    onclick={() => {
-                      selectedLevels = [];
-                      applyFilters();
-                    }}
-                  >
-                    Clear
-                  </Button>
-                </div>
-              </div>
-              <div class="max-h-[260px] overflow-y-auto p-1.5">
-                <div class="space-y-1">
-                  {#each ["debug", "info", "warn", "error", "critical"] as level}
-                    <label
-                      class="flex items-center gap-2 cursor-pointer hover:bg-accent px-2 py-1 rounded-sm"
-                    >
-                      <input
-                        type="checkbox"
-                        value={level}
-                        checked={selectedLevels.includes(level)}
-                        onchange={(e) => {
-                          if (e.currentTarget.checked) {
-                            selectedLevels = [...selectedLevels, level];
-                          } else {
-                            selectedLevels = selectedLevels.filter((l) => l !== level);
-                          }
-                          applyFilters();
-                        }}
-                        class="h-4 w-4 rounded border-gray-300"
-                      />
-                      <span class="text-sm flex-1 capitalize">{level}</span>
-                    </label>
-                  {/each}
-                </div>
-              </div>
-            </Popover.Content>
-          </Popover.Root>
-
-          <Popover.Root>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  variant={tracePillActive ? "secondary" : "outline"}
-                  size="sm"
-                  class="h-7 gap-1.5 text-xs font-normal"
-                  data-testid="filter-pill-trace-id"
-                >
-                  <span>{tracePillLabel}</span>
-                  <ChevronDown class="w-3 h-3 opacity-60" />
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-[280px] max-w-[90vw] p-2 space-y-2" align="start">
-              <Label for="traceId" class="text-xs uppercase text-muted-foreground">Trace ID</Label>
-              <Input
-                id="traceId"
-                type="text"
-                placeholder="Filter by trace ID..."
-                bind:value={traceId}
-                oninput={debouncedSearch}
-                class="h-8 text-sm"
-              />
-              {#if traceId.trim().length > 0}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="text-muted-foreground"
-                  onclick={() => { traceId = ""; applyFilters(); }}
-                >
-                  Clear
-                </Button>
-              {/if}
-            </Popover.Content>
-          </Popover.Root>
-
-          <Popover.Root>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  variant={sessionPillActive ? "secondary" : "outline"}
-                  size="sm"
-                  class="h-7 gap-1.5 text-xs font-normal"
-                >
-                  <span>{sessionPillLabel}</span>
-                  <ChevronDown class="w-3 h-3 opacity-60" />
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-[280px] max-w-[90vw] p-2 space-y-2" align="start">
-              <Label for="sessionId" class="text-xs uppercase text-muted-foreground">Session ID</Label>
-              <Input
-                id="sessionId"
-                type="text"
-                placeholder="Filter by session ID..."
-                bind:value={sessionId}
-                oninput={debouncedSearch}
-                class="h-8 text-sm"
-              />
-              {#if sessionId.trim().length > 0}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="text-muted-foreground"
-                  onclick={() => { sessionId = ""; applyFilters(); }}
-                >
-                  Clear
-                </Button>
-              {/if}
-            </Popover.Content>
-          </Popover.Root>
-
-          <Popover.Root>
-            <Popover.Trigger>
-              {#snippet child({ props })}
-                <Button
-                  {...props}
-                  variant={metadataPillActive ? "secondary" : "outline"}
-                  size="sm"
-                  class="h-7 gap-1.5 text-xs font-normal"
-                  data-testid="filter-pill-metadata"
-                >
-                  <span>{metadataPillLabel}</span>
-                  <ChevronDown class="w-3 h-3 opacity-60" />
-                </Button>
-              {/snippet}
-            </Popover.Trigger>
-            <Popover.Content class="w-[360px] max-w-[90vw] p-2 space-y-2 max-h-[70vh] overflow-y-auto" align="start">
-              <Label class="text-xs uppercase text-muted-foreground">Metadata filters</Label>
-              <MetadataFilterBuilder bind:filters={metadataFilters} />
-              {#if metadataFilters.length > 0}
-                <div class="flex gap-2">
-                  <Button
-                    variant="default"
-                    size="sm"
-                    data-testid="metadata-filter-apply"
-                    onclick={() => applyFilters()}
-                  >
-                    Apply
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    data-testid="metadata-filter-clear-all"
-                    onclick={() => { metadataFilters = []; applyFilters(); }}
-                    class="text-muted-foreground"
-                  >
-                    Clear
-                  </Button>
-                </div>
-              {/if}
-            </Popover.Content>
-          </Popover.Root>
-
-          {#if activeFilterCount > 0}
             <button
               type="button"
-              class="ml-auto text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
-              onclick={clearAllFilters}
+              class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+              onclick={createAlert}
             >
-              Clear all
+              <BellPlus class="size-4 text-muted-foreground" />
+              Create alert
             </button>
-          {/if}
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div class="flex items-center justify-between">
-            <CardTitle>
-              {#if effectiveTotalLogs > 0}
-                {effectiveTotalLogs.toLocaleString("en-US")}
-                {effectiveTotalLogs === 1 ? "log" : "logs"}
-                {#if liveTail}
-                  <span class="text-sm font-normal text-muted-foreground"
-                    >(last {liveTailLimit})</span
-                  >
-                {/if}
-              {:else}
-                No logs
-              {/if}
-            </CardTitle>
-            <div class="flex items-center gap-2">
-              <div class="inline-flex rounded-md border border-input bg-background" role="group" aria-label="View mode">
-                <Button
-                  variant={viewMode === "table" ? "secondary" : "ghost"}
-                  size="sm"
-                  onclick={() => {
-                    viewMode = "table";
-                    sessionStorage.setItem("logtide_view_mode", "table");
-                  }}
-                  class="rounded-r-none border-r gap-1.5"
-                  title="Table view"
-                  aria-label="Table view"
-                  aria-pressed={viewMode === "table"}
-                >
-                  <Table2 class="w-4 h-4" />
-                  <span class="hidden sm:inline">Table</span>
-                </Button>
-                <Button
-                  variant={viewMode === "terminal" ? "secondary" : "ghost"}
-                  size="sm"
-                  onclick={() => {
-                    viewMode = "terminal";
-                    sessionStorage.setItem("logtide_view_mode", "terminal");
-                  }}
-                  class="rounded-l-none gap-1.5"
-                  title="Terminal view"
-                  aria-label="Terminal view"
-                  aria-pressed={viewMode === "terminal"}
-                >
-                  <SquareTerminal class="w-4 h-4" />
-                  <span class="hidden sm:inline">Terminal</span>
-                </Button>
-              </div>
-              {#if viewMode === "terminal"}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onclick={() => layoutStore.toggleTerminalWrap()}
-                  title={terminalWrapEnabled ? "Disable text wrapping (horizontal scroll)" : "Enable text wrapping"}
-                  aria-label={terminalWrapEnabled ? "Disable wrapping" : "Enable wrapping"}
-                  class="gap-1.5"
-                >
-                  <WrapText class="w-4 h-4 {terminalWrapEnabled ? 'text-primary' : 'text-muted-foreground'}" />
-                  <span class="hidden sm:inline">{terminalWrapEnabled ? "Wrap" : "No wrap"}</span>
-                </Button>
-              {/if}
-              {#if viewMode === "table"}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onclick={toggleDensity}
-                  class="gap-1.5"
-                  title={rowDensity === "compact" ? "Comfortable rows" : "Compact rows"}
-                  aria-label={rowDensity === "compact" ? "Comfortable rows" : "Compact rows"}
-                >
-                  <Rows3 class="w-4 h-4" />
-                  <span class="hidden sm:inline">{rowDensity === "compact" ? "Compact" : "Cozy"}</span>
-                </Button>
-                <ColumnConfigMenu
-                  bind:columns={customColumns}
-                  onchange={(cols) => { columnStore?.set(cols); }}
-                />
-              {/if}
-              {#if liveTail}
-                <Badge variant="default" class="gap-1.5 animate-pulse">
-                  <Radio class="w-3 h-3" />
-                  Live
-                </Badge>
-              {/if}
-            </div>
+            <button
+              type="button"
+              class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+              disabled={!canExport}
+              onclick={openExport}
+            >
+              <Download class="size-4 text-muted-foreground" />
+              Export
+            </button>
           </div>
-        </CardHeader>
-        <CardContent>
-          {#if !hasLoadedOnce || (isLoading && logs.length === 0)}
-            <SkeletonTable rows={8} columns={6} />
-          {:else if paginatedLogs.length === 0}
-            {#if searchQuery.trim() || activeFilterCount > 0}
-              <div class="text-center py-16 text-muted-foreground space-y-2">
-                <p class="text-sm">No logs match the current filters.</p>
-                <button
-                  type="button"
-                  class="text-xs underline underline-offset-2 hover:text-foreground"
-                  onclick={clearAllFilters}
-                >
-                  Clear filters
-                </button>
-              </div>
-            {:else}
-              <EmptyLogs />
-            {/if}
-          {:else if viewMode === "terminal"}
-            <TableLoadingOverlay loading={isLoading}>
-            <TerminalLogView
-              logs={paginatedLogs}
-              isLiveTail={liveTail}
-              maxHeight="600px"
-            />
-            </TableLoadingOverlay>
-          {:else}
-            <TableLoadingOverlay loading={isLoading}>
-            <div class="rounded-md border overflow-x-auto" bind:this={logsContainer}>
-              <Table class="w-full {rowDensity === 'compact' ? '[&_td]:py-1 [&_th]:py-1' : ''}">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead class="w-[180px]">Time</TableHead>
-                    <TableHead class="w-[120px]">Project</TableHead>
-                    <TableHead class="w-[150px]">Service</TableHead>
-                    <TableHead class="w-[100px]">Level</TableHead>
-                    <TableHead>Message</TableHead>
-                    {#each customColumns as col (col)}
-                      <TableHead class="w-[120px]">{col}</TableHead>
-                    {/each}
-                    <TableHead class="w-[80px]">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {#each paginatedLogs as log, i}
-                    {@const globalIndex = i}
-                    <TableRow data-log-row class={selectedLogIndex === globalIndex ? 'bg-accent/50 ring-1 ring-primary/30' : ''}>
-                      <TableCell class="font-mono text-xs">
-                        <span title={formatTimeAgo(log.time)}>{formatDateTime(log.time)}</span>
-                      </TableCell>
-                      <TableCell>
-                        <a
-                          href="/dashboard/projects/{log.projectId}"
-                          class="inline-flex items-center rounded-md border border-input bg-background px-2.5 py-0.5 text-xs font-semibold transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                        >
-                          {projects.find((p) => p.id === log.projectId)?.name ||
-                            "Unknown"}
-                        </a>
-                      </TableCell>
-                      <TableCell>
-                        <div class="flex flex-col gap-0.5">
-                          <button
-                            onclick={() => {
-                              if (!selectedServices.includes(log.service)) {
-                                selectedServices = [
-                                  ...selectedServices,
-                                  log.service,
-                                ];
-                                applyFilters();
-                              }
-                            }}
-                            title="Click to filter by this service"
-                            class="hover:opacity-80 transition-opacity"
-                          >
-                            <Badge variant="outline">{log.service}</Badge>
-                          </button>
-                          {#if log.metadata?.hostname}
-                            <button
-                              onclick={() => {
-                                const hostname = log.metadata?.hostname;
-                                if (hostname && !selectedHostnames.includes(hostname)) {
-                                  selectedHostnames = [...selectedHostnames, hostname];
-                                  applyFilters();
-                                }
-                              }}
-                              title="Click to filter by this host"
-                              class="text-xs text-muted-foreground font-mono hover:text-foreground transition-colors truncate max-w-[140px]"
-                            >
-                              @{log.metadata.hostname}
-                            </button>
-                          {/if}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <button
-                          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border uppercase {getLevelColor(
-                            log.level,
-                          )} hover:opacity-80 transition-opacity cursor-pointer"
-                          onclick={() => {
-                            if (!selectedLevels.includes(log.level)) {
-                              selectedLevels = [...selectedLevels, log.level];
-                              applyFilters();
-                            }
-                          }}
-                          title="Click to filter by this level"
-                        >
-                          {log.level}
-                        </button>
-                      </TableCell>
-                      <TableCell class="max-w-md truncate">
-                        {#each highlightSegments(log.message, searchQuery) as seg}
-                          {#if seg.match}<mark
-                              class="rounded-sm bg-yellow-200 text-inherit dark:bg-yellow-500/40"
-                              >{seg.text}</mark
-                            >{:else}{seg.text}{/if}
-                        {/each}
-                      </TableCell>
-                      {#each customColumns as col (col)}
-                        {@const cellValue = resolveMetadataPath(log.metadata, col)}
-                        <TableCell
-                          class="font-mono text-xs max-w-[120px] truncate"
-                          title={cellValue !== undefined && cellValue !== null
-                            ? formatMetadataCell(cellValue)
-                            : undefined}
-                        >
-                          {#if cellValue !== undefined && cellValue !== null}
-                            {formatMetadataCell(cellValue)}
-                          {:else}
-                            <span class="text-muted-foreground">-</span>
-                          {/if}
-                        </TableCell>
-                      {/each}
-                      <TableCell>
-                        <div class="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onclick={() => toggleRow(globalIndex)}
-                          >
-                            {expandedRows.has(globalIndex) ? "Hide" : "Details"}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onclick={() => openContextDialog(log)}
-                            title="View logs before and after this entry"
-                          >
-                            Context
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                    {#if expandedRows.has(globalIndex)}
-                      <TableRow>
-                        <TableCell colspan={6 + customColumns.length} class="bg-muted/50 !p-0">
-                          <div class="p-4 space-y-3 w-0 min-w-full">
-                            <div>
-                              <span class="font-semibold">Full Message:</span>
-                              <div
-                                class="mt-2 p-3 bg-background rounded-md text-sm whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
-                              >
-                                {log.message}
-                              </div>
-                            </div>
-                            {#if log.traceId}
-                              <div class="flex items-center flex-wrap gap-1.5">
-                                <span class="font-semibold">Trace ID:</span>
-                                {#if log.projectId}
-                                  <a
-                                    href="/dashboard/traces/{log.traceId}?projectId={log.projectId}"
-                                    class="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-primary transition-colors hover:bg-primary/10"
-                                    title="Open trace timeline"
-                                  >
-                                    {log.traceId}
-                                    <ArrowUpRight class="h-3 w-3 opacity-60 transition-opacity group-hover:opacity-100" />
-                                  </a>
-                                  <button
-                                    class="inline-flex items-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                                    onclick={() => {
-                                      traceId = log.traceId || "";
-                                      applyFilters();
-                                    }}
-                                    title="Filter by this trace ID"
-                                  >
-                                    <Filter class="h-3 w-3" />
-                                  </button>
-                                {:else}
-                                  <button
-                                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-primary transition-colors hover:bg-primary/10"
-                                    onclick={() => {
-                                      traceId = log.traceId || "";
-                                      applyFilters();
-                                    }}
-                                    title="Filter by this trace ID"
-                                  >
-                                    {log.traceId}
-                                    <Filter class="h-3 w-3 opacity-60" />
-                                  </button>
-                                {/if}
-                              </div>
-                            {/if}
-                            {#if log.sessionId}
-                              <div class="flex items-center flex-wrap gap-1.5">
-                                <span class="font-semibold">Session ID:</span>
-                                <button
-                                  class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-teal-600 transition-colors hover:bg-teal-500/10 dark:text-teal-400"
-                                  onclick={() => {
-                                    sessionId = log.sessionId || "";
-                                    applyFilters();
-                                  }}
-                                  title="Filter by this session ID"
-                                >
-                                  {log.sessionId}
-                                  <Filter class="h-3 w-3 opacity-60" />
-                                </button>
-                              </div>
-                            {/if}
-                            {#if log.id && logIdentifiers.has(log.id) && (logIdentifiers.get(log.id)?.length ?? 0) > 0}
-                              <div>
-                                <span class="font-semibold">Identifiers:</span>
-                                <div class="flex flex-wrap items-center gap-2 mt-2">
-                                  {#each logIdentifiers.get(log.id) ?? [] as identifier}
-                                    <IdentifierBadge
-                                      type={identifier.type}
-                                      value={identifier.value}
-                                      onclick={() => openCorrelationDialog(log, identifier.type, identifier.value)}
-                                    />
-                                  {/each}
-                                  <a
-                                    href="/dashboard/settings/patterns"
-                                    class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-dashed border-muted-foreground/50 text-muted-foreground hover:text-foreground hover:border-foreground/50 transition-colors"
-                                  >
-                                    <Settings2 class="w-3 h-3" />
-                                    <span>Configure</span>
-                                  </a>
-                                </div>
-                              </div>
-                            {/if}
-                            {#if log.metadata}
-                              {@const metaKey = `meta-${log.id ?? globalIndex}`}
-                              <div>
-                                <span class="font-semibold">Metadata:</span>
-                                <div class="relative mt-2">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    class="absolute right-1 top-1 z-10 h-6 w-6 bg-background/80 backdrop-blur hover:bg-accent"
-                                    title="Copy metadata"
-                                    onclick={() => copyMetadata(metaKey, log.metadata)}
-                                  >
-                                    {#if copiedMetaKey === metaKey}
-                                      <Check class="h-3 w-3 text-green-500" />
-                                    {:else}
-                                      <Copy class="h-3 w-3" />
-                                    {/if}
-                                  </Button>
-                                  <div class="p-3 pr-9 bg-background rounded-md max-h-64 overflow-auto">
-                                    <pre class="text-xs w-max">{JSON.stringify(
-                                      log.metadata,
-                                      null,
-                                      2,
-                                    )}</pre>
-                                  </div>
-                                </div>
-                              </div>
-                            {/if}
-                            {#if isErrorLevel(log.level) && log.id}
-                              <div class="pt-2 border-t mt-3">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onclick={() => openExceptionDialog(log)}
-                                  class="gap-2"
-                                >
-                                  <AlertTriangle class="w-4 h-4 text-red-500" />
-                                  View Exception Details
-                                </Button>
-                              </div>
-                            {/if}
-                            {#if getBreadcrumbs(log).length > 0}
-                              {@const crumbs = getBreadcrumbs(log)}
-                              <div class="pt-2 border-t mt-3">
-                                <button
-                                  type="button"
-                                  class="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
-                                  onclick={() => toggleBreadcrumbs(globalIndex)}
-                                >
-                                  <ListTree class="w-4 h-4" />
-                                  Breadcrumbs ({crumbs.length})
-                                  <span class="text-xs ml-auto">{expandedBreadcrumbs.has(globalIndex) ? "▾" : "▸"}</span>
-                                </button>
-                                {#if expandedBreadcrumbs.has(globalIndex)}
-                                  <div class="mt-2 max-h-64 overflow-auto">
-                                    <BreadcrumbTimeline breadcrumbs={crumbs} eventTime={log.time} />
-                                  </div>
-                                {/if}
-                              </div>
-                            {/if}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    {/if}
-                  {/each}
-                </TableBody>
-              </Table>
-            </div>
-
-            {#if !liveTail && logs.length > 0}
-              <div class="flex items-center justify-between mt-6 px-2">
-                <div class="text-sm text-muted-foreground">
-                  {#if totalLogs > 0}
-                    Showing {((currentPage - 1) * pageSize + 1).toLocaleString('en-US')} to {Math.min(currentPage * pageSize, totalLogs).toLocaleString('en-US')} of {totalLogs.toLocaleString('en-US')} logs
-                  {:else}
-                    Showing {(currentPage - 1) * pageSize + 1} to {(currentPage - 1) * pageSize + logs.length} logs
-                  {/if}
-                </div>
-                <div class="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onclick={previousPage}
-                    disabled={currentPage === 1 || isLoading}
-                  >
-                    <ChevronLeft class="w-4 h-4" />
-                    <span class="hidden sm:inline">Previous</span>
-                  </Button>
-                  {#if totalPages > 0}
-                    <div class="flex items-center gap-1">
-                      {#if totalPages <= 7}
-                        {#each Array.from({ length: totalPages }, (_, i) => i + 1) as pg}
-                          <Button
-                            variant={currentPage === pg ? "default" : "outline"}
-                            size="sm"
-                            onclick={() => goToPage(pg)}
-                            disabled={isLoading}
-                            class="w-10"
-                          >
-                            {pg}
-                          </Button>
-                        {/each}
-                      {:else if currentPage <= 3}
-                        {#each [1, 2, 3, 4] as pg}
-                          <Button
-                            variant={currentPage === pg ? "default" : "outline"}
-                            size="sm"
-                            onclick={() => goToPage(pg)}
-                            disabled={isLoading}
-                            class="w-10"
-                          >
-                            {pg}
-                          </Button>
-                        {/each}
-                        <span class="px-2 text-muted-foreground">…</span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onclick={() => goToPage(totalPages)}
-                          disabled={isLoading}
-                          class="w-10"
-                        >
-                          {totalPages}
-                        </Button>
-                      {:else if currentPage >= totalPages - 2}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onclick={() => goToPage(1)}
-                          disabled={isLoading}
-                          class="w-10"
-                        >
-                          1
-                        </Button>
-                        <span class="px-2 text-muted-foreground">…</span>
-                        {#each [totalPages - 3, totalPages - 2, totalPages - 1, totalPages] as pg}
-                          <Button
-                            variant={currentPage === pg ? "default" : "outline"}
-                            size="sm"
-                            onclick={() => goToPage(pg)}
-                            disabled={isLoading}
-                            class="w-10"
-                          >
-                            {pg}
-                          </Button>
-                        {/each}
-                      {:else}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onclick={() => goToPage(1)}
-                          disabled={isLoading}
-                          class="w-10"
-                        >
-                          1
-                        </Button>
-                        <span class="px-2 text-muted-foreground">…</span>
-                        {#each [currentPage - 1, currentPage, currentPage + 1] as pg}
-                          <Button
-                            variant={currentPage === pg ? "default" : "outline"}
-                            size="sm"
-                            onclick={() => goToPage(pg)}
-                            disabled={isLoading}
-                            class="w-10"
-                          >
-                            {pg}
-                          </Button>
-                        {/each}
-                        <span class="px-2 text-muted-foreground">…</span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onclick={() => goToPage(totalPages)}
-                          disabled={isLoading}
-                          class="w-10"
-                        >
-                          {totalPages}
-                        </Button>
-                      {/if}
-                    </div>
-                  {:else}
-                    <span class="text-sm text-muted-foreground px-3">
-                      Page {currentPage.toLocaleString('en-US')}
-                    </span>
-                  {/if}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onclick={nextPage}
-                    disabled={!hasMoreLogs || isLoading || (totalPages > 0 && currentPage >= totalPages)}
-                  >
-                    <span class="hidden sm:inline">Next</span>
-                    <ChevronRight class="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            {/if}
-            </TableLoadingOverlay>
-          {/if}
-        </CardContent>
-      </Card>
+        </Popover.Content>
+      </Popover.Root>
     </div>
 
+    {#if live && liveSnap?.error && liveSnap.state === "disconnected"}
+      <p role="alert" class="text-xs text-destructive-text">Live tail stopped: {liveSnap.error}</p>
+    {/if}
+
+    {#if recent.length > 0 && draftQ.trim() === ""}
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="text-xs text-muted-foreground">Recent:</span>
+        {#each recent as entry, i (i)}
+          <button
+            type="button"
+            class="inline-flex max-w-[16rem] items-center truncate rounded-full border bg-background px-2.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+            title={entry.q}
+            onclick={() => applyRecent(entry)}
+          >
+            {recentLabel(entry)}
+          </button>
+        {/each}
+        <button
+          type="button"
+          class="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          aria-label="Clear recent searches"
+          onclick={clearRecent}
+        >
+          Clear
+        </button>
+      </div>
+    {/if}
+  </div>
+
+  {#if hasRun && !live && resultsState !== "onboarding"}
+    <section aria-label="Log volume" class="mb-4 rounded-lg border bg-card p-3 text-card-foreground">
+      <LogVolumeHistogram
+        buckets={histogramBuckets}
+        bucketSeconds={histogramBucketSeconds}
+        total={histogramTotal}
+        loading={histogramLoading}
+        error={histogramError}
+        onRangeSelect={selectHistogramRange}
+        onRetry={() => run && void loadHistogram(run)}
+      />
+    </section>
+  {/if}
+
+  <div class="grid items-start gap-4 {gridClass}">
+    <FacetSidebar
+      {facets}
+      loading={facetsLoading}
+      error={facetsError}
+      {q}
+      {pinnedKeys}
+      {candidateKeys}
+      bind:collapsed={() => facetsCollapsed, (next) => setFacetsCollapsed(next)}
+      onToggle={applyFieldToggle}
+      onPin={pinFacet}
+      onUnpin={unpinFacet}
+    />
+
+    <section aria-label="Results" class="min-w-0 rounded-lg border bg-card text-card-foreground">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
+        <div class="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          {#if resultsState === "results" || (live && rows.length > 0)}
+            <span class="font-medium">{countText}</span>
+          {/if}
+          {#if live}
+            <span class="text-muted-foreground">Newest first, up to {liveLimit.toLocaleString("en-US")} kept</span>
+          {:else if run && run.preset && hasRun}
+            <span class="text-muted-foreground" title={asOfTitle}>Results as of {asOfText}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-7"
+              aria-label="Refresh results"
+              title="Refresh results"
+              onclick={refresh}
+            >
+              <RefreshCw class="size-3.5" />
+            </Button>
+          {/if}
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="inline-flex rounded-md border border-input bg-background" role="group" aria-label="View">
+            <Button
+              variant={view === "table" ? "secondary" : "ghost"}
+              size="sm"
+              class="gap-1.5 rounded-r-none border-r"
+              aria-pressed={view === "table"}
+              onclick={() => setView("table")}
+            >
+              <Table2 class="size-4" />
+              <span>Table</span>
+            </Button>
+            <Button
+              variant={view === "terminal" ? "secondary" : "ghost"}
+              size="sm"
+              class="gap-1.5 rounded-l-none"
+              aria-pressed={view === "terminal"}
+              onclick={() => setView("terminal")}
+            >
+              <SquareTerminal class="size-4" />
+              <span>Terminal</span>
+            </Button>
+          </div>
+          {#if view === "terminal"}
+            <Button
+              variant="ghost"
+              size="sm"
+              class="gap-1.5"
+              aria-pressed={terminalWrap}
+              title={terminalWrap ? "Turn off line wrapping" : "Wrap long lines"}
+              onclick={() => layoutStore.toggleTerminalWrap()}
+            >
+              <WrapText class="size-4 {terminalWrap ? 'text-primary' : 'text-muted-foreground'}" />
+              <span>Wrap lines</span>
+            </Button>
+          {:else}
+            <Button
+              variant="outline"
+              size="sm"
+              class="gap-1.5"
+              aria-pressed={density === "compact"}
+              title={density === "compact" ? "Use comfortable rows" : "Use compact rows"}
+              onclick={toggleDensity}
+            >
+              <Rows3 class="size-4" />
+              <span>Compact rows</span>
+            </Button>
+            <ColumnConfigMenu
+              columns={customColumns}
+              onchange={(cols) => columnStoreFor(projectKey).set(cols)}
+              {layout}
+              onLayoutChange={(next) => builtinStoreFor(projectKey).set(next)}
+            />
+          {/if}
+        </div>
+      </div>
+
+      <div class="p-3">
+        {#if showPendingPill}
+          <div class="flex justify-center pb-2">
+            <Button size="sm" class="h-7 rounded-full px-3 text-xs" onclick={showPending}>{pendingText}</Button>
+          </div>
+        {/if}
+        {#if live && rows.length === 0}
+          <EmptyState
+            variant="no-data"
+            title="Waiting for new logs"
+            description="Logs that match the query appear here as they arrive."
+          />
+        {:else if resultsState === "loading"}
+          <SkeletonTable rows={8} columns={6} />
+        {:else if resultsState === "error"}
+          <EmptyState variant="error" title="Could not load logs" description={error ?? undefined}>
+            {#snippet actions()}
+              <Button variant="outline" size="sm" onclick={retry}>Retry</Button>
+            {/snippet}
+          </EmptyState>
+        {:else if resultsState === "onboarding"}
+          <EmptyLogs />
+        {:else if resultsState === "no-results"}
+          <EmptyState
+            variant="no-results"
+            title="No logs match in {rangePhrase}"
+            description="Try a wider time range or a simpler query."
+          >
+            {#snippet actions()}
+              {#if run?.preset !== "24h"}
+                <Button variant="outline" size="sm" onclick={() => searchRange("24h")}>Search last 24h</Button>
+              {/if}
+              {#if run?.preset !== "7d"}
+                <Button variant="outline" size="sm" onclick={() => searchRange("7d")}>Search last 7d</Button>
+              {/if}
+              {#if q}
+                <Button variant="ghost" size="sm" onclick={clearQuery}>Clear</Button>
+              {/if}
+            {/snippet}
+          </EmptyState>
+        {:else}
+          <TableLoadingOverlay {loading}>
+            {#if view === "terminal"}
+              <TerminalLogView
+                bind:this={terminalView}
+                logs={rows}
+                isLiveTail={live}
+                maxHeight={RESULTS_HEIGHT}
+                {selectedId}
+                onSelect={(log) => openDetails(log)}
+                onScrollTopChange={handleScrollTop}
+              />
+            {:else}
+              <LogResultsTable
+                bind:this={resultsTable}
+                logs={rows}
+                projects={scopeProjects}
+                columns={visibleColumns(layout)}
+                {customColumns}
+                {density}
+                {selectedId}
+                {highlightQuery}
+                {hasMore}
+                {loadingMore}
+                {centerOnId}
+                onSelect={(log) => openDetails(log)}
+                onFilter={(key, value) => applyFieldToggle(key, value, "include")}
+                onProjectFilter={filterProject}
+                onLoadMore={() => void loadMore()}
+                onScrollTopChange={handleScrollTop}
+              />
+            {/if}
+          </TableLoadingOverlay>
+          {#if capped}
+            <p role="status" class="mt-2 text-center text-xs text-muted-foreground">
+              Showing the newest {MAX_LOADED_ROWS.toLocaleString("en-US")} logs. Narrow the time range or the query to see
+              older ones.
+            </p>
+          {/if}
+        {/if}
+      </div>
+    </section>
+
+    {#if detailsLog}
+      <div
+        class="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col bg-background p-2 shadow-lg xl:sticky xl:inset-auto xl:top-4 xl:z-auto xl:h-[calc(100dvh-10rem)] xl:max-w-none xl:bg-transparent xl:p-0 xl:shadow-none"
+      >
+        <LogDetailsPanel
+          log={detailsLog}
+          projectName={projects.find((p) => p.id === detailsLog?.projectId)?.name ?? detailsLog.projectId}
+          identifiers={(detailsLog.id && identifiers.get(detailsLog.id)) || []}
+          organizationId={$currentOrganization?.id ?? ""}
+          onClose={closeDetails}
+          onFilter={(key, value, negate) => applyFieldToggle(key, value, negate ? "exclude" : "include")}
+          onProjectFilter={filterProject}
+          onAddColumn={(path) => columnStoreFor(projectKey).add(path)}
+          onOpenContext={(log) => openContext(log)}
+          onOpenCorrelation={(log, type, value) => (correlation = { log, type, value })}
+        />
+      </div>
+    {/if}
+  </div>
+</div>
+
 <LogContextDialog
-  open={contextDialogOpen}
-  projectId={selectedLogForContext?.projectId || ""}
-  organizationId={$currentOrganization?.id || ""}
-  selectedLog={selectedLogForContext}
-  onClose={closeContextDialog}
-/>
-
-<ExceptionDetailsDialog
-  open={exceptionDialogOpen}
-  logId={selectedLogForException?.id || ""}
-  organizationId={$currentOrganization?.id || ""}
-  metadata={selectedLogForException?.metadata}
-  onClose={closeExceptionDialog}
-/>
-
-<ExportLogsDialog
-  bind:open={exportDialogOpen}
-  totalLogs={totalLogs}
-  filters={exportFilters}
+  open={contextOpen}
+  projectId={contextLog?.projectId ?? ""}
+  organizationId={$currentOrganization?.id ?? ""}
+  selectedLog={contextLog}
+  onClose={closeContext}
+  onOpenAround={openAround}
 />
 
 <CorrelationTimelineDialog
-  open={correlationDialogOpen}
-  projectId={selectedLogForCorrelation?.projectId || selectedProjects[0] || ""}
-  identifierType={selectedIdentifierType}
-  identifierValue={selectedIdentifierValue}
-  referenceTime={selectedLogForCorrelation?.time}
-  onClose={closeCorrelationDialog}
-  onLogClick={(correlatedLog) => {
-    closeCorrelationDialog();
-    const logEntry = {
-      id: correlatedLog.id,
-      time: correlatedLog.time,
-      service: correlatedLog.service,
-      level: correlatedLog.level as LogEntry["level"],
-      message: correlatedLog.message,
-      metadata: correlatedLog.metadata ?? undefined,
-      traceId: correlatedLog.traceId ?? undefined,
-      projectId: correlatedLog.projectId || "",
-    };
-    openContextDialog(logEntry);
+  open={correlation !== null}
+  projectId={correlation?.log.projectId ?? resolvedIds[0] ?? ""}
+  identifierType={correlation?.type ?? ""}
+  identifierValue={correlation?.value ?? ""}
+  referenceTime={correlation?.log.time}
+  onClose={() => (correlation = null)}
+  onLogClick={(correlated) => {
+    correlation = null;
+    openContext({
+      id: correlated.id,
+      time: correlated.time,
+      service: correlated.service,
+      level: correlated.level as LogEntry["level"],
+      message: correlated.message,
+      metadata: correlated.metadata ?? null,
+      traceId: correlated.traceId ?? null,
+      projectId: correlated.projectId || "",
+    });
   }}
+/>
+
+<ExportLogsDialog
+  bind:open={exportOpen}
+  totalLogs={shownTotal ?? rows.length}
+  scope={exportScope}
+  projects={scopeProjects}
+  {customColumns}
 />

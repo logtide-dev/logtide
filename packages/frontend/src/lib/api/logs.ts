@@ -3,15 +3,33 @@ import { getAuthToken } from '$lib/utils/auth';
 import { requestStreamTicket } from './stream-tickets';
 import type { LogLevel, MetadataFilterInput } from '@logtide/shared';
 
-interface LogEntry {
+/**
+ * One log row as every logs endpoint returns it (list, by-id, context and the
+ * live tail `logs` message all share the backend `mapApiLog` shape).
+ */
+export interface LogEntry {
+  id?: string;
   time: string;
+  projectId: string;
   service: string;
   level: LogLevel;
   message: string;
-  metadata?: Record<string, any>;
-  traceId?: string;
-  sessionId?: string;
-  projectId: string;
+  metadata?: Record<string, unknown> | null;
+  traceId?: string | null;
+  spanId?: string | null;
+  sessionId?: string | null;
+  hostname?: string | null;
+}
+
+/** A `q` the server could not parse: `position` is the 0-based character index. */
+export class LogQueryError extends Error {
+  readonly position: number;
+
+  constructor(message: string, position: number) {
+    super(message);
+    this.name = 'LogQueryError';
+    this.position = position;
+  }
 }
 
 interface LogsResponse {
@@ -42,6 +60,48 @@ interface LogFilters {
   metadataFilters?: MetadataFilterInput[];
 }
 
+/** Scope and query shared by the explorer endpoints (histogram, facets). */
+export interface LogScopeParams {
+  projectId: string | string[];
+  q?: string;
+  from: string;
+  to: string;
+}
+
+export interface LogHistogramBucket {
+  time: string;
+  total: number;
+  byLevel: Partial<Record<LogLevel, number>>;
+}
+
+export interface LogHistogramResponse {
+  buckets: LogHistogramBucket[];
+  bucketSeconds: number;
+  total: number;
+  from: string;
+  to: string;
+}
+
+export interface LogFacet {
+  /** Echoes the requested grammar key (`host`, not `hostname`). */
+  field: string;
+  values: { value: string; count: number }[];
+  otherCount: number;
+}
+
+export interface LogFieldInfo {
+  key: string;
+  occurrences: number;
+}
+
+export interface LogContextResponse {
+  before: LogEntry[];
+  current: LogEntry | null;
+  after: LogEntry[];
+  /** The service and host the server filtered on (derived from the reference log). */
+  applied: { service: string | null; hostname: string | null };
+}
+
 interface StatsResponse {
   timeseries: {
     bucket: string;
@@ -65,6 +125,43 @@ interface StatsFilters {
   interval?: '1m' | '5m' | '1h' | '1d';
 }
 
+function appendProjectIds(params: URLSearchParams, projectId: string | string[]): void {
+  if (Array.isArray(projectId)) {
+    projectId.forEach((id) => params.append('projectId', id));
+  } else {
+    params.append('projectId', projectId);
+  }
+}
+
+function appendScope(params: URLSearchParams, scope: LogScopeParams): void {
+  appendProjectIds(params, scope.projectId);
+  if (scope.q) params.append('q', scope.q);
+  params.append('from', scope.from);
+  params.append('to', scope.to);
+}
+
+/**
+ * Turn a failed response into an error: a 400 whose JSON body carries a numeric
+ * `position` is a query parse error (`LogQueryError`), anything else keeps the
+ * historical `<fallback>: <statusText>` message.
+ */
+async function throwForResponse(response: Response, fallback: string): Promise<never> {
+  if (response.status === 400) {
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    if (body && typeof body === 'object') {
+      const { error, position } = body as { error?: unknown; position?: unknown };
+      if (typeof position === 'number') {
+        throw new LogQueryError(typeof error === 'string' ? error : 'Invalid query', position);
+      }
+    }
+  }
+  throw new Error(`${fallback}: ${response.statusText}`);
+}
 
 export class LogsAPI {
   constructor(private getToken: () => string | null) { }
@@ -82,16 +179,19 @@ export class LogsAPI {
     return headers;
   }
 
+  private async getJson<T>(path: string, params: URLSearchParams, fallback: string): Promise<T> {
+    const response = await fetch(`${getApiBaseUrl()}${path}?${params.toString()}`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+    if (!response.ok) await throwForResponse(response, fallback);
+    return response.json();
+  }
+
   async getLogs(filters: LogFilters = {}): Promise<LogsResponse> {
     const params = new URLSearchParams();
 
-    if (filters.projectId) {
-      if (Array.isArray(filters.projectId)) {
-        filters.projectId.forEach((id) => params.append('projectId', id));
-      } else {
-        params.append('projectId', filters.projectId);
-      }
-    }
+    if (filters.projectId) appendProjectIds(params, filters.projectId);
 
     if (filters.service) {
       if (Array.isArray(filters.service)) {
@@ -130,18 +230,38 @@ export class LogsAPI {
       params.set('metadata_filters', JSON.stringify(filters.metadataFilters));
     }
 
-    const url = `${getApiBaseUrl()}/logs?${params.toString()}`;
+    return this.getJson<LogsResponse>('/logs', params, 'Failed to fetch logs');
+  }
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
+  async getHistogram(p: LogScopeParams & { bucketSeconds: number }): Promise<LogHistogramResponse> {
+    const params = new URLSearchParams();
+    appendScope(params, p);
+    params.append('bucketSeconds', String(p.bucketSeconds));
+    return this.getJson<LogHistogramResponse>('/logs/histogram', params, 'Failed to fetch log histogram');
+  }
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch logs: ${response.statusText}`);
-    }
+  async getFacets(p: LogScopeParams & { fields: string[]; limit?: number }): Promise<LogFacet[]> {
+    const params = new URLSearchParams();
+    appendScope(params, p);
+    params.append('fields', p.fields.join(','));
+    if (p.limit != null) params.append('limit', String(p.limit));
+    const data = await this.getJson<{ facets: LogFacet[] }>('/logs/facets', params, 'Failed to fetch log facets');
+    return data.facets;
+  }
 
-    return response.json();
+  async getFields(p: {
+    projectId: string | string[];
+    from: string;
+    to: string;
+    sampleSize?: number;
+  }): Promise<LogFieldInfo[]> {
+    const params = new URLSearchParams();
+    appendProjectIds(params, p.projectId);
+    params.append('from', p.from);
+    params.append('to', p.to);
+    if (p.sampleSize != null) params.append('sampleSize', String(p.sampleSize));
+    const data = await this.getJson<{ fields: LogFieldInfo[] }>('/logs/fields', params, 'Failed to fetch log fields');
+    return data.fields;
   }
 
   async getStats(filters: StatsFilters = {}): Promise<StatsResponse> {
@@ -166,12 +286,19 @@ export class LogsAPI {
     return response.json();
   }
 
-  async createLogsWebSocket(filters: { service?: string; level?: string; hostname?: string; projectId: string }): Promise<WebSocket> {
+  async createLogsWebSocket(filters: {
+    projectId: string;
+    service?: string;
+    level?: string;
+    hostname?: string;
+    q?: string;
+  }): Promise<WebSocket> {
     const params = new URLSearchParams();
     params.append('projectId', filters.projectId);
     if (filters.service) params.append('service', filters.service);
     if (filters.level) params.append('level', filters.level);
     if (filters.hostname) params.append('hostname', filters.hostname);
+    if (filters.q) params.append('q', filters.q);
 
     // Pass a short-lived single-use ticket instead of the session token so the
     // long-lived token never appears in the WebSocket URL (and thus in proxy logs).
@@ -193,34 +320,30 @@ export class LogsAPI {
     ws.close();
   }
 
+  /**
+   * Logs around a reference log. The server derives the service and host for
+   * `sameService` / `sameHost` from the reference `logId` (or the log at `time`),
+   * so the client never sends service or host values.
+   */
   async getLogContext(params: {
     projectId: string;
     time: string;
+    logId?: string;
     before?: number;
     after?: number;
-  }): Promise<{
-    before: LogEntry[];
-    current: LogEntry | null;
-    after: LogEntry[];
-  }> {
+    sameService?: boolean;
+    sameHost?: boolean;
+  }): Promise<LogContextResponse> {
     const queryParams = new URLSearchParams();
     queryParams.append('projectId', params.projectId);
     queryParams.append('time', params.time);
-    if (params.before) queryParams.append('before', params.before.toString());
-    if (params.after) queryParams.append('after', params.after.toString());
+    if (params.logId) queryParams.append('logId', params.logId);
+    if (params.before != null) queryParams.append('before', params.before.toString());
+    if (params.after != null) queryParams.append('after', params.after.toString());
+    if (params.sameService) queryParams.append('sameService', 'true');
+    if (params.sameHost) queryParams.append('sameHost', 'true');
 
-    const url = `${getApiBaseUrl()}/logs/context?${queryParams.toString()}`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: this.getHeaders(),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch log context: ${response.statusText}`);
-    }
-
-    return response.json();
+    return this.getJson<LogContextResponse>('/logs/context', queryParams, 'Failed to fetch log context');
   }
 
   async getServices(params: {
@@ -230,11 +353,7 @@ export class LogsAPI {
   }): Promise<string[]> {
     const queryParams = new URLSearchParams();
 
-    if (Array.isArray(params.projectId)) {
-      params.projectId.forEach((id) => queryParams.append('projectId', id));
-    } else {
-      queryParams.append('projectId', params.projectId);
-    }
+    appendProjectIds(queryParams, params.projectId);
 
     if (params.from) queryParams.append('from', params.from);
     if (params.to) queryParams.append('to', params.to);
@@ -261,11 +380,7 @@ export class LogsAPI {
   }): Promise<string[]> {
     const queryParams = new URLSearchParams();
 
-    if (Array.isArray(params.projectId)) {
-      params.projectId.forEach((id) => queryParams.append('projectId', id));
-    } else {
-      queryParams.append('projectId', params.projectId);
-    }
+    appendProjectIds(queryParams, params.projectId);
 
     if (params.from) queryParams.append('from', params.from);
     if (params.to) queryParams.append('to', params.to);

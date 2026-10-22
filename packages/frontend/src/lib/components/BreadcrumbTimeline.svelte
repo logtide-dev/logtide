@@ -7,6 +7,9 @@
 	import Layers from '@lucide/svelte/icons/layers';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import { formatTimestamp } from '$lib/utils/datetime';
+	import { levelTone } from '$lib/utils/severity';
+	import { displayPreferences, type DisplayPreferences } from '$lib/stores/display-preferences';
 
 	interface Breadcrumb {
 		type: string;
@@ -49,14 +52,9 @@
 		return `${(ms / 60_000).toFixed(1)}m`;
 	}
 
-	function formatAbsoluteTime(timestamp: number): string {
-		return new Date(timestamp).toLocaleTimeString('en-US', {
-			hour12: false,
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-			fractionalSecondDigits: 3,
-		});
+	// `_prefs` comes from the template so the title follows a display preference change.
+	function formatAbsoluteTime(timestamp: number, _prefs: DisplayPreferences): string {
+		return formatTimestamp(timestamp, { precision: 'ms' });
 	}
 
 	interface IconConfig {
@@ -65,36 +63,25 @@
 		bg: string;
 	}
 
-	function getTypeConfig(type: string, category?: string): IconConfig {
+	// Breadcrumb types are categories, not severities: fixed hues with a dark
+	// variant each. The error type and the accent bar use the level module.
+	function getTypeConfig(type: string): IconConfig {
 		if (type === 'ui') {
-			return { icon: MousePointerClick, color: 'text-violet-600', bg: 'bg-violet-500/10' };
+			return { icon: MousePointerClick, color: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-500/10' };
 		}
 		if (type === 'http') {
-			return { icon: Globe, color: 'text-blue-600', bg: 'bg-blue-500/10' };
+			return { icon: Globe, color: 'text-sky-600 dark:text-sky-400', bg: 'bg-sky-500/10' };
 		}
 		if (type === 'console') {
-			return { icon: Terminal, color: 'text-gray-600', bg: 'bg-gray-500/10' };
+			return { icon: Terminal, color: 'text-muted-foreground', bg: 'bg-muted' };
 		}
 		if (type === 'navigation') {
-			return { icon: Navigation, color: 'text-green-600', bg: 'bg-green-500/10' };
+			return { icon: Navigation, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-500/10' };
 		}
 		if (type === 'error') {
-			return { icon: AlertTriangle, color: 'text-red-600', bg: 'bg-red-500/10' };
+			return { icon: AlertTriangle, color: levelTone('error').text, bg: 'bg-destructive/10' };
 		}
-		return { icon: Layers, color: 'text-gray-500', bg: 'bg-gray-500/10' };
-	}
-
-	function getLevelColor(level?: string): string {
-		switch (level) {
-			case 'error':
-				return 'border-l-red-400';
-			case 'warn':
-				return 'border-l-yellow-400';
-			case 'debug':
-				return 'border-l-gray-300';
-			default:
-				return 'border-l-blue-300';
-		}
+		return { icon: Layers, color: 'text-muted-foreground', bg: 'bg-muted' };
 	}
 </script>
 
@@ -107,17 +94,22 @@
 
 		<div class="space-y-1">
 			{#each breadcrumbs as crumb, i}
-				{@const config = getTypeConfig(crumb.type, crumb.category)}
+				{@const config = getTypeConfig(crumb.type)}
 				{@const hasData = crumb.data && Object.keys(crumb.data).length > 0}
 
-				<div
-					class="relative flex items-start gap-3 pl-8 border-l-2 {getLevelColor(crumb.level)} ml-[13px] py-1.5 pr-2"
-				>
+				<div class="relative flex items-start gap-3 pl-8 ml-[13px] py-1.5 pr-2">
+					<!-- Level accent bar -->
+					<span
+						data-breadcrumb-accent
+						aria-hidden="true"
+						class="absolute left-0 top-0 bottom-0 w-0.5 -translate-x-px rounded-full {levelTone(crumb.level ?? 'info').dot}"
+					></span>
+
 					<!-- Icon -->
 					<div
 						class="absolute left-0 w-7 h-7 rounded-full flex items-center justify-center {config.bg} -translate-x-[calc(50%+1px)]"
 					>
-						<config.icon class="w-3.5 h-3.5 {config.color}" />
+						<config.icon class="w-3.5 h-3.5 {config.color}" aria-hidden="true" />
 					</div>
 
 					<!-- Content -->
@@ -131,7 +123,7 @@
 							<div class="flex items-center gap-2">
 								<span
 									class="text-xs font-mono text-muted-foreground shrink-0"
-									title={formatAbsoluteTime(crumb.timestamp)}
+									title={formatAbsoluteTime(crumb.timestamp, $displayPreferences)}
 								>
 									{formatRelativeTime(crumb.timestamp)}
 								</span>

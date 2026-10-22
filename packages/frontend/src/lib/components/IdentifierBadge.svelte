@@ -10,11 +10,18 @@
 
   let { type, value, onclick }: Props = $props();
 
+  const ACRONYMS: Record<string, string> = { id: 'ID', uuid: 'UUID' };
+
+  /** snake_case to sentence case: first word capitalised, ID and UUID in capitals. */
   function formatType(type: string): string {
-    // Convert snake_case to Title Case
     return type
       .split('_')
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .filter((word) => word !== '')
+      .map((word, i) => {
+        const lower = word.toLowerCase();
+        if (ACRONYMS[lower]) return ACRONYMS[lower];
+        return i === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+      })
       .join(' ');
   }
 
@@ -50,11 +57,13 @@
 </script>
 
 <button
+  type="button"
   class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono rounded cursor-pointer transition-colors border-none {getTypeColor(type)}"
   {onclick}
-  title="Click to see all events with {formatType(type)}: {value}"
+  aria-label="Show events with {formatType(type)} {value}"
+  title="Show events with {formatType(type)} {value}"
 >
-  <Link2 class="w-3 h-3" />
+  <Link2 class="w-3 h-3" aria-hidden="true" />
   <span class="font-medium">{formatType(type)}:</span>
   <span>{truncateValue(value)}</span>
 </button>

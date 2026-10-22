@@ -1,18 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/svelte';
-import { fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import IdentifierBadge from './IdentifierBadge.svelte';
 
 describe('IdentifierBadge', () => {
   it('renders formatted type and value', () => {
     const { getByText } = render(IdentifierBadge, { props: { type: 'trace_id', value: 'abc123' } });
-    expect(getByText('Trace Id:')).toBeTruthy();
+    expect(getByText('Trace ID:')).toBeTruthy();
     expect(getByText('abc123')).toBeTruthy();
   });
 
-  it('converts snake_case type to Title Case', () => {
-    const { getByText } = render(IdentifierBadge, { props: { type: 'request_id', value: 'req-1' } });
-    expect(getByText('Request Id:')).toBeTruthy();
+  it('writes the type in sentence case with ID and UUID in capitals', () => {
+    const first = render(IdentifierBadge, { props: { type: 'request_id', value: 'req-1' } });
+    expect(first.getByText('Request ID:')).toBeTruthy();
+    first.unmount();
+    const second = render(IdentifierBadge, { props: { type: 'uuid', value: 'u-1' } });
+    expect(second.getByText('UUID:')).toBeTruthy();
+    second.unmount();
+    const third = render(IdentifierBadge, { props: { type: 'some_other_type', value: 'v' } });
+    expect(third.getByText('Some other type:')).toBeTruthy();
+  });
+
+  it('names the action with the full value', () => {
+    const longVal = 'a'.repeat(30);
+    render(IdentifierBadge, { props: { type: 'trace_id', value: longVal } });
+    expect(screen.getByRole('button', { name: `Show events with Trace ID ${longVal}` })).toBeTruthy();
+  });
+
+  it('labels the button for assistive technology', () => {
+    render(IdentifierBadge, { props: { type: 'trace_id', value: 'abc123' } });
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Show events with Trace ID abc123');
   });
 
   it('truncates long values to 24 chars with ellipsis', () => {
