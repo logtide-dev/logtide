@@ -405,3 +405,26 @@ describe('Email Templates (branches) - Digest edge cases', () => {
     expect(result.text).toContain('Total logs: 0');
   });
 });
+
+describe('Email Templates (branches) - monitor incident deep link', () => {
+  const base: MonitorEmailData = {
+    monitorId: 'mon-9',
+    monitorName: 'Link Monitor',
+    status: 'down',
+    severity: 'high',
+    organizationName: 'Org',
+  };
+
+  it('links to the incident when one is given', () => {
+    const result = generateMonitorEmail({ ...base, incidentId: 'inc-123' });
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/incidents/inc-123');
+    expect(result.text).toContain('View details: https://app.logtide.dev/dashboard/incidents/inc-123');
+    expect(result.html).not.toContain('https://app.logtide.dev/dashboard/uptime"');
+  });
+
+  it('keeps the uptime link without an incident', () => {
+    const result = generateMonitorEmail({ ...base, incidentId: null });
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/uptime');
+    expect(result.html).not.toContain('/dashboard/incidents/');
+  });
+});

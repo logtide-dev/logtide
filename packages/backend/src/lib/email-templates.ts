@@ -838,11 +838,15 @@ export interface MonitorEmailData {
   responseTimeMs?: number | null;
   consecutiveFailures?: number;
   downtimeDuration?: string | null;
+  /** Shared incident opened for this outage; the email deep links to it when set. */
+  incidentId?: string | null;
 }
 
 export function generateMonitorEmail(data: MonitorEmailData): { html: string; text: string } {
   const frontendUrl = getFrontendUrl();
-  const monitorUrl = `${frontendUrl}/dashboard/uptime`;
+  const monitorUrl = data.incidentId
+    ? `${frontendUrl}/dashboard/incidents/${data.incidentId}`
+    : `${frontendUrl}/dashboard/uptime`;
   const isDown = data.status === 'down';
   const severityLabel = severityLabels[data.severity] || data.severity;
 

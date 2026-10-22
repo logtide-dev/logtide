@@ -205,6 +205,7 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
       responseTimeMs: data.responseTimeMs,
       consecutiveFailures: data.consecutiveFailures,
       downtimeDuration: data.downtimeDuration,
+      incidentId: data.incidentId,
     });
 
     const subjectPrefix = isDown ? 'DOWN' : 'RECOVERED';
