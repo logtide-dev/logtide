@@ -111,3 +111,15 @@ describe('traces ui rules', () => {
     expect(tags[0]).toContain('go()');
   });
 });
+
+describe('operations card layout', () => {
+  it('lets the grid cards shrink so the table scrolls inside its card', () => {
+    const file = Object.keys(sources).find((f) => f.endsWith('/TracesExplorer.svelte'));
+    expect(file).toBeTruthy();
+    const src = sources[file as string];
+    const grid = src.slice(src.indexOf('lg:grid-cols-2'));
+    const cards = grid.match(/<Card[ >][^\n]*/g)!.slice(0, 2);
+    expect(cards[0]).toContain('min-w-0');
+    expect(cards[1]).toContain('min-w-0');
+  });
+});
