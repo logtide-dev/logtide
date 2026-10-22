@@ -1,13 +1,14 @@
 import { db } from '../../database/index.js';
 import { reservoir } from '../../database/reservoir.js';
-import type { TimeBucket, StoredLogRecord } from '@logtide/reservoir';
+import type { TimeBucket, StoredLogRecord, IReservoir } from '@logtide/reservoir';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
-import type { LogLevel, MetadataFilter } from '@logtide/shared';
+import type { LogLevel, LogSearchQuery, MetadataFilter } from '@logtide/shared';
 import { hooks } from '../../hooks/index.js';
 import { context } from '@logtide/shared/context';
+import { buildLogFilter, type SearchMode } from './build-log-filter.js';
 
 /** Supported search modes */
-export type SearchMode = 'fulltext' | 'substring';
+export type { SearchMode };
 
 export interface LogQueryParams {
   projectId: string | string[]; // Support single or multiple projects
@@ -18,8 +19,8 @@ export interface LogQueryParams {
   sessionId?: string; // Filter by browser session ID
   from?: Date;
   to?: Date;
-  q?: string; // Search query
-  searchMode?: SearchMode; // Search mode: 'fulltext' (default) or 'substring'
+  q?: string; // Search query (log query language, or one phrase in substring mode)
+  searchMode?: SearchMode; // Search mode: 'fulltext' (default, parses q) or 'substring'
   metadata_filters?: MetadataFilter[]; // Filter by metadata key/value
   limit?: number;
   offset?: number;
@@ -27,64 +28,118 @@ export interface LogQueryParams {
   skipCache?: boolean; // Bypass the query cache (e.g. for per-second live tail polling)
 }
 
+/** The reservoir filter part shared by query, count, histogram and facets. */
+export type LogFilterParams = Omit<Parameters<IReservoir['histogram']>[0], 'bucketSeconds'>;
+
+export interface PreparedLogFilter {
+  filter: LogFilterParams;
+  query: LogSearchQuery;
+  /** The params after beforeQuery hooks ran (limit, offset, cursor, skipCache live here). */
+  params: LogQueryParams;
+}
+
+/** The log payload of every log read endpoint (list, by id, context, trace, live tail). */
+export interface ApiLog {
+  id: string;
+  time: Date;
+  projectId: string;
+  service: string;
+  level: LogLevel;
+  message: string;
+  metadata?: Record<string, unknown>;
+  traceId?: string;
+  spanId?: string;
+  sessionId?: string;
+  hostname?: string;
+}
+
+const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const orUndefined = (value: string | null | undefined): string | undefined =>
+  value === null || value === undefined || value === '' ? undefined : value;
+
+/** CacheManager.queryKey sorts an array argument in place: hand it a copy. */
+const cacheProjectPart = (projectId: LogFilterParams['projectId']): string | string[] =>
+  Array.isArray(projectId) ? [...projectId] : projectId;
+
+/** The one mapper from a stored log to the API payload. */
+export function mapApiLog(log: StoredLogRecord): ApiLog {
+  const metadataHost = log.metadata?.hostname;
+  return {
+    id: log.id,
+    time: log.time,
+    projectId: log.projectId,
+    service: log.service,
+    level: log.level,
+    message: log.message,
+    metadata: log.metadata ?? undefined,
+    traceId: orUndefined(log.traceId),
+    spanId: orUndefined(log.spanId),
+    sessionId: orUndefined(log.sessionId),
+    hostname: typeof metadataHost === 'string' && metadataHost !== '' ? metadataHost : undefined,
+  };
+}
+
 export class QueryService {
+  /**
+   * Runs the beforeQuery hook (#216), compiles the (possibly mutated) params
+   * with the log query language and applies the default window (last 24h).
+   * Every log read endpoint goes through here, so a hook that forces a filter
+   * narrows search, count, histogram, facets and fields alike.
+   *
+   * Throws LogQueryError for an invalid q.
+   */
+  async prepare(params: LogQueryParams): Promise<PreparedLogFilter> {
+    const ctx = {
+      organizationId: context.currentOrNull()?.organizationId ?? null,
+      projectIds: Array.isArray(params.projectId) ? [...params.projectId] : [params.projectId],
+      params,
+    };
+    if (hooks.hasHandlers('beforeQuery')) {
+      await hooks.run('beforeQuery', ctx);
+    }
+    const effective = ctx.params;
+
+    const built = buildLogFilter({
+      q: effective.q,
+      searchMode: effective.searchMode,
+      service: effective.service,
+      level: effective.level,
+      hostname: effective.hostname,
+      traceId: effective.traceId,
+      sessionId: effective.sessionId,
+      metadata_filters: effective.metadata_filters,
+    });
+
+    // PERFORMANCE: always a time filter (defaults to the last 24h) to prevent
+    // full table scans on large datasets.
+    const to = effective.to ?? new Date();
+    const from = effective.from ?? new Date(Date.now() - DEFAULT_WINDOW_MS);
+
+    return {
+      filter: { projectId: effective.projectId, from, to, ...built.filter },
+      query: built.query,
+      params: effective,
+    };
+  }
+
   /**
    * Query logs with filters
    * Cached for performance - common queries are frequently repeated
-   *
-   * PERFORMANCE: Always uses a time filter (defaults to last 24h)
-   * to prevent full table scans on large datasets.
    */
   async queryLogs(params: LogQueryParams) {
-    // Lifecycle hook (#216): runs after parsing/access checks (done in the
-    // route), before the cache key is built - so mutated params drive both
-    // the cache key and the reservoir read.
-    if (hooks.hasHandlers('beforeQuery')) {
-      await hooks.run('beforeQuery', {
-        organizationId: context.currentOrNull()?.organizationId ?? null,
-        projectIds: Array.isArray(params.projectId) ? params.projectId : [params.projectId],
-        params,
-      });
-    }
+    // Hooks run inside prepare, before the cache key is built, so mutated
+    // params drive both the cache key and the reservoir read.
+    const prepared = await this.prepare(params);
+    const { filter } = prepared;
+    const { limit = 100, offset = 0, cursor, skipCache = false } = prepared.params;
 
-    const {
-      projectId,
-      service,
-      level,
-      hostname,
-      traceId,
-      sessionId,
-      from,
-      to,
-      q,
-      searchMode = 'fulltext',
-      metadata_filters,
-      limit = 100,
-      offset = 0,
-      cursor,
-      skipCache = false,
-    } = params;
-
-    // PERFORMANCE: Default to last 24h if no time filter provided
-    const effectiveFrom = from || new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    // Generate deterministic cache key
-    const cacheParams = {
-      service: service || null,
-      level: level || null,
-      hostname: hostname || null,
-      traceId: traceId || null,
-      sessionId: sessionId || null,
-      from: effectiveFrom.toISOString(),
-      to: to?.toISOString() || null,
-      q: q || null,
-      searchMode: searchMode || 'fulltext',
-      metadata_filters: metadata_filters ? JSON.stringify(metadata_filters) : null,
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
+      filter: JSON.stringify(filter),
       limit,
       offset,
       cursor: cursor || null,
-    };
-    const cacheKey = CacheManager.queryKey(projectId, cacheParams);
+    });
     const cached = skipCache ? null : await CacheManager.get<any>(cacheKey);
 
     if (cached && cached.total !== -1) {
@@ -97,48 +152,14 @@ export class QueryService {
       };
     }
 
-    // Delegate to reservoir (raw parametrized SQL, no Kysely overhead)
-    const effectiveTo = to ?? new Date();
-    const commonParams = {
-      projectId,
-      service,
-      level,
-      hostname,
-      traceId,
-      sessionId,
-      from: effectiveFrom,
-      to: effectiveTo,
-      search: q,
-      searchMode,
-      metadataFilters: metadata_filters,
-    };
-
     // Run data query and count query in parallel
     const [queryResult, countResult] = await Promise.all([
-      reservoir.query({
-        ...commonParams,
-        limit,
-        offset,
-        cursor,
-      }),
-      reservoir.countEstimate(commonParams),
+      reservoir.query({ ...filter, limit, offset, cursor }),
+      reservoir.countEstimate(filter),
     ]);
 
-    // Map reservoir StoredLogRecord to API format
-    const logs = queryResult.logs.map((log: StoredLogRecord) => ({
-      id: log.id,
-      time: log.time,
-      projectId: log.projectId,
-      service: log.service,
-      level: log.level,
-      message: log.message,
-      metadata: log.metadata,
-      traceId: log.traceId,
-      sessionId: log.sessionId,
-    }));
-
     const result = {
-      logs,
+      logs: queryResult.logs.map(mapApiLog),
       total: countResult.count,
       hasMore: queryResult.hasMore,
       limit: queryResult.limit,
@@ -156,23 +177,9 @@ export class QueryService {
   /**
    * Get a single log by ID
    */
-  async getLogById(logId: string, projectId: string) {
+  async getLogById(logId: string, projectId: string): Promise<ApiLog | null> {
     const log = await reservoir.getById({ id: logId, projectId });
-
-    if (!log) {
-      return null;
-    }
-
-    return {
-      id: log.id,
-      time: log.time,
-      projectId: log.projectId,
-      service: log.service,
-      level: log.level,
-      message: log.message,
-      metadata: log.metadata,
-      traceId: log.traceId,
-    };
+    return log ? mapApiLog(log) : null;
   }
 
   /**
@@ -201,16 +208,7 @@ export class QueryService {
       limit: 1000,
     });
 
-    const result = queryResult.logs.map((log: { id: string; time: Date; projectId: string; service: string; level: string; message: string; metadata?: Record<string, unknown>; traceId?: string }) => ({
-      id: log.id,
-      time: log.time,
-      projectId: log.projectId,
-      service: log.service,
-      level: log.level,
-      message: log.message,
-      metadata: log.metadata,
-      traceId: log.traceId,
-    }));
+    const result = queryResult.logs.map(mapApiLog);
 
     // Cache for longer since trace data is immutable
     await CacheManager.set(cacheKey, result, CACHE_TTL.TRACE);
@@ -257,21 +255,10 @@ export class QueryService {
       }),
     ]);
 
-    const mapLog = (log: StoredLogRecord) => ({
-      id: log.id,
-      time: log.time,
-      projectId: log.projectId,
-      service: log.service,
-      level: log.level,
-      message: log.message,
-      metadata: log.metadata,
-      traceId: log.traceId,
-    });
-
     return {
-      before: beforeResult.logs.reverse().map(mapLog),
-      current: currentResult.logs.length > 0 ? mapLog(currentResult.logs[0]) : null,
-      after: afterResult.logs.map(mapLog),
+      before: beforeResult.logs.reverse().map(mapApiLog),
+      current: currentResult.logs.length > 0 ? mapApiLog(currentResult.logs[0]) : null,
+      after: afterResult.logs.map(mapApiLog),
     };
   }
 

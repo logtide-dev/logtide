@@ -1,8 +1,13 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { queryService, type SearchMode } from './service.js';
-import type { LogLevel, MetadataFilter } from '@logtide/shared';
-import { metadataFiltersSchema } from '@logtide/shared';
+import { queryService } from './service.js';
+import type { LogLevel } from '@logtide/shared';
 import { db } from '../../database/index.js';
+import { LogQueryError } from './build-log-filter.js';
+import {
+  LOG_FILTER_QUERYSTRING_PROPERTIES,
+  readLogFilterRequest,
+  resolveAccessibleProjects,
+} from './filter-params.js';
 import { requireFullAccess, resolveQueryProjectId } from '../auth/guards.js';
 import { auditLogService } from '../audit-log/service.js';
 
@@ -28,122 +33,47 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
       querystring: {
         type: 'object',
         properties: {
-          projectId: {
-            anyOf: [
-              { type: 'string' },
-              { type: 'array', items: { type: 'string' } }
-            ]
-          },
-          service: {
-            anyOf: [
-              { type: 'string' },
-              { type: 'array', items: { type: 'string' } }
-            ]
-          },
-          level: {
-            anyOf: [
-              { type: 'string', enum: ['debug', 'info', 'warn', 'error', 'critical'] },
-              {
-                type: 'array',
-                items: { type: 'string', enum: ['debug', 'info', 'warn', 'error', 'critical'] }
-              }
-            ]
-          },
-          hostname: {
-            anyOf: [
-              { type: 'string' },
-              { type: 'array', items: { type: 'string' } }
-            ]
-          },
-          traceId: { type: 'string' },
-          sessionId: { type: 'string' },
-          from: { type: 'string', format: 'date-time' },
-          to: { type: 'string', format: 'date-time' },
-          q: { type: 'string' },
-          searchMode: { type: 'string', enum: ['fulltext', 'substring'], default: 'fulltext' },
+          ...LOG_FILTER_QUERYSTRING_PROPERTIES,
           limit: { type: 'number', minimum: 1, maximum: 1000, default: 100 },
           offset: { type: 'number', minimum: 0, default: 0 },
           cursor: { type: 'string' },
-          metadata_filters: { type: 'string' },
         },
       },
     },
     handler: async (request: any, reply) => {
       if (!await requireFullAccess(request, reply)) return;
 
-      const { service, level, hostname, traceId, sessionId, from, to, q, searchMode, limit, offset, cursor, metadata_filters: rawMetadataFilters, projectId: queryProjectId } = request.query as {
-        service?: string | string[];
-        level?: LogLevel | LogLevel[];
-        hostname?: string | string[];
-        traceId?: string;
-        sessionId?: string;
-        from?: string;
-        to?: string;
-        q?: string;
-        searchMode?: SearchMode;
+      const query = request.query as Record<string, unknown> & {
         limit?: number;
         offset?: number;
         cursor?: string;
-        metadata_filters?: string;
         projectId?: string | string[];
       };
 
-      // Parse and validate metadata_filters if provided
-      let metadata_filters: MetadataFilter[] | undefined;
-      if (rawMetadataFilters) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(rawMetadataFilters);
-        } catch {
-          return reply.code(400).send({ error: 'metadata_filters must be valid JSON' });
-        }
-        const result = metadataFiltersSchema.safeParse(parsed);
-        if (!result.success) {
-          return reply.code(400).send({ error: 'invalid metadata_filters', details: result.error.issues });
-        }
-        metadata_filters = result.data;
-      }
+      const read = readLogFilterRequest(query);
+      if (!read.ok) return reply.code(400).send(read.body);
 
-      // Resolve projectId enforcing API-key tenant boundary
-      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
-      if (resolvedProjectId === null) return; // 403 already sent
-      const projectId = resolvedProjectId;
+      // Resolve projectId enforcing API-key tenant boundary and membership
+      const projectId = await resolveAccessibleProjects(request, reply, query.projectId);
+      if (projectId === null) return;
 
-      if (!projectId) {
-        return reply.code(400).send({
-          error: 'Project context missing - provide projectId query parameter',
+      let logs;
+      try {
+        logs = await queryService.queryLogs({
+          ...read.value,
+          projectId,
+          limit: query.limit || 100,
+          offset: query.offset || 0,
+          cursor: query.cursor,
         });
-      }
-
-      if ((request as any).user?.id) {
-        const projectIds = Array.isArray(projectId) ? projectId : [projectId];
-        for (const pid of projectIds) {
-          const hasAccess = await verifyProjectAccess(pid, (request as any).user.id);
-          if (!hasAccess) {
-            return reply.code(403).send({
-              error: `Access denied - you do not have access to project ${pid}`,
-            });
-          }
+      } catch (err) {
+        if (err instanceof LogQueryError) {
+          return reply.code(400).send({ error: err.message, position: err.position });
         }
+        throw err;
       }
 
-      const logs = await queryService.queryLogs({
-        projectId,
-        service,
-        level,
-        hostname,
-        traceId,
-        sessionId,
-        from: from ? new Date(from) : undefined,
-        to: to ? new Date(to) : undefined,
-        q,
-        searchMode,
-        metadata_filters,
-        limit: limit || 100,
-        offset: offset || 0,
-        cursor,
-      });
-
+      const { q, service, level, traceId, sessionId, searchMode } = read.value;
       void auditLogService.record({
         action: 'data.logs_searched',
         target: { type: 'project', id: Array.isArray(projectId) ? projectId.join(',') : projectId },
