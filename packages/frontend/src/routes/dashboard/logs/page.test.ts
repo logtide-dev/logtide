@@ -1,7 +1,4 @@
 // Logs explorer page (routes/dashboard/logs/+page.svelte).
-//
-// Lives next to the explorer components because the root `.gitignore` rule
-// `logs/` ignores every new file under routes/dashboard/logs (SR-W2-1).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -93,16 +90,16 @@ vi.mock('$lib/stores/checklist', () => ({ checklistStore: { completeItem: h.comp
 vi.mock('echarts', () => ({ init: () => h.chart }));
 
 vi.mock('$lib/components/app/ScopeBar.svelte', async () => ({
-  default: (await import('./test-stubs/ScopeBarStub.svelte')).default,
+  default: (await import('$lib/components/search/test-stubs/ScopeBarStub.svelte')).default,
 }));
 vi.mock('$lib/components/app/KeyValueTable.svelte', async () => ({
-  default: (await import('./test-stubs/KeyValueTableStub.svelte')).default,
+  default: (await import('$lib/components/search/test-stubs/KeyValueTableStub.svelte')).default,
 }));
 
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { get } from 'svelte/store';
-import Page from '../../../routes/dashboard/logs/+page.svelte';
+import Page from './+page.svelte';
 import { page } from '$app/state';
 import { LogQueryError, type LogEntry } from '$lib/api/logs';
 import { scopeStore } from '$lib/stores/scope';
@@ -111,7 +108,7 @@ import { authStore } from '$lib/stores/auth';
 import { shortcutsStore } from '$lib/stores/shortcuts';
 import { displayPreferences } from '$lib/stores/display-preferences';
 import { toastStore } from '$lib/stores/toast';
-import { makeLog, resetLogIds, deferred, FakeWebSocket } from './test-fixtures';
+import { makeLog, resetLogIds, deferred, FakeWebSocket } from '$lib/components/search/test-fixtures';
 
 const NOW = new Date('2026-10-21T10:42:13.000Z');
 
