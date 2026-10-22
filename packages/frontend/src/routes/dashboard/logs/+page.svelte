@@ -1375,7 +1375,7 @@
     {/if}
 
     {#if recent.length > 0 && draftQ.trim() === ""}
-      <div class="flex flex-wrap items-center gap-1.5">
+      <div class="flex flex-wrap items-center gap-1.5 max-md:hidden">
         <span class="text-xs text-muted-foreground">Recent:</span>
         {#each recent as entry, i (i)}
           <button
