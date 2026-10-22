@@ -4,3 +4,9 @@ export { default as ExceptionDetailsDialog } from './ExceptionDetailsDialog.svel
 export { default as ErrorGroupCard } from './ErrorGroupCard.svelte';
 export { default as LanguageBadge } from './shared/LanguageBadge.svelte';
 export { default as ErrorGroupStatusBadge } from './shared/ErrorGroupStatusBadge.svelte';
+export { default as IgnoreDialog } from './IgnoreDialog.svelte';
+export { default as AssigneePicker } from './AssigneePicker.svelte';
+export { default as ErrorSparkline } from './ErrorSparkline.svelte';
+export { default as ErrorStatusBadges } from './ErrorStatusBadges.svelte';
+export { default as BulkActionBar } from './BulkActionBar.svelte';
+export type { AssigneeMember, IgnoreOptions } from './error-status';

@@ -30,3 +30,9 @@ export function describeIgnore(
   if (parts.length === 0) return 'Ignored forever';
   return `Ignored until ${parts.join(' or ')}`;
 }
+
+/** A member that can be assigned an error group. */
+export type AssigneeMember = { id: string; name: string; email: string };
+
+/** Options chosen in the ignore dialog; both absent means ignore forever. */
+export type IgnoreOptions = { ignoredUntil?: string; ignoreUntilCount?: number };
