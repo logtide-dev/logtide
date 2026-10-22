@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import crypto from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { StoredLogRecord } from '@logtide/reservoir';
 import { build } from '../../server.js';
+import { hooks } from '../../hooks/index.js';
 import { createTestContext } from '../helpers/index.js';
 import { seedLogs } from '../modules/query/seed.js';
 
@@ -175,5 +176,104 @@ describe('Log search API (query language)', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('Queries can be at most 2,000 characters');
     expect(res.body.position).toBe(2000);
+  });
+
+  describe('GET /api/v1/logs/count', () => {
+    afterEach(() => {
+      hooks.clear();
+    });
+
+    function count(params: Params) {
+      const qs = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        for (const v of Array.isArray(value) ? value : [value]) qs.append(key, v);
+      }
+      return request(app.server).get(`/api/v1/logs/count?${qs.toString()}`).set('x-api-key', apiKey);
+    }
+
+    it('counts logs matching q', async () => {
+      const res = await count({ q: 'region:eu' });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ count: 2 });
+    });
+
+    it('counts every log without q', async () => {
+      const res = await count({});
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(5);
+    });
+
+    it('count agrees with the search result', async () => {
+      const [counted, searched] = await Promise.all([count({ q: 'refused' }), search({ q: 'refused' })]);
+      expect(counted.status).toBe(200);
+      expect(searched.status).toBe(200);
+      expect(counted.body.count).toBe(searched.body.logs.length);
+      expect(counted.body.count).toBe(2);
+    });
+
+    it('applies legacy params and contradictions', async () => {
+      expect((await count({ service: 'api', q: 'level:error' })).body.count).toBe(1);
+      expect((await count({ service: 'api', q: 'service:worker' })).body.count).toBe(0);
+    });
+
+    it('returns 400 with position for an invalid q', async () => {
+      const res = await count({ q: 'timeout level:loud' });
+      expect(res.status).toBe(400);
+      expect(typeof res.body.error).toBe('string');
+      expect(res.body.position).toBe(8);
+    });
+
+    it('beforeQuery hooks narrow the count', async () => {
+      hooks.register('beforeQuery', (ctx) => {
+        ctx.params.service = 'worker';
+      });
+      const res = await count({});
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(2);
+    });
+
+    it('returns 400 for a malformed metadata_filters param', async () => {
+      const res = await count({ metadata_filters: 'not-json' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('metadata_filters must be valid JSON');
+    });
+
+    it('returns 400 when from is after to', async () => {
+      const res = await count({ from: '2026-10-21T12:00:00.000Z', to: '2026-10-21T11:00:00.000Z' });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('export paging', () => {
+    it('pages through q results by cursor', async () => {
+      const base = Date.now() - 30 * 60 * 1000;
+      await seedLogs(projectId, [
+        ...Array.from({ length: 7 }, (_, i) => ({
+          message: `exportrun batch item ${i}`,
+          time: new Date(base + i * 1000),
+        })),
+        ...Array.from({ length: 3 }, (_, i) => ({
+          message: `unrelated item ${i}`,
+          time: new Date(base + (i + 10) * 1000),
+        })),
+      ]);
+
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      for (let page = 0; page < 10; page++) {
+        const params: Params = { q: 'exportrun', limit: '3' };
+        if (cursor) params.cursor = cursor;
+        const res = await search(params);
+        expect(res.status).toBe(200);
+        for (const log of res.body.logs as { id: string; message: string }[]) {
+          expect(log.message).toContain('exportrun');
+          seen.add(log.id);
+        }
+        if (!res.body.hasMore) break;
+        cursor = res.body.nextCursor;
+        expect(typeof cursor).toBe('string');
+      }
+      expect(seen.size).toBe(7);
+    });
   });
 });

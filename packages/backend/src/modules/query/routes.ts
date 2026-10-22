@@ -3,6 +3,7 @@ import { queryService } from './service.js';
 import type { LogLevel } from '@logtide/shared';
 import { db } from '../../database/index.js';
 import { LogQueryError } from './build-log-filter.js';
+import { logExplorerRoutes } from './explorer-routes.js';
 import {
   LOG_FILTER_QUERYSTRING_PROPERTIES,
   readLogFilterRequest,
@@ -25,6 +26,8 @@ async function verifyProjectAccess(projectId: string, userId: string): Promise<b
 }
 
 const queryRoutes: FastifyPluginAsync = async (fastify) => {
+  await fastify.register(logExplorerRoutes);
+
   // GET /api/v1/logs - Search and filter logs
   fastify.get('/api/v1/logs', {
     schema: {

@@ -175,6 +175,24 @@ export class QueryService {
   }
 
   /**
+   * Exact number of logs matching the filters (same prepare path as search).
+   */
+  async countLogs(params: LogQueryParams): Promise<{ count: number }> {
+    const { filter } = await this.prepare(params);
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
+      kind: 'count',
+      filter: JSON.stringify(filter),
+    });
+    const cached = await CacheManager.get<{ count: number }>(cacheKey);
+    if (cached && typeof cached.count === 'number') return { count: cached.count };
+
+    const result = await reservoir.count(filter);
+    const value = { count: result.count };
+    await CacheManager.set(cacheKey, value, CACHE_TTL.QUERY);
+    return value;
+  }
+
+  /**
    * Get a single log by ID
    */
   async getLogById(logId: string, projectId: string): Promise<ApiLog | null> {
