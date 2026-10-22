@@ -1,4 +1,4 @@
-// Logs explorer read endpoints (count, histogram, facets, fields). They share
+// Logs explorer read endpoints (count, histogram, facets). They share
 // the filter params and the prepare path of GET /api/v1/logs, so the query
 // language, legacy params, beforeQuery hooks and tenancy apply identically
 // (fields takes only the projects and the window).
@@ -29,6 +29,24 @@ const EXPLORER_RATE_LIMIT = { max: 120, timeWindow: '1 minute' };
 const FIELDS_RATE_LIMIT = { max: 60, timeWindow: '1 minute' };
 const FIELDS_MIN_SAMPLE_SIZE = 100;
 
+/**
+ * Widest window the aggregate explorer reads (count, histogram, facets)
+ * accept: 31 days, the longest preset of the time range picker and the same
+ * cap as the web vitals reads. Wider windows scan the whole retention on every
+ * engine and run into the engine time limit anyway.
+ */
+export const EXPLORER_MAX_RANGE_MS = 31 * 24 * 60 * 60 * 1000;
+
+/** True for an engine time limit error: Mongo 50, ClickHouse 159, Postgres 57014. */
+export function isEngineTimeout(err: unknown, depth = 0): boolean {
+  if (!err || typeof err !== 'object' || depth > 3) return false;
+  const e = err as { code?: unknown; codeName?: unknown; type?: unknown; cause?: unknown };
+  if (e.code === 50 || e.code === '50' || e.codeName === 'MaxTimeMSExpired') return true;
+  if (e.code === 159 || e.code === '159' || e.type === 'TIMEOUT_EXCEEDED') return true;
+  if (e.code === '57014') return true;
+  return isEngineTimeout(e.cause, depth + 1);
+}
+
 interface LogReadRequest {
   params: LogQueryParams;
   projectId: string | string[];
@@ -42,6 +60,13 @@ async function readLogRead(request: FastifyRequest, reply: FastifyReply): Promis
   if (!read.ok) {
     reply.code(400).send(read.body);
     return null;
+  }
+  if (read.value.from) {
+    const to = read.value.to ?? new Date();
+    if (to.getTime() - read.value.from.getTime() > EXPLORER_MAX_RANGE_MS) {
+      reply.code(400).send({ error: 'The time range can be at most 31 days. Narrow it and try again.' });
+      return null;
+    }
   }
   const projectId = await resolveAccessibleProjects(request, reply, query.projectId as string | string[] | undefined);
   if (projectId === null) return null;
@@ -59,6 +84,11 @@ function handleQueryError(reply: FastifyReply, err: unknown): FastifyReply {
   }
   if (err instanceof ExplorerParamError) {
     return reply.code(400).send({ error: err.message });
+  }
+  if (isEngineTimeout(err)) {
+    return reply.code(503).send({
+      error: 'The query took too long to run. Narrow the time range or add filters and try again.',
+    });
   }
   throw err;
 }
