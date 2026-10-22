@@ -126,4 +126,19 @@ describe('clickhouse json paths', () => {
     expect(r.query).toContain('multiIf(JSONHas(metadata, {p_mfk0:String})');
     expect(r.query).not.toContain('JSONExtractString(metadata,');
   });
+
+  it('top values and distinct resolve metadata fields through the resolver, keys bound', () => {
+    const translator = new ClickHouseQueryTranslator('logs');
+    const scope = { projectId: 'p', from: new Date('2026-01-01T00:00:00Z'), to: new Date('2026-01-02T00:00:00Z') };
+    const top = translator.translateTopValues({ ...scope, field: 'metadata.performance.metric' });
+    const [topParams] = top.parameters as [Record<string, unknown>];
+    expect(top.query).not.toContain('performance');
+    expect(top.query).toContain('multiIf(JSONHas(metadata, {p_fk:String}), JSONExtractRaw(metadata, {p_fk:String})');
+    expect(topParams).toMatchObject({ p_fk: 'performance.metric', p_fks0: 'performance', p_fks1: 'metric' });
+    const distinct = translator.translateDistinct({ ...scope, field: 'metadata.region' });
+    expect(distinct.query).toContain('JSONExtractRaw(metadata, {p_fk:String})');
+    expect(distinct.query).toContain("WHERE value IS NOT NULL AND value != ''");
+    // The hostname keeps its materialized column.
+    expect(translator.translateDistinct({ ...scope, field: 'metadata.hostname' }).query).toContain('SELECT DISTINCT hostname AS value');
+  });
 });

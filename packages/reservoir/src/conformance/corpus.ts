@@ -125,6 +125,11 @@ const LOG_ROWS: LogRow[] = [
     meta: { tags: ['prod', 'eu'], errors: [{ code: 'E42' }], user: { name: 'alice' }, list: { '0': 'zero' } },
   },
   { id: 'L45', project: PROJECT_D, t: 35, service: 'api', level: 'info', message: 'a null value', meta: { note: null } },
+  // Web vitals as the browser SDK sends them: flat literal dotted keys (L46 to L48), plus one nested (L49).
+  { id: 'L46', project: PROJECT_D, t: 36, service: 'web', level: 'info', message: 'web vital LCP good', meta: { 'performance.metric': 'LCP', 'performance.value': 2100, 'performance.rating': 'good' } },
+  { id: 'L47', project: PROJECT_D, t: 37, service: 'web', level: 'warn', message: 'web vital LCP poor', meta: { 'performance.metric': 'LCP', 'performance.value': 4200, 'performance.rating': 'poor' } },
+  { id: 'L48', project: PROJECT_D, t: 38, service: 'web', level: 'info', message: 'web vital INP good', meta: { 'performance.metric': 'INP', 'performance.value': 150, 'performance.rating': 'good' } },
+  { id: 'L49', project: PROJECT_D, t: 39, service: 'web', level: 'info', message: 'web vital CLS nested', meta: { performance: { metric: 'CLS', rating: 'good' } } },
 ];
 
 function logRecord(row: LogRow): LogRecord {

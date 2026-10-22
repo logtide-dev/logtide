@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { StorageConfig } from '../../core/types.js';
 import { MongoDBEngine } from './mongodb-engine.js';
 import { MongoDBQueryTranslator } from './query-translator.js';
+import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
 
 // ============================================================================
 // Query Translator Unit Tests (no DB needed)
@@ -256,14 +257,17 @@ describe('MongoDBQueryTranslator', () => {
       expect(native.metadata?.limit).toBe(1000);
     });
 
-    it('handles metadata fields with dot notation', () => {
-      const native = translator.translateDistinct({
-        field: 'metadata.hostname',
-        projectId: 'p1',
-        from: new Date('2024-01-01'),
-        to: new Date('2024-01-02'),
-      });
-      expect(native.metadata?.mongoField).toBe('metadata.hostname');
+    it('resolves metadata fields like metadata filters, never by dot notation', () => {
+      const scope = { projectId: 'p1', from: new Date('2024-01-01'), to: new Date('2024-01-02') };
+      const hostname = translator.translateDistinct({ ...scope, field: 'metadata.hostname' });
+      expect(hostname.metadata?.mongoField).toBeUndefined();
+      expect(hostname.metadata?.valueExpr).toEqual(scalarTextExpr(resolvedValueExpr('metadata', 'hostname')));
+      // The browser SDK's flat `performance.metric` key: literal key first, then the nested path.
+      const top = translator.translateTopValues({ ...scope, field: 'metadata.performance.metric' });
+      expect(top.metadata?.valueExpr).toEqual(scalarTextExpr(resolvedValueExpr('metadata', 'performance.metric')));
+      expect(JSON.stringify(top.metadata?.valueExpr)).not.toContain('$metadata.performance');
+      // Built-in columns keep their path.
+      expect(translator.translateTopValues({ ...scope, field: 'service' }).metadata).toMatchObject({ mongoField: 'service', valueExpr: '$service' });
     });
 
     it('throws for invalid field name', () => {

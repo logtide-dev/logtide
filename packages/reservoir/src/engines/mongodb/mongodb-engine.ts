@@ -576,17 +576,21 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateDistinct(params);
     const filter = native.query as Document;
-    const mongoField = native.metadata!.mongoField as string;
+    const mongoField = native.metadata!.mongoField as string | undefined;
+    const valueExpr = native.metadata!.valueExpr as Document | string;
     const limit = native.metadata!.limit as number;
 
     const pipeline: Document[] = [
       { $match: filter },
-      // Pre-filter before $group to reduce the number of docs aggregated.
-      // Exclude only null and empty string. NOTE: `$gt: ''` would wrongly drop all
-      // numeric/boolean values too, since in BSON sort order those types compare
-      // below strings; use $nin so non-string metadata values survive.
-      { $match: { [mongoField]: { $exists: true, $nin: [null, ''] } } },
-      { $group: { _id: `$${mongoField}` } },
+      // Built-in columns: pre-filter before $group to reduce the number of docs
+      // aggregated. Exclude only null and empty string. NOTE: `$gt: ''` would
+      // wrongly drop all numeric/boolean values too, since in BSON sort order
+      // those types compare below strings.
+      ...(mongoField ? [{ $match: { [mongoField]: { $exists: true, $nin: [null, ''] } } }] : []),
+      // Metadata fields group by the S5 text of the resolved key: null for
+      // missing, null, objects and arrays, dropped after the group.
+      { $group: { _id: valueExpr } },
+      { $match: { _id: { $nin: [null, ''] } } },
       { $sort: { _id: 1 } },
       { $limit: limit },
       { $project: { value: '$_id', _id: 0 } },
@@ -604,19 +608,20 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateTopValues(params);
     const filter = native.query as Document;
-    const mongoField = native.metadata!.mongoField as string;
+    const valueExpr = native.metadata!.valueExpr as Document | string;
     const limit = native.metadata!.limit as number;
 
     const pipeline: Document[] = [
       { $match: filter },
       {
         $group: {
-          _id: `$${mongoField}`,
+          // A built-in column path, or the S5 text of a resolved metadata key.
+          _id: valueExpr,
           count: { $sum: 1 },
           ...(params.includeLastSeen ? { lastSeen: { $max: '$time' } } : {}),
         },
       },
-      { $match: { _id: { $ne: null } } },
+      { $match: { _id: { $nin: [null, ''] } } },
       { $sort: { count: -1 } },
       { $limit: limit },
       {

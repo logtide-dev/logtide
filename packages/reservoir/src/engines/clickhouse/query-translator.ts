@@ -285,11 +285,10 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
       const whereAll = fullWhere.length > 0 ? ` WHERE ${fullWhere.join(' AND ')}` : '';
       query = `SELECT DISTINCT hostname AS value FROM ${this.tableName}${prewhereClause}${whereAll} ORDER BY value ASC${limitClause}`;
     } else if (params.field.startsWith('metadata.')) {
-      // For other metadata fields: extract JSON once in a subquery instead of 3x per row.
-      // JSONExtractString always returns '' for missing keys - IS NOT NULL is redundant.
-      const jsonKey = params.field.slice('metadata.'.length);
-      const extract = `JSONExtractString(metadata, '${jsonKey}')`;
-      query = `SELECT DISTINCT value FROM (SELECT ${extract} AS value FROM ${this.tableName}${prewhereClause}${whereClause}) WHERE value != '' ORDER BY value ASC${limitClause}`;
+      // Other metadata fields: the scalar text of the resolved key (shared
+      // candidates, literal key first), computed once in a subquery.
+      const extract = chJsonScalarExpr('metadata', bindJsonKey(params.field.slice('metadata.'.length), 'p_fk', queryParams));
+      query = `SELECT DISTINCT value FROM (SELECT ${extract} AS value FROM ${this.tableName}${prewhereClause}${whereClause}) WHERE value IS NOT NULL AND value != '' ORDER BY value ASC${limitClause}`;
     } else {
       const selectExpr = params.field;
       conditions.push(`${selectExpr} IS NOT NULL`);
@@ -335,13 +334,11 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
       }
     }
 
-    let selectExpr: string;
-    if (params.field.startsWith('metadata.')) {
-      const jsonKey = params.field.slice('metadata.'.length);
-      selectExpr = `JSONExtractString(metadata, '${jsonKey}')`;
-    } else {
-      selectExpr = params.field;
-    }
+    // Metadata fields: the scalar text of the resolved key (shared candidates,
+    // literal key first); numbers and booleans count by their text.
+    const selectExpr = params.field.startsWith('metadata.')
+      ? chJsonScalarExpr('metadata', bindJsonKey(params.field.slice('metadata.'.length), 'p_fk', queryParams))
+      : params.field;
 
     conditions.push(`${selectExpr} IS NOT NULL`);
     conditions.push(`${selectExpr} != ''`);

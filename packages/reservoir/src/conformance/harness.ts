@@ -26,6 +26,7 @@ import { describeLatencyHistogramConformance } from './suites/latency-histogram.
 import { describeSpanTraceQueryConformance } from './suites/spans-traces.js';
 import { describeSessionsConformance } from './suites/sessions.js';
 import { describeMetadataPathConformance } from './suites/metadata-paths.js';
+import { describeTopValuesConformance } from './suites/top-values.js';
 
 export type ConformanceEngine = EngineType | 'reference';
 
@@ -37,6 +38,8 @@ export type ConformanceSubject = Pick<
   | 'histogram'
   | 'facets'
   | 'discoverMetadataKeys'
+  | 'topValues'
+  | 'distinct'
   | 'ingestSpans'
   | 'upsertTrace'
   | 'querySpans'
@@ -246,5 +249,6 @@ export function describeReservoirConformance(engine: ConformanceEngine, options:
     describeSpanTraceQueryConformance(ctx);
     describeSessionsConformance(ctx);
     describeMetadataPathConformance(ctx);
+    describeTopValuesConformance(ctx);
   });
 }

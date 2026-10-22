@@ -33,6 +33,10 @@ import {
   type CountParams,
   type CountResult,
   type DiscoverMetadataKeysParams,
+  type DistinctParams,
+  type DistinctResult,
+  type TopValuesParams,
+  type TopValuesResult,
   type EngineCapabilities,
   type EngineType,
   type HasSessionsParams,
@@ -136,6 +140,16 @@ function hostnameOf(log: LogRecord): string | undefined {
   const fromMetadata = log.metadata?.hostname;
   return typeof fromMetadata === 'string' ? fromMetadata : log.hostname;
 }
+
+/** Built-in columns topValues and distinct accept (the translators' ALLOWED_COLUMNS). */
+const BUILTIN_FIELD_READERS: Record<string, (log: StoredLogRecord) => string | undefined> = {
+  service: (log) => log.service,
+  level: (log) => log.level,
+  message: (log) => log.message,
+  trace_id: (log) => log.traceId,
+  span_id: (log) => log.spanId,
+  project_id: (log) => log.projectId,
+};
 
 function assertNoClientOnlyParams(params: object, method: string): void {
   if ('matchNothing' in params) throw new Error(`${method}: matchNothing must be answered by the client, never sent to an engine`);
@@ -267,6 +281,50 @@ export class ReferenceEngine {
 
   async countEstimate(params: CountParams): Promise<CountResult> {
     return { count: this.matchLogs(params, 'countEstimate').length };
+  }
+
+  /** Text values of `field` over the logs of the top values / distinct scope (S5 text, empty skipped). */
+  private fieldValues(params: TopValuesParams | DistinctParams): { value: string; time: Date }[] {
+    const field = params.field;
+    const read = BUILTIN_FIELD_READERS[field];
+    if (!read && !(field.startsWith('metadata.') && field.length > 'metadata.'.length)) {
+      throw new Error(`${NAME}: unsupported field ${field}`);
+    }
+    const key = field.slice('metadata.'.length);
+    const out: { value: string; time: Date }[] = [];
+    for (const log of this.logs) {
+      if (!logMatches(log, params)) continue;
+      const value = read ? read(log) : metadataValueText(resolveMetadataPath(log.metadata, key));
+      if (value === undefined || value === '') continue;
+      out.push({ value, time: log.time });
+    }
+    return out;
+  }
+
+  async topValues(params: TopValuesParams): Promise<TopValuesResult> {
+    const groups = new Map<string, { count: number; lastSeen: number }>();
+    for (const { value, time } of this.fieldValues(params)) {
+      const group = groups.get(value);
+      if (group) {
+        group.count++;
+        group.lastSeen = Math.max(group.lastSeen, time.getTime());
+      } else {
+        groups.set(value, { count: 1, lastSeen: time.getTime() });
+      }
+    }
+    const rows = [...groups]
+      .map(([value, g]) => ({
+        value,
+        count: g.count,
+        ...(params.includeLastSeen ? { lastSeen: new Date(g.lastSeen).toISOString() } : {}),
+      }))
+      .sort((a, b) => b.count - a.count || compareByteOrder(a.value, b.value));
+    return { values: params.limit ? rows.slice(0, params.limit) : rows };
+  }
+
+  async distinct(params: DistinctParams): Promise<DistinctResult> {
+    const values = [...new Set(this.fieldValues(params).map((v) => v.value))].sort(compareByteOrder);
+    return { values: params.limit ? values.slice(0, params.limit) : values };
   }
 
   async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {

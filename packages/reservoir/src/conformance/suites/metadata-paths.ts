@@ -12,7 +12,7 @@ import type { LogFacetsParams } from '../../core/types.js';
 import { minutes, PROJECT_C, PROJECT_D } from '../corpus.js';
 
 const D = [PROJECT_D];
-const D_LOGS = ['L40', 'L41', 'L42', 'L43', 'L44', 'L45'];
+const D_LOGS = ['L40', 'L41', 'L42', 'L43', 'L44', 'L45', 'L46', 'L47', 'L48', 'L49'];
 const except = (...ids: string[]): string[] => D_LOGS.filter((id) => !ids.includes(id));
 
 export const METADATA_PATH_CASES: LogCase[] = [
