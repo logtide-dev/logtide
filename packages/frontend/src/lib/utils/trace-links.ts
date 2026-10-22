@@ -18,7 +18,7 @@ function withQuery(path: string, params: URLSearchParams): string {
   return qs ? `${path}?${qs}` : path;
 }
 
-function paddedWindow(trace: { start_time: string; end_time: string }): { from: string; to: string } | null {
+export function paddedWindow(trace: { start_time: string; end_time: string }): { from: string; to: string } | null {
   const start = new Date(trace.start_time).getTime();
   const end = new Date(trace.end_time).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
