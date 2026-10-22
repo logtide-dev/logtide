@@ -15,6 +15,11 @@ export interface NavItem {
   external?: boolean;
   /** Active only when the pathname equals href */
   exact?: boolean;
+  /**
+   * Section path that marks the item active when it differs from href. Settings
+   * links straight to a page (a client route) but owns the whole section.
+   */
+  activePath?: string;
   adminOnly?: boolean;
   badge?: {
     id: string;
@@ -75,7 +80,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: 'Manage',
     items: [
       { id: 'projects', label: 'Projects', href: '/dashboard/projects', shortcut: 'g p' },
-      { id: 'settings', label: 'Settings', href: '/dashboard/settings', shortcut: 'g x' },
+      { id: 'settings', label: 'Settings', href: '/dashboard/settings/general', activePath: '/dashboard/settings', shortcut: 'g x' },
     ],
   },
   {
@@ -109,5 +114,6 @@ export function flatNavItems(): NavItem[] {
 export function isNavItemActive(item: NavItem, pathname: string): boolean {
   if (item.external) return false;
   if (item.exact) return pathname === item.href;
-  return pathname === item.href || pathname.startsWith(item.href + '/');
+  const base = item.activePath ?? item.href;
+  return pathname === base || pathname.startsWith(base + '/') || pathname === item.href;
 }

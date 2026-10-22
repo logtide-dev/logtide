@@ -610,7 +610,7 @@
                 Account settings
               </DropdownMenuItem>
               <DropdownMenuItem
-                onclick={() => goto("/dashboard/settings")}
+                onclick={() => goto("/dashboard/settings/general")}
                 class="cursor-pointer"
               >
                 <Building2 class="w-4 h-4 mr-2" />

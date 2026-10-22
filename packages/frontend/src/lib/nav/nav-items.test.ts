@@ -85,6 +85,21 @@ describe('nav-items', () => {
     expect(activeIds('/dashboard/settings/members')).toEqual(['settings']);
   });
 
+  it('links Settings straight to a client route and keeps the whole section active (UI-5)', () => {
+    const settings = flatNavItems().find((i) => i.id === 'settings')!;
+    // /dashboard/settings is a server-only redirect: navigating to it reloads the SPA
+    expect(settings.href).toBe('/dashboard/settings/general');
+    expect(flatNavItems().find((i) => i.shortcut === 'g x')!.href).toBe(settings.href);
+    for (const path of [
+      '/dashboard/settings/general',
+      '/dashboard/settings/members',
+      '/dashboard/settings/account/profile',
+    ]) {
+      expect(isNavItemActive(settings, path)).toBe(true);
+    }
+    expect(isNavItemActive(settings, '/dashboard/projects')).toBe(false);
+  });
+
   it('never marks external links active', () => {
     const docs = flatNavItems().find((i) => i.id === 'docs')!;
     expect(isNavItemActive(docs, '/dashboard')).toBe(false);
