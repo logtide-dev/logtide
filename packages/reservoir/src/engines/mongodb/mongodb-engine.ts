@@ -61,8 +61,64 @@ import type {
   MetricOverviewItem,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
 } from '../../core/types.js';
+import {
+  assertTimeRange,
+  normalizeDiscoverParams,
+  normalizeFacetsParams,
+  normalizeHistogramParams,
+  normalizeListSessionsParams,
+  normalizeOperationStatsParams,
+} from '../../core/normalize.js';
+import { decodeSessionCursor } from '../../core/aggregation-helpers.js';
+import {
+  DEFAULT_OPERATION_KINDS,
+  DISCOVER_DEFAULT_SAMPLE_SIZE,
+  FACETS_DEFAULT_LIMIT,
+  OPERATION_STATS_DEFAULT_LIMIT,
+} from '../../core/constants.js';
 import { MongoDBQueryTranslator, INTERVAL_MS } from './query-translator.js';
+import {
+  assembleFacets,
+  assembleHistogram,
+  assembleMetadataKeys,
+  assembleSessions,
+  discoverKeysPipeline,
+  facetsPipeline,
+  histogramPipeline,
+  listSessionsPipeline,
+  sessionMatch,
+  type FacetRow,
+  type HistogramRow,
+} from './log-analytics.js';
+import {
+  assembleLatencyHistogram,
+  assembleOperationStats,
+  buildSpanFilter,
+  buildTraceFilter,
+  entrySpanMatch,
+  isTraceSpanMatchActive,
+  latencyHistogramPipeline,
+  operationStatsPipeline,
+  spanSort,
+  traceMatchPipeline,
+  traceSort,
+  type EntryMode,
+  type PercentileStrategy,
+} from './apm-queries.js';
 
 export interface MongoDBEngineOptions {
   /** Use an existing MongoClient instead of creating a new one */
@@ -77,6 +133,13 @@ export interface MongoDBEngineOptions {
   useTimeSeries?: boolean;
   /** Use an existing Db instance (test/injection) */
   db?: Db;
+  /**
+   * Percentiles of getOperationStats: `'native'` uses `$percentile`
+   * (MongoDB 7.0+), `'buckets'` derives them from latency buckets (any
+   * version, error within one bucket), `'auto'` (default) picks native on
+   * 7.0 and later.
+   */
+  percentileStrategy?: 'auto' | 'native' | 'buckets';
 }
 
 /** Interval to $dateTrunc unit/binSize for MongoDB 5.0+ */
@@ -140,6 +203,8 @@ export class MongoDBEngine extends StorageEngine {
   private options: MongoDBEngineOptions;
   private useTimeSeries = false;
   private useDateTrunc = false;
+  /** Server major version: undefined until known, -1 when it cannot be read. */
+  private serverMajor: number | undefined;
 
   private get tableName(): string {
     return this.options.tableName ?? 'logs';
@@ -237,6 +302,7 @@ export class MongoDBEngine extends StorageEngine {
     try {
       const info = await db.admin().serverInfo();
       const [major] = info.version.split('.').map(Number);
+      this.serverMajor = Number.isFinite(major) ? major : -1;
       this.useDateTrunc = major >= 5;
 
       if (this.options.useTimeSeries !== undefined) {
@@ -577,6 +643,53 @@ export class MongoDBEngine extends StorageEngine {
     };
   }
 
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    // Same validation as the client (bucket size, bucket cap, range), so a
+    // direct engine call cannot build an unbounded zero-filled result.
+    const normalized = normalizeHistogramParams(params);
+    const filter = this.translator.buildLogFilter(normalized);
+    const rows = await this.logsCol()
+      .aggregate(histogramPipeline(filter, normalized.bucketSeconds * 1000), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleHistogram(normalized, rows as HistogramRow[]);
+  }
+
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    // Same validation as the client (field list, keys, limit clamp).
+    const normalized = normalizeFacetsParams(params);
+    const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
+    const filter = this.translator.buildLogFilter(normalized);
+    const rows = await this.logsCol()
+      .aggregate(facetsPipeline(filter, normalized.fields, limit), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleFacets(normalized.fields, rows as FacetRow[], limit);
+  }
+
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    const normalized = normalizeDiscoverParams(params);
+    const sampleSize = normalized.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE;
+    const rows = await this.logsCol()
+      .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleMetadataKeys(rows as { _id: unknown; occurrences: unknown }[]);
+  }
+
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    // Same validation as the client (range, limit clamp, cursor format).
+    const normalized = normalizeListSessionsParams(params);
+    const cursor = normalized.cursor !== undefined ? decodeSessionCursor(normalized.cursor) : null;
+    const rows = await this.logsCol()
+      .aggregate(listSessionsPipeline(normalized, normalized.limit, cursor), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleSessions(rows, normalized.limit);
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    assertTimeRange(params.from, params.to);
+    const doc = await this.logsCol().findOne(sessionMatch(params), { ...ctxOpts(), projection: { _id: 1 } });
+    return doc !== null;
+  }
+
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {
     const start = Date.now();
     const col = this.logsCol();
@@ -665,22 +778,11 @@ export class MongoDBEngine extends StorageEngine {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
-    const filter = this.buildSpanFilter(params);
-    // Same allowlist as the Timescale and ClickHouse engines so callers get the
-    // same ordering on every engine (there it also guards against SQL injection)
-    const ALLOWED_SORT_FIELDS = new Set([
-      'start_time',
-      'end_time',
-      'duration_ms',
-      'service_name',
-      'operation_name',
-    ]);
-    const sortBy = ALLOWED_SORT_FIELDS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
-    const sortOrder = params.sortOrder === 'desc' ? -1 : 1;
+    const filter = buildSpanFilter(params);
 
     const [docs, total] = await Promise.all([
       col.find(filter, { ...ctxOpts(), projection: { _id: 0 } })
-        .sort({ [sortBy]: sortOrder })
+        .sort(spanSort(params))
         .skip(offset)
         .limit(limit)
         .toArray(),
@@ -711,12 +813,31 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.tracesCol();
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
+    const sort = traceSort(params);
 
-    const filter = this.buildTraceFilter(params);
+    if (isTraceSpanMatchActive(params)) {
+      // At least one span of the trace must match the operation and every
+      // attribute filter together: start on spans, join the traces.
+      const [result] = await this.spansCol()
+        .aggregate(traceMatchPipeline(params, sort, offset, limit), { ...ctxOpts(), allowDiskUse: true })
+        .toArray();
+      const total = Number(result?.total?.[0]?.n ?? 0);
+      const page = ((result?.page ?? []) as Document[]).slice(0, limit);
+      return {
+        traces: page.map(mapDocToTraceRecord),
+        total,
+        hasMore: offset + page.length < total,
+        limit,
+        offset,
+        executionTimeMs: Date.now() - start,
+      };
+    }
+
+    const filter = buildTraceFilter(params);
 
     const [docs, total] = await Promise.all([
       col.find(filter, { ...ctxOpts(), projection: { _id: 0 } })
-        .sort({ start_time: -1 })
+        .sort(sort)
         .skip(offset)
         .limit(limit)
         .toArray(),
@@ -933,6 +1054,53 @@ export class MongoDBEngine extends StorageEngine {
 
     const result = await col.deleteMany(filter, { ...ctxOpts() });
     return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
+  }
+
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    // Same validation as the client (range, kinds, limit clamp).
+    const normalized = normalizeOperationStatsParams(params);
+    const limit = normalized.limit ?? OPERATION_STATS_DEFAULT_LIMIT;
+    const strategy = await this.percentileStrategy();
+    const run = async (mode: EntryMode): Promise<OperationStat[]> => {
+      const rows = await this.spansCol()
+        .aggregate(operationStatsPipeline({ ...normalized, limit }, mode, strategy), { ...ctxOpts(), allowDiskUse: true })
+        .toArray();
+      return assembleOperationStats(rows, strategy, limit);
+    };
+    const stats = await run('kinds');
+    // Explicit kinds never fall back; default kinds fall back to root spans.
+    if (stats.length > 0 || normalized.kinds !== undefined) return stats;
+    return run('root');
+  }
+
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    assertTimeRange(params.from, params.to);
+    const col = this.spansCol();
+    // The entry mode is decided on the project and service scope, before the operation filter.
+    const probe = await col.findOne(entrySpanMatch(params, 'kinds', DEFAULT_OPERATION_KINDS), {
+      ...ctxOpts(),
+      projection: { _id: 1 },
+    });
+    const rows = await col
+      .aggregate(latencyHistogramPipeline(params, probe ? 'kinds' : 'root'), { ...ctxOpts(), allowDiskUse: true })
+      .toArray();
+    return assembleLatencyHistogram(rows);
+  }
+
+  /** `$percentile` needs MongoDB 7.0; older (or unknown) servers use the bucket strategy. */
+  private async percentileStrategy(): Promise<PercentileStrategy> {
+    const forced = this.options.percentileStrategy;
+    if (forced === 'native' || forced === 'buckets') return forced;
+    if (this.serverMajor === undefined) {
+      try {
+        const info = await this.getDb().admin().serverInfo();
+        const major = Number(String(info.version).split('.')[0]);
+        this.serverMajor = Number.isFinite(major) ? major : -1;
+      } catch {
+        this.serverMajor = -1;
+      }
+    }
+    return this.serverMajor >= 7 ? 'native' : 'buckets';
   }
 
   // =========================================================================
@@ -1440,6 +1608,9 @@ export class MongoDBEngine extends StorageEngine {
     await safeCreateIndex(col, { project_id: 1, service_name: 1, status_code: 1, time: -1 }, 'idx_span_service_status_time');
     // Serves duration-sorted top-K reads (digest slowest spans)
     await safeCreateIndex(col, { project_id: 1, duration_ms: -1 }, 'idx_span_project_duration');
+    // Serves trace operation matches and operation-filtered latency histograms
+    // (built on the next start; `spans` is a normal collection)
+    await safeCreateIndex(col, { project_id: 1, operation_name: 1, time: -1 }, 'idx_span_operation_time');
   }
 
   private async createTracesIndexes(db: Db): Promise<void> {
@@ -1464,70 +1635,6 @@ export class MongoDBEngine extends StorageEngine {
     const exemplarCol = db.collection('metric_exemplars');
     await safeCreateIndex(exemplarCol, { metric_id: 1 }, 'idx_exemplar_metric');
     await safeCreateIndex(exemplarCol, { project_id: 1, time: -1 }, 'idx_exemplar_time');
-  }
-
-  private buildSpanFilter(params: SpanQueryParams): Document {
-    const filter: Document = {};
-
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      filter.project_id = pids.length === 1 ? pids[0] : { $in: pids };
-    }
-
-    const timeFilter: Document = {};
-    timeFilter[params.fromExclusive ? '$gt' : '$gte'] = params.from;
-    timeFilter[params.toExclusive ? '$lt' : '$lte'] = params.to;
-    filter.time = timeFilter;
-
-    if (params.traceId) {
-      const tids = Array.isArray(params.traceId) ? params.traceId : [params.traceId];
-      filter.trace_id = tids.length === 1 ? tids[0] : { $in: tids };
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      filter.service_name = svc.length === 1 ? svc[0] : { $in: svc };
-    }
-    if (params.kind) {
-      const k = Array.isArray(params.kind) ? params.kind : [params.kind];
-      filter.kind = k.length === 1 ? k[0] : { $in: k };
-    }
-    if (params.statusCode) {
-      const sc = Array.isArray(params.statusCode) ? params.statusCode : [params.statusCode];
-      filter.status_code = sc.length === 1 ? sc[0] : { $in: sc };
-    }
-
-    return filter;
-  }
-
-  private buildTraceFilter(params: TraceQueryParams): Document {
-    const filter: Document = {};
-
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      filter.project_id = pids.length === 1 ? pids[0] : { $in: pids };
-    }
-
-    filter.start_time = { $gte: params.from, $lte: params.to };
-
-    if (params.organizationId) {
-      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
-      filter.organization_id = oids.length === 1 ? oids[0] : { $in: oids };
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      filter.service_name = svc.length === 1 ? svc[0] : { $in: svc };
-    }
-    if (params.error !== undefined) {
-      filter.error = params.error;
-    }
-    if (params.minDurationMs !== undefined) {
-      filter.duration_ms = { ...filter.duration_ms, $gte: params.minDurationMs };
-    }
-    if (params.maxDurationMs !== undefined) {
-      filter.duration_ms = { ...filter.duration_ms, $lte: params.maxDurationMs };
-    }
-
-    return filter;
   }
 
   private buildMetricFilter(params: MetricQueryParams): Document {

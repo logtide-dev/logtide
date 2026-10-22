@@ -65,7 +65,10 @@ describe('MongoDBQueryTranslator', () => {
       expect(filter.level).toEqual({ $in: ['error', 'critical'] });
     });
 
-    it('adds fulltext search with $text', () => {
+    // Legacy `search` is converted to text terms; whole-word regexes replace $text.
+    const wordRe = (token: string) => `(?:^|[^\\p{L}\\p{N}_])${token}(?:$|[^\\p{L}\\p{N}_])`;
+
+    it('fulltext search ANDs a whole-word regex per word, never $text', () => {
       const native = translator.translateQuery({
         projectId: 'p1',
         from: new Date('2024-01-01'),
@@ -73,7 +76,11 @@ describe('MongoDBQueryTranslator', () => {
         search: 'connection error',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.$text).toEqual({ $search: 'connection error' });
+      expect(filter.$text).toBeUndefined();
+      expect(filter.$and).toEqual([
+        { message: { $regex: wordRe('connection'), $options: 'i' } },
+        { message: { $regex: wordRe('error'), $options: 'i' } },
+      ]);
     });
 
     it('uses regex for substring search mode', () => {
@@ -85,11 +92,11 @@ describe('MongoDBQueryTranslator', () => {
         searchMode: 'substring',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.message).toEqual({ $regex: 'test', $options: 'i' });
+      expect(filter.$and).toEqual([{ message: { $regex: 'test', $options: 'i' } }]);
       expect(filter.$text).toBeUndefined();
     });
 
-    it('uses regex for search with special characters', () => {
+    it('splits fulltext search with special characters into words', () => {
       const native = translator.translateQuery({
         projectId: 'p1',
         from: new Date('2024-01-01'),
@@ -97,7 +104,10 @@ describe('MongoDBQueryTranslator', () => {
         search: 'error: connection_failed',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.message).toBeDefined();
+      expect(filter.$and).toEqual([
+        { message: { $regex: wordRe('error'), $options: 'i' } },
+        { message: { $regex: wordRe('connection_failed'), $options: 'i' } },
+      ]);
       expect(filter.$text).toBeUndefined();
     });
 
@@ -110,8 +120,7 @@ describe('MongoDBQueryTranslator', () => {
         searchMode: 'substring',
       });
       const filter = native.query as Record<string, unknown>;
-      const msg = filter.message as { $regex: string };
-      expect(msg.$regex).toBe('test\\.\\*injection');
+      expect(filter.$and).toEqual([{ message: { $regex: 'test\\.\\*injection', $options: 'i' } }]);
     });
 
     it('adds traceId filter', () => {
@@ -136,10 +145,14 @@ describe('MongoDBQueryTranslator', () => {
         cursor,
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.$or).toEqual([
-        { time: { $lt: cursorTime } },
-        { time: cursorTime, id: { $lt: 'uuid-123' } },
-      ]);
+      // The cursor clause lives in the shared $and list, never at the top level.
+      expect(filter.$or).toBeUndefined();
+      expect(filter.$and).toEqual([{
+        $or: [
+          { time: { $lt: cursorTime } },
+          { time: cursorTime, id: { $lt: 'uuid-123' } },
+        ],
+      }]);
     });
 
     it('handles cursor pagination (asc)', () => {
@@ -154,10 +167,12 @@ describe('MongoDBQueryTranslator', () => {
         sortOrder: 'asc',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.$or).toEqual([
-        { time: { $gt: cursorTime } },
-        { time: cursorTime, id: { $gt: 'uuid-123' } },
-      ]);
+      expect(filter.$and).toEqual([{
+        $or: [
+          { time: { $gt: cursorTime } },
+          { time: cursorTime, id: { $gt: 'uuid-123' } },
+        ],
+      }]);
     });
 
     it('ignores invalid cursor', () => {
@@ -169,6 +184,7 @@ describe('MongoDBQueryTranslator', () => {
       });
       const filter = native.query as Record<string, unknown>;
       expect(filter.$or).toBeUndefined();
+      expect(filter.$and).toBeUndefined();
     });
 
     it('sets sort direction based on sortOrder', () => {
