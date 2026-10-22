@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 # Install pnpm and build dependencies for native modules (like bcrypt)
 RUN apk add --no-cache python3 make g++ && \
@@ -31,7 +31,7 @@ RUN pnpm --filter '@logtide/reservoir' build
 RUN pnpm --filter '@logtide/backend' build
 
 # Production stage
-FROM node:20-alpine
+FROM node:24-alpine
 
 # Install pnpm and runtime dependencies (nc for entrypoint)
 RUN apk add --no-cache netcat-openbsd && \
