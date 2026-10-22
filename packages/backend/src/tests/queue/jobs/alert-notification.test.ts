@@ -36,20 +36,43 @@ vi.mock('../../../modules/alerts/index.js', () => ({
 }));
 
 // Mock notificationChannelsService
-const mockGetAlertRuleChannels = vi.fn().mockResolvedValue([]);
-const mockGetOrganizationDefaults = vi.fn().mockResolvedValue([]);
-const mockGetSigmaRuleChannels = vi.fn().mockResolvedValue([]);
-vi.mock('../../../modules/notification-channels/index.js', () => ({
-    notificationChannelsService: {
-        getAlertRuleChannels: (...args: unknown[]) => mockGetAlertRuleChannels(...args),
-        getOrganizationDefaults: (...args: unknown[]) => mockGetOrganizationDefaults(...args),
-        getSigmaRuleChannels: (...args: unknown[]) => mockGetSigmaRuleChannels(...args),
-    },
+const { mockGetAlertRuleChannels, mockGetOrganizationDefaults, mockGetSigmaRuleChannels } = vi.hoisted(() => ({
+    mockGetAlertRuleChannels: vi.fn(),
+    mockGetOrganizationDefaults: vi.fn(),
+    mockGetSigmaRuleChannels: vi.fn(),
 }));
+// Channels returned by the real service always belong to the queried
+// organization, so the mock stamps organizationId like the DB rows do.
+const mockChannelsService = vi.hoisted(() => ({
+    getAlertRuleChannels: async (ruleId: string, organizationId: string) =>
+        ((await mockGetAlertRuleChannels(ruleId, organizationId)) as Record<string, unknown>[]).map((c) => ({
+            organizationId,
+            ...c,
+        })),
+    getSigmaRuleChannels: async (ruleId: string, organizationId: string) =>
+        ((await mockGetSigmaRuleChannels(ruleId, organizationId)) as Record<string, unknown>[]).map((c) => ({
+            organizationId,
+            ...c,
+        })),
+    getOrganizationDefaults: async (organizationId: string, eventType: string) =>
+        ((await mockGetOrganizationDefaults(organizationId, eventType)) as Record<string, unknown>[]).map((c) => ({
+            organizationId,
+            ...c,
+        })),
+}));
+// The job imports the index, the shared resolver imports the service file.
+vi.mock('../../../modules/notification-channels/index.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../modules/notification-channels/index.js')>();
+    return { ...actual, notificationChannelsService: mockChannelsService };
+});
+vi.mock('../../../modules/notification-channels/service.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../modules/notification-channels/service.js')>();
+    return { ...actual, notificationChannelsService: mockChannelsService };
+});
 
 // Mock config
-vi.mock('../../../config/index.js', () => ({
-    config: {
+vi.mock('../../../config/index.js', () => {
+  const config = {
         SMTP_HOST: 'smtp.test.com',
         SMTP_PORT: 587,
         SMTP_USER: 'test@test.com',
@@ -61,8 +84,9 @@ vi.mock('../../../config/index.js', () => ({
         CACHE_TTL: 60,
         FRONTEND_URL: 'https://app.logtide.dev',
         NODE_ENV: 'test',
-    },
-}));
+  };
+  return { config, isSmtpConfigured: () => !!config.SMTP_HOST };
+});
 
 describe('Alert Notification Job', () => {
     beforeEach(async () => {
@@ -957,6 +981,92 @@ describe('Alert Notification Job', () => {
             }
 
             expect(sendMailMock).not.toHaveBeenCalled();
+        });
+
+        describe('PagerDuty destinations', () => {
+            const PD_ROUTING_KEY = 'r'.repeat(32);
+            const pagerDutyChannel = {
+                id: '00000000-0000-4000-8000-000000000012',
+                type: 'pagerduty',
+                name: 'On call',
+                enabled: true,
+                config: { routingKey: PD_ROUTING_KEY },
+            };
+            const PD_URL = 'https://events.pagerduty.com/v2/enqueue';
+
+            function pagerDutyCalls() {
+                return enqueueMock.mock.calls.map((c) => c[0]).filter((c) => c.url === PD_URL);
+            }
+
+            it('triggers with the rule dedup key on alert.triggered', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetAlertRuleChannels.mockResolvedValueOnce([pagerDutyChannel]);
+
+                await processAlertNotification({ data: firingJob(organization.id, project.id) });
+
+                const calls = pagerDutyCalls();
+                expect(calls).toHaveLength(1);
+                expect(calls[0].payload).toMatchObject({
+                    routing_key: PD_ROUTING_KEY,
+                    event_action: 'trigger',
+                    dedup_key: `alert:${RULE_ID}`,
+                });
+                expect(calls[0].channelId).toBe(pagerDutyChannel.id);
+                // PagerDuty is not an email or webhook destination.
+                expect(sendMailMock).not.toHaveBeenCalled();
+                expect(enqueueMock.mock.calls.filter((c) => c[0].url !== PD_URL)).toHaveLength(0);
+            });
+
+            it('re-notifications keep the same dedup key', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetAlertRuleChannels.mockResolvedValueOnce([pagerDutyChannel]);
+
+                await processAlertNotification({
+                    data: firingJob(organization.id, project.id, { kind: 'renotify' }),
+                });
+
+                expect(pagerDutyCalls()[0].payload).toMatchObject({
+                    event_action: 'trigger',
+                    dedup_key: `alert:${RULE_ID}`,
+                });
+            });
+
+            it('resolves the same dedup key on alert.resolved', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetAlertRuleChannels.mockResolvedValueOnce([pagerDutyChannel]);
+
+                await processAlertNotification({ data: resolvedJob(organization.id, project.id) });
+
+                const calls = pagerDutyCalls();
+                expect(calls).toHaveLength(1);
+                expect(calls[0].payload).toEqual({
+                    routing_key: PD_ROUTING_KEY,
+                    event_action: 'resolve',
+                    dedup_key: `alert:${RULE_ID}`,
+                });
+            });
+
+            it('uses org default alert channels when the rule has none', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetOrganizationDefaults.mockResolvedValueOnce([pagerDutyChannel]);
+
+                await processAlertNotification({ data: firingJob(organization.id, project.id) });
+
+                expect(mockGetOrganizationDefaults).toHaveBeenCalledWith(organization.id, 'alert');
+                expect(pagerDutyCalls()).toHaveLength(1);
+                expect(sendMailMock).not.toHaveBeenCalled();
+            });
+
+            it('Sigma jobs without kind never page', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetAlertRuleChannels.mockResolvedValueOnce([pagerDutyChannel]);
+
+                await processAlertNotification({
+                    data: firingJob(organization.id, project.id, { kind: undefined }),
+                });
+
+                expect(pagerDutyCalls()).toHaveLength(0);
+            });
         });
 
         it('jobs without kind never use org defaults', async () => {

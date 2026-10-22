@@ -1,17 +1,19 @@
 import { alertsService } from '../../modules/alerts/index.js';
 import { notificationsService } from '../../modules/notifications/index.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
+import {
+  resolveChannelsForEvent,
+  resolveFallbackEmails,
+  toDeliveryTargets,
+  type ResolvedRouting,
+} from '../../modules/notification-channels/resolver.js';
+import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
 import { db } from '../../database/connection.js';
 import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { config } from '../../config/index.js';
 import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
-import type {
-  EmailChannelConfig,
-  NotificationChannel,
-  WebhookChannelConfig,
-  WebhookEnvelope,
-} from '@logtide/shared';
+import type { NotificationChannel, WebhookEnvelope } from '@logtide/shared';
 import type {
   AlertNotificationData,
   AlertNotificationJobData,
@@ -41,10 +43,6 @@ export type {
 
 // Create email transporter (reused across notifications)
 let emailTransporter: Transporter | null = null;
-
-function smtpConfigured(): boolean {
-  return !!config.SMTP_HOST;
-}
 
 function getEmailTransporter() {
   if (!emailTransporter) {
@@ -97,29 +95,46 @@ export async function processAlertNotification(job: { data: AlertNotificationJob
 }
 
 /**
- * Destinations of an alert job: the rule's enabled channels; when there are
- * none and the job comes from an alert rule (`kind` set), the organization
- * defaults for `alert`. Jobs without `kind` (Sigma, pre-1.6) keep rule
- * channels only. Sigma jobs (event_type 'sigma') read the sigma rule channels
- * and the 'sigma' org defaults. When this is empty the firing path emails the owners and
- * admins (the shared fallback; W11 swaps this body for the shared resolver).
+ * Destinations of an alert job through the shared resolver: the rule's
+ * enabled channels, else the organization defaults for the event type, else
+ * (SMTP configured) an email to the owners and admins (`fallback`). Sigma
+ * jobs (event_type 'sigma') read the sigma rule channels and the 'sigma' org
+ * defaults. Jobs without `kind` (pre-1.6) keep rule channels only: no
+ * defaults, no fallback.
  */
-export async function resolveAlertChannels(data: AlertNotificationJobData): Promise<NotificationChannel[]> {
+export async function resolveAlertChannels(data: AlertNotificationJobData): Promise<ResolvedRouting> {
   const isSigma = 'event_type' in data && data.event_type === 'sigma';
-  const channels = isSigma
+  const ruleChannels = isSigma
     ? await notificationChannelsService.getSigmaRuleChannels(data.rule_id, data.organization_id)
     : await notificationChannelsService.getAlertRuleChannels(data.rule_id, data.organization_id);
-  if (channels.length > 0 || data.kind === undefined) return channels;
-  return notificationChannelsService.getOrganizationDefaults(
-    data.organization_id,
-    isSigma ? 'sigma' : 'alert'
-  );
+  if (data.kind === undefined) {
+    const channels = ruleChannels.filter((c) => c.enabled);
+    return { channels, source: channels.length > 0 ? 'explicit' : 'none', fallback: null };
+  }
+  return resolveChannelsForEvent({
+    organizationId: data.organization_id,
+    eventType: isSigma ? 'sigma' : 'alert',
+    explicitChannels: ruleChannels,
+  });
+}
+
+function pagerDutySummary(data: Record<string, unknown>, resolved: boolean): string {
+  const name = String(data.alert_name ?? 'Alert');
+  if (resolved) return `Alert resolved: ${name}`;
+  const prefix = data.renotify ? 'Alert still firing' : 'Alert triggered';
+  const bm = data.baseline_metadata as { deviation_ratio?: number } | null | undefined;
+  if (bm && typeof bm.deviation_ratio === 'number') {
+    return `${prefix}: ${name} (${formatNumber(bm.deviation_ratio)}x above baseline)`;
+  }
+  return `${prefix}: ${name} (${formatNumber(Number(data.log_count ?? 0))} logs, threshold ${formatNumber(Number(data.threshold ?? 0))})`;
 }
 
 /**
- * The single fan-out of an alert envelope to non-email destinations, today
- * webhook channels only (dedup by URL, first channel wins for hook
- * attribution). Event id `${eventIdPrefix}:${url}`. Returns the errors.
+ * The single fan-out of an alert envelope to non-email destinations: webhook
+ * channels (dedup by URL, first channel wins for hook attribution, event id
+ * `${eventIdPrefix}:${url}`) and PagerDuty channels (alert rule envelopes
+ * only: trigger on `alert.triggered`, resolve on `alert.resolved`, dedup key
+ * `alert:${alert_rule_id}`). Returns the errors.
  */
 export async function dispatchAlertEnvelope(
   envelope: WebhookEnvelope,
@@ -128,18 +143,34 @@ export async function dispatchAlertEnvelope(
 ): Promise<string[]> {
   const errors: string[] = [];
   const ruleName = String((envelope.data as { alert_name?: unknown }).alert_name ?? ids.ruleId);
+  const targets = toDeliveryTargets(channels.filter((ch) => ch.enabled));
   const webhookTargets = new Map<string, string>();
+  for (const w of targets.webhooks) {
+    if (w.url) webhookTargets.set(w.url, w.channelId);
+  }
 
-  for (const ch of channels) {
-    if (!ch.enabled) continue;
-    if (ch.type === 'webhook') {
-      const webhookConfig = ch.config as WebhookChannelConfig;
-      if (webhookConfig.url && !webhookTargets.has(webhookConfig.url)) {
-        webhookTargets.set(webhookConfig.url, ch.id);
-      }
-    }
-    // SEAM:W11 pagerduty branch (trigger on alert.triggered, resolve on
-    // alert.resolved, dedup key `alert:${data.alert_rule_id}`).
+  // Sigma jobs (no alert_rule_id in the data) never page.
+  const alertRuleId = (envelope.data as { alert_rule_id?: unknown }).alert_rule_id;
+  if (targets.pagerDuty.length > 0 && typeof alertRuleId === 'string') {
+    const resolved = envelope.type === 'alert.resolved';
+    const data = envelope.data as Record<string, unknown>;
+    await notifyPagerDutyTargets(targets.pagerDuty, {
+      organizationId: envelope.organizationId,
+      action: resolved ? 'resolve' : 'trigger',
+      dedupKey: `alert:${alertRuleId}`,
+      eventType: envelope.type,
+      summary: pagerDutySummary(data, resolved),
+      severity: 'high',
+      link: typeof data.link === 'string' ? data.link : undefined,
+      details: {
+        alert_name: data.alert_name,
+        log_count: data.log_count,
+        threshold: data.threshold,
+        time_window: data.time_window,
+        incident_id: data.incident_id ?? null,
+      },
+      ruleId: ids.ruleId,
+    });
   }
 
   // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
@@ -208,26 +239,16 @@ async function processFiringNotification(data: AlertNotificationData) {
     }
 
     // STEP 2: Destinations (rule channels, else org defaults for alert rules)
-    const channels = await resolveAlertChannels(data);
+    const routing = await resolveAlertChannels(data);
+    const channels = routing.channels;
 
-    // STEP 3: Collect email recipients from notification channels
-    const emailRecipients = new Set<string>();
-
-    channels
-      .filter((ch) => ch.type === 'email' && ch.enabled)
-      .forEach((ch) => {
-        const emailConfig = ch.config as EmailChannelConfig;
-        emailConfig.recipients.forEach((email: string) => emailRecipients.add(email));
-      });
-
-    // Shared fallback: an alert rule job with no destination at all emails
-    // the organization owners and admins (never every member) when SMTP is
-    // configured. Jobs without kind keep "rule channels only".
-    if (channels.length === 0 && data.kind !== undefined && smtpConfigured()) {
-      for (const email of await getOwnerAndAdminEmails(data.organization_id)) {
-        emailRecipients.add(email);
-      }
-    }
+    // STEP 3: Email recipients: email channels, or (nothing resolved and SMTP
+    // configured) the owners and admins, never every member.
+    const emailRecipients = new Set<string>(
+      routing.fallback
+        ? await enabledFallbackEmails(data.organization_id)
+        : toDeliveryTargets(channels).emailRecipients
+    );
 
     // STEP 4: Send emails if there are recipients
     if (emailRecipients.size > 0) {
@@ -281,7 +302,7 @@ async function processFiringNotification(data: AlertNotificationData) {
 async function processResolvedNotification(data: AlertResolvedNotificationData) {
   console.log(`Processing alert resolution: ${data.rule_name}`);
 
-  const channels = await resolveAlertChannels(data);
+  const { channels } = await resolveAlertChannels(data);
 
   const durationSeconds = Math.max(
     0,
@@ -326,17 +347,21 @@ async function processResolvedNotification(data: AlertResolvedNotificationData) 
   console.log(`Alert resolution processed: ${data.rule_name}`);
 }
 
-/** Enabled owners and admins of the organization (the shared email fallback). */
-async function getOwnerAndAdminEmails(organizationId: string): Promise<string[]> {
-  const rows = await db
-    .selectFrom('organization_members')
-    .innerJoin('users', 'users.id', 'organization_members.user_id')
-    .select(['users.email'])
-    .where('organization_members.organization_id', '=', organizationId)
-    .where('organization_members.role', 'in', ['owner', 'admin'])
-    .where('users.disabled', '=', false)
+/**
+ * Owners and admins from the shared fallback, minus disabled accounts
+ * (resolveFallbackEmails does not filter them; see the W8 report handoff).
+ */
+async function enabledFallbackEmails(organizationId: string): Promise<string[]> {
+  const emails = await resolveFallbackEmails(organizationId);
+  if (emails.length === 0) return emails;
+  const disabled = await db
+    .selectFrom('users')
+    .select('email')
+    .where('email', 'in', emails)
+    .where('disabled', '=', true)
     .execute();
-  return [...new Set(rows.map((r) => r.email).filter((email): email is string => !!email))];
+  const blocked = new Set(disabled.map((r) => r.email.toLowerCase()));
+  return emails.filter((e) => !blocked.has(e.toLowerCase()));
 }
 
 function minutesSince(iso: string | undefined): number | null {
