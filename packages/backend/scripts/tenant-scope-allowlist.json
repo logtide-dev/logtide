@@ -175,27 +175,9 @@
   },
   {
     "file": "packages/backend/src/modules/monitoring/service.ts",
-    "table": "monitor_uptime_daily",
-    "snippet": ".selectFrom('monitor_uptime_daily')",
-    "reason": "scoped-indirect: query by monitor_id IN list; monitorIds derived from org-scoped monitor query earlier"
-  },
-  {
-    "file": "packages/backend/src/modules/monitoring/service.ts",
     "table": "monitors",
     "snippet": ".selectFrom('monitors')",
     "reason": "intentional cross-org worker: loads all enabled due monitors across all orgs to schedule checks"
-  },
-  {
-    "file": "packages/backend/src/modules/monitoring/service.ts",
-    "table": "projects",
-    "snippet": ".selectFrom('projects')",
-    "reason": "scoped-indirect: lookup by slug for public status page; visibility check follows immediately"
-  },
-  {
-    "file": "packages/backend/src/modules/monitoring/service.ts",
-    "table": "projects",
-    "snippet": ".selectFrom('projects')",
-    "reason": "scoped-indirect: lookup by verifiedProjectId (server-trusted) for public status page"
   },
   {
     "file": "packages/backend/src/modules/notifications/service.ts",
