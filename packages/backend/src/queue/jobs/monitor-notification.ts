@@ -29,6 +29,10 @@ export interface MonitorNotificationJob {
   downtimeDuration?: string | null;
   /** Shared incident opened for this outage (F4), when there is one. */
   incidentId?: string | null;
+  /** Set when a user disabled or deleted the monitor while it was down. */
+  resolvedBy?: 'disabled' | 'deleted';
+  /** Channels the monitor had when this was queued (a delete removes the links). */
+  channelIds?: string[];
 }
 
 /**
@@ -134,7 +138,9 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
   const routing = await resolveChannelsForEvent({
     organizationId: data.organizationId,
     eventType: 'monitoring',
-    explicitChannels: await notificationChannelsService.getMonitorChannels(data.monitorId),
+    ...(data.channelIds && data.channelIds.length > 0
+      ? { explicitChannelIds: data.channelIds }
+      : { explicitChannels: await notificationChannelsService.getMonitorChannels(data.monitorId) }),
   });
   const targets = toDeliveryTargets(routing.channels);
 
@@ -164,7 +170,9 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
 
   const message = isDown
     ? `${data.monitorName} is not responding${data.errorCode ? ` (${data.errorCode})` : ''}`
-    : `${data.monitorName} is back online${data.downtimeDuration ? ` after ${data.downtimeDuration}` : ''}`;
+    : data.resolvedBy
+      ? `${data.monitorName} was ${data.resolvedBy} while it was down`
+      : `${data.monitorName} is back online${data.downtimeDuration ? ` after ${data.downtimeDuration}` : ''}`;
 
   const notificationPromises = members.map((member) =>
     notificationsService.createNotification({

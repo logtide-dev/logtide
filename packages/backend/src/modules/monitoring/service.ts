@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import type { Database } from '../../database/types.js';
 import type { Severity } from '@logtide/shared';
 import { maintenanceService } from '../maintenances/service.js';
+import { notificationChannelsService } from '../notification-channels/index.js';
 import { monitorNotificationQueue } from '../../queue/jobs/monitor-notification.js';
 import type {
   Monitor,
@@ -208,6 +209,7 @@ export class MonitorService {
         .where('organization_id', '=', organizationId)
         .executeTakeFirst();
       if (current?.enabled) {
+        await this.notifyManualRecovery(id, organizationId, 'disabled');
         await this.resolveMonitorIncident({ id, organizationId }, new Date(), 'manual');
         await this.db
           .updateTable('monitor_status')
@@ -255,6 +257,7 @@ export class MonitorService {
       .where('organization_id', '=', organizationId)
       .executeTakeFirst();
     if (existing) {
+      await this.notifyManualRecovery(id, organizationId, 'deleted');
       await this.resolveMonitorIncident({ id, organizationId }, new Date(), 'manual');
     }
 
@@ -998,10 +1001,39 @@ export class MonitorService {
     }
   }
 
+  /**
+   * A user disabled or deleted a monitor: when its outage had been reported
+   * (down at or past the failure threshold) queue the recovery job so the
+   * "up" webhook and the PagerDuty resolve go out. The monitor's channels are
+   * snapshotted because a delete removes the links before the job runs.
+   * Never throws.
+   */
+  private async notifyManualRecovery(
+    monitorId: string,
+    organizationId: string,
+    reason: 'disabled' | 'deleted'
+  ): Promise<void> {
+    try {
+      const monitor = await this.getMonitor(monitorId, organizationId);
+      const status = monitor?.status;
+      if (!monitor || !status) return;
+      if (status.status !== 'down' || status.consecutiveFailures < monitor.failureThreshold) return;
+
+      const channels = await notificationChannelsService.getMonitorChannels(monitorId);
+      await this.notifyMonitorRecovered(monitor, status.lastStatusChangeAt, status.incidentId, {
+        resolvedBy: reason,
+        channelIds: channels.length > 0 ? channels.map((c) => c.id) : undefined,
+      });
+    } catch (err) {
+      console.error(`[MonitorService] Failed to queue recovery for ${reason} monitor ${monitorId}:`, err);
+    }
+  }
+
   private async notifyMonitorRecovered(
     monitor: Monitor,
     downtimeStart: Date | null,
-    incidentId: string | null = null
+    incidentId: string | null = null,
+    manual: { resolvedBy: 'disabled' | 'deleted'; channelIds?: string[] } | null = null
   ): Promise<void> {
     try {
       let downtimeDuration: string | null = null;
@@ -1023,6 +1055,7 @@ export class MonitorService {
         target: monitor.target,
         downtimeDuration,
         incidentId,
+        ...(manual ? { resolvedBy: manual.resolvedBy, channelIds: manual.channelIds } : {}),
       });
       console.log(`[MonitorService] Queued recovery notification for monitor "${monitor.name}"`);
     } catch (err) {
