@@ -9,7 +9,13 @@ import type {
   BaselineMetadata,
 } from '../../database/types.js';
 import { baselineCalculator } from './baseline-calculator.js';
-import { compileAlertQuery, filterToReservoirParams, normalizeAlertQuery } from './alert-query.js';
+import {
+  compileAlertQuery,
+  filterToReservoirParams,
+  normalizeAlertQuery,
+  type AlertLogFilter,
+} from './alert-query.js';
+import { AlertRuleInputError } from './validation.js';
 import {
   decideRateOfChange,
   decideThreshold,
@@ -34,6 +40,9 @@ export interface PreviewAlertRuleInput {
   threshold: number;
   timeWindow: number; // minutes
   previewRange: PreviewRange;
+  /** Logs query (threshold rules); blank means none. */
+  query?: string | null;
+  metadataFilters?: MetadataFilter[];
 }
 
 export interface PreviewIncident {
@@ -925,6 +934,11 @@ export class AlertsService {
    * Preview how an alert rule would have performed over historical data
    */
   async previewAlertRule(input: PreviewAlertRuleInput): Promise<PreviewAlertRuleOutput> {
+    // 0. A query or metadata filters switch to the filtered path, which
+    // compiles exactly what the saved rule would evaluate. An invalid query
+    // throws AlertRuleInputError (400 { error, position }) before any read.
+    const filter = this.previewFilter(input);
+
     // 1. Parse time range
     const rangeMs: Record<PreviewRange, number> = {
       '1d': 86400000,
@@ -950,14 +964,9 @@ export class AlertsService {
     }
 
     // 4. Execute time-bucketed query
-    const buckets = await this.getTimeBuckets(
-      from,
-      to,
-      bucketInterval,
-      projectIds,
-      input.level,
-      input.service
-    );
+    const buckets = filter
+      ? await this.getFilteredTimeBuckets(from, to, bucketInterval, projectIds, filter)
+      : await this.getTimeBuckets(from, to, bucketInterval, projectIds, input.level, input.service);
 
     if (buckets.length === 0) {
       return this.emptyPreviewResult(from, to, [
@@ -982,18 +991,15 @@ export class AlertsService {
         incident.endTime,
         projectIds,
         input.level,
-        input.service
+        input.service,
+        filter
       );
     }
 
     // 7. Get affected services
-    const affectedServices = await this.getAffectedServices(
-      from,
-      to,
-      projectIds,
-      input.level,
-      input.service
-    );
+    const affectedServices = filter
+      ? await this.getFilteredAffectedServices(from, to, projectIds, filter)
+      : await this.getAffectedServices(from, to, projectIds, input.level, input.service);
 
     // 8. Compute statistics
     const statistics = this.computeStatistics(buckets, incidents, input.threshold);
@@ -1017,6 +1023,80 @@ export class AlertsService {
       statistics,
       suggestions,
     };
+  }
+
+  /**
+   * The compiled filter of a preview with a query or metadata filters, or
+   * null when it has neither (the pre-1.6 aggregate path then runs
+   * unchanged). Same compiler as the evaluation, so the preview matches
+   * exactly what the saved rule counts.
+   */
+  private previewFilter(input: PreviewAlertRuleInput): AlertLogFilter | null {
+    const query = normalizeAlertQuery(input.query);
+    const metadataFilters = input.metadataFilters ?? [];
+    if (query === null && metadataFilters.length === 0) return null;
+
+    const compiled = compileAlertQuery({
+      query,
+      level: input.level,
+      service: input.service ?? null,
+      metadataFilters,
+    });
+    if (!compiled.ok) {
+      throw new AlertRuleInputError(compiled.error.message, compiled.error.position);
+    }
+    return filterToReservoirParams(compiled.filter);
+  }
+
+  /**
+   * Time-bucketed counts of the logs matching a compiled filter (query,
+   * levels, service, metadata), through the reservoir histogram on every
+   * engine. Empty buckets are dropped so the statistics match the
+   * aggregate path.
+   */
+  private async getFilteredTimeBuckets(
+    from: Date,
+    to: Date,
+    bucketInterval: string,
+    projectIds: string[],
+    filter: AlertLogFilter
+  ): Promise<Array<{ bucket: Date; count: number }>> {
+    const bucketSeconds = this.getBucketMs(bucketInterval) / 1000;
+    const result = await reservoir.histogram({
+      projectId: projectIds,
+      from,
+      to,
+      ...filter,
+      bucketSeconds,
+    });
+
+    return result.buckets
+      .filter((b) => b.total > 0)
+      .map((b) => ({ bucket: b.time, count: b.total }))
+      .sort((a, b) => a.bucket.getTime() - b.bucket.getTime());
+  }
+
+  /**
+   * Services of the logs matching a compiled filter (top 50), without the
+   * `unknown` placeholder.
+   */
+  private async getFilteredAffectedServices(
+    from: Date,
+    to: Date,
+    projectIds: string[],
+    filter: AlertLogFilter
+  ): Promise<string[]> {
+    const result = await reservoir.facets({
+      projectId: projectIds,
+      from,
+      to,
+      ...filter,
+      fields: [{ builtin: 'service' }],
+      limit: 50,
+    });
+
+    const services = result.facets[0]?.values ?? [];
+    return services.map((v) => v.value).filter((s) => s !== 'unknown');
   }
 
   /**
@@ -1160,16 +1240,19 @@ export class AlertsService {
     to: Date,
     projectIds: string[],
     levels: LogLevel[],
-    service?: string | null
+    service?: string | null,
+    filter?: AlertLogFilter | null
   ): Promise<PreviewIncident['sampleLogs']> {
     const serviceFilter = service ? [service, 'unknown'] : undefined;
 
+    // With a compiled filter (query / metadata filters) the samples match
+    // exactly the logs counted in the buckets.
+    const criteria = filter ?? { level: levels, service: serviceFilter };
     const result = await reservoir.query({
       projectId: projectIds,
       from,
       to,
-      level: levels,
-      service: serviceFilter,
+      ...criteria,
       limit: 5,
       sortOrder: 'desc',
     });

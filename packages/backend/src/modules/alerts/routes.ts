@@ -122,6 +122,10 @@ const previewAlertRuleSchema = z.object({
   threshold: z.number().int().min(1),
   timeWindow: z.number().int().min(1).max(1440), // Max 24 hours
   previewRange: z.enum(['1d', '7d', '14d', '30d']),
+  // Same filters as a saved threshold rule. Unknown keys are stripped, so the
+  // edit form (or a GET /:id rule) can be posted as is.
+  query: z.string().max(2000).optional().nullable(),
+  metadataFilters: metadataFiltersSchema.optional(),
 });
 
 /**
@@ -416,6 +420,9 @@ export async function alertsRoutes(fastify: FastifyInstance) {
           error: 'Validation error',
           details: error.errors,
         });
+      }
+      if (error instanceof AlertRuleInputError) {
+        return reply.status(400).send(inputErrorBody(error));
       }
 
       throw error;
