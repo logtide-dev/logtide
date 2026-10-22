@@ -1,31 +1,14 @@
 import { writable, get } from 'svelte/store';
 import type { Project } from '@logtide/shared';
 import { projectsAPI } from '$lib/api/projects';
-import { getApiBaseUrl } from '$lib/config';
-import { getAuthToken } from '$lib/utils/auth';
+import { projectLastEventsAPI } from '$lib/api/first-signal';
 
 /**
  * Projects of the active organization plus per-project activity, for the project
  * cards, the header breadcrumb and the command palette.
  *
- * Last event per project comes from W13's GET /api/v1/projects/last-events
- * (response { lastEvents: Record<projectId, ISO | null> }). Until the shared
- * client lands, `projectLastEventsAPI` below is a local stand-in with the same
- * signature; swap the import when W13 merges.
+ * Last event per project comes from the W13 client (GET /api/v1/projects/last-events).
  */
-export const projectLastEventsAPI = {
-  async get(organizationId: string): Promise<{ lastEvents: Record<string, string | null> }> {
-    const token = getAuthToken();
-    if (!token) throw new Error('Not authenticated');
-    const response = await fetch(
-      `${getApiBaseUrl()}/projects/last-events?organizationId=${encodeURIComponent(organizationId)}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (!response.ok) throw new Error('Failed to fetch project last events');
-    return response.json();
-  },
-};
-
 export interface OrgProjectsState {
   orgId: string | null;
   projects: Project[];
@@ -93,7 +76,7 @@ function createOrgProjectsStore() {
       }
 
       if (lastEventsResult.status === 'fulfilled') {
-        next.lastEventAt = { ...(lastEventsResult.value.lastEvents ?? {}) };
+        next.lastEventAt = { ...(lastEventsResult.value ?? {}) };
       }
 
       return next;

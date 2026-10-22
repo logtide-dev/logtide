@@ -12,7 +12,8 @@ vi.mock('$lib/api/projects', () => ({
 vi.mock('$lib/utils/auth', () => ({ getAuthToken: () => 'tok' }));
 vi.mock('$lib/config', () => ({ getApiBaseUrl: () => 'http://api.test/api/v1' }));
 
-import { orgProjectsStore, projectLastEventsAPI } from './org-projects';
+import { projectLastEventsAPI } from '$lib/api/first-signal';
+import { orgProjectsStore } from './org-projects';
 
 const p = (id: string, name: string) => ({ id, name });
 
@@ -39,7 +40,7 @@ describe('orgProjectsStore', () => {
   it('fills projects, last events and the receiving set', async () => {
     getProjects.mockResolvedValue({ projects: [p('a', 'Alpha'), p('b', 'Beta')] });
     getProjectDataAvailability.mockResolvedValue({ logs: ['a'], traces: ['b'], metrics: ['a'] });
-    lastEvents.mockResolvedValue({ lastEvents: { a: '2026-10-21T10:00:00.000Z', b: null } });
+    lastEvents.mockResolvedValue({ a: '2026-10-21T10:00:00.000Z', b: null });
 
     await orgProjectsStore.load('org-1');
 
@@ -74,7 +75,7 @@ describe('orgProjectsStore', () => {
       org === 'org-a' ? slow.promise : Promise.resolve({ projects: [p('b1', 'B project')] })
     );
     getProjectDataAvailability.mockResolvedValue({ logs: [], traces: [], metrics: [] });
-    lastEvents.mockResolvedValue({ lastEvents: {} });
+    lastEvents.mockResolvedValue({});
 
     const loadA = orgProjectsStore.load('org-a');
     await orgProjectsStore.load('org-b');
@@ -89,7 +90,7 @@ describe('orgProjectsStore', () => {
   it('sets error and keeps previous projects on failure', async () => {
     getProjects.mockResolvedValueOnce({ projects: [p('a', 'Alpha')] });
     getProjectDataAvailability.mockResolvedValue({ logs: [], traces: [], metrics: [] });
-    lastEvents.mockResolvedValue({ lastEvents: {} });
+    lastEvents.mockResolvedValue({});
     await orgProjectsStore.load('org-1');
 
     getProjects.mockRejectedValueOnce(new Error('boom'));
@@ -104,7 +105,7 @@ describe('orgProjectsStore', () => {
   it('drops the previous organization projects while a new organization loads', async () => {
     getProjects.mockResolvedValueOnce({ projects: [p('a', 'Alpha')] });
     getProjectDataAvailability.mockResolvedValue({ logs: [], traces: [], metrics: [] });
-    lastEvents.mockResolvedValue({ lastEvents: {} });
+    lastEvents.mockResolvedValue({});
     await orgProjectsStore.load('org-1');
 
     const slow = deferred<{ projects: ReturnType<typeof p>[] }>();
@@ -114,5 +115,25 @@ describe('orgProjectsStore', () => {
     expect(get(orgProjectsStore).loading).toBe(true);
     slow.resolve({ projects: [] });
     await pending;
+  });
+
+  it('reads last events through the real W13 client (unwrapped record)', async () => {
+    lastEvents.mockRestore();
+    getProjects.mockResolvedValue({ projects: [p('a', 'Alpha')] });
+    getProjectDataAvailability.mockResolvedValue({ logs: [], traces: [], metrics: [] });
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ lastEvents: { a: '2026-10-21T10:00:00.000Z' } }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await orgProjectsStore.load('org-9');
+      expect(get(orgProjectsStore).lastEventAt).toEqual({ a: '2026-10-21T10:00:00.000Z' });
+      expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toContain(
+        '/projects/last-events?organizationId=org-9'
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
