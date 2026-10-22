@@ -1,9 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { db } from '../../database/index.js';
 import { reservoir } from '../../database/reservoir.js';
-import type { LogLevel } from '@logtide/shared';
+import type { LogLevel, MetadataFilter } from '@logtide/shared';
 import {
   createLiveTailFilter,
+  metadataFiltersToClauses,
   notificationManager,
   type LiveTailLog,
   type LogNotificationEvent,
@@ -13,6 +14,7 @@ import { randomUUID } from 'crypto';
 import { verifyProjectAccess } from '../auth/verify-project-access.js';
 import { buildLogFilter, LogQueryError, type SearchMode } from './build-log-filter.js';
 import { mapApiLog } from './service.js';
+import { readLogFilterRequest } from './filter-params.js';
 
 const asList = <T>(value: T | T[] | undefined): T[] | undefined =>
   value === undefined ? undefined : Array.isArray(value) ? value : [value];
@@ -34,7 +36,7 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
     // project-membership check (DB), so cap the connection attempt rate per client.
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (socket, req: any) => {
-    const { projectId, service, level, hostname, token, q, searchMode } = req.query as {
+    const { projectId, service, level, hostname, token, q, searchMode, metadata_filters } = req.query as {
       projectId: string;
       service?: string | string[];
       level?: LogLevel | LogLevel[];
@@ -42,6 +44,7 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
       token?: string;
       q?: string | string[];
       searchMode?: string | string[];
+      metadata_filters?: string | string[];
     };
 
     if (!projectId) {
@@ -133,6 +136,22 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
       return;
     }
 
+    // Legacy metadata_filters: same JSON and validation as the REST endpoints,
+    // evaluated in memory as query field clauses.
+    let legacyMetadata: MetadataFilter[] | undefined;
+    if (metadata_filters !== undefined) {
+      if (typeof metadata_filters !== 'string') {
+        rejectQuery('metadata_filters must be a single string', 0);
+        return;
+      }
+      const read = readLogFilterRequest({ metadata_filters });
+      if (!read.ok) {
+        rejectQuery(read.body.error, 0);
+        return;
+      }
+      legacyMetadata = read.value.metadata_filters;
+    }
+
     let matchesFilters: (log: LiveTailLog) => boolean;
     try {
       const built = buildLogFilter({
@@ -141,12 +160,15 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
         service: serviceFilter,
         level: levelFilter,
         hostname: hostnameFilter,
+        metadata_filters: legacyMetadata,
       });
       matchesFilters = createLiveTailFilter({
         services: serviceFilter,
         levels: levelFilter,
         hostnames: hostnameFilter,
-        query: built.query,
+        query: legacyMetadata
+          ? { ...built.query, fields: [...built.query.fields, ...metadataFiltersToClauses(legacyMetadata)] }
+          : built.query,
       });
     } catch (err) {
       if (err instanceof LogQueryError) {
