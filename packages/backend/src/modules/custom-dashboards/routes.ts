@@ -10,6 +10,7 @@ import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { auditLogService } from '../audit-log/service.js';
+import { listDashboardTemplates } from './templates.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -35,6 +36,13 @@ const importYamlSchema = z.object({
 });
 
 const duplicateSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+});
+
+const fromTemplateSchema = z.object({
+  organizationId: z.string().uuid(),
+  templateId: z.string().min(1).max(64),
+  projectId: z.string().uuid().optional().nullable(),
   name: z.string().min(1).max(200).optional(),
 });
 
@@ -227,6 +235,54 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       }
       if (e instanceof Error && e.message === 'Dashboard not found') {
         return reply.status(404).send({ error: e.message });
+      }
+      throw e;
+    }
+  });
+
+  // ─── Starter templates (must come before /:id routes) ───────────────────
+  fastify.get('/templates', async (_request, reply) => {
+    return reply.send({ templates: listDashboardTemplates() });
+  });
+
+  fastify.post('/from-template', async (request: any, reply) => {
+    try {
+      const body = fromTemplateSchema.parse(request.body);
+      if (!(await checkMembership(request.user.id, body.organizationId))) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const dashboard = await createWithinLimit(body.organizationId, () =>
+        customDashboardsService.createFromTemplate(
+          body.templateId,
+          body.organizationId,
+          request.user.id,
+          { projectId: body.projectId ?? null, name: body.name }
+        )
+      );
+
+      await auditLogService.record({
+        action: 'dashboard.imported',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId: body.organizationId,
+        metadata: { name: dashboard.name, templateId: body.templateId },
+      });
+
+      return reply.status(201).send({ dashboard });
+    } catch (e) {
+      if (e instanceof CapabilityError) {
+        throw e;
+      }
+      if (e instanceof z.ZodError) {
+        return reply
+          .status(400)
+          .send({ error: 'Validation error', details: e.errors });
+      }
+      if (e instanceof Error && e.message === 'Template not found') {
+        return reply.status(404).send({ error: e.message });
+      }
+      if (e instanceof Error && e.message === 'Project does not belong to the organization') {
+        return reply.status(400).send({ error: e.message });
       }
       throw e;
     }

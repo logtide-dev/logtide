@@ -725,3 +725,211 @@ describe('POST /api/v1/dashboards/:id/duplicate', () => {
     expect((row.metadata as { duplicatedFrom: string }).duplicatedFrom).toBe(src.id);
   });
 });
+
+describe('GET /api/v1/dashboards/templates', () => {
+  it('lists the starter templates', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/dashboards/templates',
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    const { templates } = JSON.parse(res.payload);
+    expect(templates.map((t: { id: string }) => t.id)).toEqual([
+      'service-health',
+      'errors-overview',
+      'web-vitals',
+      'security-overview',
+    ]);
+    expect(templates[0]).toEqual(
+      expect.objectContaining({
+        name: expect.any(String),
+        description: expect.any(String),
+        panelCount: expect.any(Number),
+        panelTypes: expect.any(Array),
+      })
+    );
+  });
+
+  it('requires authentication', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/v1/dashboards/templates' });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('POST /api/v1/dashboards/from-template', () => {
+  const post = (token: string, payload: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/v1/dashboards/from-template',
+      headers: authHeaders(token),
+      payload,
+    });
+
+  it('creates a dashboard from a template (201) and audits it', async () => {
+    const { db } = await import('../../../database/index.js');
+    const res = await post(authToken, {
+      organizationId: ctx.organization.id,
+      templateId: 'web-vitals',
+      projectId: ctx.project.id,
+    });
+    expect(res.statusCode).toBe(201);
+    const { dashboard } = JSON.parse(res.payload);
+    expect(dashboard.name).toBe('Web vitals');
+    expect(dashboard.panels.length).toBeGreaterThan(0);
+
+    const row = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('resource_id', '=', dashboard.id)
+      .executeTakeFirstOrThrow();
+    expect(row.action).toBe('dashboard.imported');
+    expect((row.metadata as { templateId: string }).templateId).toBe('web-vitals');
+  });
+
+  it('accepts a name override and a null project', async () => {
+    const res = await post(authToken, {
+      organizationId: ctx.organization.id,
+      templateId: 'service-health',
+      projectId: null,
+      name: 'Prod health',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).dashboard.name).toBe('Prod health');
+  });
+
+  it('returns 404 for an unknown template', async () => {
+    const res = await post(authToken, { organizationId: ctx.organization.id, templateId: 'nope' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 400 for a project of another organization', async () => {
+    const other = await createTestContext();
+    const res = await post(authToken, {
+      organizationId: ctx.organization.id,
+      templateId: 'service-health',
+      projectId: other.project.id,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 for an invalid body', async () => {
+    const res = await post(authToken, { organizationId: 'not-a-uuid', templateId: 'service-health' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 403 for a non-member', async () => {
+    const { createTestUser } = await import('../../helpers/factories.js');
+    const stranger = await createTestUser();
+    const strangerToken = (await createTestSession(stranger.id)).token;
+    const res = await post(strangerToken, {
+      organizationId: ctx.organization.id,
+      templateId: 'service-health',
+    });
+    expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('GET /api/v1/dashboards/templates', () => {
+  it('lists the starter templates', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/dashboards/templates',
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    const { templates } = JSON.parse(res.payload);
+    expect(templates.map((t: { id: string }) => t.id)).toEqual([
+      'service-health',
+      'errors-overview',
+      'web-vitals',
+      'security-overview',
+    ]);
+    expect(templates[0]).toEqual(
+      expect.objectContaining({
+        name: expect.any(String),
+        description: expect.any(String),
+        panelCount: expect.any(Number),
+        panelTypes: expect.any(Array),
+      })
+    );
+  });
+
+  it('requires authentication', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/v1/dashboards/templates' });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('POST /api/v1/dashboards/from-template', () => {
+  const post = (token: string, payload: Record<string, unknown>) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/v1/dashboards/from-template',
+      headers: authHeaders(token),
+      payload,
+    });
+
+  it('creates a dashboard from a template (201) and audits it', async () => {
+    const { db } = await import('../../../database/index.js');
+    const res = await post(authToken, {
+      organizationId: ctx.organization.id,
+      templateId: 'web-vitals',
+      projectId: ctx.project.id,
+    });
+    expect(res.statusCode).toBe(201);
+    const { dashboard } = JSON.parse(res.payload);
+    expect(dashboard.name).toBe('Web vitals');
+    expect(dashboard.panels.length).toBeGreaterThan(0);
+
+    const row = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('resource_id', '=', dashboard.id)
+      .executeTakeFirstOrThrow();
+    expect(row.action).toBe('dashboard.imported');
+    expect((row.metadata as { templateId: string }).templateId).toBe('web-vitals');
+  });
+
+  it('accepts a name override and a null project', async () => {
+    const res = await post(authToken, {
+      organizationId: ctx.organization.id,
+      templateId: 'service-health',
+      projectId: null,
+      name: 'Prod health',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).dashboard.name).toBe('Prod health');
+  });
+
+  it('returns 404 for an unknown template', async () => {
+    const res = await post(authToken, { organizationId: ctx.organization.id, templateId: 'nope' });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 400 for a project of another organization', async () => {
+    const other = await createTestContext();
+    const res = await post(authToken, {
+      organizationId: ctx.organization.id,
+      templateId: 'service-health',
+      projectId: other.project.id,
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 for an invalid body', async () => {
+    const res = await post(authToken, { organizationId: 'not-a-uuid', templateId: 'service-health' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 403 for a non-member', async () => {
+    const { createTestUser } = await import('../../helpers/factories.js');
+    const stranger = await createTestUser();
+    const strangerToken = (await createTestSession(stranger.id)).token;
+    const res = await post(strangerToken, {
+      organizationId: ctx.organization.id,
+      templateId: 'service-health',
+    });
+    expect(res.statusCode).toBe(403);
+  });
+});

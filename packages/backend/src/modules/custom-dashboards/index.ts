@@ -6,6 +6,11 @@ export {
   panelInstanceSchema,
   dashboardDocumentSchema,
 } from './panel-registry.js';
+export {
+  listDashboardTemplates,
+  buildTemplateYaml,
+} from './templates.js';
+export type { DashboardTemplateId, DashboardTemplateSummary } from './templates.js';
 export { fetchPanelData } from './panel-data-service.js';
 export type {
   PanelDataContext,

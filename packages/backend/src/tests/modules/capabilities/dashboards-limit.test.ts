@@ -230,4 +230,106 @@ panels: []
       expect((await dup(srcB.id, ctxB.organization.id, tokenB)).statusCode).toBe(201);
     });
   });
+
+  // ─── POST /from-template ───────────────────────────────────────────────
+  describe('POST /from-template', () => {
+    const fromTemplate = (org: string, tok: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/dashboards/from-template',
+        headers: { Authorization: `Bearer ${tok}` },
+        payload: { organizationId: org, templateId: 'errors-overview' },
+      });
+    const setLimit = async (org: string, limit: number) => {
+      await db
+        .insertInto('organization_entitlements')
+        .values({ organization_id: org, capability: 'dashboards.max_custom', enabled: null, limit_value: limit })
+        .execute();
+      capabilities.invalidate(org);
+    };
+
+    it('blocks from-template when at the limit and creates no row', async () => {
+      await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 1);
+
+      const res = await fromTemplate(orgId, token);
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).code).toBe('capability.dashboards.max_custom.limit_reached');
+
+      const rows = await db.selectFrom('custom_dashboards').select('id').where('organization_id', '=', orgId).execute();
+      expect(rows).toHaveLength(1);
+    });
+
+    it('allows from-template when under the limit', async () => {
+      await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 2);
+      expect((await fromTemplate(orgId, token)).statusCode).toBe(201);
+    });
+
+    it('allows from-template when unlimited', async () => {
+      expect((await fromTemplate(orgId, token)).statusCode).toBe(201);
+    });
+
+    it('does not block org B when org A is at the limit', async () => {
+      await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 1);
+      expect((await fromTemplate(orgId, token)).statusCode).toBe(403);
+
+      const ctxB = await createTestContext();
+      const tokenB = await createTestSession(ctxB.user.id);
+      capabilities.invalidate(ctxB.organization.id);
+      expect((await fromTemplate(ctxB.organization.id, tokenB)).statusCode).toBe(201);
+    });
+  });
+
+  // ─── POST /from-template ───────────────────────────────────────────────
+  describe('POST /from-template', () => {
+    const fromTemplate = (org: string, tok: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/dashboards/from-template',
+        headers: { Authorization: `Bearer ${tok}` },
+        payload: { organizationId: org, templateId: 'errors-overview' },
+      });
+    const setLimit = async (org: string, limit: number) => {
+      await db
+        .insertInto('organization_entitlements')
+        .values({ organization_id: org, capability: 'dashboards.max_custom', enabled: null, limit_value: limit })
+        .execute();
+      capabilities.invalidate(org);
+    };
+
+    it('blocks from-template when at the limit and creates no row', async () => {
+      await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 1);
+
+      const res = await fromTemplate(orgId, token);
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).code).toBe('capability.dashboards.max_custom.limit_reached');
+
+      const rows = await db.selectFrom('custom_dashboards').select('id').where('organization_id', '=', orgId).execute();
+      expect(rows).toHaveLength(1);
+    });
+
+    it('allows from-template when under the limit', async () => {
+      await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 2);
+      expect((await fromTemplate(orgId, token)).statusCode).toBe(201);
+    });
+
+    it('allows from-template when unlimited', async () => {
+      expect((await fromTemplate(orgId, token)).statusCode).toBe(201);
+    });
+
+    it('does not block org B when org A is at the limit', async () => {
+      await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 1);
+      expect((await fromTemplate(orgId, token)).statusCode).toBe(403);
+
+      const ctxB = await createTestContext();
+      const tokenB = await createTestSession(ctxB.user.id);
+      capabilities.invalidate(ctxB.organization.id);
+      expect((await fromTemplate(ctxB.organization.id, tokenB)).statusCode).toBe(201);
+    });
+  });
 });

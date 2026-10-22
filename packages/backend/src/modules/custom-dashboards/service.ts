@@ -19,6 +19,7 @@ import {
   panelRegistry,
   panelInstanceSchema,
 } from './panel-registry.js';
+import { buildTemplateYaml } from './templates.js';
 
 interface DashboardRow {
   id: string;
@@ -537,6 +538,36 @@ export class CustomDashboardsService {
       },
       userId
     );
+  }
+
+  /**
+   * Instantiate a starter template. The template YAML goes through importYaml
+   * (validation, fresh panel ids); a projectId must belong to the organization.
+   */
+  async createFromTemplate(
+    templateId: string,
+    organizationId: string,
+    userId: string,
+    opts: { projectId?: string | null; name?: string } = {}
+  ): Promise<CustomDashboard> {
+    const yamlText = buildTemplateYaml(templateId, opts);
+    if (yamlText === null) {
+      throw new Error('Template not found');
+    }
+
+    if (opts.projectId) {
+      const project = await db
+        .selectFrom('projects')
+        .select('id')
+        .where('id', '=', opts.projectId)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (!project) {
+        throw new Error('Project does not belong to the organization');
+      }
+    }
+
+    return this.importYaml(yamlText, organizationId, userId);
   }
 
   /**
