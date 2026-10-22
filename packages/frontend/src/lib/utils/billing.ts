@@ -1,4 +1,5 @@
 import type { BillingCurrentPlan, BillingInterval, BillingPlanId } from '@logtide/shared';
+import { formatDateShort } from './datetime';
 
 /** What a plan card offers, given the org's current plan. */
 export type PlanCta = 'current' | 'subscribe' | 'switch' | 'downgrade-to-free' | 'opening-soon' | 'none';
@@ -83,12 +84,12 @@ export function annualSavingPercent(month: number, year: number): number {
   return Math.max(0, Math.round((1 - year / (month * 12)) * 100));
 }
 
-/** "Jan 17, 2027", in the viewer's time zone. */
+/** "Jan 17, 2027", in the display time zone preference. */
 export function formatBillingDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return formatDateShort(d);
 }
 
 /** Status badge of the current plan. */

@@ -376,3 +376,17 @@ describe('isCardExpired', () => {
     expect(isCardExpired({ expMonth: 1, expYear: 2027 }, now)).toBe(false);
   });
 });
+
+describe('formatBillingDate (UI-9)', () => {
+  it('follows the display zone, not the browser zone', async () => {
+    const { displayPreferences } = await import('$lib/stores/display-preferences');
+    const { formatBillingDate } = await import('./billing');
+    // 23:30 UTC on Jan 17 is already Jan 18 in Kiritimati (UTC+14).
+    displayPreferences.set({ hour12: false, timeZone: 'Pacific/Kiritimati' });
+    expect(formatBillingDate('2027-01-17T23:30:00.000Z')).toBe('Jan 18, 2027');
+    displayPreferences.set({ hour12: false, timeZone: 'UTC' });
+    expect(formatBillingDate('2027-01-17T23:30:00.000Z')).toBe('Jan 17, 2027');
+    expect(formatBillingDate(null)).toBe('');
+    expect(formatBillingDate('nope')).toBe('');
+  });
+});

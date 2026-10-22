@@ -144,10 +144,10 @@ describe('AlertHistoryTable', () => {
     expect(hrefs()).toContain('/dashboard/alerts?edit=r1');
   });
 
-  it('org-wide alert has no project param', () => {
+  it('org-wide alert links to all projects explicitly', () => {
     mount({ alerts: [hist({ projectId: null, projectName: null, ruleId: 'x' })] });
     const href = hrefs().find((h) => h.startsWith('/dashboard/logs'))!;
-    expect(new URL(href, 'http://x').searchParams.has('project')).toBe(false);
+    expect(new URL(href, 'http://x').searchParams.get('project')).toBe('all');
     expect(screen.getByText('All projects')).toBeTruthy();
   });
 

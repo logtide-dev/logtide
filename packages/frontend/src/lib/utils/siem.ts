@@ -6,6 +6,7 @@ import {
   formatMitreTactic,
   formatMitreTechnique,
 } from '@logtide/shared';
+import { formatTimestamp } from './datetime';
 import { escapeHtml } from './html';
 import { severityTone } from './severity';
 
@@ -15,25 +16,14 @@ export function getStatusLabel(status: string): string {
   return getIncidentStatusLabel(status as import('@logtide/shared').IncidentStatus);
 }
 
+// The export is a shared artifact, so every time carries its zone label and
+// follows the viewer's zone and clock preferences (shared formatter, UI-9).
 export function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatTimestamp(dateStr, { precision: 'minute', withZone: true });
 }
 
 export function formatShortDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatTimestamp(dateStr, { precision: 'minute', withZone: true });
 }
 
 export function formatTimeAgo(dateStr: string): string {

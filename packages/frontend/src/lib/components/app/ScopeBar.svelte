@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import type { TimeRangePreset } from "@logtide/shared";
@@ -13,9 +14,9 @@
   import { rangeLabel, zoneLabel } from "$lib/components/time-range/labels";
   import { displayPreferences } from "$lib/stores/display-preferences";
   import {
-    rangesEqual,
     reconcileScope,
     scopeStore,
+    stripLegacyProject,
     writeScopeToUrl,
     type Scope,
     type TimeRangeValue,
@@ -29,6 +30,11 @@
     /** Time picker stays visible but cannot be changed (live tail). */
     timeDisabled?: boolean;
     presets?: TimeRangePreset[];
+    /**
+     * Put the scope in the address bar on mount, so a copied link opens the
+     * same view (spec 5.2). Pages that manage their own URL (Logs) turn it off.
+     */
+    canonicalUrl?: boolean;
   }
 
   let {
@@ -38,6 +44,7 @@
     showTime = true,
     timeDisabled = false,
     presets,
+    canonicalUrl = true,
   }: Props = $props();
 
   const FILTER_THRESHOLD = 8;
@@ -45,29 +52,40 @@
   let projectsOpen = $state(false);
   let filter = $state("");
 
-  function sameScope(a: Scope, b: Scope): boolean {
-    return (
-      a.projectIds.length === b.projectIds.length &&
-      a.projectIds.every((id, i) => id === b.projectIds[i]) &&
-      rangesEqual(a.range, b.range)
-    );
-  }
+  let lastCanonical = "";
 
-  // Reconcile the store with the URL and the visible projects. Never touches
-  // the URL: only user actions below do.
+  // Reconcile the store with the URL and the visible projects. Only what the URL
+  // or the user decided is persisted; a page fallback is shown for this page
+  // only (UI-1). Then the address bar gets the canonical scope once.
   $effect(() => {
     const result = reconcileScope({
-      stored: scopeStore.get(),
+      stored: scopeStore.getPersisted(),
       url: page.url,
       projects,
       mode,
       presets,
+      write: { projects: showProjects, range: showTime },
     });
-    if (!sameScope(result.commit, scopeStore.get())) scopeStore.set(result.commit);
+    scopeStore.reconcile(result.commit, result.effective);
+    // Wait for the project list, or the first canonical URL would be rewritten
+    // again as soon as the projects load.
+    const ready = !showProjects || projects.length > 0;
+    if (canonicalUrl && ready && result.url && result.url.href !== lastCanonical) {
+      lastCanonical = result.url.href;
+      goto(result.url, { replaceState: true, keepFocus: true, noScroll: true });
+    }
   });
 
+  // Leaving the page drops its fallback, so the next page starts from what was
+  // really remembered.
+  onDestroy(() => scopeStore.clearEffective());
+
   function syncUrl() {
-    goto(writeScopeToUrl(page.url, scopeStore.get()), {
+    const current = scopeStore.get();
+    const parts: Partial<Scope> = {};
+    if (showProjects) parts.projectIds = current.projectIds;
+    if (showTime) parts.range = current.range;
+    goto(stripLegacyProject(writeScopeToUrl(page.url, parts, { explicitAll: true })), {
       replaceState: true,
       keepFocus: true,
       noScroll: true,

@@ -36,10 +36,15 @@ function buildUrl(
   extra: Record<string, string>
 ): string {
   const base = new URL(path, BASE);
-  const url = writeScopeToUrl(base, {
-    ...(projectId ? { projectIds: [projectId] } : {}),
-    range: { kind: 'preset', preset: range },
-  });
+  // An org-wide panel (no project) drills into all projects, not the viewer's remembered one.
+  const url = writeScopeToUrl(
+    base,
+    {
+      projectIds: projectId ? [projectId] : [],
+      range: { kind: 'preset', preset: range },
+    },
+    { explicitAll: true }
+  );
   for (const [key, value] of Object.entries(extra)) url.searchParams.set(key, value);
   return `${url.pathname}${url.search}`;
 }

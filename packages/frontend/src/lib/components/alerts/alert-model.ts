@@ -187,10 +187,15 @@ export interface MatchedLogsCriteria extends ComposeCriteria {
 export function buildMatchedLogsUrl(c: MatchedLogsCriteria): string {
   const end = toTime(c.triggeredAt) ?? Date.now();
   const start = end - Math.max(1, c.windowMinutes) * 60_000;
-  const url = writeScopeToUrl(new URL('http://x/dashboard/logs'), {
-    projectIds: c.projectId ? [c.projectId] : [],
-    range: { kind: 'custom', from: new Date(start).toISOString(), to: new Date(end).toISOString() },
-  });
+  // An org-wide rule opens Logs over all projects, not the viewer's remembered one.
+  const url = writeScopeToUrl(
+    new URL('http://x/dashboard/logs'),
+    {
+      projectIds: c.projectId ? [c.projectId] : [],
+      range: { kind: 'custom', from: new Date(start).toISOString(), to: new Date(end).toISOString() },
+    },
+    { explicitAll: true }
+  );
   const { q } = composeAlertQuery(c);
   if (q) url.searchParams.set('q', q);
   return `/dashboard/logs?${url.searchParams.toString()}`;

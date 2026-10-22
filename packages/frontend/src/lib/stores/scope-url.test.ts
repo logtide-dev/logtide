@@ -249,7 +249,7 @@ describe('reconcileScope', () => {
       mode: 'multi',
     });
     expect(r.effective.projectIds).toEqual([]);
-    expect(r.url!.searchParams.has('project')).toBe(false);
+    expect(r.url!.searchParams.get('project')).toBe('all');
   });
 
   it('single falls back to the first project', () => {
@@ -340,5 +340,120 @@ describe('reconcileScope', () => {
     });
     expect(r.url).toBeNull();
     expect(rangesEqual(r.effective.range, preset('1h'))).toBe(true);
+  });
+});
+
+describe('scope links and fallbacks (UI-1, UI-2, UI-4)', () => {
+  const sc = (ids: string[], range: TimeRangeValue = DEFAULT_RANGE): Scope => ({
+    projectIds: ids,
+    range,
+  });
+  const projs = [{ id: 'p1' }, { id: 'p2' }];
+
+  it('project=all reads as an explicit empty selection', () => {
+    expect(readScopeFromUrl(u('?project=all')).projectIds).toEqual([]);
+    expect(readScopeFromUrl(u('?project=all,p1')).projectIds).toEqual(['p1']);
+    expect('projectIds' in readScopeFromUrl(u(''))).toBe(false);
+  });
+
+  it('explicitAll writes project=all for an empty selection only on request', () => {
+    expect(writeScopeToUrl(u(''), { projectIds: [] }).searchParams.has('project')).toBe(false);
+    const url = writeScopeToUrl(u('?project=p1'), { projectIds: [] }, { explicitAll: true });
+    expect(url.searchParams.get('project')).toBe('all');
+    expect(readScopeFromUrl(url).projectIds).toEqual([]);
+  });
+
+  it('a pre-fill link does not read projectId as scope', () => {
+    expect(readScopeFromUrl(u('?create=1&projectId=p9')).projectIds).toBeUndefined();
+    expect(readScopeFromUrl(u('?new=1&projectId=p9')).projectIds).toBeUndefined();
+    expect(readScopeFromUrl(u('?create=1&project=p2&projectId=p9')).projectIds).toEqual(['p2']);
+  });
+
+  it('a single-project page does not persist its first-project fallback', () => {
+    const r = reconcileScope({ stored: sc([]), url: u(''), projects: projs, mode: 'single' });
+    expect(r.effective.projectIds).toEqual(['p1']);
+    expect(r.commit.projectIds).toEqual([]);
+    const multi = reconcileScope({
+      stored: sc(['x', 'p2']),
+      url: u(''),
+      projects: projs,
+      mode: 'single',
+    });
+    expect(multi.effective.projectIds).toEqual(['p2']);
+    expect(multi.commit.projectIds).toEqual(['x', 'p2']);
+  });
+
+  it('a page preset fallback is not persisted, a url range is', () => {
+    const r = reconcileScope({
+      stored: sc([], preset('1h')),
+      url: u(''),
+      projects: projs,
+      mode: 'multi',
+      presets: ['24h', '7d'],
+    });
+    expect(r.effective.range).toEqual(preset('24h'));
+    expect(r.commit.range).toEqual(preset('1h'));
+    const fromUrl = reconcileScope({
+      stored: sc([], preset('1h')),
+      url: u('?range=7d'),
+      projects: projs,
+      mode: 'multi',
+      presets: ['24h', '7d'],
+    });
+    expect(fromUrl.commit.range).toEqual(preset('7d'));
+  });
+
+  it('project=all beats the remembered project in multi mode', () => {
+    const r = reconcileScope({
+      stored: sc(['p1']),
+      url: u('?project=all'),
+      projects: projs,
+      mode: 'multi',
+    });
+    expect(r.effective.projectIds).toEqual([]);
+    expect(r.commit.projectIds).toEqual([]);
+  });
+
+  it('a link with only foreign ids does not overwrite the remembered project', () => {
+    const r = reconcileScope({
+      stored: sc(['p1']),
+      url: u('?project=zz'),
+      projects: projs,
+      mode: 'multi',
+    });
+    expect(r.commit.projectIds).toEqual(['p1']);
+  });
+
+  it('the canonical url carries the scope and drops legacy projectId', () => {
+    const r = reconcileScope({
+      stored: sc([], preset('1h')),
+      url: u('?projectId=p1&range=1h'),
+      projects: projs,
+      mode: 'multi',
+    });
+    expect(r.url!.searchParams.get('project')).toBe('p1');
+    expect(r.url!.searchParams.has('projectId')).toBe(false);
+  });
+
+  it('the canonical url keeps legacy projectId on log and create links', () => {
+    const log = reconcileScope({
+      stored: sc([]),
+      url: u('?logId=l1&projectId=p1'),
+      projects: projs,
+      mode: 'multi',
+    });
+    expect(log.url!.searchParams.get('projectId')).toBe('p1');
+  });
+
+  it('write options leave out a part the bar does not show', () => {
+    const r = reconcileScope({
+      stored: sc(['p1'], preset('1h')),
+      url: u(''),
+      projects: projs,
+      mode: 'multi',
+      write: { range: false },
+    });
+    expect(r.url!.searchParams.get('project')).toBe('p1');
+    expect(r.url!.searchParams.has('range')).toBe(false);
   });
 });

@@ -158,7 +158,7 @@ describe('incident-model', () => {
     );
     expect(url.searchParams.get('from')).toBe('2026-01-01T11:30:00.000Z');
     expect(url.searchParams.get('to')).toBe('2026-01-01T12:30:00.000Z');
-    expect(url.searchParams.has('project')).toBe(false);
+    expect(url.searchParams.get('project')).toBe('all');
     expect(url.searchParams.has('q')).toBe(false);
   });
 

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('$app/environment', () => ({ browser: true }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
-import { render, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, fireEvent, waitFor, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { goto } from '$app/navigation';
 import { page } from '$app/state';
@@ -52,18 +52,49 @@ describe('ScopeBar', () => {
     expect(goto).not.toHaveBeenCalled();
   });
 
-  it('does not rewrite the url on mount', async () => {
+  it('leaves an already canonical url alone on mount', async () => {
     scopeStore.set({ projectIds: ['p1'], range: preset('1h') });
+    setUrl('?project=p1&range=1h&q=timeout');
     render(ScopeBar, { props: { mode: 'multi', projects } });
     await tick();
     expect(scopeStore.get()).toEqual({ projectIds: ['p1'], range: preset('1h') });
     expect(goto).not.toHaveBeenCalled();
+  });
 
+  it('puts the remembered scope in the url on mount, keeping other params (UI-3)', async () => {
+    scopeStore.set({ projectIds: ['p1'], range: preset('1h') });
     setUrl('?q=timeout&view=terminal&utm=x');
     render(ScopeBar, { props: { mode: 'multi', projects } });
     await tick();
-    expect(scopeStore.get()).toEqual({ projectIds: ['p1'], range: preset('1h') });
+    expect(goto).toHaveBeenCalledTimes(1);
+    const url = lastGotoUrl();
+    expect(url.searchParams.get('project')).toBe('p1');
+    expect(url.searchParams.get('range')).toBe('1h');
+    expect(url.searchParams.get('q')).toBe('timeout');
+    expect(url.searchParams.get('utm')).toBe('x');
+    expect(vi.mocked(goto).mock.calls[0][1]).toMatchObject({ replaceState: true });
+  });
+
+  it('writes all projects explicitly so a link does not depend on the viewer', async () => {
+    render(ScopeBar, { props: { mode: 'multi', projects } });
+    await tick();
+    expect(lastGotoUrl().searchParams.get('project')).toBe('all');
+  });
+
+  it('canonicalUrl=false leaves the url to the page', async () => {
+    render(ScopeBar, { props: { mode: 'multi', projects, canonicalUrl: false } });
+    await tick();
     expect(goto).not.toHaveBeenCalled();
+  });
+
+  it('waits for the project list before writing the url', async () => {
+    const { rerender } = render(ScopeBar, { props: { mode: 'single', projects: [] } });
+    await tick();
+    expect(goto).not.toHaveBeenCalled();
+    await rerender({ mode: 'single', projects });
+    await tick();
+    expect(goto).toHaveBeenCalledTimes(1);
+    expect(lastGotoUrl().searchParams.get('project')).toBe('p1');
   });
 
   it('preserves params it does not own on user actions', async () => {
@@ -122,14 +153,44 @@ describe('ScopeBar', () => {
     render(ScopeBar, { props: { mode: 'single', projects } });
     await tick();
     expect(scopeStore.get().projectIds).toEqual(['p1']);
-    expect(goto).not.toHaveBeenCalled();
+    // the fallback is for this page only, the remembered scope is untouched (UI-1)
+    expect(scopeStore.getPersisted().projectIds).toEqual([]);
 
     scopeStore.reset();
     scopeStore.setProjects(['zz']);
     render(ScopeBar, { props: { mode: 'single', projects } });
     await tick();
     expect(scopeStore.get().projectIds).toEqual(['p1']);
-    expect(goto).not.toHaveBeenCalled();
+    expect(scopeStore.getPersisted().projectIds).toEqual(['zz']);
+  });
+
+  it('leaving a single-project page drops its fallback', async () => {
+    const { unmount } = render(ScopeBar, { props: { mode: 'single', projects } });
+    await tick();
+    expect(scopeStore.get().projectIds).toEqual(['p1']);
+    unmount();
+    expect(scopeStore.get().projectIds).toEqual([]);
+  });
+
+  it('a preset the page does not offer is not persisted (UI-1)', async () => {
+    scopeStore.setRange(preset('1h'));
+    render(ScopeBar, {
+      props: { mode: 'multi', projects, presets: ['24h', '7d', '30d'] as never },
+    });
+    await tick();
+    expect(scopeStore.get().range).toEqual(preset('24h'));
+    expect(scopeStore.getPersisted().range).toEqual(preset('1h'));
+  });
+
+  it('a user choice on a fallback page keeps the other remembered part', async () => {
+    scopeStore.setRange(preset('1h'));
+    const { getByRole, findByText } = render(ScopeBar, {
+      props: { mode: 'multi', projects, presets: ['24h', '7d', '30d'] as never },
+    });
+    await tick();
+    await fireEvent.click(getByRole('button', { name: /Last 24 hours/ }));
+    await fireEvent.click(await findByText('Last 7 days'));
+    expect(scopeStore.getPersisted().range).toEqual(preset('7d'));
   });
 
   it('multi mode drops foreign ids once projects load', async () => {
@@ -146,8 +207,8 @@ describe('ScopeBar', () => {
     scopeStore.setProjects(['p1', 'p2']);
     render(ScopeBar, { props: { mode: 'single', projects } });
     await tick();
-    expect(scopeStore.get().projectIds).toEqual(['p1', 'p2']);
-    expect(goto).not.toHaveBeenCalled();
+    expect(scopeStore.get().projectIds).toEqual(['p1']);
+    expect(scopeStore.getPersisted().projectIds).toEqual(['p1', 'p2']);
   });
 
   it('choosing a project updates store and url', async () => {
@@ -157,8 +218,24 @@ describe('ScopeBar', () => {
     await fireEvent.click(getByRole('button', { name: /Project one/ }));
     await fireEvent.click(await findByRole('checkbox', { name: /Project two/ }));
     expect(scopeStore.get().projectIds).toEqual([]);
-    // selecting every project normalises to [] and removes `project`
-    expect(lastGotoUrl().searchParams.has('project')).toBe(false);
+    // selecting every project normalises to [] and is written as an explicit `all`
+    expect(lastGotoUrl().searchParams.get('project')).toBe('all');
+  });
+
+  it('all projects clears a legacy projectId so it cannot bounce back (UI-4)', async () => {
+    setUrl('?projectId=p1');
+    const { getByRole } = render(ScopeBar, { props: { mode: 'multi', projects } });
+    await tick();
+    expect(scopeStore.get().projectIds).toEqual(['p1']);
+    await fireEvent.click(getByRole('button', { name: /Project one/ }));
+    await fireEvent.click(await screen.findByRole('checkbox', { name: /All projects/ }));
+    const url = lastGotoUrl();
+    expect(url.searchParams.get('project')).toBe('all');
+    expect(url.searchParams.has('projectId')).toBe(false);
+    // and the next reconcile of that url reads all projects, not p1
+    (page as { url: URL }).url = url;
+    await tick();
+    expect(scopeStore.get().projectIds).toEqual([]);
   });
 
   it('choosing one project writes project to the url', async () => {

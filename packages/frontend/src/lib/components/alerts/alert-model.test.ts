@@ -171,7 +171,7 @@ describe('validateAlertQuery', () => {
 });
 
 describe('buildMatchedLogsUrl', () => {
-  it('for an org-wide rule has no project param', () => {
+  it('for an org-wide rule links to all projects explicitly', () => {
     const url = buildMatchedLogsUrl({
       projectId: null,
       levels: ['error'],
@@ -179,7 +179,7 @@ describe('buildMatchedLogsUrl', () => {
       windowMinutes: 5,
     });
     const params = new URL(url, 'http://x').searchParams;
-    expect(params.has('project')).toBe(false);
+    expect(params.get('project')).toBe('all');
     expect(params.get('q')).toBe('level:error');
   });
 

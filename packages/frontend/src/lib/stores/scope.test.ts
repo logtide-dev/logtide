@@ -120,3 +120,43 @@ describe('scopeStore', () => {
     expect(localStorage.getItem('logtide_scope')).toBeNull();
   });
 });
+
+describe('scopeStore effective vs persisted', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('reconcile shows the fallback but persists only the commit', async () => {
+    const { scopeStore } = await fresh();
+    scopeStore.reconcile({ projectIds: [], range: p('1h') }, { projectIds: ['p1'], range: p('24h') });
+    expect(scopeStore.get()).toEqual({ projectIds: ['p1'], range: p('24h') });
+    expect(scopeStore.getPersisted()).toEqual({ projectIds: [], range: p('1h') });
+    expect(JSON.parse(localStorage.getItem('logtide_scope')!)).toEqual({
+      projectIds: [],
+      range: p('1h'),
+    });
+    const b = await fresh();
+    expect(b.scopeStore.get()).toEqual({ projectIds: [], range: p('1h') });
+  });
+
+  it('clearEffective returns to the persisted scope and notifies', async () => {
+    const { scopeStore } = await fresh();
+    scopeStore.reconcile({ projectIds: [], range: p('1h') }, { projectIds: ['p1'], range: p('1h') });
+    const seen: string[][] = [];
+    const unsub = scopeStore.subscribe((s) => seen.push(s.projectIds));
+    scopeStore.clearEffective();
+    expect(scopeStore.get().projectIds).toEqual([]);
+    expect(seen[seen.length - 1]).toEqual([]);
+    unsub();
+  });
+
+  it('a user choice persists its part and leaves the other fallback alone', async () => {
+    const { scopeStore } = await fresh();
+    scopeStore.reconcile({ projectIds: [], range: p('1h') }, { projectIds: [], range: p('24h') });
+    scopeStore.setProjects(['p2']);
+    expect(scopeStore.getPersisted()).toEqual({ projectIds: ['p2'], range: p('1h') });
+    expect(scopeStore.get()).toEqual({ projectIds: ['p2'], range: p('24h') });
+    scopeStore.setRange(p('7d'));
+    expect(scopeStore.getPersisted().range).toEqual(p('7d'));
+  });
+});

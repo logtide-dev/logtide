@@ -18,6 +18,9 @@ export interface Scope {
   range: TimeRangeValue;
 }
 
+/** URL value of `project` that means "all projects" (an empty list cannot be written). */
+export const ALL_PROJECTS = 'all';
+
 export const DEFAULT_RANGE: TimeRangeValue = { kind: 'preset', preset: '24h' };
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}(:?\d{2})?)?$/i;
@@ -57,9 +60,20 @@ export function readScopeFromUrl(url: URL): Partial<Scope> {
   const result: Partial<Scope> = {};
   const p = url.searchParams;
 
-  const projectValues = p.has('project') ? p.getAll('project') : p.getAll('projectId');
-  const ids = parseIdList(projectValues);
+  // On a create-alert link `projectId` means "pre-fill the project" (spec 5.10),
+  // never scope.
+  const prefillLink = p.get('create') === '1' || p.get('new') === '1';
+  const projectValues = p.has('project')
+    ? p.getAll('project')
+    : prefillLink
+      ? []
+      : p.getAll('projectId');
+  const all = parseIdList(projectValues);
+  const ids = all.filter((id) => id !== ALL_PROJECTS);
   if (ids.length > 0) result.projectIds = ids;
+  // `project=all` is an explicit "all projects", so a link can override the
+  // viewer's remembered project.
+  else if (all.length > 0) result.projectIds = [];
 
   const range = p.get('range');
   if (range !== null && isTimeRangePreset(range)) {
@@ -71,7 +85,30 @@ export function readScopeFromUrl(url: URL): Partial<Scope> {
   return result;
 }
 
-export function writeScopeToUrl(url: URL, scope: Partial<Scope>): URL {
+export interface WriteScopeOptions {
+  /** Write `project=all` for an empty selection instead of leaving `project` out. */
+  explicitAll?: boolean;
+}
+
+/**
+ * Drops the legacy `projectId` scope param, which would otherwise be re-read
+ * and override a later "All projects" choice. Kept on log links (`logId`) and
+ * on create-alert links, where it has another meaning.
+ */
+export function stripLegacyProject(url: URL): URL {
+  const p = url.searchParams;
+  if (!p.has('projectId')) return url;
+  if (p.has('logId') || p.get('create') === '1' || p.get('new') === '1') return url;
+  const next = new URL(url.href);
+  next.searchParams.delete('projectId');
+  return next;
+}
+
+export function writeScopeToUrl(
+  url: URL,
+  scope: Partial<Scope>,
+  options: WriteScopeOptions = {}
+): URL {
   const next = new URL(url.href);
   const p = next.searchParams;
   if (scope.range) {
@@ -87,6 +124,7 @@ export function writeScopeToUrl(url: URL, scope: Partial<Scope>): URL {
   }
   if (scope.projectIds) {
     if (scope.projectIds.length > 0) p.set('project', scope.projectIds.join(','));
+    else if (options.explicitAll) p.set('project', ALL_PROJECTS);
     else p.delete('project');
   }
   return next;
@@ -208,11 +246,15 @@ export function reconcileScope(input: {
   projects: { id: string }[];
   mode: 'multi' | 'single';
   presets?: TimeRangePreset[];
+  /** Which scope parts the canonical URL carries (a bar may hide one). */
+  write?: { projects?: boolean; range?: boolean };
 }): { effective: Scope; commit: Scope; url: URL | null } {
   const { stored, url, projects, mode, presets } = input;
   const fromUrl = readScopeFromUrl(url);
 
-  // Range
+  // `effective` is what this page shows and may fall back for this page only.
+  // `commit` is what gets persisted: what the URL decided, otherwise the stored
+  // value untouched. A page fallback is never persisted.
   let range: TimeRangeValue = fromUrl.range ?? stored.range;
   if (!rangeAllowed(range, presets)) {
     if (rangeAllowed(stored.range, presets)) range = stored.range;
@@ -220,36 +262,44 @@ export function reconcileScope(input: {
     else range = { kind: 'preset', preset: (presets as TimeRangePreset[])[0] };
   }
 
+  const commitRange =
+    fromUrl.range && rangeAllowed(fromUrl.range, presets) ? fromUrl.range : stored.range;
+
   // Projects
-  const merged = fromUrl.projectIds ?? stored.projectIds;
+  const urlIds = fromUrl.projectIds;
+  const merged = urlIds ?? stored.projectIds;
   const valid = new Set(projects.map((p) => p.id));
   let ids: string[];
-  let commitIds: string[];
+  let commitIds: string[] = stored.projectIds;
 
   if (projects.length > 0) {
     if (mode === 'multi') {
       ids = merged.filter((id) => valid.has(id));
       if (ids.length === projects.length) ids = [];
-      commitIds = ids;
+      // A link whose ids are all foreign decides nothing.
+      if (urlIds && (urlIds.length === 0 || urlIds.some((id) => valid.has(id)))) commitIds = ids;
     } else {
-      const pick =
-        merged.find((id) => valid.has(id)) ??
-        stored.projectIds.find((id) => valid.has(id)) ??
-        projects[0].id;
+      const urlPick = urlIds?.find((id) => valid.has(id));
+      const pick = urlPick ?? stored.projectIds.find((id) => valid.has(id)) ?? projects[0].id;
       ids = [pick];
-      commitIds = stored.projectIds[0] === pick ? stored.projectIds : ids;
+      if (urlPick) commitIds = stored.projectIds[0] === pick ? stored.projectIds : ids;
     }
   } else if (mode === 'multi') {
     ids = merged;
-    commitIds = ids;
+    if (urlIds) commitIds = ids;
   } else {
     ids = merged.slice(0, 1);
-    commitIds = ids.length > 0 && stored.projectIds[0] === ids[0] ? stored.projectIds : ids;
+    if (urlIds) {
+      commitIds = ids.length > 0 && stored.projectIds[0] === ids[0] ? stored.projectIds : ids;
+    }
   }
 
   const effective: Scope = { projectIds: ids, range };
-  const commit: Scope = { projectIds: commitIds, range };
-  const written = writeScopeToUrl(url, effective);
+  const commit: Scope = { projectIds: commitIds, range: commitRange };
+  const parts: Partial<Scope> = {};
+  if (input.write?.projects !== false) parts.projectIds = ids;
+  if (input.write?.range !== false) parts.range = range;
+  const written = stripLegacyProject(writeScopeToUrl(url, parts, { explicitAll: true }));
   const same = written.searchParams.toString() === url.searchParams.toString();
   return { effective, commit, url: same ? null : written };
 }

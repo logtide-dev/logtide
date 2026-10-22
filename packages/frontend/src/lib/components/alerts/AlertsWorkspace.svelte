@@ -68,6 +68,13 @@
 		return readScopeFromUrl(page.url).projectIds ?? $scopeStore.projectIds;
 	});
 
+	// A create or edit link is cleaned up by the effect below; the scope bar must
+	// not rewrite the same URL meanwhile.
+	const canonicalScopeUrl = $derived.by(() => {
+		const parsed = parseAlertPrefill(page.url);
+		return !parsed.open && !parsed.editRuleId;
+	});
+
 	function inScope(projectId: string | null | undefined): boolean {
 		if (projectId == null) return true;
 		return scopeIds.length === 0 || scopeIds.includes(projectId);
@@ -457,7 +464,7 @@
 		appliesTo="organization"
 	>
 		{#snippet actions()}
-			<ScopeBar mode="multi" {projects} showTime={false} />
+			<ScopeBar mode="multi" {projects} showTime={false} canonicalUrl={canonicalScopeUrl} />
 			<Button variant="outline" class="gap-2" onclick={() => (showPacks = true)}>
 				<Package class="w-4 h-4" aria-hidden="true" />
 				Detection packs
