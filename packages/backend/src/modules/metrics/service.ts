@@ -2,7 +2,15 @@ import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
 import { metering, recordMetricIngestion } from '../metering/index.js';
 import { createSkewTracker } from '../ingestion/skew.js';
+import {
+  pickAutoInterval,
+  intervalSeconds,
+  toRateSeries,
+  expandAttributeFilters,
+  capSeries,
+} from './aggregate-options.js';
 import type {
+  MetricTimeBucket,
   MetricRecord,
   AggregationInterval,
   MetricAggregationFn,
@@ -119,6 +127,71 @@ export class MetricsService {
       attributes: params.attributes,
       serviceName: params.serviceName,
     });
+  }
+
+  /**
+   * Explorer aggregate: resolves `auto` intervals, maps `rate` onto `last`,
+   * fans out one reservoir call per attribute combination (multi-value filters
+   * are one series per value), and caps the number of series.
+   */
+  async aggregateWithOptions(params: {
+    projectId: string | string[];
+    metricName: string;
+    from: Date;
+    to: Date;
+    interval: AggregationInterval | 'auto';
+    aggregation: MetricAggregationFn | 'rate';
+    groupBy?: string[];
+    attributes?: Record<string, string[]>;
+    serviceName?: string;
+  }) {
+    const interval = params.interval === 'auto' ? pickAutoInterval(params.from, params.to) : params.interval;
+    const bucketSeconds = intervalSeconds(interval);
+    const isRate = params.aggregation === 'rate';
+    const aggregation: MetricAggregationFn = isRate ? 'last' : (params.aggregation as MetricAggregationFn);
+
+    const attributes = params.attributes ?? {};
+    const combos = expandAttributeFilters(attributes);
+    const multiKeys = Object.keys(attributes).filter((k) => attributes[k].length > 1);
+
+    const results = await Promise.all(
+      combos.map(async (combo) => {
+        const result = await reservoir.aggregateMetrics({
+          projectId: params.projectId,
+          metricName: params.metricName,
+          from: params.from,
+          to: params.to,
+          interval,
+          aggregation,
+          groupBy: params.groupBy,
+          attributes: Object.keys(combo).length > 0 ? combo : undefined,
+          serviceName: params.serviceName,
+        });
+        const extra: Record<string, string> = {};
+        for (const k of multiKeys) extra[k] = combo[k];
+        return { result, extra };
+      }),
+    );
+
+    let timeseries: MetricTimeBucket[] = [];
+    for (const { result, extra } of results) {
+      for (const point of result.timeseries ?? []) {
+        timeseries.push(multiKeys.length > 0 ? { ...point, labels: { ...(point.labels ?? {}), ...extra } } : point);
+      }
+    }
+
+    if (isRate) timeseries = toRateSeries(timeseries, bucketSeconds);
+    const capped = capSeries(timeseries);
+
+    const first = results[0]?.result;
+    return {
+      ...(first ?? { metricName: params.metricName, metricType: 'gauge' as const }),
+      timeseries: capped.points,
+      interval,
+      bucketSeconds,
+      seriesTotal: capped.seriesTotal,
+      seriesShown: capped.seriesShown,
+    };
   }
 
   async getOverview(params: {
