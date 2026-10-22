@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { OrganizationsService } from './service.js';
+import { OrganizationsService, OrganizationLimitError } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import type { OrgRole } from '@logtide/shared';
 import { auditLogService } from '../audit-log/index.js';
@@ -321,14 +321,7 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
       const { id } = organizationIdSchema.parse(request.params);
       const { userId } = transferOwnershipBodySchema.parse(request.body);
 
-      const result = await organizationsService.transferOwnership(id, request.user.id, userId);
-
-      await auditLogService.record({
-        action: 'org.ownership_transferred',
-        target: { type: 'organization', id },
-        organizationId: id,
-        metadata: { previousOwnerId: result.previousOwnerId, newOwnerId: result.newOwnerId },
-      });
+      await organizationsService.transferOwnership(id, request.user.id, userId);
 
       return reply.send({ success: true });
     } catch (error) {
@@ -336,6 +329,13 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({
           error: 'Validation error',
           details: error.errors,
+        });
+      }
+
+      if (error instanceof OrganizationLimitError) {
+        return reply.status(403).send({
+          error: 'organization_limit_reached',
+          message: `That user can own at most ${error.max.toLocaleString('en-US')} organization${error.max === 1 ? '' : 's'}`,
         });
       }
 

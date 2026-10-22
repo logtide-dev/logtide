@@ -170,7 +170,7 @@ Mutating routes must be serialized per organization on the billing side so a dou
 
 ### MAX_ORGANIZATIONS_PER_USER
 
-Positive integer; unset = unlimited; anything else aborts startup. It counts organizations where the user is `owner`; being a member or admin of someone else's organization never counts. At the cap, `POST /api/v1/organizations` answers `403 { "error": "organization_limit_reached", "message": ... }`. That endpoint is the only path that creates a user-owned organization (registration, invitations and SSO login do not). Operator scripts such as seeding are not capped.
+Positive integer; unset = unlimited; anything else aborts startup. It counts organizations where the user is `owner`; being a member or admin of someone else's organization never counts. At the cap, `POST /api/v1/organizations` answers `403 { "error": "organization_limit_reached", "message": ... }`. Creating an organization and receiving one through `POST /api/v1/organizations/:id/transfer-ownership` are the only paths that make a user an owner (registration, invitations and SSO login do not); a transfer to a user already at the cap answers the same `403 organization_limit_reached`. Operator scripts such as seeding are not capped.
 
 ### MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH
 
