@@ -1,8 +1,9 @@
 import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import type { LogLevel, MetadataFilter } from '@logtide/shared';
-import type { AlertType, BaselineType, BaselineMetadata } from '../../database/types.js';
+import type { AlertType, AlertRuleState, BaselineType, BaselineMetadata } from '../../database/types.js';
 import { baselineCalculator } from './baseline-calculator.js';
+import { normalizeAlertQuery } from './alert-query.js';
 import { reservoir } from '../../database/reservoir.js';
 import { hooks, HookRejectionError } from '../../hooks/index.js';
 
@@ -97,6 +98,14 @@ export interface AlertRule {
   emailRecipients: string[];
   webhookUrl: string | null;
   metadataFilters: MetadataFilter[];
+  // 1.6 lifecycle (migration 065)
+  query: string | null;
+  state: AlertRuleState;
+  lastTriggeredAt: Date | null;
+  lastEvaluatedAt: Date | null;
+  lastNotifiedAt: Date | null;
+  snoozedUntil: Date | null;
+  renotifyMinutes: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -119,6 +128,10 @@ export interface CreateAlertRuleInput {
   emailRecipients: string[];
   webhookUrl?: string | null;
   metadataFilters?: MetadataFilter[] | null;
+  /** Grammar query (threshold rules only); blank is stored as null. */
+  query?: string | null;
+  /** Threshold rules only, 5 to 1440. */
+  renotifyMinutes?: number | null;
 }
 
 export interface UpdateAlertRuleInput {
@@ -137,6 +150,12 @@ export interface UpdateAlertRuleInput {
   emailRecipients?: string[];
   webhookUrl?: string | null;
   metadataFilters?: MetadataFilter[] | null;
+  query?: string | null;
+  renotifyMinutes?: number | null;
+}
+
+function toDateOrNull(value: Date | string | null | undefined): Date | null {
+  return value == null ? null : new Date(value);
 }
 
 export class AlertsService {
@@ -167,6 +186,8 @@ export class AlertsService {
         email_recipients: input.emailRecipients,
         webhook_url: input.webhookUrl || null,
         metadata_filters: sql`${JSON.stringify(input.metadataFilters ?? [])}::jsonb`,
+        query: normalizeAlertQuery(input.query),
+        renotify_minutes: input.renotifyMinutes ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -264,6 +285,8 @@ export class AlertsService {
     if (input.emailRecipients !== undefined) updateData.email_recipients = input.emailRecipients;
     if (input.webhookUrl !== undefined) updateData.webhook_url = input.webhookUrl;
     if (input.metadataFilters !== undefined) updateData.metadata_filters = sql`${JSON.stringify(input.metadataFilters ?? [])}::jsonb`;
+    if (input.query !== undefined) updateData.query = normalizeAlertQuery(input.query);
+    if (input.renotifyMinutes !== undefined) updateData.renotify_minutes = input.renotifyMinutes;
 
     const rule = await db
       .updateTable('alert_rules')
@@ -591,6 +614,23 @@ export class AlertsService {
   }
 
   /**
+   * Notifications (alert_history rows) per rule since `since`, for the rules
+   * of one organization. Rules without any row are absent from the map.
+   */
+  async countTriggersSince(organizationId: string, since: Date): Promise<Map<string, number>> {
+    const rows = await db
+      .selectFrom('alert_history')
+      .innerJoin('alert_rules', 'alert_rules.id', 'alert_history.rule_id')
+      .select(['alert_history.rule_id', (eb) => eb.fn.count('alert_history.id').as('count')])
+      .where('alert_rules.organization_id', '=', organizationId)
+      .where('alert_history.triggered_at', '>=', since)
+      .groupBy('alert_history.rule_id')
+      .execute();
+
+    return new Map(rows.map((row) => [row.rule_id, Number(row.count)]));
+  }
+
+  /**
    * Get alert history for an organization
    */
   async getAlertHistory(
@@ -618,6 +658,8 @@ export class AlertsService {
         'alert_rules.service',
         'alert_rules.level',
         'alert_rules.alert_type',
+        'alert_rules.query',
+        'alert_rules.metadata_filters',
       ])
       .where('alert_rules.organization_id', '=', organizationId);
 
@@ -670,6 +712,8 @@ export class AlertsService {
         service: row.service,
         level: row.level,
         alertType: (row as any).alert_type || 'threshold',
+        query: row.query ?? null,
+        metadataFilters: (row.metadata_filters ?? []) as MetadataFilter[],
       })),
       total: Number(total?.count || 0),
       limit: options?.limit ?? 100,
@@ -1156,6 +1200,13 @@ export class AlertsService {
       emailRecipients: row.email_recipients,
       webhookUrl: row.webhook_url,
       metadataFilters: row.metadata_filters ?? [],
+      query: row.query ?? null,
+      state: row.state ?? 'ok',
+      lastTriggeredAt: toDateOrNull(row.last_triggered_at),
+      lastEvaluatedAt: toDateOrNull(row.last_evaluated_at),
+      lastNotifiedAt: toDateOrNull(row.last_notified_at),
+      snoozedUntil: toDateOrNull(row.snoozed_until),
+      renotifyMinutes: row.renotify_minutes != null ? Number(row.renotify_minutes) : null,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };
