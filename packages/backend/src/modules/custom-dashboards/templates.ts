@@ -191,7 +191,8 @@ export function buildTemplateYaml(
   const projectId = opts.projectId ?? null;
   const panels = template.panels.map((p) => ({
     ...p,
-    config: 'projectId' in p.config ? { ...p.config, projectId } : { ...p.config },
+    // Every panel config carries a projectId (null = all projects).
+    config: { ...p.config, projectId } as PanelConfig,
   }));
 
   return yaml.dump(
