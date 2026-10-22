@@ -202,6 +202,7 @@ export const webhookDispatcher = {
         payload: params.payload as Record<string, unknown>,
         signingSecret: params.signingSecret ?? null,
         headers: params.headers ?? null,
+        method: params.method ?? null,
         channelId: params.channelId ?? null,
         ruleId: params.ruleId ?? null,
         ...(params.metadata ?? {}),

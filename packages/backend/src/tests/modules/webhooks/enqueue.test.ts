@@ -45,6 +45,16 @@ describe('webhookDispatcher.enqueue', () => {
     expect(opts.jobKey).not.toContain(':');
   });
 
+  it('persists method and headers so the worker sends them', async () => {
+    await webhookDispatcher.enqueue({
+      url: 'https://e.com/hook', payload: {}, organizationId: 'org-1', eventType: 'alert', eventId: 'evt-m',
+      method: 'PUT', headers: { Authorization: 'Bearer t' },
+    });
+    expect(createDeliveryMock.mock.calls[0][0].metadata).toMatchObject({
+      method: 'PUT', headers: { Authorization: 'Bearer t' },
+    });
+  });
+
   it('does not let a completed job id linger in the backend', async () => {
     await webhookDispatcher.enqueue({
       url: 'https://e.com/hook', payload: { a: 1 }, organizationId: 'org-1', eventType: 'alert', eventId: 'evt-9',

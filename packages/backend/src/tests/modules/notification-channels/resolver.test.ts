@@ -254,6 +254,24 @@ describe('toDeliveryTargets', () => {
   });
 });
 
+describe('toDeliveryTargets webhook request settings', () => {
+  it('carries method and merged headers with the auth header', () => {
+    const mk = (id: string, config: unknown): NotificationChannel => ({
+      id, organizationId: 'o', name: id, type: 'webhook', enabled: true, config: config as any,
+      description: null, createdBy: null, createdAt: new Date(), updatedAt: new Date(),
+    });
+    const targets = toDeliveryTargets([
+      mk('b', { url: 'https://example.com/b', method: 'PUT', headers: { 'X-Team': 'ops' }, auth: { type: 'bearer', token: 'tok' } }),
+      mk('c', { url: 'https://example.com/c', auth: { type: 'basic', username: 'u', password: 'p' } }),
+    ]);
+    expect(targets.webhooks[0]).toMatchObject({
+      channelId: 'b', method: 'PUT', headers: { 'X-Team': 'ops', Authorization: 'Bearer tok' },
+    });
+    expect(targets.webhooks[1].headers.Authorization).toBe('Basic ' + Buffer.from('u:p').toString('base64'));
+    expect(targets.webhooks[1].method).toBeUndefined();
+  });
+});
+
 describe('resolveFallbackEmails', () => {
   beforeEach(async () => {
     await db.deleteFrom('organization_default_channels').execute();
