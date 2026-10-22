@@ -235,7 +235,7 @@
                             <Table.Head>Project name</Table.Head>
                             <Table.Head>Organization</Table.Head>
                             <Table.Head class="text-right">Logs</Table.Head>
-                            <Table.Head class="text-right">API Keys</Table.Head>
+                            <Table.Head class="text-right">API keys</Table.Head>
                             <Table.Head class="text-right">Alerts</Table.Head>
                             <Table.Head>Created</Table.Head>
                             <Table.Head class="text-right">Actions</Table.Head>
@@ -280,7 +280,7 @@
                                                 size: "sm",
                                             })}
                                         >
-                                            View Details
+                                            View details
                                         </a>
                                         <Button
                                             variant="destructive"

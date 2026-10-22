@@ -93,7 +93,7 @@
 	<CardHeader class="pb-3">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<Shield class="w-4 h-4" />
-			IP Reputation
+			IP reputation
 			<Badge variant="secondary" class="ml-auto">{ipEntries.length}</Badge>
 		</CardTitle>
 	</CardHeader>
@@ -171,12 +171,12 @@
 							{/if}
 							{#if data.usageType}
 								<div class="flex justify-between">
-									<span class="text-muted-foreground">Usage Type</span>
+									<span class="text-muted-foreground">Usage type</span>
 									<span>{data.usageType}</span>
 								</div>
 							{/if}
 							<div class="flex justify-between">
-								<span class="text-muted-foreground">Last Checked</span>
+								<span class="text-muted-foreground">Last checked</span>
 								<span>{formatTimestamp(data.lastChecked)}</span>
 							</div>
 						</div>

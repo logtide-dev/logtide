@@ -146,8 +146,8 @@
     });
 
     const authModeOptionsList = [
-        { value: "standard", label: "Standard Authentication" },
-        { value: "none", label: "Auth-Free Mode" },
+        { value: "standard", label: "Standard authentication" },
+        { value: "none", label: "Auth-free mode" },
     ];
 
     function getAuthModeLabel(mode: string): string {
@@ -216,12 +216,12 @@
             </div>
         {:else}
             <div class="grid gap-6 md:grid-cols-2">
-                <!-- User Registration Settings -->
+                <!-- User registration settings -->
                 <Card>
                     <CardHeader>
                         <CardTitle class="flex items-center gap-2">
                             <UserPlus class="h-5 w-5" />
-                            User Registration
+                            User registration
                         </CardTitle>
                         <CardDescription>
                             Control whether new users can register on the platform
@@ -250,12 +250,12 @@
                     </CardContent>
                 </Card>
 
-                <!-- Authentication Mode Settings -->
+                <!-- Authentication mode settings -->
                 <Card>
                     <CardHeader>
                         <CardTitle class="flex items-center gap-2">
                             <Shield class="h-5 w-5" />
-                            Authentication Mode
+                            Authentication mode
                         </CardTitle>
                         <CardDescription>
                             Configure how users authenticate to the platform
@@ -288,7 +288,7 @@
                         {#if authMode === "none"}
                             <div class="bg-warning/10 border border-warning/20 rounded-md p-3 space-y-2">
                                 <p class="text-sm font-medium text-warning-text">
-                                    Auth-Free Mode Active
+                                    Auth-free mode active
                                 </p>
                                 <p class="text-sm text-muted-foreground">
                                     All users will be automatically logged in as the default user.
@@ -311,7 +311,7 @@
                         <CardHeader>
                             <CardTitle class="flex items-center gap-2">
                                 <User class="h-5 w-5" />
-                                Default User Configuration
+                                Default user configuration
                             </CardTitle>
                             <CardDescription>
                                 Select the default user for auth-free mode. All requests will be processed as this user.
@@ -378,12 +378,12 @@
                     </Card>
                 {/if}
 
-                <!-- Search Settings -->
+                <!-- Search settings -->
                 <Card class="md:col-span-2">
                     <CardHeader>
                         <CardTitle class="flex items-center gap-2">
                             <Search class="h-5 w-5" />
-                            Search Settings
+                            Search settings
                         </CardTitle>
                         <CardDescription>
                             Configure log search behavior and performance
@@ -444,7 +444,7 @@
                     <CardHeader>
                         <CardTitle class="flex items-center gap-2">
                             <ArrowUpCircle class="h-5 w-5" />
-                            Update Notifications
+                            Update notifications
                         </CardTitle>
                         <CardDescription>
                             Choose which release channel to track for update notifications

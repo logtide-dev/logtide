@@ -314,7 +314,7 @@
                                                 size: "sm",
                                             })}
                                         >
-                                            View Details
+                                            View details
                                         </a>
                                     </TableCell>
                                 </TableRow>

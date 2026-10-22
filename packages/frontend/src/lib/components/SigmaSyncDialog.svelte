@@ -136,7 +136,7 @@
                 </div>
 
                 <div class="space-y-2">
-                    <Label>Notification Channels (optional)</Label>
+                    <Label>Notification channels (optional)</Label>
                     <ChannelSelector
                         selectedIds={selectedChannelIds}
                         onSelectionChange={(ids) => (selectedChannelIds = ids)}

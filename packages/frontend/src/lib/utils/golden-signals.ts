@@ -26,7 +26,7 @@ export interface SignalConfig {
 export const SIGNAL_CONFIGS: SignalConfig[] = [
   {
     type: 'request_rate',
-    title: 'Request Rate',
+    title: 'Request rate',
     description: 'Incoming requests per second',
     metricPatterns: [
       'http.server.request.duration',
@@ -40,7 +40,7 @@ export const SIGNAL_CONFIGS: SignalConfig[] = [
   },
   {
     type: 'error_rate',
-    title: 'Error Rate',
+    title: 'Error rate',
     description: 'Server errors per second',
     metricPatterns: [
       'http.server.error.count',
