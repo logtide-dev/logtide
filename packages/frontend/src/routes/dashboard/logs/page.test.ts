@@ -985,3 +985,26 @@ describe('logs page: phone layout', () => {
     expect(queryInput().placeholder).toBe('Search logs');
   });
 });
+
+describe('logs page on a phone', () => {
+  const realMatchMedia = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+  });
+
+  it('renders no histogram and requests none, the count stays in the results header', async () => {
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('max-width: 767'),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    h.getLogs.mockResolvedValue(response(logsList(3), { total: 3 }));
+    await renderPage();
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(h.getHistogram).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Log volume')).toBeNull();
+    expect(screen.getAllByText('3 logs').length).toBeGreaterThan(0);
+  });
+});

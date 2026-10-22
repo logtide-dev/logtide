@@ -444,7 +444,8 @@
       return true;
     }
 
-    void loadHistogram(r);
+    // No chart on phones, so no request either.
+    if (!get(isMobile)) void loadHistogram(r);
     void loadFacets(r);
     loading = true;
     try {
@@ -1265,7 +1266,7 @@
 
   <div class="mb-4 space-y-2">
     <div class="flex flex-wrap items-start gap-2">
-      <div class="min-w-[280px] flex-1">
+      <div class="min-w-[280px] flex-1 max-md:min-w-0 max-md:w-full max-md:basis-full">
         <LogQueryBar
           bind:value={draftQ}
           fields={discoveredKeys}
@@ -1275,11 +1276,12 @@
           onEdit={() => recorder.cancel()}
         />
       </div>
+      <div class="grid w-full grid-cols-1 gap-2 min-[480px]:grid-cols-[repeat(4,minmax(0,1fr))] md:contents">
       {#if $isMobile}
         <Button
           variant="outline"
           size="sm"
-          class="h-9 gap-1.5"
+          class="h-10 w-full min-w-0 gap-1.5 md:w-auto"
           aria-label={filterClauseCount > 0 ? `Filters, ${filterClauseCount} active` : "Filters"}
           aria-haspopup="dialog"
           aria-expanded={filtersOpen}
@@ -1296,7 +1298,7 @@
           {/if}
         </Button>
       {/if}
-      <div class="flex min-h-9 items-center">
+      <div class="flex min-h-9 items-center {live ? 'max-md:col-span-full min-[480px]:max-md:order-last' : 'max-md:min-w-0'} max-md:w-full">
         <LiveTailControls
           {live}
           state={liveSnap?.state ?? "disconnected"}
@@ -1329,8 +1331,9 @@
       <Popover.Root bind:open={moreOpen}>
         <Popover.Trigger>
           {#snippet child({ props })}
-            <Button {...props} variant="outline" size="icon" class="size-9" aria-label="More actions" title="More actions">
+            <Button {...props} variant="outline" size="icon" class="size-9 max-md:h-10 max-md:w-full max-md:min-w-0 max-md:gap-1.5" aria-label="More actions" title="More actions">
               <Ellipsis class="size-4" />
+              <span class="md:hidden">More</span>
             </Button>
           {/snippet}
         </Popover.Trigger>
@@ -1364,6 +1367,7 @@
           </div>
         </Popover.Content>
       </Popover.Root>
+      </div>
     </div>
 
     {#if live && liveSnap?.error && liveSnap.state === "disconnected"}
@@ -1395,7 +1399,7 @@
     {/if}
   </div>
 
-  {#if hasRun && !live && resultsState !== "onboarding"}
+  {#if hasRun && !live && resultsState !== "onboarding" && !$isMobile}
     <section aria-label="Log volume" class="mb-4 rounded-lg border bg-card p-3 text-card-foreground">
       <LogVolumeHistogram
         buckets={histogramBuckets}
@@ -1440,8 +1444,8 @@
       />
     {/if}
 
-    <section aria-label="Results" class="min-w-0 rounded-lg border bg-card text-card-foreground">
-      <div class="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
+    <section aria-label="Results" class="min-w-0 bg-card text-card-foreground max-md:overflow-hidden rounded-lg border">
+      <div class="flex items-center justify-between gap-2 border-b px-3 py-2 md:flex-wrap">
         <div class="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           {#if resultsState === "results" || (live && rows.length > 0)}
             <span class="font-medium">{countText}</span>
@@ -1467,22 +1471,22 @@
             <Button
               variant={view === "table" ? "secondary" : "ghost"}
               size="sm"
-              class="gap-1.5 rounded-r-none border-r"
+              class="gap-1.5 rounded-r-none border-r max-md:h-8 max-md:px-3"
               aria-pressed={view === "table"}
               onclick={() => setView("table")}
             >
               <Table2 class="size-4" />
-              <span>Table</span>
+              <span class="max-md:sr-only">Table</span>
             </Button>
             <Button
               variant={view === "terminal" ? "secondary" : "ghost"}
               size="sm"
-              class="gap-1.5 rounded-l-none"
+              class="gap-1.5 rounded-l-none max-md:h-8 max-md:px-3"
               aria-pressed={view === "terminal"}
               onclick={() => setView("terminal")}
             >
               <SquareTerminal class="size-4" />
-              <span>Terminal</span>
+              <span class="max-md:sr-only">Terminal</span>
             </Button>
           </div>
           {#if view === "terminal"}
@@ -1495,7 +1499,7 @@
               onclick={() => layoutStore.toggleTerminalWrap()}
             >
               <WrapText class="size-4 {terminalWrap ? 'text-primary' : 'text-muted-foreground'}" />
-              <span>Wrap lines</span>
+              <span class="max-md:sr-only">Wrap lines</span>
             </Button>
           {:else if !$isMobile}
             <Button
@@ -1519,9 +1523,9 @@
         </div>
       </div>
 
-      <div class="p-3">
+      <div class="p-3 {resultsState === 'results' || (live && rows.length > 0) ? 'max-md:p-0' : ''}">
         {#if showPendingPill}
-          <div class="flex justify-center pb-2">
+          <div class="flex justify-center pb-2 max-md:pt-2">
             <Button size="sm" class="h-7 rounded-full px-3 text-xs" onclick={showPending}>{pendingText}</Button>
           </div>
         {/if}
