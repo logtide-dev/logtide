@@ -79,3 +79,62 @@ export function formatResponseTime(ms: number | null | undefined): string {
 export function monitorTitle(m: { name: string; displayName?: string | null }): string {
   return m.displayName?.trim() ? m.displayName : m.name;
 }
+
+export interface MonitorSummary {
+  total: number;
+  up: number;
+  down: number;
+  paused: number;
+  unknown: number;
+}
+
+type FilterableMonitor = {
+  name: string;
+  displayName?: string | null;
+  groupName?: string | null;
+  target: string | null;
+  type: MonitorType;
+  enabled: boolean;
+  status?: { status: 'up' | 'down' | 'unknown' } | null;
+};
+
+export type MonitorStatusFilter = 'all' | 'up' | 'down' | 'paused' | 'unknown';
+
+export function summarizeMonitors(monitors: FilterableMonitor[]): MonitorSummary {
+  const s: MonitorSummary = { total: monitors.length, up: 0, down: 0, paused: 0, unknown: 0 };
+  for (const m of monitors) {
+    if (!m.enabled) s.paused++;
+    else if (m.status?.status === 'up') s.up++;
+    else if (m.status?.status === 'down') s.down++;
+    else s.unknown++;
+  }
+  return s;
+}
+
+export function filterMonitors<T extends FilterableMonitor>(
+  monitors: T[],
+  status: MonitorStatusFilter,
+  query: string
+): T[] {
+  const q = query.trim().toLowerCase();
+  return monitors.filter((m) => {
+    if (
+      q &&
+      !(
+        m.name.toLowerCase().includes(q) ||
+        (m.displayName ?? '').toLowerCase().includes(q) ||
+        (m.groupName ?? '').toLowerCase().includes(q) ||
+        (m.target ?? '').toLowerCase().includes(q) ||
+        monitorTypeLabel(m.type).toLowerCase().includes(q)
+      )
+    ) {
+      return false;
+    }
+    if (status === 'all') return true;
+    if (status === 'paused') return !m.enabled;
+    if (!m.enabled) return false;
+    const s = m.status?.status ?? 'unknown';
+    if (status === 'unknown') return s !== 'up' && s !== 'down';
+    return s === status;
+  });
+}

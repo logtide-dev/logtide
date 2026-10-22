@@ -62,7 +62,7 @@ export function weightedUptime(slots: DaySlot[]): number | null {
   let weighted = 0;
   let total = 0;
   for (const s of slots) {
-    if (s.uptimePct === null) continue;
+    if (s.uptimePct === null || !('totalChecks' in s)) continue;
     weighted += s.uptimePct * s.totalChecks;
     total += s.totalChecks;
   }

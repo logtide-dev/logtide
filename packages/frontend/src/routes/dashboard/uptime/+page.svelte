@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { currentOrganization } from '$lib/stores/organization';
-  import { currentProjectStore } from '$lib/stores/current-project';
+  import { scopeStore } from '$lib/stores/scope';
   import { monitoringStore, monitors, monitorsLoading, monitorsError } from '$lib/stores/monitoring';
   import { toastStore } from '$lib/stores/toast';
-  import { layoutStore } from '$lib/stores/layout';
   import { type CreateMonitorInput, type Monitor, type MonitorType } from '$lib/api/monitoring';
   import { ProjectsAPI } from '$lib/api/projects';
   import { getAuthToken } from '$lib/utils/auth';
@@ -13,13 +13,17 @@
   import { logsAPI } from '$lib/api/logs';
   import type { Project } from '@logtide/shared';
   import Button from '$lib/components/ui/button/button.svelte';
-  import Input from '$lib/components/ui/input/input.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import * as Tabs from '$lib/components/ui/tabs';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Select from '$lib/components/ui/select';
+  import EmptyState from '$lib/components/app/EmptyState.svelte';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import ScopeBar from '$lib/components/app/ScopeBar.svelte';
   import StatusBadgeEmbed from '$lib/components/monitoring/StatusBadgeEmbed.svelte';
+  import MonitorList from '$lib/components/monitoring/MonitorList.svelte';
+  import { parseUptimeUrl, writeUptimeUrl, type UptimeTab } from '$lib/components/monitoring/uptime-url';
   import Activity from '@lucide/svelte/icons/activity';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import Code2 from '@lucide/svelte/icons/code-2';
@@ -27,27 +31,38 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Pencil from '@lucide/svelte/icons/pencil';
-  import Copy from '@lucide/svelte/icons/copy';
-  import Globe from '@lucide/svelte/icons/globe';
-  import Wifi from '@lucide/svelte/icons/wifi';
-  import Heart from '@lucide/svelte/icons/heart';
-  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import ExternalLink from '@lucide/svelte/icons/external-link';
-  import Play from '@lucide/svelte/icons/play';
-  import Pause from '@lucide/svelte/icons/pause';
-  import Search from '@lucide/svelte/icons/search';
   import CalendarClock from '@lucide/svelte/icons/calendar-clock';
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
   import Settings from '@lucide/svelte/icons/settings';
 
-  const layout = $derived($layoutStore);
   const org = $derived($currentOrganization);
   const monitorList = $derived($monitors);
   const loading = $derived($monitorsLoading);
   const error = $derived($monitorsError);
 
   let projects = $state<Project[]>([]);
+  let projectsLoaded = $state(false);
   const projectsAPI = new ProjectsAPI(getAuthToken);
+
+  // The project comes from the shared scope. Until the projects of this
+  // organization are loaded a stale id from another organization is ignored.
+  const projectId = $derived.by(() => {
+    const id = $scopeStore.projectIds[0];
+    return projectsLoaded && id && projects.some((p) => p.id === id) ? id : undefined;
+  });
+
+  const urlState = $derived(parseUptimeUrl(page.url));
+  const activeTab = $derived(urlState.tab);
+
+  function navigate(url: URL, replace: boolean) {
+    goto(url, { replaceState: replace, keepFocus: true, noScroll: true });
+  }
+
+  function setTab(tab: UptimeTab) {
+    navigate(writeUptimeUrl(page.url, { tab }), false);
+  }
+
 
   // Display labels for the shared Select dropdowns
   const monitorTypeLabels: Record<string, string> = {
@@ -74,17 +89,9 @@
     members_only: 'Members only',
   };
 
-  type MonitoringTab = 'monitors' | 'incidents' | 'maintenance' | 'status-page';
-  let activeTab = $state<MonitoringTab>('monitors');
-
-  let monitorSearch = $state('');
-  let monitorStatusFilter = $state<'all' | 'up' | 'down' | 'paused' | 'unknown'>('all');
-
   let showCreateForm = $state(false);
   let editingMonitor = $state<Monitor | null>(null);
-  let deleteConfirmId = $state<string | null>(null);
   let submitting = $state(false);
-  let togglingEnabledId = $state<string | null>(null);
 
   let formName = $state('');
   let formType = $state<MonitorType>('http');
@@ -95,35 +102,53 @@
   let formGracePeriod = $state<number | null>(null);
   let formAutoResolve = $state(true);
   let formEnabled = $state(true);
-  let projectId = $state<string | undefined>(undefined);
   let availableServices = $state<string[]>([]);
   let serviceSearchOpen = $state(false);
 
   $effect(() => {
     const orgId = org?.id;
     if (!orgId) return;
-    projectsAPI.getProjects(orgId).then((res) => {
-      projects = res.projects;
-      if (!untrack(() => projectId) && res.projects.length > 0) {
-        const remembered = currentProjectStore.get();
-        projectId = res.projects.some((p) => p.id === remembered)
-          ? (remembered as string)
-          : res.projects[0].id;
-      }
-    }).catch((err) => {
-      toastStore.error(err instanceof Error ? err.message : 'Failed to load projects');
-    });
+    let cancelled = false;
+    projectsLoaded = false;
+    projectsAPI
+      .getProjects(orgId)
+      .then((res) => {
+        if (cancelled) return;
+        projects = res.projects;
+        projectsLoaded = true;
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        projectsLoaded = true;
+        toastStore.error(err instanceof Error ? err.message : 'Could not load projects');
+      });
+    return () => {
+      cancelled = true;
+    };
   });
 
   $effect(() => {
-    if (org) {
-      monitoringStore.load(org.id, projectId);
-      if (projectId) {
-        loadIncidents();
-        loadMaintenances();
-      }
+    const organization = org;
+    const pid = projectId;
+    if (!organization || !pid) return;
+    untrack(() => {
+      monitoringStore.load(organization.id, pid);
+      loadIncidents();
+      loadMaintenances();
+    });
+  });
+
+  // create=1 on the monitors tab opens the create dialog once, then leaves the URL clean.
+  $effect(() => {
+    if (urlState.create && urlState.tab === 'monitors' && projectId) {
+      untrack(() => openCreate());
+      navigate(writeUptimeUrl(page.url, { create: false }), true);
     }
   });
+
+  function reloadMonitors() {
+    if (org && projectId) monitoringStore.load(org.id, projectId);
+  }
 
   $effect(() => {
     if (formType === 'log_heartbeat' && projectId && org) {
@@ -276,86 +301,6 @@
     } finally {
       submitting = false;
     }
-  }
-
-  async function handleDelete(id: string) {
-    if (!org) return;
-    try {
-      await monitoringStore.delete(id, org.id);
-      toastStore.success('Monitor deleted');
-      deleteConfirmId = null;
-    } catch (err) {
-      toastStore.error(err instanceof Error ? err.message : 'Failed to delete monitor');
-    }
-  }
-
-  async function toggleMonitorEnabled(monitor: Monitor) {
-    if (!org) return;
-    togglingEnabledId = monitor.id;
-    try {
-      await monitoringStore.update(monitor.id, org.id, { enabled: !monitor.enabled });
-      toastStore.success(monitor.enabled ? 'Monitor paused' : 'Monitor resumed');
-    } catch (err) {
-      toastStore.error(err instanceof Error ? err.message : 'Failed to toggle monitor');
-    } finally {
-      togglingEnabledId = null;
-    }
-  }
-
-  const monitorSummary = $derived.by(() => {
-    let up = 0, down = 0, paused = 0, unknown = 0;
-    for (const m of monitorList) {
-      if (!m.enabled) { paused++; continue; }
-      const s = m.status?.status;
-      if (s === 'up') up++;
-      else if (s === 'down') down++;
-      else unknown++;
-    }
-    return { up, down, paused, unknown, total: monitorList.length };
-  });
-
-  const filteredMonitors = $derived.by(() => {
-    const q = monitorSearch.trim().toLowerCase();
-    return monitorList.filter((m) => {
-      if (q && !(
-        m.name.toLowerCase().includes(q) ||
-        (m.target ?? '').toLowerCase().includes(q) ||
-        m.type.toLowerCase().includes(q)
-      )) return false;
-      if (monitorStatusFilter === 'all') return true;
-      if (monitorStatusFilter === 'paused') return !m.enabled;
-      if (!m.enabled) return false;
-      const s = m.status?.status ?? 'unknown';
-      if (monitorStatusFilter === 'up') return s === 'up';
-      if (monitorStatusFilter === 'down') return s === 'down';
-      if (monitorStatusFilter === 'unknown') return s !== 'up' && s !== 'down';
-      return true;
-    });
-  });
-
-  function statusColor(status?: string) {
-    if (status === 'up') return 'bg-green-500';
-    if (status === 'down') return 'bg-red-500';
-    return 'bg-gray-400';
-  }
-
-  function statusLabel(status?: string) {
-    if (status === 'up') return 'Up';
-    if (status === 'down') return 'Down';
-    return 'Unknown';
-  }
-
-  function typeIcon(type: string) {
-    if (type === 'http') return Globe;
-    if (type === 'tcp') return Wifi;
-    if (type === 'log_heartbeat') return Activity;
-    return Heart;
-  }
-
-  function formatResponseTime(ms: number | null | undefined) {
-    if (ms == null) return '-';
-    if (ms < 1000) return `${ms}ms`;
-    return `${(ms / 1000).toFixed(1)}s`;
   }
 
   const selectedProject = $derived(projects.find((p) => p.id === projectId));
@@ -609,96 +554,94 @@
 
 </script>
 
+
 <svelte:head>
-  <title>Monitoring - LogTide</title>
+  <title>Uptime - LogTide</title>
 </svelte:head>
 
-<div class="flex flex-col gap-6 p-6">
-  <div class="flex items-center justify-between gap-4">
-    <div class="flex items-center gap-3 min-w-0">
-      <Activity class="h-6 w-6 text-primary flex-shrink-0" />
-      <div class="min-w-0">
-        <h1 class="text-2xl font-semibold">Monitoring</h1>
-        <p class="text-sm text-muted-foreground truncate">Uptime and health checks for your services</p>
-      </div>
-    </div>
-    <div class="flex items-center gap-2">
-      {#if projects.length > 1}
-        <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) { projectId = v; currentProjectStore.set(v); } }}>
-          <Select.Trigger class="h-8 w-[180px]">
-            {projects.find((p) => p.id === projectId)?.name ?? 'Select project'}
-          </Select.Trigger>
-          <Select.Content>
-            {#each projects as p (p.id)}
-              <Select.Item value={p.id}>{p.name}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
+{#snippet noProject()}
+  <EmptyState
+    variant="setup"
+    title={projectsLoaded && projects.length === 0 ? 'Create a project first' : 'Select a project'}
+    description={projectsLoaded && projects.length === 0
+      ? 'Monitors, status updates and the status page belong to a project.'
+      : 'Choose a project in the scope bar to see its monitors and status page.'}
+  >
+    {#snippet actions()}
+      {#if projectsLoaded && projects.length === 0}
+        <Button size="sm" href="/dashboard/projects">Go to projects</Button>
       {/if}
-      <Button
-        variant="outline"
-        size="sm"
-        onclick={() => org && monitoringStore.load(org.id, projectId)}
-        title="Refresh"
-      >
+    {/snippet}
+  </EmptyState>
+{/snippet}
+
+<div class="flex flex-col gap-2 p-6">
+  <PageHeader
+    title="Uptime"
+    description="Uptime and health checks for your services"
+    appliesTo="project"
+  >
+    {#snippet actions()}
+      <ScopeBar mode="single" {projects} showTime={false} />
+      <Button variant="outline" size="sm" onclick={reloadMonitors} aria-label="Refresh">
         <RefreshCw class="h-4 w-4" />
       </Button>
-    </div>
-  </div>
+    {/snippet}
+  </PageHeader>
 
   {#if error}
-    <div class="rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-      {error}
-    </div>
+    <EmptyState variant="error" title="Could not load monitors" description={error}>
+      {#snippet actions()}
+        <Button variant="outline" size="sm" onclick={reloadMonitors}>Try again</Button>
+      {/snippet}
+    </EmptyState>
   {/if}
 
-  <Tabs.Root value={activeTab} onValueChange={(v) => { if (v) activeTab = v as MonitoringTab; }}>
+  <Tabs.Root value={activeTab} onValueChange={(v) => { if (v) setTab(v as UptimeTab); }}>
     <div class="flex items-center justify-between gap-2 flex-wrap">
       <Tabs.List class="gap-1">
         <Tabs.Trigger value="monitors" class="gap-2">
           <Activity class="h-4 w-4" />
           <span>Monitors</span>
           {#if monitorList.length > 0}
-            <Badge variant="secondary" class="ml-1 h-5 px-1.5 text-xs">{monitorList.length}</Badge>
+            <Badge variant="secondary" class="ml-1 h-5 px-1.5 text-xs">{monitorList.length.toLocaleString('en-US')}</Badge>
           {/if}
         </Tabs.Trigger>
-        <Tabs.Trigger value="incidents" class="gap-2">
+        <Tabs.Trigger value="status-updates" class="gap-2">
           <AlertTriangle class="h-4 w-4" />
-          <span>Incidents</span>
+          <span>Status updates</span>
           {#if statusIncidents.length > 0}
-            <Badge variant="secondary" class="ml-1 h-5 px-1.5 text-xs">{statusIncidents.length}</Badge>
+            <Badge variant="secondary" class="ml-1 h-5 px-1.5 text-xs">{statusIncidents.length.toLocaleString('en-US')}</Badge>
           {/if}
         </Tabs.Trigger>
         <Tabs.Trigger value="maintenance" class="gap-2">
           <CalendarClock class="h-4 w-4" />
-          <span class="hidden sm:inline">Maintenance</span>
-          <span class="sm:hidden">Maint.</span>
+          <span>Maintenance</span>
           {#if maintenances.length > 0}
-            <Badge variant="secondary" class="ml-1 h-5 px-1.5 text-xs">{maintenances.length}</Badge>
+            <Badge variant="secondary" class="ml-1 h-5 px-1.5 text-xs">{maintenances.length.toLocaleString('en-US')}</Badge>
           {/if}
         </Tabs.Trigger>
         <Tabs.Trigger value="status-page" class="gap-2">
           <Settings class="h-4 w-4" />
-          <span class="hidden sm:inline">Status page</span>
-          <span class="sm:hidden">Page</span>
+          <span>Status page</span>
         </Tabs.Trigger>
       </Tabs.List>
 
       <div class="flex items-center gap-2">
-        {#if activeTab === 'monitors'}
+        {#if activeTab === 'monitors' && projectId}
           <Button size="sm" onclick={openCreate}>
             <Plus class="mr-2 h-4 w-4" />
-            New Monitor
+            New monitor
           </Button>
-        {:else if activeTab === 'incidents'}
+        {:else if activeTab === 'status-updates' && projectId}
           <Button size="sm" onclick={() => (showIncidentForm = !showIncidentForm)}>
             <Plus class="mr-2 h-4 w-4" />
-            New Incident
+            New status update
           </Button>
-        {:else if activeTab === 'maintenance'}
+        {:else if activeTab === 'maintenance' && projectId}
           <Button size="sm" onclick={() => (showMaintenanceForm = !showMaintenanceForm)}>
             <Plus class="mr-2 h-4 w-4" />
-            Schedule Maintenance
+            Schedule maintenance
           </Button>
         {:else if activeTab === 'status-page' && selectedProject?.statusPageVisibility !== 'disabled' && selectedProject?.slug && org?.slug}
           <Button size="sm" variant="outline" href="/status/{org.slug}/{selectedProject.slug}" target="_blank" class="gap-2">
@@ -709,65 +652,23 @@
       </div>
     </div>
 
-    <!-- ================================================================
-         MONITORS TAB
-         ================================================================ -->
     <Tabs.Content value="monitors" class="mt-4 space-y-4">
-      <!-- Summary cards -->
-      {#if monitorList.length > 0}
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <button
-            type="button"
-            class="rounded-lg border bg-card p-3 text-left transition-colors {monitorStatusFilter === 'all' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}"
-            onclick={() => (monitorStatusFilter = 'all')}
-          >
-            <p class="text-xs font-medium text-muted-foreground">Total</p>
-            <p class="text-2xl font-bold">{monitorSummary.total.toLocaleString('en-US')}</p>
-          </button>
-          <button
-            type="button"
-            class="rounded-lg border bg-card p-3 text-left transition-colors {monitorStatusFilter === 'up' ? 'ring-2 ring-green-500' : 'hover:border-green-500/50'}"
-            onclick={() => (monitorStatusFilter = 'up')}
-          >
-            <p class="text-xs font-medium text-green-600 dark:text-green-500">Up</p>
-            <p class="text-2xl font-bold">{monitorSummary.up.toLocaleString('en-US')}</p>
-          </button>
-          <button
-            type="button"
-            class="rounded-lg border bg-card p-3 text-left transition-colors {monitorStatusFilter === 'down' ? 'ring-2 ring-red-500' : 'hover:border-red-500/50'}"
-            onclick={() => (monitorStatusFilter = 'down')}
-          >
-            <p class="text-xs font-medium text-red-600 dark:text-red-500">Down</p>
-            <p class="text-2xl font-bold">{monitorSummary.down.toLocaleString('en-US')}</p>
-          </button>
-          <button
-            type="button"
-            class="rounded-lg border bg-card p-3 text-left transition-colors {monitorStatusFilter === 'paused' ? 'ring-2 ring-muted-foreground' : 'hover:border-muted-foreground/50'}"
-            onclick={() => (monitorStatusFilter = 'paused')}
-          >
-            <p class="text-xs font-medium text-muted-foreground">Paused</p>
-            <p class="text-2xl font-bold">{monitorSummary.paused.toLocaleString('en-US')}</p>
-          </button>
-        </div>
-
-        <!-- Filter bar -->
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="relative flex-1 min-w-[200px]">
-            <Search class="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Search monitors by name, target or type..."
-              bind:value={monitorSearch}
-              class="pl-9 h-9"
-            />
-          </div>
-          {#if monitorStatusFilter !== 'all' || monitorSearch}
-            <Button variant="ghost" size="sm" onclick={() => { monitorSearch = ''; monitorStatusFilter = 'all'; }}>
-              Clear filters
-            </Button>
-          {/if}
-        </div>
+      {#if !projectId}
+        {@render noProject()}
+      {:else}
+        <MonitorList
+          monitors={monitorList}
+          {loading}
+          orgId={org?.id ?? ''}
+          bind:status={() => urlState.status, (v) => navigate(writeUptimeUrl(page.url, { status: v }), true)}
+          bind:q={() => urlState.q, (v) => navigate(writeUptimeUrl(page.url, { q: v }), true)}
+          onEdit={openEdit}
+          onDuplicate={openDuplicate}
+          onChanged={() => {}}
+          onCreate={openCreate}
+        />
       {/if}
+
 
       <Dialog.Root open={showCreateForm} onOpenChange={(o) => { if (!o) closeForm(); }}>
         <Dialog.Content class="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -790,7 +691,7 @@
             {#if !editingMonitor}
               <div>
                 <label class="mb-1 block text-sm font-medium">Project</label>
-                <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) { projectId = v; currentProjectStore.set(v); } }}>
+                <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) scopeStore.setProjects([v]); }}>
                   <Select.Trigger class="w-full">
                     {projects.find((p) => p.id === projectId)?.name ?? 'Select project'}
                   </Select.Trigger>
@@ -943,170 +844,15 @@
           </form>
         </Dialog.Content>
       </Dialog.Root>
-
-      {#if loading}
-        <div class="flex items-center justify-center py-16">
-          <RefreshCw class="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      {:else if monitorList.length === 0 && !showCreateForm}
-        <div class="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed py-16 text-center">
-          <Activity class="h-10 w-10 text-muted-foreground" />
-          <div>
-            <p class="font-medium">No monitors yet</p>
-            <p class="text-sm text-muted-foreground">Create a monitor to track uptime and health of your services</p>
-          </div>
-          <Button size="sm" onclick={openCreate}>
-            <Plus class="mr-2 h-4 w-4" />
-            Create your first monitor
-          </Button>
-        </div>
-      {:else if filteredMonitors.length === 0}
-        <div class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-12 text-center">
-          <p class="text-sm text-muted-foreground">No monitors match the current filters.</p>
-          <Button variant="ghost" size="sm" onclick={() => { monitorSearch = ''; monitorStatusFilter = 'all'; }}>
-            Clear filters
-          </Button>
-        </div>
-      {:else}
-        <div class="rounded-lg border bg-card overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="border-b text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                <th class="px-4 py-3">Status</th>
-                <th class="px-4 py-3">Name</th>
-                <th class="px-4 py-3">Type</th>
-                <th class="px-4 py-3 hidden md:table-cell">Response</th>
-                <th class="px-4 py-3 hidden lg:table-cell">Last checked</th>
-                <th class="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each filteredMonitors as monitor (monitor.id)}
-                <tr class="border-b last:border-0 hover:bg-muted/40 transition-colors">
-                  <td class="px-4 py-3">
-                    <div class="flex items-center gap-2">
-                      <span class="h-2.5 w-2.5 rounded-full {statusColor(monitor.status?.status)}"></span>
-                      <span class="font-medium {monitor.status?.status === 'down' ? 'text-destructive' : ''}">
-                        {statusLabel(monitor.status?.status)}
-                      </span>
-                      {#if !monitor.enabled}
-                        <Badge variant="outline" class="text-xs">Paused</Badge>
-                      {/if}
-                    </div>
-                  </td>
-                  <td class="px-4 py-3">
-                    <button
-                      class="font-medium hover:text-primary hover:underline text-left"
-                      onclick={() => goto(`/dashboard/uptime/${monitor.id}`)}
-                    >
-                      {monitor.name}
-                    </button>
-                  </td>
-                  <td class="px-4 py-3">
-                    <div class="flex items-center gap-1.5 text-muted-foreground">
-                      {#if monitor.type === 'http'}
-                        <Globe class="h-3.5 w-3.5" />
-                      {:else if monitor.type === 'tcp'}
-                        <Wifi class="h-3.5 w-3.5" />
-                      {:else if monitor.type === 'log_heartbeat'}
-                        <Activity class="h-3.5 w-3.5" />
-                      {:else}
-                        <Heart class="h-3.5 w-3.5" />
-                      {/if}
-                      {#if monitor.type === 'http'}
-                        HTTP
-                      {:else if monitor.type === 'tcp'}
-                        TCP
-                      {:else if monitor.type === 'log_heartbeat'}
-                        Log Based
-                      {:else}
-                        Heartbeat (Push)
-                      {/if}
-                    </div>
-                  </td>
-                  <td class="px-4 py-3 hidden md:table-cell text-muted-foreground">
-                    {formatResponseTime(monitor.status?.responseTimeMs)}
-                  </td>
-                  <td class="px-4 py-3 hidden lg:table-cell text-muted-foreground text-xs">
-                    {monitor.status?.lastCheckedAt
-                      ? new Date(monitor.status.lastCheckedAt).toLocaleString('en-US')
-                      : '-'}
-                  </td>
-                  <td class="px-4 py-3 text-right">
-                    <div class="flex items-center justify-end gap-1">
-                      {#if deleteConfirmId === monitor.id}
-                        <span class="text-xs text-muted-foreground mr-1">Delete?</span>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onclick={() => handleDelete(monitor.id)}
-                        >Yes</Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onclick={() => (deleteConfirmId = null)}
-                        >No</Button>
-                      {:else}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onclick={() => toggleMonitorEnabled(monitor)}
-                          disabled={togglingEnabledId === monitor.id}
-                          title={monitor.enabled ? 'Pause' : 'Resume'}
-                        >
-                          {#if monitor.enabled}
-                            <Pause class="h-4 w-4" />
-                          {:else}
-                            <Play class="h-4 w-4" />
-                          {/if}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onclick={() => openEdit(monitor)}
-                          title="Edit"
-                        >
-                          <Pencil class="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onclick={() => openDuplicate(monitor)}
-                          title="Duplicate"
-                        >
-                          <Copy class="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onclick={() => (deleteConfirmId = monitor.id)}
-                          title="Delete"
-                        >
-                          <Trash2 class="h-4 w-4 text-destructive" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onclick={() => goto(`/dashboard/uptime/${monitor.id}`)}
-                          title="View details"
-                        >
-                          <ChevronRight class="h-4 w-4" />
-                        </Button>
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
     </Tabs.Content>
 
     <!-- ================================================================
          INCIDENTS TAB
          ================================================================ -->
-    <Tabs.Content value="incidents" class="mt-4 space-y-3">
+    <Tabs.Content value="status-updates" class="mt-4 space-y-3">
+      {#if !projectId}
+        {@render noProject()}
+      {:else}
       <Dialog.Root open={showIncidentForm} onOpenChange={(o) => (showIncidentForm = o)}>
         <Dialog.Content class="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <Dialog.Header>
@@ -1224,12 +970,16 @@
           </div>
         </Dialog.Content>
       </Dialog.Root>
+          {/if}
     </Tabs.Content>
 
     <!-- ================================================================
          MAINTENANCE TAB
          ================================================================ -->
     <Tabs.Content value="maintenance" class="mt-4 space-y-3">
+      {#if !projectId}
+        {@render noProject()}
+      {:else}
       <Dialog.Root open={showMaintenanceForm} onOpenChange={(o) => (showMaintenanceForm = o)}>
         <Dialog.Content class="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <Dialog.Header>
@@ -1311,6 +1061,7 @@
           {/each}
         </div>
       {/if}
+          {/if}
     </Tabs.Content>
 
     <!-- ================================================================
