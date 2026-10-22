@@ -1343,11 +1343,11 @@
         {#each recent as entry, i (i)}
           <button
             type="button"
-            class="inline-flex max-w-[16rem] items-center truncate rounded-full border bg-background px-2.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent hover:text-accent-foreground"
+            class="inline-flex min-w-0 max-w-full items-center overflow-hidden rounded-full border bg-background px-2.5 py-0.5 font-mono text-xs transition-colors hover:bg-accent hover:text-accent-foreground sm:max-w-[16rem]"
             title={entry.q}
             onclick={() => applyRecent(entry)}
           >
-            {recentLabel(entry)}
+            <span class="min-w-0 truncate">{recentLabel(entry)}</span>
           </button>
         {/each}
         <button
