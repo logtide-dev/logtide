@@ -37,6 +37,15 @@ export function reduceUrlToHost(url: unknown): string {
   }
 }
 
+function sameOrigin(a: unknown, b: unknown): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
 function serializeConfig(
   type: NotificationChannel['type'],
   config: ChannelConfig,
@@ -117,14 +126,25 @@ export function mergeConfigSecrets(
     const stored = existing as Partial<WebhookChannelConfig>;
     const sent = incoming as unknown as WebhookChannelConfig;
     const out: Record<string, unknown> = { ...sent };
+    // Stored secrets only follow the destination they were saved for: restoring
+    // them for a new origin would let an admin who cannot read them send them
+    // to a host of their choosing (test or edit with a retargeted URL).
+    const restorable = sameOrigin(stored.url, sent.url);
+    const retype = () => {
+      throw new Error(
+        'Invalid configuration: retype the secrets when the destination URL changes host'
+      );
+    };
 
     if (isRecord(sent.auth) && isRecord(stored.auth) && sent.auth.type === stored.auth.type) {
       const auth: Record<string, unknown> = { ...sent.auth };
       delete auth.hasSecret;
       if (isMissingSecret(auth.token) && typeof stored.auth.token === 'string') {
+        if (!restorable) retype();
         auth.token = stored.auth.token;
       }
       if (isMissingSecret(auth.password) && typeof stored.auth.password === 'string') {
+        if (!restorable) retype();
         auth.password = stored.auth.password;
       }
       out.auth = auth;
@@ -139,7 +159,10 @@ export function mergeConfigSecrets(
       for (const [name, value] of Object.entries(sent.headers)) {
         if (value === SECRET_MASK) {
           const previous = isRecord(stored.headers) ? stored.headers[name] : undefined;
-          if (typeof previous === 'string') headers[name] = previous;
+          if (typeof previous === 'string') {
+            if (!restorable) retype();
+            headers[name] = previous;
+          }
           // else: drop it, never send the literal mask as a header value
         } else {
           headers[name] = value;
