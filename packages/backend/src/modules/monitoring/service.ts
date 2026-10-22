@@ -31,7 +31,11 @@ import {
   parseHostPort,
 } from './checker.js';
 import { reservoir } from '../../database/reservoir.js';
-import { config } from '../../config/index.js';
+import { config, isSmtpConfigured } from '../../config/index.js';
+import { StatusPageService } from './status-page.js';
+
+const PUBLIC_HISTORY_DAYS = 90;
+const PUBLIC_RECENT_INCIDENTS_CAP = 50;
 import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 import { incidentsService } from '../incidents/service.js';
@@ -384,17 +388,17 @@ export class MonitorService {
 
   async getPublicStatus(projectSlug: string, verifiedProjectId?: string): Promise<PublicStatusPage | null> {
     // If the route already verified the project, use that ID directly to avoid TOCTOU
-    let project: { id: string; name: string; slug: string } | null = null;
+    let project: { id: string; name: string; slug: string; organization_id: string; status_page_visibility: string } | null = null;
     if (verifiedProjectId) {
       project = await this.db
         .selectFrom('projects')
-        .select(['id', 'name', 'slug'])
+        .select(['id', 'name', 'slug', 'organization_id', 'status_page_visibility'])
         .where('id', '=', verifiedProjectId)
         .executeTakeFirst() ?? null;
     } else {
       const row = await this.db
         .selectFrom('projects')
-        .select(['id', 'name', 'slug', 'status_page_visibility'])
+        .select(['id', 'name', 'slug', 'organization_id', 'status_page_visibility'])
         .where('slug', '=', projectSlug)
         .executeTakeFirst() ?? null;
       if (!row || row.status_page_visibility === 'disabled') return null;
@@ -402,13 +406,14 @@ export class MonitorService {
     }
 
     if (!project) return null;
+    const projectOrgId = project.organization_id;
 
     // Fetch monitors, incidents, and maintenances in parallel
     const now = new Date();
-    const since7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const since90d = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
 
-    const [monitorRowsResult, activeIncidentRows, recentIncidentRows, activeMaintenanceRows, upcomingMaintenanceRows] = await Promise.all([
+    const [statusConfig, monitorRowsResult, activeIncidentRows, recentIncidentRows, activeMaintenanceRows, upcomingMaintenanceRows] = await Promise.all([
+      new StatusPageService(this.db).getConfig(project.id, projectOrgId),
       // Monitors
       this.db
         .selectFrom('monitors')
@@ -416,13 +421,18 @@ export class MonitorService {
         .select([
           'monitors.id',
           'monitors.name',
+          'monitors.display_name',
+          'monitors.group_name',
           'monitors.type',
           'monitor_status.status',
           'monitor_status.last_checked_at',
         ])
         .where('monitors.project_id', '=', project.id)
+        .where('monitors.organization_id', '=', projectOrgId)
         .where('monitors.enabled', '=', true)
+        .orderBy('monitors.display_order', 'asc')
         .orderBy('monitors.created_at', 'asc')
+        .orderBy('monitors.id', 'asc')
         .execute(),
       // Active incidents (not resolved)
       this.db
@@ -432,14 +442,15 @@ export class MonitorService {
         .where('status', '!=', 'resolved')
         .orderBy('created_at', 'desc')
         .execute(),
-      // Recently resolved incidents (last 7 days)
+      // Recently resolved incidents (last 90 days, capped)
       this.db
         .selectFrom('status_incidents')
         .selectAll()
         .where('project_id', '=', project.id)
         .where('status', '=', 'resolved')
-        .where('resolved_at', '>=', since7d)
+        .where('resolved_at', '>=', since90d)
         .orderBy('resolved_at', 'desc')
+        .limit(PUBLIC_RECENT_INCIDENTS_CAP)
         .execute(),
       // Active maintenances (in_progress)
       this.db
@@ -489,6 +500,7 @@ export class MonitorService {
       createdAt: (row.created_at as Date).toISOString(),
       resolvedAt: row.resolved_at ? (row.resolved_at as Date).toISOString() : null,
       updates: updatesByIncident.get(row.id) ?? [],
+      affectedComponents: [],
     });
 
     const mapMaintenance = (row: typeof activeMaintenanceRows[0]): PublicMaintenance => ({
@@ -498,6 +510,7 @@ export class MonitorService {
       status: row.status,
       scheduledStart: (row.scheduled_start as Date).toISOString(),
       scheduledEnd: (row.scheduled_end as Date).toISOString(),
+      affectedComponents: [],
     });
 
     // Build monitors with uptime
@@ -506,25 +519,29 @@ export class MonitorService {
       const monitorIds = monitorRowsResult.map((m) => m.id);
       const uptimeRows = await this.db
         .selectFrom('monitor_uptime_daily')
-        .select(['bucket', 'monitor_id', 'uptime_pct'])
+        .select(['bucket', 'monitor_id', 'uptime_pct', 'total_checks'])
         .where('monitor_id', 'in', monitorIds)
+        .where('organization_id', '=', projectOrgId)
         .where('bucket', '>=', since90d)
+        .where('total_checks', '>', 0)
         .orderBy('bucket', 'asc')
         .execute();
 
-      const uptimeByMonitor = new Map<string, { bucket: string; uptimePct: number }[]>();
+      const uptimeByMonitor = new Map<string, { bucket: string; uptimePct: number; totalChecks: number }[]>();
       for (const row of uptimeRows) {
         const id = row.monitor_id;
         if (!uptimeByMonitor.has(id)) uptimeByMonitor.set(id, []);
         uptimeByMonitor.get(id)!.push({
           bucket: (row.bucket as Date).toISOString(),
-          uptimePct: row.uptime_pct ?? 0,
+          uptimePct: Number(row.uptime_pct ?? 0),
+          totalChecks: Number(row.total_checks),
         });
       }
 
       monitors = monitorRowsResult.map((m) => ({
-        name: m.name,
-        type: m.type,
+        name: m.display_name ?? m.name,
+        ...(statusConfig.showMonitorTypes ? { type: m.type } : {}),
+        groupName: m.group_name ?? null,
         status: (m.status ?? 'unknown') as 'up' | 'down' | 'unknown',
         uptimeHistory: uptimeByMonitor.get(m.id) ?? [],
       }));
@@ -541,6 +558,13 @@ export class MonitorService {
     return {
       projectName: project.name,
       projectSlug: project.slug,
+      title: statusConfig.title,
+      description: statusConfig.description,
+      logoUrl: statusConfig.logoUrl,
+      accentColor: statusConfig.accentColor,
+      showMonitorTypes: statusConfig.showMonitorTypes,
+      subscriptionsEnabled: project.status_page_visibility === 'public' && isSmtpConfigured(),
+      historyDays: PUBLIC_HISTORY_DAYS,
       overallStatus,
       monitors,
       activeIncidents: activeIncidentRows.map(mapIncident),

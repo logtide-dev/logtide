@@ -138,9 +138,11 @@ export interface UpdateMonitorInput {
 
 export interface PublicMonitorStatus {
   name: string;
-  type: MonitorType;
+  /** Only present when the project enabled show_monitor_types. */
+  type?: MonitorType;
+  groupName: string | null;
   status: MonitorStatusValue;
-  uptimeHistory: { bucket: string; uptimePct: number }[];
+  uptimeHistory: { bucket: string; uptimePct: number; totalChecks: number }[];
 }
 
 export interface PublicStatusIncident {
@@ -151,6 +153,8 @@ export interface PublicStatusIncident {
   createdAt: string;
   resolvedAt: string | null;
   updates: { id: string; status: string; message: string; createdAt: string }[];
+  /** Public names of the affected components. */
+  affectedComponents: string[];
 }
 
 export interface PublicMaintenance {
@@ -160,11 +164,19 @@ export interface PublicMaintenance {
   status: string;
   scheduledStart: string;
   scheduledEnd: string;
+  affectedComponents: string[];
 }
 
 export interface PublicStatusPage {
   projectName: string;
   projectSlug: string;
+  title: string | null;
+  description: string | null;
+  logoUrl: string | null;
+  accentColor: string | null;
+  showMonitorTypes: boolean;
+  subscriptionsEnabled: boolean;
+  historyDays: number;
   overallStatus: 'operational' | 'degraded' | 'outage';
   monitors: PublicMonitorStatus[];
   activeIncidents: PublicStatusIncident[];

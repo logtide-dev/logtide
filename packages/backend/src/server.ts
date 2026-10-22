@@ -43,7 +43,7 @@ import { capabilitiesRoutes, adminEntitlementsRoutes } from './modules/capabilit
 import { QuotaEvaluator } from './capabilities/index.js';
 import { loadExternalHooks } from './hooks/index.js';
 import { storageSnapshotJob } from './modules/metering/storage-snapshot.js';
-import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from './modules/monitoring/index.js';
+import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes, statusPageRoutes } from './modules/monitoring/index.js';
 import { statusIncidentRoutes } from './modules/status-incidents/routes.js';
 import { maintenanceRoutes } from './modules/maintenances/routes.js';
 import { sessionsRoutes } from './modules/sessions/routes.js';
@@ -247,6 +247,7 @@ export async function build(opts = {}) {
   await fastify.register(monitoringRoutes, { prefix: '/api/v1/monitors' });
   await fastify.register(heartbeatRoutes, { prefix: '/api/v1/monitors' });
   await fastify.register(publicStatusRoutes, { prefix: '/api/v1/status' });
+  await fastify.register(statusPageRoutes, { prefix: '/api/v1/status-page' });
   await fastify.register(statusIncidentRoutes, { prefix: '/api/v1/status-incidents' });
   await fastify.register(maintenanceRoutes, { prefix: '/api/v1/maintenances' });
 
