@@ -355,4 +355,179 @@ describe('Logs explorer API', () => {
       expect(res.body.fields).toEqual([{ key: 'only_first', occurrences: 1 }]);
     });
   });
+
+  describe('GET /api/v1/logs/context', () => {
+    const SECOND = 1000;
+    let anchorTime: Date;
+
+    beforeEach(() => {
+      anchorTime = new Date(Math.floor((Date.now() - 3 * HOUR) / MINUTE) * MINUTE);
+    });
+
+    const at = (offsetSeconds: number) => new Date(anchorTime.getTime() + offsetSeconds * SECOND);
+    const context = (params: Params) => get('/api/v1/logs/context', params);
+    type Row = { id: string; message: string; service: string; hostname?: string; sessionId?: string; spanId?: string };
+
+    it('returns up to 100 logs on each side', async () => {
+      const rows = [];
+      for (let i = 110; i >= 1; i--) rows.push({ message: `before ${i}`, time: at(-i) });
+      rows.push({ message: 'anchor', time: at(0) });
+      for (let i = 1; i <= 110; i++) rows.push({ message: `after ${i}`, time: at(i) });
+      const seeded = await seedLogs(projectId, rows);
+      const anchor = seeded[110];
+
+      const res = await context({ time: anchorTime.toISOString(), logId: anchor.id, before: '100', after: '100' });
+      expect(res.status).toBe(200);
+      expect(res.body.before).toHaveLength(100);
+      expect(res.body.after).toHaveLength(100);
+      expect(res.body.before[0].message).toBe('before 100');
+      expect(res.body.before[99].message).toBe('before 1');
+      expect(res.body.after[0].message).toBe('after 1');
+      expect(res.body.after[99].message).toBe('after 100');
+      expect(res.body.current.id).toBe(anchor.id);
+
+      expect((await context({ time: anchorTime.toISOString(), before: '101' })).status).toBe(400);
+      expect((await context({ time: anchorTime.toISOString(), after: '101' })).status).toBe(400);
+      expect((await context({ time: anchorTime.toISOString(), before: '-1' })).status).toBe(400);
+    });
+
+    it('before=0 returns no earlier logs', async () => {
+      const rows = [];
+      for (let i = 12; i >= 1; i--) rows.push({ message: `before ${i}`, time: at(-i) });
+      rows.push({ message: 'anchor', time: at(0) });
+      for (let i = 1; i <= 12; i++) rows.push({ message: `after ${i}`, time: at(i) });
+      await seedLogs(projectId, rows);
+
+      const res = await context({ time: anchorTime.toISOString(), before: '0' });
+      expect(res.status).toBe(200);
+      expect(res.body.before).toEqual([]);
+      expect(res.body.after).toHaveLength(10);
+      expect(res.body.current.message).toBe('anchor');
+
+      const noAfter = await context({ time: anchorTime.toISOString(), after: '0' });
+      expect(noAfter.body.after).toEqual([]);
+      expect(noAfter.body.before).toHaveLength(10);
+      expect(noAfter.body.applied).toEqual({ service: null, hostname: null });
+    });
+
+    it('sameService keeps only the anchor service', async () => {
+      const rows = [];
+      for (let i = 1; i <= 6; i++) {
+        rows.push({ message: `before ${i}`, service: i % 2 ? 'api' : 'worker', time: at(-i) });
+        rows.push({ message: `after ${i}`, service: i % 2 ? 'worker' : 'api', time: at(i) });
+      }
+      rows.push({ message: 'anchor', service: 'api', time: at(0) });
+      await seedLogs(projectId, rows);
+
+      const res = await context({ time: anchorTime.toISOString(), sameService: 'true' });
+      expect(res.status).toBe(200);
+      const all = [...res.body.before, ...res.body.after] as Row[];
+      expect(res.body.before).toHaveLength(3);
+      expect(res.body.after).toHaveLength(3);
+      expect(all.every((row) => row.service === 'api')).toBe(true);
+      expect(res.body.applied).toEqual({ service: 'api', hostname: null });
+
+      const unfiltered = await context({ time: anchorTime.toISOString() });
+      expect(unfiltered.body.before).toHaveLength(6);
+      expect(unfiltered.body.applied).toEqual({ service: null, hostname: null });
+    });
+
+    it('sameHost keeps only the anchor host', async () => {
+      const rows = [];
+      for (let i = 1; i <= 6; i++) {
+        rows.push({ message: `before ${i}`, time: at(-i), metadata: { hostname: i % 2 ? 'web-1' : 'web-2' } });
+        rows.push({ message: `after ${i}`, time: at(i), metadata: i % 3 === 0 ? {} : { hostname: i % 2 ? 'web-2' : 'web-1' } });
+      }
+      rows.push({ message: 'anchor', time: at(0), metadata: { hostname: 'web-1' } });
+      await seedLogs(projectId, rows);
+
+      const res = await context({ time: anchorTime.toISOString(), sameHost: 'true' });
+      expect(res.status).toBe(200);
+      const all = [...res.body.before, ...res.body.after] as Row[];
+      expect(all.every((row) => row.hostname === 'web-1')).toBe(true);
+      // before: i = 1, 3, 5 are web-1; after: i = 2, 4 are web-1 (6 has no host)
+      expect(res.body.before).toHaveLength(3);
+      expect(res.body.after).toHaveLength(2);
+      expect(res.body.applied).toEqual({ service: null, hostname: 'web-1' });
+    });
+
+    it('sameHost is not applied when the anchor has no host', async () => {
+      await seedLogs(projectId, [
+        { message: 'b2', time: at(-2), metadata: { hostname: 'web-1' } },
+        { message: 'b1', time: at(-1), metadata: { hostname: 'web-2' } },
+        { message: 'anchor', time: at(0), metadata: { hostname: '' } },
+        { message: 'a1', time: at(1), metadata: { hostname: 'web-3' } },
+      ]);
+
+      const res = await context({ time: anchorTime.toISOString(), sameHost: 'true', sameService: 'true' });
+      expect(res.status).toBe(200);
+      expect(res.body.applied).toEqual({ service: 'api', hostname: null });
+      const hosts = new Set([...res.body.before, ...res.body.after].map((row: Row) => row.hostname));
+      expect(hosts).toEqual(new Set(['web-1', 'web-2', 'web-3']));
+    });
+
+    it('logId anchors the context', async () => {
+      const seeded = await seedLogs(projectId, [
+        { message: 'api before', service: 'api', time: at(-2) },
+        { message: 'worker before', service: 'worker', time: at(-1) },
+        { message: 'api twin', service: 'api', time: at(0) },
+        { message: 'worker twin', service: 'worker', time: at(0) },
+        { message: 'api after', service: 'api', time: at(1) },
+        { message: 'worker after', service: 'worker', time: at(2) },
+      ]);
+      const worker = seeded[3];
+
+      const res = await context({ time: anchorTime.toISOString(), logId: worker.id, sameService: 'true' });
+      expect(res.status).toBe(200);
+      expect(res.body.current.id).toBe(worker.id);
+      expect(res.body.before.map((row: Row) => row.message)).toEqual(['worker before']);
+      expect(res.body.after.map((row: Row) => row.message)).toEqual(['worker after']);
+      expect(res.body.applied).toEqual({ service: 'worker', hostname: null });
+    });
+
+    it('returns 404 for an unknown logId', async () => {
+      await seedLogs(projectId, [{ message: 'anchor', time: at(0) }]);
+      const res = await context({ time: anchorTime.toISOString(), logId: '00000000-0000-4000-8000-000000000000' });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Log not found');
+
+      const notUuid = await context({ time: anchorTime.toISOString(), logId: 'nope' });
+      expect(notUuid.status).toBe(400);
+    });
+
+    it('rows carry hostname, sessionId and spanId', async () => {
+      const sessionId = '6f1c2b0e-4d8a-4c3e-9b7a-2e5d1f0a9c11';
+      await seedLogs(projectId, [
+        { message: 'before', time: at(-1), metadata: { hostname: 'web-1' }, sessionId, spanId: '00f067aa0ba902b7', traceId: 't-ctx' },
+        { message: 'anchor', time: at(0), metadata: { hostname: 'web-2' } },
+        { message: 'after', time: at(1), metadata: { hostname: 'web-3' }, sessionId, spanId: '00f067aa0ba902b8' },
+      ]);
+
+      const res = await context({ time: anchorTime.toISOString() });
+      expect(res.status).toBe(200);
+      expect(res.body.before[0]).toMatchObject({ hostname: 'web-1', sessionId, spanId: '00f067aa0ba902b7', traceId: 't-ctx' });
+      expect(res.body.current).toMatchObject({ hostname: 'web-2', message: 'anchor' });
+      expect(res.body.after[0]).toMatchObject({ hostname: 'web-3', sessionId, spanId: '00f067aa0ba902b8' });
+    });
+
+    it('ignores client-sent service and hostname', async () => {
+      await seedLogs(projectId, [
+        { message: 'other before', service: 'other', time: at(-2), metadata: { hostname: 'web-9' } },
+        { message: 'api before', service: 'api', time: at(-1), metadata: { hostname: 'web-1' } },
+        { message: 'anchor', service: 'api', time: at(0), metadata: { hostname: 'web-1' } },
+        { message: 'other after', service: 'other', time: at(1), metadata: { hostname: 'web-9' } },
+      ]);
+
+      const res = await context({
+        time: anchorTime.toISOString(),
+        sameService: 'true',
+        service: 'other',
+        hostname: 'web-9',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.applied).toEqual({ service: 'api', hostname: null });
+      expect(res.body.before.map((row: Row) => row.message)).toEqual(['api before']);
+      expect(res.body.after).toEqual([]);
+    });
+  });
 });

@@ -75,6 +75,28 @@ export interface LogFieldsResponse {
 /** Most metadata keys GET /api/v1/logs/fields returns. */
 export const FIELDS_MAX_RESULTS = 200;
 
+/** Rows per side of GET /api/v1/logs/context: default and maximum. */
+export const CONTEXT_DEFAULT_SIZE = 10;
+export const CONTEXT_MAX_SIZE = 100;
+
+export interface LogContextResponse {
+  before: ApiLog[];
+  current: ApiLog | null;
+  after: ApiLog[];
+  /** The reference log's service / host used to filter both sides, null when not applied. */
+  applied: { service: string | null; hostname: string | null };
+}
+
+/** The reference log of a context request does not exist in the project (404). */
+export class LogNotFoundError extends Error {
+  readonly statusCode = 404;
+
+  constructor() {
+    super('Log not found');
+    this.name = 'LogNotFoundError';
+  }
+}
+
 const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const orUndefined = (value: string | null | undefined): string | undefined =>
@@ -393,48 +415,72 @@ export class QueryService {
   }
 
   /**
-   * Get log context (logs before and after a specific timestamp)
+   * Logs before and after a reference log. With `logId` the reference is
+   * that log (LogNotFoundError when it is not in the project) and its time is
+   * the anchor; without it the reference is the log found at `time`.
+   * `sameService` / `sameHost` filter both sides on the REFERENCE log's
+   * service and host, never on client-sent values; `sameHost` is not applied
+   * when the reference has no host, and nothing is applied without a
+   * reference. `applied` reports the values used. A side asked for 0 rows is
+   * not queried.
    */
   async getLogContext(params: {
     projectId: string;
     time: Date;
+    logId?: string;
     before?: number;
     after?: number;
-  }) {
-    const { projectId, time, before = 10, after = 10 } = params;
+    sameService?: boolean;
+    sameHost?: boolean;
+  }): Promise<LogContextResponse> {
+    const { projectId, logId, sameService = false, sameHost = false } = params;
+    const before = params.before ?? CONTEXT_DEFAULT_SIZE;
+    const after = params.after ?? CONTEXT_DEFAULT_SIZE;
 
-    const [beforeResult, afterResult, currentResult] = await Promise.all([
-      // Logs before (exclusive, descending → then reverse)
-      reservoir.query({
-        projectId,
-        from: new Date(0),
-        to: time,
-        toExclusive: true,
-        sortOrder: 'desc',
-        limit: before,
-      }),
-      // Logs after (exclusive, ascending) - no upper bound needed
-      reservoir.query({
-        projectId,
-        from: time,
-        fromExclusive: true,
-        to: new Date('9999-12-31T23:59:59.999Z'),
-        sortOrder: 'asc',
-        limit: after,
-      }),
-      // Current log at exact time
-      reservoir.query({
-        projectId,
-        from: time,
-        to: time,
-        limit: 1,
-      }),
+    let current: ApiLog | null;
+    if (logId !== undefined) {
+      current = await this.getLogById(logId, projectId);
+      if (!current) throw new LogNotFoundError();
+    } else {
+      const found = await reservoir.query({ projectId, from: params.time, to: params.time, limit: 1 });
+      current = found.logs.length > 0 ? mapApiLog(found.logs[0]) : null;
+    }
+    const time = logId !== undefined && current ? current.time : params.time;
+
+    const applied: LogContextResponse['applied'] = {
+      service: sameService && current ? current.service : null,
+      hostname: sameHost && current?.hostname ? current.hostname : null,
+    };
+    const sideFilter = {
+      ...(applied.service !== null ? { service: applied.service } : {}),
+      ...(applied.hostname !== null ? { hostname: applied.hostname } : {}),
+    };
+
+    const none = Promise.resolve({ logs: [] as StoredLogRecord[] });
+    const [beforeResult, afterResult] = await Promise.all([
+      // Logs before (exclusive, newest first, reversed below)
+      before > 0
+        ? reservoir.query({ projectId, ...sideFilter, from: new Date(0), to: time, toExclusive: true, sortOrder: 'desc', limit: before })
+        : none,
+      // Logs after (exclusive, oldest first), no upper bound
+      after > 0
+        ? reservoir.query({
+            projectId,
+            ...sideFilter,
+            from: time,
+            fromExclusive: true,
+            to: new Date('9999-12-31T23:59:59.999Z'),
+            sortOrder: 'asc',
+            limit: after,
+          })
+        : none,
     ]);
 
     return {
-      before: beforeResult.logs.reverse().map(mapApiLog),
-      current: currentResult.logs.length > 0 ? mapApiLog(currentResult.logs[0]) : null,
+      before: [...beforeResult.logs].reverse().map(mapApiLog),
+      current,
       after: afterResult.logs.map(mapApiLog),
+      applied,
     };
   }
 

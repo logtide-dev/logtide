@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { queryService } from './service.js';
+import { CONTEXT_DEFAULT_SIZE, CONTEXT_MAX_SIZE, LogNotFoundError, queryService } from './service.js';
 import type { LogLevel } from '@logtide/shared';
 import { db } from '../../database/index.js';
 import { LogQueryError } from './build-log-filter.js';
@@ -147,18 +147,21 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
     },
   });
 
-  // GET /api/v1/logs/context - Get log context (logs before and after)
+  // GET /api/v1/logs/context - Logs before and after a reference log
   fastify.get('/api/v1/logs/context', {
     schema: {
-      description: 'Get log context (logs before and after a specific time)',
+      description: 'Get log context (logs before and after a reference log)',
       tags: ['query'],
       querystring: {
         type: 'object',
         properties: {
           projectId: { type: 'string' },
           time: { type: 'string', format: 'date-time' },
-          before: { type: 'number', minimum: 1, maximum: 50, default: 10 },
-          after: { type: 'number', minimum: 1, maximum: 50, default: 10 },
+          logId: { type: 'string', format: 'uuid' },
+          before: { type: 'integer', minimum: 0, maximum: CONTEXT_MAX_SIZE, default: CONTEXT_DEFAULT_SIZE },
+          after: { type: 'integer', minimum: 0, maximum: CONTEXT_MAX_SIZE, default: CONTEXT_DEFAULT_SIZE },
+          sameService: { type: 'boolean', default: false },
+          sameHost: { type: 'boolean', default: false },
         },
         required: ['time'],
       },
@@ -166,10 +169,15 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
     handler: async (request: any, reply) => {
       if (!await requireFullAccess(request, reply)) return;
 
-      const { time, before, after, projectId: queryProjectId } = request.query as {
+      // service / hostname are never read from the client: sameService and
+      // sameHost use the reference log's own values.
+      const { time, logId, before, after, sameService, sameHost, projectId: queryProjectId } = request.query as {
         time: string;
+        logId?: string;
         before?: number;
         after?: number;
+        sameService?: boolean;
+        sameHost?: boolean;
         projectId?: string;
       };
 
@@ -194,17 +202,28 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const context = await queryService.getLogContext({
-        projectId,
-        time: new Date(time),
-        before: before || 10,
-        after: after || 10,
-      });
+      let context;
+      try {
+        context = await queryService.getLogContext({
+          projectId,
+          time: new Date(time),
+          logId,
+          before: before ?? CONTEXT_DEFAULT_SIZE,
+          after: after ?? CONTEXT_DEFAULT_SIZE,
+          sameService: sameService ?? false,
+          sameHost: sameHost ?? false,
+        });
+      } catch (err) {
+        if (err instanceof LogNotFoundError) {
+          return reply.code(404).send({ error: err.message });
+        }
+        throw err;
+      }
 
       void auditLogService.record({
         action: 'data.log_context_viewed',
         target: { type: 'project', id: projectId },
-        metadata: { time, before, after },
+        metadata: { time, logId, before, after, sameService, sameHost },
         organizationId: null,
       }, { buffered: true });
 
