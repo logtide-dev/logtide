@@ -1,7 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import { statusIncidentRoutes } from '../../../modules/status-incidents/routes.js';
 import { createTestContext, createTestSession } from '../../helpers/index.js';
+
+vi.mock('../../../queue/jobs/monitor-status-subscribers.js', () => ({
+  enqueueStatusSubscriberNotification: vi.fn().mockResolvedValue(undefined),
+}));
 import { db } from '../../../database/index.js';
 
 function authHeaders(token: string) {

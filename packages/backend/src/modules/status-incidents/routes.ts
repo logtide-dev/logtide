@@ -9,6 +9,7 @@ import {
   InvalidSourceIncidentError,
   MAX_LINKED_MONITORS,
 } from '../monitoring/component-links.js';
+import { enqueueStatusSubscriberNotification } from '../../queue/jobs/monitor-status-subscribers.js';
 
 const STATUS_VALUES = ['investigating', 'identified', 'monitoring', 'resolved'] as const;
 const SEVERITY_VALUES = ['minor', 'major', 'critical'] as const;
@@ -50,6 +51,33 @@ const updateSchema = z.object({
   severity: z.enum(SEVERITY_VALUES).optional(),
   monitorIds: z.array(z.string().uuid()).max(MAX_LINKED_MONITORS).optional(),
 });
+
+/**
+ * Emails the confirmed subscribers of the page. Best effort: any failure here
+ * (lookup or queue) is logged and never fails the request.
+ */
+async function notifySubscribers(
+  incidentId: string,
+  organizationId: string,
+  kind: 'incident_created' | 'incident_updated' | 'incident_resolved',
+  status: string,
+  message?: string,
+): Promise<void> {
+  try {
+    const incident = await statusIncidentService.getById(incidentId, organizationId);
+    if (!incident) return;
+    await enqueueStatusSubscriberNotification({
+      kind,
+      organizationId,
+      projectId: incident.projectId,
+      title: incident.title,
+      status,
+      message,
+    });
+  } catch (err) {
+    console.error('[StatusIncidents] subscriber notification failed:', err instanceof Error ? err.message : err);
+  }
+}
 
 /** Maps link validation errors to a 400; anything else is rethrown. */
 function sendLinkError(err: unknown, reply: any) {
@@ -128,6 +156,7 @@ export async function statusIncidentRoutes(fastify: FastifyInstance) {
         ...parse.data,
         createdBy: request.user.id,
       });
+      await notifySubscribers(incident.id, incident.organizationId, 'incident_created', incident.status, parse.data.message);
       return reply.status(201).send({ incident });
     } catch (err) {
       return sendLinkError(err, reply);
@@ -148,8 +177,15 @@ export async function statusIncidentRoutes(fastify: FastifyInstance) {
     if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
 
     try {
+      const before = parse.data.status === 'resolved'
+        ? await statusIncidentService.getById(paramsParse.data.id, organizationId)
+        : null;
       const incident = await statusIncidentService.update(paramsParse.data.id, organizationId, parse.data);
       if (!incident) return reply.status(404).send({ error: 'Not found' });
+      // Only the transition into "resolved" is announced, not repeated saves.
+      if (before && before.status !== 'resolved' && incident.status === 'resolved') {
+        await notifySubscribers(incident.id, organizationId, 'incident_resolved', incident.status);
+      }
       return reply.send({ incident });
     } catch (err) {
       return sendLinkError(err, reply);
@@ -189,6 +225,13 @@ export async function statusIncidentRoutes(fastify: FastifyInstance) {
         paramsParse.data.id,
         organizationId,
         { ...parse.data, createdBy: request.user.id },
+      );
+      await notifySubscribers(
+        paramsParse.data.id,
+        organizationId,
+        update.status === 'resolved' ? 'incident_resolved' : 'incident_updated',
+        update.status,
+        update.message,
       );
       return reply.status(201).send({ update });
     } catch (err) {

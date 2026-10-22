@@ -70,3 +70,76 @@ export function generateConfirmationEmail(data: {
   ].join('\n');
   return { subject, html, text };
 }
+
+export type StatusUpdateKind =
+  | 'incident_created'
+  | 'incident_updated'
+  | 'incident_resolved'
+  | 'maintenance_scheduled';
+
+const KIND_LABELS: Record<StatusUpdateKind, { subject: string; heading: string }> = {
+  incident_created: { subject: 'Incident', heading: 'New incident' },
+  incident_updated: { subject: 'Update', heading: 'Incident update' },
+  incident_resolved: { subject: 'Resolved', heading: 'Incident resolved' },
+  maintenance_scheduled: { subject: 'Scheduled maintenance', heading: 'Scheduled maintenance' },
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  investigating: 'Investigating',
+  identified: 'Identified',
+  monitoring: 'Monitoring',
+  resolved: 'Resolved',
+};
+
+export function generateStatusUpdateEmail(data: {
+  kind: StatusUpdateKind;
+  pageTitle: string;
+  accentColor?: string | null;
+  title: string;
+  status?: string;
+  message?: string;
+  scheduledStart?: string;
+  scheduledEnd?: string;
+  pageUrl: string;
+  unsubscribeUrl: string;
+}): StatusEmail {
+  const labels = KIND_LABELS[data.kind];
+  const oneLine = (s: string) => s.replace(/[\r\n]+/g, ' ');
+  const subject = `[${oneLine(data.pageTitle)}] ${labels.subject}: ${oneLine(data.title)}`;
+
+  const facts: string[] = [];
+  const textLines: string[] = [data.title, ''];
+  if (data.status) {
+    const label = STATUS_LABELS[data.status] ?? data.status;
+    facts.push(`<p style="margin:0 0 8px;font-size:13px;color:#52525b;">Status: <strong style="color:#18181b;">${escapeHtml(label)}</strong></p>`);
+    textLines.push(`Status: ${label}`);
+  }
+  if (data.scheduledStart && data.scheduledEnd) {
+    const start = new Date(data.scheduledStart).toUTCString();
+    const end = new Date(data.scheduledEnd).toUTCString();
+    facts.push(`<p style="margin:0 0 8px;font-size:13px;color:#52525b;">From <strong style="color:#18181b;">${escapeHtml(start)}</strong> to <strong style="color:#18181b;">${escapeHtml(end)}</strong></p>`);
+    textLines.push(`From ${start} to ${end}`);
+  }
+  if (data.message) {
+    facts.push(`<p style="margin:12px 0;font-size:14px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(data.message)}</p>`);
+    textLines.push('', data.message);
+  }
+  const bodyHtml = `
+      <h2 style="margin:0 0 12px;font-size:16px;">${escapeHtml(data.title)}</h2>
+      ${facts.join('\n      ')}
+      <p style="margin:16px 0 0;"><a href="${escapeHtml(data.pageUrl)}" style="color:${safeAccent(data.accentColor)};font-size:14px;">View the status page</a></p>`;
+  const footerHtml = `You receive this because you subscribed to ${escapeHtml(data.pageTitle)}. <a href="${escapeHtml(data.unsubscribeUrl)}" style="color:#71717a;">Unsubscribe</a>`;
+  textLines.push('', `Status page: ${data.pageUrl}`, '', `Unsubscribe: ${data.unsubscribeUrl}`);
+
+  return {
+    subject,
+    html: wrapStatusEmail({
+      pageTitle: data.pageTitle,
+      accent: data.accentColor,
+      heading: labels.heading,
+      bodyHtml,
+      footerHtml,
+    }),
+    text: textLines.join('\n'),
+  };
+}

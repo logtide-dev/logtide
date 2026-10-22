@@ -5,6 +5,7 @@ import { authenticate } from '../auth/middleware.js';
 import { db } from '../../database/connection.js';
 import { projectsService } from '../projects/service.js';
 import { InvalidMonitorIdsError, MAX_LINKED_MONITORS } from '../monitoring/component-links.js';
+import { enqueueStatusSubscriberNotification } from '../../queue/jobs/monitor-status-subscribers.js';
 
 async function checkOrgAdmin(userId: string, organizationId: string): Promise<boolean> {
   const member = await db
@@ -106,6 +107,16 @@ export async function maintenanceRoutes(fastify: FastifyInstance) {
         autoUpdateStatus: parse.data.autoUpdateStatus,
         monitorIds: parse.data.monitorIds,
         createdBy: request.user.id,
+      });
+      // Best effort: a failing queue must not fail the request.
+      await enqueueStatusSubscriberNotification({
+        kind: 'maintenance_scheduled',
+        organizationId: maintenance.organizationId,
+        projectId: maintenance.projectId,
+        title: maintenance.title,
+        message: maintenance.description ?? undefined,
+        scheduledStart: maintenance.scheduledStart.toISOString(),
+        scheduledEnd: maintenance.scheduledEnd.toISOString(),
       });
       return reply.status(201).send({ maintenance });
     } catch (err) {
