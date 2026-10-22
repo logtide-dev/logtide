@@ -53,8 +53,8 @@
 
 <Card
 	class="border-l-4 {frame.isAppCode
-		? 'border-l-blue-500 bg-blue-50/30 dark:bg-blue-950/20'
-		: 'border-l-gray-300 dark:border-l-gray-700 opacity-75'}"
+		? 'border-l-info bg-info/5'
+		: 'border-l-border opacity-75'}"
 >
 	<CardContent class="p-3">
 		<!-- Header row -->
@@ -69,7 +69,7 @@
 				{#if isLibraryCode}
 					<Package class="w-4 h-4 text-muted-foreground flex-shrink-0" />
 				{:else}
-					<FileCode class="w-4 h-4 text-blue-500 flex-shrink-0" />
+					<FileCode class="w-4 h-4 text-info-text flex-shrink-0" />
 				{/if}
 
 				<code class="font-mono text-sm truncate font-medium">
@@ -77,13 +77,13 @@
 				</code>
 
 				{#if frame.isAppCode}
-					<Badge variant="outline" class="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+					<Badge variant="outline" class="text-xs bg-info/15 text-info-text border-info/30">
 						App
 					</Badge>
 				{/if}
 
 				{#if isSourceMapped}
-					<Badge variant="outline" class="text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
+					<Badge variant="outline" class="text-xs bg-success/15 text-success-text border-success/30">
 						<MapPin class="w-3 h-3 mr-1" />
 						Source mapped
 					</Badge>
@@ -95,6 +95,7 @@
 					variant="ghost"
 					size="icon"
 					class="h-6 w-6"
+					aria-label={isExpanded ? 'Collapse frame' : 'Expand frame'}
 					onclick={() => (isExpanded = !isExpanded)}
 				>
 					{#if isExpanded}
@@ -110,7 +111,7 @@
 		<div class="mt-1 pl-8 flex items-center gap-2 text-xs text-muted-foreground">
 			<span class="font-mono truncate">{displayPath}</span>
 			{#if displayLine}
-				<span class="text-blue-500 font-mono flex-shrink-0">
+				<span class="text-info-text font-mono flex-shrink-0">
 					:{displayLine}{#if displayCol}:{displayCol}{/if}
 				</span>
 			{/if}
@@ -135,7 +136,7 @@
 							<span>Source</span>
 						</div>
 						<pre class="text-xs font-mono overflow-x-auto p-2 leading-relaxed">{#each codeCtx.pre ?? [] as codeLine}<span class="text-muted-foreground">{codeLine}
-</span>{/each}{#if codeCtx.line}<span class="bg-red-100 dark:bg-red-900/30 font-bold inline-block w-full">{codeCtx.line}
+</span>{/each}{#if codeCtx.line}<span class="bg-destructive/15 font-bold inline-block w-full">{codeCtx.line}
 </span>{/if}{#each codeCtx.post ?? [] as codeLine}<span class="text-muted-foreground">{codeLine}
 </span>{/each}</pre>
 					</div>

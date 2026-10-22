@@ -92,18 +92,20 @@
 	}
 
 	function viewErrorGroup() {
-		if (exception) {
-			// Navigate to the error groups list filtered to this exception.
-			// The list page reads the `search` param (ILIKE on exception type/message);
-			// it does not read a `fingerprint` param, so use the exception type as the
-			// search term to land on the matching group.
+		if (!exception) return;
+		const groupId = exception.errorGroupId;
+		if (groupId) {
+			const params = new URLSearchParams({ organizationId });
+			goto(`/dashboard/errors/${encodeURIComponent(groupId)}?${params.toString()}`);
+		} else {
+			// No group row for this exception: land on the list filtered by its type.
 			const params = new URLSearchParams({
 				organizationId,
 				search: exception.exception.exceptionType,
 			});
 			goto(`/dashboard/errors?${params.toString()}`);
-			onClose();
 		}
+		onClose();
 	}
 </script>
 
@@ -111,8 +113,8 @@
 	<Dialog.Content class="max-w-4xl max-h-[85vh] overflow-y-auto">
 		<Dialog.Header>
 			<Dialog.Title class="flex items-center gap-2">
-				<AlertTriangle class="w-5 h-5 text-red-500" />
-				Exception Details
+				<AlertTriangle class="w-5 h-5 text-destructive-text" aria-hidden="true" />
+				Exception details
 			</Dialog.Title>
 			<Dialog.Description>
 				Parsed stack trace and error information
@@ -123,7 +125,7 @@
 			{#if loading}
 				<div class="flex items-center justify-center py-12">
 					<Spinner />
-					<span class="ml-3 text-muted-foreground">Loading exception details...</span>
+					<span class="ml-3 text-muted-foreground">Loading exception details</span>
 				</div>
 			{:else if exception}
 				<StackTraceViewer {exception} />
@@ -135,8 +137,8 @@
 						{#if metadataError.errorFields.reason || metadataError.errorFields.message || metadataError.errorFields.error}
 							<div>
 								<h4 class="text-sm font-semibold text-muted-foreground mb-2">Error</h4>
-								<div class="p-3 bg-red-500/10 border border-red-500/20 rounded-md">
-									<p class="font-mono text-sm text-red-600 dark:text-red-400">
+								<div class="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+									<p class="font-mono text-sm text-destructive-text">
 										{metadataError.errorFields.reason || metadataError.errorFields.message || metadataError.errorFields.error}
 									</p>
 								</div>
@@ -147,7 +149,7 @@
 							{@const stackValue = String(metadataError.errorFields.stack || metadataError.errorFields.stackTrace || metadataError.errorFields.stack_trace)}
 							<div>
 								<div class="flex items-center justify-between mb-2">
-									<h4 class="text-sm font-semibold text-muted-foreground">Stack Trace</h4>
+									<h4 class="text-sm font-semibold text-muted-foreground">Stack trace</h4>
 									<Button
 										variant="ghost"
 										size="sm"
@@ -155,7 +157,7 @@
 										class="h-7 px-2 text-xs"
 									>
 										{#if stackCopied}
-											<Check class="w-3 h-3 mr-1 text-green-500" />
+											<Check class="w-3 h-3 mr-1 text-success-text" />
 											Copied
 										{:else}
 											<Copy class="w-3 h-3 mr-1" />
@@ -206,7 +208,7 @@
 				{#if exception}
 					<Button variant="outline" onclick={viewErrorGroup}>
 						<ExternalLink class="w-4 h-4 mr-2" />
-						View Error Group
+						View error group
 					</Button>
 				{/if}
 			</div>
