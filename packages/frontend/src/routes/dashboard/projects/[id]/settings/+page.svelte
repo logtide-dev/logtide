@@ -86,7 +86,7 @@
     { id: 'general', label: 'General' },
     { id: 'connect', label: 'Connect' },
     { id: 'api-keys', label: 'API keys' },
-    { id: 'inbound-webhooks', label: 'Inbound webhooks' },
+    { id: 'inbound-webhooks', label: 'Receivers' },
     { id: 'danger-zone', label: 'Danger zone' },
   ];
 
@@ -270,7 +270,7 @@
       receivers = response.receivers;
       lastLoadedReceiversKey = projectId;
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Could not load inbound webhooks');
+      toastStore.error(e instanceof Error ? e.message : 'Could not load receivers');
     } finally {
       loadingReceivers = false;
     }
@@ -284,7 +284,7 @@
     if (!projectId) throw new Error('No project ID');
 
     const response = await receiversAPI.create(projectId, data);
-    toastStore.success('Inbound webhook created');
+    toastStore.success('Receiver created');
     await loadReceivers();
     return response;
   }
@@ -294,10 +294,10 @@
 
     try {
       await receiversAPI.update(projectId, receiver.id, { enabled });
-      toastStore.success(enabled ? 'Inbound webhook enabled' : 'Inbound webhook disabled');
+      toastStore.success(enabled ? 'Receiver enabled' : 'Receiver disabled');
       await loadReceivers();
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Could not update the inbound webhook');
+      toastStore.error(e instanceof Error ? e.message : 'Could not update the receiver');
       await loadReceivers();
     }
   }
@@ -308,10 +308,10 @@
 
     try {
       await receiversAPI.delete(projectId, target.id);
-      toastStore.success('Inbound webhook deleted');
+      toastStore.success('Receiver deleted');
       await loadReceivers();
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Could not delete the inbound webhook');
+      toastStore.error(e instanceof Error ? e.message : 'Could not delete the receiver');
     } finally {
       receiverToDelete = null;
     }
@@ -428,7 +428,7 @@
 {#snippet receiverEnabledCell(r: Receiver)}
   <Switch
     checked={r.enabled}
-    aria-label="Enable inbound webhook {r.name}"
+    aria-label="Enable receiver {r.name}"
     onCheckedChange={(checked) => handleToggleReceiver(r, checked)}
   />
 {/snippet}
@@ -448,7 +448,7 @@
     <Button
       variant="ghost"
       size="sm"
-      aria-label="Delete inbound webhook {r.name}"
+      aria-label="Delete receiver {r.name}"
       onclick={() => (receiverToDelete = r)}
       class="gap-2 text-destructive-text hover:text-destructive-text"
     >
@@ -600,14 +600,14 @@
 
     <div id="inbound-webhooks" class="scroll-mt-20">
       <SettingsSection
-        title="Inbound webhooks"
+        title="Receivers"
         description="Receive events from external systems (CI/CD, uptime monitors) as log entries"
       >
         <div class="space-y-4">
           <div class="flex justify-end">
             <Button onclick={() => (showCreateReceiverDialog = true)} class="gap-2">
               <Plus class="h-4 w-4" aria-hidden="true" />
-              Create inbound webhook
+              Create receiver
             </Button>
           </div>
           <DataTable
@@ -618,8 +618,8 @@
           >
             {#snippet empty()}
               <div class="space-y-1 py-4">
-                <p>No inbound webhooks yet</p>
-                <p class="text-sm">Create an inbound webhook to ingest events from external tools</p>
+                <p>No receivers yet</p>
+                <p class="text-sm">Create a receiver to ingest events from external tools</p>
               </div>
             {/snippet}
           </DataTable>
@@ -649,9 +649,9 @@
 
 <ConfirmDialog
   bind:open={() => receiverToDelete !== null, (v) => { if (!v) receiverToDelete = null; }}
-  title="Delete inbound webhook"
-  description="Delete {receiverToDelete?.name ?? 'this inbound webhook'}? Its webhook URL stops working immediately and cannot be restored."
-  confirmLabel="Delete inbound webhook"
+  title="Delete receiver"
+  description="Delete {receiverToDelete?.name ?? 'this receiver'}? Its webhook URL stops working immediately and cannot be restored."
+  confirmLabel="Delete receiver"
   onConfirm={handleDeleteReceiver}
 />
 

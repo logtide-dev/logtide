@@ -163,20 +163,20 @@ describe('project settings page', () => {
     expect(m.toastSuccess).toHaveBeenCalledWith('API key deleted');
   });
 
-  it('calls the section Inbound webhooks with a Create inbound webhook button', async () => {
+  it('calls the section Receivers with a Create receiver button', async () => {
     await renderLoaded();
-    expect(screen.getByRole('heading', { name: 'Inbound webhooks' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Create inbound webhook' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Receivers' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create receiver' })).toBeInTheDocument();
     expect(screen.getByText('CI hook')).toBeInTheDocument();
   });
 
-  it('deletes an inbound webhook through the confirm dialog', async () => {
+  it('deletes a receiver through the confirm dialog', async () => {
     await renderLoaded();
-    await fireEvent.click(screen.getByRole('button', { name: 'Delete inbound webhook CI hook' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete receiver CI hook' }));
     const dialog = await screen.findByRole('alertdialog');
-    await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete inbound webhook' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Delete receiver' }));
     await waitFor(() => expect(m.deleteReceiver).toHaveBeenCalledWith('p1', 'r1'));
-    expect(m.toastSuccess).toHaveBeenCalledWith('Inbound webhook deleted');
+    expect(m.toastSuccess).toHaveBeenCalledWith('Receiver deleted');
   });
 
   it('moves the project to the trash only after typing its name', async () => {

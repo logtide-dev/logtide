@@ -81,7 +81,7 @@
         fieldMapping: buildFieldMapping()
       });
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Could not create the inbound webhook';
+      error = e instanceof Error ? e.message : 'Could not create the receiver';
     } finally {
       submitting = false;
     }
@@ -130,9 +130,9 @@
   <DialogContent class="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
     {#if !created}
       <DialogHeader>
-        <DialogTitle>Create inbound webhook</DialogTitle>
+        <DialogTitle>Create receiver</DialogTitle>
         <DialogDescription>
-          Inbound webhooks receive events from other tools (GitHub, uptime checkers, generic JSON) and store them as logs.
+          Receivers receive events from other tools (GitHub, uptime checkers, generic JSON) and store them as logs.
         </DialogDescription>
       </DialogHeader>
 
@@ -217,14 +217,14 @@
               Creating...
             {:else}
               <Plus class="w-4 h-4" />
-              Create inbound webhook
+              Create receiver
             {/if}
           </Button>
         </DialogFooter>
       </form>
     {:else}
       <DialogHeader>
-        <DialogTitle>Inbound webhook created</DialogTitle>
+        <DialogTitle>Receiver created</DialogTitle>
         <DialogDescription>Point the external system at this URL to start receiving events.</DialogDescription>
       </DialogHeader>
 
@@ -232,8 +232,8 @@
         <Alert.Root variant="destructive">
           <Alert.Title>Save this URL now</Alert.Title>
           <Alert.Description>
-            The URL contains the inbound webhook token and is the only credential the external system needs.
-            This is the only time it will be shown. If you lose it, delete the inbound webhook and create a new one.
+            The URL contains the receiver token and is the only credential the external system needs.
+            This is the only time it will be shown. If you lose it, delete the receiver and create a new one.
           </Alert.Description>
         </Alert.Root>
 

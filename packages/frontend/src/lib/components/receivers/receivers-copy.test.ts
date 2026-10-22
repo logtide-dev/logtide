@@ -10,28 +10,28 @@ import ReceiverEventsDialog from './ReceiverEventsDialog.svelte';
 
 const dashPattern = new RegExp('[' + String.fromCharCode(0x2013, 0x2014) + ']');
 
-describe('inbound webhook copy', () => {
-	it('names the create dialog Inbound webhook everywhere', () => {
+describe('receiver copy', () => {
+	it('names the create dialog receiver everywhere', () => {
 		render(CreateReceiverDialog, { onSubmit: vi.fn(), open: true });
 
-		expect(screen.getByRole('heading', { name: 'Create inbound webhook' })).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: 'Create receiver' })).toBeInTheDocument();
 		expect(
-			screen.getByText(/Inbound webhooks receive events from other tools/)
+			screen.getByText(/Receivers receive events from other tools/)
 		).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Create inbound webhook' })).toBeInTheDocument();
-		expect(screen.queryByText(/Receiver/)).toBeNull();
+		expect(screen.getByRole('button', { name: 'Create receiver' })).toBeInTheDocument();
+		expect(screen.queryByText(/inbound webhook/i)).toBeNull();
 		expect(document.body.textContent).not.toMatch(dashPattern);
 	});
 
-	it('names the events dialog Inbound webhook events', async () => {
+	it('names the events dialog Receiver events', async () => {
 		render(ReceiverEventsDialog, {
 			projectId: 'p1',
 			receiver: { id: 'r1', name: 'GitHub deploys' } as never,
 			open: true,
 		});
 
-		expect(await screen.findByText(/^Inbound webhook events/)).toBeInTheDocument();
-		expect(screen.queryByText(/Receiver/)).toBeNull();
+		expect(await screen.findByText(/^Receiver events/)).toBeInTheDocument();
+		expect(screen.queryByText(/inbound webhook/i)).toBeNull();
 		expect(document.body.textContent).not.toMatch(dashPattern);
 	});
 });

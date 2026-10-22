@@ -34,7 +34,7 @@
       const response = await receiversAPI.listEvents(projectId, receiver.id);
       events = response.events;
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Could not load inbound webhook events');
+      toastStore.error(e instanceof Error ? e.message : 'Could not load receiver events');
     } finally {
       loading = false;
     }
@@ -57,9 +57,9 @@
 <Dialog bind:open>
   <DialogContent class="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
     <DialogHeader>
-      <DialogTitle>Inbound webhook events{receiver ? `: ${receiver.name}` : ''}</DialogTitle>
+      <DialogTitle>Receiver events{receiver ? `: ${receiver.name}` : ''}</DialogTitle>
       <DialogDescription>
-        The last events received by this inbound webhook, with their normalized output. Only the most recent
+        The last events received by this receiver, with their normalized output. Only the most recent
         100 events are kept.
       </DialogDescription>
     </DialogHeader>
