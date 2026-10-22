@@ -721,8 +721,8 @@ describe('Email Templates - Common Elements', () => {
       timeWindow: 1,
     });
 
-    expect(result.html).toContain('/dashboard/settings/channels');
-    expect(result.text).toContain('/dashboard/settings/channels');
+    expect(result.html).toContain('/dashboard/settings/notifications/destinations');
+    expect(result.text).toContain('/dashboard/settings/notifications/destinations');
   });
 
   it('should include LogTide branding', () => {
@@ -818,7 +818,7 @@ describe('Email Templates - Digest', () => {
 
     expect(result.html).toContain('https://app.logtide.dev/unsubscribe?token=tok_123');
     expect(result.html).toContain('Unsubscribe');
-    expect(result.html).not.toContain('/dashboard/settings/channels');
+    expect(result.html).not.toContain('/dashboard/settings/notifications/destinations');
   });
 
   it('carries all sections in the plaintext fallback', () => {
