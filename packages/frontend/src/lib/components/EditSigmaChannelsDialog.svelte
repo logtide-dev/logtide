@@ -68,7 +68,7 @@
 			toastStore.error(
 				error instanceof Error
 					? error.message
-					: "Failed to update channels",
+					: "Could not update the channels",
 			);
 		} finally {
 			submitting = false;
