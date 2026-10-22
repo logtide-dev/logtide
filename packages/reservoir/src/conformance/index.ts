@@ -33,9 +33,6 @@
 //    Add `-t baseline` (or another describe name) to run one capability.
 // 6. The in-memory reference engine runs the whole suite in CI without
 //    databases: `npx vitest run src/conformance/conformance.test.ts`.
-// 7. Known blocker until R-TS lands: TimescaleEngine.initialize() creates no
-//    session_id column and no spans/traces tables, so Timescale seeding fails
-//    loudly; ClickHouse and MongoDB seed and pass the baseline today.
 //
 // Capabilities (one describe each, in this order): baseline, text query,
 // direct filters, field clauses, histogram, facets, metadata keys, operation
