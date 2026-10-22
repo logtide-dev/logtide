@@ -1,85 +1,153 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { layoutStore } from '$lib/stores/layout';
-
-	interface LogEntry {
-		id?: string;
-		time: string;
-		service: string;
-		level: 'debug' | 'info' | 'warn' | 'error' | 'critical';
-		message: string;
-		metadata?: Record<string, unknown>;
-		traceId?: string;
-		sessionId?: string;
-		projectId: string;
-	}
+	import { displayPreferences, type DisplayPreferences } from '$lib/stores/display-preferences';
+	import { formatTimestamp, getDisplayZoneLabel } from '$lib/utils/datetime';
+	import { levelTone } from '$lib/utils/severity';
+	import type { LogEntry } from '$lib/api/logs';
+	import { computeWindow } from '$lib/components/search/virtual-window';
+	import { rowKey } from '$lib/components/search/log-fields';
 
 	interface Props {
 		logs: LogEntry[];
 		isLiveTail?: boolean;
 		maxHeight?: string;
 		class?: string;
+		/** Row key (`rowKey(log, index)`) of the line shown in the details panel. */
+		selectedId?: string | null;
+		onSelect?: (log: LogEntry) => void;
+		/** Fires when the view reaches or leaves the newest lines (top 50 px). */
+		onScrollTopChange?: (atTop: boolean) => void;
 	}
 
-	let { logs, isLiveTail = false, maxHeight = '600px', class: className = '' }: Props = $props();
+	let {
+		logs,
+		isLiveTail = false,
+		maxHeight = '600px',
+		class: className = '',
+		selectedId = null,
+		onSelect,
+		onScrollTopChange,
+	}: Props = $props();
 
-	let wrapEnabled = $state(true);
+	/** Fixed line height of the no-wrap mode, used for windowing. */
+	const LINE_HEIGHT = 21;
+	const AT_TOP_PX = 50;
+	// No-wrap lines are one truncated row; nothing past this is ever visible.
+	const MAX_LINE_CHARS = 2000;
 
-	$effect(() => {
-		const unsubscribe = layoutStore.subscribe((state) => {
-			wrapEnabled = state.terminalWrapEnabled;
-		});
-		return unsubscribe;
-	});
+	const wrapEnabled = $derived($layoutStore.terminalWrapEnabled);
 
 	let containerRef = $state<HTMLDivElement | null>(null);
-	let shouldAutoScroll = $state(true);
+	let scrollTop = $state(0);
+	let viewportHeight = $state(0);
+	// Plain variable: the auto-scroll effect must re-run on new logs, not on scrolling.
+	let atTop = true;
 
-	function formatTimestamp(time: string): string {
-		const date = new Date(time);
-		if (isNaN(date.getTime())) {
-			return '[Invalid Date]';
-		}
-		const year = date.getFullYear();
-		const month = String(date.getMonth() + 1).padStart(2, '0');
-		const day = String(date.getDate()).padStart(2, '0');
-		const hours = String(date.getHours()).padStart(2, '0');
-		const minutes = String(date.getMinutes()).padStart(2, '0');
-		const seconds = String(date.getSeconds()).padStart(2, '0');
-		const ms = String(date.getMilliseconds()).padStart(3, '0');
-		return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${ms}`;
+	const keys = $derived(uniqueKeys(logs));
+	const win = $derived(
+		wrapEnabled
+			? { start: 0, end: logs.length, padTop: 0, padBottom: 0 }
+			: computeWindow({ scrollTop, viewportHeight, rowHeight: LINE_HEIGHT, count: logs.length }),
+	);
+	const visible = $derived(logs.slice(win.start, win.end));
+	// Reading the store re-renders the caption when the zone preference changes.
+	const zoneLabel = $derived.by(() => {
+		$displayPreferences;
+		return getDisplayZoneLabel();
+	});
+
+	/** Keys for the keyed list; a repeated id gets a suffix instead of breaking the list. */
+	function uniqueKeys(list: LogEntry[]): string[] {
+		const seen = new Map<string, number>();
+		return list.map((log, i) => {
+			const base = rowKey(log, i);
+			const n = seen.get(base) ?? 0;
+			seen.set(base, n + 1);
+			return n === 0 ? base : `${base}#${n}`;
+		});
 	}
 
-	function getLevelClass(level: LogEntry['level']): string {
-		switch (level) {
-			case 'critical':
-				return 'terminal-level-critical';
-			case 'error':
-				return 'terminal-level-error';
-			case 'warn':
-				return 'terminal-level-warn';
-			case 'info':
-				return 'terminal-level-info';
-			case 'debug':
-				return 'terminal-level-debug';
-			default:
-				return 'terminal-level-debug';
+	// `_prefs` comes from the template so the line re-renders on a preference change.
+	function timeText(time: string, _prefs: DisplayPreferences): string {
+		return formatTimestamp(time, { precision: 'ms', withDate: true });
+	}
+
+	function levelText(level: unknown): string {
+		const text = typeof level === 'string' && level ? level : 'unknown';
+		return text.toUpperCase().padEnd(8);
+	}
+
+	function messageText(message: unknown, wrap: boolean): string {
+		const text = typeof message === 'string' ? message : String(message ?? '');
+		if (wrap) return text;
+		// One line per log in no-wrap mode, so windowing can assume a fixed height.
+		const line = text.length > MAX_LINE_CHARS ? text.slice(0, MAX_LINE_CHARS) : text;
+		return line.replace(/\r\n|\r|\n/g, '\\n');
+	}
+
+	function measure() {
+		if (!containerRef) return;
+		viewportHeight = containerRef.clientHeight;
+	}
+
+	function syncScroll() {
+		if (!containerRef) return;
+		scrollTop = containerRef.scrollTop;
+		const nowAtTop = scrollTop < AT_TOP_PX;
+		if (nowAtTop !== atTop) {
+			atTop = nowAtTop;
+			onScrollTopChange?.(nowAtTop);
 		}
 	}
 
 	function handleScroll() {
-		if (!containerRef) return;
-		// New logs are prepended at the top, so check if user is near top
-		const isAtTop = containerRef.scrollTop < 50;
-		shouldAutoScroll = isAtTop;
+		measure();
+		syncScroll();
 	}
 
+	/** Scroll back to the newest lines (new logs are prepended at the top). */
+	export function scrollToTop(): void {
+		if (!containerRef) return;
+		containerRef.scrollTop = 0;
+		syncScroll();
+	}
+
+	function handleLineKeydown(event: KeyboardEvent, log: LogEntry) {
+		if (event.target !== event.currentTarget) return;
+		if (event.key !== 'Enter' && event.key !== ' ') return;
+		event.preventDefault();
+		// Keeps the page-level Enter shortcut from acting on the same key press.
+		event.stopPropagation();
+		onSelect?.(log);
+	}
+
+	// While live and at the top, keep showing the newest lines as they arrive.
 	$effect(() => {
-		if (isLiveTail && shouldAutoScroll && containerRef && logs.length > 0) {
+		const count = logs.length;
+		if (isLiveTail && atTop && containerRef && count > 0) {
 			containerRef.scrollTop = 0;
+			scrollTop = 0;
 		}
+	});
+
+	onMount(() => {
+		measure();
+		const onResize = () => measure();
+		window.addEventListener('resize', onResize);
+		let observer: ResizeObserver | null = null;
+		if (typeof ResizeObserver !== 'undefined' && containerRef) {
+			observer = new ResizeObserver(onResize);
+			observer.observe(containerRef);
+		}
+		return () => {
+			window.removeEventListener('resize', onResize);
+			observer?.disconnect();
+		};
 	});
 </script>
 
+<p class="mb-1 text-right text-xs text-muted-foreground">Times in {zoneLabel}</p>
 <div
 	bind:this={containerRef}
 	onscroll={handleScroll}
@@ -95,14 +163,30 @@
 			<span class="terminal-prompt">$</span> No logs to display
 		</div>
 	{:else}
-		{#each logs as log (log.id ?? `${log.time}-${log.message.slice(0, 50)}`)}
-			<div class="terminal-line {getLevelClass(log.level)}" role="article">
-				<span class="terminal-timestamp">[{formatTimestamp(log.time)}]</span>
-				<span class="terminal-level-badge">[{log.level.toUpperCase().padEnd(8)}]</span>
-				<span class="terminal-service">[{log.service}]</span>
-				<span class="terminal-message">{log.message}</span>
+		{#if win.padTop > 0}
+			<div aria-hidden="true" style="height: {win.padTop}px;"></div>
+		{/if}
+		{#each visible as log, j (keys[win.start + j])}
+			{@const key = rowKey(log, win.start + j)}
+			{@const selected = selectedId !== null && key === selectedId}
+			{@const tone = levelTone(String(log.level ?? ''))}
+			<div
+				class="terminal-line {selected ? 'is-selected' : ''}"
+				role="button"
+				tabindex="0"
+				aria-current={selected ? 'true' : undefined}
+				onclick={() => onSelect?.(log)}
+				onkeydown={(e) => handleLineKeydown(e, log)}
+			>
+				<span class="terminal-timestamp text-muted-foreground">[{timeText(log.time, $displayPreferences)}]</span>
+				<span class="terminal-level-badge {tone.text}">[{levelText(log.level)}]</span>
+				<span class="terminal-service text-primary-text">[{log.service}]</span>
+				<span class="terminal-message {tone.text}">{messageText(log.message, wrapEnabled)}</span>
 			</div>
 		{/each}
+		{#if win.padBottom > 0}
+			<div aria-hidden="true" style="height: {win.padBottom}px;"></div>
+		{/if}
 	{/if}
 </div>
 
@@ -135,68 +219,53 @@
 	}
 
 	.terminal-container .terminal-line {
-		padding: 0.125rem 0;
+		padding: 0.125rem 0.25rem;
+		border-radius: 0.25rem;
+		cursor: pointer;
 	}
 
-	/* Wrap mode (default) */
+	.terminal-container .terminal-line:focus-visible {
+		outline: 2px solid hsl(var(--ring));
+		outline-offset: -2px;
+	}
+
+	/* Wrap mode (default): every line rendered, off-screen ones skipped by the browser */
 	.terminal-container.wrap-enabled .terminal-line {
 		white-space: pre-wrap;
 		word-break: break-word;
+		content-visibility: auto;
+		contain-intrinsic-size: auto 21px;
 	}
 
-	/* No-wrap mode */
+	/* No-wrap mode: fixed-height lines, windowed */
 	.terminal-container.no-wrap {
 		overflow-x: auto;
 	}
 
 	.terminal-container.no-wrap .terminal-line {
 		white-space: pre;
+		height: 21px;
+		line-height: 21px;
+		padding-top: 0;
+		padding-bottom: 0;
+		width: max-content;
+		min-width: 100%;
 	}
 
 	.terminal-container .terminal-line:hover {
 		background-color: #f4f4f5;
 	}
 
-	.terminal-container .terminal-timestamp {
-		color: #71717a;
+	.terminal-container .terminal-line.is-selected {
+		background-color: hsl(var(--primary) / 0.12);
 	}
 
 	.terminal-container .terminal-level-badge {
 		font-weight: 500;
 	}
 
-	.terminal-container .terminal-service {
-		color: #7c3aed;
-	}
-
 	.terminal-container .terminal-message {
 		margin-left: 0.25rem;
-	}
-
-	/* Light mode level colors */
-	.terminal-container .terminal-level-critical .terminal-level-badge,
-	.terminal-container .terminal-level-critical .terminal-message {
-		color: #dc2626;
-	}
-
-	.terminal-container .terminal-level-error .terminal-level-badge,
-	.terminal-container .terminal-level-error .terminal-message {
-		color: #dc2626;
-	}
-
-	.terminal-container .terminal-level-warn .terminal-level-badge,
-	.terminal-container .terminal-level-warn .terminal-message {
-		color: #d97706;
-	}
-
-	.terminal-container .terminal-level-info .terminal-level-badge,
-	.terminal-container .terminal-level-info .terminal-message {
-		color: #0891b2;
-	}
-
-	.terminal-container .terminal-level-debug .terminal-level-badge,
-	.terminal-container .terminal-level-debug .terminal-message {
-		color: #6b7280;
 	}
 
 	/* Dark mode */
@@ -210,37 +279,11 @@
 		background-color: #27272a;
 	}
 
+	:global(.dark) .terminal-container .terminal-line.is-selected {
+		background-color: hsl(var(--primary) / 0.22);
+	}
+
 	:global(.dark) .terminal-container .terminal-prompt {
 		color: #22c55e;
-	}
-
-	:global(.dark) .terminal-container .terminal-service {
-		color: #a78bfa;
-	}
-
-	/* Dark mode level colors - ANSI style */
-	:global(.dark) .terminal-container .terminal-level-critical .terminal-level-badge,
-	:global(.dark) .terminal-container .terminal-level-critical .terminal-message {
-		color: #f87171;
-	}
-
-	:global(.dark) .terminal-container .terminal-level-error .terminal-level-badge,
-	:global(.dark) .terminal-container .terminal-level-error .terminal-message {
-		color: #ef4444;
-	}
-
-	:global(.dark) .terminal-container .terminal-level-warn .terminal-level-badge,
-	:global(.dark) .terminal-container .terminal-level-warn .terminal-message {
-		color: #fbbf24;
-	}
-
-	:global(.dark) .terminal-container .terminal-level-info .terminal-level-badge,
-	:global(.dark) .terminal-container .terminal-level-info .terminal-message {
-		color: #22d3ee;
-	}
-
-	:global(.dark) .terminal-container .terminal-level-debug .terminal-level-badge,
-	:global(.dark) .terminal-container .terminal-level-debug .terminal-message {
-		color: #6b7280;
 	}
 </style>

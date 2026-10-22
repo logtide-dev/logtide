@@ -1811,6 +1811,8 @@
               logs={paginatedLogs}
               isLiveTail={liveTail}
               maxHeight="600px"
+              selectedId={selectedLogIndex >= 0 && paginatedLogs[selectedLogIndex] ? rowKey(paginatedLogs[selectedLogIndex], selectedLogIndex) : null}
+              onSelect={(log) => openDetails(log)}
             />
             </TableLoadingOverlay>
           {:else}
