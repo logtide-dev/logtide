@@ -144,15 +144,37 @@ describe('error notification: shared channel routing', () => {
     expect(pd).toHaveLength(0);
   });
 
-  it('pages PagerDuty for a new group and for an escalating one', async () => {
+  it('pages PagerDuty for a new error group', async () => {
     const env = await setup();
     await addDefaultChannel(env.org.id, 'pagerduty', { routingKey: 'a'.repeat(32) });
 
     await processErrorNotification(buildJob(env, { isNewErrorGroup: true }));
+
+    const pd = hoisted.enqueue.mock.calls.map((c) => c[0]).filter((c) => c.url.includes('pagerduty'));
+    expect(pd).toHaveLength(1);
+    expect(pd[0].payload.dedup_key).toBe(`error:${env.group.id}`);
+  });
+
+  it('pages PagerDuty for an escalating group', async () => {
+    const env = await setup();
+    await addDefaultChannel(env.org.id, 'pagerduty', { routingKey: 'a'.repeat(32) });
+
     await processErrorNotification(buildJob(env, { isEscalating: true }));
 
     const pd = hoisted.enqueue.mock.calls.map((c) => c[0]).filter((c) => c.url.includes('pagerduty'));
-    expect(pd.length).toBeGreaterThanOrEqual(1);
+    expect(pd).toHaveLength(1);
+    expect(pd[0].payload.dedup_key).toBe(`error:${env.group.id}`);
+  });
+
+  it('pages PagerDuty for a regression', async () => {
+    const env = await setup();
+    await addDefaultChannel(env.org.id, 'pagerduty', { routingKey: 'a'.repeat(32) });
+
+    await processErrorNotification(buildJob(env, { isRegression: true }));
+
+    const pd = hoisted.enqueue.mock.calls.map((c) => c[0]).filter((c) => c.url.includes('pagerduty'));
+    expect(pd).toHaveLength(1);
+    expect(pd[0].payload.dedup_key).toBe(`error:${env.group.id}`);
   });
 
   it('falls back to owners and admins only when no channel resolves', async () => {

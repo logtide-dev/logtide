@@ -117,6 +117,20 @@ describe('webhookDeliveryService', () => {
       expect((await lookup(orgId, 'mon-2:down'))?.id).toBe(d.id);
     });
 
+    it('markRetrying does not move a dead row back to failed', async () => {
+      const d = await create(orgId, 'mon-dead:down');
+      await webhookDeliveryService.markDead(d.id, 5, 'superseded');
+      await webhookDeliveryService.markRetrying(d.id, 2, new Date(Date.now() + 5000), 'HTTP 500');
+      const row = await db
+        .selectFrom('webhook_deliveries')
+        .select(['status', 'attempt_count', 'last_error'])
+        .where('id', '=', d.id)
+        .executeTakeFirstOrThrow();
+      expect(row.status).toBe('dead');
+      expect(row.attempt_count).toBe(5);
+      expect(row.last_error).toBe('superseded');
+    });
+
     it('ignores terminal deliveries so a repeated event is not suppressed', async () => {
       const dead = await create(orgId, 'mon-3:down');
       await webhookDeliveryService.markDead(dead.id, 5, 'gave up');

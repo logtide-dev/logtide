@@ -126,6 +126,8 @@ export const webhookDeliveryService = {
       .updateTable('webhook_deliveries')
       .set({ status: 'failed', attempt_count: attemptCount, next_attempt_at: nextAttemptAt, last_error: lastError, updated_at: new Date() })
       .where('id', '=', id)
+      // A row already moved to dead (superseded by a later event) stays dead.
+      .where('status', 'in', ['pending', 'failed'])
       .execute();
   },
 
