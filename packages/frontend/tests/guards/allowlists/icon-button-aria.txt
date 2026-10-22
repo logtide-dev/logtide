@@ -1,4 +1,1 @@
 # Ratchet allowlist for the icon-button-aria guard. Shrink-only: delete lines for files you fixed, never add one.
-src/lib/components/alerts/AlertPreview.svelte
-src/lib/components/siem/incidents/IncidentActionsDropdown.svelte
-src/routes/dashboard/security/incidents/[id]/+page.svelte

@@ -74,6 +74,7 @@
 							type="text"
 							class="w-36 shrink-0"
 							placeholder="metadata key"
+							aria-label="Metadata key"
 							data-testid="metadata-filter-key"
 							bind:value={filters[i].key}
 							{disabled}
@@ -82,6 +83,7 @@
 						<select
 							class="{selectClass} w-36 shrink-0"
 							data-testid="metadata-filter-op"
+							aria-label="Operator"
 							value={f.op}
 							onchange={(e) =>
 								updateOp(i, (e.currentTarget as HTMLSelectElement).value as MetadataFilterOp)}
@@ -97,6 +99,7 @@
 								type="text"
 								class="flex-1 min-w-0"
 								placeholder="value"
+								aria-label="Value"
 								data-testid="metadata-filter-value"
 								bind:value={filters[i].value}
 								{disabled}
@@ -106,6 +109,7 @@
 								type="text"
 								class="flex-1 min-w-0"
 								placeholder="val1, val2, ..."
+								aria-label="Values"
 								data-testid="metadata-filter-values"
 								value={(f.values ?? []).join(', ')}
 								oninput={(e) =>

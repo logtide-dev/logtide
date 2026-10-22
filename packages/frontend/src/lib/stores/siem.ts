@@ -1,12 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
-import {
-	getDashboardStats,
-	listIncidents,
-	type DashboardStats,
-	type Incident,
-	type IncidentFilters,
-	type Severity,
-} from '$lib/api/siem';
+import { getDashboardStats, type DashboardStats, type Severity } from '$lib/api/siem';
+import { incidentsAPI, type InboxFilters } from '$lib/api/incidents';
+import type { IncidentListItem } from '@logtide/shared';
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 import { requestStreamTicket } from '$lib/api/stream-tickets';
@@ -24,17 +19,27 @@ export interface SiemState {
 	dashboardSeverityFilter: Severity[];
 
 	// Incidents
-	incidents: Incident[];
+	incidents: IncidentListItem[];
 	incidentsLoading: boolean;
 	incidentsError: string | null;
-	incidentFilters: Omit<IncidentFilters, 'organizationId'>;
 	incidentsTotal: number;
 
 	// Real-time
 	sseConnection: EventSource | null;
 	realtimeEnabled: boolean;
 	lastSseEvent: { type: string; timestamp: number } | null;
+	sseStatus: SseStatus;
 }
+
+export type SseStatus = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'disconnected';
+
+export interface RealtimeOptions {
+	incidentId?: string;
+	projectIds?: string[];
+}
+
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_MS = 1000;
 
 const initialState: SiemState = {
 	// Dashboard
@@ -48,16 +53,13 @@ const initialState: SiemState = {
 	incidents: [],
 	incidentsLoading: false,
 	incidentsError: null,
-	incidentFilters: {
-		limit: 20,
-		offset: 0,
-	},
 	incidentsTotal: 0,
 
 	// Real-time
 	sseConnection: null,
 	realtimeEnabled: false,
 	lastSseEvent: null,
+	sseStatus: 'idle',
 };
 
 // ============================================================================
@@ -66,6 +68,30 @@ const initialState: SiemState = {
 
 function createSiemStore() {
 	const { subscribe, set, update } = writable<SiemState>(initialState);
+
+	// Bookkeeping that must not trigger renders.
+	let loadSeq = 0;
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let reconnectAttempts = 0;
+	let realtimeGeneration = 0;
+	let realtimeTarget: { organizationId: string; opts: RealtimeOptions } | null = null;
+	let incidentMatcher: ((i: IncidentListItem) => boolean) | null = null;
+
+	function clearReconnectTimer(): void {
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+		}
+	}
+
+	function closeSource(): void {
+		const current = get({ subscribe }).sseConnection;
+		if (current) {
+			current.onmessage = null;
+			current.onerror = null;
+			current.close();
+		}
+	}
 
 	return {
 		subscribe,
@@ -124,28 +150,31 @@ function createSiemStore() {
 		// Incidents Methods
 		// ========================================
 
-		async loadIncidents(organizationId: string, projectId?: string): Promise<void> {
-			update((state) => ({
-				...state,
-				incidentsLoading: true,
-				incidentsError: null,
-			}));
+		async loadIncidents(
+			organizationId: string,
+			filters: Omit<InboxFilters, 'organizationId'>,
+			opts: { silent?: boolean } = {}
+		): Promise<void> {
+			const seq = ++loadSeq;
+			if (!opts.silent) {
+				update((state) => ({ ...state, incidentsLoading: true, incidentsError: null }));
+			}
 
 			try {
-				const currentState = get({ subscribe });
-				const response = await listIncidents({
-					organizationId,
-					projectId,
-					...currentState.incidentFilters,
-				});
-
+				const response = await incidentsAPI.list({ ...filters, organizationId });
+				// A newer load started meanwhile: its result wins.
+				if (seq !== loadSeq) return;
 				update((state) => ({
 					...state,
 					incidents: response.incidents,
 					incidentsTotal: response.total,
 					incidentsLoading: false,
+					incidentsError: null,
 				}));
 			} catch (error) {
+				if (seq !== loadSeq) return;
+				// A failed background refresh keeps the rows on screen.
+				if (opts.silent) return;
 				update((state) => ({
 					...state,
 					incidentsLoading: false,
@@ -154,83 +183,76 @@ function createSiemStore() {
 			}
 		},
 
-		setIncidentFilters(filters: Partial<Omit<IncidentFilters, 'organizationId'>>): void {
-			update((state) => ({
-				...state,
-				incidentFilters: {
-					...state.incidentFilters,
-					...filters,
-				},
-			}));
-		},
-
-		resetIncidentFilters(): void {
-			update((state) => ({
-				...state,
-				incidentFilters: {
-					limit: 20,
-					offset: 0,
-				},
-			}));
-		},
-
-		setPage(page: number): void {
-			update((state) => ({
-				...state,
-				incidentFilters: {
-					...state.incidentFilters,
-					offset: (page - 1) * (state.incidentFilters.limit || 20),
-				},
-			}));
+		/** Decides whether an incident_created event belongs in the current list. */
+		setIncidentMatcher(fn: ((i: IncidentListItem) => boolean) | null): void {
+			incidentMatcher = fn;
 		},
 
 		// ========================================
 		// Real-time Methods (SSE)
 		// ========================================
 
-		async startRealtimeUpdates(organizationId: string, incidentId?: string): Promise<void> {
-			const currentState = get({ subscribe });
+		async startRealtimeUpdates(organizationId: string, opts: RealtimeOptions = {}): Promise<void> {
+			clearReconnectTimer();
+			closeSource();
+			reconnectAttempts = 0;
+			realtimeGeneration++;
+			realtimeTarget = { organizationId, opts };
+			update((state) => ({ ...state, sseConnection: null, sseStatus: 'connecting' }));
+			await this.connectRealtime(realtimeGeneration);
+		},
 
-			// Close existing connection
-			if (currentState.sseConnection) {
-				currentState.sseConnection.close();
-			}
+		/** One connection attempt with a fresh single-use ticket. */
+		async connectRealtime(generation: number): Promise<void> {
+			const target = realtimeTarget;
+			if (!target || generation !== realtimeGeneration) return;
 
 			const token = getAuthToken();
-			if (!token) return;
-
-			const params = new URLSearchParams({ organizationId });
-			if (incidentId) {
-				params.append('incidentId', incidentId);
+			if (!token) {
+				update((state) => ({ ...state, sseStatus: 'disconnected', realtimeEnabled: false }));
+				return;
 			}
 
-			// Use a short-lived single-use ticket instead of the session token so the
-			// token never appears in the SSE URL (and thus in proxy/server logs).
 			let ticket: string;
 			try {
 				ticket = await requestStreamTicket(token);
 			} catch (error) {
 				console.error('Failed to obtain SIEM stream ticket:', error);
+				this.scheduleReconnect(generation);
 				return;
 			}
+			if (generation !== realtimeGeneration) return;
+
+			const params = new URLSearchParams({ organizationId: target.organizationId });
+			if (target.opts.incidentId) params.append('incidentId', target.opts.incidentId);
+			// The stream filters by one project only; several are filtered by the matcher.
+			if (target.opts.projectIds?.length === 1) params.append('projectId', target.opts.projectIds[0]);
 			params.append('ticket', ticket);
 
-			const eventSource = new EventSource(
-				`${getApiUrl()}/api/v1/siem/events?${params.toString()}`
-			);
+			closeSource();
+			const eventSource = new EventSource(`${getApiUrl()}/api/v1/siem/events?${params.toString()}`);
 
 			eventSource.onmessage = (event) => {
 				try {
 					const data = JSON.parse(event.data);
+					if (data?.type === 'connected') {
+						reconnectAttempts = 0;
+						update((state) => ({ ...state, sseStatus: 'live' }));
+					}
 					this.handleRealtimeEvent(data);
 				} catch {
 					console.error('Failed to parse SSE event:', event.data);
 				}
 			};
 
+			// A ticket is single use, so the browser's own retry would reuse a dead URL:
+			// close the source and reconnect with a new ticket.
 			eventSource.onerror = () => {
-				console.error('SSE connection error, attempting reconnect...');
-				// Auto-reconnect handled by EventSource
+				if (generation !== realtimeGeneration) return;
+				eventSource.onmessage = null;
+				eventSource.onerror = null;
+				eventSource.close();
+				this.scheduleReconnect(generation);
 			};
 
 			update((state) => ({
@@ -240,17 +262,40 @@ function createSiemStore() {
 			}));
 		},
 
-		stopRealtimeUpdates(): void {
-			update((state) => {
-				if (state.sseConnection) {
-					state.sseConnection.close();
-				}
-				return {
+		scheduleReconnect(generation: number): void {
+			if (generation !== realtimeGeneration) return;
+			clearReconnectTimer();
+			closeSource();
+			if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+				update((state) => ({
 					...state,
 					sseConnection: null,
 					realtimeEnabled: false,
-				};
-			});
+					sseStatus: 'disconnected',
+				}));
+				return;
+			}
+			const delay = RECONNECT_BASE_MS * 2 ** reconnectAttempts;
+			reconnectAttempts++;
+			update((state) => ({ ...state, sseConnection: null, sseStatus: 'reconnecting' }));
+			reconnectTimer = setTimeout(() => {
+				reconnectTimer = null;
+				void this.connectRealtime(generation);
+			}, delay);
+		},
+
+		stopRealtimeUpdates(): void {
+			clearReconnectTimer();
+			closeSource();
+			realtimeGeneration++;
+			realtimeTarget = null;
+			reconnectAttempts = 0;
+			update((state) => ({
+				...state,
+				sseConnection: null,
+				realtimeEnabled: false,
+				sseStatus: 'idle',
+			}));
 		},
 
 		handleRealtimeEvent(event: {
@@ -260,31 +305,32 @@ function createSiemStore() {
 			const timestamp = Date.now();
 
 			switch (event.type) {
-				case 'incident_created':
-					update((state) => ({
-						...state,
-						incidents: [event.data as Incident, ...state.incidents],
-						lastSseEvent: { type: 'incident_created', timestamp },
-					}));
+				case 'incident_created': {
+					const incoming = event.data as IncidentListItem;
+					update((state) => {
+						const exists = state.incidents.some((inc) => inc.id === incoming.id);
+						const accepted = !incidentMatcher || incidentMatcher(incoming);
+						const add = !exists && accepted;
+						return {
+							...state,
+							incidents: add ? [incoming, ...state.incidents] : state.incidents,
+							incidentsTotal: add ? state.incidentsTotal + 1 : state.incidentsTotal,
+							lastSseEvent: { type: 'incident_created', timestamp },
+						};
+					});
 					break;
+				}
 
 				case 'incident_updated':
+					// Merge by id and keep the row position; rows not in the list are ignored.
 					update((state) => ({
 						...state,
 						incidents: state.incidents.map((inc) =>
-							inc.id === (event.data as Incident).id ? (event.data as Incident) : inc
+							inc.id === (event.data as IncidentListItem).id
+								? { ...inc, ...(event.data as IncidentListItem) }
+								: inc
 						),
 						lastSseEvent: { type: 'incident_updated', timestamp },
-					}));
-					break;
-
-				case 'incident_deleted':
-					update((state) => ({
-						...state,
-						incidents: state.incidents.filter(
-							(inc) => inc.id !== (event.data as { id: string }).id
-						),
-						lastSseEvent: { type: 'incident_deleted', timestamp },
 					}));
 					break;
 
@@ -311,15 +357,23 @@ function createSiemStore() {
 		// ========================================
 
 		clear(): void {
-			const currentState = get({ subscribe });
-			if (currentState.sseConnection) {
-				currentState.sseConnection.close();
-			}
+			clearReconnectTimer();
+			closeSource();
+			realtimeGeneration++;
+			realtimeTarget = null;
+			reconnectAttempts = 0;
+			incidentMatcher = null;
+			loadSeq++;
 			set(initialState);
 		},
 
+		/** Replace the local rows (the detail page seeds its own incident so stream updates merge in place). */
+		seedIncidents(items: IncidentListItem[]): void {
+			update((state) => ({ ...state, incidents: items, incidentsTotal: items.length }));
+		},
+
 		// Add incident to local state (for optimistic updates)
-		addIncident(incident: Incident): void {
+		addIncident(incident: IncidentListItem): void {
 			update((state) => ({
 				...state,
 				incidents: [incident, ...state.incidents],
@@ -327,7 +381,7 @@ function createSiemStore() {
 		},
 
 		// Update incident in local state (for optimistic updates)
-		updateIncidentLocal(incidentId: string, updates: Partial<Incident>): void {
+		updateIncidentLocal(incidentId: string, updates: Partial<IncidentListItem>): void {
 			update((state) => ({
 				...state,
 				incidents: state.incidents.map((inc) =>
@@ -338,10 +392,14 @@ function createSiemStore() {
 
 		// Remove incident from local state
 		removeIncident(incidentId: string): void {
-			update((state) => ({
-				...state,
-				incidents: state.incidents.filter((inc) => inc.id !== incidentId),
-			}));
+			update((state) => {
+				const present = state.incidents.some((inc) => inc.id === incidentId);
+				return {
+					...state,
+					incidents: state.incidents.filter((inc) => inc.id !== incidentId),
+					incidentsTotal: present ? Math.max(0, state.incidentsTotal - 1) : state.incidentsTotal,
+				};
+			});
 		},
 	};
 }
@@ -361,7 +419,8 @@ export const dashboardTimeRange = derived(siemStore, ($store) => $store.dashboar
 export const incidents = derived(siemStore, ($store) => $store.incidents);
 export const incidentsLoading = derived(siemStore, ($store) => $store.incidentsLoading);
 export const incidentsError = derived(siemStore, ($store) => $store.incidentsError);
-export const incidentFilters = derived(siemStore, ($store) => $store.incidentFilters);
+export const incidentsTotal = derived(siemStore, ($store) => $store.incidentsTotal);
 
 export const realtimeEnabled = derived(siemStore, ($store) => $store.realtimeEnabled);
 export const lastSseEvent = derived(siemStore, ($store) => $store.lastSseEvent);
+export const sseStatus = derived(siemStore, ($store) => $store.sseStatus);

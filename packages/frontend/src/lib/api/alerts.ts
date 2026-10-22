@@ -20,6 +20,9 @@ export interface AlertBuilderPrefill {
   sustainedMinutes?: number | null;
   metadataFilters?: MetadataFilterInput[];
   channelIds?: string[];
+  projectId?: string | null;
+  query?: string;
+  renotifyMinutes?: number | null;
 }
 
 export interface AlertRule {
@@ -42,6 +45,15 @@ export interface AlertRule {
   webhookUrl: string | null;
   channelIds?: string[];
   metadataFilters: MetadataFilter[];
+  /** Text query (log search grammar). Absent on payloads from older APIs. */
+  query?: string | null;
+  /** Lifecycle fields; absent on older payloads, which are treated as ok. */
+  state?: 'ok' | 'firing';
+  lastTriggeredAt?: string | null;
+  lastEvaluatedAt?: string | null;
+  snoozedUntil?: string | null;
+  renotifyMinutes?: number | null;
+  triggers24h?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -65,6 +77,8 @@ export interface CreateAlertRuleInput {
   webhookUrl?: string | null;
   channelIds?: string[];
   metadataFilters?: MetadataFilterInput[];
+  query?: string | null;
+  renotifyMinutes?: number | null;
 }
 
 export interface UpdateAlertRuleInput {
@@ -84,6 +98,8 @@ export interface UpdateAlertRuleInput {
   webhookUrl?: string | null;
   channelIds?: string[];
   metadataFilters?: MetadataFilterInput[];
+  query?: string | null;
+  renotifyMinutes?: number | null;
 }
 
 export interface GetAlertsOptions {
@@ -107,6 +123,8 @@ export interface AlertHistory {
   service: string | null;
   level: LogLevel[];
   alertType: AlertType;
+  query?: string | null;
+  metadataFilters?: MetadataFilter[];
   baselineMetadata: {
     baseline_value: number;
     current_value: number;
@@ -133,6 +151,8 @@ export interface PreviewAlertRuleInput {
   threshold: number;
   timeWindow: number;
   previewRange: PreviewRange;
+  query?: string;
+  metadataFilters?: MetadataFilterInput[];
 }
 
 export interface PreviewIncident {
@@ -264,6 +284,27 @@ export class AlertsAPI {
     return this.request(`/api/v1/alerts/${id}?organizationId=${organizationId}`, {
       method: 'DELETE',
     });
+  }
+
+  async snoozeAlertRule(
+    organizationId: string,
+    id: string,
+    until: string
+  ): Promise<{ alertRule: AlertRule }> {
+    return this.request(
+      `/api/v1/alerts/${id}/snooze?organizationId=${encodeURIComponent(organizationId)}`,
+      { method: 'POST', body: JSON.stringify({ until }) }
+    );
+  }
+
+  async unsnoozeAlertRule(
+    organizationId: string,
+    id: string
+  ): Promise<{ alertRule: AlertRule }> {
+    return this.request(
+      `/api/v1/alerts/${id}/snooze?organizationId=${encodeURIComponent(organizationId)}`,
+      { method: 'DELETE' }
+    );
   }
 
   async getAlertHistory(

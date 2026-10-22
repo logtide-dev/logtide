@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { PreviewIncident } from "$lib/api/alerts";
+	import { levelTone } from "$lib/utils/severity";
+	import { formatTimestamp } from "$lib/utils/datetime";
 	import { Badge } from "$lib/components/ui/badge";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -25,43 +27,11 @@
 		expandedIncidents = newSet;
 	}
 
-	function getLevelColor(level: string): string {
-		switch (level) {
-			case "debug":
-				return "bg-gray-100 text-gray-800";
-			case "info":
-				return "bg-blue-100 text-blue-800";
-			case "warn":
-				return "bg-yellow-100 text-yellow-800";
-			case "error":
-				return "bg-red-100 text-red-800";
-			case "critical":
-				return "bg-purple-100 text-purple-800";
-			default:
-				return "bg-gray-100 text-gray-800";
-		}
-	}
+	const getLevelColor = (level: string): string => levelTone(level).badge;
 
-	function formatTime(dateStr: string): string {
-		const d = new Date(dateStr);
-		return d.toLocaleString('en-US', {
-			month: "short",
-			day: "numeric",
-			hour: "2-digit",
-			minute: "2-digit",
-			hour12: false,
-		});
-	}
+	const formatTime = (dateStr: string): string => formatTimestamp(dateStr, { precision: "minute" });
 
-	function formatLogTime(dateStr: string): string {
-		const d = new Date(dateStr);
-		return d.toLocaleTimeString('en-US', {
-			hour: "2-digit",
-			minute: "2-digit",
-			second: "2-digit",
-			hour12: false,
-		});
-	}
+	const formatLogTime = (dateStr: string): string => formatTimestamp(dateStr, { withDate: false });
 </script>
 
 <div class="space-y-2">
@@ -78,7 +48,7 @@
 					class="w-full px-3 py-2 flex items-center justify-between bg-muted/50 hover:bg-muted/80 transition-colors text-left"
 				>
 					<div class="flex items-center gap-3">
-						<AlertTriangle class="w-4 h-4 text-orange-500" />
+						<AlertTriangle class="w-4 h-4 text-warning-text" aria-hidden="true" />
 						<div class="text-sm">
 							<span class="font-medium">
 								{formatTime(incident.startTime)}

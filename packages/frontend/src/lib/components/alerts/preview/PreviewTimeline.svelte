@@ -3,6 +3,7 @@
 	import { onMount } from "svelte";
 	import * as echarts from "echarts";
 	import { themeStore } from "$lib/stores/theme";
+	import { formatTimestamp } from "$lib/utils/datetime";
 	import {
 		getAxisStyle,
 		getTooltipStyle,
@@ -77,15 +78,7 @@
 		dataPoints.sort((a, b) => a.time.getTime() - b.time.getTime());
 
 		// Format times for x-axis
-		const times = dataPoints.map((d) =>
-			d.time.toLocaleString('en-US', {
-				month: "short",
-				day: "numeric",
-				hour: "2-digit",
-				minute: "2-digit",
-				hour12: false,
-			})
-		);
+		const times = dataPoints.map((d) => formatTimestamp(d.time, { precision: "minute" }));
 
 		const values = dataPoints.map((d) => d.value);
 
@@ -106,7 +99,7 @@
 							<div class="text-sm">
 								Peak: <strong>${point.incident.peakValue}</strong> logs<br/>
 								Duration: ${point.incident.durationMinutes} min<br/>
-								<span class="text-red-500">Alert would have triggered</span>
+								<span class="text-destructive-text">Alert would have triggered</span>
 							</div>
 						`;
 					}
@@ -132,7 +125,7 @@
 			},
 			yAxis: {
 				type: "value",
-				name: "Log Count",
+				name: "Log count",
 				minInterval: 1,
 				...axisStyle,
 				axisLabel: {
@@ -145,7 +138,7 @@
 			},
 			series: [
 				{
-					name: "Log Count",
+					name: "Log count",
 					type: "line",
 					data: values,
 					smooth: false,
