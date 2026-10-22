@@ -4,39 +4,13 @@
 
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
-import type { TimeRangePreset } from '@logtide/shared';
+import type {
+  SavedSearch,
+  SavedSearchState,
+  SavedSearchVisibility,
+} from '@logtide/shared';
 
-export type SavedSearchVisibility = 'private' | 'organization';
-
-/**
- * Explorer state stored with a saved search.
- *
- * Local mirror of the shared `savedSearchStateSchema` (W3). The Wave D seam
- * swaps this declaration for the `@logtide/shared` import; keep the two in sync.
- */
-export interface SavedSearchState {
-  q: string;
-  projectIds: string[];
-  range?: TimeRangePreset;
-  from?: string;
-  to?: string;
-  view?: 'table' | 'terminal';
-  columns?: string[];
-}
-
-export interface SavedSearch {
-  id: string;
-  organizationId: string;
-  /** `null` once the creator's account is deleted. */
-  createdBy: string | null;
-  createdByName: string | null;
-  name: string;
-  visibility: SavedSearchVisibility;
-  state: SavedSearchState;
-  canEdit: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+export type { SavedSearch, SavedSearchState, SavedSearchVisibility };
 
 export interface SavedSearchInput {
   name: string;
