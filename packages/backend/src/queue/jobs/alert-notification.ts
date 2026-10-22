@@ -149,7 +149,8 @@ export async function dispatchAlertEnvelope(
     if (w.url) webhookTargets.set(w.url, w.channelId);
   }
 
-  // Sigma jobs (no alert_rule_id in the data) never page.
+  // Sigma envelopes carry no alert_rule_id (see buildTriggeredEnvelope), so
+  // they never page.
   const alertRuleId = (envelope.data as { alert_rule_id?: unknown }).alert_rule_id;
   if (targets.pagerDuty.length > 0 && typeof alertRuleId === 'string') {
     const resolved = envelope.type === 'alert.resolved';
@@ -358,8 +359,10 @@ function buildTriggeredEnvelope(data: AlertNotificationData): WebhookEnvelope {
   // Both plain threshold and anomaly (rate-of-change) alerts use type
   // 'alert.triggered'; anomaly is distinguished by data.baseline_metadata
   // !== null. organization_id/project_id live on the envelope.
+  // Sigma detections have no alert rule and no resolve path: no lifecycle
+  // block, so the envelope carries no alert_rule_id and never pages.
   const lifecycle =
-    data.kind !== undefined
+    data.kind !== undefined && data.event_type !== 'sigma'
       ? {
           alert_rule_id: data.rule_id,
           renotify: data.kind === 'renotify',

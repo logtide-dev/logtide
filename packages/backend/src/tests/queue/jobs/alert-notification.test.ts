@@ -1067,6 +1067,27 @@ describe('Alert Notification Job', () => {
 
                 expect(pagerDutyCalls()).toHaveLength(0);
             });
+
+            it('Sigma jobs with the real job shape (kind set, event_type sigma) never page', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetSigmaRuleChannels.mockResolvedValueOnce([pagerDutyChannel, webhookChannel]);
+
+                await processAlertNotification({
+                    data: firingJob(organization.id, project.id, {
+                        kind: 'triggered',
+                        event_type: 'sigma',
+                        historyId: null as never,
+                    }),
+                });
+
+                expect(pagerDutyCalls()).toHaveLength(0);
+                // The webhook envelope must not claim a sigma rule id as an alert rule id.
+                const hook = enqueueMock.mock.calls.find((c) => c[0].url !== PD_URL);
+                expect(hook).toBeDefined();
+                const data = (hook![0].payload as { data: Record<string, unknown> }).data;
+                expect(data).not.toHaveProperty('alert_rule_id');
+                expect(data).not.toHaveProperty('renotify');
+            });
         });
 
         it('jobs without kind never use org defaults', async () => {
