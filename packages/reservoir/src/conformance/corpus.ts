@@ -13,6 +13,8 @@ import type { LogLevel, LogRecord, SpanKind, SpanRecord, SpanStatusCode, TraceRe
 export const CONFORMANCE_BASE = new Date('2026-01-05T10:00:00.000Z');
 export const PROJECT_A = '00000000-0000-4000-8000-0000000000a1';
 export const PROJECT_B = '00000000-0000-4000-8000-0000000000b1';
+/** Metadata key discovery edges only (dotted child keys, the key cap): logs L93 and L94. */
+export const PROJECT_C = '00000000-0000-4000-8000-0000000000c1';
 export const ORG_ID = '00000000-0000-4000-8000-0000000000f1';
 
 const BASE_MS = CONFORMANCE_BASE.getTime();
@@ -70,6 +72,13 @@ interface LogRow {
 
 const prod = { env: 'prod' };
 
+/** Number of distinct top-level keys of L94, more than DISCOVER_MAX_KEYS. */
+export const WIDE_METADATA_KEY_COUNT = 600;
+const wideKey = (i: number): string => `k${String(i).padStart(3, '0')}`;
+const WIDE_META: Record<string, unknown> = Object.fromEntries(
+  Array.from({ length: WIDE_METADATA_KEY_COUNT }, (_, i) => [wideKey(i), i]),
+);
+
 const LOG_ROWS: LogRow[] = [
   { id: 'L01', project: PROJECT_A, t: 1, service: 'api', level: 'info', host: 'web-1', message: 'User login succeeded for alice', meta: { env: 'prod', user: { id: '42', name: 'alice' }, status: 200 } },
   { id: 'L02', project: PROJECT_A, t: 2, service: 'api', level: 'error', host: 'web-1', message: 'Connection refused by upstream db', meta: { env: 'prod', 'http.method': 'GET', status: 500 } },
@@ -99,6 +108,8 @@ const LOG_ROWS: LogRow[] = [
   { id: 'L90', project: PROJECT_B, t: 5, service: 'api', level: 'error', host: 'web-1', message: 'Connection refused by upstream db', meta: prod, sessionId: SESSION_IDS.SESS9 },
   { id: 'L92', project: PROJECT_B, t: 5, service: 'api', level: 'info', host: 'web-1', message: 'session ping', meta: prod, sessionId: SESSION_IDS.SESS8 },
   { id: 'L91', project: PROJECT_A, t: -1440, service: 'api', level: 'error', host: 'web-1', message: 'Connection refused by upstream db', meta: prod, sessionId: SESSION_IDS.SESS1 },
+  { id: 'L93', project: PROJECT_C, t: 1, service: 'collector', level: 'info', message: 'otel resource keys', meta: { otel: { 'service.name': 'checkout', 'k8s.pod.name': 'pod-1' }, http: { method: 'GET' } } },
+  { id: 'L94', project: PROJECT_C, t: 2, service: 'collector', level: 'info', message: 'wide metadata', meta: WIDE_META },
 ];
 
 function logRecord(row: LogRow): LogRecord {
@@ -150,6 +161,8 @@ interface SpanRow {
   durationMs: number;
   status: SpanStatusCode;
   attributes: Record<string, unknown>;
+  /** Resource attributes, read by `resource.`-prefixed attribute filters (Wave D ruling C2). */
+  resource?: Record<string, unknown>;
   start: Date;
 }
 
@@ -161,6 +174,10 @@ const TW1 = traceHex(0x301);
 const TB1 = traceHex(0x401);
 const TX1 = traceHex(0x501);
 const pad2 = (n: number) => String(n).padStart(2, '0');
+// Resource attributes: the orders spans carry a nested service version, the
+// worker spans an OpenTelemetry-style literal dotted key.
+const ORDERS_RESOURCE = { 'deployment.environment': 'prod', service: { version: '1.4.0' } };
+const WORKER_RESOURCE = { 'deployment.environment': 'staging', 'service.version': '2.0.0' };
 
 function buildSpanRows(): SpanRow[] {
   const rows: SpanRow[] = [];
@@ -187,23 +204,23 @@ function buildSpanRows(): SpanRow[] {
     rows.push({
       id: `POST-${k}`, project: PROJECT_A, traceId: postTrace(k), spanId: spanHex(0x3000 + k), service: 'api', kind: 'SERVER',
       operation: 'POST /orders', durationMs: 100 * k, status: k >= 9 ? 'ERROR' : 'OK',
-      attributes: { 'http.method': 'POST', 'http.status_code': k >= 9 ? 500 : 201 }, start,
+      attributes: { 'http.method': 'POST', 'http.status_code': k >= 9 ? 500 : 201 }, resource: ORDERS_RESOURCE, start,
     });
     rows.push({
       id: `SELECT-${k}`, project: PROJECT_A, traceId: postTrace(k), spanId: spanHex(0x3100 + k), parentSpanId: spanHex(0x3000 + k),
       service: 'api', kind: 'CLIENT', operation: 'SELECT orders', durationMs: 5 * k, status: 'OK',
-      attributes: { 'db.system': 'postgresql' }, start: new Date(start.getTime() + 1000),
+      attributes: { 'db.system': 'postgresql' }, resource: ORDERS_RESOURCE, start: new Date(start.getTime() + 1000),
     });
   }
   rows.push({
     id: 'LOOP', project: PROJECT_A, traceId: TW1, spanId: spanHex(0x4001), service: 'worker', kind: 'INTERNAL',
-    operation: 'job loop', durationMs: 45, status: 'UNSET', attributes: {}, start: minutes(40),
+    operation: 'job loop', durationMs: 45, status: 'UNSET', attributes: {}, resource: WORKER_RESOURCE, start: minutes(40),
   });
   for (let j = 1; j <= 4; j++) {
     rows.push({
       id: `JOB-${j}`, project: PROJECT_A, traceId: TW1, spanId: spanHex(0x4100 + j), parentSpanId: spanHex(0x4001),
       service: 'worker', kind: 'CONSUMER', operation: 'process job', durationMs: 10 * j, status: j === 4 ? 'ERROR' : 'OK',
-      attributes: {}, start: new Date(minutes(40).getTime() + j * 1000),
+      attributes: {}, resource: WORKER_RESOURCE, start: new Date(minutes(40).getTime() + j * 1000),
     });
   }
   rows.push({
@@ -234,6 +251,7 @@ function spanRecord(row: SpanRow): SpanRecord {
   };
   if (row.parentSpanId !== undefined) record.parentSpanId = row.parentSpanId;
   if (row.kind !== undefined) record.kind = row.kind;
+  if (row.resource !== undefined) record.resourceAttributes = structuredClone(row.resource);
   return record;
 }
 

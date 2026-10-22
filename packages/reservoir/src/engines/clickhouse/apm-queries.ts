@@ -124,9 +124,10 @@ function hasSpanMatch(params: TraceQueryParams): boolean {
 /**
  * The span-match block of queryTraces, or null when neither `operation` nor
  * attribute filters are set: the trace must have one span, in the same
- * project and inside `[from, to]`, that matches the operation, every
- * attribute filter and, when given, `serviceName`, all together. Reuses the
- * outer `p_pids`, `p_from` and `p_to` parameters.
+ * project and starting inside `[from, to]`, that matches the operation and
+ * every attribute filter together. `serviceName` is not part of it: it stays
+ * a trace-level filter (Wave D ruling C3, conformance TQ10 to TQ13). Reuses
+ * the outer `p_pids`, `p_from` and `p_to` parameters.
  */
 export function traceSpanMatchSql(params: TraceQueryParams, queryParams: Record<string, unknown>): string | null {
   if (!hasSpanMatch(params)) return null;
@@ -142,18 +143,13 @@ export function traceSpanMatchSql(params: TraceQueryParams, queryParams: Record<
     conditions.push('operation_name = {p_op:String}');
     queryParams.p_op = params.operation;
   }
-  if (params.serviceName) {
-    conditions.push('service_name IN {p_ssvc:Array(String)}');
-    queryParams.p_ssvc = asList(params.serviceName);
-  }
   conditions.push(...attributePredicates(params.attributeFilters, queryParams, { attributes: 'p_taf', resource: 'p_trf' }));
   return `(project_id, trace_id) IN (SELECT project_id, trace_id FROM spans WHERE ${conditions.join(' AND ')})`;
 }
 
 /**
- * WHERE predicates of queryTraces (ANDed). While the span-match block is
- * active, `serviceName` applies to the matching span, not to the trace's
- * own `service_name` (only the first span seen at ingest).
+ * WHERE predicates of queryTraces (ANDed). `serviceName` is always the
+ * trace's own `service_name`, also while the span-match block is active.
  */
 export function buildTraceConditions(params: TraceQueryParams, queryParams: Record<string, unknown>): string[] {
   const conditions: string[] = ['start_time >= {p_from:DateTime64(3)}', 'start_time <= {p_to:DateTime64(3)}'];
@@ -165,7 +161,7 @@ export function buildTraceConditions(params: TraceQueryParams, queryParams: Reco
     queryParams.p_pids = asList(params.projectId);
   }
   const spanMatch = traceSpanMatchSql(params, queryParams);
-  if (params.serviceName && !spanMatch) {
+  if (params.serviceName) {
     conditions.push('service_name IN {p_svc:Array(String)}');
     queryParams.p_svc = asList(params.serviceName);
   }
@@ -251,14 +247,14 @@ function entryModeCondition(scope: EntryScope, mode: EntryMode, queryParams: Rec
 }
 
 /**
- * `LIMIT 1` probe over the scope (never the operation): `'kinds'` looks for
- * an entry span, `'any-kind'` for any span with a kind. The root fallback
- * applies only when kinds were omitted and no span in scope has a kind.
+ * `LIMIT 1` probe over the scope (never the operation) for one span of the
+ * entry kinds. With kinds omitted and no such span in scope, the root spans
+ * of the scope are used instead, whatever other kinds are present (Wave D
+ * ruling C1, conformance O08 and LH07).
  */
-export function entryProbeSql(scope: EntryScope, probe: 'kinds' | 'any-kind'): NativeQuery {
+export function entryProbeSql(scope: EntryScope): NativeQuery {
   const queryParams: Record<string, unknown> = {};
-  const conditions = entryScopeConditions(scope, queryParams);
-  conditions.push(probe === 'kinds' ? entryModeCondition(scope, 'kinds', queryParams) : "kind IS NOT NULL AND kind != ''");
+  const conditions = [...entryScopeConditions(scope, queryParams), entryModeCondition(scope, 'kinds', queryParams)];
   return { query: `SELECT 1 FROM spans WHERE ${conditions.join(' AND ')} LIMIT 1`, parameters: [queryParams] };
 }
 

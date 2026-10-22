@@ -367,7 +367,11 @@ export interface SpanQueryParams {
   operation?: string;
   kind?: SpanKind | SpanKind[];
   statusCode?: SpanStatusCode | SpanStatusCode[];
-  /** Filters over span `attributes`, with the metadata filter semantics of logs. */
+  /**
+   * Filters over span `attributes`, with the metadata filter semantics of
+   * logs; a key starting with `resource.` reads `resourceAttributes` with the
+   * rest of the key instead.
+   */
   attributeFilters?: MetadataFilter[];
   from: Date;
   to: Date;
@@ -396,7 +400,7 @@ export type TraceSortBy = 'start_time' | 'duration';
 export interface TraceQueryParams {
   organizationId?: string | string[];
   projectId?: string | string[];
-  /** Trace-level service (the trace's `serviceName`). */
+  /** Trace-level service (the trace's `serviceName`), also when `operation` or `attributeFilters` is set. */
   serviceName?: string | string[];
   error?: boolean;
   from: Date;
@@ -404,8 +408,9 @@ export interface TraceQueryParams {
   minDurationMs?: number;
   maxDurationMs?: number;
   /**
-   * `operation` and `attributeFilters` keep traces with at least one span
-   * matching the operation and all attribute filters together.
+   * `operation` and `attributeFilters` keep traces with at least one span,
+   * starting inside [from, to], matching the operation and all attribute
+   * filters together. A `resource.` key prefix reads `resourceAttributes`.
    */
   operation?: string;
   attributeFilters?: MetadataFilter[];
@@ -736,7 +741,7 @@ export interface LogFacetsResult {
   facets: LogFacet[];
 }
 
-/** Metadata keys seen in the most recent `sampleSize` logs of the range. */
+/** Metadata keys seen in the most recent `sampleSize` logs of the range (at most DISCOVER_MAX_KEYS keys). */
 export interface DiscoverMetadataKeysParams {
   projectId: string | string[];
   from: Date;
@@ -746,7 +751,7 @@ export interface DiscoverMetadataKeysParams {
 }
 
 export interface MetadataKeyOccurrence {
-  /** Top-level key, or `parent.child` for one nested level. */
+  /** Top-level key, or `parent.child` for one nested level (the child name may contain dots). */
   key: string;
   /** Number of sampled logs that have the key. */
   occurrences: number;

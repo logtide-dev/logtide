@@ -1114,7 +1114,9 @@ export class ClickHouseEngine extends StorageEngine {
   async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
     const scope = normalizeEntryParams(params);
     let rows = await this.runNative(operationStatsSql(scope, 'kinds'), 'operation-stats');
-    if (rows.length === 0 && !scope.kindsExplicit && !(await this.hasRows(entryProbeSql(scope, 'any-kind')))) {
+    // No row means no span of the entry kinds in scope: fall back to the
+    // root spans unless the kinds were explicit (Wave D ruling C1).
+    if (rows.length === 0 && !scope.kindsExplicit) {
       rows = await this.runNative(operationStatsSql(scope, 'root'), 'operation-stats');
     }
     return assembleOperationStats(rows);
@@ -1124,11 +1126,7 @@ export class ClickHouseEngine extends StorageEngine {
     // The entry selection is decided for the project and service scope, before
     // the operation filter, exactly as in getOperationStats.
     const scope = normalizeEntryParams(params);
-    let mode: EntryMode | null = 'kinds';
-    if (!(await this.hasRows(entryProbeSql(scope, 'kinds')))) {
-      mode = (await this.hasRows(entryProbeSql(scope, 'any-kind'))) ? null : 'root';
-    }
-    if (mode === null) return assembleLatencyHistogram([]);
+    const mode: EntryMode = (await this.hasRows(entryProbeSql(scope))) || scope.kindsExplicit ? 'kinds' : 'root';
     return assembleLatencyHistogram(await this.runNative(latencyHistogramSql(scope, mode), 'latency-histogram'));
   }
 

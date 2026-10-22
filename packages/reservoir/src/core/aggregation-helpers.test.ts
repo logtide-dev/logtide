@@ -10,6 +10,7 @@ import {
   decodeSessionCursor,
   compareByteOrder,
 } from './aggregation-helpers.js';
+import { DISCOVER_MAX_KEYS } from './constants.js';
 
 const BASE = new Date('2026-01-05T10:00:00.000Z');
 const min = (n: number) => new Date(BASE.getTime() + n * 60_000);
@@ -124,6 +125,19 @@ describe('countMetadataKeys', () => {
 
   it('returns an empty list for no metadata', () => {
     expect(countMetadataKeys([])).toEqual([]);
+  });
+
+  it('lists child names that contain a dot', () => {
+    expect(countMetadataKeys([{ otel: { 'service.name': 'a' } }])).toEqual([{ key: 'otel.service.name', occurrences: 1 }]);
+  });
+
+  it('keeps at most DISCOVER_MAX_KEYS keys, busiest first, then byte order', () => {
+    const wide = Object.fromEntries(Array.from({ length: DISCOVER_MAX_KEYS + 20 }, (_, i) => [`k${String(i).padStart(3, '0')}`, i]));
+    const keys = countMetadataKeys([wide, { z: 1 }]);
+    expect(keys).toHaveLength(DISCOVER_MAX_KEYS);
+    expect(keys[0]).toEqual({ key: 'k000', occurrences: 1 });
+    expect(keys.at(-1)).toEqual({ key: 'k499', occurrences: 1 });
+    expect(countMetadataKeys([{ z: 1 }, { z: 2 }, wide]).slice(0, 2)).toEqual([{ key: 'z', occurrences: 2 }, { key: 'k000', occurrences: 1 }]);
   });
 });
 

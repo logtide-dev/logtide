@@ -1,14 +1,16 @@
-// Span and trace query conformance (plan D3, D6): span `attributeFilters`
-// follow the metadata semantics over `attributes`; a trace matches
-// `operation` and `attributeFilters` when ONE of its spans matches all of
-// them together; `serviceName` keeps its trace-level meaning; trace sorting
-// by start time or duration, default start time desc.
+// Span and trace query conformance (plan D3, D6, Wave D rulings C2 and C3):
+// span `attributeFilters` follow the metadata semantics over `attributes`,
+// or over `resourceAttributes` for a key starting with `resource.` (the rest
+// of the key); a trace matches `operation` and `attributeFilters` when ONE of its spans
+// starting inside [from, to] matches all of them together; `serviceName`
+// keeps its trace-level meaning, also while that span match is active;
+// trace sorting by start time or duration, default start time desc.
 
 import { describe, expect, it } from 'vitest';
 import type { MetadataFilter, SpanQueryParams, TraceQueryParams } from '../../core/types.js';
 import type { ConformanceContext } from '../harness.js';
 import { spanIdsOf, traceIdsOf } from '../harness.js';
-import { PROJECT_A, WINDOW } from '../corpus.js';
+import { PROJECT_A, seconds, WINDOW } from '../corpus.js';
 
 const range = (prefix: string, from: number, to: number, pad = 0): string[] =>
   Array.from({ length: to - from + 1 }, (_, i) => `${prefix}${String(from + i).padStart(pad, '0')}`);
@@ -40,6 +42,24 @@ export function describeSpanTraceQueryConformance(ctx: ConformanceContext): void
 
     it('SQ04 start time ascending', async () => {
       expect(await spans({ sortBy: 'start_time', sortOrder: 'asc', limit: 1 })).toEqual(['PAGE-1']);
+    });
+
+    const workerSpans = sorted(['LOOP', ...range('JOB-', 1, 4)]);
+    const ordersSpans = sorted([...range('POST-', 1, 10), ...range('SELECT-', 1, 10)]);
+
+    it('SQ05 a resource. key reads the resource attributes, an unprefixed key never does', async () => {
+      expect(sorted(await spans({ attributeFilters: [equals('resource.deployment.environment', 'staging')] }))).toEqual(workerSpans);
+      expect(await spans({ attributeFilters: [equals('deployment.environment', 'staging')] })).toEqual([]);
+    });
+
+    it('SQ06 a resource. key prefers the literal dotted key, then the nested path', async () => {
+      expect(sorted(await spans({ attributeFilters: [equals('resource.service.version', '2.0.0')] }))).toEqual(workerSpans);
+      expect(sorted(await spans({ attributeFilters: [equals('resource.service.version', '1.4.0')] }))).toEqual(ordersSpans);
+    });
+
+    it('SQ07 resource and span attribute filters combine on one span', async () => {
+      const ids = await spans({ attributeFilters: [equals('resource.deployment.environment', 'prod'), equals('http.method', 'POST')] });
+      expect(sorted(ids)).toEqual(sorted(range('POST-', 1, 10)));
     });
 
     it('TQ01 a trace matches an operation of any of its spans', async () => {
@@ -77,6 +97,37 @@ export function describeSpanTraceQueryConformance(ctx: ConformanceContext): void
 
     it('TQ09 error traces', async () => {
       expect(sorted(await traces({ error: true }))).toEqual(['TF3', 'TO09', 'TO10', 'TW1']);
+    });
+
+    it('TQ10 the service name stays trace level when an operation is set', async () => {
+      // GET /users spans belong to service api, their traces to service frontend.
+      expect(sorted(await traces({ serviceName: 'frontend', operation: 'GET /users' }))).toEqual(['TF1', 'TF2', 'TF3']);
+      expect(await traces({ serviceName: 'api', operation: 'GET /users' })).toEqual([]);
+    });
+
+    it('TQ11 the service name stays trace level with attribute filters', async () => {
+      expect(await traces({ serviceName: 'frontend', attributeFilters: [equals('http.status_code', '500')] })).toEqual(['TF3']);
+      expect(await traces({ serviceName: 'api', attributeFilters: [equals('http.status_code', '500')] })).toEqual(['TO10', 'TO09']);
+    });
+
+    it('TQ12 the matching span must start inside the window', async () => {
+      // TF3 starts inside [BASE, BASE + 500 s] but its GET /users spans start at 680 s and later.
+      expect(sorted(await traces({ to: seconds(500), operation: 'GET /users' }))).toEqual(['TF1', 'TF2']);
+      const { total } = await ctx.subject().queryTraces({ projectId: PROJECT_A, from: WINDOW.from, to: seconds(500), operation: 'GET /users' });
+      expect(total).toBe(2);
+    });
+
+    it('TQ13 the window also bounds the span of attribute filters', async () => {
+      // The only spans with http.status_code 500 in TF1 to TF3 are GET-96 to GET-100 (960 s to 1,000 s).
+      expect(await traces({ to: seconds(500), attributeFilters: [equals('http.status_code', '500')] })).toEqual([]);
+    });
+
+    it('TQ14 trace attribute filters read resource attributes on the matching span', async () => {
+      expect(await traces({ operation: 'process job', attributeFilters: [equals('resource.deployment.environment', 'staging')] }))
+        .toEqual(['TW1']);
+      expect(sorted(await traces({ attributeFilters: [equals('resource.service.version', '1.4.0'), equals('db.system', 'postgresql')] })))
+        .toEqual(range('TO', 1, 10, 2));
+      expect(await traces({ operation: 'GET /users', attributeFilters: [equals('resource.deployment.environment', 'prod')] })).toEqual([]);
     });
   });
 }

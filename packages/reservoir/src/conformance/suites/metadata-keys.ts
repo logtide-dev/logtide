@@ -1,11 +1,13 @@
-// Metadata key discovery conformance (plan D6): the most recent `sampleSize`
-// logs of the range, top-level keys plus one nested level of plain objects,
-// one occurrence per log and key, occurrences desc then key byte order.
+// Metadata key discovery conformance (plan D6, Wave D ruling C4): the most
+// recent `sampleSize` logs of the range, top-level keys plus one nested level
+// of plain objects (child names with a dot included), one occurrence per log
+// and key, occurrences desc then key byte order, at most DISCOVER_MAX_KEYS.
 
 import { describe, expect, it } from 'vitest';
+import { DISCOVER_MAX_KEYS } from '../../core/constants.js';
 import type { MetadataKeyOccurrence } from '../../core/types.js';
 import type { ConformanceContext } from '../harness.js';
-import { PROJECT_A, PROJECT_B, WINDOW } from '../corpus.js';
+import { minutes, PROJECT_A, PROJECT_B, PROJECT_C, WINDOW } from '../corpus.js';
 
 const compact = (keys: MetadataKeyOccurrence[]): string[] => keys.map((k) => `${k.key} ${k.occurrences}`);
 
@@ -32,6 +34,25 @@ export function describeMetadataKeysConformance(ctx: ConformanceContext): void {
     it('D04 a project list covers every listed project', async () => {
       const keys = await ctx.subject().discoverMetadataKeys({ projectId: [PROJECT_A, PROJECT_B], ...WINDOW });
       expect(compact(keys).slice(0, 3)).toEqual(['env 26', 'hostname 26', 'status 4']);
+    });
+
+    it('D05 child keys with a dot in their own name are listed under their parent', async () => {
+      const keys = await ctx.subject().discoverMetadataKeys({ projectId: PROJECT_C, from: minutes(0), to: minutes(1) });
+      expect(compact(keys)).toEqual(['http.method 1', 'otel.k8s.pod.name 1', 'otel.service.name 1']);
+    });
+
+    it('D06 at most DISCOVER_MAX_KEYS keys, the first in key byte order on a tie', async () => {
+      // L94 alone: 600 top-level keys k000 to k599, one occurrence each.
+      const keys = await ctx.subject().discoverMetadataKeys({ projectId: PROJECT_C, from: minutes(2), to: minutes(3) });
+      expect(DISCOVER_MAX_KEYS).toBe(500);
+      expect(compact(keys)).toEqual(Array.from({ length: DISCOVER_MAX_KEYS }, (_, i) => `k${String(i).padStart(3, '0')} 1`));
+    });
+
+    it('D07 the cap applies after counting over the whole sample', async () => {
+      const keys = await ctx.subject().discoverMetadataKeys({ projectId: PROJECT_C, from: minutes(0), to: minutes(3) });
+      expect(keys).toHaveLength(DISCOVER_MAX_KEYS);
+      expect(compact(keys).slice(0, 4)).toEqual(['http.method 1', 'k000 1', 'k001 1', 'k002 1']);
+      expect(compact(keys).at(-1)).toBe('k498 1');
     });
   });
 }

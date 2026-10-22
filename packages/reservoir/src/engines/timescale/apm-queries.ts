@@ -99,17 +99,15 @@ export function spanOrderSql(params: Pick<SpanQueryParams, 'sortBy' | 'sortOrder
 }
 
 /**
- * The span-match block of queryTraces (S12, F3 contract): active when
- * `operation` or `attributeFilters` is set, it keeps traces with one span
- * matching the operation and every attribute filter together. Only a lower
- * time bound is applied to that span, for chunk exclusion: a trace starts
- * at its first span (upsertTrace keeps the LEAST start), so every span of
- * a trace in the window starts at or after `from`. `serviceName` stays a
- * trace-level filter (F3, conformance TQ08). Inactive block: `condition`
- * is null.
+ * The span-match block of queryTraces (S12, F3 contract, Wave D ruling C3):
+ * active when `operation` or `attributeFilters` is set, it keeps traces
+ * with one span starting inside [from, to] that matches the operation and
+ * every attribute filter together (conformance TQ12, TQ13). `serviceName`
+ * stays a trace-level filter (conformance TQ08, TQ10, TQ11). Inactive
+ * block: `condition` is null.
  */
 export function traceSpanMatchSql(
-  params: Pick<TraceQueryParams, 'from' | 'operation' | 'attributeFilters'>,
+  params: Pick<TraceQueryParams, 'from' | 'to' | 'operation' | 'attributeFilters'>,
   startIdx: number,
   schema: string,
 ): { condition: string | null; values: unknown[]; nextIdx: number } {
@@ -120,6 +118,8 @@ export function traceSpanMatchSql(
   out.conditions.push('s.project_id = traces.project_id', 's.trace_id = traces.trace_id');
   out.values.push(params.from);
   out.conditions.push(`s.time >= $${out.nextIdx++}`);
+  out.values.push(params.to);
+  out.conditions.push(`s.time <= $${out.nextIdx++}`);
   if (params.operation !== undefined) {
     out.values.push(params.operation);
     out.conditions.push(`s.operation_name = $${out.nextIdx++}`);

@@ -86,21 +86,21 @@ describe('spanOrderSql', () => {
 
 describe('traceSpanMatchSql', () => {
   it('is inactive without operation or attribute filters', () => {
-    expect(traceSpanMatchSql({ from }, 5, 'public')).toEqual({ condition: null, values: [], nextIdx: 5 });
-    expect(traceSpanMatchSql({ from, attributeFilters: [] }, 5, 'public').condition).toBeNull();
+    expect(traceSpanMatchSql({ from, to }, 5, 'public')).toEqual({ condition: null, values: [], nextIdx: 5 });
+    expect(traceSpanMatchSql({ from, to, attributeFilters: [] }, 5, 'public').condition).toBeNull();
   });
 
-  it('trace span-match block is an EXISTS on the same project and trace, bounded below by the window', () => {
-    const r = traceSpanMatchSql({ from, operation: 'GET /x' }, 4, 'public');
+  it('trace span-match block is an EXISTS on the same project and trace, inside the window', () => {
+    const r = traceSpanMatchSql({ from, to, operation: 'GET /x' }, 4, 'public');
     expect(r.condition).toBe(
-      'EXISTS (SELECT 1 FROM public.spans s WHERE s.project_id = traces.project_id AND s.trace_id = traces.trace_id AND s.time >= $4 AND s.operation_name = $5)',
+      'EXISTS (SELECT 1 FROM public.spans s WHERE s.project_id = traces.project_id AND s.trace_id = traces.trace_id AND s.time >= $4 AND s.time <= $5 AND s.operation_name = $6)',
     );
-    expect(r.values).toEqual([from, 'GET /x']);
-    expect(r.nextIdx).toBe(6);
+    expect(r.values).toEqual([from, to, 'GET /x']);
+    expect(r.nextIdx).toBe(7);
   });
 
   it('attribute filters apply to the same span', () => {
-    const r = traceSpanMatchSql({ from, attributeFilters: [eq('http.method', 'POST'), eq('resource.env', 'prod')] }, 1, 'public');
+    const r = traceSpanMatchSql({ from, to, attributeFilters: [eq('http.method', 'POST'), eq('resource.env', 'prod')] }, 1, 'public');
     expect(r.condition).toContain('s.attributes ?');
     expect(r.condition).toContain('s.resource_attributes->>$');
     expect(r.condition?.match(/EXISTS/g)).toHaveLength(1);

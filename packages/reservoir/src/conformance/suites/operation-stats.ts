@@ -1,5 +1,6 @@
-// Operation stats conformance (plan D6): entry spans (default kinds SERVER
-// and CONSUMER, root spans when the scope has none and `kinds` was omitted),
+// Operation stats conformance (plan D6, Wave D ruling C1): entry spans
+// (default kinds SERVER and CONSUMER; root spans when no span of those kinds
+// is in scope and `kinds` was omitted, whatever other kinds are present),
 // grouped by service and operation, `percentile_cont` percentiles within the
 // tolerances below, ordered by count desc, service, operation.
 
@@ -7,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { OperationStat, OperationStatsParams } from '../../core/types.js';
 import type { ConformanceContext } from '../harness.js';
 import { expectBetween, expectMs } from '../harness.js';
-import { PROJECT_A, PROJECT_B, WINDOW } from '../corpus.js';
+import { minutes, PROJECT_A, PROJECT_B, WINDOW } from '../corpus.js';
 
 const names = (rows: OperationStat[]): string[] => rows.map((r) => `${r.service}/${r.operation}`);
 
@@ -85,6 +86,15 @@ export function describeOperationStatsConformance(ctx: ConformanceContext): void
       expect(names(rows)).toEqual(['api/GET /users']);
       expect(rows[0].count).toBe(1);
       expectMs(rows[0].avgMs, 5000, 0.01, 'project B avgMs');
+    });
+
+    it('O08 a scope whose spans only have non-entry kinds falls back to its root spans', async () => {
+      // Only LOOP (INTERNAL, root, 45 ms) starts in this window; the CONSUMER jobs start a second later.
+      const rows = await stats(ctx, { service: 'worker', from: minutes(40), to: new Date(minutes(40).getTime() + 500) });
+      expect(names(rows)).toEqual(['worker/job loop']);
+      expect([rows[0].count, rows[0].errorCount]).toEqual([1, 0]);
+      expectMs(rows[0].avgMs, 45, 0.01, 'job loop avgMs');
+      expectOrderedPercentiles(rows);
     });
   });
 }
