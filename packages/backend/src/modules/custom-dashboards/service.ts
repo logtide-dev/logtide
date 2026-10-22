@@ -172,6 +172,37 @@ export class CustomDashboardsService {
     return this.mapRow(row as unknown as DashboardRow);
   }
 
+  /**
+   * Copy a dashboard the caller can see: same panels and configs with fresh
+   * panel ids, same scope (project, personal flag), never the default.
+   */
+  async duplicate(
+    id: string,
+    organizationId: string,
+    userId: string,
+    opts: { name?: string } = {}
+  ): Promise<CustomDashboard> {
+    const source = await this.getById(id, organizationId, userId);
+    if (!source) {
+      throw new Error('Dashboard not found');
+    }
+
+    const suffix = ' (copy)';
+    const name = opts.name ?? `${source.name.slice(0, 200 - suffix.length)}${suffix}`;
+
+    return this.create(
+      {
+        organizationId,
+        projectId: source.projectId,
+        name,
+        description: source.description,
+        isPersonal: source.isPersonal,
+        panels: source.panels.map((p) => ({ ...p, id: this.generatePanelId() })),
+      },
+      userId
+    );
+  }
+
   async update(
     id: string,
     organizationId: string,

@@ -175,4 +175,59 @@ panels: []
 
     expect(res.statusCode).toBe(201);
   });
+
+  // ─── POST /:id/duplicate ───────────────────────────────────────────────
+  describe('POST /:id/duplicate', () => {
+    const dup = (id: string, org: string, tok: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/dashboards/${id}/duplicate?organizationId=${org}`,
+        headers: { Authorization: `Bearer ${tok}` },
+        payload: {},
+      });
+    const setLimit = async (org: string, limit: number) => {
+      await db
+        .insertInto('organization_entitlements')
+        .values({ organization_id: org, capability: 'dashboards.max_custom', enabled: null, limit_value: limit })
+        .execute();
+      capabilities.invalidate(org);
+    };
+
+    it('blocks duplicate when at the limit and creates no row', async () => {
+      const src = await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 1);
+
+      const res = await dup(src.id, orgId, token);
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).code).toBe('capability.dashboards.max_custom.limit_reached');
+
+      const rows = await db.selectFrom('custom_dashboards').select('id').where('organization_id', '=', orgId).execute();
+      expect(rows).toHaveLength(1);
+    });
+
+    it('allows duplicate when under the limit', async () => {
+      const src = await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 2);
+      const res = await dup(src.id, orgId, token);
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('allows duplicate when unlimited', async () => {
+      const src = await insertDashboard(orgId, userId, 1);
+      const res = await dup(src.id, orgId, token);
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('does not block org B when org A is at the limit', async () => {
+      const srcA = await insertDashboard(orgId, userId, 1);
+      await setLimit(orgId, 1);
+      expect((await dup(srcA.id, orgId, token)).statusCode).toBe(403);
+
+      const ctxB = await createTestContext();
+      const tokenB = await createTestSession(ctxB.user.id);
+      capabilities.invalidate(ctxB.organization.id);
+      const srcB = await insertDashboard(ctxB.organization.id, ctxB.user.id, 1);
+      expect((await dup(srcB.id, ctxB.organization.id, tokenB)).statusCode).toBe(201);
+    });
+  });
 });
