@@ -173,6 +173,8 @@ function createSiemStore() {
 				}));
 			} catch (error) {
 				if (seq !== loadSeq) return;
+				// A failed background refresh keeps the rows on screen.
+				if (opts.silent) return;
 				update((state) => ({
 					...state,
 					incidentsLoading: false,

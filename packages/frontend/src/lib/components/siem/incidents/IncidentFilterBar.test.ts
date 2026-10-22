@@ -1,8 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
+import type { ComponentProps } from 'svelte';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import IncidentFilterBar from './IncidentFilterBar.svelte';
 
-function props(over: Record<string, unknown> = {}) {
+type P = ComponentProps<typeof IncidentFilterBar>;
+type Props = P & { onChange: Mock; onReset: Mock };
+
+function props(over: Partial<P> = {}): Props {
   return {
     status: ['open', 'investigating'],
     severity: [],
@@ -11,7 +15,7 @@ function props(over: Record<string, unknown> = {}) {
     onChange: vi.fn(),
     onReset: vi.fn(),
     ...over,
-  };
+  } as Props;
 }
 
 describe('IncidentFilterBar', () => {

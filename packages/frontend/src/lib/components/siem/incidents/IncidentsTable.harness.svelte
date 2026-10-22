@@ -1,5 +1,6 @@
 <script lang="ts">
 	// Test harness: binds `selected` so tests can observe it.
+	import type { Snippet } from 'svelte';
 	import IncidentsTable from './IncidentsTable.svelte';
 
 	interface Props {
@@ -23,7 +24,7 @@
 	page={1}
 	pageSize={25}
 	onPageChange={() => {}}
-	empty={withEmpty ? emptySlot : undefined}
+	empty={withEmpty ? (emptySlot as unknown as Snippet) : undefined}
 />
 <pre data-testid="selected">{JSON.stringify(selected)}</pre>
 

@@ -50,15 +50,18 @@
 		return { name: 'Unknown user' };
 	}
 
+	// Snippets declared in the template are typed loosely by svelte-check.
+	const asCell = (s: unknown) => s as Snippet<[IncidentListItem]>;
+
 	const columns: DataTableColumn<IncidentListItem>[] = [
-		{ key: 'status', header: 'Status', cell: statusCell },
-		{ key: 'severity', header: 'Severity', cell: severityCell },
-		{ key: 'title', header: 'Title', class: 'min-w-[16rem]', cell: titleCell },
-		{ key: 'source', header: 'Source', cell: sourceCell },
-		{ key: 'project', header: 'Project', cell: projectCell },
-		{ key: 'assignee', header: 'Assignee', cell: assigneeCell },
-		{ key: 'age', header: 'Age', cell: ageCell },
-		{ key: 'lastEvent', header: 'Last event', cell: lastEventCell },
+		{ key: 'status', header: 'Status', cell: asCell(statusCell) },
+		{ key: 'severity', header: 'Severity', cell: asCell(severityCell) },
+		{ key: 'title', header: 'Title', class: 'min-w-[16rem]', cell: asCell(titleCell) },
+		{ key: 'source', header: 'Source', cell: asCell(sourceCell) },
+		{ key: 'project', header: 'Project', cell: asCell(projectCell) },
+		{ key: 'assignee', header: 'Assignee', cell: asCell(assigneeCell) },
+		{ key: 'age', header: 'Age', cell: asCell(ageCell) },
+		{ key: 'lastEvent', header: 'Last event', cell: asCell(lastEventCell) },
 	];
 </script>
 
