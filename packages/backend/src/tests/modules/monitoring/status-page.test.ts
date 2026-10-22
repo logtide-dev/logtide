@@ -428,6 +428,41 @@ describe('public status payload', () => {
     expect(body2.recentIncidents.map((i: any) => i.title)).toEqual(['Eighty days']);
   });
 
+  it('affected components in the public payload use public names', async () => {
+    await makePublic();
+    const api = await addMonitor({ name: 'internal-api', display_name: 'Public API', display_order: 1 });
+    const web = await addMonitor({ name: 'web', display_order: 0 });
+    const disabled = await addMonitor({ name: 'hidden-job' });
+    await db.updateTable('monitors').set({ enabled: false }).where('id', '=', disabled).execute();
+
+    const incident = await db
+      .insertInto('status_incidents')
+      .values({ organization_id: ctx.organization.id, project_id: ctx.project.id, title: 'Slow', status: 'investigating', severity: 'minor' })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto('status_incident_monitors')
+      .values([api, web, disabled].map((monitor_id) => ({ incident_id: incident.id, monitor_id })))
+      .execute();
+    const maintenance = await db
+      .insertInto('scheduled_maintenances')
+      .values({
+        organization_id: ctx.organization.id,
+        project_id: ctx.project.id,
+        title: 'Upgrade',
+        status: 'scheduled',
+        scheduled_start: new Date(Date.now() + 3600_000),
+        scheduled_end: new Date(Date.now() + 7200_000),
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await db.insertInto('maintenance_monitors').values({ maintenance_id: maintenance.id, monitor_id: api }).execute();
+
+    const body = (await app.inject({ method: 'GET', url: url() })).json();
+    expect(body.activeIncidents[0].affectedComponents).toEqual(['web', 'Public API']);
+    expect(body.upcomingMaintenances[0].affectedComponents).toEqual(['Public API']);
+  });
+
   it('works for a project with zero monitors', async () => {
     await makePublic();
     const res = await app.inject({ method: 'GET', url: url() });

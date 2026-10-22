@@ -492,6 +492,59 @@ export class MonitorService {
       }
     }
 
+    // Affected components: public names of the enabled monitors linked to each
+    // status update / maintenance, in the order shown on the page.
+    const maintenanceIds = [...activeMaintenanceRows, ...upcomingMaintenanceRows].map((m) => m.id);
+    const [incidentLinkRows, maintenanceLinkRows] = await Promise.all([
+      allIncidentIds.length === 0
+        ? Promise.resolve([] as { owner_id: string; name: string; display_name: string | null }[])
+        : this.db
+            .selectFrom('status_incident_monitors')
+            .innerJoin('monitors', 'monitors.id', 'status_incident_monitors.monitor_id')
+            .select([
+              'status_incident_monitors.incident_id as owner_id',
+              'monitors.name',
+              'monitors.display_name',
+            ])
+            .where('status_incident_monitors.incident_id', 'in', allIncidentIds)
+            .where('monitors.project_id', '=', project.id)
+            .where('monitors.organization_id', '=', projectOrgId)
+            .where('monitors.enabled', '=', true)
+            .orderBy('monitors.display_order', 'asc')
+            .orderBy('monitors.created_at', 'asc')
+            .orderBy('monitors.id', 'asc')
+            .execute(),
+      maintenanceIds.length === 0
+        ? Promise.resolve([] as { owner_id: string; name: string; display_name: string | null }[])
+        : this.db
+            .selectFrom('maintenance_monitors')
+            .innerJoin('monitors', 'monitors.id', 'maintenance_monitors.monitor_id')
+            .select([
+              'maintenance_monitors.maintenance_id as owner_id',
+              'monitors.name',
+              'monitors.display_name',
+            ])
+            .where('maintenance_monitors.maintenance_id', 'in', maintenanceIds)
+            .where('monitors.project_id', '=', project.id)
+            .where('monitors.organization_id', '=', projectOrgId)
+            .where('monitors.enabled', '=', true)
+            .orderBy('monitors.display_order', 'asc')
+            .orderBy('monitors.created_at', 'asc')
+            .orderBy('monitors.id', 'asc')
+            .execute(),
+    ]);
+    const groupNames = (rows: { owner_id: string; name: string; display_name: string | null }[]) => {
+      const map = new Map<string, string[]>();
+      for (const r of rows) {
+        const list = map.get(r.owner_id) ?? [];
+        list.push(r.display_name ?? r.name);
+        map.set(r.owner_id, list);
+      }
+      return map;
+    };
+    const incidentComponents = groupNames(incidentLinkRows);
+    const maintenanceComponents = groupNames(maintenanceLinkRows);
+
     const mapIncident = (row: typeof activeIncidentRows[0]): PublicStatusIncident => ({
       id: row.id,
       title: row.title,
@@ -500,7 +553,7 @@ export class MonitorService {
       createdAt: (row.created_at as Date).toISOString(),
       resolvedAt: row.resolved_at ? (row.resolved_at as Date).toISOString() : null,
       updates: updatesByIncident.get(row.id) ?? [],
-      affectedComponents: [],
+      affectedComponents: incidentComponents.get(row.id) ?? [],
     });
 
     const mapMaintenance = (row: typeof activeMaintenanceRows[0]): PublicMaintenance => ({
@@ -510,7 +563,7 @@ export class MonitorService {
       status: row.status,
       scheduledStart: (row.scheduled_start as Date).toISOString(),
       scheduledEnd: (row.scheduled_end as Date).toISOString(),
-      affectedComponents: [],
+      affectedComponents: maintenanceComponents.get(row.id) ?? [],
     });
 
     // Build monitors with uptime
