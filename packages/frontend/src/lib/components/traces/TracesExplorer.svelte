@@ -15,19 +15,15 @@
     type OperationRow,
     type LatencyHistogram as LatencyHistogramData,
     type EnrichedServiceDependencies,
-    type EnrichedServiceDependencyNode,
   } from '$lib/api/traces';
   import PageHeader from '$lib/components/app/PageHeader.svelte';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
   import ScopeBar from '$lib/components/app/ScopeBar.svelte';
-  import ServiceMap from '$lib/components/ServiceMap.svelte';
   import EmptyTraces from '$lib/components/EmptyTraces.svelte';
-  import Spinner from '$lib/components/Spinner.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
   import Switch from '$lib/components/ui/switch/switch.svelte';
   import * as Popover from '$lib/components/ui/popover';
-  import { Badge } from '$lib/components/ui/badge';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import Layers from '@lucide/svelte/icons/layers';
@@ -37,13 +33,11 @@
   import List from '@lucide/svelte/icons/list';
   import Download from '@lucide/svelte/icons/download';
   import Radio from '@lucide/svelte/icons/radio';
-  import X from '@lucide/svelte/icons/x';
-  import ArrowRight from '@lucide/svelte/icons/arrow-right';
-  import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import OperationsTable from './OperationsTable.svelte';
   import LatencyHistogram from './LatencyHistogram.svelte';
   import TraceFilterBar from './TraceFilterBar.svelte';
   import TraceListTable from './TraceListTable.svelte';
+  import ServiceMapPanel from './ServiceMapPanel.svelte';
   import { validateAttr } from './attr';
   import { formatDuration } from './format';
   import {
@@ -75,6 +69,7 @@
   const filters = $derived(parseTraceFilters(page.url));
   const projectId = $derived($scopeStore.projectIds[0] ?? null);
   const rangeKey = $derived(JSON.stringify($scopeStore.range));
+  const mapRange = $derived(resolveRange($scopeStore.range));
   const attrCheck = $derived(validateAttr(filters.attr));
   const filtersActive = $derived(
     !!filters.service ||
@@ -126,7 +121,6 @@
   let mapData = $state<EnrichedServiceDependencies | null>(null);
   let isLoadingMap = $state(false);
   let mapLoadError = $state<string | null>(null);
-  let selectedNode = $state<EnrichedServiceDependencyNode | null>(null);
 
   const listGuard = createLatest();
   const statsGuard = createLatest();
@@ -628,27 +622,9 @@
   }
 
   // ─── Service map ───────────────────────────────────────────────────────
-  function handleNodeClick(name: string) {
-    selectedNode = mapData?.nodes.find((n) => n.name === name) ?? null;
-  }
-
-  function healthOf(errorRate: number): { label: string; tone: ReturnType<typeof stateTone> } {
-    if (errorRate >= 0.1) return { label: 'Unhealthy', tone: stateTone('failed') };
-    if (errorRate >= 0.01) return { label: 'Degraded', tone: levelTone('warn') };
-    return { label: 'Healthy', tone: stateTone('ok') };
-  }
-
   function viewTracesForService(name: string) {
-    selectedNode = null;
     patch({ view: 'list', service: name, operation: undefined });
   }
-
-  const downstreamEdges = $derived(
-    mapData && selectedNode ? mapData.edges.filter((e) => e.source === selectedNode!.name) : [],
-  );
-  const upstreamEdges = $derived(
-    mapData && selectedNode ? mapData.edges.filter((e) => e.target === selectedNode!.name) : [],
-  );
 
   // ─── Shortcuts ─────────────────────────────────────────────────────────
   function focusRow(index: number) {
@@ -963,149 +939,19 @@
         />
       {/if}
     {:else}
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div class="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-          <div class="flex items-center gap-1.5">
-            <span class="inline-block size-3 rounded-full {stateTone('ok').dot}"></span>
-            <span>Healthy (under 1%)</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <span class="inline-block size-3 rounded-full {levelTone('warn').dot}"></span>
-            <span>Degraded (1 to 10%)</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <span class="inline-block size-3 rounded-full {stateTone('failed').dot}"></span>
-            <span>Unhealthy (over 10%)</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <span class="inline-block w-6 border-t-2 border-dashed border-muted-foreground"></span>
-            <span>Log correlation</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="flex gap-4">
-        <div class="min-w-0 flex-1">
-          <Card>
-            <CardContent class="pt-6">
-              {#if isLoadingMap}
-                <div class="flex h-[500px] items-center justify-center"><Spinner size="lg" /></div>
-              {:else if mapLoadError}
-                <EmptyState variant="error" title="Could not load the service map" description={mapLoadError}>
-                  {#snippet actions()}
-                    <Button variant="outline" size="sm" onclick={loadMap}>Retry</Button>
-                  {/snippet}
-                </EmptyState>
-              {:else if mapData && mapData.nodes.length > 0}
-                <ServiceMap dependencies={mapData} height="600px" onNodeClick={handleNodeClick} />
-              {:else if mapData}
-                <EmptyState
-                  variant="no-data"
-                  title="No service dependencies found"
-                  description="Send traces with parent-child spans or logs with a trace id to see service relationships"
-                />
-              {:else}
-                <p class="py-24 text-center text-muted-foreground">Select a project to view the service map</p>
-              {/if}
-            </CardContent>
-          </Card>
-        </div>
-
-        {#if selectedNode}
-          {@const health = healthOf(selectedNode.errorRate)}
-          <div class="w-80 flex-shrink-0">
-            <Card>
-              <CardHeader class="flex flex-row items-start justify-between pb-3">
-                <div>
-                  <CardTitle class="text-base">{selectedNode.name}</CardTitle>
-                  <span class="mt-1.5 inline-flex rounded-full border px-2 py-0.5 text-xs font-medium {health.tone.badge}">
-                    {health.label}
-                  </span>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="size-8"
-                  aria-label="Close service panel"
-                  onclick={() => (selectedNode = null)}
-                >
-                  <X class="size-4" aria-hidden="true" />
-                </Button>
-              </CardHeader>
-              <CardContent class="space-y-4">
-                <div class="grid grid-cols-2 gap-3">
-                  <div class="rounded-lg bg-muted/50 p-3">
-                    <p class="text-xs text-muted-foreground">Error rate</p>
-                    <p class="text-lg font-bold {health.tone.text}">{pct(selectedNode.errorRate)}</p>
-                  </div>
-                  <div class="rounded-lg bg-muted/50 p-3">
-                    <p class="text-xs text-muted-foreground">Avg latency</p>
-                    <p class="text-lg font-bold">{formatDuration(selectedNode.avgLatencyMs)}</p>
-                  </div>
-                  <div class="rounded-lg bg-muted/50 p-3">
-                    <p class="text-xs text-muted-foreground">p95 latency</p>
-                    <p class="text-lg font-bold">
-                      {selectedNode.p95LatencyMs != null ? formatDuration(selectedNode.p95LatencyMs) : 'N/A'}
-                    </p>
-                  </div>
-                  <div class="rounded-lg bg-muted/50 p-3">
-                    <p class="text-xs text-muted-foreground">Total calls</p>
-                    <p class="text-lg font-bold">{selectedNode.totalCalls.toLocaleString('en-US')}</p>
-                  </div>
-                </div>
-
-                {#if downstreamEdges.length > 0}
-                  <div>
-                    <p class="mb-2 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      <ArrowRight class="size-3" aria-hidden="true" />
-                      Calls to
-                    </p>
-                    <div class="space-y-1.5">
-                      {#each downstreamEdges as edge (edge.target)}
-                        <div class="flex items-center justify-between text-sm">
-                          <span class="truncate font-medium">{edge.target}</span>
-                          <div class="flex flex-shrink-0 items-center gap-2">
-                            <span class="tabular-nums text-muted-foreground">{edge.callCount.toLocaleString('en-US')}</span>
-                            {#if edge.type === 'log_correlation'}
-                              <Badge variant="outline" class="px-1 py-0 text-[10px]">log</Badge>
-                            {/if}
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
-
-                {#if upstreamEdges.length > 0}
-                  <div>
-                    <p class="mb-2 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      <ArrowLeft class="size-3" aria-hidden="true" />
-                      Called by
-                    </p>
-                    <div class="space-y-1.5">
-                      {#each upstreamEdges as edge (edge.source)}
-                        <div class="flex items-center justify-between text-sm">
-                          <span class="truncate font-medium">{edge.source}</span>
-                          <div class="flex flex-shrink-0 items-center gap-2">
-                            <span class="tabular-nums text-muted-foreground">{edge.callCount.toLocaleString('en-US')}</span>
-                            {#if edge.type === 'log_correlation'}
-                              <Badge variant="outline" class="px-1 py-0 text-[10px]">log</Badge>
-                            {/if}
-                          </div>
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
-
-                <Button class="w-full" onclick={() => viewTracesForService(selectedNode!.name)}>
-                  View traces
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        {/if}
-      </div>
+      {#if projectId}
+        <ServiceMapPanel
+          {projectId}
+          data={mapData}
+          loading={isLoadingMap}
+          error={mapLoadError}
+          range={mapRange}
+          onRetry={loadMap}
+          onViewTraces={viewTracesForService}
+        />
+      {:else}
+        <p class="py-24 text-center text-muted-foreground">Select a project to view the service map</p>
+      {/if}
     {/if}
   {/if}
 </div>
