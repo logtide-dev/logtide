@@ -21,8 +21,20 @@ const LEGACY_RANGE_KEY = 'logtide_time_range';
 
 export interface ScopeStore {
   subscribe: Readable<Scope>['subscribe'];
+  /** The scope this page shows. Differs from the persisted one only by a page fallback. */
   get(): Scope;
+  /** The scope remembered per browser (what the URL or the user decided). */
+  getPersisted(): Scope;
   set(scope: Scope): void;
+  /**
+   * ScopeBar reconcile: persists `commit` and shows `effective`. A page
+   * fallback (first project on a single-project page, a preset the page does
+   * not offer) lives only in `effective`.
+   */
+  reconcile(commit: Scope, effective: Scope): void;
+  /** Drops any page fallback, so the next page starts from the persisted scope. */
+  clearEffective(): void;
+  /** A user choice: persisted, and shown even over a page fallback of the other part. */
   setProjects(ids: string[]): void;
   setRange(range: TimeRangeValue): void;
   /** Merge the scope parts carried by a URL, without project validation. */
@@ -84,34 +96,60 @@ function sameScope(a: Scope, b: Scope): boolean {
 function createScopeStore(): ScopeStore {
   // In-memory source of truth, hydrated once. get() reads this so the scope
   // survives within a session even if localStorage is blocked.
-  let current = load();
+  let persisted = load();
+  // What the page shows: the persisted scope, or a page-only fallback on top.
+  let current = persisted;
   const { subscribe, set: emit } = writable<Scope>(current);
 
   function persist() {
     if (!browser) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
     } catch {
       // localStorage may be unavailable or full
     }
   }
 
+  function copy(scope: Scope): Scope {
+    return { projectIds: [...scope.projectIds], range: scope.range };
+  }
+
+  function apply(commit: Scope, effective: Scope) {
+    const persistedChanged = !sameScope(persisted, commit);
+    const shownChanged = !sameScope(current, effective);
+    if (persistedChanged) {
+      persisted = copy(commit);
+      persist();
+    }
+    if (shownChanged) {
+      current = copy(effective);
+      emit(current);
+    }
+  }
+
   function set(scope: Scope) {
-    if (sameScope(current, scope)) return;
-    current = { projectIds: [...scope.projectIds], range: scope.range };
-    persist();
-    emit(current);
+    apply(scope, scope);
   }
 
   return {
     subscribe,
     get: () => current,
+    getPersisted: () => persisted,
     set,
-    setProjects: (ids) => set({ ...current, projectIds: ids }),
-    setRange: (range) => set({ ...current, range }),
-    applyUrl: (url) => set({ ...current, ...readScopeFromUrl(url) }),
+    reconcile: apply,
+    clearEffective: () => apply(persisted, persisted),
+    // A user choice changes one part of both views and leaves the other part,
+    // which may be a page fallback, as it was.
+    setProjects: (ids) =>
+      apply({ ...persisted, projectIds: ids }, { ...current, projectIds: ids }),
+    setRange: (range) => apply({ ...persisted, range }, { ...current, range }),
+    applyUrl: (url) => {
+      const fromUrl = readScopeFromUrl(url);
+      apply({ ...persisted, ...fromUrl }, { ...current, ...fromUrl });
+    },
     reset: () => {
-      current = defaults();
+      persisted = defaults();
+      current = persisted;
       if (browser) {
         try {
           localStorage.removeItem(STORAGE_KEY);

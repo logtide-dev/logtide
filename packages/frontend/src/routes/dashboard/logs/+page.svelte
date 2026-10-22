@@ -1247,7 +1247,7 @@
 <div class="container mx-auto {containerPadding} {maxWidthClass}">
   <PageHeader title="Logs" description="Search, filter and tail logs across your projects">
     {#snippet actions()}
-      <ScopeBar mode="multi" projects={scopeProjects} timeDisabled={live} />
+      <ScopeBar mode="multi" projects={scopeProjects} timeDisabled={live} canonicalUrl={false} />
     {/snippet}
   </PageHeader>
 
