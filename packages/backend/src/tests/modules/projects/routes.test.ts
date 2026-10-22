@@ -282,6 +282,35 @@ describe('Projects Routes', () => {
             expect(body.project.name).toBe('Updated Project Name');
         });
 
+        it('forbids members from changing the status page access settings but not the name', async () => {
+            const member = await createTestUser({ email: 'sp-member@example.com' });
+            await db
+                .insertInto('organization_members')
+                .values({ user_id: member.id, organization_id: testOrganization.id, role: 'member' })
+                .execute();
+            const { token } = await createTestSession(member.id);
+            const put = (payload: Record<string, unknown>) =>
+                app.inject({
+                    method: 'PUT',
+                    url: `/api/v1/projects/${testProject.id}`,
+                    headers: { Authorization: `Bearer ${token}` },
+                    payload,
+                });
+
+            expect((await put({ statusPageVisibility: 'public' })).statusCode).toBe(403);
+            expect((await put({ statusPagePassword: 'hunter2hunter2' })).statusCode).toBe(403);
+            expect((await put({ slug: 'member-slug' })).statusCode).toBe(403);
+            expect((await put({ name: 'Renamed by member' })).statusCode).toBe(200);
+
+            const row = await db
+                .selectFrom('projects')
+                .select(['status_page_visibility', 'name'])
+                .where('id', '=', testProject.id)
+                .executeTakeFirstOrThrow();
+            expect(row.status_page_visibility).not.toBe('public');
+            expect(row.name).toBe('Renamed by member');
+        });
+
         it('should return 404 for non-existent project', async () => {
             const response = await app.inject({
                 method: 'PUT',

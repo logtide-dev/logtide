@@ -149,7 +149,7 @@
     <ReadOnlyNotice what="the status page settings" />
   {/if}
 
-  <StatusPageAccess {orgId} {orgSlug} {project} {onProjectChanged} />
+  <StatusPageAccess {orgId} {orgSlug} {project} {onProjectChanged} disabled={!canEdit} />
 
   {#if loadError}
     <EmptyState variant="error" title="Could not load the status page settings" description={loadError}>

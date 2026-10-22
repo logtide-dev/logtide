@@ -12,9 +12,11 @@
     orgSlug: string;
     project: Project;
     onProjectChanged: (p: Project) => void;
+    /** Read-only for members: only owners and admins change the access settings. */
+    disabled?: boolean;
   }
 
-  let { orgId, orgSlug, project, onProjectChanged }: Props = $props();
+  let { orgId, orgSlug, project, onProjectChanged, disabled = false }: Props = $props();
 
   const projectsAPI = new ProjectsAPI(getAuthToken);
 
@@ -95,7 +97,7 @@
     <select
       id="sp-visibility"
       value={project.statusPageVisibility}
-      disabled={saving}
+      disabled={saving || disabled}
       onchange={(e) => updateVisibility((e.currentTarget as HTMLSelectElement).value)}
       class="h-9 w-48 rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
     >
@@ -115,8 +117,9 @@
         placeholder="Set or update password"
         class="w-64"
         autocomplete="new-password"
+        {disabled}
       />
-      <Button size="sm" disabled={!password || saving} onclick={savePassword}>Save password</Button>
+      <Button size="sm" disabled={!password || saving || disabled} onclick={savePassword}>Save password</Button>
     </div>
   {/if}
 
@@ -125,10 +128,10 @@
       <Label for="sp-slug">Public URL slug</Label>
       <div class="flex flex-wrap items-center gap-2">
         <span class="whitespace-nowrap text-xs text-muted-foreground">/status/{orgSlug}/</span>
-        <Input id="sp-slug" bind:value={slugInput} placeholder="project-slug" class="w-48" />
+        <Input id="sp-slug" bind:value={slugInput} placeholder="project-slug" class="w-48" {disabled} />
         <Button
           size="sm"
-          disabled={!slugInput || slugInput === project.slug || savingSlug}
+          disabled={!slugInput || slugInput === project.slug || savingSlug || disabled}
           onclick={saveSlug}
         >
           Save slug

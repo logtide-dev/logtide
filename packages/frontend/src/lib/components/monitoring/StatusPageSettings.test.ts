@@ -108,6 +108,7 @@ describe('StatusPageSettings', () => {
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
     expect(screen.queryByText('Subscribers')).not.toBeInTheDocument();
     expect(api.listStatusSubscribers).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Visibility')).toBeDisabled();
   });
 
   it('admins and owners get no read-only notice', async () => {

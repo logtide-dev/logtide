@@ -11,6 +11,7 @@ import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 import { emailVerificationService } from '../users/email-verification.js';
 import { termsAcceptanceService } from '../users/terms.js';
+import { db } from '../../database/connection.js';
 
 const createProjectSchema = z.object({
   organizationId: z.string().uuid('Invalid organization ID'),
@@ -362,6 +363,29 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     try {
       const { id } = projectIdSchema.parse(request.params);
       const body = updateProjectSchema.parse(request.body);
+
+      // The status page access settings (visibility, password, public slug) are
+      // admin-only; plain members can still edit the project name and description.
+      if (
+        body.statusPageVisibility !== undefined ||
+        body.statusPagePassword !== undefined ||
+        body.slug !== undefined
+      ) {
+        const existing = await projectsService.getProjectById(id, request.user.id);
+        if (existing) {
+          const member = await db
+            .selectFrom('organization_members')
+            .select('role')
+            .where('user_id', '=', request.user.id)
+            .where('organization_id', '=', existing.organizationId)
+            .executeTakeFirst();
+          if (member?.role !== 'owner' && member?.role !== 'admin') {
+            return reply.status(403).send({
+              error: 'Admin or owner role required to change the status page access settings',
+            });
+          }
+        }
+      }
 
       const project = await projectsService.updateProject(id, request.user.id, body);
 
