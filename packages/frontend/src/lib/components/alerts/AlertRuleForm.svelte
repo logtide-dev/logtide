@@ -10,7 +10,7 @@
 	import type { LogLevel, MetadataFilterInput } from '@logtide/shared';
 	import MetadataFilterBuilder from '$lib/components/alerts/MetadataFilterBuilder.svelte';
 	import AlertPreview from '$lib/components/alerts/AlertPreview.svelte';
-	import { validateAlertQuery } from '$lib/components/alerts/alert-model';
+	import { validateAlertQuery, type QueryValidation } from '$lib/components/alerts/alert-model';
 	import { ChannelSelector } from '$lib/components/notification-channels';
 	import WillNotify from '$lib/components/notification-channels/WillNotify.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -99,11 +99,11 @@
 	const isThreshold = $derived(alertType === 'threshold');
 	const effectiveProjectId = $derived(lockedProjectId ?? (projectChoice || null));
 	const trimmedQuery = $derived(query.trim());
-	const queryCheck = $derived(
-		isThreshold && trimmedQuery ? validateAlertQuery(trimmedQuery) : ({ ok: true } as const)
+	const queryCheck = $derived<QueryValidation>(
+		isThreshold && trimmedQuery ? validateAlertQuery(trimmedQuery) : { ok: true }
 	);
 	const queryError = $derived(
-		queryCheck.ok ? null : `${queryCheck.message} (position ${queryCheck.position})`
+		queryCheck.ok === false ? `${queryCheck.message} (position ${queryCheck.position})` : null
 	);
 	const scopeName = $derived.by(() => {
 		const id = lockedProjectId ?? seed.projectId ?? null;
