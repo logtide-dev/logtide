@@ -2,14 +2,16 @@
 // TimescaleDB JSON key resolution (spec 5.3, plan S4 and S5)
 // ============================================================================
 // One resolver for log `metadata` and span `attributes`/`resource_attributes`.
-// A key without `.` is `col->>key` (today's SQL, kept byte for byte). A key
-// with `.` resolves like `resolveMetadataPath`: the candidate key sequences
-// of the shared `metadataPathCandidates`, in order, the first that exists
-// wins. Each candidate is a chain of `->` with text keys, which reads object
-// members only (it never indexes an array). `->>` already gives numbers and
-// booleans their JSON text (`500`, `true`), so values compare by text.
-// Negative operators with `include_missing` match records where the key does
-// not resolve, because the text expression is NULL there.
+// A key without `.` is `col->key`. A key with `.` resolves like
+// `resolveMetadataPath`: the candidate key sequences of the shared
+// `metadataPathCandidates`, in order, the first that exists wins. Each
+// candidate is a chain of `->` with text keys, which reads object members
+// only (it never indexes an array). Values compare by their S5 text form:
+// strings, numbers (`500`) and booleans (`true`); null, objects and arrays
+// have no text, so they never equal, contain or list-match a value. Negative
+// operators with `include_missing` match records where the key does not
+// resolve (or has no text); with `include_missing: false` the key must
+// resolve, whatever its value.
 //
 // Keys, paths and values are always bound parameters; only the column name
 // is interpolated, and it comes from a fixed allowlist. A dotted key binds
@@ -31,7 +33,7 @@ function checkColumn(column: string): void {
 export interface BoundJsonKey {
   /** The jsonb value the key resolves to (SQL NULL when it does not resolve). */
   value: string;
-  /** Raw text of the resolved value (`->>` semantics): NULL when missing or JSON null. */
+  /** S5 text of the resolved value: NULL when missing, null, an object or an array. */
   text: string;
   /** True when the key resolves, whatever its value (JSON null included). */
   exists: string;
@@ -48,8 +50,9 @@ export function bindJsonKey(
 ): { key: BoundJsonKey; values: unknown[]; nextIdx: number } {
   checkColumn(column);
   if (!key.includes('.')) {
+    const value = `${column}->$${idx}`;
     return {
-      key: { value: `${column}->$${idx}`, text: `${column}->>$${idx}`, exists: `${column} ? $${idx}` },
+      key: { value, text: scalarTextExpr(value), exists: `${column} ? $${idx}` },
       values: [key],
       nextIdx: idx + 1,
     };
@@ -65,7 +68,7 @@ export function bindJsonKey(
   });
   const value = `COALESCE(${chains.join(', ')})`;
   return {
-    key: { value, text: `(${value}) #>> '{}'`, exists: `(${value}) IS NOT NULL` },
+    key: { value, text: scalarTextExpr(value), exists: `(${value}) IS NOT NULL` },
     values: [flat],
     nextIdx: idx + 1,
   };
@@ -105,23 +108,20 @@ export function compileJsonFilters(
       case 'equals':
         conditions.push(`(${text} = ${bind(f.value)})`);
         break;
-      case 'not_equals':
-        conditions.push(
-          f.include_missing
-            ? `(${text} IS DISTINCT FROM ${bind(f.value)})`
-            : `(${exists} AND ${text} <> ${bind(f.value)})`,
-        );
+      case 'not_equals': {
+        // A value without text (null, object, array) differs from every value.
+        const differs = `${text} IS DISTINCT FROM ${bind(f.value)}`;
+        conditions.push(f.include_missing ? `(${differs})` : `(${exists} AND ${differs})`);
         break;
+      }
       case 'in':
         conditions.push(`(${text} = ANY(${bind(f.values)}))`);
         break;
-      case 'not_in':
-        conditions.push(
-          f.include_missing
-            ? `(${text} IS NULL OR ${text} <> ALL(${bind(f.values)}))`
-            : `(${exists} AND ${text} <> ALL(${bind(f.values)}))`,
-        );
+      case 'not_in': {
+        const outside = `(${text} IS NULL OR ${text} <> ALL(${bind(f.values)}))`;
+        conditions.push(f.include_missing ? outside : `(${exists} AND ${outside})`);
         break;
+      }
       case 'exists':
         conditions.push(`(${exists})`);
         break;

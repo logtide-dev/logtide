@@ -16,8 +16,9 @@
 //    (a -> b -> c) comes last.
 // Keys with more than METADATA_PATH_MAX_SPLIT_SEGMENTS segments only try the
 // literal key and the plain nested walk, which bounds the generated queries.
-// Every step reads an own property of a plain object; a JSON null stops the
-// resolution with the value null.
+// Every step reads an own property of an object; arrays are values, never
+// walked into (a numeric segment only names an object key, as on every
+// engine). A JSON null stops the resolution with the value null.
 
 /** Segment count up to which a key also tries the leading/trailing literal splits. */
 export const METADATA_PATH_MAX_SPLIT_SEGMENTS = 8;
@@ -70,7 +71,8 @@ const MISSING = Symbol('missing');
 function walk(root: unknown, keys: readonly string[]): unknown {
   let current: unknown = root;
   for (const key of keys) {
-    if (current === null || typeof current !== 'object') return MISSING;
+    // Arrays are values, never containers: a numeric segment only names an object key.
+    if (current === null || typeof current !== 'object' || Array.isArray(current)) return MISSING;
     if (!Object.prototype.hasOwnProperty.call(current, key)) return MISSING;
     current = (current as Record<string, unknown>)[key];
   }

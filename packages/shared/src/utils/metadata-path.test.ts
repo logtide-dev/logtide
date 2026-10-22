@@ -61,6 +61,14 @@ describe('resolveMetadataPath', () => {
     expect(resolveMetadataPath({ 'a.b': { c: 'lead' }, a: { 'b.c': 'tail' } }, 'a.b.c')).toBe('lead');
   });
 
+  it('never walks into an array, numeric segments name object keys only', () => {
+    expect(resolveMetadataPath({ errors: [{ code: 'E42' }] }, 'errors.0.code')).toBeUndefined();
+    expect(resolveMetadataPath({ tags: ['a', 'b'] }, 'tags.0')).toBeUndefined();
+    expect(resolveMetadataPath({ tags: ['a', 'b'] }, 'tags.length')).toBeUndefined();
+    expect(resolveMetadataPath({ tags: ['a', 'b'] }, 'tags')).toEqual(['a', 'b']);
+    expect(resolveMetadataPath({ list: { '0': 'zero' } }, 'list.0')).toBe('zero');
+  });
+
   it('a null value stops the resolution', () => {
     expect(resolveMetadataPath({ 'a.b': null, a: { b: 'nested' } }, 'a.b')).toBeNull();
   });

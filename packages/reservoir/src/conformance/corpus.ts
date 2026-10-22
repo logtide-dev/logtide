@@ -120,6 +120,11 @@ const LOG_ROWS: LogRow[] = [
   { id: 'L41', project: PROJECT_D, t: 31, service: 'collector', level: 'info', message: 'otel log of another service', meta: { resource: { 'service.name': 'cart', 'host.name': 'web-2' } } },
   { id: 'L42', project: PROJECT_D, t: 32, service: 'api', level: 'info', message: 'literal child next to a nested path', meta: { a: { 'b.c': 'literal-child', b: { c: 'deep' } } } },
   { id: 'L43', project: PROJECT_D, t: 33, service: 'api', level: 'info', message: 'dotted parent next to a dotted child', meta: { 'a.b': { c: 'dotted-parent' }, a: { 'b.c': 'dotted-child' } } },
+  {
+    id: 'L44', project: PROJECT_D, t: 34, service: 'api', level: 'info', message: 'arrays and objects as values',
+    meta: { tags: ['prod', 'eu'], errors: [{ code: 'E42' }], user: { name: 'alice' }, list: { '0': 'zero' } },
+  },
+  { id: 'L45', project: PROJECT_D, t: 35, service: 'api', level: 'info', message: 'a null value', meta: { note: null } },
 ];
 
 function logRecord(row: LogRow): LogRecord {

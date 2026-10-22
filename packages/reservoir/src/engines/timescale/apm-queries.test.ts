@@ -102,7 +102,7 @@ describe('traceSpanMatchSql', () => {
   it('attribute filters apply to the same span', () => {
     const r = traceSpanMatchSql({ from, to, attributeFilters: [eq('http.method', 'POST'), eq('resource.env', 'prod')] }, 1, 'public');
     expect(r.condition).toContain('COALESCE(s.attributes -> (');
-    expect(r.condition).toContain('s.resource_attributes->>$');
+    expect(r.condition).toContain('jsonb_typeof(s.resource_attributes->$');
     expect(r.condition?.match(/EXISTS/g)).toHaveLength(1);
   });
 });

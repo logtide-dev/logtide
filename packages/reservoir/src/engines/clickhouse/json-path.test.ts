@@ -83,6 +83,9 @@ describe('clickhouse json paths', () => {
     expect(ne.conditions[0].startsWith('((JSONHas(metadata, {p_mfk0:String}) OR JSONHas(metadata, {p_mfk0s0:String}, {p_mfk0s1:String})) AND ')).toBe(true);
     const ni = compile([mf({ key: 'env', op: 'not_in', values: ['dev'], include_missing: false })]);
     expect(ni.conditions[0].startsWith('(JSONHas(metadata, {p_mfk0:String}) AND ')).toBe(true);
+    // A resolved value without text (null, object, array) differs from every value.
+    expect(ne.conditions[0].endsWith(' != {p_mfv0:String}, 1))')).toBe(true);
+    expect(ni.conditions[0].endsWith(' NOT IN {p_mfv0:Array(String)}, 1))')).toBe(true);
   });
 
   it('exists checks both forms of a dotted key', () => {

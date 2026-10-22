@@ -108,13 +108,15 @@ export function compileJsonFilters(
         return `${scalar} = ${value()}`;
       case 'in':
         return `${scalar} IN ${values()}`;
+      // A value without text (null, object, array) differs from every value,
+      // so include_missing: false keeps it as long as the key resolves.
       case 'not_equals': {
-        const v = value();
-        return keepMissing ? `(NOT (${exists}) OR ifNull(${scalar} != ${v}, 1))` : `(${exists} AND ${scalar} != ${v})`;
+        const differs = `ifNull(${scalar} != ${value()}, 1)`;
+        return keepMissing ? `(NOT (${exists}) OR ${differs})` : `(${exists} AND ${differs})`;
       }
       case 'not_in': {
-        const vs = values();
-        return keepMissing ? `(NOT (${exists}) OR ifNull(${scalar} NOT IN ${vs}, 1))` : `(${exists} AND ${scalar} NOT IN ${vs})`;
+        const outside = `ifNull(${scalar} NOT IN ${values()}, 1)`;
+        return keepMissing ? `(NOT (${exists}) OR ${outside})` : `(${exists} AND ${outside})`;
       }
       case 'exists':
         return exists;

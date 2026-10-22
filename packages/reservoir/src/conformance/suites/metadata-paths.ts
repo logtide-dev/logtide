@@ -12,7 +12,7 @@ import type { LogFacetsParams } from '../../core/types.js';
 import { minutes, PROJECT_C, PROJECT_D } from '../corpus.js';
 
 const D = [PROJECT_D];
-const D_LOGS = ['L40', 'L41', 'L42', 'L43'];
+const D_LOGS = ['L40', 'L41', 'L42', 'L43', 'L44', 'L45'];
 const except = (...ids: string[]): string[] => D_LOGS.filter((id) => !ids.includes(id));
 
 export const METADATA_PATH_CASES: LogCase[] = [
@@ -29,6 +29,37 @@ export const METADATA_PATH_CASES: LogCase[] = [
   { id: 'R11', title: 'a dotted child hidden by a longer leading key', q: 'a.b.c:dotted-child', projectIds: D, expected: [] },
   { id: 'R12', title: 'a discovered dotted child key (D05) filters', q: 'otel.service.name:checkout', projectIds: [PROJECT_C], window: { from: minutes(0), to: minutes(3) }, expected: ['L93'] },
   { id: 'R13', title: 'a discovered dotted child key with dashes inside', q: 'otel.k8s.pod.name:pod-1', projectIds: [PROJECT_C], window: { from: minutes(0), to: minutes(3) }, expected: ['L93'] },
+
+  // Arrays and objects have no text form (S5) and a path never walks into an
+  // array: numeric segments only name object keys.
+  { id: 'A01', title: 'contains never matches an array', q: 'tags:*prod*', projectIds: D, expected: [] },
+  { id: 'A02', title: 'contains never matches an object', q: 'user:*alice*', projectIds: D, expected: [] },
+  { id: 'A03', title: 'a numeric segment does not index an array', q: 'errors.0.code:E42', projectIds: D, expected: [] },
+  { id: 'A04', title: 'a path through an array does not exist', q: '-errors.0.code:*', projectIds: D, expected: D_LOGS },
+  { id: 'A05', title: 'a numeric segment names an object key', q: 'list.0:zero', projectIds: D, expected: ['L44'] },
+  { id: 'A06', title: 'an array value exists', q: 'tags:*', projectIds: D, expected: ['L44'] },
+  { id: 'A07', title: 'an excluded value keeps a log whose value is an array', q: '-tags:prod', projectIds: D, expected: D_LOGS },
+  {
+    id: 'A08', title: 'equals never matches the JSON text of an array',
+    params: { metadataFilters: [{ key: 'tags', op: 'equals', value: '["prod", "eu"]', include_missing: false }] }, projectIds: D, expected: [],
+  },
+  {
+    id: 'A09', title: 'in never matches the JSON text of an object',
+    params: { metadataFilters: [{ key: 'user', op: 'in', values: ['{"name": "alice"}', '{"name":"alice"}'], include_missing: false }] },
+    projectIds: D, expected: [],
+  },
+  {
+    id: 'A10', title: 'include_missing false keeps an array value, which resolves',
+    params: { metadataFilters: [{ key: 'tags', op: 'not_equals', value: 'prod', include_missing: false }] }, projectIds: D, expected: ['L44'],
+  },
+  {
+    id: 'A11', title: 'include_missing false keeps a null value, which resolves',
+    params: { metadataFilters: [{ key: 'note', op: 'not_in', values: ['x'], include_missing: false }] }, projectIds: D, expected: ['L45'],
+  },
+  {
+    id: 'A12', title: 'include_missing false keeps an object value on a dotted key',
+    params: { metadataFilters: [{ key: 'otel.body', op: 'not_equals', value: 'x', include_missing: false }] }, projectIds: D, expected: ['L40'],
+  },
 ];
 
 export function describeMetadataPathConformance(ctx: ConformanceContext): void {

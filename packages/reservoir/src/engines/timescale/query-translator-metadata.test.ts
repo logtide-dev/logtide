@@ -26,7 +26,7 @@ describe('TimescaleQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'equals', value: 'prod' })],
     });
-    expect(r.query).toContain('metadata->>$');
+    expect(r.query).toContain("CASE WHEN jsonb_typeof(metadata->$");
     expect(r.query).toContain(' = $');
     expect(r.parameters).toContain('env');
     expect(r.parameters).toContain('prod');
@@ -45,7 +45,7 @@ describe('TimescaleQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'not_equals', value: 'dev', include_missing: false })],
     });
-    expect(r.query).toMatch(/metadata \? \$\d+ AND metadata->>\$\d+ <> \$\d+/);
+    expect(r.query).toMatch(/metadata \? \$\d+ AND CASE WHEN jsonb_typeof\(metadata->\$\d+\) IN \('string', 'number', 'boolean'\) THEN \(metadata->\$\d+\) #>> '\{\}' END IS DISTINCT FROM \$\d+/);
   });
 
   it('in emits = ANY', () => {
@@ -62,7 +62,7 @@ describe('TimescaleQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'not_in', values: ['dev'], include_missing: true })],
     });
-    expect(r.query).toMatch(/IS NULL OR metadata->>\$\d+ <> ALL/);
+    expect(r.query).toMatch(/IS NULL OR CASE WHEN jsonb_typeof\(metadata->\$\d+\) IN \('string', 'number', 'boolean'\) THEN \(metadata->\$\d+\) #>> '\{\}' END <> ALL/);
   });
 
   it('not_in with include_missing=false requires key present', () => {
@@ -70,7 +70,7 @@ describe('TimescaleQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'not_in', values: ['dev'], include_missing: false })],
     });
-    expect(r.query).toMatch(/metadata \? \$\d+ AND metadata->>\$\d+ <> ALL/);
+    expect(r.query).toMatch(/metadata \? \$\d+ AND \(CASE WHEN jsonb_typeof\(metadata->\$\d+\) IN \('string', 'number', 'boolean'\) THEN \(metadata->\$\d+\) #>> '\{\}' END IS NULL OR CASE WHEN jsonb_typeof\(metadata->\$\d+\) IN \('string', 'number', 'boolean'\) THEN \(metadata->\$\d+\) #>> '\{\}' END <> ALL/);
   });
 
   it('exists emits ? operator', () => {
