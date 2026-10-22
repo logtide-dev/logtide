@@ -45,7 +45,7 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
     };
 
     if (!projectId) {
-      socket.close(1008, 'ProjectId required');
+      socket.close(1008, 'projectId required');
       return;
     }
 
