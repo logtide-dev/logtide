@@ -12,6 +12,12 @@
  * not just the first modifier.
  */
 
+import isSafeRegex from 'safe-regex2';
+
+/** Longest |re pattern we compile; longer ones never match. */
+const MAX_REGEX_PATTERN_LENGTH = 512;
+const regexCache = new Map<string, RegExp | null>();
+
 export type FieldModifier =
   | 'contains'
   | 'startswith'
@@ -301,8 +307,19 @@ export class SigmaFieldMatcher {
   ): boolean {
     try {
       const flags = caseSensitive ? '' : 'i';
-      const regex = new RegExp(pattern, flags);
-      return regex.test(value);
+      const key = `${flags}/${pattern}`;
+      let regex = regexCache.get(key);
+      if (regex === undefined) {
+        // Rule YAML is user-controlled (also via the preview endpoint on the API
+        // process): refuse patterns that can backtrack catastrophically.
+        regex =
+          pattern.length <= MAX_REGEX_PATTERN_LENGTH && isSafeRegex(pattern)
+            ? new RegExp(pattern, flags)
+            : null;
+        if (regexCache.size >= 1000) regexCache.clear();
+        regexCache.set(key, regex);
+      }
+      return regex ? regex.test(value) : false;
     } catch (error) {
       console.warn(`[SigmaFieldMatcher] Invalid regex pattern: ${pattern}`, error);
       return false;
