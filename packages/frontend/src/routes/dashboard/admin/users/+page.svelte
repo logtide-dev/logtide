@@ -5,6 +5,7 @@
     import { adminAPI, type UserBasic } from "$lib/api/admin";
     import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
     import { Button, buttonVariants } from "$lib/components/ui/button";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
     import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
     import { Switch } from "$lib/components/ui/switch";
@@ -237,13 +238,13 @@
             {#if loading && users.length === 0}
                 <SkeletonTable rows={8} columns={7} />
             {:else if error}
-                <div class="text-center py-8">
-                    <p class="text-destructive">{error}</p>
-                </div>
+                <EmptyState variant="error" title="Could not load users" description={error}>
+                    {#snippet actions()}
+                        <Button variant="outline" size="sm" onclick={loadUsers}>Retry</Button>
+                    {/snippet}
+                </EmptyState>
             {:else if users.length === 0}
-                <div class="text-center py-8">
-                    <p class="text-muted-foreground">No users found</p>
-                </div>
+                <EmptyState variant="no-results" title="No users found" />
             {:else}
                 <TableLoadingOverlay loading={loading}>
                 <div class="rounded-md border">
@@ -314,7 +315,7 @@
                                                 size: "sm",
                                             })}
                                         >
-                                            View Details
+                                            View details
                                         </a>
                                     </TableCell>
                                 </TableRow>

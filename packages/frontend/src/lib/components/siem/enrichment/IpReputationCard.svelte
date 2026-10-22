@@ -8,6 +8,7 @@
 	import AlertCircle from '@lucide/svelte/icons/alert-circle';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
+	import { NEUTRAL_TONE, severityTone, stateTone } from '$lib/utils/severity';
 
 	interface IpReputationEntry {
 		ip: string;
@@ -35,25 +36,25 @@
 		switch (reputation) {
 			case 'clean':
 				return {
-					color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+					color: stateTone('ok').badge,
 					icon: CheckCircle2,
 					label: 'Clean',
 				};
 			case 'suspicious':
 				return {
-					color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+					color: severityTone('medium').badge,
 					icon: AlertCircle,
 					label: 'Suspicious',
 				};
 			case 'malicious':
 				return {
-					color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+					color: severityTone('high').badge,
 					icon: AlertTriangle,
 					label: 'Malicious',
 				};
 			default:
 				return {
-					color: 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200',
+					color: NEUTRAL_TONE.badge,
 					icon: Shield,
 					label: 'Unknown',
 				};
@@ -93,7 +94,7 @@
 	<CardHeader class="pb-3">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<Shield class="w-4 h-4" />
-			IP Reputation
+			IP reputation
 			<Badge variant="secondary" class="ml-auto">{ipEntries.length}</Badge>
 		</CardTitle>
 	</CardHeader>
@@ -118,7 +119,7 @@
 									{config.label}
 								</Badge>
 								{#if data.reputation === 'malicious'}
-									<AlertTriangle class="w-4 h-4 text-red-500" />
+									<AlertTriangle class="w-4 h-4 text-destructive-text" />
 								{/if}
 							</div>
 							{#if data.abuseConfidenceScore !== undefined}
@@ -127,10 +128,10 @@
 									<div class="flex-1 h-2 bg-muted rounded-full overflow-hidden max-w-[100px]">
 										<div
 											class="h-full rounded-full transition-all"
-											class:bg-green-500={data.abuseConfidenceScore < 30}
-											class:bg-yellow-500={data.abuseConfidenceScore >= 30 &&
+											class:bg-success={data.abuseConfidenceScore < 30}
+											class:bg-warning={data.abuseConfidenceScore >= 30 &&
 												data.abuseConfidenceScore < 70}
-											class:bg-red-500={data.abuseConfidenceScore >= 70}
+											class:bg-destructive={data.abuseConfidenceScore >= 70}
 											style="width: {data.abuseConfidenceScore}%"
 										></div>
 									</div>
@@ -171,12 +172,12 @@
 							{/if}
 							{#if data.usageType}
 								<div class="flex justify-between">
-									<span class="text-muted-foreground">Usage Type</span>
+									<span class="text-muted-foreground">Usage type</span>
 									<span>{data.usageType}</span>
 								</div>
 							{/if}
 							<div class="flex justify-between">
-								<span class="text-muted-foreground">Last Checked</span>
+								<span class="text-muted-foreground">Last checked</span>
 								<span>{formatTimestamp(data.lastChecked)}</span>
 							</div>
 						</div>

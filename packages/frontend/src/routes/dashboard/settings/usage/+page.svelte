@@ -21,6 +21,7 @@
     TableRow,
   } from '$lib/components/ui/table';
   import { Button } from '$lib/components/ui/button';
+  import EmptyState from '$lib/components/app/EmptyState.svelte';
   import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import QuotaStateBadge from '$lib/components/QuotaStateBadge.svelte';
@@ -263,7 +264,11 @@
   {/if}
 
   {#if error}
-    <p class="text-sm text-destructive">{error}</p>
+    <EmptyState variant="error" title="Could not load usage" description={error}>
+      {#snippet actions()}
+        <Button variant="outline" size="sm" onclick={load}>Retry</Button>
+      {/snippet}
+    </EmptyState>
   {/if}
 
   <!-- Summary cards -->

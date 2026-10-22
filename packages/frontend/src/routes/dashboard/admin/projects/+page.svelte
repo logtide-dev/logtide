@@ -12,6 +12,7 @@
     import { authStore } from "$lib/stores/auth";
     import * as Table from "$lib/components/ui/table";
     import { Button, buttonVariants } from "$lib/components/ui/button";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
     import { Input } from "$lib/components/ui/input";
     import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
     import {
@@ -213,20 +214,18 @@
         <CardContent>
             {#if loading && projects.length === 0}
                 <SkeletonTable rows={8} columns={7} />
+            {:else if projects.length === 0 && error}
+                <EmptyState variant="error" title="Could not load projects" description={error}>
+                    {#snippet actions()}
+                        <Button variant="outline" size="sm" onclick={loadProjects}>Retry</Button>
+                    {/snippet}
+                </EmptyState>
             {:else if projects.length === 0}
-                <div
-                    class="flex flex-col items-center justify-center p-12 text-center"
-                >
-                    <FolderKanban
-                        class="h-12 w-12 text-muted-foreground mb-4"
-                    />
-                    <h3 class="text-lg font-semibold">No projects found</h3>
-                    <p class="text-muted-foreground mt-2">
-                        {searchQuery
-                            ? "Try adjusting your search"
-                            : "No projects have been created yet"}
-                    </p>
-                </div>
+                <EmptyState
+                    variant="no-results"
+                    title="No projects found"
+                    description={searchQuery ? "Try adjusting your search" : "No projects have been created yet"}
+                />
             {:else}
                 <TableLoadingOverlay loading={loading}>
                 <Table.Root>
@@ -235,7 +234,7 @@
                             <Table.Head>Project name</Table.Head>
                             <Table.Head>Organization</Table.Head>
                             <Table.Head class="text-right">Logs</Table.Head>
-                            <Table.Head class="text-right">API Keys</Table.Head>
+                            <Table.Head class="text-right">API keys</Table.Head>
                             <Table.Head class="text-right">Alerts</Table.Head>
                             <Table.Head>Created</Table.Head>
                             <Table.Head class="text-right">Actions</Table.Head>
@@ -280,7 +279,7 @@
                                                 size: "sm",
                                             })}
                                         >
-                                            View Details
+                                            View details
                                         </a>
                                         <Button
                                             variant="destructive"

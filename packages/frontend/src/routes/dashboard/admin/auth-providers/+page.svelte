@@ -382,7 +382,7 @@
   {/if}
 </div>
 
-<!-- Create Provider Dialog -->
+<!-- Create provider dialog -->
 <Dialog.Root bind:open={showCreateDialog}>
   <Dialog.Content class="max-w-lg">
     <Dialog.Header>
@@ -427,7 +427,7 @@
 
       {#if createForm.type === 'oidc'}
         <div class="space-y-4 pt-4 border-t">
-          <h4 class="font-medium">OIDC Configuration</h4>
+          <h4 class="font-medium">OIDC configuration</h4>
 
           <div class="space-y-2">
             <Label for="issuerUrl">Issuer URL</Label>
@@ -469,7 +469,7 @@
         </div>
       {:else if createForm.type === 'ldap'}
         <div class="space-y-4 pt-4 border-t">
-          <h4 class="font-medium">LDAP Configuration</h4>
+          <h4 class="font-medium">LDAP configuration</h4>
 
           <div class="space-y-2">
             <Label for="ldapUrl">LDAP URL</Label>
@@ -529,17 +529,17 @@
         {#if dialogLoading}
           <Spinner size="sm" class="mr-2" />
         {/if}
-        Create Provider
+        Create provider
       </Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
 
-<!-- Edit Provider Dialog -->
+<!-- Edit provider dialog -->
 <Dialog.Root bind:open={showEditDialog}>
   <Dialog.Content class="max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Edit Provider: {editingProvider?.name}</Dialog.Title>
+      <Dialog.Title>Edit provider: {editingProvider?.name}</Dialog.Title>
       <Dialog.Description>
         Update the configuration for this authentication provider
       </Dialog.Description>
@@ -563,7 +563,7 @@
 
       {#if editingProvider?.type === 'oidc'}
         <div class="space-y-4 pt-4 border-t">
-          <h4 class="font-medium">OIDC Configuration</h4>
+          <h4 class="font-medium">OIDC configuration</h4>
 
           <div class="space-y-2">
             <Label for="edit-issuerUrl">Issuer URL</Label>
@@ -605,7 +605,7 @@
         </div>
       {:else if editingProvider?.type === 'ldap'}
         <div class="space-y-4 pt-4 border-t">
-          <h4 class="font-medium">LDAP Configuration</h4>
+          <h4 class="font-medium">LDAP configuration</h4>
 
           <div class="space-y-2">
             <Label for="edit-ldapUrl">LDAP URL</Label>
@@ -665,7 +665,7 @@
         {#if dialogLoading}
           <Spinner size="sm" class="mr-2" />
         {/if}
-        Save Changes
+        Save changes
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

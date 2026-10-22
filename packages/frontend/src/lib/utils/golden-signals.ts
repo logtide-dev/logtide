@@ -3,6 +3,8 @@
  * Maps well-known OTel metric names to signal panels.
  */
 
+import { levelTone, stateTone } from './severity';
+
 export type SignalType = 'request_rate' | 'error_rate' | 'latency' | 'saturation';
 
 export interface SignalConfig {
@@ -24,7 +26,7 @@ export interface SignalConfig {
 export const SIGNAL_CONFIGS: SignalConfig[] = [
   {
     type: 'request_rate',
-    title: 'Request Rate',
+    title: 'Request rate',
     description: 'Incoming requests per second',
     metricPatterns: [
       'http.server.request.duration',
@@ -38,13 +40,13 @@ export const SIGNAL_CONFIGS: SignalConfig[] = [
   },
   {
     type: 'error_rate',
-    title: 'Error Rate',
+    title: 'Error rate',
     description: 'Server errors per second',
     metricPatterns: [
       'http.server.error.count',
       'http.server.request.duration',
     ],
-    aggregations: [{ fn: 'count', label: 'errors/s', color: '#ef4444' }],
+    aggregations: [{ fn: 'count', label: 'errors/s', color: levelTone('error').chart }],
     unit: 'errors/s',
     attributeFilter: { 'http.response.status_code': '500' },
     emptyHint: 'Send http.server.error.count or http.server.request.duration with status_code attributes to populate this panel',
@@ -59,9 +61,9 @@ export const SIGNAL_CONFIGS: SignalConfig[] = [
       'http.server.duration',
     ],
     aggregations: [
-      { fn: 'p50', label: 'p50', color: '#22c55e' },
-      { fn: 'p95', label: 'p95', color: '#f59e0b' },
-      { fn: 'p99', label: 'p99', color: '#ef4444' },
+      { fn: 'p50', label: 'p50', color: stateTone('ok').chart },
+      { fn: 'p95', label: 'p95', color: levelTone('warn').chart },
+      { fn: 'p99', label: 'p99', color: levelTone('error').chart },
     ],
     unit: 'ms',
     emptyHint: 'Send http.server.request.duration to populate this panel',

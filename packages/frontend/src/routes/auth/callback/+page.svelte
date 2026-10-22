@@ -87,7 +87,7 @@
           {#if loading}
             Signing in...
           {:else if error}
-            Authentication Failed
+            Authentication failed
           {:else}
             Welcome!
           {/if}
@@ -111,7 +111,7 @@
           <AlertDescription>{error}</AlertDescription>
         </Alert>
         <Button href="/login" class="w-full">
-          Back to Login
+          Back to login
         </Button>
       {/if}
     </CardContent>

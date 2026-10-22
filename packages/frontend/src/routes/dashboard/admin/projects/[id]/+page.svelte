@@ -143,7 +143,7 @@
                 <CardHeader
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
-                    <CardTitle class="text-sm font-medium">API Keys</CardTitle>
+                    <CardTitle class="text-sm font-medium">API keys</CardTitle>
                     <Key class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
@@ -195,10 +195,10 @@
             </Card>
         </div>
 
-        <!-- API Keys Section -->
+        <!-- API keys section -->
         <Card>
             <CardHeader>
-                <CardTitle>API Keys</CardTitle>
+                <CardTitle>API keys</CardTitle>
             </CardHeader>
             <CardContent>
                 {#if project.apiKeys.length === 0}
@@ -407,7 +407,7 @@
                         class="ml-4"
                     >
                         <Trash2 class="mr-2 h-4 w-4" />
-                        Delete Project
+                        Delete project
                     </Button>
                 </div>
             </CardContent>

@@ -131,4 +131,17 @@ describe('IngestionSkewBanner', () => {
       expect(screen.getByText(/1\s+span ended with a timestamp/)).toBeInTheDocument();
     });
   });
+
+  it('uses the warning tokens, not raw amber classes', () => {
+    render(IngestionSkewBanner, {
+      props: {
+        skew: { count24h: 5, maxPastMs: 3600000, maxFutureMs: 0, lastSeenAt: '2026-07-17T08:55:00.000Z' },
+        signal: 'logs',
+      },
+    });
+    const alert = screen.getByRole('alert');
+    expect(alert.className).toContain('text-warning-text');
+    expect(alert.className).toContain('border-warning/50');
+    expect(alert.className).not.toMatch(/amber-/);
+  });
 });
