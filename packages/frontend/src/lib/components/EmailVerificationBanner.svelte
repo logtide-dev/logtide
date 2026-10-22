@@ -43,9 +43,9 @@
 {#if visible}
   <div
     role="status"
-    class="flex flex-wrap items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm"
+    class="flex flex-wrap items-center gap-3 border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm"
   >
-    <MailWarning class="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+    <MailWarning class="h-4 w-4 shrink-0 text-warning-text" />
     <span class="font-medium">Verify your email</span>
     <span class="text-muted-foreground">
       Confirm your address to create projects and API keys. We sent you a link.

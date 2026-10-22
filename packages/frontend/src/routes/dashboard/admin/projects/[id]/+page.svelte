@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -22,16 +24,7 @@
         Building2,
     } from "@lucide/svelte";
     import { Badge } from "$lib/components/ui/badge";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
     import { goto } from "$app/navigation";
 
     const projectId = $derived(page.params.id);
@@ -71,16 +64,11 @@
     }
 
     function formatDate(date: string) {
-        return new Date(date).toLocaleString('en-US', {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit"
-        });
+        return formatTimestamp(date, { precision: 'minute' });
     }
 
     function formatNumber(num: number) {
-        return new Intl.NumberFormat(undefined).format(num);
+        return new Intl.NumberFormat('en-US').format(num);
     }
 
     onMount(() => {
@@ -91,10 +79,29 @@
 </script>
 
 <svelte:head>
-    <title>{project?.name ?? 'Project'} - Admin - LogTide</title>
+    <title>{project?.name ?? 'Project'} - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
+<div class="space-y-6">
+    <PageHeader
+        title={project?.name ?? 'Project'}
+        appliesTo="instance"
+        description={project ? [project.organization_name, project.description].filter(Boolean).join(' - ') : undefined}
+        breadcrumbs={[
+            { label: 'All projects', href: '/dashboard/admin/projects' },
+            { label: project?.name ?? 'Project' },
+        ]}
+    >
+        {#snippet actions()}
+            {#if project}
+                <Button variant="outline" size="sm" onclick={loadProject} disabled={loading}>
+                    <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
+                    Refresh
+                </Button>
+            {/if}
+        {/snippet}
+    </PageHeader>
+
     {#if loading}
         <div class="flex justify-center p-12">
             <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
@@ -104,46 +111,7 @@
             {error}
         </div>
     {:else if project}
-        <!-- Header -->
-        <div class="flex items-start justify-between">
-            <div class="space-y-1">
-                <a
-                    href="/dashboard/admin/projects"
-                    class={buttonVariants({
-                        variant: "ghost",
-                        size: "sm",
-                    }) + " mb-2"}
-                >
-                    <ArrowLeft class="mr-2 h-4 w-4" />
-                    Back to Projects
-                </a>
-                <h1 class="text-3xl font-bold tracking-tight">
-                    {project.name}
-                </h1>
-                <div class="flex items-center gap-2">
-                    <Building2 class="h-4 w-4 text-muted-foreground" />
-                    <span class="text-muted-foreground">
-                        {project.organization_name}
-                    </span>
-                </div>
-                {#if project.description}
-                    <p class="text-muted-foreground mt-2">
-                        {project.description}
-                    </p>
-                {/if}
-            </div>
-            <Button
-                variant="outline"
-                size="sm"
-                onclick={loadProject}
-                disabled={loading}
-            >
-                <RefreshCw
-                    class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}"
-                />
-                Refresh
-            </Button>
-        </div>
+
 
         <!-- Stats Cards -->
         <div class="grid gap-4 md:grid-cols-4">
@@ -151,7 +119,7 @@
                 <CardHeader
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
-                    <CardTitle class="text-sm font-medium">Total Logs</CardTitle
+                    <CardTitle class="text-sm font-medium">Total logs</CardTitle
                     >
                     <Database class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
@@ -193,7 +161,7 @@
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
                     <CardTitle class="text-sm font-medium"
-                        >Alert Rules</CardTitle
+                        >Alert rules</CardTitle
                     >
                     <Bell class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
@@ -212,7 +180,7 @@
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
                     <CardTitle class="text-sm font-medium"
-                        >Sigma Rules</CardTitle
+                        >Sigma rules</CardTitle
                     >
                     <Shield class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
@@ -241,11 +209,11 @@
                     <Table.Root>
                         <Table.Header>
                             <Table.Row>
-                                <Table.Head>Key Name</Table.Head>
+                                <Table.Head>Key name</Table.Head>
                                 <Table.Head>Type</Table.Head>
                                 <Table.Head>Origins</Table.Head>
                                 <Table.Head>Created</Table.Head>
-                                <Table.Head>Last Used</Table.Head>
+                                <Table.Head>Last used</Table.Head>
                                 <Table.Head>Status</Table.Head>
                             </Table.Row>
                         </Table.Header>
@@ -257,7 +225,7 @@
                                     </Table.Cell>
                                     <Table.Cell>
                                         {#if apiKey.type === 'full'}
-                                            <Badge variant="default">Full Access</Badge>
+                                            <Badge variant="default">Full access</Badge>
                                         {:else}
                                             <Badge variant="secondary">Write-Only</Badge>
                                         {/if}
@@ -305,7 +273,7 @@
         <!-- Alert Rules Section -->
         <Card>
             <CardHeader>
-                <CardTitle>Alert Rules</CardTitle>
+                <CardTitle>Alert rules</CardTitle>
             </CardHeader>
             <CardContent>
                 {#if project.alertRules.length === 0}
@@ -316,7 +284,7 @@
                     <Table.Root>
                         <Table.Header>
                             <Table.Row>
-                                <Table.Head>Rule Name</Table.Head>
+                                <Table.Head>Rule name</Table.Head>
                                 <Table.Head>Status</Table.Head>
                                 <Table.Head>Created</Table.Head>
                             </Table.Row>
@@ -354,7 +322,7 @@
         <!-- Sigma Rules Section -->
         <Card>
             <CardHeader>
-                <CardTitle>Sigma Rules</CardTitle>
+                <CardTitle>Sigma rules</CardTitle>
             </CardHeader>
             <CardContent>
                 {#if project.sigmaRules.length === 0}
@@ -365,7 +333,7 @@
                     <Table.Root>
                         <Table.Header>
                             <Table.Row>
-                                <Table.Head>Rule Title</Table.Head>
+                                <Table.Head>Rule title</Table.Head>
                                 <Table.Head>Level</Table.Head>
                                 <Table.Head>Status</Table.Head>
                                 <Table.Head>Created</Table.Head>
@@ -421,12 +389,12 @@
         <!-- Danger Zone -->
         <Card class="border-destructive">
             <CardHeader>
-                <CardTitle class="text-destructive">Danger Zone</CardTitle>
+                <CardTitle class="text-destructive">Danger zone</CardTitle>
             </CardHeader>
             <CardContent>
                 <div class="flex items-center justify-between">
                     <div>
-                        <h4 class="font-semibold">Delete Project</h4>
+                        <h4 class="font-semibold">Delete project</h4>
                         <p class="text-sm text-muted-foreground mt-1">
                             This will permanently delete the project, all logs,
                             API keys, alert rules, and sigma rules. This action
@@ -447,20 +415,12 @@
     {/if}
 </div>
 
-<AlertDialog bind:open={showDeleteDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Delete Project</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to delete <strong>{project?.name}</strong>?
-                This will permanently delete all logs, API keys, alert rules, and sigma rules. This action cannot be undone.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Project"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDeleteDialog}
+    title="Delete project"
+    description="This permanently deletes all logs, API keys, alert rules and sigma rules of this project. This cannot be undone."
+    confirmLabel="Delete project"
+    requireText={project?.name ?? ""}
+    busy={deleting}
+    onConfirm={handleDelete}
+/>

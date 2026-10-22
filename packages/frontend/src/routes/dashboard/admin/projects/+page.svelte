@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { formatDateShort } from "$lib/utils/datetime";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -22,16 +24,7 @@
         Trash2,
     } from "@lucide/svelte";
     import { browser } from "$app/environment";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
 
     let projects = $state<ProjectBasic[]>([]);
     let loading = $state(true);
@@ -99,12 +92,7 @@
     }
 
     function formatDate(dateStr: string | Date) {
-        const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-        return date.toLocaleDateString('en-US', {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-        });
+        return formatDateShort(dateStr);
     }
 
     function formatNumber(num: number) {
@@ -119,29 +107,22 @@
 </script>
 
 <svelte:head>
-    <title>Projects - Admin - LogTide</title>
+    <title>All projects - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex justify-between items-center">
-        <div>
-            <h1 class="text-3xl font-bold tracking-tight">
-                Projects Management
-            </h1>
-            <p class="text-muted-foreground mt-1">
-                Manage all projects across organizations
-            </p>
-        </div>
-        <Button
-            variant="outline"
-            size="sm"
-            onclick={loadProjects}
-            disabled={loading}
-        >
-            <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
-            Refresh
-        </Button>
-    </div>
+<div class="space-y-6">
+    <PageHeader
+        title="All projects"
+        appliesTo="instance"
+        description="Manage all projects across organizations"
+    >
+        {#snippet actions()}
+            <Button variant="outline" size="sm" onclick={loadProjects} disabled={loading}>
+                <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
+                Refresh
+            </Button>
+        {/snippet}
+    </PageHeader>
 
     {#if error}
         <div class="bg-destructive/15 text-destructive p-4 rounded-md">
@@ -155,7 +136,7 @@
             <CardHeader
                 class="flex flex-row items-center justify-between space-y-0 pb-2"
             >
-                <CardTitle class="text-sm font-medium">Total Projects</CardTitle
+                <CardTitle class="text-sm font-medium">Total projects</CardTitle
                 >
                 <FolderKanban class="h-4 w-4 text-muted-foreground" />
             </CardHeader>
@@ -171,7 +152,7 @@
             <CardHeader
                 class="flex flex-row items-center justify-between space-y-0 pb-2"
             >
-                <CardTitle class="text-sm font-medium">Total Logs</CardTitle>
+                <CardTitle class="text-sm font-medium">Total logs</CardTitle>
                 <Database class="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -191,7 +172,7 @@
                 class="flex flex-row items-center justify-between space-y-0 pb-2"
             >
                 <CardTitle class="text-sm font-medium"
-                    >Active API Keys</CardTitle
+                    >Active API keys</CardTitle
                 >
                 <Key class="h-4 w-4 text-muted-foreground" />
             </CardHeader>
@@ -251,7 +232,7 @@
                 <Table.Root>
                     <Table.Header>
                         <Table.Row>
-                            <Table.Head>Project Name</Table.Head>
+                            <Table.Head>Project name</Table.Head>
                             <Table.Head>Organization</Table.Head>
                             <Table.Head class="text-right">Logs</Table.Head>
                             <Table.Head class="text-right">API Keys</Table.Head>
@@ -353,20 +334,12 @@
     </Card>
 </div>
 
-<AlertDialog bind:open={showDeleteDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Delete Project</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to delete <strong>{deleteTargetName}</strong>?
-                This will permanently delete all logs, API keys, alert rules, and sigma rules. This action cannot be undone.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Project"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDeleteDialog}
+    title="Delete project"
+    description="This permanently deletes all logs, API keys, alert rules and sigma rules of this project. This cannot be undone."
+    confirmLabel="Delete project"
+    requireText={deleteTargetName}
+    busy={deleting}
+    onConfirm={handleDelete}
+/>

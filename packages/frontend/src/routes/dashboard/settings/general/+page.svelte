@@ -9,38 +9,19 @@
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
   import Textarea from '$lib/components/ui/textarea/textarea.svelte';
-  import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
-  import { Separator } from '$lib/components/ui/separator';
-  import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-  } from '$lib/components/ui/select';
-  import { displayPreferences } from '$lib/stores/display-preferences';
-  import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger,
-  } from '$lib/components/ui/alert-dialog';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import SettingsSection from '$lib/components/app/SettingsSection.svelte';
+  import DangerZone from '$lib/components/app/DangerZone.svelte';
+  import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
+  import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
   import type { OrganizationWithRole } from '@logtide/shared';
   import Save from '@lucide/svelte/icons/save';
-  import Clock from '@lucide/svelte/icons/clock';
-  import Monitor from '@lucide/svelte/icons/monitor';
   import Trash2 from '@lucide/svelte/icons/trash-2';
 
-  let user: any = null;
   let token: string | null = null;
   let currentOrg = $state<OrganizationWithRole | null>(null);
   let saving = $state(false);
-  let deleting = $state(false);
+  let deleteOpen = $state(false);
 
   let orgName = $state('');
   let orgSlug = $state('');
@@ -48,7 +29,6 @@
   let slugError = $state<string | null>(null);
 
   const unsubAuthStore = authStore.subscribe((state) => {
-    user = state.user;
     token = state.token;
   });
 
@@ -97,7 +77,7 @@
       organizationStore.updateOrganization(response.organization.id, response.organization);
       orgSlug = response.organization.slug;
 
-      toastStore.success('Organization settings updated successfully');
+      toastStore.success('Organization updated');
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Failed to update organization settings';
       if (errorMsg.toLowerCase().includes('slug')) {
@@ -118,257 +98,138 @@
       return;
     }
 
-    deleting = true;
+    const orgId = currentOrg.id;
     try {
       const api = new OrganizationsAPI(() => token);
-      await api.deleteOrganization(currentOrg.id);
-
-      organizationStore.removeOrganization(currentOrg.id);
-
-      toastStore.success('Organization deleted successfully');
-      goto('/dashboard');
+      await api.deleteOrganization(orgId);
     } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : 'Failed to delete organization';
-      toastStore.error(errorMsg);
-    } finally {
-      deleting = false;
+      toastStore.error(e instanceof Error ? e.message : 'Failed to delete organization');
+      // Rethrow so the dialog stays open for a retry.
+      throw e;
     }
+
+    organizationStore.removeOrganization(orgId);
+    toastStore.success('Organization deleted');
+    goto('/dashboard');
   }
 
   let isOwner = $derived(currentOrg?.role === 'owner');
-
-  // Display preferences are per viewer and stored in the browser, so they need
-  // no role check and no save button: every change applies immediately.
-  const BROWSER_TIMEZONE = '__browser__';
-
-  const timeFormatOptions = [
-    { value: '24', label: '24-hour' },
-    { value: '12', label: '12-hour (AM/PM)' },
-  ];
-
-  // Intl.supportedValuesOf is newer than the TS lib this project targets and is
-  // missing in older runtimes; an empty list still leaves "Browser default"
-  // usable rather than breaking the card.
-  const timeZones: string[] = (() => {
-    const intl = Intl as typeof Intl & {
-      supportedValuesOf?: (key: 'timeZone') => string[];
-    };
-    try {
-      return intl.supportedValuesOf?.('timeZone') ?? [];
-    } catch {
-      return [];
-    }
-  })();
-
-  let timeFormatValue = $derived($displayPreferences.hour12 ? '12' : '24');
-  let timeZoneValue = $derived($displayPreferences.timeZone ?? BROWSER_TIMEZONE);
-  let timeZoneLabel = $derived($displayPreferences.timeZone ?? 'Browser default');
-
-  function setTimeFormat(value: string) {
-    displayPreferences.set({ ...$displayPreferences, hour12: value === '12' });
-  }
-
-  function setTimeZone(value: string) {
-    displayPreferences.set({
-      ...$displayPreferences,
-      timeZone: value === BROWSER_TIMEZONE ? null : value,
-    });
-  }
 </script>
 
 <svelte:head>
-  <title>Organization Settings - LogTide</title>
+  <title>General - LogTide</title>
 </svelte:head>
 
-<div class="space-y-6">
-  <Card>
-    <CardHeader>
-      <CardTitle>Organization Information</CardTitle>
-      <CardDescription>Update your organization details</CardDescription>
-    </CardHeader>
-    <CardContent>
-      <form onsubmit={(e) => { e.preventDefault(); saveOrganization(); }} class="space-y-4">
-        <div class="space-y-2">
-          <Label for="org-name">Organization Name</Label>
-          <Input
-            id="org-name"
-            type="text"
-            placeholder="My Organization"
-            bind:value={orgName}
-            disabled={saving || !isOwner}
-            required
-          />
-          {#if !isOwner}
-            <p class="text-sm text-muted-foreground">Only the owner can edit the organization name</p>
-          {/if}
-        </div>
+<div class="space-y-8">
+  <PageHeader
+    title="General"
+    appliesTo="organization"
+    description="Name, URL slug and description of this organization."
+  />
 
-        <div class="space-y-2">
-          <Label for="org-slug">Slug (URL-friendly identifier)</Label>
-          <Input
-            id="org-slug"
-            type="text"
-            bind:value={orgSlug}
-            disabled={saving || !isOwner}
-          />
-          <p class="text-sm text-muted-foreground">
-            Used in URLs like <code>/status/{orgSlug || 'your-slug'}/...</code>. Changing this breaks any existing status-page links and embed badges.
-          </p>
-          {#if slugError}
-            <p class="text-sm text-destructive">{slugError}</p>
-          {/if}
-        </div>
+  {#if !isOwner}
+    <ReadOnlyNotice requiredRole="owner" what="the organization name, URL slug and description" />
+  {/if}
 
-        <div class="space-y-2">
-          <Label for="org-description">Description</Label>
-          <Textarea
-            id="org-description"
-            placeholder="A brief description of your organization"
-            bind:value={orgDescription}
-            disabled={saving || !isOwner}
-            rows={3}
-          />
-        </div>
-
-        <Separator />
-
-        <Button type="submit" disabled={saving || !isOwner} class="gap-2">
-          <Save class="w-4 h-4" />
-          {saving ? 'Saving...' : 'Save Changes'}
-        </Button>
-      </form>
-    </CardContent>
-  </Card>
-
-  <Card>
-    <CardHeader>
-      <div class="flex items-center gap-2">
-        <Clock class="w-5 h-5 text-primary" />
-        <div>
-          <CardTitle>Log Retention Policy</CardTitle>
-          <CardDescription>How long logs are retained for this organization</CardDescription>
-        </div>
+  <SettingsSection title="Organization information" description="Update your organization details">
+    <form onsubmit={(e) => { e.preventDefault(); saveOrganization(); }} class="space-y-4">
+      <div class="space-y-2">
+        <Label for="org-name">Organization name</Label>
+        <Input
+          id="org-name"
+          type="text"
+          placeholder="My organization"
+          bind:value={orgName}
+          disabled={saving || !isOwner}
+          required
+        />
       </div>
-    </CardHeader>
-    <CardContent>
-      <div class="space-y-4">
-        <div class="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-          <div class="flex-1">
-            <div class="text-2xl font-bold">
-              {#if currentOrg?.retentionDays != null}
-                {currentOrg.retentionDays} days
-              {:else}
-                <span class="text-muted-foreground">...</span>
-              {/if}
-            </div>
-            <p class="text-sm text-muted-foreground">
-              Logs older than this will be automatically deleted
-            </p>
-          </div>
-        </div>
+
+      <div class="space-y-2">
+        <Label for="org-slug">URL slug</Label>
+        <Input
+          id="org-slug"
+          type="text"
+          bind:value={orgSlug}
+          disabled={saving || !isOwner}
+        />
         <p class="text-sm text-muted-foreground">
-          The log retention policy is configured by your system administrator.
-          Contact your admin if you need to change this setting.
+          Used in URLs like <code>/status/{orgSlug || 'your-slug'}/...</code>. Changing this breaks any existing status-page links and embed badges.
         </p>
+        {#if slugError}
+          <p class="text-sm text-destructive-text">{slugError}</p>
+        {/if}
       </div>
-    </CardContent>
-  </Card>
 
-  <Card>
-    <CardHeader>
-      <div class="flex items-center gap-2">
-        <Monitor class="w-5 h-5 text-primary" />
-        <div>
-          <CardTitle>Display</CardTitle>
-          <CardDescription>How timestamps are rendered for you in this browser</CardDescription>
+      <div class="space-y-2">
+        <Label for="org-description">Description</Label>
+        <Textarea
+          id="org-description"
+          placeholder="A brief description of your organization"
+          bind:value={orgDescription}
+          disabled={saving || !isOwner}
+          rows={3}
+        />
+      </div>
+
+      <Button type="submit" disabled={saving || !isOwner} class="gap-2">
+        <Save class="w-4 h-4" aria-hidden="true" />
+        {saving ? 'Saving...' : 'Save changes'}
+      </Button>
+    </form>
+  </SettingsSection>
+
+  <SettingsSection title="Log retention policy" description="How long logs are retained for this organization">
+    <div class="space-y-4">
+      <div class="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+        <div class="flex-1">
+          <div class="text-2xl font-bold">
+            {#if currentOrg?.retentionDays != null}
+              {currentOrg.retentionDays} days
+            {:else}
+              <span class="text-muted-foreground">...</span>
+            {/if}
+          </div>
+          <p class="text-sm text-muted-foreground">
+            Logs older than this will be automatically deleted
+          </p>
         </div>
       </div>
-    </CardHeader>
-    <CardContent>
-      <div class="space-y-4">
-        <div class="space-y-2">
-          <Label>Time format</Label>
-          <Select type="single" value={timeFormatValue} onValueChange={(v) => v && setTimeFormat(v)}>
-            <SelectTrigger>
-              <SelectValue>
-                {timeFormatOptions.find((o) => o.value === timeFormatValue)?.label}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {#each timeFormatOptions as option (option.value)}
-                <SelectItem value={option.value}>{option.label}</SelectItem>
-              {/each}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div class="space-y-2">
-          <Label>Timezone</Label>
-          <Select type="single" value={timeZoneValue} onValueChange={(v) => v && setTimeZone(v)}>
-            <SelectTrigger>
-              <SelectValue>{timeZoneLabel}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={BROWSER_TIMEZONE}>Browser default</SelectItem>
-              {#each timeZones as zone (zone)}
-                <SelectItem value={zone}>{zone}</SelectItem>
-              {/each}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <p class="text-sm text-muted-foreground">Applies to dashboard panels.</p>
-      </div>
-    </CardContent>
-  </Card>
+      <p class="text-sm text-muted-foreground">
+        The log retention policy is configured by your system administrator.
+        Contact your admin if you need to change this setting.
+      </p>
+    </div>
+  </SettingsSection>
 
   {#if isOwner}
-    <Card class="border-destructive">
-      <CardHeader>
-        <CardTitle class="text-destructive">Danger Zone</CardTitle>
-        <CardDescription>Irreversible and destructive actions</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div class="flex items-start justify-between gap-4">
-          <div>
-            <h4 class="font-medium mb-1">Delete Organization</h4>
-            <p class="text-sm text-muted-foreground">
-              Permanently delete this organization and all associated projects and logs. This action cannot be undone.
-            </p>
-          </div>
-          <AlertDialog>
-            <AlertDialogTrigger class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10 px-4 py-2 flex-shrink-0">
-              <Trash2 class="w-4 h-4" />
-              Delete
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete Organization?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Are you sure you want to delete <strong>{currentOrg?.name}</strong>?
-                  This will permanently delete:
-                  <ul class="list-disc list-inside mt-2 space-y-1">
-                    <li>All projects in this organization</li>
-                    <li>All logs and data</li>
-                    <li>All members will lose access</li>
-                  </ul>
-                  <p class="mt-4 font-semibold text-destructive">This action cannot be undone!</p>
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onclick={deleteOrganization}
-                  disabled={deleting}
-                  class="bg-destructive hover:bg-destructive/90"
-                >
-                  {deleting ? 'Deleting...' : 'Delete Organization'}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+    <p class="text-sm text-muted-foreground" data-testid="transfer-pointer">
+      To hand the organization to someone else, use Transfer ownership on the
+      <a href="/dashboard/settings/members" class="text-primary hover:underline">Members page</a>.
+    </p>
+
+    <DangerZone>
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 class="font-medium mb-1">Delete organization</h3>
+          <p class="text-sm text-muted-foreground">
+            Permanently delete this organization and all associated projects and logs. This action cannot be undone.
+          </p>
         </div>
-      </CardContent>
-    </Card>
+        <Button variant="destructive" class="gap-2 flex-shrink-0" onclick={() => (deleteOpen = true)}>
+          <Trash2 class="w-4 h-4" aria-hidden="true" />
+          Delete organization
+        </Button>
+      </div>
+    </DangerZone>
   {/if}
 </div>
+
+<ConfirmDialog
+  bind:open={deleteOpen}
+  title="Delete organization"
+  description="This permanently deletes all projects, logs and data in this organization, and every member loses access. This cannot be undone."
+  confirmLabel="Delete organization"
+  requireText={currentOrg?.name}
+  onConfirm={deleteOrganization}
+/>

@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -131,13 +133,13 @@
     }
 
     function aggregateStaleness(agg: AggregateStatsItem): { label: string; color: string } {
-        if (!agg.lastRefresh) return { label: "Never refreshed", color: "text-red-500" };
+        if (!agg.lastRefresh) return { label: "Never refreshed", color: "text-destructive-text" };
         const now = new Date();
         const last = new Date(agg.lastRefresh);
         const diffMin = Math.round((now.getTime() - last.getTime()) / 60000);
-        if (diffMin < 120) return { label: `${diffMin}m ago`, color: "text-green-500" };
-        if (diffMin < 1440) return { label: `${Math.round(diffMin / 60)}h ago`, color: "text-yellow-500" };
-        return { label: `${Math.round(diffMin / 1440)}d ago`, color: "text-red-500" };
+        if (diffMin < 120) return { label: `${diffMin}m ago`, color: "text-success-text" };
+        if (diffMin < 1440) return { label: `${Math.round(diffMin / 60)}h ago`, color: "text-warning-text" };
+        return { label: `${Math.round(diffMin / 1440)}d ago`, color: "text-destructive-text" };
     }
 
     let totalSpaceSaved = $derived(
@@ -151,46 +153,43 @@
         isMongoDB ? 'MongoDB' : isClickHouse ? 'ClickHouse' : 'TimescaleDB'
     );
     let engineBadgeClass = $derived(
-        isMongoDB ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-        : isClickHouse ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400'
-        : 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+        isMongoDB ? 'bg-success/10 text-success-text'
+        : isClickHouse ? 'bg-warning/10 text-warning-text'
+        : 'bg-info/10 text-info-text'
     );
 </script>
 
 <svelte:head>
-    <title>System Health - LogTide Admin</title>
+    <title>System health - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <!-- Header -->
-    <div class="flex justify-between items-center">
-        <div>
-            <div class="flex items-center gap-2.5">
-                <h1 class="text-2xl font-bold tracking-tight">System Health</h1>
-                {#if healthStats?.storageEngine}
-                    <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
-                        {engineLabel}
-                    </span>
-                {/if}
-            </div>
-            <p class="text-sm text-muted-foreground mt-0.5">
-                {isClickHouse
-                    ? 'PostgreSQL, ClickHouse, compression & infrastructure diagnostics'
-                    : isMongoDB
-                    ? 'MongoDB & infrastructure diagnostics'
-                    : 'Database, compression, aggregates & infrastructure diagnostics'}
-            </p>
-        </div>
-        <div class="flex items-center gap-3">
+<div class="space-y-6">
+    <PageHeader
+        title="System health"
+        appliesTo="instance"
+        description={isClickHouse
+            ? 'PostgreSQL, ClickHouse, compression and infrastructure diagnostics'
+            : isMongoDB
+            ? 'MongoDB and infrastructure diagnostics'
+            : 'Database, compression, aggregates and infrastructure diagnostics'}
+    >
+        {#snippet meta()}
+            {#if healthStats?.storageEngine}
+                <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
+                    {engineLabel}
+                </span>
+            {/if}
+        {/snippet}
+        {#snippet actions()}
             <span class="text-xs text-muted-foreground">
-                {lastRefreshed.toLocaleTimeString('en-US')}
+                {formatTimestamp(lastRefreshed, { precision: 'second' })}
             </span>
             <Button variant="outline" size="sm" onclick={loadData} disabled={loading}>
                 <RefreshCw class="mr-1.5 h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
                 Refresh
             </Button>
-        </div>
-    </div>
+        {/snippet}
+    </PageHeader>
 
     {#if error}
         <div class="bg-destructive/15 text-destructive p-4 rounded-md flex items-center gap-2">
@@ -202,7 +201,7 @@
     {#if $authStore.user?.is_admin}
         <!-- Connection Pool & Health -->
         <div class="grid gap-4 md:grid-cols-2 {isClickHouse || isMongoDB ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}">
-            <Card class={healthStats?.database.status === 'healthy' ? 'border-green-500/30' : healthStats?.database.status === 'degraded' ? 'border-yellow-500/30' : 'border-red-500/30'}>
+            <Card class={healthStats?.database.status === 'healthy' ? 'border-success/30' : healthStats?.database.status === 'degraded' ? 'border-warning/30' : 'border-destructive/30'}>
                 <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle class="text-sm font-medium">
                         {isClickHouse ? 'PostgreSQL' : isMongoDB ? 'MongoDB' : 'Database'}
@@ -212,7 +211,7 @@
                 <CardContent class="space-y-3">
                     <div class="flex justify-between items-center">
                         <span class="text-sm text-muted-foreground">Status</span>
-                        <span class="font-medium capitalize {healthStats?.database.status === 'healthy' ? 'text-green-500' : healthStats?.database.status === 'degraded' ? 'text-yellow-500' : 'text-red-500'}">
+                        <span class="font-medium capitalize {healthStats?.database.status === 'healthy' ? 'text-success-text' : healthStats?.database.status === 'degraded' ? 'text-warning-text' : 'text-destructive-text'}">
                             {healthStats?.database.status ?? "..."}
                         </span>
                     </div>
@@ -231,15 +230,15 @@
             </Card>
 
             {#if isClickHouse && healthStats?.clickhouse}
-                <Card class={healthStats.clickhouse.status === 'healthy' ? 'border-green-500/30' : healthStats.clickhouse.status === 'degraded' ? 'border-yellow-500/30' : 'border-red-500/30'}>
+                <Card class={healthStats.clickhouse.status === 'healthy' ? 'border-success/30' : healthStats.clickhouse.status === 'degraded' ? 'border-warning/30' : 'border-destructive/30'}>
                     <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle class="text-sm font-medium">ClickHouse</CardTitle>
-                        <Database class="h-4 w-4 text-orange-500" />
+                        <Database class="h-4 w-4 text-warning-text" />
                     </CardHeader>
                     <CardContent class="space-y-3">
                         <div class="flex justify-between items-center">
                             <span class="text-sm text-muted-foreground">Status</span>
-                            <span class="font-medium capitalize {healthStats.clickhouse.status === 'healthy' ? 'text-green-500' : healthStats.clickhouse.status === 'degraded' ? 'text-yellow-500' : 'text-red-500'}">
+                            <span class="font-medium capitalize {healthStats.clickhouse.status === 'healthy' ? 'text-success-text' : healthStats.clickhouse.status === 'degraded' ? 'text-warning-text' : 'text-destructive-text'}">
                                 {healthStats.clickhouse.status}
                             </span>
                         </div>
@@ -255,15 +254,15 @@
             {/if}
 
             {#if isMongoDB && healthStats?.mongodb}
-                <Card class={healthStats.mongodb.status === 'healthy' ? 'border-green-500/30' : healthStats.mongodb.status === 'degraded' ? 'border-yellow-500/30' : 'border-red-500/30'}>
+                <Card class={healthStats.mongodb.status === 'healthy' ? 'border-success/30' : healthStats.mongodb.status === 'degraded' ? 'border-warning/30' : 'border-destructive/30'}>
                     <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
                         <CardTitle class="text-sm font-medium">MongoDB</CardTitle>
-                        <Database class="h-4 w-4 text-green-500" />
+                        <Database class="h-4 w-4 text-success-text" />
                     </CardHeader>
                     <CardContent class="space-y-3">
                         <div class="flex justify-between items-center">
                             <span class="text-sm text-muted-foreground">Status</span>
-                            <span class="font-medium capitalize {healthStats.mongodb.status === 'healthy' ? 'text-green-500' : healthStats.mongodb.status === 'degraded' ? 'text-yellow-500' : 'text-red-500'}">
+                            <span class="font-medium capitalize {healthStats.mongodb.status === 'healthy' ? 'text-success-text' : healthStats.mongodb.status === 'degraded' ? 'text-warning-text' : 'text-destructive-text'}">
                                 {healthStats.mongodb.status}
                             </span>
                         </div>
@@ -280,7 +279,7 @@
 
             <Card>
                 <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle class="text-sm font-medium">Connection Pool</CardTitle>
+                    <CardTitle class="text-sm font-medium">Connection pool</CardTitle>
                     <Server class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent class="space-y-3">
@@ -294,7 +293,7 @@
                     </div>
                     <div class="flex justify-between items-center">
                         <span class="text-sm text-muted-foreground">Waiting</span>
-                        <span class="font-medium {(healthStats?.pool.waitingRequests ?? 0) > 0 ? 'text-yellow-500' : ''}">
+                        <span class="font-medium {(healthStats?.pool.waitingRequests ?? 0) > 0 ? 'text-warning-text' : ''}">
                             {healthStats?.pool.waitingRequests ?? "..."}
                         </span>
                     </div>
@@ -315,7 +314,7 @@
                             <span class="font-medium">{redisStats?.memory.used ?? "..."}</span>
                         </div>
                         <div class="flex justify-between items-center">
-                            <span class="text-sm text-muted-foreground">Peak Memory</span>
+                            <span class="text-sm text-muted-foreground">Peak memory</span>
                             <span class="font-medium">{redisStats?.memory.peak ?? "..."}</span>
                         </div>
                         <div class="flex justify-between items-center">
@@ -331,7 +330,7 @@
         <Card>
             <CardHeader class="pb-3">
                 <div class="flex items-center justify-between">
-                    <CardTitle class="text-sm font-medium">Database Tables</CardTitle>
+                    <CardTitle class="text-sm font-medium">Database tables</CardTitle>
                     {#if databaseStats}
                         <span class="text-xs text-muted-foreground">
                             Total: <span class="font-medium text-foreground">{databaseStats.totalSize}</span>
@@ -347,7 +346,7 @@
                                 <Table.Head>Table</Table.Head>
                                 <Table.Head class="text-right">Rows</Table.Head>
                                 <Table.Head class="text-right">Size</Table.Head>
-                                <Table.Head class="text-right">Index Size</Table.Head>
+                                <Table.Head class="text-right">Index size</Table.Head>
                             </Table.Row>
                         </Table.Header>
                         <Table.Body>
@@ -356,8 +355,8 @@
                                 <Table.Row>
                                     <Table.Cell class="font-mono text-sm">
                                         {#if isCh}
-                                            <span class="text-orange-500">{table.name.replace('clickhouse.', '')}</span>
-                                            <span class="text-xs text-orange-400/70 ml-1">CH</span>
+                                            <span class="text-warning-text">{table.name.replace('clickhouse.', '')}</span>
+                                            <span class="text-xs text-warning-text/70 ml-1">CH</span>
                                         {:else}
                                             {table.name.replace('public.', '')}
                                         {/if}
@@ -385,7 +384,7 @@
                     <div class="flex items-center justify-between">
                         <CardTitle class="text-sm font-medium">Compression</CardTitle>
                         {#if totalSpaceSaved > 0}
-                            <span class="text-xs text-green-500 font-medium">
+                            <span class="text-xs text-success-text font-medium">
                                 {formatBytes(totalSpaceSaved)} saved
                             </span>
                         {/if}
@@ -398,7 +397,7 @@
                                 <div class="space-y-1.5">
                                     <div class="flex items-center justify-between">
                                         <span class="font-mono text-sm">{ht.hypertable}</span>
-                                        <span class="text-sm font-medium text-green-500">
+                                        <span class="text-sm font-medium text-success-text">
                                             {ht.compressionRatio > 0 ? `${ht.compressionRatio.toFixed(1)}x` : "N/A"}
                                         </span>
                                     </div>
@@ -410,7 +409,7 @@
                                     {#if ht.totalChunks > 0}
                                         <div class="h-1.5 bg-muted rounded-full overflow-hidden">
                                             <div
-                                                class="h-full bg-green-500 rounded-full transition-all"
+                                                class="h-full bg-success rounded-full transition-all"
                                                 style="width: {Math.round((ht.compressedChunks / ht.totalChunks) * 100)}%"
                                             ></div>
                                         </div>
@@ -432,7 +431,7 @@
             {#if !isClickHouse && !isMongoDB}
                 <Card>
                     <CardHeader class="pb-3">
-                        <CardTitle class="text-sm font-medium">Continuous Aggregates</CardTitle>
+                        <CardTitle class="text-sm font-medium">Continuous aggregates</CardTitle>
                     </CardHeader>
                     <CardContent>
                         {#if aggregateStats.length > 0}
@@ -470,18 +469,18 @@
         <!-- Performance Stats -->
         <Card>
             <CardHeader class="pb-3">
-                <CardTitle class="text-sm font-medium">Storage & Performance</CardTitle>
+                <CardTitle class="text-sm font-medium">Storage & performance</CardTitle>
             </CardHeader>
             <CardContent>
                 <div class="grid gap-6 md:grid-cols-2 {isClickHouse || isMongoDB ? '' : 'lg:grid-cols-4'}">
                     {#if !isClickHouse && !isMongoDB}
                         <div>
-                            <div class="text-xs text-muted-foreground mb-1">Logs Storage</div>
+                            <div class="text-xs text-muted-foreground mb-1">Logs storage</div>
                             <div class="text-lg font-bold">{performanceStats?.storage.logsSize || "..."}</div>
                         </div>
                         <div>
-                            <div class="text-xs text-muted-foreground mb-1">Compression Ratio</div>
-                            <div class="text-lg font-bold text-green-500">
+                            <div class="text-xs text-muted-foreground mb-1">Compression ratio</div>
+                            <div class="text-lg font-bold text-success-text">
                                 {performanceStats?.storage.compressionRatio
                                     ? `${performanceStats.storage.compressionRatio.toFixed(1)}x`
                                     : "..."}
@@ -489,7 +488,7 @@
                         </div>
                     {/if}
                     <div>
-                        <div class="text-xs text-muted-foreground mb-1">Ingestion Throughput</div>
+                        <div class="text-xs text-muted-foreground mb-1">Ingestion throughput</div>
                         <div class="text-lg font-bold">
                             {performanceStats
                                 ? `${performanceStats.ingestion.throughput.toFixed(1)} logs/s`
@@ -498,7 +497,7 @@
                     </div>
                     {#if !isClickHouse && !isMongoDB}
                         <div>
-                            <div class="text-xs text-muted-foreground mb-1">Avg Latency</div>
+                            <div class="text-xs text-muted-foreground mb-1">Avg latency</div>
                             <div class="text-lg font-bold">
                                 {performanceStats
                                     ? `${Math.round(performanceStats.ingestion.avgLatency)}ms`
@@ -514,12 +513,12 @@
         {#if healthStats?.redis.status !== "not_configured"}
             <Card>
                 <CardHeader class="pb-3">
-                    <CardTitle class="text-sm font-medium">Worker Queues</CardTitle>
+                    <CardTitle class="text-sm font-medium">Worker queues</CardTitle>
                 </CardHeader>
                 <CardContent>
                     <div class="grid gap-4 md:grid-cols-2">
                         <div class="rounded-md border p-4">
-                            <h4 class="text-sm font-medium mb-3">Alert Notifications</h4>
+                            <h4 class="text-sm font-medium mb-3">Alert notifications</h4>
                             <div class="grid grid-cols-2 gap-3 text-sm">
                                 <div>
                                     <div class="text-xs text-muted-foreground">Waiting</div>
@@ -531,18 +530,18 @@
                                 </div>
                                 <div>
                                     <div class="text-xs text-muted-foreground">Completed</div>
-                                    <div class="font-bold text-green-500">{redisStats?.queues.alertNotifications.completed ?? "..."}</div>
+                                    <div class="font-bold text-success-text">{redisStats?.queues.alertNotifications.completed ?? "..."}</div>
                                 </div>
                                 <div>
                                     <div class="text-xs text-muted-foreground">Failed</div>
-                                    <div class="font-bold {(redisStats?.queues.alertNotifications.failed ?? 0) > 0 ? 'text-red-500' : ''}">
+                                    <div class="font-bold {(redisStats?.queues.alertNotifications.failed ?? 0) > 0 ? 'text-destructive-text' : ''}">
                                         {redisStats?.queues.alertNotifications.failed ?? "..."}
                                     </div>
                                 </div>
                             </div>
                         </div>
                         <div class="rounded-md border p-4">
-                            <h4 class="text-sm font-medium mb-3">Sigma Detection</h4>
+                            <h4 class="text-sm font-medium mb-3">Sigma detection</h4>
                             <div class="grid grid-cols-2 gap-3 text-sm">
                                 <div>
                                     <div class="text-xs text-muted-foreground">Waiting</div>
@@ -554,11 +553,11 @@
                                 </div>
                                 <div>
                                     <div class="text-xs text-muted-foreground">Completed</div>
-                                    <div class="font-bold text-green-500">{redisStats?.queues.sigmaDetection.completed ?? "..."}</div>
+                                    <div class="font-bold text-success-text">{redisStats?.queues.sigmaDetection.completed ?? "..."}</div>
                                 </div>
                                 <div>
                                     <div class="text-xs text-muted-foreground">Failed</div>
-                                    <div class="font-bold {(redisStats?.queues.sigmaDetection.failed ?? 0) > 0 ? 'text-red-500' : ''}">
+                                    <div class="font-bold {(redisStats?.queues.sigmaDetection.failed ?? 0) > 0 ? 'text-destructive-text' : ''}">
                                         {redisStats?.queues.sigmaDetection.failed ?? "..."}
                                     </div>
                                 </div>
@@ -607,7 +606,7 @@
                                             {q.query}
                                         </div>
                                     </Table.Cell>
-                                    <Table.Cell class="text-right font-medium {q.durationMs > 5000 ? 'text-red-500' : q.durationMs > 1000 ? 'text-yellow-500' : ''}">
+                                    <Table.Cell class="text-right font-medium {q.durationMs > 5000 ? 'text-destructive-text' : q.durationMs > 1000 ? 'text-warning-text' : ''}">
                                         {q.durationMs > 1000 ? `${(q.durationMs / 1000).toFixed(1)}s` : `${q.durationMs}ms`}
                                     </Table.Cell>
                                     <Table.Cell>
@@ -637,7 +636,7 @@
                     <div class="flex items-center justify-between">
                         <div class="flex items-center gap-2">
                             <Clock class="h-4 w-4 text-muted-foreground" />
-                            <CardTitle class="text-sm font-medium">Slowest Queries (Historical)</CardTitle>
+                            <CardTitle class="text-sm font-medium">Slowest queries (historical)</CardTitle>
                         </div>
                         <span class="text-xs text-muted-foreground">via pg_stat_statements</span>
                     </div>
@@ -663,7 +662,7 @@
                                             </div>
                                         </Table.Cell>
                                         <Table.Cell class="text-right">{formatNumber(q.calls)}</Table.Cell>
-                                        <Table.Cell class="text-right font-medium {q.avg_ms > 100 ? 'text-red-500' : q.avg_ms > 10 ? 'text-yellow-500' : ''}">
+                                        <Table.Cell class="text-right font-medium {q.avg_ms > 100 ? 'text-destructive-text' : q.avg_ms > 10 ? 'text-warning-text' : ''}">
                                             {q.avg_ms.toFixed(1)}ms
                                         </Table.Cell>
                                         <Table.Cell class="text-right">
@@ -685,7 +684,7 @@
             <div class="bg-muted/50 p-6 rounded-full mb-4">
                 <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-            <h2 class="text-xl font-semibold">Verifying Access...</h2>
+            <h2 class="text-xl font-semibold">Verifying access...</h2>
             <p class="text-muted-foreground mt-2">Updating your profile permissions.</p>
         </div>
     {/if}

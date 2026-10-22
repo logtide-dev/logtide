@@ -1,0 +1,78 @@
+import { describe, it, expect } from 'vitest';
+import { SETTINGS_GROUPS, visibleSettingsItems, visibleSettingsGroups } from './settings-nav';
+
+const labels = (items: { label: string }[]) => items.map((i) => i.label);
+
+describe('settings nav definition', () => {
+  it('visibleSettingsItems hides Audit log and Billing from members', () => {
+    const items = visibleSettingsItems({ role: 'member', billingEnabled: true });
+    expect(labels(items)).not.toContain('Audit log');
+    expect(labels(items)).not.toContain('Billing');
+  });
+
+  it('shows Audit log and Billing to admins when billing is enabled', () => {
+    const items = visibleSettingsItems({ role: 'admin', billingEnabled: true });
+    expect(labels(items)).toContain('Audit log');
+    expect(labels(items)).toContain('Billing');
+  });
+
+  it('hides Billing when billingEnabled is false even for owners', () => {
+    const items = visibleSettingsItems({ role: 'owner', billingEnabled: false });
+    expect(labels(items)).not.toContain('Billing');
+    expect(labels(items)).toContain('Audit log');
+  });
+
+  it('treats an unknown role as a plain member', () => {
+    const items = visibleSettingsItems({ role: null, billingEnabled: true });
+    expect(labels(items)).not.toContain('Audit log');
+  });
+
+  it('shows Usage always', () => {
+    for (const role of ['owner', 'admin', 'member', null] as const) {
+      expect(labels(visibleSettingsItems({ role, billingEnabled: false }))).toContain('Usage');
+    }
+  });
+
+  it('every href is unique and starts with /dashboard/', () => {
+    const hrefs = SETTINGS_GROUPS.flatMap((g) => g.items.map((i) => i.href));
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+    for (const h of hrefs) expect(h.startsWith('/dashboard/')).toBe(true);
+    const ids = SETTINGS_GROUPS.flatMap((g) => g.items.map((i) => i.id));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('has the five groups in order', () => {
+    expect(SETTINGS_GROUPS.map((g) => g.label)).toEqual([
+      'Account',
+      'Organization',
+      'Data',
+      'Notifications',
+      'Projects',
+    ]);
+  });
+
+  it('Notifications entries match the four W11 paths exactly', () => {
+    const group = SETTINGS_GROUPS.find((g) => g.label === 'Notifications')!;
+    expect(group.items.map((i) => [i.label, i.href])).toEqual([
+      ['Destinations', '/dashboard/settings/notifications/destinations'],
+      ['Routing', '/dashboard/settings/notifications/routing'],
+      ['Digests', '/dashboard/settings/notifications/digests'],
+      ['Delivery log', '/dashboard/settings/notifications/delivery-log'],
+    ]);
+  });
+
+  it('Account entries use the settings shell paths and apply to you', () => {
+    const group = SETTINGS_GROUPS.find((g) => g.label === 'Account')!;
+    expect(group.items.map((i) => i.href)).toEqual([
+      '/dashboard/settings/account/profile',
+      '/dashboard/settings/account/preferences',
+      '/dashboard/settings/account/security',
+    ]);
+    for (const i of group.items) expect(i.appliesTo).toBe('you');
+  });
+
+  it('drops groups that end up empty', () => {
+    const groups = visibleSettingsGroups({ role: 'member', billingEnabled: false });
+    for (const g of groups) expect(g.items.length).toBeGreaterThan(0);
+  });
+});

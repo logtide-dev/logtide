@@ -42,6 +42,10 @@ const updateMemberRoleSchema = z.object({
   role: z.enum(['admin', 'member']),
 });
 
+const transferOwnershipBodySchema = z.object({
+  userId: z.string().uuid('Invalid user ID format'),
+});
+
 const upgradeHandoffBodySchema = z.object({
   intent: z.enum(['upgrade', 'manage']),
 });
@@ -304,6 +308,46 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
           return reply.status(400).send({
             error: error.message,
           });
+        }
+      }
+
+      throw error;
+    }
+  });
+
+  // Transfer ownership (owner only). The previous owner becomes an admin.
+  fastify.post('/:id/transfer-ownership', async (request: any, reply) => {
+    try {
+      const { id } = organizationIdSchema.parse(request.params);
+      const { userId } = transferOwnershipBodySchema.parse(request.body);
+
+      const result = await organizationsService.transferOwnership(id, request.user.id, userId);
+
+      await auditLogService.record({
+        action: 'org.ownership_transferred',
+        target: { type: 'organization', id },
+        organizationId: id,
+        metadata: { previousOwnerId: result.previousOwnerId, newOwnerId: result.newOwnerId },
+      });
+
+      return reply.send({ success: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          error: 'Validation error',
+          details: error.errors,
+        });
+      }
+
+      if (error instanceof Error) {
+        if (error.message.includes('Only the organization owner')) {
+          return reply.status(403).send({ error: error.message });
+        }
+        if (error.message.includes('not found')) {
+          return reply.status(404).send({ error: error.message });
+        }
+        if (error.message.includes('already own') || error.message.includes('must be a member')) {
+          return reply.status(400).send({ error: error.message });
         }
       }
 

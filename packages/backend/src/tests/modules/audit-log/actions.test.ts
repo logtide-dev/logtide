@@ -38,3 +38,10 @@ describe('audit action registry', () => {
     for (const a of required) expect(isAuditAction(a)).toBe(true);
   });
 });
+
+describe('ownership transfer audit action', () => {
+  it('maps org.ownership_transferred to user_management', () => {
+    expect(isAuditAction('org.ownership_transferred')).toBe(true);
+    expect(categoryFor('org.ownership_transferred')).toBe('user_management');
+  });
+});

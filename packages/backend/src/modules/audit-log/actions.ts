@@ -13,6 +13,7 @@ export const AUDIT_ACTIONS = {
   'org.deleted': 'data_modification',
   'org.entitlements_updated': 'config_change',
   'org.retention_updated': 'config_change',
+  'org.ownership_transferred': 'user_management',
   // projects
   'project.created': 'config_change',
   'project.updated': 'config_change',

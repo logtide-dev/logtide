@@ -645,4 +645,79 @@ export class OrganizationsService {
       .where('id', '=', member.id)
       .execute();
   }
+
+  /**
+   * Transfer ownership to another member. The previous owner becomes an admin.
+   * The organization row is locked so concurrent transfers serialize and
+   * exactly one owner remains.
+   */
+  async transferOwnership(
+    organizationId: string,
+    currentOwnerId: string,
+    newOwnerUserId: string
+  ): Promise<{ previousOwnerId: string; newOwnerId: string }> {
+    const orgName = await db.transaction().execute(async (trx) => {
+      const org = await trx
+        .selectFrom('organizations')
+        .select(['id', 'name', 'owner_id'])
+        .where('id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+
+      if (!org) {
+        throw new Error('Organization not found');
+      }
+
+      if (org.owner_id !== currentOwnerId) {
+        throw new Error('Only the organization owner can transfer ownership');
+      }
+
+      if (newOwnerUserId === currentOwnerId) {
+        throw new Error('You already own this organization');
+      }
+
+      const target = await trx
+        .selectFrom('organization_members')
+        .select(['id'])
+        .where('organization_id', '=', organizationId)
+        .where('user_id', '=', newOwnerUserId)
+        .executeTakeFirst();
+
+      if (!target) {
+        throw new Error('The new owner must be a member of this organization');
+      }
+
+      await trx
+        .updateTable('organizations')
+        .set({ owner_id: newOwnerUserId })
+        .where('id', '=', organizationId)
+        .execute();
+
+      await trx
+        .updateTable('organization_members')
+        .set({ role: 'owner' })
+        .where('organization_id', '=', organizationId)
+        .where('user_id', '=', newOwnerUserId)
+        .execute();
+
+      await trx
+        .updateTable('organization_members')
+        .set({ role: 'admin' })
+        .where('organization_id', '=', organizationId)
+        .where('user_id', '=', currentOwnerId)
+        .execute();
+
+      return org.name;
+    });
+
+    await notificationsService.createNotification({
+      userId: newOwnerUserId,
+      type: 'system',
+      title: `You are now the owner of ${orgName}`,
+      message: `Ownership of ${orgName} was transferred to you`,
+      organizationId,
+    });
+
+    return { previousOwnerId: currentOwnerId, newOwnerId: newOwnerUserId };
+  }
 }

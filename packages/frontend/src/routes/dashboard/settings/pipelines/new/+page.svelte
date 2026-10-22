@@ -8,6 +8,8 @@
   import { logPipelineAPI } from '$lib/api/log-pipeline';
   import { projectsAPI } from '$lib/api/projects';
   import type { Project } from '@logtide/shared';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -26,10 +28,11 @@
   import PipelinePreview from '$lib/components/pipelines/PipelinePreview.svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import Upload from '@lucide/svelte/icons/upload';
-  import GitBranch from '@lucide/svelte/icons/git-branch';
 
   let token: string | null = null;
   let organizationId = $state<string | null>(null);
+  let role = $state<string | null>(null);
+  let canEdit = $derived(role === 'owner' || role === 'admin');
   let projects = $state<Project[]>([]);
   let projectId = $state<string | null>(null);
 
@@ -49,6 +52,7 @@
 
   organizationStore.subscribe((s) => {
     organizationId = s.currentOrganization?.id ?? null;
+    role = s.currentOrganization?.role ?? null;
   });
 
   $effect(() => {
@@ -61,7 +65,7 @@
   async function handleCreate() {
     if (!organizationId) return;
     if (!name.trim()) {
-      toastStore.error('Pipeline name is required');
+      toastStore.error('Enter a pipeline name');
       return;
     }
     saving = true;
@@ -76,7 +80,7 @@
       toastStore.success('Pipeline created');
       goto('/dashboard/settings/pipelines');
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Failed to create pipeline');
+      toastStore.error(e instanceof Error ? e.message : 'Could not create pipeline');
     } finally {
       saving = false;
     }
@@ -91,7 +95,7 @@
       importDialogOpen = false;
       goto('/dashboard/settings/pipelines');
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Failed to import pipeline');
+      toastStore.error(e instanceof Error ? e.message : 'Could not import pipeline');
     } finally {
       importing = false;
     }
@@ -99,34 +103,45 @@
 </script>
 
 <svelte:head>
-  <title>New Pipeline - LogTide</title>
+  <title>New pipeline - LogTide</title>
 </svelte:head>
 
 <div class="space-y-6">
-  <!-- Header -->
-  <div class="flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <Button variant="ghost" size="icon" onclick={() => goto('/dashboard/settings/pipelines')}>
+  <PageHeader
+    title="New pipeline"
+    appliesTo="organization"
+    description="Define parsing and enrichment steps for your logs."
+    breadcrumbs={[
+      { label: 'Pipelines', href: '/dashboard/settings/pipelines' },
+      { label: 'New pipeline' },
+    ]}
+  >
+    {#snippet actions()}
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Back to pipelines"
+        onclick={() => goto('/dashboard/settings/pipelines')}
+      >
         <ArrowLeft class="w-4 h-4" />
       </Button>
-      <div>
-        <h2 class="text-xl font-semibold flex items-center gap-2">
-          <GitBranch class="w-5 h-5" />
-          New Pipeline
-        </h2>
-        <p class="text-sm text-muted-foreground">Define parsing and enrichment steps for your logs</p>
-      </div>
-    </div>
-    <Button variant="outline" class="gap-2" onclick={() => importDialogOpen = true}>
-      <Upload class="w-4 h-4" />
-      Import from YAML
-    </Button>
-  </div>
+      {#if canEdit}
+        <Button variant="outline" class="gap-2" onclick={() => (importDialogOpen = true)}>
+          <Upload class="w-4 h-4" />
+          Import pipeline from YAML
+        </Button>
+      {/if}
+    {/snippet}
+  </PageHeader>
+
+  {#if !canEdit}
+    <ReadOnlyNotice what="log pipelines" />
+  {/if}
 
   <!-- Basic Info -->
   <Card>
     <CardHeader>
-      <CardTitle>Basic Info</CardTitle>
+      <CardTitle>Basic info</CardTitle>
     </CardHeader>
     <CardContent class="space-y-4">
       <div class="space-y-2">
@@ -150,14 +165,14 @@
         />
       </div>
       <div class="space-y-2">
-        <Label for="pipeline-project">Project <span class="text-muted-foreground text-xs">(optional - leave empty for org-wide default)</span></Label>
+        <Label for="pipeline-project">Project <span class="text-muted-foreground text-xs">(optional, leave empty for an organization-wide default)</span></Label>
         <select
           id="pipeline-project"
           class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
           onchange={(e) => { projectId = (e.currentTarget as HTMLSelectElement).value || null; }}
-          disabled={saving}
+          disabled={saving || !canEdit}
         >
-          <option value="">Org-wide (applies to all projects)</option>
+          <option value="">All projects (organization-wide)</option>
           {#each projects as p}
             <option value={p.id}>{p.name}</option>
           {/each}
@@ -173,7 +188,7 @@
   <!-- Steps -->
   <Card>
     <CardHeader>
-      <CardTitle>Pipeline Steps</CardTitle>
+      <CardTitle>Pipeline steps</CardTitle>
       <CardDescription>
         Steps are executed in order. Each step can parse or enrich log data.
       </CardDescription>
@@ -185,7 +200,7 @@
 
   <!-- Preview -->
   {#if organizationId}
-    <PipelinePreview {organizationId} {steps} />
+    <PipelinePreview {organizationId} {steps} {projectId} />
   {/if}
 
   <!-- Actions -->
@@ -197,7 +212,7 @@
     >
       Cancel
     </Button>
-    <Button onclick={handleCreate} disabled={saving || !name.trim()}>
+    <Button onclick={handleCreate} disabled={saving || !name.trim() || !canEdit}>
       {saving ? 'Creating...' : 'Create pipeline'}
     </Button>
   </div>
@@ -207,7 +222,7 @@
 <Dialog bind:open={importDialogOpen}>
   <DialogContent class="max-w-lg">
     <DialogHeader>
-      <DialogTitle>Import Pipeline from YAML</DialogTitle>
+      <DialogTitle>Import pipeline from YAML</DialogTitle>
       <DialogDescription>
         Paste your pipeline YAML definition below to import it.
       </DialogDescription>

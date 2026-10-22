@@ -237,6 +237,18 @@ export class PiiMaskingService {
       }
     }
 
+    if (input.projectId) {
+      const project = await db
+        .selectFrom('projects')
+        .select('id')
+        .where('id', '=', input.projectId)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (!project) {
+        throw new Error('Project not found in this organization');
+      }
+    }
+
     const row = await db
       .insertInto('pii_masking_rules')
       .values({

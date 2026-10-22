@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
   import { onMount } from 'svelte';
   import { authStore } from '$lib/stores/auth';
   import { toastStore } from '$lib/stores/toast';
@@ -10,16 +11,7 @@
   import { Alert, AlertDescription } from '$lib/components/ui/alert';
   import Spinner from '$lib/components/Spinner.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
-  import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-  } from '$lib/components/ui/alert-dialog';
+  import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
   import { Plus, Settings, Trash2, Pencil, Building2, Server, Mail, Check, X } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { browser } from '$app/environment';
@@ -175,7 +167,7 @@
         config,
       });
 
-      toastStore.success('Provider created successfully');
+      toastStore.success('Provider created');
       showCreateDialog = false;
       resetCreateForm();
       await loadProviders();
@@ -214,6 +206,7 @@
       await loadProviders();
     } catch (e) {
       toastStore.error(e instanceof Error ? e.message : 'Failed to delete provider');
+      throw e;
     } finally {
       deletingProvider = false;
     }
@@ -281,7 +274,7 @@
         config,
       });
 
-      toastStore.success('Provider updated successfully');
+      toastStore.success('Provider updated');
       showEditDialog = false;
       editingProvider = null;
       resetCreateForm();
@@ -295,20 +288,22 @@
 </script>
 
 <svelte:head>
-  <title>Authentication Providers - Admin - LogTide</title>
+  <title>Auth providers - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto py-6 space-y-6">
-  <div class="flex justify-between items-center">
-    <div>
-      <h1 class="text-2xl font-bold">Authentication Providers</h1>
-      <p class="text-muted-foreground">Configure SSO providers for your organization</p>
-    </div>
-    <Button onclick={() => { resetCreateForm(); showCreateDialog = true; }}>
-      <Plus class="h-4 w-4 mr-2" />
-      Add Provider
-    </Button>
-  </div>
+<div class="space-y-6">
+  <PageHeader
+    title="Auth providers"
+    appliesTo="instance"
+    description="Sign-in providers apply to the whole instance, not to a single organization."
+  >
+    {#snippet actions()}
+      <Button onclick={() => { resetCreateForm(); showCreateDialog = true; }}>
+        <Plus class="h-4 w-4 mr-2" />
+        Add provider
+      </Button>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
     <div class="flex justify-center py-12">
@@ -363,7 +358,7 @@
                     title={provider.enabled ? 'Disable' : 'Enable'}
                   >
                     {#if provider.enabled}
-                      <Check class="h-4 w-4 text-green-500" />
+                      <Check class="h-4 w-4 text-success-text" />
                     {:else}
                       <X class="h-4 w-4 text-muted-foreground" />
                     {/if}
@@ -391,7 +386,7 @@
 <Dialog.Root bind:open={showCreateDialog}>
   <Dialog.Content class="max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Add Authentication Provider</Dialog.Title>
+      <Dialog.Title>Add authentication provider</Dialog.Title>
       <Dialog.Description>
         Configure a new SSO provider for user authentication
       </Dialog.Description>
@@ -399,7 +394,7 @@
 
     <div class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="type">Provider Type</Label>
+        <Label for="type">Provider type</Label>
         <select
           id="type"
           bind:value={createForm.type}
@@ -411,7 +406,7 @@
       </div>
 
       <div class="space-y-2">
-        <Label for="name">Display Name</Label>
+        <Label for="name">Display name</Label>
         <Input
           id="name"
           placeholder="e.g., Authentik SSO"
@@ -453,7 +448,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="clientSecret">Client Secret</Label>
+            <Label for="clientSecret">Client secret</Label>
             <Input
               id="clientSecret"
               type="password"
@@ -486,7 +481,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapBindDn">Bind DN (Service Account)</Label>
+            <Label for="ldapBindDn">Bind DN (service account)</Label>
             <Input
               id="ldapBindDn"
               placeholder="CN=Service,OU=Users,DC=example,DC=com"
@@ -495,7 +490,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapBindPassword">Bind Password</Label>
+            <Label for="ldapBindPassword">Bind password</Label>
             <Input
               id="ldapBindPassword"
               type="password"
@@ -505,7 +500,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapSearchBase">Search Base DN</Label>
+            <Label for="ldapSearchBase">Search base DN</Label>
             <Input
               id="ldapSearchBase"
               placeholder="OU=Users,DC=example,DC=com"
@@ -514,7 +509,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapSearchFilter">Search Filter</Label>
+            <Label for="ldapSearchFilter">Search filter</Label>
             <Input
               id="ldapSearchFilter"
               placeholder={'(uid={{username}})'}
@@ -552,7 +547,7 @@
 
     <div class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="edit-name">Display Name</Label>
+        <Label for="edit-name">Display name</Label>
         <Input
           id="edit-name"
           placeholder="e.g., Authentik SSO"
@@ -589,7 +584,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-clientSecret">Client Secret</Label>
+            <Label for="edit-clientSecret">Client secret</Label>
             <Input
               id="edit-clientSecret"
               type="password"
@@ -622,7 +617,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapBindDn">Bind DN (Service Account)</Label>
+            <Label for="edit-ldapBindDn">Bind DN (service account)</Label>
             <Input
               id="edit-ldapBindDn"
               placeholder="CN=Service,OU=Users,DC=example,DC=com"
@@ -631,7 +626,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapBindPassword">Bind Password</Label>
+            <Label for="edit-ldapBindPassword">Bind password</Label>
             <Input
               id="edit-ldapBindPassword"
               type="password"
@@ -641,7 +636,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapSearchBase">Search Base DN</Label>
+            <Label for="edit-ldapSearchBase">Search base DN</Label>
             <Input
               id="edit-ldapSearchBase"
               placeholder="OU=Users,DC=example,DC=com"
@@ -650,7 +645,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapSearchFilter">Search Filter</Label>
+            <Label for="edit-ldapSearchFilter">Search filter</Label>
             <Input
               id="edit-ldapSearchFilter"
               placeholder={'(uid={{username}})'}
@@ -677,20 +672,11 @@
 </Dialog.Root>
 
 <!-- Delete Provider Dialog -->
-<AlertDialog bind:open={showDeleteProviderDialog}>
-  <AlertDialogContent>
-    <AlertDialogHeader>
-      <AlertDialogTitle>Delete Provider</AlertDialogTitle>
-      <AlertDialogDescription>
-        Are you sure you want to delete the <strong>{deleteTarget?.name}</strong> provider?
-        Users who authenticate via this provider will no longer be able to log in. This action cannot be undone.
-      </AlertDialogDescription>
-    </AlertDialogHeader>
-    <AlertDialogFooter>
-      <AlertDialogCancel>Cancel</AlertDialogCancel>
-      <AlertDialogAction onclick={handleDeleteProvider} disabled={deletingProvider}>
-        {deletingProvider ? "Deleting..." : "Delete Provider"}
-      </AlertDialogAction>
-    </AlertDialogFooter>
-  </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+  bind:open={showDeleteProviderDialog}
+  title="Delete provider"
+  description={`Users who sign in through ${deleteTarget?.name ?? 'this provider'} will no longer be able to log in. This cannot be undone.`}
+  confirmLabel="Delete provider"
+  busy={deletingProvider}
+  onConfirm={handleDeleteProvider}
+/>

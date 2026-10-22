@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount } from "svelte";
     import { adminAPI, type UserBasic } from "$lib/api/admin";
     import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
@@ -102,7 +104,7 @@
                 password: createForm.password,
                 is_admin: createForm.is_admin,
             });
-            toastStore.success(`User ${email} created successfully`);
+            toastStore.success(`User ${email} created`);
             showCreateDialog = false;
             resetCreateForm();
             page = 1;
@@ -179,7 +181,7 @@
 
     function formatDate(dateString: string | null) {
         if (!dateString) return "Never";
-        return new Date(dateString).toLocaleString('en-US');
+        return formatTimestamp(dateString, { precision: 'minute' });
     }
 
     onMount(() => {
@@ -188,25 +190,27 @@
 </script>
 
 <svelte:head>
-    <title>Users - Admin - LogTide</title>
+    <title>All users - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-3xl font-bold">User Management</h1>
-            <p class="text-muted-foreground">Manage all users in the system</p>
-        </div>
-        <Button
-            onclick={() => {
-                resetCreateForm();
-                showCreateDialog = true;
-            }}
-        >
-            <UserPlus class="h-4 w-4 mr-2" />
-            Create User
-        </Button>
-    </div>
+<div class="space-y-6">
+    <PageHeader
+        title="All users"
+        appliesTo="instance"
+        description="Manage all users in the system"
+    >
+        {#snippet actions()}
+            <Button
+                onclick={() => {
+                    resetCreateForm();
+                    showCreateDialog = true;
+                }}
+            >
+                <UserPlus class="h-4 w-4 mr-2" />
+                Create user
+            </Button>
+        {/snippet}
+    </PageHeader>
 
     <Card>
         <CardHeader>
@@ -250,7 +254,7 @@
                                 <TableHead>Name</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead>Role</TableHead>
-                                <TableHead>Last Login</TableHead>
+                                <TableHead>Last login</TableHead>
                                 <TableHead>Created</TableHead>
                                 <TableHead class="text-right">Actions</TableHead
                                 >
@@ -353,7 +357,7 @@
 <Dialog.Root bind:open={showCreateDialog}>
     <Dialog.Content class="max-w-lg">
         <Dialog.Header>
-            <Dialog.Title>Create User</Dialog.Title>
+            <Dialog.Title>Create user</Dialog.Title>
             <Dialog.Description>
                 Provision a new user account. Share the credentials with the
                 user to let them sign in.
@@ -435,7 +439,7 @@
                     Cancel
                 </Button>
                 <Button type="submit" disabled={creating}>
-                    {creating ? "Creating..." : "Create User"}
+                    {creating ? "Creating..." : "Create user"}
                 </Button>
             </Dialog.Footer>
         </form>

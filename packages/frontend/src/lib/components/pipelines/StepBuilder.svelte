@@ -72,6 +72,7 @@
               onclick={() => moveUp(i)}
               disabled={i === 0}
               title="Move up"
+              aria-label="Move step up"
             >
               <ChevronUp class="w-3.5 h-3.5" />
             </Button>
@@ -82,6 +83,7 @@
               onclick={() => moveDown(i)}
               disabled={i === steps.length - 1}
               title="Move down"
+              aria-label="Move step down"
             >
               <ChevronDown class="w-3.5 h-3.5" />
             </Button>
@@ -91,6 +93,7 @@
               class="h-7 w-7 text-destructive hover:text-destructive"
               onclick={() => removeStep(i)}
               title="Remove step"
+              aria-label="Remove step"
             >
               <Trash2 class="w-3.5 h-3.5" />
             </Button>

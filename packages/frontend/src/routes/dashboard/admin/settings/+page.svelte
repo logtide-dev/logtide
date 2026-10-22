@@ -1,4 +1,5 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -126,7 +127,7 @@
                 "search.substring_indexed": searchSubstringIndexed,
                 "updates.channel": updatesChannel,
             });
-            success = "Settings saved successfully";
+            success = "Settings saved";
             setTimeout(() => {
                 success = null;
             }, 3000);
@@ -166,42 +167,26 @@
 </script>
 
 <svelte:head>
-    <title>Admin Settings - LogTide</title>
+    <title>Instance settings - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-8">
-    <div class="flex justify-between items-center">
-        <div>
-            <h1 class="text-3xl font-bold tracking-tight flex items-center gap-2">
-                <Settings class="h-8 w-8" />
-                System Settings
-            </h1>
-            <p class="text-muted-foreground mt-1">
-                Configure global authentication and security settings
-            </p>
-        </div>
-        <div class="flex items-center gap-4">
-            <Button
-                variant="outline"
-                size="sm"
-                onclick={loadSettings}
-                disabled={loading}
-            >
-                <RefreshCw
-                    class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}"
-                />
+<div class="space-y-8">
+    <PageHeader
+        title="Instance settings"
+        appliesTo="instance"
+        description="Configure global authentication and security settings"
+    >
+        {#snippet actions()}
+            <Button variant="outline" size="sm" onclick={loadSettings} disabled={loading}>
+                <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
                 Refresh
             </Button>
-            <Button
-                size="sm"
-                onclick={saveSettings}
-                disabled={saving || loading}
-            >
+            <Button size="sm" onclick={saveSettings} disabled={saving || loading}>
                 <Save class="mr-2 h-4 w-4" />
-                {saving ? "Saving..." : "Save Changes"}
+                {saving ? "Saving..." : "Save changes"}
             </Button>
-        </div>
-    </div>
+        {/snippet}
+    </PageHeader>
 
     {#if error}
         <div
@@ -214,7 +199,7 @@
 
     {#if success}
         <div
-            class="bg-green-500/15 text-green-600 dark:text-green-400 p-4 rounded-md flex items-center gap-2"
+            class="bg-success/15 text-success-text p-4 rounded-md flex items-center gap-2"
         >
             <Info class="h-5 w-5" />
             <span>{success}</span>
@@ -227,7 +212,7 @@
                 <div class="bg-muted/50 p-6 rounded-full mb-4">
                     <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
-                <h2 class="text-xl font-semibold">Loading Settings...</h2>
+                <h2 class="text-xl font-semibold">Loading settings...</h2>
             </div>
         {:else}
             <div class="grid gap-6 md:grid-cols-2">
@@ -256,8 +241,8 @@
                             />
                         </div>
                         {#if !signupEnabled}
-                            <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
-                                <p class="text-sm text-yellow-600 dark:text-yellow-400">
+                            <div class="bg-warning/10 border border-warning/20 rounded-md p-3">
+                                <p class="text-sm text-warning-text">
                                     New user registration is disabled. Users can only be added via invitations or admin creation.
                                 </p>
                             </div>
@@ -278,7 +263,7 @@
                     </CardHeader>
                     <CardContent class="space-y-4">
                         <div class="space-y-2">
-                            <Label>Authentication Mode</Label>
+                            <Label>Authentication mode</Label>
                             <Select.Root
                                 type="single"
                                 value={authMode}
@@ -301,8 +286,8 @@
                             </Select.Root>
                         </div>
                         {#if authMode === "none"}
-                            <div class="bg-orange-500/10 border border-orange-500/20 rounded-md p-3 space-y-2">
-                                <p class="text-sm font-medium text-orange-600 dark:text-orange-400">
+                            <div class="bg-warning/10 border border-warning/20 rounded-md p-3 space-y-2">
+                                <p class="text-sm font-medium text-warning-text">
                                     Auth-Free Mode Active
                                 </p>
                                 <p class="text-sm text-muted-foreground">
@@ -311,8 +296,8 @@
                                 </p>
                             </div>
                         {:else}
-                            <div class="bg-blue-500/10 border border-blue-500/20 rounded-md p-3">
-                                <p class="text-sm text-blue-600 dark:text-blue-400">
+                            <div class="bg-info/10 border border-info/20 rounded-md p-3">
+                                <p class="text-sm text-info-text">
                                     Standard authentication requires users to login with email/password, OIDC, or LDAP.
                                 </p>
                             </div>
@@ -334,10 +319,10 @@
                         </CardHeader>
                         <CardContent class="space-y-4">
                             <div class="space-y-2">
-                                <Label>Default User</Label>
+                                <Label>Default user</Label>
                                 {#if usersList.length === 0}
-                                    <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
-                                        <p class="text-sm text-yellow-600 dark:text-yellow-400">
+                                    <div class="bg-warning/10 border border-warning/20 rounded-md p-3">
+                                        <p class="text-sm text-warning-text">
                                             No users available. Create a user first before enabling auth-free mode.
                                         </p>
                                     </div>
@@ -374,14 +359,14 @@
                                 {/if}
                             </div>
                             {#if !defaultUserId && usersList.length > 0}
-                                <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
-                                    <p class="text-sm text-yellow-600 dark:text-yellow-400">
+                                <div class="bg-warning/10 border border-warning/20 rounded-md p-3">
+                                    <p class="text-sm text-warning-text">
                                         Please select a default user before saving. Auth-free mode requires a default user to be configured.
                                     </p>
                                 </div>
                             {/if}
                             <div class="bg-muted/50 rounded-md p-4 space-y-2">
-                                <p class="text-sm font-medium">What happens in Auth-Free Mode:</p>
+                                <p class="text-sm font-medium">What happens in Auth-Free mode:</p>
                                 <ul class="text-sm text-muted-foreground list-disc list-inside space-y-1">
                                     <li>All requests bypass authentication and use the selected default user</li>
                                     <li>Login and registration pages redirect to the dashboard</li>
@@ -407,7 +392,7 @@
                     <CardContent class="space-y-4">
                         <div class="grid gap-4 md:grid-cols-2">
                             <div class="space-y-2">
-                                <Label>Default Search Mode</Label>
+                                <Label>Default search mode</Label>
                                 <Select.Root
                                     type="single"
                                     value={searchDefaultMode}
@@ -422,7 +407,7 @@
                                     </Select.Trigger>
                                     <Select.Content>
                                         <Select.Item value="fulltext">Full-text (Word-based)</Select.Item>
-                                        <Select.Item value="substring">Substring (Anywhere)</Select.Item>
+                                        <Select.Item value="substring">Substring (anywhere)</Select.Item>
                                     </Select.Content>
                                 </Select.Root>
                                 <p class="text-xs text-muted-foreground">
@@ -432,7 +417,7 @@
                             <div class="space-y-2">
                                 <div class="flex items-center justify-between">
                                     <div class="space-y-0.5">
-                                        <Label>Substring Index Enabled</Label>
+                                        <Label>Substring index enabled</Label>
                                         <p class="text-sm text-muted-foreground">
                                             pg_trgm trigram index is active
                                         </p>
@@ -445,8 +430,8 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="bg-blue-500/10 border border-blue-500/20 rounded-md p-3">
-                            <p class="text-sm text-blue-600 dark:text-blue-400">
+                        <div class="bg-info/10 border border-info/20 rounded-md p-3">
+                            <p class="text-sm text-info-text">
                                 <strong>Full-text:</strong> Word-based search with stemming (e.g., "fail" finds "failed", "failing").<br/>
                                 <strong>Substring:</strong> Finds text anywhere in the message (e.g., "bluez" finds "spa.bluez5.native").
                             </p>
@@ -468,7 +453,7 @@
                     <CardContent class="space-y-4">
                         <div class="grid gap-4 md:grid-cols-2">
                             <div class="space-y-2">
-                                <Label>Release Channel</Label>
+                                <Label>Release channel</Label>
                                 <Select.Root
                                     type="single"
                                     value={updatesChannel}
@@ -491,8 +476,8 @@
                                 </p>
                             </div>
                         </div>
-                        <div class="bg-blue-500/10 border border-blue-500/20 rounded-md p-3">
-                            <p class="text-sm text-blue-600 dark:text-blue-400">
+                        <div class="bg-info/10 border border-info/20 rounded-md p-3">
+                            <p class="text-sm text-info-text">
                                 <strong>Stable:</strong> Only notify for production-ready releases.<br/>
                                 <strong>Beta:</strong> Also notify for pre-release versions (may contain experimental features).
                             </p>
@@ -506,7 +491,7 @@
                 <div class="flex items-start gap-3">
                     <AlertTriangle class="h-5 w-5 text-destructive mt-0.5" />
                     <div>
-                        <h3 class="font-medium text-destructive">Important Security Notice</h3>
+                        <h3 class="font-medium text-destructive">Important security notice</h3>
                         <p class="text-sm text-muted-foreground mt-1">
                             Changing authentication settings affects all users immediately. Auth-Free mode should only be used in trusted, single-user environments.
                             Never enable Auth-Free mode on a publicly accessible instance.
@@ -520,7 +505,7 @@
             <div class="bg-muted/50 p-6 rounded-full mb-4">
                 <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-            <h2 class="text-xl font-semibold">Verifying Access...</h2>
+            <h2 class="text-xl font-semibold">Verifying access...</h2>
             <p class="text-muted-foreground mt-2">
                 Updating your profile permissions.
             </p>

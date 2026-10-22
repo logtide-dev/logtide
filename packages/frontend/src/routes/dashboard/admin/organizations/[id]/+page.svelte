@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
     import { adminAPI, type OrganizationDetails, type EntitlementMap, type EntitlementUpdate } from "$lib/api/admin";
@@ -37,16 +39,7 @@
         Save,
         ShieldCheck,
     } from "@lucide/svelte";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
     import { goto } from "$app/navigation";
 
     const orgId = $derived(page.params.id);
@@ -203,7 +196,7 @@
     }
 
     function formatDate(dateString: string) {
-        return new Date(dateString).toLocaleString('en-US');
+        return formatTimestamp(dateString, { precision: 'minute' });
     }
 
     function loadAll() {
@@ -238,22 +231,18 @@
 </script>
 
 <svelte:head>
-    <title>{org?.name ?? 'Organization'} - Admin - LogTide</title>
+    <title>{org?.name ?? 'Organization'} - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex items-center gap-4">
-        <a
-            href="/dashboard/admin/organizations"
-            class={buttonVariants({
-                variant: "ghost",
-                size: "sm",
-            })}
-        >
-            <ArrowLeft class="h-4 w-4 mr-2" />
-            Back to Organizations
-        </a>
-    </div>
+<div class="space-y-6">
+    <PageHeader
+        title={org?.name ?? 'Organization'}
+        appliesTo="instance"
+        breadcrumbs={[
+            { label: 'All organizations', href: '/dashboard/admin/organizations' },
+            { label: org?.name ?? 'Organization' },
+        ]}
+    />
 
     {#if loading}
         <div class="text-center py-12">
@@ -288,7 +277,7 @@
                         onclick={() => (showDeleteDialog = true)}
                     >
                         <Trash2 class="h-4 w-4 mr-2" />
-                        Delete Organization
+                        Delete organization
                     </Button>
                 </div>
             </CardHeader>
@@ -315,7 +304,7 @@
 
         <Card>
             <CardHeader>
-                <CardTitle>Log Retention Policy</CardTitle>
+                <CardTitle>Log retention policy</CardTitle>
                 <CardDescription>
                     Configure how long logs are retained for this organization
                 </CardDescription>
@@ -324,7 +313,7 @@
                 <div class="space-y-4">
                     <div class="flex items-end gap-4">
                         <div class="space-y-2">
-                            <Label for="retention-days">Retention Period (days)</Label>
+                            <Label for="retention-days">Retention period (days)</Label>
                             <Input
                                 id="retention-days"
                                 type="number"
@@ -336,7 +325,7 @@
                             />
                         </div>
                         <div class="space-y-2">
-                            <Label for="audit-retention-days">Audit Retention (days)</Label>
+                            <Label for="audit-retention-days">Audit retention (days)</Label>
                             <Input
                                 id="audit-retention-days"
                                 type="number"
@@ -540,31 +529,12 @@
     {/if}
 </div>
 
-<AlertDialog bind:open={showDeleteDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Delete Organization</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to delete <strong>{org?.name}</strong>? This action cannot be undone.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <div class="py-4">
-            <div class="bg-destructive/10 border border-destructive/20 rounded-md p-4">
-                <p class="text-sm text-destructive font-medium">
-                    This will permanently delete:
-                </p>
-                <ul class="text-sm text-muted-foreground mt-2 space-y-1 list-disc list-inside">
-                    <li>{org?.members.length} member associations</li>
-                    <li>{org?.projects.length} projects and all their data</li>
-                    <li>All logs and related data</li>
-                </ul>
-            </div>
-        </div>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Organization"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDeleteDialog}
+    title="Delete organization"
+    description={`This permanently deletes ${org?.members.length ?? 0} member associations, ${org?.projects.length ?? 0} projects with all their data, and all logs and related data. This cannot be undone.`}
+    confirmLabel="Delete organization"
+    requireText={org?.name ?? ""}
+    busy={deleting}
+    onConfirm={handleDelete}
+/>

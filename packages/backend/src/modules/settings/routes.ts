@@ -12,8 +12,8 @@ import { bootstrapService } from '../bootstrap/service.js';
 import { isUpgradeHandoffActive } from '../organizations/upgrade-handoff.js';
 import { isBillingApiActive } from '../billing/seam.js';
 import { isEmailVerificationRequired } from '../users/email-verification-flag.js';
-import { getActiveTerms, TERMS_AUTH_FREE_ERROR, TERMS_AUTH_FREE_MESSAGE } from '../users/terms.js';
 import { getPasswordResetConfig } from '../users/password-reset.js';
+import { getActiveTerms, TERMS_AUTH_FREE_ERROR, TERMS_AUTH_FREE_MESSAGE } from '../users/terms.js';
 import type { UserProfile } from '../users/service.js';
 import { auditLogService } from '../audit-log/service.js';
 
@@ -271,6 +271,7 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         signupEnabled: true,
         requiresLogin: true,
         ...(isEmailVerificationRequired() ? { emailVerificationRequired: true } : {}),
+        ...(await getPasswordResetConfig().catch(() => ({}))),
         ...(getActiveTerms() ?? {}),
       });
     }

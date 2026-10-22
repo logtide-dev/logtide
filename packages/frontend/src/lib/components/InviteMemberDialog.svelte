@@ -62,7 +62,7 @@
     <DialogHeader>
       <DialogTitle class="flex items-center gap-2">
         <UserPlus class="w-5 h-5" />
-        Invite Team Member
+        Invite member
       </DialogTitle>
       <DialogDescription>
         Invite someone to join your organization. They'll receive a notification and can accept the invitation when ready.
@@ -71,7 +71,7 @@
 
     <form onsubmit={handleSubmit} class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="member-email">Email Address</Label>
+        <Label for="member-email">Email address</Label>
         <div class="relative">
           <Mail class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -102,7 +102,7 @@
           {#if role === 'admin'}
             Admins can invite members, manage roles, and remove members (except the owner).
           {:else}
-            Members can view and use all organization resources but cannot manage team settings.
+            Members can view and use all organization data. They cannot change PII masking, pipelines, notifications or members.
           {/if}
         </p>
       </div>
@@ -114,7 +114,7 @@
       {/if}
 
       {#if successMessage}
-        <div class="text-sm text-green-600 bg-green-50 dark:bg-green-900/20 dark:text-green-400 p-3 rounded-md">
+        <div class="text-sm text-success-text bg-success/10 p-3 rounded-md">
           {successMessage}
         </div>
       {/if}
@@ -138,7 +138,7 @@
             Inviting...
           {:else}
             <UserPlus class="w-4 h-4" />
-            Send Invitation
+            Send invitation
           {/if}
         </Button>
       </DialogFooter>

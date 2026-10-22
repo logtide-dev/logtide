@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { formatTimestamp } from "$lib/utils/datetime";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
         Card,
         CardContent,
@@ -72,9 +74,9 @@
         isMongoDB ? 'MongoDB' : isClickHouse ? 'ClickHouse' : 'TimescaleDB'
     );
     let engineBadgeClass = $derived(
-        isMongoDB ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-        : isClickHouse ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400'
-        : 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+        isMongoDB ? 'bg-success/10 text-success-text'
+        : isClickHouse ? 'bg-warning/10 text-warning-text'
+        : 'bg-info/10 text-info-text'
     );
 
     const usersAPI = new UsersAPI(() => get(authStore).token);
@@ -195,49 +197,39 @@
     });
 
     function healthColor(status: string | undefined) {
-        if (status === "healthy") return "text-green-500";
-        if (status === "degraded") return "text-yellow-500";
-        return "text-red-500";
+        if (status === "healthy") return "text-success-text";
+        if (status === "degraded") return "text-warning-text";
+        return "text-destructive-text";
     }
 </script>
 
 <svelte:head>
-    <title>Admin Dashboard - LogTide</title>
+    <title>Instance overview - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <!-- Header -->
-    <div class="flex justify-between items-center">
-        <div>
-            <div class="flex items-center gap-2.5">
-                <h1 class="text-2xl font-bold tracking-tight">Admin Dashboard</h1>
-                {#if healthStats?.storageEngine}
-                    <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
-                        {engineLabel}
-                    </span>
-                {/if}
-            </div>
-            <p class="text-sm text-muted-foreground mt-0.5">
-                Platform health, performance & usage overview
-            </p>
-        </div>
-        <div class="flex items-center gap-3">
+<div class="space-y-6">
+    <PageHeader
+        title="Instance overview"
+        appliesTo="instance"
+        description="Platform health, performance and usage"
+    >
+        {#snippet meta()}
+            {#if healthStats?.storageEngine}
+                <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
+                    {engineLabel}
+                </span>
+            {/if}
+        {/snippet}
+        {#snippet actions()}
             <span class="text-xs text-muted-foreground">
-                {lastRefreshed.toLocaleTimeString('en-US')}
+                {formatTimestamp(lastRefreshed, { precision: 'second' })}
             </span>
-            <Button
-                variant="outline"
-                size="sm"
-                onclick={loadData}
-                disabled={loading}
-            >
-                <RefreshCw
-                    class="mr-1.5 h-3.5 w-3.5 {loading ? 'animate-spin' : ''}"
-                />
+            <Button variant="outline" size="sm" onclick={loadData} disabled={loading}>
+                <RefreshCw class="mr-1.5 h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
                 Refresh
             </Button>
-        </div>
-    </div>
+        {/snippet}
+    </PageHeader>
 
     {#if error}
         <div
@@ -254,22 +246,22 @@
             {@const targetRelease = versionCheck.channel === 'beta'
                 ? (versionCheck.latestBeta ?? versionCheck.latestStable)
                 : versionCheck.latestStable}
-            <Card class={versionCheck.updateAvailable ? 'border-blue-500/50 bg-blue-500/5' : ''}>
+            <Card class={versionCheck.updateAvailable ? 'border-info/50 bg-info/5' : ''}>
                 <CardContent class="py-4">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center gap-3">
                             {#if versionCheck.updateAvailable && targetRelease}
-                                <div class="rounded-full bg-blue-500/10 p-2">
-                                    <ArrowUpCircle class="h-5 w-5 text-blue-500" />
+                                <div class="rounded-full bg-info/10 p-2">
+                                    <ArrowUpCircle class="h-5 w-5 text-info-text" />
                                 </div>
                                 <div>
                                     <div class="flex items-center gap-2">
                                         <span class="font-medium">Update available</span>
-                                        <span class="text-xs px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono">
+                                        <span class="text-xs px-1.5 py-0.5 rounded-full bg-info/10 text-info-text font-mono">
                                             v{versionCheck.currentVersion}
                                         </span>
                                         <span class="text-muted-foreground">&rarr;</span>
-                                        <span class="text-xs px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-600 dark:text-blue-400 font-mono font-semibold">
+                                        <span class="text-xs px-1.5 py-0.5 rounded-full bg-info/20 text-info-text font-mono font-semibold">
                                             v{targetRelease.version}
                                         </span>
                                     </div>
@@ -282,19 +274,19 @@
                                     </p>
                                 </div>
                             {:else}
-                                <div class="rounded-full bg-green-500/10 p-2">
-                                    <CheckCircle2 class="h-5 w-5 text-green-500" />
+                                <div class="rounded-full bg-success/10 p-2">
+                                    <CheckCircle2 class="h-5 w-5 text-success-text" />
                                 </div>
                                 <div>
                                     <div class="flex items-center gap-2">
                                         <span class="font-medium">Up to date</span>
-                                        <span class="text-xs px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 font-mono">
+                                        <span class="text-xs px-1.5 py-0.5 rounded-full bg-success/10 text-success-text font-mono">
                                             v{versionCheck.currentVersion}
                                         </span>
                                     </div>
                                     <p class="text-xs text-muted-foreground mt-0.5">
                                         Channel: <span class="font-medium">{versionCheck.channel}</span>
-                                        &middot; Checked {new Date(versionCheck.checkedAt).toLocaleTimeString('en-US')}
+                                        &middot; Checked {formatTimestamp(versionCheck.checkedAt, { precision: 'minute' })}
                                     </p>
                                 </div>
                             {/if}
@@ -305,7 +297,7 @@
                                     href={targetRelease.url}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    class="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                                    class="inline-flex items-center gap-1.5 text-sm font-medium text-info-text hover:underline"
                                 >
                                     View release
                                     <ExternalLink class="h-3.5 w-3.5" />
@@ -351,16 +343,16 @@
             >
                 <Card
                     class="transition-shadow hover:shadow-md cursor-pointer {healthStats?.overall === 'healthy'
-                        ? 'border-green-500/50'
+                        ? 'border-success/50'
                         : healthStats?.overall === 'degraded'
-                          ? 'border-yellow-500/50'
-                          : 'border-red-500/50'}"
+                          ? 'border-warning/50'
+                          : 'border-destructive/50'}"
                 >
                     <CardHeader
                         class="flex flex-row items-center justify-between space-y-0 pb-2"
                     >
                         <CardTitle class="text-sm font-medium"
-                            >System Health</CardTitle
+                            >System health</CardTitle
                         >
                         <Activity
                             class="h-4 w-4 {healthColor(healthStats?.overall)}"
@@ -403,7 +395,7 @@
                         {#if performanceStats?.storage.logsSize && performanceStats.storage.logsSize !== 'N/A'}
                             Storage: {performanceStats.storage.logsSize}
                             {#if performanceStats.storage.compressionRatio}
-                                &middot; <span class="text-green-500">{performanceStats.storage.compressionRatio.toFixed(1)}x</span> compression
+                                &middot; <span class="text-success-text">{performanceStats.storage.compressionRatio.toFixed(1)}x</span> compression
                             {/if}
                         {:else if performanceStats}
                             {engineLabel} engine
@@ -417,17 +409,17 @@
             <!-- Active Issues -->
             <Card
                 class={totalIssues > 0
-                    ? "border-orange-500/30"
+                    ? "border-warning/30"
                     : ""}
             >
                 <CardHeader
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
                     <CardTitle class="text-sm font-medium"
-                        >Active Issues</CardTitle
+                        >Active issues</CardTitle
                     >
                     <ShieldAlert
-                        class="h-4 w-4 {totalIssues > 0 ? 'text-orange-500' : 'text-muted-foreground'}"
+                        class="h-4 w-4 {totalIssues > 0 ? 'text-warning-text' : 'text-muted-foreground'}"
                     />
                 </CardHeader>
                 <CardContent>
@@ -440,16 +432,16 @@
                                 <span>{activeIssues.openIncidents} incidents</span>
                             {/if}
                             {#if activeIssues.criticalDetections24h > 0}
-                                <span class="text-red-500">{activeIssues.criticalDetections24h} critical</span>
+                                <span class="text-destructive-text">{activeIssues.criticalDetections24h} critical</span>
                             {/if}
                             {#if activeIssues.failedNotifications24h > 0}
-                                <span class="text-orange-500">{activeIssues.failedNotifications24h} failed notif.</span>
+                                <span class="text-warning-text">{activeIssues.failedNotifications24h} failed notif.</span>
                             {/if}
                             {#if activeIssues.openErrorGroups > 0}
                                 <span>{activeIssues.openErrorGroups} errors</span>
                             {/if}
                             {#if totalIssues === 0}
-                                <span class="text-green-500">All clear</span>
+                                <span class="text-success-text">All clear</span>
                             {/if}
                         </div>
                     {:else}
@@ -463,7 +455,7 @@
                 <CardHeader
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
-                    <CardTitle class="text-sm font-medium">Total Logs</CardTitle>
+                    <CardTitle class="text-sm font-medium">Total logs</CardTitle>
                     <Database class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
@@ -496,8 +488,8 @@
                     <div>Span timestamp skew: {c.spanTimestampSkew.toLocaleString('en-US')}</div>
                     <div>Metric timestamp skew: {c.metricTimestampSkew.toLocaleString('en-US')}</div>
                     <div class="col-span-2 flex flex-wrap gap-x-4 pt-1 text-xs text-muted-foreground border-t">
-                        <span>GeoIP: <span class={ingestionHealth.enrichment.geoIp.ready ? 'text-green-500' : 'text-orange-500'}>{ingestionHealth.enrichment.geoIp.ready ? 'ready' : 'unavailable'}</span></span>
-                        <span>IP reputation: <span class={ingestionHealth.enrichment.ipReputation.ready ? 'text-green-500' : 'text-orange-500'}>{ingestionHealth.enrichment.ipReputation.ready ? 'ready' : 'unavailable'}</span></span>
+                        <span>GeoIP: <span class={ingestionHealth.enrichment.geoIp.ready ? 'text-success-text' : 'text-warning-text'}>{ingestionHealth.enrichment.geoIp.ready ? 'ready' : 'unavailable'}</span></span>
+                        <span>IP reputation: <span class={ingestionHealth.enrichment.ipReputation.ready ? 'text-success-text' : 'text-warning-text'}>{ingestionHealth.enrichment.ipReputation.ready ? 'ready' : 'unavailable'}</span></span>
                     </div>
                 </CardContent>
             </Card>
@@ -507,14 +499,14 @@
         <Card>
             <CardHeader class="pb-2">
                 <div class="flex items-center justify-between">
-                    <CardTitle class="text-sm font-medium">Platform Activity (24h)</CardTitle>
+                    <CardTitle class="text-sm font-medium">Platform activity (24h)</CardTitle>
                     <div class="flex items-center gap-4 text-xs text-muted-foreground">
                         <span class="flex items-center gap-1.5">
-                            <span class="inline-block w-3 h-0.5 rounded bg-blue-500"></span>
+                            <span class="inline-block w-3 h-0.5 rounded bg-info"></span>
                             Logs
                         </span>
                         <span class="flex items-center gap-1.5">
-                            <span class="inline-block w-3 h-0.5 rounded bg-orange-500"></span>
+                            <span class="inline-block w-3 h-0.5 rounded bg-warning"></span>
                             Detections
                         </span>
                         <span class="flex items-center gap-1.5">
@@ -522,7 +514,7 @@
                             Spans
                         </span>
                         <span class="flex items-center gap-1.5">
-                            <span class="inline-block w-3 h-0.5 rounded bg-green-500"></span>
+                            <span class="inline-block w-3 h-0.5 rounded bg-success"></span>
                             Metrics
                         </span>
                     </div>
@@ -600,7 +592,7 @@
 
             <Card>
                 <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle class="text-sm font-medium">Ingestion Rate</CardTitle>
+                    <CardTitle class="text-sm font-medium">Ingestion rate</CardTitle>
                     <HardDrive class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
@@ -626,7 +618,7 @@
                     <p class="text-xs text-muted-foreground mt-1">
                         {alertsStats?.triggered.last24h || 0} triggered (24h)
                         {#if notificationSuccessRate !== null}
-                            &middot; <span class={notificationSuccessRate >= 95 ? 'text-green-500' : 'text-red-500'}>{notificationSuccessRate}%</span> delivery
+                            &middot; <span class={notificationSuccessRate >= 95 ? 'text-success-text' : 'text-destructive-text'}>{notificationSuccessRate}%</span> delivery
                         {/if}
                     </p>
                 </CardContent>
@@ -634,7 +626,7 @@
 
             <Card>
                 <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle class="text-sm font-medium">Worker Queues</CardTitle>
+                    <CardTitle class="text-sm font-medium">Worker queues</CardTitle>
                     <Cpu class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
@@ -697,7 +689,7 @@
                 </Card>
             </button>
 
-            <Card class={healthStats?.redis.status === 'down' ? 'border-red-500/50' : ''}>
+            <Card class={healthStats?.redis.status === 'down' ? 'border-destructive/50' : ''}>
                 <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle class="text-sm font-medium">Redis</CardTitle>
                     <Bug class="h-4 w-4 {healthColor(healthStats?.redis.status === 'not_configured' ? 'healthy' : healthStats?.redis.status)}" />
@@ -723,7 +715,7 @@
         <div class="grid gap-4 md:grid-cols-2">
             <Card>
                 <CardHeader class="pb-3">
-                    <CardTitle class="text-sm font-medium">Top Organizations (by Logs)</CardTitle>
+                    <CardTitle class="text-sm font-medium">Top organizations (by logs)</CardTitle>
                 </CardHeader>
                 <CardContent>
                     {#if logsStats && logsStats.topOrganizations.length > 0}
@@ -751,7 +743,7 @@
 
             <Card>
                 <CardHeader class="pb-3">
-                    <CardTitle class="text-sm font-medium">Top Projects (by Logs)</CardTitle>
+                    <CardTitle class="text-sm font-medium">Top projects (by logs)</CardTitle>
                 </CardHeader>
                 <CardContent>
                     {#if logsStats && logsStats.topProjects.length > 0}
@@ -784,7 +776,7 @@
             <div class="bg-muted/50 p-6 rounded-full mb-4">
                 <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
-            <h2 class="text-xl font-semibold">Verifying Access...</h2>
+            <h2 class="text-xl font-semibold">Verifying access...</h2>
             <p class="text-muted-foreground mt-2">
                 Updating your profile permissions.
             </p>

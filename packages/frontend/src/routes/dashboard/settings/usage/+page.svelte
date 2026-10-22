@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { formatDateShort } from '$lib/utils/datetime';
   import { onMount, onDestroy } from 'svelte';
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
@@ -23,6 +24,8 @@
   import TimeRangeButtons from '$lib/components/TimeRangeButtons.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import QuotaStateBadge from '$lib/components/QuotaStateBadge.svelte';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import { CAPABILITY_LABELS, nextQuotaReset, isMonthlyQuota } from '$lib/utils/quota';
   import { authAPI } from '$lib/api/auth';
   import { organizationsAPI } from '$lib/api/organizations';
   import { canShowUpgradeCta, anyCapabilityAtLimit } from '$lib/utils/upgrade-cta';
@@ -139,7 +142,7 @@
       storage = stor;
       capabilities = caps.capabilities;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to load usage data';
+      error = e instanceof Error ? e.message : 'Could not load usage data';
     } finally {
       loading = false;
     }
@@ -179,30 +182,16 @@
 
   function formatDate(iso: string): string {
     if (!iso) return '';
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatDateShort(iso);
   }
 
   function formatTypeQty(type: string, qty: number): string {
     return type.endsWith('.bytes') ? formatBytes(qty) : formatCount(qty);
   }
 
-  // Friendly labels + unit per measurable capability. Bytes-kind caps format as
-  // bytes; everything else as a count.
-  const CAP_META: Record<string, { label: string; unit: 'count' | 'bytes' }> = {
-    'alerts.max_rules': { label: 'Alert rules', unit: 'count' },
-    'notifications.max_channels': { label: 'Notification channels', unit: 'count' },
-    'apikeys.max': { label: 'API keys', unit: 'count' },
-    'projects.max': { label: 'Projects', unit: 'count' },
-    'sigma.max_active_rules': { label: 'Active Sigma rules', unit: 'count' },
-    'dashboards.max_custom': { label: 'Custom dashboards', unit: 'count' },
-    'ingestion.max_events_monthly': { label: 'Events (this month)', unit: 'count' },
-    'ingestion.max_bytes_monthly': { label: 'Ingested bytes (this month)', unit: 'bytes' },
-    'storage.max_bytes': { label: 'Storage used', unit: 'bytes' },
-    'tracing.max_spans_monthly': { label: 'Spans (this month)', unit: 'count' },
-    'metrics.max_datapoints_monthly': { label: 'Metric datapoints (this month)', unit: 'count' },
-    'telemetry.max_bytes_monthly': { label: 'Telemetry (logs, traces and metrics)', unit: 'bytes' },
-  };
+  // Friendly labels + unit per measurable capability live in $lib/utils/quota.
+  // Bytes-kind caps format as bytes; everything else as a count.
+  const CAP_META = CAPABILITY_LABELS;
 
   function capLabel(c: CapabilityUsage): string {
     return CAP_META[c.capability]?.label ?? c.capability;
@@ -217,14 +206,26 @@
   let sortedCapabilities = $derived(visibleCapabilities(capabilities));
 
   let hasAnyLimit = $derived(capabilities.some((c) => c.limit !== null));
+
+  // Self-hosted instances without billing or an upgrade link have no plans,
+  // so the word "plan" is only used when one of the two is enabled.
+  let hasPlans = $derived(upgradeEnabled || billingEnabled);
+  let limitsTitle = $derived(hasAnyLimit && hasPlans ? 'Plan limits' : 'Limits');
+  let resetsAt = $derived(nextQuotaReset());
 </script>
 
 <svelte:head>
   <title>Usage - LogTide</title>
 </svelte:head>
 
+<PageHeader
+  title="Usage"
+  appliesTo="organization"
+  description="Ingestion volume, storage and limits for this organization."
+/>
+
 <div class="space-y-6">
-  <!-- Header row with range selector -->
+  <!-- Range selector and actions -->
   <div class="flex items-center justify-between flex-wrap gap-3">
     <TimeRangeButtons
       options={RANGES.map((r) => ({ value: String(r.days), label: r.label }))}
@@ -310,7 +311,7 @@
         {#if loading}
           <Spinner size="sm" />
         {:else}
-          <div class="text-2xl font-bold">{storage ? formatBytes(storage.current) : '—'}</div>
+          <div class="text-2xl font-bold">{storage ? formatBytes(storage.current) : '-'}</div>
           <p class="text-xs text-muted-foreground mt-1">
             Logical bytes within retention · daily snapshot
           </p>
@@ -324,10 +325,10 @@
     <CardHeader class="pb-3">
       <CardTitle class="text-base flex items-center gap-2">
         <Gauge class="h-4 w-4 text-muted-foreground" />
-        Plan limits
+        {limitsTitle}
       </CardTitle>
       <CardDescription>
-        Current usage against your organization's configured capability limits
+        Current usage against your organization's configured limits
       </CardDescription>
     </CardHeader>
     <CardContent>
@@ -343,7 +344,7 @@
       {:else}
         {#if !hasAnyLimit}
           <p class="mb-4 text-sm text-muted-foreground">
-            No limits configured - all capabilities are unlimited on this plan.
+            This instance has no limits.
           </p>
         {/if}
         <div class="grid gap-x-8 gap-y-4 sm:grid-cols-2">
@@ -351,7 +352,7 @@
             {@const pct = capPercent(cap)}
             <div class="space-y-1.5">
               <div class="flex items-center justify-between gap-2 text-sm">
-                <span class="font-medium truncate" title={cap.description}>{capLabel(cap)} <QuotaStateBadge state={cap.state} /></span>
+                <span class="font-medium truncate" title={cap.description}>{capLabel(cap)} <QuotaStateBadge state={cap.state} resetsAt={isMonthlyQuota(cap) ? resetsAt : null} /></span>
                 <span class="text-muted-foreground whitespace-nowrap">
                   {capFormat(cap, cap.current)} / {cap.limit === null ? '∞' : capFormat(cap, cap.limit)}
                   {#if pct !== null}
