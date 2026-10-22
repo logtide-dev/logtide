@@ -49,9 +49,9 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
     "alert_name": "Error rate spike",
     "log_count": 142,
     "threshold": 50,
-    "time_window": 300,
+    "time_window": 5,
     "baseline_metadata": null,
-    "link": "https://app.logtide.dev/alerts/history/abc123"
+    "link": "https://app.logtide.dev/dashboard/alerts"
   }
 }
 ```
