@@ -60,3 +60,15 @@ describe('destination catalog', () => {
     );
   });
 });
+
+describe('displayTypeOf server type', () => {
+  it('prefers the server-computed type over the reduced member URL', () => {
+    const channel = {
+      type: 'webhook' as const,
+      config: { url: 'https://hooks.slack.com/...' },
+      displayType: 'slack' as const,
+    };
+    expect(displayTypeOf(channel)).toBe('slack');
+    expect(displayTypeOf({ type: 'webhook', config: { url: 'https://hooks.slack.com/...' } })).toBe('webhook');
+  });
+});

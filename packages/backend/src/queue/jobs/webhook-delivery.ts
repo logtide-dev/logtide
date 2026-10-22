@@ -42,6 +42,7 @@ export async function processWebhookDelivery(job: IJob<WebhookDeliveryJobData>):
       eventType: delivery.event_type,
       signingSecret: (meta.signingSecret as string) ?? undefined,
       headers: (meta.headers as Record<string, string>) ?? undefined,
+      method: (meta.method as string) ?? undefined,
       channelId: (meta.channelId as string) ?? undefined,
       ruleId: (meta.ruleId as string) ?? undefined,
     })

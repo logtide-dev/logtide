@@ -59,8 +59,9 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
       return reply.status(403).send({ error: 'Not a member of this organization' });
     }
 
+    const isAdmin = await checkAdminRole(request.user.id, organizationId);
     const deliveries = await webhookDeliveryService.listDeliveries(organizationId, { status, limit, offset });
-    return reply.send({ deliveries: deliveries.map(redactDeliveryForApi) });
+    return reply.send({ deliveries: deliveries.map((d) => redactDeliveryForApi(d, isAdmin)) });
   });
 
   /**
@@ -78,8 +79,9 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
       return reply.status(403).send({ error: 'Not a member of this organization' });
     }
 
+    const isAdmin = await checkAdminRole(request.user.id, delivery.organization_id);
     const attempts = await webhookDeliveryService.listAttempts(id);
-    return reply.send({ delivery: redactDeliveryForApi(delivery), attempts });
+    return reply.send({ delivery: redactDeliveryForApi(delivery, isAdmin), attempts });
   });
 
   /**
@@ -121,6 +123,6 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
       metadata: { eventType: delivery.event_type, urlHost },
     });
 
-    return reply.send({ delivery: redactDeliveryForApi(reset) });
+    return reply.send({ delivery: redactDeliveryForApi(reset, true) });
   });
 }

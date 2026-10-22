@@ -424,7 +424,8 @@ describe('Email Templates (branches) - monitor incident deep link', () => {
 
   it('keeps the uptime link without an incident', () => {
     const result = generateMonitorEmail({ ...base, incidentId: null });
-    expect(result.html).toContain('https://app.logtide.dev/dashboard/uptime');
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/uptime/mon-9"');
+    expect(result.text).toContain('https://app.logtide.dev/dashboard/uptime/mon-9');
     expect(result.html).not.toContain('/dashboard/incidents/');
   });
 });

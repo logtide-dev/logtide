@@ -31,6 +31,8 @@ export interface EnqueueParams {
   eventId?: string;
   signingSecret?: string;
   headers?: Record<string, string>;
+  /** HTTP method for the queued request, defaults to POST. */
+  method?: string;
   metadata?: Record<string, unknown>;
   maxAttempts?: number;
   channelId?: string;

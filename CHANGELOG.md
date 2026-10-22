@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Webhook destinations pointing at Microsoft Teams Workflows URLs (`*.logic.azure.com/workflows/...`, `*.api.powerplatform.com/powerautomate/...`) now receive an Adaptive Card instead of the event envelope. These URLs are the same as generic Azure Logic Apps and Power Automate HTTP triggers, so an existing generic destination that parses the envelope in such a flow will stop matching its schema after the upgrade.
+
 
 ## [1.5.0] - 2026-10-20
 

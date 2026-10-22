@@ -23,6 +23,7 @@ import { getChannelDisplayType } from '@logtide/shared';
 import { isSmtpConfigured } from '../../config/index.js';
 import { db } from '../../database/connection.js';
 import { notificationChannelsService } from './service.js';
+import { buildWebhookRequestSettings } from './webhook-request.js';
 
 export interface ResolveChannelsInput {
   organizationId: string;
@@ -77,7 +78,15 @@ export async function resolveChannelsForEvent(
 
 export interface DeliveryTargets {
   emailRecipients: string[];
-  webhooks: { channelId: string; name: string; url: string; displayType: ChannelDisplayType }[];
+  webhooks: {
+    channelId: string;
+    name: string;
+    url: string;
+    displayType: ChannelDisplayType;
+    /** Method and merged headers (custom + auth) so queued sends match the Test button. */
+    method?: string;
+    headers: Record<string, string>;
+  }[];
   pagerDuty: { channelId: string; name: string; routingKey: string }[];
 }
 
@@ -94,13 +103,17 @@ export function toDeliveryTargets(channels: NotificationChannel[]): DeliveryTarg
         if (!emails.has(key)) emails.set(key, email);
       }
     } else if (channel.type === 'webhook') {
-      const url = (channel.config as WebhookChannelConfig).url;
+      const webhookConfig = channel.config as WebhookChannelConfig;
+      const url = webhookConfig.url;
       if (typeof url === 'string' && !webhooks.has(url)) {
+        const request = buildWebhookRequestSettings(channel.id, webhookConfig);
         webhooks.set(url, {
           channelId: channel.id,
           name: channel.name,
           url,
           displayType: getChannelDisplayType(channel),
+          method: request.method,
+          headers: request.headers,
         });
       }
     } else if (channel.type === 'pagerduty') {

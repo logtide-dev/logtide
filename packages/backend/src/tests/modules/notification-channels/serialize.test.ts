@@ -89,6 +89,17 @@ describe('serializeChannel', () => {
   });
 });
 
+describe('serializeChannel displayType', () => {
+  it('keeps the slack type for members whose URL is reduced to the host', () => {
+    const out = serializeChannel(
+      channel('webhook', { url: 'https://hooks.slack.com/services/T1/B2/secret' }),
+      { isAdmin: false }
+    );
+    expect((out.config as any).url).toBe('https://hooks.slack.com/...');
+    expect(out.displayType).toBe('slack');
+  });
+});
+
 describe('mergeConfigSecrets', () => {
   const stored = {
     url: 'https://x.example/h',
@@ -103,6 +114,40 @@ describe('mergeConfigSecrets', () => {
     } as ChannelConfig) as any;
     expect(out.url).toBe('https://x.example/h2');
     expect(out.auth.token).toBe('stored-token');
+  });
+
+  it('refuses to restore a stored token for a different origin', () => {
+    expect(() =>
+      mergeConfigSecrets(stored, {
+        url: 'https://attacker.example/x',
+        auth: { type: 'bearer' },
+      } as ChannelConfig)
+    ).toThrow(/^Invalid configuration/);
+    expect(() =>
+      mergeConfigSecrets(stored, {
+        url: 'https://attacker.example/x',
+        auth: { type: 'bearer', token: SECRET_MASK },
+      } as ChannelConfig)
+    ).toThrow(/^Invalid configuration/);
+  });
+
+  it('refuses to restore a masked header for a different origin', () => {
+    expect(() =>
+      mergeConfigSecrets(stored, {
+        url: 'https://attacker.example/x',
+        headers: { 'X-Api-Key': SECRET_MASK },
+      } as ChannelConfig)
+    ).toThrow(/^Invalid configuration/);
+  });
+
+  it('accepts a retargeted URL when the secrets are retyped', () => {
+    const out = mergeConfigSecrets(stored, {
+      url: 'https://other.example/x',
+      auth: { type: 'bearer', token: 'fresh' },
+      headers: { 'X-Api-Key': 'fresh-key' },
+    } as ChannelConfig) as any;
+    expect(out.auth.token).toBe('fresh');
+    expect(out.headers['X-Api-Key']).toBe('fresh-key');
   });
 
   it('replaces the token when incoming has one', () => {

@@ -852,7 +852,7 @@ export function generateMonitorEmail(data: MonitorEmailData): { html: string; te
   const frontendUrl = getFrontendUrl();
   const monitorUrl = data.incidentId
     ? `${frontendUrl}/dashboard/incidents/${data.incidentId}`
-    : `${frontendUrl}/dashboard/uptime`;
+    : `${frontendUrl}/dashboard/uptime/${data.monitorId}`;
   const isDown = data.status === 'down';
   const severityLabel = severityLabels[data.severity] || data.severity;
 
