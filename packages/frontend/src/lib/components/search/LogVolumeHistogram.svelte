@@ -35,6 +35,9 @@
 
   let chartEl: HTMLDivElement;
   let chart: echarts.ECharts | null = null;
+  // Under this width only a couple of x labels fit; see buildHistogramOption.
+  const COMPACT_BELOW_PX = 520;
+  let compact = false;
   let drag = $state<{ startX: number; currentX: number; downTime: number } | null>(null);
 
   const extent = $derived(
@@ -59,7 +62,15 @@
       bucketSeconds,
       colors,
       formatAxis: (ms) => formatTimestamp(ms, { precision: "minute", withDate }),
+      compact,
     });
+  }
+
+  function syncCompact(): boolean {
+    const next = chartEl ? chartEl.clientWidth > 0 && chartEl.clientWidth < COMPACT_BELOW_PX : false;
+    const changed = next !== compact;
+    compact = next;
+    return changed;
   }
 
   function redraw() {
@@ -114,13 +125,17 @@
   onMount(() => {
     const instance = echarts.init(chartEl);
     chart = instance;
+    syncCompact();
     instance.setOption(buildOption());
     const zr = instance.getZr();
     zr.on("mousedown", onDown);
     zr.on("mousemove", onMove);
     zr.on("mouseup", onUp);
 
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => chart?.resize()) : null;
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+          chart?.resize();
+          if (syncCompact()) redraw();
+        }) : null;
     observer?.observe(chartEl);
     // Colours and axis labels live in the option, so theme and clock changes redraw it.
     const unsubTheme = themeStore.subscribe(() => redraw());
@@ -153,7 +168,7 @@
       <p class="text-xs text-muted-foreground">Click a bar or drag to zoom</p>
     {/if}
   </div>
-  <div class="relative h-24 select-none">
+  <div class="relative h-20 select-none md:h-24">
     <div
       bind:this={chartEl}
       role="img"

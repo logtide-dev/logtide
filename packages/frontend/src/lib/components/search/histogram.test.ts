@@ -154,3 +154,15 @@ describe('buildHistogramOption', () => {
     expect((empty.series as unknown[]).length).toBe(5);
   });
 });
+
+describe('buildHistogramOption compact', () => {
+  const base = { buckets: [], bucketSeconds: 60, colors: {} as never, formatAxis: String };
+  it('uses fewer ticks and keeps room at the right edge when compact', () => {
+    const wide = buildHistogramOption(base) as { grid: { right: number }; xAxis: { splitNumber?: number } };
+    const narrow = buildHistogramOption({ ...base, compact: true }) as typeof wide;
+    expect(wide.xAxis.splitNumber).toBeUndefined();
+    expect(wide.grid.right).toBe(8);
+    expect(narrow.xAxis.splitNumber).toBe(2);
+    expect(narrow.grid.right).toBeGreaterThan(8);
+  });
+});

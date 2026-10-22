@@ -83,6 +83,8 @@ export function buildHistogramOption(i: {
   bucketSeconds: number;
   colors: Record<LogLevel, string>;
   formatAxis: (ms: number) => string;
+  /** Narrow chart: about two x labels and room at the right edge so none is clipped. */
+  compact?: boolean;
 }): EChartsOption {
   const bucketMs = i.bucketSeconds * 1000;
   const starts = i.buckets.map((b) => Date.parse(b.time));
@@ -106,7 +108,8 @@ export function buildHistogramOption(i: {
 
   return {
     animation: false,
-    grid: { left: 8, right: 8, top: 8, bottom: 4, containLabel: true },
+    // The last time label is centred on the right edge, so a narrow chart keeps room for half of it.
+    grid: { left: 8, right: i.compact ? 40 : 8, top: 8, bottom: 4, containLabel: true },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -130,7 +133,12 @@ export function buildHistogramOption(i: {
       type: 'time',
       min,
       max,
-      axisLabel: { ...axisStyle.axisLabel, formatter: (value: number) => i.formatAxis(value), hideOverlap: true },
+      ...(i.compact ? { splitNumber: 2 } : {}),
+      axisLabel: {
+        ...axisStyle.axisLabel,
+        formatter: (value: number) => i.formatAxis(value),
+        hideOverlap: true,
+      },
       axisLine: axisStyle.axisLine,
       splitLine: { show: false },
     },
