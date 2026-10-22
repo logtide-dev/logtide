@@ -1,4 +1,3 @@
 # Ratchet allowlist for the no-dash guard. Shrink-only: delete lines for files you fixed, never add one.
 src/routes/dashboard/uptime/[id]/+page.svelte
-src/routes/dashboard/projects/[id]/+layout.svelte
 src/routes/dashboard/traces/+page.svelte

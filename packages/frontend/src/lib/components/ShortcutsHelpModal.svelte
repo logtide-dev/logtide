@@ -32,8 +32,8 @@
   const categoryLabels: Record<string, string> = {
     navigation: 'Navigation',
     actions: 'Actions',
-    search: 'Search & Filters',
-    time: 'Time Ranges',
+    search: 'Search and filters',
+    time: 'Time ranges',
   };
 
   const categoryOrder = ['navigation', 'actions', 'search', 'time'];
@@ -42,21 +42,21 @@
 <Dialog.Root {open} onOpenChange={handleOpenChange}>
   <Dialog.Content class="max-w-2xl max-h-[80vh] overflow-y-auto">
     <Dialog.Header>
-      <Dialog.Title>Keyboard Shortcuts</Dialog.Title>
+      <Dialog.Title>Keyboard shortcuts</Dialog.Title>
       <Dialog.Description>
-        Navigate faster with keyboard shortcuts
+        Navigate faster with the keyboard
       </Dialog.Description>
     </Dialog.Header>
 
     <div class="space-y-5 py-2">
       {#each categoryOrder as category, i}
-        {#if grouped[category]?.length}
+        {#if grouped[category]?.some((s) => s.combo !== 'escape')}
           <div>
             <h3 class="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
               {categoryLabels[category] ?? category}
             </h3>
             <div class="space-y-0.5">
-              {#each grouped[category].filter(s => s.combo !== 'escape') as shortcut}
+              {#each grouped[category].filter(s => s.combo !== 'escape') as shortcut (shortcut.id)}
                 <div class="flex items-center justify-between py-1.5 px-3 rounded-md hover:bg-accent/50 transition-colors">
                   <span class="text-sm">{shortcut.label}</span>
                   <kbd class="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-border bg-muted text-muted-foreground text-xs font-mono">

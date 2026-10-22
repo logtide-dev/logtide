@@ -53,7 +53,7 @@
 <Dialog bind:open>
   <DialogContent class="sm:max-w-[500px]">
     <DialogHeader>
-      <DialogTitle>Create Organization</DialogTitle>
+      <DialogTitle>Create organization</DialogTitle>
       <DialogDescription>
         Create a new organization to group your projects and manage team access.
       </DialogDescription>
@@ -61,7 +61,7 @@
 
     <form onsubmit={handleSubmit} class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="org-name">Organization Name</Label>
+        <Label for="org-name">Organization name</Label>
         <Input
           id="org-name"
           type="text"
@@ -112,7 +112,7 @@
             Creating...
           {:else}
             <Plus class="w-4 h-4" />
-            Create Organization
+            Create organization
           {/if}
         </Button>
       </DialogFooter>

@@ -3,12 +3,13 @@ import { browser } from '$app/environment';
 import { goto } from '$app/navigation';
 import { matchesCombo, isTypingTarget } from '$lib/utils/keyboard';
 import { layoutStore } from '$lib/stores/layout';
+import { flatNavItems } from '$lib/nav/nav-items';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type ShortcutScope = 'global' | 'search' | 'dashboard';
+export type ShortcutScope = 'global' | 'search' | 'dashboard' | 'traces';
 
 export type ShortcutCategory = 'navigation' | 'actions' | 'search' | 'time';
 
@@ -60,21 +61,21 @@ function createShortcutsStore() {
   // Derived stores
   // ---------------------------------------------------------------------------
 
-  /** All shortcuts grouped by category for the help modal */
-  const grouped = derived(shortcuts, ($shortcuts) => {
-    const groups: Record<string, Shortcut[]> = {};
-    for (const s of $shortcuts) {
-      if (!groups[s.category]) groups[s.category] = [];
-      groups[s.category].push(s);
-    }
-    return groups;
-  });
-
   /** Active shortcuts = global + current scope */
   const active = derived([shortcuts, state], ([$shortcuts, $state]) => {
     return $shortcuts.filter(
       (s) => s.scope === 'global' || s.scope === $state.activeScope
     );
+  });
+
+  /** Active shortcuts grouped by category for the help modal (what works right now) */
+  const grouped = derived(active, ($active) => {
+    const groups: Record<string, Shortcut[]> = {};
+    for (const s of $active) {
+      if (!groups[s.category]) groups[s.category] = [];
+      groups[s.category].push(s);
+    }
+    return groups;
   });
 
   // ---------------------------------------------------------------------------
@@ -216,6 +217,21 @@ function createShortcutsStore() {
   // Register global shortcuts
   // ---------------------------------------------------------------------------
 
+  function navShortcuts(): Shortcut[] {
+    return flatNavItems()
+      .filter((item) => item.shortcut)
+      .map((item) => ({
+        id: `global:go-${item.id}`,
+        combo: item.shortcut as string,
+        label: `Go to ${item.label}`,
+        scope: 'global' as const,
+        category: 'navigation' as const,
+        action: () => {
+          goto(item.href);
+        },
+      }));
+  }
+
   function registerGlobalShortcuts() {
     register([
       {
@@ -237,7 +253,7 @@ function createShortcutsStore() {
       {
         id: 'global:search-focus',
         combo: 'mod+/',
-        label: 'Go to search / focus search input',
+        label: 'Go to Logs or focus the search box',
         scope: 'global',
         category: 'search',
         action: () => {
@@ -269,71 +285,8 @@ function createShortcutsStore() {
           }));
         },
       },
-      // Navigation sequences
-      {
-        id: 'global:go-dashboard',
-        combo: 'g d',
-        label: 'Go to Dashboard',
-        scope: 'global',
-        category: 'navigation',
-        action: () => goto('/dashboard'),
-      },
-      {
-        id: 'global:go-search',
-        combo: 'g s',
-        label: 'Go to Logs',
-        scope: 'global',
-        category: 'navigation',
-        action: () => goto('/dashboard/logs'),
-      },
-      {
-        id: 'global:go-alerts',
-        combo: 'g a',
-        label: 'Go to Alerts',
-        scope: 'global',
-        category: 'navigation',
-        action: () => goto('/dashboard/alerts'),
-      },
-      {
-        id: 'global:go-projects',
-        combo: 'g p',
-        label: 'Go to Projects',
-        scope: 'global',
-        category: 'navigation',
-        action: () => goto('/dashboard/projects'),
-      },
-      {
-        id: 'global:go-traces',
-        combo: 'g t',
-        label: 'Go to Traces',
-        scope: 'global',
-        category: 'navigation',
-        action: () => goto('/dashboard/traces'),
-      },
-      {
-        id: 'global:go-security',
-        combo: 'g e',
-        label: 'Go to Security',
-        scope: 'global',
-        category: 'navigation',
-        action: () => goto('/dashboard/security'),
-      },
-      {
-        id: 'global:go-errors',
-        combo: 'g r',
-        label: 'Go to Errors',
-        scope: 'global',
-        category: 'navigation',
-        action: () => goto('/dashboard/errors'),
-      },
-      {
-        id: 'global:go-settings',
-        combo: 'g x',
-        label: 'Go to Settings',
-        scope: 'global',
-        category: 'navigation',
-        action: () => goto('/dashboard/settings'),
-      },
+      // Navigation sequences come from the nav definition (one source of truth)
+      ...navShortcuts(),
       // UI toggles
       {
         id: 'global:toggle-sidebar',
@@ -363,7 +316,12 @@ function createShortcutsStore() {
     if (!browser || !installed) return;
     document.removeEventListener('keydown', handleKeyDown);
     installed = false;
-    if (pendingTimeout) clearTimeout(pendingTimeout);
+    if (pendingTimeout) {
+      clearTimeout(pendingTimeout);
+      pendingTimeout = null;
+    }
+    state.update((st) => ({ ...st, pendingKey: null }));
+    shortcuts.update((list) => list.filter((sc) => !sc.id.startsWith('global:')));
   }
 
   return {
