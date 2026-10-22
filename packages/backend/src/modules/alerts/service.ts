@@ -314,6 +314,18 @@ export class AlertsService {
     if (input.query !== undefined) updateData.query = normalizeAlertQuery(input.query);
     if (input.renotifyMinutes !== undefined) updateData.renotify_minutes = input.renotifyMinutes;
 
+    if (input.enabled === false) {
+      // A disabled rule is no longer evaluated: it leaves the firing state in
+      // the same UPDATE (no alert.resolved is sent), and its incident is
+      // resolved as manual first (row A1).
+      const current = await this.getLifecycleState(id, organizationId);
+      if (!current) return null;
+      if (current.state === 'firing') {
+        await resolveAlertIncident(current, 'manual', new Date());
+      }
+      updateData.state = 'ok';
+    }
+
     const rule = await db
       .updateTable('alert_rules')
       .set(updateData)
@@ -326,9 +338,17 @@ export class AlertsService {
   }
 
   /**
-   * Delete alert rule
+   * Delete alert rule. A firing rule's incident is resolved as manual BEFORE
+   * the delete (row A2): incidents.alert_rule_id is ON DELETE SET NULL, so
+   * afterwards the incident could no longer be found by its rule.
    */
   async deleteAlertRule(id: string, organizationId: string): Promise<boolean> {
+    const current = await this.getLifecycleState(id, organizationId);
+    if (!current) return false;
+    if (current.state === 'firing') {
+      await resolveAlertIncident(current, 'manual', new Date());
+    }
+
     const result = await db
       .deleteFrom('alert_rules')
       .where('id', '=', id)
@@ -336,6 +356,34 @@ export class AlertsService {
       .executeTakeFirst();
 
     return Number(result.numDeletedRows || 0) > 0;
+  }
+
+  /**
+   * Set (or clear, with null) the snooze end of a rule. The lifecycle state
+   * is not touched: the next evaluation applies T3/T6/T7/T10.
+   */
+  async snoozeAlertRule(id: string, organizationId: string, until: Date | null): Promise<AlertRule | null> {
+    const rule = await db
+      .updateTable('alert_rules')
+      .set({ snoozed_until: until, updated_at: new Date() })
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .returningAll()
+      .executeTakeFirst();
+
+    return rule ? this.mapAlertRule(rule) : null;
+  }
+
+  private async getLifecycleState(
+    id: string,
+    organizationId: string
+  ): Promise<{ id: string; organization_id: string; state: AlertRuleState } | undefined> {
+    return db
+      .selectFrom('alert_rules')
+      .select(['id', 'organization_id', 'state'])
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
   }
 
   /**

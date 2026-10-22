@@ -172,6 +172,50 @@ async function withTriggersLast24h<T extends { id: string }>(
   return alertRules.map((rule) => ({ ...rule, triggersLast24h: counts.get(rule.id) ?? 0 }));
 }
 
+const snoozeBodySchema = z.object({
+  until: z.string().datetime({ offset: true }),
+});
+
+const SNOOZE_MAX_MS = 365 * DAY_MS;
+
+/**
+ * Shared body of POST/DELETE /:id/snooze: membership (403), rule in the
+ * organization (404), update, audit `rule.updated`, enriched response.
+ */
+async function setSnooze(
+  request: any,
+  reply: any,
+  id: string,
+  organizationId: string,
+  until: Date | null
+) {
+  const isMember = await checkOrganizationMembership(request.user.id, organizationId);
+  if (!isMember) {
+    return reply.status(403).send({
+      error: 'You are not a member of this organization',
+    });
+  }
+
+  const alertRule = await alertsService.snoozeAlertRule(id, organizationId, until);
+  if (!alertRule) {
+    return reply.status(404).send({
+      error: 'Alert rule not found',
+    });
+  }
+
+  await auditLogService.record({
+    action: 'rule.updated',
+    target: { type: 'alert_rule', id },
+    organizationId,
+    metadata: { updatedFields: ['snoozedUntil'], snoozedUntil: until ? until.toISOString() : null },
+  });
+
+  const [enrichedRule] = await withTriggersLast24h(organizationId, [
+    await enrichAlertRuleWithChannels(alertRule),
+  ]);
+  return reply.send({ alertRule: enrichedRule });
+}
+
 function inputErrorBody(error: AlertRuleInputError): { error: string; position?: number } {
   return error.position !== undefined
     ? { error: error.message, position: error.position }
@@ -366,6 +410,59 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       const preview = await alertsService.previewAlertRule(body);
 
       return reply.send({ preview });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          error: 'Validation error',
+          details: error.errors,
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  // Snooze an alert rule until a time (must be before /:id routes)
+  fastify.post('/:id/snooze', async (request: any, reply) => {
+    const params = alertRuleIdSchema.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({ error: 'Invalid alert rule ID format' });
+    }
+    try {
+      const { organizationId } = orgQuerySchema.parse(request.query);
+      const { until } = snoozeBodySchema.parse(request.body ?? {});
+
+      const untilDate = new Date(until);
+      const now = Date.now();
+      if (untilDate.getTime() <= now) {
+        return reply.status(400).send({ error: 'Snooze end must be in the future' });
+      }
+      if (untilDate.getTime() > now + SNOOZE_MAX_MS) {
+        return reply.status(400).send({ error: 'Snooze end must be within 365 days' });
+      }
+
+      return await setSnooze(request, reply, params.data.id, organizationId, untilDate);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          error: 'Validation error',
+          details: error.errors,
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  // End the snooze of an alert rule
+  fastify.delete('/:id/snooze', async (request: any, reply) => {
+    const params = alertRuleIdSchema.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({ error: 'Invalid alert rule ID format' });
+    }
+    try {
+      const { organizationId } = orgQuerySchema.parse(request.query);
+      return await setSnooze(request, reply, params.data.id, organizationId, null);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
