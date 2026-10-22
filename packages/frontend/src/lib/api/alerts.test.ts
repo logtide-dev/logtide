@@ -46,7 +46,7 @@ describe('AlertsAPI lifecycle', () => {
       lastTriggeredAt: '2026-10-22T10:00:00Z',
       snoozedUntil: null,
       renotifyMinutes: 60,
-      triggers24h: 4,
+      triggersLast24h: 4,
     };
     fetchMock.mockReturnValue(ok({ alertRules: [rule] }));
     const res = await api.getAlertRules('org1');

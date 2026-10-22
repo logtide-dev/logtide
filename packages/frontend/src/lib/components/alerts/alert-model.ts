@@ -38,11 +38,11 @@ export function deriveRuleState(
 
 /** Server count when present, else history rows of that rule newer than 24 h. */
 export function countTriggers24h(
-  rule: Pick<AlertRule, 'id' | 'triggers24h'>,
+  rule: Pick<AlertRule, 'id' | 'triggersLast24h'>,
   history: Pick<AlertHistory, 'ruleId' | 'triggeredAt'>[],
   now: Date = new Date()
 ): number {
-  if (typeof rule.triggers24h === 'number') return rule.triggers24h;
+  if (typeof rule.triggersLast24h === 'number') return rule.triggersLast24h;
   const cutoff = now.getTime() - DAY_MS;
   let count = 0;
   for (const row of history) {
