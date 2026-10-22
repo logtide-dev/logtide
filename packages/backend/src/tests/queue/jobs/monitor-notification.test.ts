@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { db } from '../../../database/index.js';
 import { createTestUser, createTestOrganization } from '../../helpers/factories.js';
 import { parseWebhookEvent } from '@logtide/shared';
 
@@ -30,12 +31,15 @@ vi.mock('../../../config/index.js', () => ({
   },
   isSmtpConfigured: vi.fn(() => false),
 }));
+import { isSmtpConfigured } from '../../../config/index.js';
+
+const { sendMailMock } = vi.hoisted(() => ({ sendMailMock: vi.fn() }));
 
 // Mock nodemailer
 vi.mock('nodemailer', () => ({
   default: {
     createTransport: vi.fn(() => ({
-      sendMail: vi.fn().mockResolvedValue({ messageId: 'test-id' }),
+      sendMail: sendMailMock,
     })),
   },
 }));
@@ -85,6 +89,7 @@ describe('Monitor webhook envelope', () => {
     const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org' });
 
     mockGetMonitorChannels.mockResolvedValueOnce([{
+      organizationId: org.id,
       id: '00000000-0000-0000-0000-000000000040',
       type: 'webhook',
       enabled: true,
@@ -131,6 +136,7 @@ describe('Monitor webhook envelope', () => {
     const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 2' });
 
     mockGetMonitorChannels.mockResolvedValue([{
+      organizationId: org.id,
       id: '00000000-0000-0000-0000-000000000041',
       type: 'webhook',
       enabled: true,
@@ -161,6 +167,7 @@ describe('Monitor webhook envelope', () => {
     const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 3' });
 
     mockGetMonitorChannels.mockResolvedValueOnce([{
+      organizationId: org.id,
       id: '00000000-0000-0000-0000-000000000042',
       type: 'webhook',
       enabled: true,
@@ -195,6 +202,7 @@ describe('Monitor webhook envelope', () => {
     const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 4' });
 
     mockGetMonitorChannels.mockResolvedValueOnce([{
+      organizationId: org.id,
       id: '00000000-0000-0000-0000-000000000043',
       type: 'webhook',
       enabled: true,
@@ -263,5 +271,132 @@ describe('Monitor webhook envelope', () => {
     } as Job<MonitorNotificationJob>);
 
     expect(createNotificationMock.mock.calls[0][0].metadata.link).toBe(`/dashboard/incidents/${incidentId}`);
+  });
+});
+
+describe('Monitor notification routing', () => {
+  const PD_KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+  const MONITOR_ID = '00000000-0000-0000-0000-0000000000b1';
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    monitorEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    sendMailMock.mockReset().mockResolvedValue({ messageId: 'test-id' });
+    createNotificationMock.mockReset().mockResolvedValue({ id: 'notification-id' });
+    vi.mocked(isSmtpConfigured).mockReturnValue(false);
+    mockGetMonitorChannels.mockReset().mockResolvedValue([]);
+    await db.deleteFrom('organization_default_channels').execute();
+  });
+
+  function jobFor(orgId: string, overrides: Partial<MonitorNotificationJob> = {}) {
+    return {
+      data: {
+        monitorId: MONITOR_ID,
+        monitorName: 'Routing Check',
+        organizationId: orgId,
+        projectId: '00000000-0000-0000-0000-000000000000',
+        status: 'down',
+        severity: 'high',
+        ...overrides,
+      } as MonitorNotificationJob,
+    } as Job<MonitorNotificationJob>;
+  }
+
+  function channel(orgId: string, type: 'email' | 'webhook' | 'pagerduty', config: unknown, id: string) {
+    return { id, organizationId: orgId, name: id, type, enabled: true, config };
+  }
+
+  it('uses the organization default channels for monitoring when the monitor has none', async () => {
+    vi.mocked(isSmtpConfigured).mockReturnValue(true);
+    const owner = await createTestUser({ name: 'Default Owner' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Default Org' });
+    const ch = await db
+      .insertInto('notification_channels')
+      .values({
+        organization_id: org.id,
+        name: 'Ops mail',
+        type: 'email',
+        enabled: true,
+        config: { recipients: ['ops@example.com'] },
+        description: null,
+        created_by: null,
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto('organization_default_channels')
+      .values({ organization_id: org.id, event_type: 'monitoring', channel_id: ch.id })
+      .execute();
+
+    await processMonitorNotification(jobFor(org.id));
+
+    expect(sendMailMock.mock.calls.map((c) => c[0].to)).toEqual(['ops@example.com']);
+  });
+
+  it('sends a PagerDuty trigger on down with the monitor dedup key', async () => {
+    const owner = await createTestUser({ name: 'PD Owner' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'PD Org' });
+    mockGetMonitorChannels.mockResolvedValueOnce([
+      channel(org.id, 'pagerduty', { routingKey: PD_KEY }, '00000000-0000-0000-0000-0000000000aa'),
+    ]);
+
+    await processMonitorNotification(jobFor(org.id));
+
+    expect(monitorEnqueueMock).toHaveBeenCalledTimes(1);
+    const call = monitorEnqueueMock.mock.calls[0][0];
+    expect(call.url).toBe('https://events.pagerduty.com/v2/enqueue');
+    expect(call.payload.event_action).toBe('trigger');
+    expect(call.payload.dedup_key).toBe(`monitor:${MONITOR_ID}`);
+    expect(call.payload.routing_key).toBe(PD_KEY);
+  });
+
+  it('sends a PagerDuty resolve on recovery with the same dedup key', async () => {
+    const owner = await createTestUser({ name: 'PD Owner 2' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'PD Org 2' });
+    mockGetMonitorChannels.mockResolvedValueOnce([
+      channel(org.id, 'pagerduty', { routingKey: PD_KEY }, '00000000-0000-0000-0000-0000000000ab'),
+    ]);
+
+    await processMonitorNotification(jobFor(org.id, { status: 'up', severity: 'informational' }));
+
+    const call = monitorEnqueueMock.mock.calls[0][0];
+    expect(call.payload.event_action).toBe('resolve');
+    expect(call.payload.dedup_key).toBe(`monitor:${MONITOR_ID}`);
+  });
+
+  it('nothing resolved with SMTP on emails owners and admins only, never plain members', async () => {
+    vi.mocked(isSmtpConfigured).mockReturnValue(true);
+    const owner = await createTestUser({ email: 'mon-owner@test.com', name: 'Owner User' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Fallback Org' });
+    const admin = await createTestUser({ email: 'mon-admin@test.com', name: 'Admin User' });
+    const member = await createTestUser({ email: 'mon-member@test.com', name: 'Member User' });
+    await db
+      .insertInto('organization_members')
+      .values([
+        { user_id: admin.id, organization_id: org.id, role: 'admin' },
+        { user_id: member.id, organization_id: org.id, role: 'member' },
+      ])
+      .execute();
+
+    await processMonitorNotification(jobFor(org.id, { severity: 'critical' }));
+
+    expect(sendMailMock.mock.calls.map((c) => c[0].to).sort()).toEqual([
+      'mon-admin@test.com',
+      'mon-owner@test.com',
+    ]);
+  });
+
+  it('a webhook-only routing sends no email even with SMTP configured', async () => {
+    vi.mocked(isSmtpConfigured).mockReturnValue(true);
+    const owner = await createTestUser({ name: 'Hook Owner' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Hook Org' });
+    mockGetMonitorChannels.mockResolvedValueOnce([
+      channel(org.id, 'webhook', { url: 'https://hooks.example.com/m' }, '00000000-0000-0000-0000-0000000000ac'),
+    ]);
+
+    await processMonitorNotification(jobFor(org.id));
+
+    expect(sendMailMock).not.toHaveBeenCalled();
+    expect(monitorEnqueueMock).toHaveBeenCalledTimes(1);
   });
 });

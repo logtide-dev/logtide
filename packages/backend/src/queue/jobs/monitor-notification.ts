@@ -4,10 +4,16 @@ import { config, isSmtpConfigured } from '../../config/index.js';
 import { db } from '../../database/connection.js';
 import { notificationsService } from '../../modules/notifications/service.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
+import {
+  resolveChannelsForEvent,
+  resolveFallbackEmails,
+  toDeliveryTargets,
+} from '../../modules/notification-channels/resolver.js';
+import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
 import { createQueue } from '../connection.js';
 import { generateMonitorEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
-import type { Severity, EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
+import type { Severity } from '@logtide/shared';
 
 export interface MonitorNotificationJob {
   monitorId: string;
@@ -122,27 +128,15 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
     return;
   }
 
-  // Get notification channels: monitor-specific → org defaults for 'monitoring'
-  // W11 resolver: replace the pair below with the shared channel resolver.
-  let channels = await notificationChannelsService.getMonitorChannels(data.monitorId);
-  if (channels.length === 0) {
-    channels = await notificationChannelsService.getOrganizationDefaults(data.organizationId, 'monitoring');
-  }
-
-  const channelEmailRecipients = new Set<string>();
-  const channelWebhookUrls = new Set<string>();
-
-  channels
-    .filter((ch) => ch.enabled)
-    .forEach((ch) => {
-      if (ch.type === 'email') {
-        const emailConfig = ch.config as EmailChannelConfig;
-        emailConfig.recipients.forEach((email) => channelEmailRecipients.add(email));
-      } else if (ch.type === 'webhook') {
-        const webhookConfig = ch.config as WebhookChannelConfig;
-        channelWebhookUrls.add(webhookConfig.url);
-      }
-    });
+  // Resolve destinations with the shared rule: channels attached to the
+  // monitor, else organization defaults for monitoring, else the owners and
+  // admins email fallback (only when nothing resolved and SMTP is configured).
+  const routing = await resolveChannelsForEvent({
+    organizationId: data.organizationId,
+    eventType: 'monitoring',
+    explicitChannels: await notificationChannelsService.getMonitorChannels(data.monitorId),
+  });
+  const targets = toDeliveryTargets(routing.channels);
 
   // Get org members for in-app notifications
   const shouldNotifyAll = data.severity === 'critical' || data.severity === 'high';
@@ -160,8 +154,7 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
   const members = await membersQuery.execute();
 
   if (members.length === 0) {
-    console.log(`[MonitorNotification] No members to notify for org ${data.organizationId}`);
-    return;
+    console.log(`[MonitorNotification] No members to notify in-app for org ${data.organizationId}`);
   }
 
   // In-app notifications
@@ -195,10 +188,9 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
   console.log(`[MonitorNotification] In-app notifications sent to ${members.length} members`);
 
   // Email notifications
-  const emailRecipients =
-    channelEmailRecipients.size > 0
-      ? Array.from(channelEmailRecipients)
-      : members.map((m) => m.email);
+  const emailRecipients = routing.fallback
+    ? await resolveFallbackEmails(data.organizationId)
+    : targets.emailRecipients;
 
   if (isSmtpConfigured() && emailRecipients.length > 0) {
     const transporter = createTransporter();
@@ -230,16 +222,35 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
     console.log(`[MonitorNotification] Emails sent to ${emailRecipients.length} recipients`);
   }
 
-  // W11 pagerduty: trigger on down, resolve on recovery (dedup key monitor:<monitorId>).
-
   // Webhook notifications
-  if (channelWebhookUrls.size > 0) {
-    const webhookPromises = Array.from(channelWebhookUrls).map((url) =>
+  if (targets.webhooks.length > 0) {
+    const webhookPromises = targets.webhooks.map(({ url }) =>
       sendMonitorWebhook(url, data, org.name)
         .then(() => console.log(`[MonitorNotification] Webhook sent to ${url}`))
         .catch((err) => console.error(`[MonitorNotification] Webhook failed for ${url}:`, err))
     );
 
     await Promise.all(webhookPromises);
+  }
+
+  // PagerDuty: trigger on down, resolve on recovery, one dedup key per monitor.
+  if (targets.pagerDuty.length > 0) {
+    await notifyPagerDutyTargets(targets.pagerDuty, {
+      organizationId: data.organizationId,
+      action: isDown ? 'trigger' : 'resolve',
+      dedupKey: `monitor:${data.monitorId}`,
+      eventType: 'monitor.status_changed',
+      summary: title,
+      severity: data.severity,
+      link: `${getFrontendUrl()}${monitorNotificationLink(data)}`,
+      details: {
+        message,
+        target: data.target,
+        error_code: data.errorCode,
+        consecutive_failures: data.consecutiveFailures,
+        incident_id: data.incidentId ?? null,
+        organization: org.name,
+      },
+    });
   }
 }
