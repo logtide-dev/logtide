@@ -2,6 +2,7 @@
   import type { MonitorStatusConfig } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
 
   interface Props {
     config: MonitorStatusConfig;
@@ -27,6 +28,15 @@
   </div>
 
   <div class="space-y-1.5">
+    <Label for="mon-project">Project</Label>
+    <ProjectSelect
+      id="mon-project"
+      value={config.projectId}
+      onChange={(projectId) => onChange({ ...config, projectId })}
+    />
+  </div>
+
+  <div class="space-y-1.5">
     <Label for="mon-limit">Number of monitors to show</Label>
     <Input
       id="mon-limit"
@@ -42,7 +52,7 @@
   </div>
 
   <p class="text-xs text-muted-foreground">
-    Leave the monitor IDs empty to show all monitors in scope. Filtering by specific IDs
-    requires editing the panel JSON for now.
+    Shows every monitor in the selected project, or in the whole organization when no
+    project is selected.
   </p>
 </div>

@@ -2,6 +2,7 @@
   import type { TraceVolumeConfig } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
   import {
     Select,
     SelectContent,
@@ -32,6 +33,15 @@
       type="text"
       value={config.title}
       oninput={(e) => update('title', (e.currentTarget as HTMLInputElement).value)}
+    />
+  </div>
+
+  <div class="space-y-1.5">
+    <Label for="tv-project">Project</Label>
+    <ProjectSelect
+      id="tv-project"
+      value={config.projectId}
+      onChange={(projectId) => onChange({ ...config, projectId })}
     />
   </div>
 
