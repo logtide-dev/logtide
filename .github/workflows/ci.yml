@@ -340,6 +340,9 @@ jobs:
           echo "Backend is ready"
           timeout 120 bash -c 'until curl -s http://localhost:3002 > /dev/null; do sleep 2; done'
           echo "Frontend is ready"
+          # The worker runs the alert cron and notification jobs the alert-to-incident journey needs
+          docker compose -f docker-compose.test.yml ps worker-test --format '{{.State}}' | grep -q running
+          echo "Worker is running"
 
       - name: Run E2E tests
         working-directory: packages/frontend
