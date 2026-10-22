@@ -106,6 +106,20 @@ describe('dashboard compatibility', () => {
     expect(imported.panels.map((p) => p.config)).toEqual(withOptionals.map((p) => p.config));
   });
 
+  it('accepts the rate aggregation on metric panels and keeps it through a yaml round trip', async () => {
+    const withRate: PanelInstance[] = [
+      { id: 'r1', layout: LAYOUT, config: { type: 'metric_chart', title: 'Rate', source: 'metrics', projectId: null, metricName: 'requests', aggregation: 'rate', interval: '5m', timeRange: '1h', serviceName: null, groupBy: ['host'] } },
+      { id: 'r2', layout: LAYOUT, config: { type: 'metric_stat', title: 'Rate stat', source: 'metrics', projectId: null, metricName: 'requests', aggregation: 'rate', timeRange: '1h', serviceName: null, unit: '/s' } },
+    ];
+    const source = await service.create(
+      { organizationId: ctx.organization.id, name: 'Rates', panels: withRate },
+      ctx.user.id
+    );
+    const text = await service.exportYaml(source.id, ctx.organization.id, ctx.user.id);
+    const imported = await service.importYaml(text, ctx.organization.id, ctx.user.id);
+    expect(imported.panels.map((p) => p.config)).toEqual(withRate.map((p) => p.config));
+  });
+
   it('a panel using a field unknown to this version is rejected with a validation error, not a crash', async () => {
     const yamlFor = (config: string) => `
 name: From the future

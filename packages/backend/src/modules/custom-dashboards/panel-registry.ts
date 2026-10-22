@@ -119,6 +119,7 @@ const metricAggregationEnum = z.enum([
   'max',
   'count',
   'last',
+  'rate',
   'p50',
   'p95',
   'p99',

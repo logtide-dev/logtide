@@ -39,7 +39,7 @@
     }
   }
 
-  const aggregations: MetricAggregation[] = ['avg', 'sum', 'min', 'max', 'count', 'last', 'p50', 'p95', 'p99'];
+  const aggregations: MetricAggregation[] = ['avg', 'sum', 'min', 'max', 'count', 'last', 'rate', 'p50', 'p95', 'p99'];
   const intervals: MetricInterval[] = ['1m', '5m', '15m', '1h', '6h', '1d'];
 
   const MAX_GROUP_KEYS = 2;

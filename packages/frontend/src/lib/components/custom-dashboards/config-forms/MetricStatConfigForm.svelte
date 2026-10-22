@@ -36,7 +36,7 @@
     }
   }
 
-  const aggregations: MetricAggregation[] = ['avg', 'sum', 'min', 'max', 'count', 'last', 'p50', 'p95', 'p99'];
+  const aggregations: MetricAggregation[] = ['avg', 'sum', 'min', 'max', 'count', 'last', 'rate', 'p50', 'p95', 'p99'];
 
   function update<K extends keyof MetricStatConfig>(key: K, value: MetricStatConfig[K]) {
     onChange({ ...config, [key]: value });

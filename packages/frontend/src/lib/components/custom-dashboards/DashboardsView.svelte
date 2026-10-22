@@ -138,6 +138,19 @@
     });
   });
 
+  // Palette "Create dashboard" links to /dashboard?create=1: open the create
+  // dialog once, then drop the param so a reload or back does not reopen it.
+  $effect(() => {
+    const currentUrl = url;
+    if (!browser || currentUrl.searchParams.get('create') !== '1') return;
+    untrack(() => {
+      showCreateDashboard = true;
+      const cleaned = new URL(currentUrl.toString());
+      cleaned.searchParams.delete('create');
+      navigate(cleaned);
+    });
+  });
+
   // Store to URL: ?id= for a non-default dashboard, ?range= for the override.
   $effect(() => {
     if (!ready) return;
@@ -149,6 +162,8 @@
       id: dashboard.isDefault ? null : dashboard.id,
       range,
     });
+    // A pending ?create=1 is consumed by the effect above; never write it back.
+    next.searchParams.delete('create');
     if (next.toString() === current.toString()) return;
     syncedKey = urlKey(next);
     untrack(() => navigate(next));
