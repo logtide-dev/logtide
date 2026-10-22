@@ -10,6 +10,7 @@
   import { Switch } from '$lib/components/ui/switch';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import { sourceLabel } from './rule-source';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
 
   interface Props {
@@ -41,20 +42,6 @@
   let ruleToDelete = $state<SigmaRuleListItem | null>(null);
 
   const MAX_TACTICS = 2;
-
-  function humanise(id: string): string {
-    const text = id.replace(/[-_]+/g, ' ').trim();
-    return text.charAt(0).toUpperCase() + text.slice(1);
-  }
-
-  function sourceLabel(rule: SigmaRuleListItem): string {
-    if (rule.source === 'sigmahq') return 'SigmaHQ';
-    if (rule.source === 'pack') {
-      if (rule.packId && packNames[rule.packId]) return packNames[rule.packId];
-      return rule.packId ? humanise(rule.packId) : 'Pack';
-    }
-    return 'Custom';
-  }
 
   function askDelete(rule: SigmaRuleListItem) {
     ruleToDelete = rule;
@@ -111,7 +98,7 @@
 {/snippet}
 
 {#snippet sourceCell(rule: SigmaRuleListItem)}
-  <span class="text-sm">{sourceLabel(rule)}</span>
+  <span class="text-sm">{sourceLabel(rule, packNames)}</span>
 {/snippet}
 
 {#snippet enabledCell(rule: SigmaRuleListItem)}
