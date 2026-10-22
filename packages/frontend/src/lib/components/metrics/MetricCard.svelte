@@ -10,6 +10,8 @@
     CardTitle,
   } from "$lib/components/ui/card";
   import { Badge } from "$lib/components/ui/badge";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { formatTimestamp } from "$lib/utils/datetime";
   import type { MetricAggregateResult, MetricType } from "$lib/api/metrics";
 
   interface Props {
@@ -75,7 +77,7 @@
     const tooltipStyle = getTooltipStyle();
     const buckets = timeseries.timeseries.map(p => {
       const d = typeof p.bucket === 'string' ? new Date(p.bucket) : p.bucket;
-      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      return formatTimestamp(d, { precision: 'minute' });
     });
     const values = timeseries.timeseries.map(p => p.value);
 
@@ -120,9 +122,7 @@
       {formatValue(value)}{#if unit}<span class="text-sm font-normal text-muted-foreground ml-1">{unit}</span>{/if}
     </div>
     {#if loading}
-      <div class="h-[80px] flex items-center justify-center">
-        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-      </div>
+      <Skeleton class="h-[80px] w-full" />
     {:else}
       <div bind:this={chartContainer} class="h-[80px] w-full"></div>
     {/if}
