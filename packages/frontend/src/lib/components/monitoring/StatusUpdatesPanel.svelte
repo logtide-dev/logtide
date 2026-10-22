@@ -145,7 +145,7 @@
         status: updateStatus,
         message: updateMessage.trim(),
       });
-      toastStore.success('Update posted');
+      toastStore.success('Status update posted');
       updateOpen = false;
       await load();
     } catch (err) {
