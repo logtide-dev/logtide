@@ -36,6 +36,8 @@ export const CAPABILITY_LABELS: Record<string, { label: string; unit: 'count' | 
   'projects.max': { label: 'Projects', unit: 'count' },
   'sigma.max_active_rules': { label: 'Active Sigma rules', unit: 'count' },
   'dashboards.max_custom': { label: 'Custom dashboards', unit: 'count' },
+  'saved_searches.max_per_org': { label: 'Saved searches', unit: 'count' },
+  'status_page.subscribers.max': { label: 'Status page subscribers', unit: 'count' },
   'ingestion.max_events_monthly': { label: 'Events (this month)', unit: 'count' },
   'ingestion.max_bytes_monthly': { label: 'Ingested bytes (this month)', unit: 'bytes' },
   'storage.max_bytes': { label: 'Storage used', unit: 'bytes' },
