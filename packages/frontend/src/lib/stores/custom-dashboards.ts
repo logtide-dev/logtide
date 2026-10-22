@@ -735,6 +735,7 @@ export const dashboardList = derived(customDashboardsStore, (s) => s.dashboards)
 export const activeDashboard = derived(customDashboardsStore, (s) => s.activeDashboard);
 export const dashboardLoading = derived(customDashboardsStore, (s) => s.loadingActive);
 export const dashboardError = derived(customDashboardsStore, (s) => s.activeError);
+export const dashboardListError = derived(customDashboardsStore, (s) => s.listError);
 export const editMode = derived(customDashboardsStore, (s) => s.editMode);
 export const pendingPanels = derived(customDashboardsStore, (s) => s.pendingPanels);
 export const dashboardSaving = derived(customDashboardsStore, (s) => s.saving);
