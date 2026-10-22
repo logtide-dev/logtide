@@ -113,7 +113,7 @@
 			onSuccess?.();
 		} catch (error) {
 			toastStore.error(
-				error instanceof Error ? error.message : "Failed to enable pack"
+				error instanceof Error ? error.message : "Could not enable the pack"
 			);
 		} finally {
 			submitting = false;
@@ -134,7 +134,7 @@
 			onSuccess?.();
 		} catch (error) {
 			toastStore.error(
-				error instanceof Error ? error.message : "Failed to disable pack"
+				error instanceof Error ? error.message : "Could not disable the pack"
 			);
 		} finally {
 			disabling = false;
@@ -156,7 +156,7 @@
 			onSuccess?.();
 		} catch (error) {
 			toastStore.error(
-				error instanceof Error ? error.message : "Failed to update settings"
+				error instanceof Error ? error.message : "Could not update the settings"
 			);
 		} finally {
 			submitting = false;

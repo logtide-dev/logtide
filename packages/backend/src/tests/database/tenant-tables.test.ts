@@ -19,7 +19,7 @@ const ALL_TABLES = [
   'audit_log', 'metrics_hourly_stats', 'metrics_daily_stats', 'metrics',
   'metric_exemplars', 'custom_dashboards', 'log_pipelines', 'digest_configs',
   'digest_recipients', 'receivers', 'receiver_events', 'email_verification_tokens',
-  'organization_creation_log', 'saved_searches',
+  'organization_creation_log', 'saved_searches', 'sigma_rule_exceptions',
 ];
 
 describe('tenant-tables manifest', () => {

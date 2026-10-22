@@ -5,6 +5,8 @@ import { SiemService } from '../../modules/siem/service.js';
 import { sql } from 'kysely';
 import { sigmaExceptionsService } from '../../modules/sigma/exceptions-service.js';
 import { partitionMatches } from '../../modules/sigma/exceptions.js';
+import { notificationChannelsService } from '../../modules/notification-channels/service.js';
+import { resolveChannelsForEvent } from '../../modules/notification-channels/resolver.js';
 
 const siemService = new SiemService(db);
 
@@ -205,22 +207,38 @@ export async function processSigmaDetection(job: any) {
           `[SigmaDetection] Sigma rule matched: ${firstMatch.ruleTitle} (${matches.length} matches, level: ${firstMatch.ruleLevel})`
         );
 
-        // Check if notifications are configured
-        const hasEmail = sigmaRule.email_recipients && sigmaRule.email_recipients.length > 0;
-        const hasWebhook = !!sigmaRule.webhook_url;
+        // Destinations: the rule's own channels, else the organization
+        // defaults for sigma, else the owners and admins fallback (when SMTP
+        // is configured). Legacy email and webhook settings still count.
+        const ruleChannels = await notificationChannelsService.getSigmaRuleChannels(
+          sigmaRule.id,
+          data.organizationId
+        );
+        const routing = await resolveChannelsForEvent({
+          organizationId: data.organizationId,
+          eventType: 'sigma',
+          explicitChannels: ruleChannels,
+        });
+        const hasLegacy =
+          (sigmaRule.email_recipients && sigmaRule.email_recipients.length > 0) ||
+          !!sigmaRule.webhook_url;
 
-        if (!hasEmail && !hasWebhook) {
+        if (routing.source === 'none' && routing.fallback === null && !hasLegacy) {
           console.log(
             `[SigmaDetection] Sigma rule "${firstMatch.ruleTitle}" matched but has no notification settings (detection-only mode)`
           );
           continue;
         }
 
-        // Queue notification job directly (no alert rule needed)
+        // Queue notification job directly (no alert rule needed). `kind` makes
+        // the worker use the 1.6 path (channels, org defaults, fallback);
+        // `event_type` tells it which org defaults apply.
         const notificationQueue = createQueue('alert-notifications');
 
         await notificationQueue.add('send-notification', {
           historyId: null, // No alert history for Sigma rules
+          kind: 'triggered',
+          event_type: 'sigma',
           rule_id: sigmaRule.id,
           rule_name: `[Sigma] ${firstMatch.ruleTitle}`,
           organization_id: data.organizationId,
