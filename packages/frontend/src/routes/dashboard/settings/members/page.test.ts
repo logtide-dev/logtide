@@ -201,10 +201,10 @@ describe('members page', () => {
     expect(api.getOrganizations).not.toHaveBeenCalled();
   });
 
-  it('role table lists seven capabilities', async () => {
+  it('role table lists eight capabilities', async () => {
     await renderPage('owner', 'u-owner');
     expect(screen.getByText('What each role can do')).toBeInTheDocument();
-    expect(screen.getAllByTestId('role-capability-row')).toHaveLength(7);
+    expect(screen.getAllByTestId('role-capability-row')).toHaveLength(8);
   });
 
   it('member viewer sees no Invite button and no actions column', async () => {
