@@ -386,7 +386,7 @@ export class CustomDashboardsService {
         layout: { x: 0, y: 0, w: 3, h: 2 },
         config: {
           type: 'single_stat',
-          title: 'Total Logs Today',
+          title: 'Total logs today',
           source: 'logs',
           metric: 'total_logs',
           projectId: null,
@@ -398,7 +398,7 @@ export class CustomDashboardsService {
         layout: { x: 3, y: 0, w: 3, h: 2 },
         config: {
           type: 'single_stat',
-          title: 'Error Rate',
+          title: 'Error rate',
           source: 'logs',
           metric: 'error_rate',
           projectId: null,
@@ -410,7 +410,7 @@ export class CustomDashboardsService {
         layout: { x: 6, y: 0, w: 3, h: 2 },
         config: {
           type: 'single_stat',
-          title: 'Active Services',
+          title: 'Active services',
           source: 'logs',
           metric: 'active_services',
           projectId: null,
@@ -434,7 +434,7 @@ export class CustomDashboardsService {
         layout: { x: 0, y: 2, w: 12, h: 4 },
         config: {
           type: 'activity_overview',
-          title: 'Activity Overview (Last 24 Hours)',
+          title: 'Activity overview (last 24 hours)',
           source: 'mixed',
           projectId: null,
           timeRange: '24h',
@@ -446,7 +446,7 @@ export class CustomDashboardsService {
         layout: { x: 0, y: 6, w: 6, h: 4 },
         config: {
           type: 'top_n_table',
-          title: 'Top Services',
+          title: 'Top services',
           source: 'logs',
           dimension: 'service',
           limit: 5,
@@ -459,7 +459,7 @@ export class CustomDashboardsService {
         layout: { x: 6, y: 6, w: 6, h: 4 },
         config: {
           type: 'top_n_table',
-          title: 'Top Error Messages',
+          title: 'Top error messages',
           source: 'logs',
           dimension: 'error_message',
           limit: 5,

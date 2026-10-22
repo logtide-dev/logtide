@@ -122,13 +122,13 @@ export interface FrontendPanelDefinition<
 const registry: Record<PanelType, FrontendPanelDefinition> = {
   time_series: {
     type: 'time_series',
-    label: 'Time Series',
+    label: 'Log volume',
     description: 'Log volume over time, broken down by level.',
     icon: LineChart,
     defaultLayout: { x: 0, y: 0, w: 8, h: 3 },
     defaultConfig: {
       type: 'time_series',
-      title: 'Log Volume',
+      title: 'Log volume',
       source: 'logs',
       projectId: null,
       interval: '24h',
@@ -142,13 +142,13 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   single_stat: {
     type: 'single_stat',
-    label: 'Single Stat',
+    label: 'Single stat',
     description: 'A headline number with trend (e.g. error rate, throughput).',
     icon: Hash,
     defaultLayout: { x: 0, y: 0, w: 3, h: 2 },
     defaultConfig: {
       type: 'single_stat',
-      title: 'Total Logs',
+      title: 'Total logs',
       source: 'logs',
       metric: 'total_logs',
       projectId: null,
@@ -161,13 +161,13 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   top_n_table: {
     type: 'top_n_table',
-    label: 'Top N Table',
+    label: 'Top N table',
     description: 'Ranked list (top services, top error messages, …).',
     icon: List,
     defaultLayout: { x: 0, y: 0, w: 6, h: 3 },
     defaultConfig: {
       type: 'top_n_table',
-      title: 'Top Services',
+      title: 'Top services',
       source: 'logs',
       dimension: 'service',
       metadataField: null,
@@ -185,13 +185,13 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   live_log_stream: {
     type: 'live_log_stream',
-    label: 'Live Log Stream',
+    label: 'Live log stream',
     description: 'A scrolling feed of recent logs.',
     icon: Radio,
     defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
     defaultConfig: {
       type: 'live_log_stream',
-      title: 'Recent Logs',
+      title: 'Recent logs',
       source: 'logs',
       projectId: null,
       service: null,
@@ -205,7 +205,7 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   alert_status: {
     type: 'alert_status',
-    label: 'Alert Status',
+    label: 'Alert status',
     description: 'Status indicators for selected alert rules.',
     icon: Bell,
     defaultLayout: { x: 0, y: 0, w: 4, h: 3 },
@@ -225,7 +225,7 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   metric_chart: {
     type: 'metric_chart',
-    label: 'Metric Chart',
+    label: 'Metric chart',
     description: 'OTLP metric over time with aggregation (avg, p95, sum...).',
     icon: Activity,
     defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
@@ -247,7 +247,7 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   metric_stat: {
     type: 'metric_stat',
-    label: 'Metric Stat',
+    label: 'Metric stat',
     description: 'Single OTLP metric value with aggregation.',
     icon: Gauge,
     defaultLayout: { x: 0, y: 0, w: 3, h: 2 },
@@ -269,7 +269,7 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   trace_latency: {
     type: 'trace_latency',
-    label: 'Trace Latency',
+    label: 'Trace latency',
     description: 'Span latency percentiles (p50/p95/p99) over time.',
     icon: Network,
     defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
@@ -289,13 +289,13 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   trace_volume: {
     type: 'trace_volume',
-    label: 'Trace Volume',
+    label: 'Trace volume',
     description: 'Span count over time, with optional errors line.',
     icon: Waves,
     defaultLayout: { x: 0, y: 0, w: 8, h: 3 },
     defaultConfig: {
       type: 'trace_volume',
-      title: 'Trace Volume',
+      title: 'Trace volume',
       source: 'traces',
       projectId: null,
       serviceName: null,
@@ -309,7 +309,7 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   detection_events: {
     type: 'detection_events',
-    label: 'Detection Events',
+    label: 'Detection events',
     description: 'Sigma detection events over time, by severity.',
     icon: Shield,
     defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
@@ -328,7 +328,7 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   monitor_status: {
     type: 'monitor_status',
-    label: 'Monitor Status',
+    label: 'Monitor status',
     description: 'Uptime and current status of HTTP/heartbeat monitors.',
     icon: HeartPulse,
     defaultLayout: { x: 0, y: 0, w: 6, h: 3 },
@@ -347,7 +347,7 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   system_status: {
     type: 'system_status',
-    label: 'System Status',
+    label: 'System status',
     description: 'Aggregated banner: All systems operational / Degraded / Outage.',
     icon: CircleCheck,
     defaultLayout: { x: 0, y: 0, w: 12, h: 2 },
@@ -365,13 +365,13 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   activity_overview: {
     type: 'activity_overview',
-    label: 'Activity Overview',
+    label: 'Activity overview',
     description: 'Logs, traces, detections and alerts on a single timeline.',
     icon: Layers,
     defaultLayout: { x: 0, y: 0, w: 12, h: 4 },
     defaultConfig: {
       type: 'activity_overview',
-      title: 'Activity Overview',
+      title: 'Activity overview',
       source: 'mixed',
       projectId: null,
       timeRange: '24h',
@@ -384,13 +384,13 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   geo_map: {
     type: 'geo_map',
-    label: 'Geo Map',
+    label: 'Geo map',
     description: 'World map of log volume from GeoIP metadata.',
     icon: Globe,
     defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
     defaultConfig: {
       type: 'geo_map',
-      title: 'Traffic Map',
+      title: 'Traffic map',
       source: 'logs',
       projectId: null,
       interval: '24h',
@@ -408,13 +408,13 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
   },
   log_table: {
     type: 'log_table',
-    label: 'Log Table',
+    label: 'Log table',
     description: 'Individual log rows with configurable metadata columns.',
     icon: Table,
     defaultLayout: { x: 0, y: 0, w: 12, h: 4 },
     defaultConfig: {
       type: 'log_table',
-      title: 'Log Table',
+      title: 'Log table',
       source: 'logs',
       projectId: null,
       mode: 'snapshot',
