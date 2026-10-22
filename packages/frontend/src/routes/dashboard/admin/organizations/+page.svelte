@@ -5,6 +5,7 @@
     import { adminAPI, type OrganizationBasic } from "$lib/api/admin";
     import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
     import { Button, buttonVariants } from "$lib/components/ui/button";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
     import { Input } from "$lib/components/ui/input";
     import { Badge } from "$lib/components/ui/badge";
     import {
@@ -154,13 +155,13 @@
             {#if loading && organizations.length === 0}
                 <SkeletonTable rows={6} columns={6} />
             {:else if error}
-                <div class="text-center py-8">
-                    <p class="text-destructive">{error}</p>
-                </div>
+                <EmptyState variant="error" title="Could not load organizations" description={error}>
+                    {#snippet actions()}
+                        <Button variant="outline" size="sm" onclick={loadOrganizations}>Retry</Button>
+                    {/snippet}
+                </EmptyState>
             {:else if organizations.length === 0}
-                <div class="text-center py-8">
-                    <p class="text-muted-foreground">No organizations found</p>
-                </div>
+                <EmptyState variant="no-results" title="No organizations found" />
             {:else}
                 <TableLoadingOverlay loading={loading}>
                 <div class="rounded-md border">
