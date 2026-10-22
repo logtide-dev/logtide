@@ -4,6 +4,7 @@
   import { resolveMetadataPath, formatMetadataCell, type LogSearchQuery } from "@logtide/shared";
   import { formatTimestamp, formatRelative, getDisplayZoneLabel } from "$lib/utils/datetime";
   import { displayPreferences, type DisplayPreferences } from "$lib/stores/display-preferences";
+  import { isMobile } from "$lib/stores/media-query";
   import SeverityBadge from "$lib/components/app/SeverityBadge.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import Spinner from "$lib/components/Spinner.svelte";
@@ -70,6 +71,8 @@
   // A row is one truncated line, so the text beyond this is never visible.
   const MAX_MESSAGE_CHARS = 2000;
   const AT_TOP_PX = 8;
+  // Phone rows are stacked: a meta line plus a message clamped to two lines.
+  const MOBILE_ROW_HEIGHT = 76;
 
   let scroller = $state<HTMLDivElement | null>(null);
   let header = $state<HTMLTableSectionElement | null>(null);
@@ -78,7 +81,7 @@
   let atTop = true;
   let centeredFor: string | null = null;
 
-  const rowHeight = $derived(ROW_HEIGHT[density]);
+  const rowHeight = $derived($isMobile ? MOBILE_ROW_HEIGHT : ROW_HEIGHT[density]);
   const win = $derived(computeWindow({ scrollTop, viewportHeight, rowHeight, count: logs.length }));
   const keys = $derived(uniqueKeys(logs));
   const visible = $derived(logs.slice(win.start, win.end));
@@ -107,6 +110,10 @@
   // `_prefs` is passed from the template so the cell re-renders on a preference change.
   function timeText(time: string, _prefs: DisplayPreferences): string {
     return formatTimestamp(time, { precision: "ms", withDate: true });
+  }
+
+  function shortTimeText(time: string, _prefs: DisplayPreferences): string {
+    return formatTimestamp(time, { precision: "second", withDate: true });
   }
 
   function relativeText(time: string, _prefs: DisplayPreferences): string {
@@ -225,6 +232,55 @@
     style="height: max(420px, calc(100dvh - 22rem));"
     onscroll={handleScroll}
   >
+    {#if $isMobile}
+      <div data-testid="log-results-list">
+        {#if win.padTop > 0}
+          <div aria-hidden="true" style="height: {win.padTop}px;"></div>
+        {/if}
+        {#each visible as log, j (keys[win.start + j])}
+          {@const key = rowKey(log, win.start + j)}
+          {@const selected = selectedId !== null && key === selectedId}
+          {@const name = projectNames.get(log.projectId) ?? "Unknown"}
+          <button
+            type="button"
+            data-log-row
+            data-log-id={key}
+            aria-current={selected ? "true" : undefined}
+            class="block w-full overflow-hidden border-b px-3 py-2 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring {selected
+              ? 'bg-accent'
+              : ''}"
+            style="height: {MOBILE_ROW_HEIGHT}px;"
+            onclick={() => onSelect(log)}
+          >
+            <span class="flex items-center gap-2 text-xs">
+              <span class="shrink-0 font-mono" title={relativeText(log.time, $displayPreferences)}
+                >{shortTimeText(log.time, $displayPreferences)}</span
+              >
+              <span class="shrink-0"><SeverityBadge kind="level" value={log.level} /></span>
+              <span class="min-w-0 truncate text-muted-foreground">{log.service} &middot; {name}</span>
+            </span>
+            <span class="mt-1 line-clamp-2 break-words font-mono text-xs leading-4">
+              {#each messageHighlights(messageText(log.message), highlightQuery) as seg}
+                {#if seg.match}<mark class="rounded-sm bg-warning/30 text-inherit">{seg.text}</mark
+                  >{:else}{seg.text}{/if}
+              {/each}
+            </span>
+          </button>
+        {/each}
+        {#if win.padBottom > 0}
+          <div aria-hidden="true" style="height: {win.padBottom}px;"></div>
+        {/if}
+        {#if loadingMore || hasMore}
+          <div data-results-footer class="py-2 text-center">
+            {#if loadingMore}
+              <Spinner size="sm" class="text-muted-foreground" />
+            {:else}
+              <Button variant="outline" size="sm" onclick={onLoadMore}>Load more</Button>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {:else}
     <table class="table-fixed w-full text-sm" style="min-width: {minWidth}rem;">
       <colgroup>
         {#each columns as col (col)}
@@ -372,5 +428,6 @@
         {/if}
       </tbody>
     </table>
+    {/if}
   </div>
 </div>
