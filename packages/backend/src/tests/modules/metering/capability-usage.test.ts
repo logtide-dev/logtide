@@ -111,7 +111,7 @@ describe('getCapabilityUsage', () => {
     });
   });
 
-  it('counts confirmed and still-pending status page subscribers of the organization only', async () => {
+  it('counts confirmed status page subscribers of the organization only (pending never count against the quota)', async () => {
     const ctx = await createTestContext();
     const other = await createTestContext();
     const sub = (organizationId: string, projectId: string, email: string, confirmed: boolean, expired = false) => ({
@@ -140,7 +140,7 @@ describe('getCapabilityUsage', () => {
     const rows = await getCapabilityUsage(orgId);
     expect(rows.find((r) => r.capability === 'status_page.subscribers.max')).toMatchObject({
       kind: 'limit',
-      current: 2,
+      current: 1,
       limit: 100,
     });
   });
