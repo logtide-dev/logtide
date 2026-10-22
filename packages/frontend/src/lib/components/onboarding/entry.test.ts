@@ -16,11 +16,17 @@ function input(
 
 describe('decideEntry', () => {
   it('redirects when onboarding is completed', () => {
-    expect(decideEntry(input({ server: { completed: true } }))).toEqual({ kind: 'redirect', to: '/dashboard' });
+    expect(decideEntry(input({ organizationCount: 1, server: { completed: true } }))).toEqual({ kind: 'redirect', to: '/dashboard' });
   });
 
   it('redirects when onboarding was skipped', () => {
-    expect(decideEntry(input({ server: { skipped: true } }))).toEqual({ kind: 'redirect', to: '/dashboard' });
+    expect(decideEntry(input({ organizationCount: 1, server: { skipped: true } }))).toEqual({ kind: 'redirect', to: '/dashboard' });
+  });
+
+  it('offers the workspace step when completed or skipped but no organization is left', () => {
+    const expected = { kind: 'step', step: 'workspace', organizationId: null, projectId: null };
+    expect(decideEntry(input({ server: { completed: true } }))).toEqual(expected);
+    expect(decideEntry(input({ server: { skipped: true, organizationId: null, projectId: 'stale' } }))).toEqual(expected);
   });
 
   it('goes to verify-email when required and unverified, keeping stored ids', () => {

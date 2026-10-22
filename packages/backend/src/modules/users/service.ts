@@ -258,21 +258,22 @@ export class UsersService {
   }
 
   /**
-   * Revoke every session of a user (cache entries first, then the rows).
+   * Revoke every session of a user (rows first, then the cache entries).
    * Returns the number of sessions removed.
    */
   async revokeAllSessions(userId: string): Promise<number> {
+    // Rows first: a request racing the revoke can no longer find a row to
+    // re-cache once its cache entry is dropped.
     const sessions = await db
-      .selectFrom('sessions')
-      .select('token')
+      .deleteFrom('sessions')
       .where('user_id', '=', userId)
+      .returning('token')
       .execute();
 
     for (const s of sessions) {
       await CacheManager.invalidateSession(s.token);
     }
 
-    await db.deleteFrom('sessions').where('user_id', '=', userId).execute();
     return sessions.length;
   }
 
@@ -368,13 +369,27 @@ export class UsersService {
       updateData.password_hash = await this.hashPassword(input.newPassword);
     }
 
-    // Update user
-    const updatedUser = await db
-      .updateTable('users')
-      .set(updateData)
-      .where('id', '=', userId)
-      .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
-      .executeTakeFirstOrThrow();
+    // Update user. A changed email or password kills outstanding reset links in
+    // the same transaction (a link mailed to the old address must not verify
+    // the new one or reset a credential the user just chose).
+    const invalidateResetTokens =
+      Boolean(input.newPassword) || Boolean(normalizedEmail && normalizedEmail !== user.email);
+    const updatedUser = await db.transaction().execute(async (trx) => {
+      if (invalidateResetTokens) {
+        await trx
+          .updateTable('password_reset_tokens')
+          .set({ used_at: sql`NOW()` })
+          .where('user_id', '=', userId)
+          .where('used_at', 'is', null)
+          .execute();
+      }
+      return trx
+        .updateTable('users')
+        .set(updateData)
+        .where('id', '=', userId)
+        .returning(['id', 'email', 'name', 'is_admin', 'disabled', 'created_at', 'last_login'])
+        .executeTakeFirstOrThrow();
+    });
 
     return {
       id: updatedUser.id,
