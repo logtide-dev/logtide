@@ -16,4 +16,3 @@ src/routes/dashboard/settings/pii-masking/+page.svelte
 src/routes/dashboard/settings/pipelines/+page.svelte
 src/routes/dashboard/settings/pipelines/[id]/+page.svelte
 src/routes/dashboard/settings/pipelines/new/+page.svelte
-src/routes/dashboard/traces/+page.svelte

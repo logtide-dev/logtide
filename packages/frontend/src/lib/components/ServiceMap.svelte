@@ -227,7 +227,7 @@
     return chart.getDataURL({
       type: "png",
       pixelRatio: 2,
-      backgroundColor: getEChartsTheme().isDark ? "#09090b" : "#ffffff",
+      backgroundColor: getEChartsTheme().tooltipBackground,
     });
   }
 
