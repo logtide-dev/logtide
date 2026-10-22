@@ -19,7 +19,8 @@ const ALL_TABLES = [
   'audit_log', 'metrics_hourly_stats', 'metrics_daily_stats', 'metrics',
   'metric_exemplars', 'custom_dashboards', 'log_pipelines', 'digest_configs',
   'digest_recipients', 'receivers', 'receiver_events', 'email_verification_tokens',
-  'organization_creation_log', 'saved_searches',
+  'organization_creation_log', 'saved_searches', 'status_page_config',
+  'status_page_subscribers',
 ];
 
 describe('tenant-tables manifest', () => {
@@ -41,6 +42,8 @@ describe('tenant-tables manifest', () => {
     expect(classifyTable('logs')).toBe('tenant');
     expect(classifyTable('users')).toBe('global');
     expect(classifyTable('incident_comments')).toBe('child');
+    expect(classifyTable('status_page_config')).toBe('tenant');
+    expect(classifyTable('status_page_subscribers')).toBe('tenant');
     expect(classifyTable('does_not_exist')).toBe('unknown');
   });
 });

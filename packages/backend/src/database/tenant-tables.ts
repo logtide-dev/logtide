@@ -15,7 +15,7 @@ export const TENANT_TABLES = new Set<string>([
   'metrics_daily_stats', 'metrics', 'metric_exemplars', 'custom_dashboards',
   'log_pipelines', 'digest_configs', 'digest_recipients', 'projects',
   'receivers',
-  'saved_searches',
+  'saved_searches', 'status_page_config', 'status_page_subscribers',
 ]);
 
 /**
