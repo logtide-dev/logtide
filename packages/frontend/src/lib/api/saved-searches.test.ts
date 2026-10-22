@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest';
+import { savedSearchStateSchema } from '@logtide/shared';
+import type * as Shared from '@logtide/shared';
 
 vi.mock('$lib/config', () => ({
   getApiBaseUrl: () => '/api/v1',
@@ -8,7 +10,7 @@ vi.mock('$lib/utils/auth', () => ({
   getAuthToken: () => 'session-token',
 }));
 
-import { savedSearchesAPI, type SavedSearch } from './saved-searches';
+import { savedSearchesAPI, type SavedSearch, type SavedSearchState } from './saved-searches';
 
 type Call = { url: string; init: RequestInit };
 type FakeResponse = { ok: boolean; status: number; statusText?: string; json: () => Promise<unknown> };
@@ -131,5 +133,14 @@ describe('savedSearchesAPI', () => {
       },
     });
     await expect(savedSearchesAPI.list('org-1')).rejects.toThrow('500 Internal Server Error');
+  });
+});
+
+describe('shared type reuse', () => {
+  it('uses the shared saved search types and schema', () => {
+    expectTypeOf<SavedSearch>().toEqualTypeOf<Shared.SavedSearch>();
+    expectTypeOf<SavedSearchState>().toEqualTypeOf<Shared.SavedSearchState>();
+    const state: SavedSearchState = { q: 'level:error', projectIds: [], range: '24h', view: 'table' };
+    expect(savedSearchStateSchema.safeParse(state).success).toBe(true);
   });
 });
