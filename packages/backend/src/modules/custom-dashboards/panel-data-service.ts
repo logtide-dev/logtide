@@ -836,16 +836,31 @@ const metricChartFetcher: PanelDataSource<MetricChartConfig, MetricChartData> = 
     const now = new Date();
     const from = new Date(now.getTime() - panelTimeRangeToMs(config.timeRange));
 
-    const result = await metricsService.aggregateMetrics({
-      projectId: projectIds,
-      metricName: config.metricName,
-      from,
-      to: now,
-      interval: config.interval,
-      aggregation: config.aggregation,
-      serviceName: config.serviceName ?? undefined,
-      groupBy: config.groupBy && config.groupBy.length > 0 ? config.groupBy : undefined,
-    });
+    const groupBy = config.groupBy && config.groupBy.length > 0 ? config.groupBy : undefined;
+    // 'rate' is not a reservoir aggregation: the metrics service reads 'last'
+    // per bucket and turns the deltas into per-second values.
+    const result =
+      config.aggregation === 'rate'
+        ? await metricsService.aggregateWithOptions({
+            projectId: projectIds,
+            metricName: config.metricName,
+            from,
+            to: now,
+            interval: config.interval,
+            aggregation: 'rate',
+            serviceName: config.serviceName ?? undefined,
+            groupBy,
+          })
+        : await metricsService.aggregateMetrics({
+            projectId: projectIds,
+            metricName: config.metricName,
+            from,
+            to: now,
+            interval: config.interval,
+            aggregation: config.aggregation,
+            serviceName: config.serviceName ?? undefined,
+            groupBy,
+          });
 
     return {
       metricName: result.metricName,
@@ -883,15 +898,26 @@ const metricStatFetcher: PanelDataSource<MetricStatConfig, MetricStatData> = {
     // Aggregate at the coarsest supported interval (1d); the combine step
     // below folds however many buckets the window spans (a 30d range at 1d
     // interval yields up to 31) into a single stat value.
-    const result = await metricsService.aggregateMetrics({
-      projectId: projectIds,
-      metricName: config.metricName,
-      from,
-      to: now,
-      interval: '1d',
-      aggregation: config.aggregation,
-      serviceName: config.serviceName ?? undefined,
-    });
+    const result =
+      config.aggregation === 'rate'
+        ? await metricsService.aggregateWithOptions({
+            projectId: projectIds,
+            metricName: config.metricName,
+            from,
+            to: now,
+            interval: '1d',
+            aggregation: 'rate',
+            serviceName: config.serviceName ?? undefined,
+          })
+        : await metricsService.aggregateMetrics({
+            projectId: projectIds,
+            metricName: config.metricName,
+            from,
+            to: now,
+            interval: '1d',
+            aggregation: config.aggregation,
+            serviceName: config.serviceName ?? undefined,
+          });
 
     // The window can span more than one bucket (e.g. a 24h range crossing midnight
     // at 1d interval). For additive aggregations (sum/count) the buckets must be

@@ -867,6 +867,43 @@ describe('alert_status panel', () => {
 // ─── metric_chart ────────────────────────────────────────────────────────────
 
 describe('metric_chart panel', () => {
+  it('metric_chart with rate reads last values and returns per-second deltas', async () => {
+    const t0 = new Date('2026-01-01T00:00:00.000Z');
+    const t1 = new Date('2026-01-01T01:00:00.000Z');
+    const t2 = new Date('2026-01-01T02:00:00.000Z');
+    const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValue({
+      metricName: 'http_requests',
+      metricType: 'sum',
+      timeseries: [
+        { bucket: t0, value: 0 },
+        { bucket: t1, value: 3600 },
+        { bucket: t2, value: 10800 },
+      ],
+      executionTimeMs: 1,
+    } as Awaited<ReturnType<typeof reservoir.aggregateMetrics>>);
+
+    const r = (await fetchPanelData(
+      {
+        type: 'metric_chart',
+        title: 'Rate',
+        source: 'metrics',
+        projectId,
+        metricName: 'http_requests',
+        aggregation: 'rate',
+        interval: '1h',
+        timeRange: '24h',
+        serviceName: null,
+      },
+      ctx(),
+    )) as { series: Array<{ time: string; value: number }>; aggregation: string };
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0].aggregation).toBe('last');
+    expect(r.aggregation).toBe('rate');
+    expect(r.series.map((x) => x.value)).toEqual([1, 2]);
+    spy.mockRestore();
+  });
+
   it('metric_chart passes groupBy to aggregateMetrics', async () => {
     const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValue({
       metricName: 'http_requests',
