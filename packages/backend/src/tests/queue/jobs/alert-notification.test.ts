@@ -696,6 +696,29 @@ describe('Alert Notification Job', () => {
             expect(notification.metadata).toMatchObject({ kind: 'triggered', incidentId: null, historyId: HISTORY_ID });
         });
 
+        it('never logs or stores the full webhook URL', async () => {
+            const { organization, project } = await createTestContext();
+            const secretUrl = 'https://hooks.slack.com/services/T000/B000/s3cr3t-token';
+            mockGetAlertRuleChannels.mockResolvedValueOnce([
+                { ...webhookChannel, id: '00000000-0000-4000-8000-0000000000f1', config: { url: secretUrl } },
+            ]);
+            enqueueMock.mockRejectedValueOnce(new Error('boom'));
+            const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const { alertsService } = await import('../../../modules/alerts/index.js');
+
+            await processAlertNotification({ data: firingJob(organization.id, project.id) });
+            // second run succeeds, to cover the "sent" log line too
+            await processAlertNotification({ data: firingJob(organization.id, project.id) });
+
+            const logged = [...logSpy.mock.calls, ...errSpy.mock.calls].flat().map(String).join('\n');
+            expect(logged).not.toContain('s3cr3t-token');
+            expect(logged).toContain('hooks.slack.com');
+            const stored = vi.mocked(alertsService.markAsNotified).mock.calls.map((c) => String(c[1] ?? ''));
+            expect(stored.join('\n')).toContain('hooks.slack.com');
+            expect(stored.join('\n')).not.toContain('s3cr3t-token');
+        });
+
         it('jobs without kind keep the triggered copy', async () => {
             const { organization, project, user } = await createTestContext();
             const { kind: _kind, firing_since: _f, incident_id: _i, ...legacy } = firingJob(organization.id, project.id);

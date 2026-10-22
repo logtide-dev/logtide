@@ -67,3 +67,12 @@ export async function notifyPagerDutyTargets(
     }
   });
 }
+
+/** Host of a webhook URL for logs and stored errors; the path often carries the secret. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'webhook';
+  }
+}

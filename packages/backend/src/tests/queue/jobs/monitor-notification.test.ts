@@ -131,6 +131,38 @@ describe('Monitor webhook envelope', () => {
     expect(d.status).toBe('down');
   });
 
+  it('never logs the full webhook URL', async () => {
+    const owner = await createTestUser({ name: 'Monitor Owner Log' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org Log' });
+    const secretUrl = 'https://hooks.slack.com/services/T000/B000/s3cr3t-token';
+    mockGetMonitorChannels.mockResolvedValueOnce([{
+      organizationId: org.id,
+      id: '00000000-0000-0000-0000-000000000043',
+      type: 'webhook',
+      enabled: true,
+      config: { url: secretUrl },
+    }]);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await processMonitorNotification({
+      data: {
+        monitorId: 'mon-log',
+        monitorName: 'Log Check',
+        organizationId: org.id,
+        projectId: '00000000-0000-0000-0000-000000000000',
+        status: 'down',
+        severity: 'high',
+      } as MonitorNotificationJob,
+    } as Job<MonitorNotificationJob>);
+
+    const logged = [...logSpy.mock.calls, ...errSpy.mock.calls].flat().map(String).join('\n');
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+    expect(logged).toContain('hooks.slack.com');
+    expect(logged).not.toContain('s3cr3t-token');
+  });
+
   it('uses type monitor.status_changed for both down and up events', async () => {
     const owner = await createTestUser({ name: 'Monitor Owner 2' });
     const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org 2' });

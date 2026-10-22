@@ -7,7 +7,7 @@ import {
   toDeliveryTargets,
   type ResolvedRouting,
 } from '../../modules/notification-channels/resolver.js';
-import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
+import { notifyPagerDutyTargets, hostOf } from '../../modules/notification-channels/dispatch.js';
 import { db } from '../../database/connection.js';
 import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { config } from '../../config/index.js';
@@ -189,9 +189,9 @@ export async function dispatchAlertEnvelope(
         metadata: { ruleName },
         payload: envelope,
       });
-      console.log(`Webhook notification sent: ${ruleName} -> ${url}`);
+      console.log(`Webhook notification sent: ${ruleName} -> ${hostOf(url)}`);
     } catch (error) {
-      const errMsg = `Webhook failed (${url}): ${error instanceof Error ? error.message : 'Unknown error'}`;
+      const errMsg = `Webhook failed (${hostOf(url)}): ${error instanceof Error ? error.message : 'Unknown error'}`;
       console.error(errMsg);
       errors.push(errMsg);
     }

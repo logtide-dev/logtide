@@ -9,7 +9,7 @@ import {
   resolveFallbackEmails,
   toDeliveryTargets,
 } from '../../modules/notification-channels/resolver.js';
-import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
+import { notifyPagerDutyTargets, hostOf } from '../../modules/notification-channels/dispatch.js';
 import { createQueue } from '../connection.js';
 import { generateMonitorEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
@@ -227,8 +227,8 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
   if (targets.webhooks.length > 0) {
     const webhookPromises = targets.webhooks.map(({ url }) =>
       sendMonitorWebhook(url, data, org.name)
-        .then(() => console.log(`[MonitorNotification] Webhook sent to ${url}`))
-        .catch((err) => console.error(`[MonitorNotification] Webhook failed for ${url}:`, err))
+        .then(() => console.log(`[MonitorNotification] Webhook sent to ${hostOf(url)}`))
+        .catch((err) => console.error(`[MonitorNotification] Webhook failed for ${hostOf(url)}:`, err))
     );
 
     await Promise.all(webhookPromises);
