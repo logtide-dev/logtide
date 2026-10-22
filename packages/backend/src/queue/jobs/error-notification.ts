@@ -30,6 +30,8 @@ export interface ErrorNotificationJobData {
   isNewErrorGroup: boolean;
   /** True when a previously resolved error group recurred (a regression). */
   isRegression?: boolean;
+  /** True when an ignored error group reopened because its ignore limit was reached. */
+  isEscalating?: boolean;
 }
 
 // Create the queue

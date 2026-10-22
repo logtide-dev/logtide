@@ -32,6 +32,28 @@ const exceptionService = new ExceptionService(db);
 const unminifier = new SourceMapUnminifier(sourceMapsService);
 
 /**
+ * Count one occurrence against an ignored group. Returns true when the group
+ * was reopened by this occurrence (ignore date passed or event budget reached).
+ */
+async function countIgnoredOccurrence(groupId: string, organizationId: string): Promise<boolean> {
+  // In a single UPDATE every right-hand side reads the pre-update row, so the
+  // expiry condition is evaluated once per row version.
+  const result = await sql<{ status: string }>`
+    UPDATE error_groups SET
+      status = CASE WHEN (ignored_until IS NOT NULL AND ignored_until <= now()) OR (ignore_until_count IS NOT NULL AND ignored_event_count + 1 >= ignore_until_count) THEN 'open' ELSE status END,
+      ignored_until = CASE WHEN (ignored_until IS NOT NULL AND ignored_until <= now()) OR (ignore_until_count IS NOT NULL AND ignored_event_count + 1 >= ignore_until_count) THEN NULL ELSE ignored_until END,
+      ignore_until_count = CASE WHEN (ignored_until IS NOT NULL AND ignored_until <= now()) OR (ignore_until_count IS NOT NULL AND ignored_event_count + 1 >= ignore_until_count) THEN NULL ELSE ignore_until_count END,
+      ignored_event_count = CASE WHEN (ignored_until IS NOT NULL AND ignored_until <= now()) OR (ignore_until_count IS NOT NULL AND ignored_event_count + 1 >= ignore_until_count) THEN 0 ELSE ignored_event_count + 1 END,
+      updated_at = now()
+    WHERE id = ${groupId}::uuid
+      AND organization_id = ${organizationId}::uuid
+      AND status = 'ignored'
+    RETURNING status
+  `.execute(db);
+  return result.rows[0]?.status === 'open';
+}
+
+/**
  * Process exception parsing job
  * Parses stack traces from error/critical logs and stores in database
  */
@@ -113,8 +135,6 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
       }
 
       const isNewErrorGroup = !existingGroup;
-      // A previously resolved error that recurs is a regression.
-      const isRegression = existingGroup?.status === 'resolved';
 
       const exceptionId = await exceptionService.createException({
         organizationId,
@@ -126,15 +146,34 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
         topFrame,
       });
 
-      // Reopen a resolved group so the regression is visible and not silently
-      // folded into a "resolved" bucket.
-      if (isRegression && existingGroup) {
-        await db
+      // A previously resolved error that recurs is a regression: reopen it so
+      // it is visible and not folded into a "resolved" bucket. The conditional
+      // UPDATE is atomic, so only one of several concurrent jobs sees the
+      // transition.
+      let isRegression = false;
+      let isEscalating = false;
+      if (existingGroup?.status === 'resolved') {
+        const reopened = await db
           .updateTable('error_groups')
-          .set({ status: 'open', resolved_at: null, resolved_by: null, updated_at: new Date() })
+          .set({
+            status: 'open',
+            resolved_at: null,
+            resolved_by: null,
+            regressed_at: sql<Date>`now()`,
+            updated_at: sql<Date>`now()`,
+          })
           .where('id', '=', existingGroup.id)
           .where('organization_id', '=', organizationId)
-          .execute();
+          .where('status', '=', 'resolved')
+          .returning('id')
+          .executeTakeFirst();
+        isRegression = !!reopened;
+      } else if (existingGroup?.status === 'ignored') {
+        // Count the occurrence against the ignore limits; the group reopens
+        // (escalates) when the date passed or the event budget is used up. One
+        // statement, so concurrent jobs serialise on the row lock and exactly
+        // one sees the transition.
+        isEscalating = await countIgnoredOccurrence(existingGroup.id, organizationId);
       }
 
       stats.parsed++;
@@ -157,6 +196,7 @@ export async function processExceptionParsing(job: IJob<ExceptionParsingJobData>
           service: log.service,
           isNewErrorGroup,
           isRegression,
+          isEscalating,
         };
 
         await errorNotificationQueue.add('error-notification', notificationData, {
