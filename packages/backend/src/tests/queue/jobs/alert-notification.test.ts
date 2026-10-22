@@ -38,10 +38,12 @@ vi.mock('../../../modules/alerts/index.js', () => ({
 // Mock notificationChannelsService
 const mockGetAlertRuleChannels = vi.fn().mockResolvedValue([]);
 const mockGetOrganizationDefaults = vi.fn().mockResolvedValue([]);
+const mockGetSigmaRuleChannels = vi.fn().mockResolvedValue([]);
 vi.mock('../../../modules/notification-channels/index.js', () => ({
     notificationChannelsService: {
         getAlertRuleChannels: (...args: unknown[]) => mockGetAlertRuleChannels(...args),
         getOrganizationDefaults: (...args: unknown[]) => mockGetOrganizationDefaults(...args),
+        getSigmaRuleChannels: (...args: unknown[]) => mockGetSigmaRuleChannels(...args),
     },
 }));
 
@@ -84,6 +86,8 @@ describe('Alert Notification Job', () => {
         mockGetAlertRuleChannels.mockResolvedValue([]);
         mockGetOrganizationDefaults.mockReset();
         mockGetOrganizationDefaults.mockResolvedValue([]);
+        mockGetSigmaRuleChannels.mockReset();
+        mockGetSigmaRuleChannels.mockResolvedValue([]);
         hooks.clear();
     });
 
@@ -980,6 +984,89 @@ describe('Alert Notification Job', () => {
             expect(enqueueMock).not.toHaveBeenCalled();
             expect(sendMailMock).not.toHaveBeenCalled();
             expect(alertsService.markAsNotified).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('sigma delivery (event_type sigma)', () => {
+        const emailChannel = (id: string, to: string) => ({
+            id,
+            type: 'email',
+            enabled: true,
+            config: { recipients: [to] },
+        });
+
+        async function runSigma(organizationId: string, projectId: string) {
+            await processAlertNotification({
+                data: {
+                    historyId: null as unknown as string,
+                    kind: 'triggered',
+                    event_type: 'sigma',
+                    rule_id: '00000000-0000-0000-0000-0000000000aa',
+                    rule_name: '[Sigma] Suspicious login',
+                    organization_id: organizationId,
+                    project_id: projectId,
+                    log_count: 3,
+                    threshold: 1,
+                    time_window: 1,
+                    email_recipients: [],
+                    webhook_url: null,
+                },
+            });
+        }
+
+        it('delivers to the sigma rule channel and not to the alert defaults', async () => {
+            const { organization, project } = await createTestContext();
+            mockGetSigmaRuleChannels.mockResolvedValue([emailChannel('c-sigma', 'sigma-rule@example.com')]);
+            mockGetOrganizationDefaults.mockImplementation(async (_org: string, type: string) =>
+                type === 'alert' ? [emailChannel('c-alert', 'alert-default@example.com')] : []
+            );
+
+            await runSigma(organization.id, project.id);
+
+            expect(mockGetAlertRuleChannels).not.toHaveBeenCalled();
+            expect(sendMailMock).toHaveBeenCalledTimes(1);
+            expect(sendMailMock.mock.calls[0][0].to).toBe('sigma-rule@example.com');
+        });
+
+        it('uses the sigma org defaults, not the alert defaults, when the rule has no channel', async () => {
+            const { organization, project } = await createTestContext();
+            mockGetOrganizationDefaults.mockImplementation(async (_org: string, type: string) =>
+                type === 'sigma'
+                    ? [emailChannel('c-sigma-def', 'sigma-default@example.com')]
+                    : [emailChannel('c-alert', 'alert-default@example.com')]
+            );
+
+            await runSigma(organization.id, project.id);
+
+            expect(mockGetOrganizationDefaults).toHaveBeenCalledWith(organization.id, 'sigma');
+            expect(sendMailMock).toHaveBeenCalledTimes(1);
+            expect(sendMailMock.mock.calls[0][0].to).toBe('sigma-default@example.com');
+        });
+
+        it('still reads alert rule channels and alert defaults for alert jobs', async () => {
+            const { organization, project } = await createTestContext();
+            mockGetOrganizationDefaults.mockImplementation(async (_org: string, type: string) =>
+                type === 'alert' ? [emailChannel('c-alert', 'alert-default@example.com')] : []
+            );
+
+            await processAlertNotification({
+                data: {
+                    historyId: '00000000-0000-0000-0000-000000000001',
+                    kind: 'triggered',
+                    rule_id: '00000000-0000-0000-0000-000000000002',
+                    rule_name: 'Plain alert',
+                    organization_id: organization.id,
+                    project_id: project.id,
+                    log_count: 100,
+                    threshold: 50,
+                    time_window: 5,
+                    email_recipients: [],
+                    webhook_url: undefined,
+                },
+            });
+
+            expect(mockGetSigmaRuleChannels).not.toHaveBeenCalled();
+            expect(sendMailMock.mock.calls[0][0].to).toBe('alert-default@example.com');
         });
     });
 });

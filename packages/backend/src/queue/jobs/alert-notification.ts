@@ -100,13 +100,20 @@ export async function processAlertNotification(job: { data: AlertNotificationJob
  * Destinations of an alert job: the rule's enabled channels; when there are
  * none and the job comes from an alert rule (`kind` set), the organization
  * defaults for `alert`. Jobs without `kind` (Sigma, pre-1.6) keep rule
- * channels only. When this is empty the firing path emails the owners and
+ * channels only. Sigma jobs (event_type 'sigma') read the sigma rule channels
+ * and the 'sigma' org defaults. When this is empty the firing path emails the owners and
  * admins (the shared fallback; W11 swaps this body for the shared resolver).
  */
 export async function resolveAlertChannels(data: AlertNotificationJobData): Promise<NotificationChannel[]> {
-  const channels = await notificationChannelsService.getAlertRuleChannels(data.rule_id, data.organization_id);
+  const isSigma = 'event_type' in data && data.event_type === 'sigma';
+  const channels = isSigma
+    ? await notificationChannelsService.getSigmaRuleChannels(data.rule_id, data.organization_id)
+    : await notificationChannelsService.getAlertRuleChannels(data.rule_id, data.organization_id);
   if (channels.length > 0 || data.kind === undefined) return channels;
-  return notificationChannelsService.getOrganizationDefaults(data.organization_id, 'alert');
+  return notificationChannelsService.getOrganizationDefaults(
+    data.organization_id,
+    isSigma ? 'sigma' : 'alert'
+  );
 }
 
 /**

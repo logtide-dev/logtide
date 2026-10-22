@@ -32,6 +32,8 @@ export interface AlertNotificationData {
   };
   // 1.6 lifecycle fields (absent on Sigma and pre-1.6 jobs)
   kind?: AlertNotificationKind;
+  /** Which routing applies: Sigma detections carry 'sigma'; absent means 'alert'. */
+  event_type?: 'alert' | 'sigma';
   /** ISO start of the firing episode (the rule's last_triggered_at). */
   firing_since?: string;
   incident_id?: string | null;
