@@ -81,7 +81,7 @@ const SPAN_COLORS = [
  */
 export function getSpanColor(span: SpanRecord): string {
   if (span.status_code === 'ERROR') {
-    return 'bg-red-500';
+    return 'bg-destructive';
   }
 
   const hash = span.service_name.split('').reduce((a, b) => {

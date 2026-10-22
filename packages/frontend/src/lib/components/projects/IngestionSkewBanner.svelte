@@ -62,7 +62,7 @@
 </script>
 
 {#if show && skew}
-  <Alert class="border-amber-500/50 text-amber-700 dark:text-amber-400 [&>svg]:text-amber-600">
+  <Alert class="border-warning/50 text-warning-text [&>svg]:text-warning-text">
     <Clock class="h-4 w-4" />
     <AlertTitle>{TITLE[signal]}</AlertTitle>
     <AlertDescription>

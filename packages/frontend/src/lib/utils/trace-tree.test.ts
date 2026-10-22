@@ -176,7 +176,7 @@ describe('getSpanWidth', () => {
 describe('getSpanColor', () => {
   it('returns error color for ERROR status', () => {
     const span = makeSpan({ span_id: 'x', service_name: 'any-service', status_code: 'ERROR' });
-    expect(getSpanColor(span)).toBe('bg-red-500');
+    expect(getSpanColor(span)).toBe('bg-destructive');
   });
 
   it('returns the same color for the same service name', () => {
@@ -201,6 +201,6 @@ describe('getSpanColor', () => {
   it('error color takes precedence over service color', () => {
     // Even a service that would otherwise get a non-red palette color returns red on error
     const span = makeSpan({ span_id: 'x', service_name: 'stable-service', status_code: 'ERROR' });
-    expect(getSpanColor(span)).toBe('bg-red-500');
+    expect(getSpanColor(span)).toBe('bg-destructive');
   });
 });
