@@ -4,6 +4,8 @@ import { savedSearchCreateSchema, savedSearchUpdateSchema } from '@logtide/share
 import type { OrgRole, SavedSearchState } from '@logtide/shared';
 import { authenticate } from '../auth/middleware.js';
 import { auditLogService } from '../audit-log/service.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { buildLogFilter, LogQueryError } from '../query/build-log-filter.js';
 import {
@@ -98,12 +100,20 @@ export async function savedSearchesRoutes(fastify: FastifyInstance): Promise<voi
       if (!member.ok) return reply;
       if (!(await checkState(reply, body.organizationId, body.state))) return reply;
 
-      const savedSearch = await savedSearchesService.create({
-        organizationId: body.organizationId,
-        userId: request.user.id,
-        name: body.name,
-        visibility: body.visibility,
-        state: body.state,
+      const orgId = body.organizationId;
+      const savedSearch = await withLimitLock(orgId, 'saved_searches.max_per_org', async () => {
+        await context.runAsSystem('saved-searches:create-limit-check', () =>
+          context.with({ organizationId: orgId }, async () => {
+            await assertWithinLimit('saved_searches.max_per_org', await savedSearchesService.countForOrg(orgId));
+          }),
+        );
+        return savedSearchesService.create({
+          organizationId: orgId,
+          userId: request.user.id,
+          name: body.name,
+          visibility: body.visibility,
+          state: body.state,
+        });
       });
 
       await auditLogService.record({

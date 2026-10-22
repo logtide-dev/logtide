@@ -122,6 +122,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum digest email recipients per organization',
   },
+  'saved_searches.max_per_org': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum saved log searches per organization',
+  },
   'quota.grace_percent': {
     kind: 'limit',
     defaultLimit: null,
