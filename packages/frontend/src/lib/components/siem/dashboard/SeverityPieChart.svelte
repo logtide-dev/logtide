@@ -4,7 +4,8 @@
 	import type { SeverityDistribution, Severity } from '$lib/api/siem';
 	import PieChart from '@lucide/svelte/icons/pie-chart';
 	import { themeStore } from '$lib/stores/theme';
-	import { chartColors, getTooltipStyle, getLegendStyle } from '$lib/utils/echarts-theme';
+	import { getTooltipStyle, getLegendStyle } from '$lib/utils/echarts-theme';
+	import { severityTone } from '$lib/utils/severity';
 
 	interface Props {
 		distribution: SeverityDistribution[] | undefined;
@@ -16,20 +17,7 @@
 	let chart: echarts.ECharts | null = null;
 
 	function getSeverityColor(severity: Severity): string {
-		switch (severity) {
-			case 'critical':
-				return chartColors.severity.critical;
-			case 'high':
-				return chartColors.severity.high;
-			case 'medium':
-				return chartColors.severity.medium;
-			case 'low':
-				return chartColors.severity.low;
-			case 'informational':
-				return chartColors.severity.informational;
-			default:
-				return chartColors.series.gray;
-		}
+		return severityTone(severity).chart;
 	}
 
 	function getSeverityLabel(severity: Severity): string {
@@ -58,7 +46,7 @@
 				trigger: 'item',
 				formatter: (params: unknown) => {
 					const p = params as { name: string; value: number; percent: number };
-					return `${p.name}<br/><strong>${p.value}</strong> (${p.percent.toFixed(1)}%)`;
+					return `${p.name}<br/><strong>${p.value.toLocaleString('en-US')}</strong> (${p.percent.toFixed(1)}%)`;
 				},
 				...tooltipStyle
 			},
@@ -101,6 +89,13 @@
 			],
 		};
 	}
+
+	const summary = $derived.by(() => {
+		if (!distribution || distribution.length === 0) return 'No severity data';
+		const total = distribution.reduce((sum, d) => sum + d.count, 0);
+		const parts = distribution.map((d) => `${d.count.toLocaleString('en-US')} ${getSeverityLabel(d.severity).toLowerCase()}`);
+		return `Severity distribution, ${total.toLocaleString('en-US')} detections: ${parts.join(', ')}`;
+	});
 
 	$effect(() => {
 		if (!chartContainer) return;
@@ -149,7 +144,7 @@
 	<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<PieChart class="w-4 h-4 text-primary" />
-			Severity Distribution
+			Severity distribution
 		</CardTitle>
 	</CardHeader>
 	<CardContent>
@@ -159,7 +154,7 @@
 				<p class="text-sm">No data available</p>
 			</div>
 		{:else}
-			<div bind:this={chartContainer} class="h-[200px] w-full"></div>
+			<div bind:this={chartContainer} role="img" aria-label={summary} class="h-[200px] w-full"></div>
 		{/if}
 	</CardContent>
 </Card>

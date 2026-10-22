@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Card, CardContent } from '$lib/components/ui/card';
+	import EmptyState from '$lib/components/app/EmptyState.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import Shield from '@lucide/svelte/icons/shield';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
@@ -19,28 +19,28 @@
 
 	const configs: Record<
 		string,
-		{ icon: Component<{ class?: string }>; defaultTitle: string; defaultDescription: string }
+		{ icon: Component; defaultTitle: string; defaultDescription: string }
 	> = {
 		incidents: {
-			icon: Shield,
+			icon: Shield as unknown as Component,
 			defaultTitle: 'No incidents found',
 			defaultDescription:
-				'No security incidents have been created yet. Incidents are automatically created when Sigma rules detect threats.',
+				'No security incidents have been created yet. Incidents are created automatically when detection rules find threats.',
 		},
 		detections: {
-			icon: AlertTriangle,
+			icon: AlertTriangle as unknown as Component,
 			defaultTitle: 'No detection events',
 			defaultDescription:
-				'No detection events are associated with this incident. Detection events are created when log patterns match Sigma rules.',
+				'No detection events are linked to this incident. They are created when log patterns match detection rules.',
 		},
 		comments: {
-			icon: MessageSquare,
+			icon: MessageSquare as unknown as Component,
 			defaultTitle: 'No comments yet',
 			defaultDescription:
 				'Be the first to add a comment. Use comments to document investigation progress and findings.',
 		},
 		history: {
-			icon: FileSearch,
+			icon: FileSearch as unknown as Component,
 			defaultTitle: 'No history',
 			defaultDescription: 'No changes have been recorded for this incident yet.',
 		},
@@ -49,23 +49,24 @@
 	const config = $derived(configs[type]);
 </script>
 
-<Card class="border-2 border-dashed">
-	<CardContent class="py-12 text-center">
-		<div
-			class="w-16 h-16 mx-auto mb-6 rounded-full bg-primary/10 flex items-center justify-center"
-		>
-			<config.icon class="w-8 h-8 text-primary" />
-		</div>
-		<h3 class="text-xl font-semibold mb-2">
-			{title || config.defaultTitle}
-		</h3>
-		<p class="text-muted-foreground mb-6 max-w-md mx-auto">
-			{description || config.defaultDescription}
-		</p>
-		{#if actionLabel && onAction}
+{#if actionLabel && onAction}
+	<EmptyState
+		variant="no-data"
+		icon={config.icon}
+		title={title || config.defaultTitle}
+		description={description || config.defaultDescription}
+	>
+		{#snippet actions()}
 			<Button onclick={onAction}>
 				{actionLabel}
 			</Button>
-		{/if}
-	</CardContent>
-</Card>
+		{/snippet}
+	</EmptyState>
+{:else}
+	<EmptyState
+		variant="no-data"
+		icon={config.icon}
+		title={title || config.defaultTitle}
+		description={description || config.defaultDescription}
+	/>
+{/if}

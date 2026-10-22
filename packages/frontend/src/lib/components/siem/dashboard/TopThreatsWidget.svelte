@@ -18,8 +18,8 @@
 <Card class="h-full">
 	<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
-			<AlertTriangle class="w-4 h-4 text-destructive" />
-			Top Threats
+			<AlertTriangle class="w-4 h-4 text-destructive-text" />
+			Top threats
 		</CardTitle>
 		<Badge variant="secondary" class="text-xs">
 			{threats?.length || 0} rules
@@ -63,8 +63,8 @@
 								</div>
 							</div>
 							<div class="flex items-center gap-1 text-sm font-semibold flex-shrink-0">
-								<TrendingUp class="w-3 h-3 text-destructive" />
-								{threat.count}
+								<TrendingUp class="w-3 h-3 text-destructive-text" />
+								{threat.count.toLocaleString('en-US')}
 							</div>
 						</div>
 					</button>

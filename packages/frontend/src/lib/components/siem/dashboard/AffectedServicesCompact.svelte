@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import type { AffectedService } from '$lib/api/siem';
+	import { severityTone } from '$lib/utils/severity';
 	import Server from '@lucide/svelte/icons/server';
 
 	interface Props {
@@ -13,9 +14,9 @@
 	const maxCount = $derived(services ? Math.max(...services.map((s) => s.detectionCount), 1) : 1);
 
 	function getBarColor(service: AffectedService): string {
-		if (service.criticalCount > 0) return 'bg-purple-500';
-		if (service.highCount > 0) return 'bg-red-500';
-		return 'bg-blue-500';
+		if (service.criticalCount > 0) return severityTone('critical').dot;
+		if (service.highCount > 0) return severityTone('high').dot;
+		return severityTone('informational').dot;
 	}
 </script>
 
@@ -23,7 +24,7 @@
 	<CardHeader class="pb-2">
 		<CardTitle class="text-sm font-semibold flex items-center gap-2">
 			<Server class="w-4 h-4 text-primary" />
-			Affected Services
+			Affected services
 		</CardTitle>
 	</CardHeader>
 	<CardContent class="pt-0">
@@ -43,7 +44,7 @@
 							<span class="text-xs font-mono truncate flex-1 mr-2 group-hover:text-primary transition-colors">
 								{service.serviceName}
 							</span>
-							<span class="text-xs font-semibold text-muted-foreground">{service.detectionCount}</span>
+							<span class="text-xs font-semibold text-muted-foreground">{service.detectionCount.toLocaleString('en-US')}</span>
 						</div>
 						<div class="h-1.5 bg-muted rounded-full overflow-hidden">
 							<div
