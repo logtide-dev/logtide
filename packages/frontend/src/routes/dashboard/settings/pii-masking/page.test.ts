@@ -75,6 +75,8 @@ describe('PII masking page', () => {
     });
     h.createRule.mockResolvedValue(rule());
     h.deleteRule.mockResolvedValue(undefined);
+    h.updateRule.mockResolvedValue(rule());
+    h.testMasking.mockResolvedValue({ message: 'x', metadata: {}, maskedFields: ['a'] });
     authStore.setAuth({ id: 'user-1', email: 'a@b.c', name: 'Test User' }, 'token-1');
     organizationStore.clear();
     organizationStore.setCurrentOrganization(org('owner') as never);
@@ -90,10 +92,10 @@ describe('PII masking page', () => {
   it('selecting a project reloads rules with that projectId', async () => {
     render(Page);
     await screen.findByText('Custom ID');
-    expect(h.listRules).toHaveBeenLastCalledWith(undefined);
+    expect(h.listRules).toHaveBeenLastCalledWith('org-1', undefined);
     await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
     await fireEvent.change(screen.getByLabelText('Applies to:'), { target: { value: 'p1' } });
-    await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('p1'));
+    await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('org-1', 'p1'));
   });
 
   async function fillAndCreate() {
@@ -103,7 +105,7 @@ describe('PII masking page', () => {
     await fireEvent.input(screen.getByLabelText('Regex pattern'), { target: { value: 'x+' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create rule' }));
     await waitFor(() => expect(h.createRule).toHaveBeenCalledTimes(1));
-    return h.createRule.mock.calls[0][0];
+    return h.createRule.mock.calls[0][1];
   }
 
   it('Add rule while a project is selected sends projectId', async () => {
@@ -111,7 +113,7 @@ describe('PII masking page', () => {
     await screen.findByText('Custom ID');
     await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
     await fireEvent.change(screen.getByLabelText('Applies to:'), { target: { value: 'p1' } });
-    await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('p1'));
+    await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('org-1', 'p1'));
     const input = await fillAndCreate();
     expect(input.projectId).toBe('p1');
   });
@@ -165,7 +167,7 @@ describe('PII masking page', () => {
       (b) => b.textContent?.trim() === 'Delete rule'
     ) as HTMLButtonElement;
     await fireEvent.click(confirmBtn);
-    await waitFor(() => expect(h.deleteRule).toHaveBeenCalledWith('r1'));
+    await waitFor(() => expect(h.deleteRule).toHaveBeenCalledWith('org-1', 'r1'));
   });
 
   it('icon buttons expose aria-labels', async () => {
@@ -173,5 +175,75 @@ describe('PII masking page', () => {
     await screen.findByText('Custom ID');
     expect(screen.getByRole('button', { name: 'Edit Custom ID' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete Custom ID' })).toBeInTheDocument();
+  });
+
+  it('sends the current organization with every call and follows an organization switch', async () => {
+    render(Page);
+    await screen.findByText('Custom ID');
+    expect(h.getProjects).toHaveBeenLastCalledWith('org-1');
+    await fireEvent.click(screen.getByRole('switch', { name: 'Enable Custom ID' }));
+    await waitFor(() => expect(h.updateRule).toHaveBeenCalledWith('org-1', 'r1', { enabled: false }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Test masking' }));
+    await waitFor(() => expect(h.testMasking).toHaveBeenCalledTimes(1));
+    expect(h.testMasking.mock.calls[0][0]).toBe('org-1');
+
+    organizationStore.setCurrentOrganization({ ...org('owner'), id: 'org-2' } as never);
+    await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('org-2', undefined));
+    expect(h.getProjects).toHaveBeenLastCalledWith('org-2');
+  });
+
+  describe('with a project selected', () => {
+    async function selectProject() {
+      h.listRules.mockImplementation(async (_org: string, projectId?: string) =>
+        projectId
+          ? [
+              rule({ id: 'r1', name: 'email', displayName: 'Email', enabled: true }),
+              rule({ id: 'r9', name: 'other', displayName: 'Other rule', projectId: 'p1' }),
+            ]
+          : [rule({ id: 'r1', name: 'email', displayName: 'Email', enabled: true })]
+      );
+      render(Page);
+      await screen.findByText('Email');
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
+      await fireEvent.change(screen.getByLabelText('Applies to:'), { target: { value: 'p1' } });
+      await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('org-1', 'p1'));
+      await screen.findByText('Other rule');
+    }
+
+    it('toggling an inherited organization rule creates a project row instead of updating it', async () => {
+      await selectProject();
+      await fireEvent.click(screen.getByRole('switch', { name: 'Enable Email' }));
+      await waitFor(() => expect(h.createRule).toHaveBeenCalledTimes(1));
+      expect(h.updateRule).not.toHaveBeenCalled();
+      const [orgId, input] = h.createRule.mock.calls[0];
+      expect(orgId).toBe('org-1');
+      expect(input).toMatchObject({ name: 'email', projectId: 'p1', enabled: false });
+    });
+
+    it('hides the delete button on inherited rows and tests masking with the project', async () => {
+      await selectProject();
+      expect(screen.queryByRole('button', { name: 'Delete Email' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Delete Other rule' })).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole('button', { name: 'Test masking' }));
+      await waitFor(() => expect(h.testMasking).toHaveBeenCalledTimes(1));
+      expect(h.testMasking.mock.calls[0][3]).toBe('p1');
+    });
+
+    it('shows only the project row when it shadows an organization row of the same name', async () => {
+      h.listRules.mockImplementation(async (_org: string, projectId?: string) =>
+        projectId
+          ? [
+              rule({ id: 'r1', name: 'email', displayName: 'Email org', enabled: true }),
+              rule({ id: 'r2', name: 'email', displayName: 'Email project', enabled: false, projectId: 'p1' }),
+            ]
+          : [rule({ id: 'r1', name: 'email', displayName: 'Email org' })]
+      );
+      render(Page);
+      await screen.findByText('Email org');
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
+      await fireEvent.change(screen.getByLabelText('Applies to:'), { target: { value: 'p1' } });
+      await screen.findByText('Email project');
+      expect(screen.queryByText('Email org')).toBeNull();
+    });
   });
 });

@@ -75,8 +75,14 @@ class PatternsAPI {
     return response.json();
   }
 
-  async listPatterns(): Promise<PatternListResponse> {
-    const url = `${getApiBaseUrl()}/patterns`;
+  // Every org-scoped call names the organization explicitly: the backend no longer
+  // falls back to the user's newest organization.
+  private orgQuery(organizationId: string): string {
+    return `?organizationId=${encodeURIComponent(organizationId)}`;
+  }
+
+  async listPatterns(organizationId: string): Promise<PatternListResponse> {
+    const url = `${getApiBaseUrl()}/patterns${this.orgQuery(organizationId)}`;
     const response = await this.fetch<{ success: boolean; data: PatternListResponse }>(url);
     return response.data;
   }
@@ -87,8 +93,8 @@ class PatternsAPI {
     return response.data;
   }
 
-  async createPattern(input: CreatePatternInput): Promise<IdentifierPattern> {
-    const url = `${getApiBaseUrl()}/patterns`;
+  async createPattern(organizationId: string, input: CreatePatternInput): Promise<IdentifierPattern> {
+    const url = `${getApiBaseUrl()}/patterns${this.orgQuery(organizationId)}`;
     const response = await this.fetch<{ success: boolean; data: IdentifierPattern }>(url, {
       method: 'POST',
       body: JSON.stringify(input),
@@ -96,8 +102,8 @@ class PatternsAPI {
     return response.data;
   }
 
-  async updatePattern(id: string, input: UpdatePatternInput): Promise<IdentifierPattern> {
-    const url = `${getApiBaseUrl()}/patterns/${id}`;
+  async updatePattern(organizationId: string, id: string, input: UpdatePatternInput): Promise<IdentifierPattern> {
+    const url = `${getApiBaseUrl()}/patterns/${id}${this.orgQuery(organizationId)}`;
     const response = await this.fetch<{ success: boolean; data: IdentifierPattern }>(url, {
       method: 'PUT',
       body: JSON.stringify(input),
@@ -105,8 +111,8 @@ class PatternsAPI {
     return response.data;
   }
 
-  async deletePattern(id: string): Promise<void> {
-    const url = `${getApiBaseUrl()}/patterns/${id}`;
+  async deletePattern(organizationId: string, id: string): Promise<void> {
+    const url = `${getApiBaseUrl()}/patterns/${id}${this.orgQuery(organizationId)}`;
     await this.fetch<{ success: boolean }>(url, {
       method: 'DELETE',
     });

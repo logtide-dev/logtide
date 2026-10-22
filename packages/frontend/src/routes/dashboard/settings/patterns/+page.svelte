@@ -87,25 +87,41 @@
     unsubOrgStore();
   });
 
-  onMount(async () => {
+  let mounted = $state(false);
+  let loadedOrgId: string | null = null;
+
+  onMount(() => {
     if (!token) {
       goto('/login');
       return;
     }
-    await loadPatterns();
+    mounted = true;
+  });
+
+  // Reload when the current organization changes: settings paths are kept on organization
+  // switch, so the list must follow it.
+  $effect(() => {
+    const orgId = currentOrg?.id ?? null;
+    if (!mounted || !orgId || orgId === loadedOrgId) return;
+    loadedOrgId = orgId;
+    void loadPatterns();
   });
 
   async function loadPatterns() {
+    const orgId = currentOrg?.id;
+    if (!orgId) return;
     loading = true;
     try {
-      const data = await patternsAPI.listPatterns();
-      customPatterns = data.custom;
-      defaultPatterns = data.defaults;
+      const data = await patternsAPI.listPatterns(orgId);
+      if (currentOrg?.id === orgId) {
+        customPatterns = data.custom;
+        defaultPatterns = data.defaults;
+      }
     } catch (e) {
       console.error('Failed to load patterns:', e);
       toastStore.error('Could not load identifier patterns');
     } finally {
-      loading = false;
+      if (currentOrg?.id === orgId) loading = false;
     }
   }
 
@@ -167,7 +183,7 @@
         .filter((f) => f.length > 0);
 
       if (isCreating) {
-        await patternsAPI.createPattern({
+        await patternsAPI.createPattern(currentOrg.id, {
           name: formName,
           displayName: formDisplayName,
           description: formDescription || undefined,
@@ -178,7 +194,7 @@
         });
         toastStore.success('Pattern created');
       } else if (editingPattern?.id) {
-        await patternsAPI.updatePattern(editingPattern.id, {
+        await patternsAPI.updatePattern(currentOrg.id, editingPattern.id, {
           displayName: formDisplayName,
           description: formDescription || undefined,
           pattern: formPattern,
@@ -203,7 +219,7 @@
     if (!editingPattern?.id) return;
 
     try {
-      await patternsAPI.deletePattern(editingPattern.id);
+      await patternsAPI.deletePattern(currentOrg.id, editingPattern.id);
       toastStore.success('Pattern deleted');
       editingPattern = null;
       await loadPatterns();
@@ -218,7 +234,7 @@
     if (!pattern.id) return;
 
     try {
-      await patternsAPI.updatePattern(pattern.id, {
+      await patternsAPI.updatePattern(currentOrg.id, pattern.id, {
         enabled: !pattern.enabled,
       });
       await loadPatterns();

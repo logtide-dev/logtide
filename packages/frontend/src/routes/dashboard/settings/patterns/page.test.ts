@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 const h = vi.hoisted(() => ({
   goto: vi.fn(),
   listPatterns: vi.fn(),
+  updatePattern: vi.fn(),
 }));
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
@@ -11,7 +12,7 @@ vi.mock('$lib/api/patterns', () => ({
   patternsAPI: {
     listPatterns: h.listPatterns,
     createPattern: vi.fn(),
-    updatePattern: vi.fn(),
+    updatePattern: h.updatePattern,
     deletePattern: vi.fn(),
     testPattern: vi.fn(),
   },
@@ -35,6 +36,8 @@ describe('identifier extraction page', () => {
   beforeEach(() => {
     localStorage.clear();
     h.listPatterns.mockReset();
+    h.updatePattern.mockReset();
+    h.updatePattern.mockResolvedValue({});
     h.listPatterns.mockResolvedValue({
       custom: [
         {
@@ -80,5 +83,20 @@ describe('identifier extraction page', () => {
     expect(screen.queryByRole('button', { name: 'Delete Customer ID' })).toBeNull();
     // testing a regex stays available
     expect(screen.getByRole('button', { name: /Test pattern/ })).toBeInTheDocument();
+  });
+
+  it('sends the current organization with every call and follows an organization switch', async () => {
+    render(Page);
+    await screen.findByText('Customer ID');
+    expect(h.listPatterns).toHaveBeenLastCalledWith('org-1');
+
+    // toggling a pattern updates it in the organization on screen
+    await fireEvent.click(screen.getByRole('switch'));
+    await waitFor(() => expect(h.updatePattern).toHaveBeenCalledTimes(1));
+    expect(h.updatePattern.mock.calls[0][0]).toBe('org-1');
+    expect(h.updatePattern.mock.calls[0][1]).toBe('p1');
+
+    organizationStore.setCurrentOrganization({ ...org('owner'), id: 'org-2' } as never);
+    await waitFor(() => expect(h.listPatterns).toHaveBeenLastCalledWith('org-2'));
   });
 });
