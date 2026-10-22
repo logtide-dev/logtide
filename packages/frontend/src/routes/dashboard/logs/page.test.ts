@@ -924,3 +924,64 @@ describe('logs page: live tail', () => {
     expect(sockets[0].closed).toBe(true);
   });
 });
+
+describe('logs page: phone layout', () => {
+  const realMatchMedia = window.matchMedia;
+
+  beforeEach(() => {
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes('max-width'),
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+  });
+
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+  });
+
+  const FACETS = [
+    { field: 'level', values: [{ value: 'error', count: 3 }], otherCount: 0 },
+    { field: 'service', values: [{ value: 'api', count: 5 }, { value: 'web', count: 2 }], otherCount: 0 },
+  ];
+
+  it('keeps the facets out of the page and shows stacked rows', async () => {
+    h.getFacets.mockResolvedValue(FACETS);
+    h.getLogs.mockResolvedValue(response(logsList(3)));
+    await renderPage();
+    await waitFor(() => expect(document.querySelectorAll('[data-log-row]').length).toBe(3));
+    expect(screen.queryByRole('complementary', { name: 'Facets' })).toBeNull();
+    expect(document.querySelector('table')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Compact rows' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Filters' })).toBeInTheDocument();
+    expect(screen.queryByTestId('filters-count')).toBeNull();
+  });
+
+  it('opens the filters panel, applies a facet, keeps the panel open and counts the clause', async () => {
+    h.getFacets.mockResolvedValue(FACETS);
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
+    const panel = await screen.findByRole('dialog', { name: 'Filters' });
+    await fireEvent.click(await within(panel).findByRole('button', { name: 'service api (5 logs)' }));
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(2));
+    expect(logsCall()).toMatchObject({ q: 'service:api' });
+    expect(screen.getByRole('dialog', { name: 'Filters' })).toBeInTheDocument();
+    await fireEvent.click(within(panel).getByRole('button', { name: 'level error (3 logs)' }));
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole('dialog', { name: 'Filters' })).toBeInTheDocument();
+    await fireEvent.click(within(panel).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Filters' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Filters, 2 active' })).toBeInTheDocument();
+    expect(screen.getByTestId('filters-count')).toHaveTextContent('2');
+  });
+
+  it('uses the short search placeholder', async () => {
+    await renderPage();
+    expect(queryInput().placeholder).toBe('Search logs');
+  });
+});

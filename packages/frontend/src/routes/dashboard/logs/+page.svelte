@@ -58,6 +58,8 @@
   import LogDetailsPanel from "$lib/components/search/LogDetailsPanel.svelte";
   import LogVolumeHistogram from "$lib/components/search/LogVolumeHistogram.svelte";
   import FacetSidebar from "$lib/components/search/FacetSidebar.svelte";
+  import FacetsSheet from "$lib/components/search/FacetsSheet.svelte";
+  import { isMobile } from "$lib/stores/media-query";
   import SavedSearchesMenu from "$lib/components/search/SavedSearchesMenu.svelte";
   import LiveTailControls from "$lib/components/search/LiveTailControls.svelte";
   import ColumnConfigMenu from "$lib/components/search/ColumnConfigMenu.svelte";
@@ -107,6 +109,7 @@
   import Download from "@lucide/svelte/icons/download";
   import Ellipsis from "@lucide/svelte/icons/ellipsis";
   import Link from "@lucide/svelte/icons/link";
+  import ListFilter from "@lucide/svelte/icons/list-filter";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import Rows3 from "@lucide/svelte/icons/rows-3";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
@@ -171,6 +174,8 @@
   let facetsLoading = $state(false);
   let facetsError = $state<string | null>(null);
   let facetsCollapsed = $state(false);
+  /** Phone only: the facets live in a full-height panel opened from the toolbar. */
+  let filtersOpen = $state(false);
   let discovered = $state.raw<LogFieldInfo[]>([]);
   let pinnedKeys = $state.raw<string[]>([]);
 
@@ -276,6 +281,13 @@
       : { q: "", projectIds: [], from: new Date(0).toISOString(), to: new Date(0).toISOString() },
   );
   const canExport = $derived(!live && run !== null && rows.length > 0);
+  const filterClauseCount = $derived.by(() => {
+    const parsed = parseLogQuery(q);
+    return parsed.ok ? parsed.query.fields.length : 0;
+  });
+  $effect(() => {
+    if (!$isMobile) filtersOpen = false;
+  });
   const gridClass = $derived(
     detailsLog
       ? facetsCollapsed
@@ -1247,7 +1259,7 @@
 <div class="container mx-auto {containerPadding} {maxWidthClass}">
   <PageHeader title="Logs" description="Search, filter and tail logs across your projects">
     {#snippet actions()}
-      <ScopeBar mode="multi" projects={scopeProjects} timeDisabled={live} canonicalUrl={false} />
+      <ScopeBar mode="multi" projects={scopeProjects} timeDisabled={live} canonicalUrl={false} hideZoneOnMobile />
     {/snippet}
   </PageHeader>
 
@@ -1263,6 +1275,27 @@
           onEdit={() => recorder.cancel()}
         />
       </div>
+      {#if $isMobile}
+        <Button
+          variant="outline"
+          size="sm"
+          class="h-9 gap-1.5"
+          aria-label={filterClauseCount > 0 ? `Filters, ${filterClauseCount} active` : "Filters"}
+          aria-haspopup="dialog"
+          aria-expanded={filtersOpen}
+          onclick={() => (filtersOpen = true)}
+        >
+          <ListFilter class="size-4" />
+          <span>Filters</span>
+          {#if filterClauseCount > 0}
+            <span
+              data-testid="filters-count"
+              class="rounded-full bg-primary px-1.5 text-xs font-medium tabular-nums text-primary-foreground"
+              >{filterClauseCount}</span
+            >
+          {/if}
+        </Button>
+      {/if}
       <div class="flex min-h-9 items-center">
         <LiveTailControls
           {live}
@@ -1377,18 +1410,35 @@
   {/if}
 
   <div class="grid items-start gap-4 {gridClass}">
-    <FacetSidebar
-      {facets}
-      loading={facetsLoading}
-      error={facetsError}
-      {q}
-      {pinnedKeys}
-      {candidateKeys}
-      bind:collapsed={() => facetsCollapsed, (next) => setFacetsCollapsed(next)}
-      onToggle={applyFieldToggle}
-      onPin={pinFacet}
-      onUnpin={unpinFacet}
-    />
+    {#if $isMobile}
+      <FacetsSheet bind:open={filtersOpen}>
+        <FacetSidebar
+          embedded
+          {facets}
+          loading={facetsLoading}
+          error={facetsError}
+          {q}
+          {pinnedKeys}
+          {candidateKeys}
+          onToggle={applyFieldToggle}
+          onPin={pinFacet}
+          onUnpin={unpinFacet}
+        />
+      </FacetsSheet>
+    {:else}
+      <FacetSidebar
+        {facets}
+        loading={facetsLoading}
+        error={facetsError}
+        {q}
+        {pinnedKeys}
+        {candidateKeys}
+        bind:collapsed={() => facetsCollapsed, (next) => setFacetsCollapsed(next)}
+        onToggle={applyFieldToggle}
+        onPin={pinFacet}
+        onUnpin={unpinFacet}
+      />
+    {/if}
 
     <section aria-label="Results" class="min-w-0 rounded-lg border bg-card text-card-foreground">
       <div class="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
@@ -1399,7 +1449,7 @@
           {#if live}
             <span class="text-muted-foreground">Newest first, up to {liveLimit.toLocaleString("en-US")} kept</span>
           {:else if run && run.preset && hasRun}
-            <span class="text-muted-foreground" title={asOfTitle}>Results as of {asOfText}</span>
+            <span class="hidden text-muted-foreground md:inline" title={asOfTitle}>Results as of {asOfText}</span>
             <Button
               variant="ghost"
               size="icon"
@@ -1447,7 +1497,7 @@
               <WrapText class="size-4 {terminalWrap ? 'text-primary' : 'text-muted-foreground'}" />
               <span>Wrap lines</span>
             </Button>
-          {:else}
+          {:else if !$isMobile}
             <Button
               variant="outline"
               size="sm"

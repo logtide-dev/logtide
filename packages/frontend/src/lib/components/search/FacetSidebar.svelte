@@ -26,6 +26,8 @@
     /** Discovered metadata keys usable as facets (see `facetCandidates`). */
     candidateKeys: string[];
     collapsed?: boolean;
+    /** Inside the phone sheet: always expanded, no collapse button. */
+    embedded?: boolean;
     onToggle: (key: string, value: string, mode: Mode) => void;
     onPin: (key: string) => void;
     onUnpin: (key: string) => void;
@@ -39,12 +41,14 @@
     pinnedKeys,
     candidateKeys,
     collapsed = $bindable(false),
+    embedded = false,
     onToggle,
     onPin,
     onUnpin,
   }: Props = $props();
 
   const uid = $props.id();
+  const isCollapsed = $derived(collapsed && !embedded);
 
   const TITLES: Record<string, string> = { level: 'Level', service: 'Service', host: 'Host' };
   const BUILTINS: readonly string[] = BUILTIN_FACET_KEYS;
@@ -107,9 +111,10 @@
 
 <aside
   aria-label="Facets"
-  class="shrink-0 {collapsed ? 'w-10' : 'w-full lg:w-64'}"
+  class="shrink-0 {isCollapsed ? 'w-10' : 'w-full lg:w-64'}"
   aria-busy={loading}
 >
+  {#if !embedded}
   <div class="flex items-center justify-between gap-2 pb-2">
     {#if !collapsed}
       <span class="text-sm font-medium text-muted-foreground">Facets</span>
@@ -127,8 +132,9 @@
       {#if collapsed}<PanelLeftOpen />{:else}<PanelLeftClose />{/if}
     </Button>
   </div>
+  {/if}
 
-  {#if !collapsed}
+  {#if !isCollapsed}
     <div id="{uid}-lists" class="space-y-4">
       {#if error}
         <div role="alert" class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm">
@@ -177,7 +183,7 @@
                   >
                     <button
                       type="button"
-                      class="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      class="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 md:py-1 focus-visible:ring-ring"
                       aria-pressed={state === 'included'}
                       aria-label="{facet.field} {valueText(item.value)} ({countLabel(item.count)})"
                       title={item.value}
@@ -205,7 +211,7 @@
                             {...props}
                             variant="ghost"
                             size="icon"
-                            class="size-6 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                            class="size-8 shrink-0 transition-opacity md:size-6 md:opacity-0 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
                             aria-label="More actions for {facet.field} {valueText(item.value)}"
                           >
                             <Ellipsis class="size-3.5" />

@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import { parseLogQuery } from "@logtide/shared";
   import Button from "$lib/components/ui/button/button.svelte";
+  import { isMobile } from "$lib/stores/media-query";
   import SearchIcon from "@lucide/svelte/icons/search";
   import QuerySyntaxHelp from "./QuerySyntaxHelp.svelte";
   import { errorRange, tokenSegments, type HighlightKind, type TokenSegment } from "./query-highlight";
@@ -235,7 +236,7 @@
         autocomplete="off"
         autocapitalize="off"
         spellcheck="false"
-        placeholder="Search logs, e.g. level:error service:api timeout"
+        placeholder={$isMobile ? "Search logs" : "Search logs, e.g. level:error service:api timeout"}
         {value}
         {disabled}
         class="relative h-9 w-full rounded-md border border-input bg-transparent px-3 font-mono text-sm text-transparent caret-foreground selection:bg-primary/25 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"

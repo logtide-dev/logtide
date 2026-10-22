@@ -35,6 +35,8 @@
      * same view (spec 5.2). Pages that manage their own URL (Logs) turn it off.
      */
     canonicalUrl?: boolean;
+    /** Phone widths: drop the time zone label, it would take a row of its own. */
+    hideZoneOnMobile?: boolean;
   }
 
   let {
@@ -45,6 +47,7 @@
     timeDisabled = false,
     presets,
     canonicalUrl = true,
+    hideZoneOnMobile = false,
   }: Props = $props();
 
   const FILTER_THRESHOLD = 8;
@@ -252,7 +255,7 @@
     {/if}
     <span
       data-testid="scope-zone"
-      class="text-xs text-muted-foreground"
+      class="text-xs text-muted-foreground {hideZoneOnMobile ? 'hidden md:inline' : ''}"
       title="Times are shown in this time zone"
     >
       {zoneText}

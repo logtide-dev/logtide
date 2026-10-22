@@ -231,7 +231,7 @@
     {#snippet child({ props })}
       <Button {...props} variant="outline" size="sm" class="gap-1.5">
         <Bookmark class="size-4" aria-hidden="true" />
-        Saved searches
+        <span class="sr-only md:not-sr-only">Saved searches</span>
       </Button>
     {/snippet}
   </Popover.Trigger>
