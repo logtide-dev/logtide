@@ -415,6 +415,8 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
       service: data.service ?? 'unknown',
       organizationName: data.organizationName ?? 'your organization',
       detectionId: data.rule_id,
+      incidentId: data.incident_id ?? null,
+      ruleId: data.rule_id,
     });
     await transporter.sendMail({
       from: `"LogTide" <${config.SMTP_FROM || config.SMTP_USER}>`,

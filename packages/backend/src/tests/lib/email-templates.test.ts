@@ -451,6 +451,23 @@ describe('Email Templates - Sigma Detection Email', () => {
     expect(result.text).toBeDefined();
   });
 
+  it('links the call to action to the incident, else the rule, not the security overview', () => {
+    const base = {
+      ruleTitle: 'Mimikatz Detection',
+      severity: 'critical' as const,
+      service: 'endpoint',
+      organizationName: 'Org',
+      detectionId: 'det-1',
+    };
+    const withIncident = generateSigmaDetectionEmail({ ...base, incidentId: 'inc-9', ruleId: 'rule-3' });
+    expect(withIncident.html).toContain('/dashboard/incidents/inc-9');
+    expect(withIncident.text).toContain('/dashboard/incidents/inc-9');
+    expect(withIncident.html).not.toContain('/dashboard/security"');
+    const ruleOnly = generateSigmaDetectionEmail({ ...base, ruleId: 'rule-3' });
+    expect(ruleOnly.html).toContain('/dashboard/security/rules/rule-3');
+    expect(ruleOnly.text).toContain('/dashboard/security/rules/rule-3');
+  });
+
   it('should include rule title', () => {
     const result = generateSigmaDetectionEmail({
       ruleTitle: 'Mimikatz Detection',

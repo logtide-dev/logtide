@@ -623,11 +623,20 @@ export interface SigmaDetectionEmailData {
   matchedFields?: Record<string, unknown>;
   organizationName: string;
   detectionId: string;
+  /** Incident the detection opened or joined; the call to action links here when set. */
+  incidentId?: string | null;
+  /** Sigma rule id; the call to action falls back to the rule page without an incident. */
+  ruleId?: string | null;
 }
 
 export function generateSigmaDetectionEmail(data: SigmaDetectionEmailData): { html: string; text: string } {
   const frontendUrl = getFrontendUrl();
-  const detectionUrl = `${frontendUrl}/dashboard/security`;
+  const detectionUrl = data.incidentId
+    ? `${frontendUrl}/dashboard/incidents/${data.incidentId}`
+    : data.ruleId
+      ? `${frontendUrl}/dashboard/security/rules/${data.ruleId}`
+      : `${frontendUrl}/dashboard/security`;
+  const ctaLabel = data.incidentId ? 'View incident' : data.ruleId ? 'View rule' : 'View in Security Dashboard';
   const severityColor = severityColors[data.severity] || colors.informational;
   const severityLabel = severityLabels[data.severity] || data.severity;
 
@@ -651,7 +660,7 @@ export function generateSigmaDetectionEmail(data: SigmaDetectionEmailData): { ht
         codeBlock(JSON.stringify(data.matchedFields, null, 2))
         : ''
       }
-      ${cta('View in Security Dashboard', detectionUrl)}
+      ${cta(ctaLabel, detectionUrl)}
     `),
     { preheader: `[${severityLabel}] Sigma detection: ${data.ruleTitle}` }
   );
