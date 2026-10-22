@@ -80,7 +80,8 @@
   const rows = $derived(entriesOf(data ?? {}));
 </script>
 
-{#snippet node(key: string, value: unknown, path: string, depth: number)}
+<!-- `underArray`: the row sits below an array (errors.0.code). No engine matches such paths, so those rows offer Copy only. -->
+{#snippet node(key: string, value: unknown, path: string, depth: number, underArray: boolean)}
   {#if expandable(value, depth)}
     {@const open = isExpanded(path, depth)}
     <tr class="border-b border-border/60 last:border-0">
@@ -99,7 +100,7 @@
     </tr>
     {#if open}
       {#each entriesOf(value) as [childKey, childValue] (childKey)}
-        {@render node(childKey, childValue, joinPath(path, childKey), depth + 1)}
+        {@render node(childKey, childValue, joinPath(path, childKey), depth + 1, underArray || Array.isArray(value))}
       {/each}
     {/if}
   {:else}
@@ -117,7 +118,7 @@
       <td class="w-px whitespace-nowrap py-0.5 text-right">
         <span class="inline-flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           <CopyButton value={copyText(value)} ariaLabel="Copy value" />
-          {#if onFilter}
+          {#if onFilter && !underArray}
             <Button
               variant="ghost"
               size="icon"
@@ -137,7 +138,7 @@
               <Ban />
             </Button>
           {/if}
-          {#if onAddColumn}
+          {#if onAddColumn && !underArray}
             <Button
               variant="ghost"
               size="icon"
@@ -160,7 +161,7 @@
   <table class="w-full border-collapse text-left">
     <tbody>
       {#each rows as [key, value] (key)}
-        {@render node(key, value, key, 0)}
+        {@render node(key, value, key, 0, false)}
       {/each}
     </tbody>
   </table>

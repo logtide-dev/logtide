@@ -60,11 +60,20 @@ describe('KeyValueTable', () => {
     expect(el.className).toContain('text-muted-foreground');
   });
 
-  it('array of objects uses the index as a path segment', async () => {
+  it('rows below an array offer Copy only, rows beside it keep Filter and Add column', async () => {
+    const onFilter = vi.fn();
     const onAddColumn = vi.fn();
-    render(KeyValueTable, { data: { items: [{ id: 1 }] }, onAddColumn });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add items.0.id as column' }));
-    expect(onAddColumn).toHaveBeenCalledWith('items.0.id');
+    render(KeyValueTable, { data: { id: 7, errors: [{ code: 'E1' }] }, onFilter, onAddColumn });
+    expect(screen.queryByRole('button', { name: 'Filter by errors.0.code' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Exclude errors.0.code' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add errors.0.code as column' })).toBeNull();
+    expect(screen.getByText('E1')).toBeInTheDocument();
+    const copyButtons = screen.getAllByRole('button', { name: 'Copy value' });
+    expect(copyButtons).toHaveLength(2);
+    await fireEvent.click(copyButtons[1]);
+    expect(copyToClipboard).toHaveBeenCalledWith('E1');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add id as column' }));
+    expect(onAddColumn).toHaveBeenCalledWith('id');
   });
 
   it('array of primitives is one JSON leaf', async () => {
