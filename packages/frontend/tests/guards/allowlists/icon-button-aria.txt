@@ -2,4 +2,3 @@
 src/lib/components/alerts/AlertPreview.svelte
 src/lib/components/siem/incidents/IncidentActionsDropdown.svelte
 src/routes/dashboard/security/incidents/[id]/+page.svelte
-src/routes/dashboard/traces/+page.svelte

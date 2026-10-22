@@ -1,18 +1,15 @@
 <script lang="ts">
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
-  import Button from '$lib/components/ui/button/button.svelte';
   import * as Tabs from '$lib/components/ui/tabs';
   import { getApiUrl } from '$lib/config';
-  import { toastStore } from '$lib/stores/toast';
-  import { copyToClipboard } from '$lib/utils/clipboard';
+  import EmptyState from '$lib/components/app/EmptyState.svelte';
+  import CopyButton from '$lib/components/app/CopyButton.svelte';
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import Key from '@lucide/svelte/icons/key';
   import Book from '@lucide/svelte/icons/book';
   import Network from '@lucide/svelte/icons/network';
-  import Copy from '@lucide/svelte/icons/copy';
   import Terminal from '@lucide/svelte/icons/terminal';
   import Timer from '@lucide/svelte/icons/timer';
-  import Layers from '@lucide/svelte/icons/layers';
   import AlertCircle from '@lucide/svelte/icons/alert-circle';
 
   let selectedTab = $state('nodejs');
@@ -79,53 +76,40 @@ tp := trace.NewTracerProvider(
 )
 otel.SetTracerProvider(tp)`
   });
-
-  async function copyCode(code: string) {
-    const success = await copyToClipboard(code);
-    if (success) {
-      toastStore.success('Code copied!');
-    } else {
-      toastStore.error('Could not copy. Please select and copy manually.');
-    }
-  }
 </script>
 
 <div class="space-y-6 py-8">
-  <!-- Empty State Hero -->
-  <div class="text-center">
-    <div class="w-20 h-20 mx-auto bg-cyan-500/10 rounded-2xl flex items-center justify-center mb-4">
-      <GitBranch class="w-10 h-10 text-cyan-500" />
-    </div>
-    <h2 class="text-2xl font-bold mb-2">No Traces Yet</h2>
-    <p class="text-muted-foreground max-w-md mx-auto">
-      Send distributed traces using OpenTelemetry to visualize request flows across your services.
-    </p>
-  </div>
+  <!-- W13 seam: replace snippets with <ConnectSnippets> in Wave D -->
+  <EmptyState
+    variant="setup"
+    icon={GitBranch}
+    title="No traces yet"
+    description="Send distributed traces using OpenTelemetry to visualize request flows across your services."
+  />
 
-  <!-- Quick Actions -->
-  <div class="grid gap-4 md:grid-cols-3 max-w-3xl mx-auto">
+  <div class="mx-auto grid max-w-3xl gap-4 md:grid-cols-3">
     <a href="/dashboard/projects" class="block">
-      <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
+      <Card class="h-full cursor-pointer text-center transition-all hover:border-primary/50">
         <CardContent class="pt-6">
-          <Key class="w-8 h-8 mx-auto text-green-500 mb-2" />
-          <h3 class="font-medium">Get API Key</h3>
+          <Key class="mx-auto mb-2 size-8 text-muted-foreground" aria-hidden="true" />
+          <h3 class="font-medium">Get an API key</h3>
           <p class="text-sm text-muted-foreground">Generate credentials</p>
         </CardContent>
       </Card>
     </a>
     <a href="https://logtide.dev/docs/opentelemetry" target="_blank" rel="noopener noreferrer" class="block">
-      <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
+      <Card class="h-full cursor-pointer text-center transition-all hover:border-primary/50">
         <CardContent class="pt-6">
-          <Book class="w-8 h-8 mx-auto text-purple-500 mb-2" />
-          <h3 class="font-medium">OTLP Docs</h3>
+          <Book class="mx-auto mb-2 size-8 text-muted-foreground" aria-hidden="true" />
+          <h3 class="font-medium">OTLP docs</h3>
           <p class="text-sm text-muted-foreground">Setup guide</p>
         </CardContent>
       </Card>
     </a>
-    <a href="https://opentelemetry.io/docs/" target="_blank" class="block">
-      <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
+    <a href="https://opentelemetry.io/docs/" target="_blank" rel="noopener noreferrer" class="block">
+      <Card class="h-full cursor-pointer text-center transition-all hover:border-primary/50">
         <CardContent class="pt-6">
-          <Network class="w-8 h-8 mx-auto text-blue-500 mb-2" />
+          <Network class="mx-auto mb-2 size-8 text-muted-foreground" aria-hidden="true" />
           <h3 class="font-medium">OpenTelemetry</h3>
           <p class="text-sm text-muted-foreground">Official docs</p>
         </CardContent>
@@ -133,37 +117,29 @@ otel.SetTracerProvider(tp)`
     </a>
   </div>
 
-  <!-- Code Examples -->
-  <Card class="max-w-3xl mx-auto">
+  <Card class="mx-auto max-w-3xl">
     <CardHeader>
       <div class="flex items-center gap-2">
-        <Terminal class="w-5 h-5 text-muted-foreground" />
-        <CardTitle class="text-lg">Send Traces with OpenTelemetry</CardTitle>
+        <Terminal class="size-5 text-muted-foreground" aria-hidden="true" />
+        <CardTitle class="text-lg">Send traces with OpenTelemetry</CardTitle>
       </div>
-      <CardDescription>
-        Configure your application to send traces to LogTide
-      </CardDescription>
+      <CardDescription>Configure your application to send traces to LogTide</CardDescription>
     </CardHeader>
     <CardContent>
       <Tabs.Root bind:value={selectedTab}>
-        <Tabs.List class="grid grid-cols-3 mb-4">
+        <Tabs.List class="mb-4 grid grid-cols-3">
           <Tabs.Trigger value="nodejs">Node.js</Tabs.Trigger>
           <Tabs.Trigger value="python">Python</Tabs.Trigger>
           <Tabs.Trigger value="go">Go</Tabs.Trigger>
         </Tabs.List>
 
-        {#each Object.entries(codeExamples) as [key, code]}
+        {#each Object.entries(codeExamples) as [key, code] (key)}
           <Tabs.Content value={key}>
             <div class="relative">
-              <pre class="bg-muted rounded-lg p-4 overflow-x-auto text-sm"><code>{code}</code></pre>
-              <Button
-                variant="ghost"
-                size="sm"
-                class="absolute top-2 right-2"
-                onclick={() => copyCode(code)}
-              >
-                <Copy class="w-4 h-4" />
-              </Button>
+              <pre class="overflow-x-auto rounded-lg bg-muted p-4 text-sm"><code>{code}</code></pre>
+              <div class="absolute right-2 top-2">
+                <CopyButton value={code} ariaLabel="Copy code" />
+              </div>
             </div>
           </Tabs.Content>
         {/each}
@@ -171,26 +147,25 @@ otel.SetTracerProvider(tp)`
     </CardContent>
   </Card>
 
-  <!-- Features Preview -->
-  <div class="max-w-3xl mx-auto">
+  <div class="mx-auto max-w-3xl">
     <Card class="bg-muted/30">
       <CardContent class="pt-6">
-        <h3 class="font-medium mb-3">Once traces arrive, you can:</h3>
-        <ul class="grid gap-2 sm:grid-cols-2 text-sm text-muted-foreground">
+        <h3 class="mb-3 font-medium">Once traces arrive, you can:</h3>
+        <ul class="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
           <li class="flex items-center gap-2">
-            <GitBranch class="w-4 h-4 text-cyan-500" />
+            <GitBranch class="size-4" aria-hidden="true" />
             View trace timeline and spans
           </li>
           <li class="flex items-center gap-2">
-            <Network class="w-4 h-4 text-blue-500" />
+            <Network class="size-4" aria-hidden="true" />
             Visualize service dependencies
           </li>
           <li class="flex items-center gap-2">
-            <Timer class="w-4 h-4 text-green-500" />
+            <Timer class="size-4" aria-hidden="true" />
             Analyze latency and performance
           </li>
           <li class="flex items-center gap-2">
-            <AlertCircle class="w-4 h-4 text-red-500" />
+            <AlertCircle class="size-4" aria-hidden="true" />
             Identify errors and bottlenecks
           </li>
         </ul>

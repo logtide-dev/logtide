@@ -165,3 +165,76 @@ describe('Tenant isolation - traces API', () => {
     });
   });
 });
+
+// ----------------------------------------------------------------------------
+// W4: operations and latency histogram
+// ----------------------------------------------------------------------------
+describe('Tenant isolation - traces APM API', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await build();
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    await truncateAllTables();
+  });
+
+  describe('GET /api/v1/traces/operations', () => {
+    it('org B api key cannot read org A operations', async () => {
+      const t = await createIsolatedTenants();
+      const a1Id = t.orgA.projects[0].id;
+      const b1Key = t.orgB.projects[0].apiKey.key;
+
+      await createTestSpan({ projectId: a1Id, serviceName: 'svc-a1', operationName: 'secret-op', kind: 'SERVER' });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces/operations')
+        .query({ projectId: a1Id })
+        .set('x-api-key', b1Key)
+        .expect(403);
+
+      expect(JSON.stringify(res.body)).not.toContain('secret-op');
+    });
+
+    it('org B api key only sees its own operations', async () => {
+      const t = await createIsolatedTenants();
+      const a1Id = t.orgA.projects[0].id;
+      const b1Id = t.orgB.projects[0].id;
+      const b1Key = t.orgB.projects[0].apiKey.key;
+
+      await createTestSpan({ projectId: a1Id, serviceName: 'svc-a1', operationName: 'op-a', kind: 'SERVER' });
+      await createTestSpan({ projectId: b1Id, serviceName: 'svc-b1', operationName: 'op-b', kind: 'SERVER' });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces/operations')
+        .set('x-api-key', b1Key)
+        .expect(200);
+
+      const ops: string[] = res.body.operations.map((o: any) => o.operation);
+      expect(ops).toContain('op-b');
+      expect(ops).not.toContain('op-a');
+    });
+  });
+
+  describe('GET /api/v1/traces/latency-histogram', () => {
+    it('org B api key cannot read org A latency histogram', async () => {
+      const t = await createIsolatedTenants();
+      const a1Id = t.orgA.projects[0].id;
+      const b1Key = t.orgB.projects[0].apiKey.key;
+
+      await createTestSpan({ projectId: a1Id, serviceName: 'svc-a1', kind: 'SERVER' });
+
+      await request(app.server)
+        .get('/api/v1/traces/latency-histogram')
+        .query({ projectId: a1Id })
+        .set('x-api-key', b1Key)
+        .expect(403);
+    });
+  });
+});

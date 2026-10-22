@@ -862,3 +862,246 @@ describe('Traces Routes', () => {
     });
   });
 });
+
+// ============================================================================
+// W4: operations, latency histogram, list params
+// ============================================================================
+describe('Traces APM routes', () => {
+  let app: any;
+  let context: Awaited<ReturnType<typeof createTestContext>>;
+  let apiKey: string;
+
+  beforeEach(async () => {
+    if (!app) {
+      app = await build();
+      await app.ready();
+    }
+    context = await createTestContext();
+    apiKey = context.apiKey.plainKey;
+  });
+
+  afterAll(async () => {
+    if (app) {
+      await app.close();
+    }
+  });
+
+  async function seedEntrySpan(over: {
+    service?: string;
+    operation: string;
+    durationMs: number;
+    statusCode?: 'OK' | 'ERROR';
+    attributes?: Record<string, unknown>;
+  }) {
+    const startTime = new Date(Date.now() - 60_000);
+    const trace = await createTestTrace({
+      projectId: context.project.id,
+      organizationId: context.organization.id,
+      serviceName: over.service ?? 'api',
+      rootServiceName: over.service ?? 'api',
+      rootOperationName: over.operation,
+      startTime,
+      durationMs: over.durationMs,
+    });
+    await createTestSpan({
+      projectId: context.project.id,
+      organizationId: context.organization.id,
+      traceId: trace.trace_id,
+      serviceName: over.service ?? 'api',
+      operationName: over.operation,
+      kind: 'SERVER',
+      statusCode: over.statusCode ?? 'OK',
+      startTime,
+      durationMs: over.durationMs,
+      attributes: over.attributes ?? null,
+    });
+    return trace;
+  }
+
+  describe('GET /api/v1/traces/operations', () => {
+    it('returns 401 without auth', async () => {
+      await request(app.server).get('/api/v1/traces/operations').expect(401);
+    });
+
+    it('returns 400 without projectId', async () => {
+      const session = await createSession(context.user.id);
+      const res = await request(app.server)
+        .get('/api/v1/traces/operations')
+        .set('Authorization', `Bearer ${session.token}`)
+        .expect(400);
+      expect(res.body.error).toContain('projectId');
+    });
+
+    it('returns operations sorted by p95 desc for seeded SERVER spans', async () => {
+      await seedEntrySpan({ operation: 'GET /fast', durationMs: 20 });
+      await seedEntrySpan({ operation: 'GET /slow', durationMs: 900, statusCode: 'ERROR' });
+      await seedEntrySpan({ operation: 'GET /mid', durationMs: 200 });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces/operations')
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      expect(res.body.operations.map((o: any) => o.operation)).toEqual(['GET /slow', 'GET /mid', 'GET /fast']);
+      const slow = res.body.operations[0];
+      expect(slow.count).toBe(1);
+      expect(slow.errorCount).toBe(1);
+      expect(slow.errorRate).toBe(1);
+      expect(slow.throughputPerMin).toBeGreaterThan(0);
+      expect(res.body.operations[2].errorRate).toBe(0);
+    });
+
+    it('filters by service', async () => {
+      await seedEntrySpan({ service: 'api', operation: 'GET /a', durationMs: 50 });
+      await seedEntrySpan({ service: 'worker', operation: 'job', durationMs: 70 });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces/operations')
+        .query({ service: 'worker' })
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      expect(res.body.operations).toHaveLength(1);
+      expect(res.body.operations[0].service).toBe('worker');
+    });
+
+    it('returns 403 for a project of another org (session auth)', async () => {
+      const other = await createTestContext();
+      const session = await createSession(context.user.id);
+      await request(app.server)
+        .get('/api/v1/traces/operations')
+        .query({ projectId: other.project.id })
+        .set('Authorization', `Bearer ${session.token}`)
+        .expect(403);
+    });
+
+    it('returns 400 when from is after to', async () => {
+      await request(app.server)
+        .get('/api/v1/traces/operations')
+        .query({ from: '2026-10-22T12:00:00.000Z', to: '2026-10-22T11:00:00.000Z' })
+        .set('x-api-key', apiKey)
+        .expect(400);
+    });
+  });
+
+  describe('GET /api/v1/traces/latency-histogram', () => {
+    it('returns 401 without auth', async () => {
+      await request(app.server).get('/api/v1/traces/latency-histogram').expect(401);
+    });
+
+    it('returns 403 for a project of another org (session auth)', async () => {
+      const other = await createTestContext();
+      const session = await createSession(context.user.id);
+      await request(app.server)
+        .get('/api/v1/traces/latency-histogram')
+        .query({ projectId: other.project.id })
+        .set('Authorization', `Bearer ${session.token}`)
+        .expect(403);
+    });
+
+    it('returns bounds and counts with counts one longer than bounds', async () => {
+      await seedEntrySpan({ operation: 'GET /a', durationMs: 20 });
+      await seedEntrySpan({ operation: 'GET /b', durationMs: 900 });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces/latency-histogram')
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      expect(Array.isArray(res.body.bounds)).toBe(true);
+      expect(res.body.counts).toHaveLength(res.body.bounds.length + 1);
+      expect(res.body.counts.reduce((a: number, b: number) => a + b, 0)).toBe(2);
+    });
+
+    it('filters by operation', async () => {
+      await seedEntrySpan({ operation: 'GET /a', durationMs: 20 });
+      await seedEntrySpan({ operation: 'GET /b', durationMs: 900 });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces/latency-histogram')
+        .query({ operation: 'GET /b' })
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      expect(res.body.counts.reduce((a: number, b: number) => a + b, 0)).toBe(1);
+    });
+  });
+
+  describe('GET /api/v1/traces list params', () => {
+    it('filters by operation', async () => {
+      const a = await seedEntrySpan({ operation: 'GET /a', durationMs: 20 });
+      await seedEntrySpan({ operation: 'GET /b', durationMs: 30 });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces')
+        .query({ operation: 'GET /a' })
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      expect(res.body.traces.map((t: any) => t.trace_id)).toEqual([a.trace_id]);
+    });
+
+    it('sorts by duration asc and desc', async () => {
+      await seedEntrySpan({ operation: 'a', durationMs: 300 });
+      await seedEntrySpan({ operation: 'b', durationMs: 100 });
+      await seedEntrySpan({ operation: 'c', durationMs: 200 });
+
+      const asc = await request(app.server)
+        .get('/api/v1/traces')
+        .query({ sortBy: 'duration', sortOrder: 'asc' })
+        .set('x-api-key', apiKey)
+        .expect(200);
+      expect(asc.body.traces.map((t: any) => t.duration_ms)).toEqual([100, 200, 300]);
+
+      const desc = await request(app.server)
+        .get('/api/v1/traces')
+        .query({ sortBy: 'duration', sortOrder: 'desc' })
+        .set('x-api-key', apiKey)
+        .expect(200);
+      expect(desc.body.traces.map((t: any) => t.duration_ms)).toEqual([300, 200, 100]);
+    });
+
+    it('filters by attr http.method:GET', async () => {
+      const get = await seedEntrySpan({ operation: 'a', durationMs: 20, attributes: { 'http.method': 'GET' } });
+      await seedEntrySpan({ operation: 'b', durationMs: 20, attributes: { 'http.method': 'POST' } });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces')
+        .query({ attr: 'http.method:GET' })
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      expect(res.body.traces.map((t: any) => t.trace_id)).toEqual([get.trace_id]);
+    });
+
+    it('returns 400 with position for attr "timeout"', async () => {
+      const res = await request(app.server)
+        .get('/api/v1/traces')
+        .query({ attr: 'timeout' })
+        .set('x-api-key', apiKey)
+        .expect(400);
+
+      expect(typeof res.body.error).toBe('string');
+      expect(res.body.position).toBe(0);
+    });
+
+    it('returns 400 for sortBy=foo', async () => {
+      await request(app.server)
+        .get('/api/v1/traces')
+        .query({ sortBy: 'foo' })
+        .set('x-api-key', apiKey)
+        .expect(400);
+    });
+
+    it('stats include p95_duration_ms', async () => {
+      await seedEntrySpan({ operation: 'a', durationMs: 250 });
+
+      const res = await request(app.server)
+        .get('/api/v1/traces/stats')
+        .set('x-api-key', apiKey)
+        .expect(200);
+
+      expect(res.body.p95_duration_ms).toBeGreaterThan(0);
+    });
+  });
+});
