@@ -107,4 +107,14 @@ describe('formatter registry', () => {
       expect(claimed.length).toBeLessThanOrEqual(1);
     }
   });
+
+  it('renders alert.triggered time window in minutes', () => {
+    const body = formatOutbound(
+      WORKFLOW_URL,
+      envelope('alert.triggered', { alert_name: 'API 5xx', log_count: 12, threshold: 10, time_window: 5 })
+    );
+    const text = JSON.stringify(body);
+    expect(text).toContain('5 min');
+    expect(text).not.toContain('5s');
+  });
 });

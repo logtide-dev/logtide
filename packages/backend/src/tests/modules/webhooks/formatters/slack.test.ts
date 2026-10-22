@@ -109,4 +109,14 @@ describe('slack formatter', () => {
     ) as any;
     expect(body.blocks.some((b: any) => b.type === 'actions')).toBe(false);
   });
+
+  it('renders alert.triggered time window in minutes', () => {
+    const body = formatOutbound(
+      SLACK_URL,
+      envelope('alert.triggered', { alert_name: 'API 5xx', log_count: 12, threshold: 10, time_window: 5 })
+    );
+    const text = JSON.stringify(body);
+    expect(text).toContain('5 min');
+    expect(text).not.toContain('5s');
+  });
 });

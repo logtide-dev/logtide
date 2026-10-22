@@ -108,7 +108,7 @@ function describe(envelope: Envelope): EventView {
     case 'alert.triggered': {
       // This event carries no title/message/severity (alertTriggeredDataSchema).
       title = `Alert triggered: ${str(data.alert_name) ?? 'unnamed rule'}`;
-      description = `${str(data.log_count) ?? '0'} logs in ${str(data.time_window) ?? '0'}s (threshold: ${str(data.threshold) ?? '0'})`;
+      description = `${str(data.log_count) ?? '0'} logs in ${str(data.time_window) ?? '0'} min (threshold: ${str(data.threshold) ?? '0'})`;
       tone = 'high';
       const baseline = data.baseline_metadata as Record<string, unknown> | null;
       if (baseline) {
@@ -120,7 +120,7 @@ function describe(envelope: Envelope): EventView {
       push(fields, field('Threshold', data.threshold));
       push(
         fields,
-        field('Time window', typeof data.time_window === 'number' ? `${data.time_window}s` : null)
+        field('Time window', typeof data.time_window === 'number' ? `${data.time_window} min` : null)
       );
       break;
     }
