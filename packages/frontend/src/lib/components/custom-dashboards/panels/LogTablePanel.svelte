@@ -5,7 +5,8 @@
   import { logsAPI } from '$lib/api/logs';
   import { Badge } from '$lib/components/ui/badge';
   import { displayPreferences } from '$lib/stores/display-preferences';
-  import { formatTimestamp } from '$lib/utils/format-time';
+  import { formatTimestamp as formatCellTime } from '$lib/utils/datetime';
+  import { stateTone } from '$lib/utils/severity';
 
   interface LogTableRow {
     id: string;
@@ -40,6 +41,11 @@
   }
 
   let { config, data, paused = false }: Props = $props();
+
+  function cellTime(value: string): string {
+    void $displayPreferences;
+    return formatCellTime(value, { precision: 'second', withDate: false });
+  }
 
   const isLive = $derived(config.mode === 'live' && config.projectId !== null);
 
@@ -172,10 +178,10 @@
     <div class="flex items-center gap-1.5 px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
       <span
         class="inline-block w-1.5 h-1.5 rounded-full {liveStatus === 'live'
-          ? 'bg-emerald-500'
+          ? stateTone('ok').dot
           : liveStatus === 'failed'
-            ? 'bg-destructive'
-            : 'bg-amber-500 animate-pulse'}"
+            ? stateTone('failed').dot
+            : stateTone('acknowledged').dot + ' animate-pulse'}"
       ></span>
       {liveStatus === 'live' ? 'live' : liveStatus === 'failed' ? 'stream unavailable' : 'connecting'}
     </div>
@@ -201,7 +207,7 @@
           <tr class="cursor-pointer hover:bg-accent/30" onclick={() => openLog(row)}>
             {#each builtins as col (col)}
               {#if col === 'time'}
-                <td class="px-2 py-1 text-muted-foreground whitespace-nowrap">{formatTimestamp(row.time, 'timeSeconds', $displayPreferences)}</td>
+                <td class="px-2 py-1 text-muted-foreground whitespace-nowrap">{cellTime(row.time)}</td>
               {:else if col === 'level'}
                 <td class="px-2 py-1">
                   <Badge variant={levelVariant(row.level)} class="text-[10px] uppercase">{row.level}</Badge>

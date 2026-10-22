@@ -71,7 +71,7 @@
       {/if}
       <h3 class="text-sm font-medium truncate">{panel.config.title}</h3>
       {#if paused && !editMode}
-        <span class="flex-shrink-0 text-[10px] uppercase tracking-wide text-amber-500">Paused</span>
+        <span class="flex-shrink-0 text-[10px] uppercase tracking-wide text-warning-text">Paused</span>
       {/if}
     </div>
     <div class="flex items-center gap-1 flex-shrink-0">
@@ -79,7 +79,7 @@
         <button
           type="button"
           class="p-1 rounded hover:bg-accent {paused
-            ? 'text-amber-500 hover:text-amber-500'
+            ? 'text-warning-text hover:text-warning-text'
             : 'text-muted-foreground hover:text-foreground'}"
           onclick={() => onTogglePause?.()}
           title={paused ? 'Resume auto-refresh' : 'Pause auto-refresh'}

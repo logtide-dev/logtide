@@ -72,25 +72,25 @@ const exporter = new OTLPLogExporter({
   const quickActions = [
     {
       icon: FolderKanban,
-      title: 'Create a Project',
+      title: 'Create a project',
       description: 'Set up a project to organize your logs',
       href: '/dashboard/projects',
-      color: 'bg-blue-500/10 text-blue-500'
+      color: 'bg-info/10 text-info-text'
     },
     {
       icon: Key,
-      title: 'Generate API Key',
+      title: 'Generate API key',
       description: 'Get credentials to send logs',
       href: '/dashboard/projects',
-      color: 'bg-green-500/10 text-green-500'
+      color: 'bg-success/10 text-success-text'
     },
     {
       icon: Book,
-      title: 'Read the Docs',
+      title: 'Read the docs',
       description: 'Learn how to integrate LogTide',
       href: 'https://logtide.dev/docs/getting-started',
       external: true,
-      color: 'bg-purple-500/10 text-purple-500'
+      color: 'bg-critical/10 text-critical-text'
     }
   ];
 </script>
@@ -191,19 +191,19 @@ const exporter = new OTLPLogExporter({
       <h3 class="font-medium mb-3">Once you start sending logs, you'll see:</h3>
       <ul class="grid gap-2 sm:grid-cols-2 text-sm text-muted-foreground">
         <li class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+          <span class="w-1.5 h-1.5 bg-info rounded-full"></span>
           Real-time log volume and trends
         </li>
         <li class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
+          <span class="w-1.5 h-1.5 bg-destructive rounded-full"></span>
           Error rates and recent errors
         </li>
         <li class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+          <span class="w-1.5 h-1.5 bg-success rounded-full"></span>
           Active services reporting logs
         </li>
         <li class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 bg-purple-500 rounded-full"></span>
+          <span class="w-1.5 h-1.5 bg-critical rounded-full"></span>
           Throughput metrics
         </li>
       </ul>

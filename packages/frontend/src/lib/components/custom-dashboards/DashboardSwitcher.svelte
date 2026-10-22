@@ -59,7 +59,7 @@
     {#snippet child({ props })}
       <Button {...props} variant="outline" class="gap-2 max-w-[300px]">
         {#if active?.isDefault}
-          <Star class="w-4 h-4 text-amber-500" />
+          <Star class="w-4 h-4 text-warning-text" />
         {:else if active?.isPersonal}
           <User class="w-4 h-4 text-muted-foreground" />
         {/if}
@@ -76,7 +76,7 @@
       {#each dashboards as dashboard (dashboard.id)}
         <DropdownMenu.Item onSelect={() => onSelect(dashboard)} class="gap-2">
           {#if dashboard.isDefault}
-            <Star class="w-4 h-4 text-amber-500 fill-amber-500 flex-shrink-0" />
+            <Star class="w-4 h-4 text-warning-text fill-current flex-shrink-0" />
           {:else if dashboard.isPersonal}
             <User class="w-4 h-4 text-muted-foreground flex-shrink-0" />
           {:else}
@@ -89,7 +89,7 @@
           {#if canBeDefault(dashboard)}
             <button
               type="button"
-              class="p-0.5 -m-0.5 rounded text-muted-foreground hover:text-amber-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="p-0.5 -m-0.5 rounded text-muted-foreground hover:text-warning-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="Set as default"
               aria-label="Set as default dashboard"
               onpointerdown={(e) => {

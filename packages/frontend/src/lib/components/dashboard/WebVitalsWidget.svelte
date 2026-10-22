@@ -2,6 +2,7 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Badge } from '$lib/components/ui/badge';
   import Gauge from '@lucide/svelte/icons/gauge';
+  import { stateTone } from '$lib/utils/severity';
 
   interface WebVitalMetric {
     name: string;
@@ -18,17 +19,17 @@
 
   function getRatingColor(rating: string): string {
     switch (rating) {
-      case 'good': return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
-      case 'needs-improvement': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300';
-      case 'poor': return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'good': return stateTone('ok').badge;
+      case 'needs-improvement': return stateTone('acknowledged').badge;
+      case 'poor': return stateTone('down').badge;
+      default: return stateTone('disabled').badge;
     }
   }
 
   function getRatingLabel(rating: string): string {
     switch (rating) {
       case 'good': return 'Good';
-      case 'needs-improvement': return 'Needs Work';
+      case 'needs-improvement': return 'Needs work';
       case 'poor': return 'Poor';
       default: return rating;
     }
@@ -46,9 +47,9 @@
 
   function getDescription(name: string): string {
     switch (name) {
-      case 'LCP': return 'Largest Contentful Paint';
-      case 'INP': return 'Interaction to Next Paint';
-      case 'CLS': return 'Cumulative Layout Shift';
+      case 'LCP': return 'Largest contentful paint';
+      case 'INP': return 'Interaction to next paint';
+      case 'CLS': return 'Cumulative layout shift';
       default: return name;
     }
   }
@@ -58,7 +59,7 @@
   <CardHeader>
     <div class="flex items-center gap-2">
       <Gauge class="h-5 w-5 text-muted-foreground" />
-      <CardTitle>Core Web Vitals</CardTitle>
+      <CardTitle>Core web vitals</CardTitle>
     </div>
   </CardHeader>
   <CardContent>
@@ -78,7 +79,7 @@
               <span class="text-lg font-semibold tabular-nums">
                 {formatValue(metric.name, metric.value)}{getUnit(metric.name)}
               </span>
-              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {getRatingColor(metric.rating)}">
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full border text-xs font-medium {getRatingColor(metric.rating)}">
                 {getRatingLabel(metric.rating)}
               </span>
             </div>
