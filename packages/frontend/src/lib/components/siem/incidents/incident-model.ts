@@ -349,3 +349,31 @@ export function formatIncidentDuration(start: string | Date, end: string | Date 
   if (hours > 0) return unit(hours, 'hour');
   return unit(mins, 'minute');
 }
+
+const SOURCE_EVENT_TITLE: Record<IncidentSourceEvent['kind'], string> = {
+  alert_trigger: 'Alert triggered',
+  monitor_check: 'Monitor check failed',
+};
+
+/**
+ * Body line of an alert or monitor timeline entry, or null when there is
+ * nothing to add beyond the entry title (the server falls back to the title
+ * itself when an event carries no summary).
+ */
+export function describeSourceEvent(event: IncidentSourceEvent): string | null {
+  const title = SOURCE_EVENT_TITLE[event.kind].toLowerCase();
+  const summary = event.summary?.trim();
+  if (summary && summary.toLowerCase() !== title) return summary;
+
+  const d = event.detail;
+  if (!d) return null;
+  if (event.kind === 'alert_trigger' && typeof d.logCount === 'number' && typeof d.threshold === 'number') {
+    const window = typeof d.timeWindow === 'number' ? ` in ${d.timeWindow} min` : '';
+    return `${d.logCount.toLocaleString('en-US')} ${d.logCount === 1 ? 'log' : 'logs'} against a threshold of ${d.threshold.toLocaleString('en-US')}${window}`;
+  }
+  for (const key of ['error', 'message']) {
+    const v = d[key];
+    if (typeof v === 'string' && v.trim() && v.trim().toLowerCase() !== title) return v.trim();
+  }
+  return null;
+}

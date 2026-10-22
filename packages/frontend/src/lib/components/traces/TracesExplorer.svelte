@@ -874,7 +874,7 @@
     {#if filters.view === 'list'}
       {#if projectId}
         <div class="mb-6 grid gap-4 lg:grid-cols-2">
-          <Card>
+          <Card class="min-w-0">
             <CardHeader class="pb-2">
               <CardTitle class="text-base">Operations</CardTitle>
             </CardHeader>
@@ -890,7 +890,7 @@
               />
             </CardContent>
           </Card>
-          <Card>
+          <Card class="min-w-0">
             <CardContent class="pt-6">
               <LatencyHistogram
                 data={histogram}

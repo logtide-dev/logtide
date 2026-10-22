@@ -113,8 +113,8 @@
 
   const columns: DataTableColumn<Monitor>[] = [
     { key: 'status', header: 'Status', cell: statusCell as unknown as Cell },
-    { key: 'name', header: 'Name', cell: nameCell as unknown as Cell },
-    { key: 'type', header: 'Type', cell: typeCell as unknown as Cell },
+    { key: 'name', header: 'Name', class: 'min-w-[9rem]', cell: nameCell as unknown as Cell },
+    { key: 'type', header: 'Type', class: 'hidden sm:table-cell', cell: typeCell as unknown as Cell },
     { key: 'response', header: 'Response', class: 'hidden md:table-cell', cell: responseCell as unknown as Cell },
     { key: 'checked', header: 'Last checked', class: 'hidden lg:table-cell', cell: checkedCell as unknown as Cell },
     { key: 'actions', header: 'Actions', class: 'text-right', cell: actionsCell as unknown as Cell },

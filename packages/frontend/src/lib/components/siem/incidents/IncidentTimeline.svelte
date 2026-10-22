@@ -21,6 +21,7 @@
 		buildTraceUrl,
 		describeHistoryEntry,
 		type TimelineEntry,
+		describeSourceEvent,
 	} from './incident-model';
 
 	interface Props {
@@ -164,6 +165,7 @@
 							{/if}
 						</div>
 					{:else if entry.kind === 'alert_trigger' || entry.kind === 'monitor_check'}
+						{@const body = describeSourceEvent(entry.event)}
 						<div class="rounded-lg border border-border bg-card p-3">
 							<div class="flex flex-wrap items-center gap-2">
 								<span class="text-sm font-medium">
@@ -173,7 +175,9 @@
 									<Timestamp value={entry.event.time} showZone />
 								</span>
 							</div>
-							<p class="mt-1 text-sm text-muted-foreground">{entry.event.summary}</p>
+							{#if body}
+								<p class="mt-1 text-sm text-muted-foreground">{body}</p>
+							{/if}
 						</div>
 					{:else if entry.kind === 'comment'}
 						{@const author = authorOf(entry.comment)}

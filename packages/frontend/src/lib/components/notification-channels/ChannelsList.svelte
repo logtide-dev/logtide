@@ -121,9 +121,9 @@
 	const asCell = (cell: unknown) => cell as Snippet<[NotificationChannel]>;
 
 	const baseColumns: DataTableColumn<NotificationChannel>[] = [
-		{ key: 'name', header: 'Name', cell: asCell(nameCell) },
+		{ key: 'name', header: 'Name', class: 'min-w-[9rem]', cell: asCell(nameCell) },
 		{ key: 'type', header: 'Type', cell: asCell(typeCell) },
-		{ key: 'target', header: 'Target', cell: asCell(targetCell) },
+		{ key: 'target', header: 'Target', class: 'hidden md:table-cell', cell: asCell(targetCell) },
 		{ key: 'enabled', header: 'Enabled', class: 'w-[90px]', cell: asCell(enabledCell) },
 	];
 	const actionColumn: DataTableColumn<NotificationChannel> = {

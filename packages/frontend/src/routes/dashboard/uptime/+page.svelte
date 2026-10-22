@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import { currentOrganization } from '$lib/stores/organization';
   import { scopeStore } from '$lib/stores/scope';
+  import { layoutStore } from '$lib/stores/layout';
   import { monitoringStore, monitors, monitorsLoading, monitorsError } from '$lib/stores/monitoring';
   import { toastStore } from '$lib/stores/toast';
   import type { Monitor } from '$lib/api/monitoring';
@@ -56,6 +57,17 @@
     navigate(writeUptimeUrl(page.url, { tab }), false);
   }
 
+
+  let maxWidthClass = $state('max-w-7xl');
+  let containerPadding = $state('px-6 py-8');
+  $effect(() => {
+    const a = layoutStore.maxWidthClass.subscribe((v) => (maxWidthClass = v));
+    const b = layoutStore.containerPadding.subscribe((v) => (containerPadding = v));
+    return () => {
+      a();
+      b();
+    };
+  });
 
   let formOpen = $state(false);
   let formMode = $state<'create' | 'edit' | 'duplicate'>('create');
@@ -147,7 +159,7 @@
   </EmptyState>
 {/snippet}
 
-<div class="flex flex-col gap-2 p-6">
+<div class="container mx-auto flex flex-col gap-2 {containerPadding} {maxWidthClass}">
   <PageHeader
     title="Uptime"
     description="Uptime and health checks for your services"

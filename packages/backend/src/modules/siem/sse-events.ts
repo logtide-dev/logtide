@@ -177,6 +177,10 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
               error: 'Auth-free mode enabled but default user not configured',
             });
           }
+        } else if (request.user) {
+          // The auth plugin already authenticated the request (it consumes the
+          // single-use ticket or validates the token): a second consume would fail.
+          user = request.user;
         } else if (query.ticket) {
           // Preferred: single-use stream ticket (keeps the session token out of the URL)
           const userId = await streamTicketService.consumeTicket(query.ticket);

@@ -119,7 +119,7 @@ describe('siem store incidents', () => {
     expect(state().incidents.map((i) => i.id)).toEqual(['new']);
   });
 
-  it('onerror closes the source, requests a NEW ticket and reconnects with backoff 1s, 2s, 4s up to 5 attempts', async () => {
+  it('onerror closes the source, requests a NEW ticket and reconnects with backoff 3s, 6s, 12s up to 5 attempts', async () => {
     await siemStore.startRealtimeUpdates('o1');
     expect(ticketMock).toHaveBeenCalledTimes(1);
     expect(FakeEventSource.instances).toHaveLength(1);
@@ -132,7 +132,7 @@ describe('siem store incidents', () => {
     expect(first.closed).toBe(true);
     expect(state().sseStatus).toBe('reconnecting');
 
-    await vi.advanceTimersByTimeAsync(999);
+    await vi.advanceTimersByTimeAsync(2999);
     expect(ticketMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(ticketMock).toHaveBeenCalledTimes(2);
@@ -140,15 +140,15 @@ describe('siem store incidents', () => {
     expect(second.url).toContain('ticket=ticket-2');
     expect(second.url).not.toBe(first.url);
 
-    // next failure waits 2s
+    // next failure waits 6s
     second.onerror?.();
-    await vi.advanceTimersByTimeAsync(1999);
+    await vi.advanceTimersByTimeAsync(5999);
     expect(ticketMock).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1);
     expect(ticketMock).toHaveBeenCalledTimes(3);
     const third = FakeEventSource.instances[2];
     third.onerror?.();
-    await vi.advanceTimersByTimeAsync(3999);
+    await vi.advanceTimersByTimeAsync(11999);
     expect(ticketMock).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(1);
     expect(ticketMock).toHaveBeenCalledTimes(4);
@@ -158,7 +158,7 @@ describe('siem store incidents', () => {
     await siemStore.startRealtimeUpdates('o1');
     for (let i = 0; i < 5; i++) {
       FakeEventSource.instances[i].onerror?.();
-      await vi.advanceTimersByTimeAsync(1000 * 2 ** i);
+      await vi.advanceTimersByTimeAsync(3000 * 2 ** i);
     }
     expect(FakeEventSource.instances).toHaveLength(6);
     FakeEventSource.instances[5].onerror?.();
@@ -170,11 +170,11 @@ describe('siem store incidents', () => {
   it('a successful connected event resets the attempt counter', async () => {
     await siemStore.startRealtimeUpdates('o1');
     FakeEventSource.instances[0].onerror?.();
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(3000);
     FakeEventSource.instances[1].emit({ type: 'connected' });
     FakeEventSource.instances[1].onerror?.();
-    // back to a 1s delay, not 2s
-    await vi.advanceTimersByTimeAsync(1000);
+    // back to a 3s delay, not 6s
+    await vi.advanceTimersByTimeAsync(3000);
     expect(ticketMock).toHaveBeenCalledTimes(3);
   });
 

@@ -105,14 +105,14 @@
 <Popover bind:open>
   {#if variant === "breadcrumb"}
     <PopoverTrigger
-      class="inline-flex items-center gap-1.5 min-w-0 max-w-[10rem] rounded-md px-2 py-1 text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      class="inline-flex items-center gap-1.5 min-w-[4rem] max-w-[10rem] rounded-md px-2 py-1 text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       role="combobox"
       aria-expanded={open}
       aria-label="Switch organization"
       title={currentOrg?.name}
       data-org-switcher
     >
-      <Building2 class="w-4 h-4 text-muted-foreground flex-shrink-0" />
+      <Building2 class="hidden sm:block w-4 h-4 text-muted-foreground flex-shrink-0" />
       <span class="truncate">{currentOrg?.name || "Select organization"}</span>
       <ChevronDown class="w-3.5 h-3.5 opacity-50 flex-shrink-0" />
     </PopoverTrigger>

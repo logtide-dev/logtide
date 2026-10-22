@@ -16,7 +16,7 @@
   import Footer from '$lib/components/Footer.svelte';
   import ProviderSelector from '$lib/components/auth/ProviderSelector.svelte';
   import LdapLoginForm from '$lib/components/auth/LdapLoginForm.svelte';
-  import { smallLogoPath } from '$lib/utils/theme';
+  import { logoPath } from '$lib/utils/theme';
   import { isSafeInternalPath, safeRedirect } from '$lib/utils/redirect';
 
   // Get redirect URL and error from query params
@@ -209,8 +209,8 @@
       </Card>
     {:else}
     <Card class="w-full max-w-md">
-      <CardHeader class="flex flex-row justify-center items-center gap-4">
-        <img src={$smallLogoPath} alt="LogTide Logo" class="h-16 w-auto" />
+      <CardHeader class="flex flex-col justify-center items-center gap-3 text-center">
+        <img src={$logoPath} alt="LogTide Logo" class="h-12 w-auto" />
         <div>
           <CardTitle class="text-2xl">Welcome back</CardTitle>
           <CardDescription>Sign in to your LogTide account</CardDescription>
