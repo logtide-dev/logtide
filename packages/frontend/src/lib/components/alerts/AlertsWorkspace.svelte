@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import type { DetectionEvent } from '@logtide/shared';
@@ -22,10 +22,12 @@
 	import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { Tabs, TabsContent, TabsList, TabsTrigger } from '$lib/components/ui/tabs';
+	import DetectionPacksGalleryDialog from '$lib/components/DetectionPacksGalleryDialog.svelte';
 	import CreateAlertDialog from '$lib/components/CreateAlertDialog.svelte';
 	import EditAlertDialog from '$lib/components/EditAlertDialog.svelte';
 	import AlertRulesTable from '$lib/components/alerts/AlertRulesTable.svelte';
 	import AlertHistoryTable from '$lib/components/alerts/AlertHistoryTable.svelte';
+	import Package from '@lucide/svelte/icons/package';
 	import Plus from '@lucide/svelte/icons/plus';
 
 	interface Props {
@@ -53,6 +55,7 @@
 	let createPrefill = $state<AlertBuilderPrefill | undefined>(undefined);
 	let showEdit = $state(false);
 	let ruleToEdit = $state<AlertRule | null>(null);
+	let showPacks = $state(false);
 	let showDelete = $state(false);
 	let ruleToDelete = $state<AlertRule | null>(null);
 
@@ -73,6 +76,23 @@
 	const visibleHistory = $derived(history.filter((h) => inScope(h.projectId)));
 	const visibleDetections = $derived(detections.filter((d) => inScope(d.projectId)));
 	const projectNames = $derived(Object.fromEntries(projects.map((p) => [p.id, p.name])));
+	// Deep link from the command palette and elsewhere: ?rule=<id>.
+	const ruleParam = $derived(page.url.searchParams.get('rule'));
+	const highlightRuleId = $derived(
+		ruleParam && visibleRules.some((r) => r.id === ruleParam) ? ruleParam : null
+	);
+	let scrolledTo = '';
+	$effect(() => {
+		const id = highlightRuleId;
+		if (!id || loading || id === scrolledTo) return;
+		scrolledTo = id;
+		void tick().then(() => {
+			const el = document.querySelector(`[data-rule-id="${CSS.escape(id)}"]`);
+			const row = el?.closest('tr') ?? el;
+			if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center' });
+		});
+	});
+
 	const hasMoreHistory = $derived(history.length < historyTotal);
 
 	// Newest request wins: an older organization's response never overwrites a newer one.
@@ -332,6 +352,7 @@
 					{history}
 					{projectNames}
 					{channelNames}
+					{highlightRuleId}
 					{loading}
 					{busyIds}
 					onToggle={toggle}
@@ -394,7 +415,10 @@
 	>
 		{#snippet actions()}
 			<ScopeBar mode="multi" {projects} showTime={false} />
-			<!-- SEAM:W10 detection-packs-gallery -->
+			<Button variant="outline" class="gap-2" onclick={() => (showPacks = true)}>
+				<Package class="w-4 h-4" aria-hidden="true" />
+				Detection packs
+			</Button>
 			{@render createButton()}
 		{/snippet}
 	</PageHeader>
@@ -404,6 +428,11 @@
 {/if}
 
 {#if orgId}
+	<DetectionPacksGalleryDialog
+		bind:open={showPacks}
+		organizationId={orgId}
+		categories={['reliability', 'database', 'business']}
+	/>
 	<CreateAlertDialog
 		bind:open={showCreate}
 		organizationId={orgId}
