@@ -11,6 +11,8 @@ import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
 import Activity from '@lucide/svelte/icons/activity';
 import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 import Settings from '@lucide/svelte/icons/settings';
+import Bookmark from '@lucide/svelte/icons/bookmark';
+import ShieldAlert from '@lucide/svelte/icons/shield-alert';
 import { ADMIN_NAV_ITEM, flatNavItems } from '$lib/nav/nav-items';
 import { navIcon } from '$lib/nav/nav-icons';
 import { shortcutsStore } from '$lib/stores/shortcuts';
@@ -21,6 +23,10 @@ import { projectsAPI } from '$lib/api/projects';
 import { customDashboardsAPI } from '$lib/api/custom-dashboards';
 import { listMonitors } from '$lib/api/monitoring';
 import { alertsAPI } from '$lib/api/alerts';
+import { savedSearchesAPI } from '$lib/api/saved-searches';
+import { incidentsAPI } from '$lib/api/incidents';
+import { savedSearchUrl } from '$lib/components/search/explorer-url';
+import { INCIDENT_ACTIVE_STATUSES } from '@logtide/shared';
 import { SETTINGS_PAGES } from '../settings-pages';
 import { OPEN_ORG_SWITCHER_EVENT } from '../events';
 import { registerPaletteProvider } from './registry';
@@ -137,6 +143,24 @@ export function registerDefaultPaletteProviders(): void {
   });
 
   registerPaletteProvider({
+    id: 'saved-searches',
+    heading: 'Saved searches',
+    order: 35,
+    needsOrganization: true,
+    items: async (ctx) => {
+      const searches = await savedSearchesAPI.list(ctx.organizationId as string);
+      return searches.map((s) => ({
+        id: `saved-search:${s.id}`,
+        label: s.name,
+        description: s.state.q || undefined,
+        icon: icon(Bookmark),
+        href: savedSearchUrl(s),
+        keywords: ['search', 'query', 'logs'],
+      }));
+    },
+  });
+
+  registerPaletteProvider({
     id: 'dashboards',
     heading: 'Dashboards',
     order: 40,
@@ -148,6 +172,27 @@ export function registerDefaultPaletteProviders(): void {
         label: d.name,
         icon: icon(LayoutDashboard),
         href: `/dashboard?id=${encodeURIComponent(d.id)}`,
+      }));
+    },
+  });
+
+  registerPaletteProvider({
+    id: 'incidents',
+    heading: 'Incidents',
+    order: 45,
+    needsOrganization: true,
+    items: async (ctx) => {
+      const { incidents } = await incidentsAPI.list({
+        organizationId: ctx.organizationId as string,
+        status: [...INCIDENT_ACTIVE_STATUSES],
+        limit: 50,
+      });
+      return incidents.map((i) => ({
+        id: `incident:${i.id}`,
+        label: i.title,
+        description: i.severity,
+        icon: icon(ShieldAlert),
+        href: `/dashboard/incidents/${encodeURIComponent(i.id)}`,
       }));
     },
   });

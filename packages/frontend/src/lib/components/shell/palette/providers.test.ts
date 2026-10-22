@@ -18,6 +18,26 @@ vi.mock('$lib/api/monitoring', () => ({
     monitors: [{ id: 'm1', name: 'Homepage', target: 'https://example.com' }],
   })),
 }));
+vi.mock('$lib/api/saved-searches', () => ({
+  savedSearchesAPI: {
+    list: vi.fn(async () => [
+      {
+        id: 's1',
+        name: 'Checkout errors',
+        visibility: 'organization',
+        state: { q: 'level:error service:checkout', projectIds: ['p1'], range: '24h' },
+      },
+    ]),
+  },
+}));
+vi.mock('$lib/api/incidents', () => ({
+  incidentsAPI: {
+    list: vi.fn(async () => ({
+      incidents: [{ id: 'i1', title: 'Brute force on login', severity: 'high', status: 'open' }],
+      total: 1,
+    })),
+  },
+}));
 vi.mock('$lib/api/alerts', () => ({
   alertsAPI: {
     getAlertRules: vi.fn(async () => ({ alertRules: [{ id: 'r1', name: 'High errors' }] })),
@@ -56,7 +76,9 @@ describe('default palette providers', () => {
       'navigation:10',
       'actions:20',
       'projects:30',
+      'saved-searches:35',
       'dashboards:40',
+      'incidents:45',
       'monitors:50',
       'alert-rules:60',
       'settings:70',
@@ -67,6 +89,7 @@ describe('default palette providers', () => {
     expect((await group('dashboards')).items[0].href).toBe('/dashboard?id=d-uuid-1');
     expect((await group('monitors')).items[0].href).toBe('/dashboard/uptime/m1');
     expect((await group('alert-rules')).items[0].href).toBe('/dashboard/alerts?rule=r1');
+    expect((await group('incidents')).items[0].href).toBe('/dashboard/incidents/i1');
     expect((await group('projects')).items[0].href).toBe('/dashboard/projects/p1/overview');
   });
 
@@ -128,5 +151,25 @@ describe('default palette providers', () => {
   it('navigation does not offer external links', async () => {
     const nav = await group('navigation');
     expect(nav.items.every((i) => !i.href!.startsWith('http'))).toBe(true);
+  });
+
+  it('lists saved searches that open in the explorer', async () => {
+    const { savedSearchesAPI } = await import('$lib/api/saved-searches');
+    const g = await group('saved-searches');
+    expect(savedSearchesAPI.list).toHaveBeenCalledWith('org-1');
+    expect(g.items[0].label).toBe('Checkout errors');
+    const href = g.items[0].href!;
+    expect(href.startsWith('/dashboard/logs?')).toBe(true);
+    expect(href).toContain('saved=s1');
+    expect(href).toContain('q=level');
+  });
+
+  it('lists open incidents for the organization', async () => {
+    const { incidentsAPI } = await import('$lib/api/incidents');
+    const g = await group('incidents');
+    expect(incidentsAPI.list).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: 'org-1', status: ['open', 'investigating'] }),
+    );
+    expect(g.items[0].label).toBe('Brute force on login');
   });
 });
