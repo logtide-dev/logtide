@@ -42,6 +42,7 @@
   import { DEFAULT_BUILTIN_LAYOUT, visibleColumns } from "$lib/components/search/builtin-columns";
   import { rowKey } from "$lib/components/search/log-fields";
   import LogResultsTable from "$lib/components/search/LogResultsTable.svelte";
+  import LogDetailsPanel from "$lib/components/search/LogDetailsPanel.svelte";
   import Download from "@lucide/svelte/icons/download";
   import ChevronLeft from "@lucide/svelte/icons/chevron-left";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
@@ -209,6 +210,9 @@
 
   let lastLoadedOrg = $state<string | null>(null);
 
+  // Log shown in the details panel (interim wiring until the page rebuild).
+  let detailsLog = $state<LogEntry | null>(null);
+
   let contextDialogOpen = $state(false);
   let selectedLogForContext = $state<LogEntry | null>(null);
   let loadingLogById = $state(false);
@@ -289,12 +293,12 @@
       {
         id: 'search:expand-log',
         combo: 'enter',
-        label: 'Open log context',
+        label: 'Open log details',
         scope: 'search',
         category: 'actions',
         action: () => {
           if (selectedLogIndex >= 0 && selectedLogIndex < logs.length) {
-            openContextDialog(logs[selectedLogIndex]);
+            openDetails(logs[selectedLogIndex]);
           }
         },
       },
@@ -833,6 +837,13 @@
       ws.close();
       ws = null;
     }
+  }
+
+  function openDetails(log: LogEntry) {
+    detailsLog = log;
+    const index = paginatedLogs.indexOf(log);
+    if (index >= 0) selectedLogIndex = index;
+    if (log.id) loadIdentifiersForLogs([log.id]);
   }
 
   function openContextDialog(log: LogEntry) {
@@ -1815,7 +1826,7 @@
               {highlightQuery}
               hasMore={false}
               loadingMore={false}
-              onSelect={(log) => openContextDialog(log)}
+              onSelect={(log) => openDetails(log)}
               onFilter={(key, value) => {
                 if (key === "service" && !selectedServices.includes(value)) {
                   selectedServices = [...selectedServices, value];
@@ -1964,6 +1975,21 @@
           {/if}
         </CardContent>
       </Card>
+
+      {#if detailsLog}
+        <LogDetailsPanel
+          log={detailsLog}
+          projectName={projects.find((p) => p.id === detailsLog?.projectId)?.name ?? detailsLog.projectId}
+          identifiers={(detailsLog.id && logIdentifiers.get(detailsLog.id)) || []}
+          organizationId={$currentOrganization?.id || ""}
+          onClose={() => (detailsLog = null)}
+          onFilter={() => {}}
+          onProjectFilter={() => {}}
+          onAddColumn={() => {}}
+          onOpenContext={(log) => openContextDialog(log)}
+          onOpenCorrelation={(log, type, value) => openCorrelationDialog(log, type, value)}
+        />
+      {/if}
     </div>
 
 <LogContextDialog
