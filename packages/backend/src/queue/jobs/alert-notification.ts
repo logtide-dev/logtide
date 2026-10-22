@@ -7,11 +7,11 @@ import {
   toDeliveryTargets,
   type ResolvedRouting,
 } from '../../modules/notification-channels/resolver.js';
-import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
+import { notifyPagerDutyTargets, hostOf } from '../../modules/notification-channels/dispatch.js';
 import { db } from '../../database/connection.js';
 import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { config } from '../../config/index.js';
-import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { generateAlertEmail, generateSigmaDetectionEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { NotificationChannel, WebhookEnvelope } from '@logtide/shared';
 import type {
@@ -80,8 +80,9 @@ function formatMinutes(minutes: number): string {
   return `${formatNumber(minutes)} minute${minutes === 1 ? '' : 's'}`;
 }
 
-function alertLink(incidentId: string | null | undefined): string {
+function alertLink(incidentId: string | null | undefined, sigmaRuleId?: string): string {
   const frontendUrl = getFrontendUrl();
+  if (sigmaRuleId) return `${frontendUrl}/dashboard/security/rules/${sigmaRuleId}`;
   return incidentId ? `${frontendUrl}/dashboard/incidents/${incidentId}` : `${frontendUrl}/dashboard/alerts`;
 }
 
@@ -149,7 +150,8 @@ export async function dispatchAlertEnvelope(
     if (w.url) webhookTargets.set(w.url, w.channelId);
   }
 
-  // Sigma jobs (no alert_rule_id in the data) never page.
+  // Sigma envelopes carry no alert_rule_id (see buildTriggeredEnvelope), so
+  // they never page.
   const alertRuleId = (envelope.data as { alert_rule_id?: unknown }).alert_rule_id;
   if (targets.pagerDuty.length > 0 && typeof alertRuleId === 'string') {
     const resolved = envelope.type === 'alert.resolved';
@@ -188,9 +190,9 @@ export async function dispatchAlertEnvelope(
         metadata: { ruleName },
         payload: envelope,
       });
-      console.log(`Webhook notification sent: ${ruleName} -> ${url}`);
+      console.log(`Webhook notification sent: ${ruleName} -> ${hostOf(url)}`);
     } catch (error) {
-      const errMsg = `Webhook failed (${url}): ${error instanceof Error ? error.message : 'Unknown error'}`;
+      const errMsg = `Webhook failed (${hostOf(url)}): ${error instanceof Error ? error.message : 'Unknown error'}`;
       console.error(errMsg);
       errors.push(errMsg);
     }
@@ -358,8 +360,10 @@ function buildTriggeredEnvelope(data: AlertNotificationData): WebhookEnvelope {
   // Both plain threshold and anomaly (rate-of-change) alerts use type
   // 'alert.triggered'; anomaly is distinguished by data.baseline_metadata
   // !== null. organization_id/project_id live on the envelope.
+  // Sigma detections have no alert rule and no resolve path: no lifecycle
+  // block, so the envelope carries no alert_rule_id and never pages.
   const lifecycle =
-    data.kind !== undefined
+    data.kind !== undefined && data.event_type !== 'sigma'
       ? {
           alert_rule_id: data.rule_id,
           renotify: data.kind === 'renotify',
@@ -378,7 +382,7 @@ function buildTriggeredEnvelope(data: AlertNotificationData): WebhookEnvelope {
       threshold: data.threshold,
       time_window: data.time_window,
       baseline_metadata: data.baseline_metadata || null,
-      link: alertLink(data.incident_id),
+      link: alertLink(data.incident_id, data.event_type === 'sigma' ? data.rule_id : undefined),
       ...lifecycle,
     },
   });
@@ -389,6 +393,29 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
 
   if (!transporter) {
     throw new Error('Email transporter not configured');
+  }
+
+  if (data.event_type === 'sigma') {
+    const level = ['critical', 'high', 'medium', 'low', 'informational'].includes(data.rule_level ?? '')
+      ? (data.rule_level as 'critical' | 'high' | 'medium' | 'low' | 'informational')
+      : 'medium';
+    const title = data.rule_name.replace(/^\[Sigma\]\s*/, '');
+    const { html, text } = generateSigmaDetectionEmail({
+      ruleTitle: title,
+      severity: level,
+      service: data.service ?? 'unknown',
+      organizationName: data.organizationName ?? 'your organization',
+      detectionId: data.rule_id,
+    });
+    await transporter.sendMail({
+      from: `"LogTide" <${config.SMTP_FROM || config.SMTP_USER}>`,
+      to: data.email_recipients.join(', '),
+      subject: `[Detection] ${title} (${level})`,
+      text,
+      html,
+    });
+    console.log(`Email sent to: ${data.email_recipients.join(', ')}`);
+    return;
   }
 
   const isRateOfChange = !!data.baseline_metadata;

@@ -10,6 +10,24 @@ import { resolveChannelsForEvent } from '../../modules/notification-channels/res
 
 const siemService = new SiemService(db);
 
+/** At most one notification per Sigma rule per window (per worker process). */
+export const SIGMA_NOTIFICATION_COOLDOWN_MS = 5 * 60_000;
+const lastNotifiedAt = new Map<string, number>();
+
+function notifyKey(organizationId: string, ruleId: string): string {
+  return `${organizationId}:${ruleId}`;
+}
+
+function markNotified(organizationId: string, ruleId: string): void {
+  const now = Date.now();
+  if (lastNotifiedAt.size > 5000) {
+    for (const [key, at] of lastNotifiedAt) {
+      if (now - at >= SIGMA_NOTIFICATION_COOLDOWN_MS) lastNotifiedAt.delete(key);
+    }
+  }
+  lastNotifiedAt.set(notifyKey(organizationId, ruleId), now);
+}
+
 export interface SigmaDetectionData {
   logs: LogEntry[];
   organizationId: string;
@@ -230,6 +248,17 @@ export async function processSigmaDetection(job: any) {
           continue;
         }
 
+        // Per-rule cooldown: a busy service can match the same rule in most
+        // ingest requests, which would mail the owners once per request.
+        // Detection events are still recorded for every match.
+        const lastNotified = lastNotifiedAt.get(notifyKey(data.organizationId, sigmaRule.id));
+        if (lastNotified !== undefined && Date.now() - lastNotified < SIGMA_NOTIFICATION_COOLDOWN_MS) {
+          console.log(
+            `[SigmaDetection] Notification for "${firstMatch.ruleTitle}" throttled (cooldown)`
+          );
+          continue;
+        }
+
         // Queue notification job directly (no alert rule needed). `kind` makes
         // the worker use the 1.6 path (channels, org defaults, fallback);
         // `event_type` tells it which org defaults apply.
@@ -248,7 +277,10 @@ export async function processSigmaDetection(job: any) {
           time_window: 1, // Immediate detection
           email_recipients: sigmaRule.email_recipients || [],
           webhook_url: sigmaRule.webhook_url,
+          rule_level: firstMatch.ruleLevel || sigmaRule.level,
+          service: (data.logs[firstMatch.logIndex] as { service?: string } | undefined)?.service || 'unknown',
         });
+        markNotified(data.organizationId, sigmaRule.id);
 
         console.log(
           `[SigmaDetection] Queued notification for: ${firstMatch.ruleTitle}`

@@ -126,6 +126,39 @@ describe('sigma detection notification routing', () => {
     expect(hoisted.add.mock.calls[0][1]).toMatchObject({ kind: 'triggered', event_type: 'sigma' });
   });
 
+  it('notifies at most once per rule per cooldown window, then again after it', async () => {
+    const { organization, project } = await createTestContext();
+    const rule = await createTestSigmaRule({ organizationId: organization.id, projectId: project.id });
+    const other = await createTestSigmaRule({ organizationId: organization.id, projectId: project.id });
+
+    await runMatch(organization.id, project.id, rule);
+    await runMatch(organization.id, project.id, rule);
+    await runMatch(organization.id, project.id, rule);
+    expect(hoisted.add).toHaveBeenCalledTimes(1);
+
+    // another rule has its own window
+    await runMatch(organization.id, project.id, other);
+    expect(hoisted.add).toHaveBeenCalledTimes(2);
+
+    const realNow = Date.now;
+    Date.now = () => realNow() + 5 * 60_000 + 1000;
+    try {
+      await runMatch(organization.id, project.id, rule);
+    } finally {
+      Date.now = realNow;
+    }
+    expect(hoisted.add).toHaveBeenCalledTimes(3);
+  });
+
+  it('puts the rule level and service on the job for the detection email', async () => {
+    const { organization, project } = await createTestContext();
+    const rule = await createTestSigmaRule({ organizationId: organization.id, projectId: project.id });
+
+    await runMatch(organization.id, project.id, { ...rule, level: 'high' });
+
+    expect(hoisted.add.mock.calls[0][1]).toMatchObject({ rule_level: 'high', service: 'api' });
+  });
+
   it('stays detection-only when nothing is configured and SMTP is off', async () => {
     const { organization, project } = await createTestContext();
     hoisted.smtp.configured = false;

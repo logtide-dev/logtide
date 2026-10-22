@@ -334,7 +334,9 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
   }
 
   // STEP 7: PagerDuty destinations
-  if (targets.pagerDuty.length > 0) {
+  // Only a new group, a regression or an escalation pages; a plain repeat
+  // occurrence (after the cooldown) must not reopen a resolved incident.
+  if (targets.pagerDuty.length > 0 && (data.isNewErrorGroup || data.isRegression || data.isEscalating)) {
     await notifyPagerDutyTargets(targets.pagerDuty, {
       organizationId: data.organizationId,
       action: 'trigger',

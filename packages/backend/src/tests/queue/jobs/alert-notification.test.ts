@@ -696,6 +696,29 @@ describe('Alert Notification Job', () => {
             expect(notification.metadata).toMatchObject({ kind: 'triggered', incidentId: null, historyId: HISTORY_ID });
         });
 
+        it('never logs or stores the full webhook URL', async () => {
+            const { organization, project } = await createTestContext();
+            const secretUrl = 'https://hooks.slack.com/services/T000/B000/s3cr3t-token';
+            mockGetAlertRuleChannels.mockResolvedValueOnce([
+                { ...webhookChannel, id: '00000000-0000-4000-8000-0000000000f1', config: { url: secretUrl } },
+            ]);
+            enqueueMock.mockRejectedValueOnce(new Error('boom'));
+            const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+            const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const { alertsService } = await import('../../../modules/alerts/index.js');
+
+            await processAlertNotification({ data: firingJob(organization.id, project.id) });
+            // second run succeeds, to cover the "sent" log line too
+            await processAlertNotification({ data: firingJob(organization.id, project.id) });
+
+            const logged = [...logSpy.mock.calls, ...errSpy.mock.calls].flat().map(String).join('\n');
+            expect(logged).not.toContain('s3cr3t-token');
+            expect(logged).toContain('hooks.slack.com');
+            const stored = vi.mocked(alertsService.markAsNotified).mock.calls.map((c) => String(c[1] ?? ''));
+            expect(stored.join('\n')).toContain('hooks.slack.com');
+            expect(stored.join('\n')).not.toContain('s3cr3t-token');
+        });
+
         it('jobs without kind keep the triggered copy', async () => {
             const { organization, project, user } = await createTestContext();
             const { kind: _kind, firing_since: _f, incident_id: _i, ...legacy } = firingJob(organization.id, project.id);
@@ -1067,6 +1090,27 @@ describe('Alert Notification Job', () => {
 
                 expect(pagerDutyCalls()).toHaveLength(0);
             });
+
+            it('Sigma jobs with the real job shape (kind set, event_type sigma) never page', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetSigmaRuleChannels.mockResolvedValueOnce([pagerDutyChannel, webhookChannel]);
+
+                await processAlertNotification({
+                    data: firingJob(organization.id, project.id, {
+                        kind: 'triggered',
+                        event_type: 'sigma',
+                        historyId: null as never,
+                    }),
+                });
+
+                expect(pagerDutyCalls()).toHaveLength(0);
+                // The webhook envelope must not claim a sigma rule id as an alert rule id.
+                const hook = enqueueMock.mock.calls.find((c) => c[0].url !== PD_URL);
+                expect(hook).toBeDefined();
+                const data = (hook![0].payload as { data: Record<string, unknown> }).data;
+                expect(data).not.toHaveProperty('alert_rule_id');
+                expect(data).not.toHaveProperty('renotify');
+            });
         });
 
         it('jobs without kind never use org defaults', async () => {
@@ -1123,6 +1167,45 @@ describe('Alert Notification Job', () => {
                 },
             });
         }
+
+        it('sends the detection email and links the webhook to the sigma rule', async () => {
+            const { organization, project } = await createTestContext();
+            const ruleId = '00000000-0000-0000-0000-0000000000aa';
+            mockGetSigmaRuleChannels.mockResolvedValue([
+                emailChannel('c-sigma', 'sigma-rule@example.com'),
+                { id: 'c-hook', type: 'webhook', enabled: true, config: { url: 'https://hooks.example.com/sigma' } },
+            ]);
+
+            await processAlertNotification({
+                data: {
+                    historyId: null as unknown as string,
+                    kind: 'triggered',
+                    event_type: 'sigma',
+                    rule_id: ruleId,
+                    rule_name: '[Sigma] Suspicious login',
+                    rule_level: 'high',
+                    service: 'auth-api',
+                    organization_id: organization.id,
+                    project_id: project.id,
+                    log_count: 3,
+                    threshold: 1,
+                    time_window: 1,
+                    email_recipients: [],
+                    webhook_url: null,
+                } as never,
+            });
+
+            const mail = sendMailMock.mock.calls[0][0];
+            expect(mail.subject).toBe('[Detection] Suspicious login (high)');
+            expect(mail.text).toContain('SIGMA DETECTION: Suspicious login');
+            expect(mail.text).toContain('Service: auth-api');
+            expect(mail.html).not.toContain('threshold');
+            expect(mail.html).not.toContain('View Alert History');
+
+            const hook = enqueueMock.mock.calls[0][0];
+            const link = (hook.payload as { data: { link: string } }).data.link;
+            expect(link).toBe(`https://app.logtide.dev/dashboard/security/rules/${ruleId}`);
+        });
 
         it('delivers to the sigma rule channel and not to the alert defaults', async () => {
             const { organization, project } = await createTestContext();
