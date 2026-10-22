@@ -3,26 +3,7 @@
 	import { organizationStore } from '$lib/stores/organization';
 	import { toastStore } from '$lib/stores/toast';
 	import Button from '$lib/components/ui/button/button.svelte';
-	import { Badge } from '$lib/components/ui/badge';
 	import { Switch } from '$lib/components/ui/switch';
-	import {
-		Table,
-		TableBody,
-		TableCell,
-		TableHead,
-		TableHeader,
-		TableRow,
-	} from '$lib/components/ui/table';
-	import {
-		AlertDialog,
-		AlertDialogAction,
-		AlertDialogCancel,
-		AlertDialogContent,
-		AlertDialogDescription,
-		AlertDialogFooter,
-		AlertDialogHeader,
-		AlertDialogTitle,
-	} from '$lib/components/ui/alert-dialog';
 	import {
 		DropdownMenu,
 		DropdownMenuContent,
@@ -30,34 +11,51 @@
 		DropdownMenuSeparator,
 		DropdownMenuTrigger,
 	} from '$lib/components/ui/dropdown-menu';
+	import DataTable from '$lib/components/app/DataTable.svelte';
+	import EmptyState from '$lib/components/app/EmptyState.svelte';
+	import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
+	import type { DataTableColumn } from '$lib/components/app/data-table';
 	import CreateChannelDialog from './CreateChannelDialog.svelte';
+	import DestinationTypeIcon from './DestinationTypeIcon.svelte';
+	import { destinationLabel, displayTypeOf } from './destination-types';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import type { NotificationChannel } from '$lib/api/notification-channels';
-	import Mail from '@lucide/svelte/icons/mail';
-	import Webhook from '@lucide/svelte/icons/webhook';
+	import type { Snippet } from 'svelte';
 	import Plus from '@lucide/svelte/icons/plus';
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import TestTube from '@lucide/svelte/icons/test-tube';
-	import Bell from '@lucide/svelte/icons/bell';
+
+	interface Props {
+		/** Admins and owners can change destinations; everyone else sees a read-only list. */
+		canManage?: boolean;
+		/** Bound by the page so its header button can open the create dialog. */
+		createOpen?: boolean;
+	}
+
+	let { canManage = true, createOpen = $bindable(false) }: Props = $props();
 
 	let currentOrg = $derived($organizationStore.currentOrganization);
 	let channels = $derived($notificationChannelsStore.channels);
 	let loading = $derived($notificationChannelsStore.loading);
+	let loadError = $derived($notificationChannelsStore.error);
 
-	// Load channels when org changes
+	// Load destinations when org changes
 	$effect(() => {
 		if (currentOrg?.id) {
 			notificationChannelsStore.load(currentOrg.id);
 		}
 	});
 
-	let createDialogOpen = $state(false);
 	let editingChannel = $state<NotificationChannel | null>(null);
+	let deleteOpen = $state(false);
 	let channelToDelete = $state<NotificationChannel | null>(null);
-	let deleting = $state(false);
 	let testingId = $state<string | null>(null);
+
+	$effect(() => {
+		if (!deleteOpen) channelToDelete = null;
+	});
 
 	async function handleToggleEnabled(channel: NotificationChannel) {
 		if (!currentOrg) return;
@@ -66,9 +64,9 @@
 			await notificationChannelsStore.update(channel.id, currentOrg.id, {
 				enabled: !channel.enabled,
 			});
-			toastStore.success(`Channel ${channel.enabled ? 'disabled' : 'enabled'}`);
+			toastStore.success(`Destination ${channel.enabled ? 'disabled' : 'enabled'}`);
 		} catch (err) {
-			toastStore.error(err instanceof Error ? err.message : 'Failed to update channel');
+			toastStore.error(err instanceof Error ? err.message : 'Failed to update destination');
 		}
 	}
 
@@ -79,7 +77,7 @@
 		try {
 			const result = await notificationChannelsStore.test(channel.id, currentOrg.id);
 			if (result.success) {
-				toastStore.success('Test notification sent successfully');
+				toastStore.success('Test notification sent');
 			} else {
 				toastStore.error(result.error || 'Test failed');
 			}
@@ -93,201 +91,183 @@
 	async function handleDelete() {
 		if (!currentOrg || !channelToDelete) return;
 
-		deleting = true;
 		try {
 			await notificationChannelsStore.delete(channelToDelete.id, currentOrg.id);
-			toastStore.success('Channel deleted');
-			channelToDelete = null;
+			toastStore.success('Destination deleted');
 		} catch (err) {
-			toastStore.error(err instanceof Error ? err.message : 'Failed to delete channel');
-		} finally {
-			deleting = false;
+			toastStore.error(err instanceof Error ? err.message : 'Failed to delete destination');
+			throw err;
 		}
 	}
 
-	function getChannelIcon(type: string) {
-		return type === 'email' ? Mail : Webhook;
-	}
-
-	function formatDate(dateStr: string): string {
-		return new Date(dateStr).toLocaleDateString('en-US');
-	}
-
-	function getConfigSummary(channel: NotificationChannel): string {
+	function getTargetSummary(channel: NotificationChannel): string {
 		if (channel.type === 'email') {
-			const config = channel.config as { recipients: string[] };
-			return `${config.recipients.length} recipient${config.recipients.length !== 1 ? 's' : ''}`;
-		} else {
-			const config = channel.config as { url: string };
-			try {
-				return new URL(config.url).hostname;
-			} catch {
-				return config.url;
-			}
+			const config = channel.config as { recipients?: string[] };
+			const count = config.recipients?.length ?? 0;
+			return `${count.toLocaleString('en-US')} recipient${count !== 1 ? 's' : ''}`;
+		}
+		if (channel.type === 'pagerduty') {
+			return 'Routing key set';
+		}
+		const config = channel.config as { url?: string };
+		try {
+			return new URL(config.url ?? '').hostname;
+		} catch {
+			return config.url ?? '';
 		}
 	}
+
+	// Top-level snippets are typed as plain functions; DataTable wants branded Snippets.
+	const asCell = (cell: unknown) => cell as Snippet<[NotificationChannel]>;
+
+	const baseColumns: DataTableColumn<NotificationChannel>[] = [
+		{ key: 'name', header: 'Name', cell: asCell(nameCell) },
+		{ key: 'type', header: 'Type', cell: asCell(typeCell) },
+		{ key: 'target', header: 'Target', cell: asCell(targetCell) },
+		{ key: 'enabled', header: 'Enabled', class: 'w-[90px]', cell: asCell(enabledCell) },
+	];
+	const actionColumn: DataTableColumn<NotificationChannel> = {
+		key: 'actions',
+		header: 'Actions',
+		class: 'w-[70px]',
+		cell: asCell(actionsCell),
+	};
+	const columns = $derived(canManage ? [...baseColumns, actionColumn] : baseColumns);
 </script>
 
-<div class="space-y-4">
-	<div class="flex items-center justify-between">
-		<div>
-			<h3 class="text-lg font-medium">Notification Channels</h3>
-			<p class="text-sm text-muted-foreground">
-				Manage reusable notification channels for alerts and events
-			</p>
-		</div>
-		<Button onclick={() => (createDialogOpen = true)} class="gap-2">
-			<Plus class="h-4 w-4" />
-			Add Channel
-		</Button>
+{#snippet nameCell(channel: NotificationChannel)}
+	<div class="min-w-0">
+		<div class="font-medium">{channel.name}</div>
+		{#if channel.description}
+			<div class="text-sm text-muted-foreground">{channel.description}</div>
+		{/if}
 	</div>
+{/snippet}
 
-	{#if loading}
-		<div class="flex items-center justify-center py-12">
-			<Spinner size="md" />
-			<span class="ml-2 text-sm text-muted-foreground">Loading channels...</span>
-		</div>
-	{:else if channels.length === 0}
-		<div class="text-center py-12 border rounded-lg">
-			<Bell class="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-			<h4 class="font-medium mb-1">No channels configured</h4>
-			<p class="text-sm text-muted-foreground mb-4">
-				Create notification channels to receive alerts via email or webhooks
-			</p>
-			<Button onclick={() => (createDialogOpen = true)} class="gap-2">
-				<Plus class="h-4 w-4" />
-				Create First Channel
-			</Button>
-		</div>
+{#snippet typeCell(channel: NotificationChannel)}
+	<div class="flex items-center gap-2">
+		<DestinationTypeIcon type={displayTypeOf(channel)} />
+		<span class="text-sm">{destinationLabel(channel)}</span>
+	</div>
+{/snippet}
+
+{#snippet targetCell(channel: NotificationChannel)}
+	<span class="text-sm text-muted-foreground">{getTargetSummary(channel)}</span>
+{/snippet}
+
+{#snippet enabledCell(channel: NotificationChannel)}
+	<Switch
+		checked={channel.enabled}
+		disabled={!canManage}
+		aria-label={`Enable ${channel.name}`}
+		onCheckedChange={() => handleToggleEnabled(channel)}
+	/>
+{/snippet}
+
+{#snippet actionsCell(channel: NotificationChannel)}
+	<DropdownMenu>
+		<DropdownMenuTrigger>
+			{#snippet child({ props })}
+				<Button
+					{...props}
+					variant="ghost"
+					size="icon"
+					class="h-8 w-8"
+					aria-label={`Actions for ${channel.name}`}
+				>
+					<MoreHorizontal class="h-4 w-4" aria-hidden="true" />
+				</Button>
+			{/snippet}
+		</DropdownMenuTrigger>
+		<DropdownMenuContent align="end">
+			<DropdownMenuItem onclick={() => (editingChannel = channel)}>
+				<Pencil class="mr-2 h-4 w-4" aria-hidden="true" />
+				Edit
+			</DropdownMenuItem>
+			<DropdownMenuItem onclick={() => handleTest(channel)} disabled={testingId === channel.id}>
+				{#if testingId === channel.id}
+					<Spinner size="sm" className="mr-2" />
+				{:else}
+					<TestTube class="mr-2 h-4 w-4" aria-hidden="true" />
+				{/if}
+				Test
+			</DropdownMenuItem>
+			<DropdownMenuSeparator />
+			<DropdownMenuItem
+				onclick={() => {
+					channelToDelete = channel;
+					deleteOpen = true;
+				}}
+				class="text-destructive focus:text-destructive"
+			>
+				<Trash2 class="mr-2 h-4 w-4" aria-hidden="true" />
+				Delete
+			</DropdownMenuItem>
+		</DropdownMenuContent>
+	</DropdownMenu>
+{/snippet}
+
+<div class="space-y-4">
+	{#if !canManage}
+		<p class="text-sm text-muted-foreground">
+			Only organization admins and owners can change destinations.
+		</p>
+	{/if}
+
+	{#if loadError && !loading && channels.length === 0}
+		<EmptyState variant="error" title="Could not load destinations" description={loadError}>
+			{#snippet actions()}
+				<Button variant="outline" onclick={() => currentOrg && notificationChannelsStore.load(currentOrg.id)}>
+					Retry
+				</Button>
+			{/snippet}
+		</EmptyState>
+	{:else if !loading && channels.length === 0}
+		<EmptyState
+			variant="no-data"
+			title="No destinations yet"
+			description="Add an email, webhook, Slack, Microsoft Teams, Discord or PagerDuty destination to get notified."
+		>
+			{#snippet actions()}
+				{#if canManage}
+					<Button onclick={() => (createOpen = true)} class="gap-2">
+						<Plus class="h-4 w-4" aria-hidden="true" />
+						Add destination
+					</Button>
+				{/if}
+			{/snippet}
+		</EmptyState>
 	{:else}
 		<div class="rounded-md border">
-			<Table>
-				<TableHeader>
-					<TableRow>
-						<TableHead>Channel</TableHead>
-						<TableHead>Type</TableHead>
-						<TableHead>Configuration</TableHead>
-						<TableHead>Created</TableHead>
-						<TableHead class="w-[80px]">Enabled</TableHead>
-						<TableHead class="w-[60px]">Actions</TableHead>
-					</TableRow>
-				</TableHeader>
-				<TableBody>
-					{#each channels as channel}
-						{@const Icon = getChannelIcon(channel.type)}
-						<TableRow>
-							<TableCell>
-								<div class="flex items-center gap-3">
-									<div
-										class="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center"
-									>
-										<Icon class="h-4 w-4 text-primary" />
-									</div>
-									<div>
-										<div class="font-medium">{channel.name}</div>
-										{#if channel.description}
-											<div class="text-sm text-muted-foreground">{channel.description}</div>
-										{/if}
-									</div>
-								</div>
-							</TableCell>
-							<TableCell>
-								<Badge variant="outline">{channel.type}</Badge>
-							</TableCell>
-							<TableCell class="text-sm text-muted-foreground">
-								{getConfigSummary(channel)}
-							</TableCell>
-							<TableCell class="text-sm text-muted-foreground">
-								{formatDate(channel.createdAt)}
-							</TableCell>
-							<TableCell>
-								<Switch checked={channel.enabled} onCheckedChange={() => handleToggleEnabled(channel)} />
-							</TableCell>
-							<TableCell>
-								<DropdownMenu>
-									<DropdownMenuTrigger>
-										<Button variant="ghost" size="icon" class="h-8 w-8">
-											<MoreHorizontal class="w-4 h-4" />
-										</Button>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end">
-										<DropdownMenuItem onclick={() => (editingChannel = channel)}>
-											<Pencil class="w-4 h-4 mr-2" />
-											Edit
-										</DropdownMenuItem>
-										<DropdownMenuItem
-											onclick={() => handleTest(channel)}
-											disabled={testingId === channel.id}
-										>
-											{#if testingId === channel.id}
-												<Spinner size="sm" className="mr-2" />
-											{:else}
-												<TestTube class="w-4 h-4 mr-2" />
-											{/if}
-											Test
-										</DropdownMenuItem>
-										<DropdownMenuSeparator />
-										<DropdownMenuItem
-											onclick={() => (channelToDelete = channel)}
-											class="text-destructive focus:text-destructive"
-										>
-											<Trash2 class="w-4 h-4 mr-2" />
-											Delete
-										</DropdownMenuItem>
-									</DropdownMenuContent>
-								</DropdownMenu>
-							</TableCell>
-						</TableRow>
-					{/each}
-				</TableBody>
-			</Table>
+			<DataTable {columns} rows={channels} rowKey={(c: NotificationChannel) => c.id} {loading} />
 		</div>
 	{/if}
 </div>
 
-<!-- Create/Edit Dialog -->
-<CreateChannelDialog
-	bind:open={createDialogOpen}
-	onSuccess={() => {
-		createDialogOpen = false;
-	}}
-/>
+{#if canManage}
+	<CreateChannelDialog
+		bind:open={createOpen}
+		onSuccess={() => {
+			createOpen = false;
+		}}
+	/>
 
-<CreateChannelDialog
-	open={!!editingChannel}
-	channel={editingChannel}
-	onOpenChange={(open) => {
-		if (!open) editingChannel = null;
-	}}
-	onSuccess={() => {
-		editingChannel = null;
-	}}
-/>
+	<CreateChannelDialog
+		open={!!editingChannel}
+		channel={editingChannel}
+		onOpenChange={(open) => {
+			if (!open) editingChannel = null;
+		}}
+		onSuccess={() => {
+			editingChannel = null;
+		}}
+	/>
 
-<!-- Delete Confirmation -->
-<AlertDialog
-	open={!!channelToDelete}
-	onOpenChange={(open) => {
-		if (!open) channelToDelete = null;
-	}}
->
-	<AlertDialogContent>
-		<AlertDialogHeader>
-			<AlertDialogTitle>Delete Channel?</AlertDialogTitle>
-			<AlertDialogDescription>
-				Are you sure you want to delete <strong>{channelToDelete?.name}</strong>? This will remove
-				it from all alert rules and events that use it.
-			</AlertDialogDescription>
-		</AlertDialogHeader>
-		<AlertDialogFooter>
-			<AlertDialogCancel onclick={() => (channelToDelete = null)}>Cancel</AlertDialogCancel>
-			<AlertDialogAction
-				onclick={handleDelete}
-				class="bg-destructive hover:bg-destructive/90"
-				disabled={deleting}
-			>
-				{deleting ? 'Deleting...' : 'Delete Channel'}
-			</AlertDialogAction>
-		</AlertDialogFooter>
-	</AlertDialogContent>
-</AlertDialog>
+	<ConfirmDialog
+		bind:open={deleteOpen}
+		title="Delete destination?"
+		description={`Rules that use ${channelToDelete?.name ?? 'this destination'} stop notifying it and fall back to the routing defaults.`}
+		confirmLabel="Delete destination"
+		onConfirm={handleDelete}
+	/>
+{/if}

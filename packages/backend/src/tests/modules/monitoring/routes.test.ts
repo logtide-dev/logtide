@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from '../../../modules/monitoring/routes.js';
+import { notificationChannelsService } from '../../../modules/notification-channels/index.js';
 import { createTestContext, createTestSession } from '../../helpers/index.js';
 
 vi.mock('../../../queue/jobs/monitor-notification.js', () => ({
@@ -707,6 +708,33 @@ describe('invalid UUID :id param', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error).toBe('organizationId required');
+  });
+});
+
+describe('GET /api/v1/monitors/:id/channels masking', () => {
+  it('does not leak channel secrets', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/monitors',
+      headers: authHeaders(authToken),
+      payload: { organizationId: ctx.organization.id, projectId: ctx.project.id, name: 'Masked', type: 'heartbeat' },
+    });
+    const { monitor } = JSON.parse(createRes.payload);
+    const channel = await notificationChannelsService.createChannel(ctx.organization.id, {
+      name: 'hook',
+      type: 'webhook',
+      config: { url: 'https://example.com/hook/SECRETPATH', auth: { type: 'bearer', token: 'SECRETTOKEN' } },
+    } as any);
+    await notificationChannelsService.setMonitorChannels(monitor.id, [channel.id], ctx.organization.id);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${monitor.id}/channels?organizationId=${ctx.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).not.toContain('SECRETTOKEN');
+    expect(JSON.parse(res.payload).channels).toHaveLength(1);
   });
 });
 

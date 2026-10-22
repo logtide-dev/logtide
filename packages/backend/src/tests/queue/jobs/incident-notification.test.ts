@@ -18,7 +18,10 @@ vi.mock('../../../queue/connection.js', () => ({
 
 // Mock webhookDispatcher so it doesn't hit real queues/SSRF guard.
 // buildEnvelope is kept real so the envelope shape can be validated.
-const { incidentEnqueueMock } = vi.hoisted(() => ({ incidentEnqueueMock: vi.fn() }));
+const { incidentEnqueueMock, sendMailMock } = vi.hoisted(() => ({
+  incidentEnqueueMock: vi.fn(),
+  sendMailMock: vi.fn(),
+}));
 vi.mock('../../../modules/webhooks/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../modules/webhooks/index.js')>();
   return {
@@ -47,7 +50,7 @@ vi.mock('../../../config/index.js', () => ({
 vi.mock('nodemailer', () => ({
   default: {
     createTransport: vi.fn(() => ({
-      sendMail: vi.fn().mockResolvedValue({ messageId: 'test-id' }),
+      sendMail: sendMailMock,
     })),
   },
 }));
@@ -78,6 +81,8 @@ describe('Incident Notification Job', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     incidentEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    sendMailMock.mockReset().mockResolvedValue({ messageId: 'test-id' });
+    vi.mocked(isSmtpConfigured).mockReturnValue(false);
     mockGetIncidentChannels.mockReset().mockResolvedValue([]);
   });
 
@@ -225,7 +230,7 @@ describe('Incident Notification Job', () => {
           metadata: expect.objectContaining({
             incidentId: 'incident-123',
             severity: 'high',
-            link: '/dashboard/security/incidents/incident-123',
+            link: '/dashboard/incidents/incident-123',
           }),
         })
       );
@@ -297,6 +302,8 @@ describe('Incident webhook envelope', () => {
 
     mockGetIncidentChannels.mockResolvedValueOnce([{
       id: '00000000-0000-0000-0000-000000000020',
+      organizationId: org.id,
+      name: 'Hook',
       type: 'webhook',
       enabled: true,
       config: { url: 'https://hooks.example.com/incident' },
@@ -363,5 +370,114 @@ describe('Incident Notification Email Generation', () => {
     expect(severityLabels.medium).toBe('Medium');
     expect(severityLabels.low).toBe('Low');
     expect(severityLabels.informational).toBe('Informational');
+  });
+});
+
+describe('Incident notification routing and links', () => {
+  const PD_KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    incidentEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    sendMailMock.mockReset().mockResolvedValue({ messageId: 'test-id' });
+    vi.mocked(isSmtpConfigured).mockReturnValue(false);
+    mockGetIncidentChannels.mockReset().mockResolvedValue([]);
+    await db.deleteFrom('organization_default_channels').execute();
+  });
+
+  function jobFor(orgId: string, overrides: Partial<IncidentNotificationJob> = {}) {
+    return {
+      data: {
+        incidentId: '00000000-0000-0000-0000-000000000077',
+        organizationId: orgId,
+        title: 'Link Test Incident',
+        description: 'desc',
+        severity: 'high',
+        affectedServices: ['api'],
+        ...overrides,
+      } as IncidentNotificationJob,
+    } as Job<IncidentNotificationJob>;
+  }
+
+  function channel(orgId: string, type: 'email' | 'webhook' | 'pagerduty', config: unknown, id: string) {
+    return { id, organizationId: orgId, name: id, type, enabled: true, config };
+  }
+
+  it('links to /dashboard/incidents/<id> in the email, webhook payload and in-app record', async () => {
+    vi.mocked(isSmtpConfigured).mockReturnValue(true);
+    const owner = await createTestUser({ name: 'Owner User' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Link Org' });
+    mockGetIncidentChannels.mockResolvedValueOnce([
+      channel(org.id, 'email', { recipients: ['ops@example.com'] }, 'c-email'),
+      channel(org.id, 'webhook', { url: 'https://hooks.example.com/incident' }, 'c-hook'),
+    ]);
+
+    await processIncidentNotification(jobFor(org.id));
+
+    const id = '00000000-0000-0000-0000-000000000077';
+    expect(sendMailMock).toHaveBeenCalledTimes(1);
+    const mail = sendMailMock.mock.calls[0][0];
+    expect(mail.html).toContain('/dashboard/incidents/' + id);
+    expect(mail.text).toContain('/dashboard/incidents/' + id);
+    expect(mail.html).not.toContain('/dashboard/security/incidents');
+
+    const payload = incidentEnqueueMock.mock.calls[0][0].payload as { data: { link: string } };
+    expect(payload.data.link).toBe('https://app.logtide.dev/dashboard/incidents/' + id);
+
+    const inApp = vi.mocked(notificationsService.createNotification).mock.calls[0][0] as any;
+    expect(inApp.metadata.link).toBe('/dashboard/incidents/' + id);
+    expect(JSON.stringify([mail, payload, inApp])).not.toContain('/dashboard/security/incidents');
+  });
+
+  it('a webhook-only routing sends no email even with SMTP configured', async () => {
+    vi.mocked(isSmtpConfigured).mockReturnValue(true);
+    const owner = await createTestUser({ name: 'Owner User' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Webhook Only Org' });
+    mockGetIncidentChannels.mockResolvedValueOnce([
+      channel(org.id, 'webhook', { url: 'https://hooks.slack.com/services/T1/B2/x' }, 'c-hook'),
+    ]);
+
+    await processIncidentNotification(jobFor(org.id));
+
+    expect(sendMailMock).not.toHaveBeenCalled();
+    expect(incidentEnqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('nothing resolved with SMTP on emails owners and admins only', async () => {
+    vi.mocked(isSmtpConfigured).mockReturnValue(true);
+    const owner = await createTestUser({ email: 'fallback-owner@test.com', name: 'Owner User' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Fallback Org' });
+    const admin = await createTestUser({ email: 'fallback-admin@test.com', name: 'Admin User' });
+    const member = await createTestUser({ email: 'fallback-member@test.com', name: 'Member User' });
+    await db
+      .insertInto('organization_members')
+      .values([
+        { user_id: admin.id, organization_id: org.id, role: 'admin' },
+        { user_id: member.id, organization_id: org.id, role: 'member' },
+      ])
+      .execute();
+
+    await processIncidentNotification(jobFor(org.id, { severity: 'critical' }));
+
+    const recipients = sendMailMock.mock.calls.map((c) => c[0].to).sort();
+    expect(recipients).toEqual(['fallback-admin@test.com', 'fallback-owner@test.com']);
+  });
+
+  it('sends a PagerDuty trigger with the incident dedup key and still runs with no members', async () => {
+    const owner = await createTestUser({ name: 'Owner User' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'PD Org' });
+    await db.deleteFrom('organization_members').where('organization_id', '=', org.id).execute();
+    mockGetIncidentChannels.mockResolvedValueOnce([
+      channel(org.id, 'pagerduty', { routingKey: PD_KEY }, '00000000-0000-0000-0000-0000000000aa'),
+    ]);
+
+    await processIncidentNotification(jobFor(org.id));
+
+    expect(incidentEnqueueMock).toHaveBeenCalledTimes(1);
+    const call = incidentEnqueueMock.mock.calls[0][0];
+    expect(call.url).toBe('https://events.pagerduty.com/v2/enqueue');
+    expect(call.payload.event_action).toBe('trigger');
+    expect(call.payload.dedup_key).toBe('incident:00000000-0000-0000-0000-000000000077');
+    expect(call.payload.routing_key).toBe(PD_KEY);
   });
 });

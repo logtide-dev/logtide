@@ -350,8 +350,8 @@ describe('Email Templates - Incident Email', () => {
       organizationName: 'Org',
     });
 
-    expect(result.html).toContain('https://app.logtide.dev/dashboard/security/incidents/my-incident-id');
-    expect(result.text).toContain('https://app.logtide.dev/dashboard/security/incidents/my-incident-id');
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/incidents/my-incident-id');
+    expect(result.text).toContain('https://app.logtide.dev/dashboard/incidents/my-incident-id');
   });
 
   it('should include affected services when provided', () => {

@@ -13,10 +13,24 @@ import type {
   UpdateNotificationChannelInput,
   NotificationContext,
   DeliveryResult,
+  ChannelDisplayType,
 } from '@logtide/shared';
+import { getChannelDisplayType } from '@logtide/shared';
 import type { NotificationProvider } from './providers/interface.js';
 import { EmailProvider } from './providers/email-provider.js';
 import { WebhookProvider } from './providers/webhook-provider.js';
+import { PagerDutyProvider } from './providers/pagerduty-provider.js';
+import { mergeConfigSecrets } from './serialize.js';
+
+const OVERRIDES_LIMIT = 200;
+
+export interface RoutingOverride {
+  eventType: NotificationEventType;
+  kind: 'alert_rule' | 'sigma_rule' | 'monitor' | 'error_group';
+  id: string;
+  name: string;
+  channels: { id: string; name: string; type: ChannelDisplayType }[];
+}
 
 export class NotificationChannelsService {
   private providers: Map<NotificationChannelType, NotificationProvider>;
@@ -25,6 +39,7 @@ export class NotificationChannelsService {
     this.providers = new Map();
     this.providers.set('email', new EmailProvider());
     this.providers.set('webhook', new WebhookProvider());
+    this.providers.set('pagerduty', new PagerDutyProvider());
   }
 
   // ============================================================================
@@ -114,6 +129,154 @@ export class NotificationChannelsService {
     return row ? this.mapChannel(row) : null;
   }
 
+  /** Enabled channels of this organization among the given ids (foreign and unknown ids are dropped). */
+  async getEnabledChannelsByIds(
+    channelIds: string[],
+    organizationId: string
+  ): Promise<NotificationChannel[]> {
+    const unique = [...new Set(channelIds)];
+    if (unique.length === 0) return [];
+    const rows = await db
+      .selectFrom('notification_channels')
+      .selectAll()
+      .where('id', 'in', unique)
+      .where('organization_id', '=', organizationId)
+      .where('enabled', '=', true)
+      .execute();
+    return rows.map((r) => this.mapChannel(r));
+  }
+
+  /**
+   * Rules (alert, sigma, monitor, error group) that carry their own enabled
+   * destinations and therefore ignore the organization defaults.
+   * Scoped on BOTH the channel and the rule table organization.
+   */
+  async getRoutingOverrides(organizationId: string): Promise<RoutingOverride[]> {
+    type Row = {
+      ruleId: string;
+      ruleName: string;
+      channelId: string;
+      channelName: string;
+      channelType: NotificationChannelType;
+      channelConfig: unknown;
+    };
+
+    const toOverrides = (
+      rows: Row[],
+      eventType: NotificationEventType,
+      kind: RoutingOverride['kind']
+    ): RoutingOverride[] => {
+      const byRule = new Map<string, RoutingOverride>();
+      for (const row of rows) {
+        let entry = byRule.get(row.ruleId);
+        if (!entry) {
+          entry = { eventType, kind, id: row.ruleId, name: row.ruleName, channels: [] };
+          byRule.set(row.ruleId, entry);
+        }
+        entry.channels.push({
+          id: row.channelId,
+          name: row.channelName,
+          type: getChannelDisplayType({ type: row.channelType, config: row.channelConfig }),
+        });
+      }
+      return Array.from(byRule.values());
+    };
+
+    const [alertRows, sigmaRows, monitorRows, errorRows] = await Promise.all([
+      db
+        .selectFrom('alert_rule_channels as rc')
+        .innerJoin('notification_channels as nc', 'nc.id', 'rc.channel_id')
+        .innerJoin('alert_rules as r', 'r.id', 'rc.alert_rule_id')
+        .select([
+          'r.id as ruleId',
+          'r.name as ruleName',
+          'nc.id as channelId',
+          'nc.name as channelName',
+          'nc.type as channelType',
+          'nc.config as channelConfig',
+        ])
+        .where('nc.organization_id', '=', organizationId)
+        .where('r.organization_id', '=', organizationId)
+        .where('nc.enabled', '=', true)
+        .orderBy('r.name', 'asc')
+        .orderBy('r.id', 'asc')
+        .limit(OVERRIDES_LIMIT)
+        .execute(),
+      db
+        .selectFrom('sigma_rule_channels as rc')
+        .innerJoin('notification_channels as nc', 'nc.id', 'rc.channel_id')
+        .innerJoin('sigma_rules as r', 'r.id', 'rc.sigma_rule_id')
+        .select([
+          'r.id as ruleId',
+          'r.title as ruleName',
+          'nc.id as channelId',
+          'nc.name as channelName',
+          'nc.type as channelType',
+          'nc.config as channelConfig',
+        ])
+        .where('nc.organization_id', '=', organizationId)
+        .where('r.organization_id', '=', organizationId)
+        .where('nc.enabled', '=', true)
+        .orderBy('r.title', 'asc')
+        .orderBy('r.id', 'asc')
+        .limit(OVERRIDES_LIMIT)
+        .execute(),
+      db
+        .selectFrom('monitor_channels as rc')
+        .innerJoin('notification_channels as nc', 'nc.id', 'rc.channel_id')
+        .innerJoin('monitors as r', 'r.id', 'rc.monitor_id')
+        .select([
+          'r.id as ruleId',
+          'r.name as ruleName',
+          'nc.id as channelId',
+          'nc.name as channelName',
+          'nc.type as channelType',
+          'nc.config as channelConfig',
+        ])
+        .where('nc.organization_id', '=', organizationId)
+        .where('r.organization_id', '=', organizationId)
+        .where('nc.enabled', '=', true)
+        .orderBy('r.name', 'asc')
+        .orderBy('r.id', 'asc')
+        .limit(OVERRIDES_LIMIT)
+        .execute(),
+      db
+        .selectFrom('error_group_channels as rc')
+        .innerJoin('notification_channels as nc', 'nc.id', 'rc.channel_id')
+        .innerJoin('error_groups as r', 'r.id', 'rc.error_group_id')
+        .select([
+          'r.id as ruleId',
+          'r.exception_type as ruleName',
+          'r.exception_message as ruleMessage',
+          'nc.id as channelId',
+          'nc.name as channelName',
+          'nc.type as channelType',
+          'nc.config as channelConfig',
+        ])
+        .where('nc.organization_id', '=', organizationId)
+        .where('r.organization_id', '=', organizationId)
+        .where('nc.enabled', '=', true)
+        .orderBy('r.exception_type', 'asc')
+        .orderBy('r.id', 'asc')
+        .limit(OVERRIDES_LIMIT)
+        .execute(),
+    ]);
+
+    const errorMapped: Row[] = errorRows.map((r) => ({
+      ...r,
+      ruleName: r.ruleMessage
+        ? `${r.ruleName}: ${r.ruleMessage}`.slice(0, 120)
+        : r.ruleName,
+    }));
+
+    return [
+      ...toOverrides(alertRows as Row[], 'alert', 'alert_rule'),
+      ...toOverrides(sigmaRows as Row[], 'sigma', 'sigma_rule'),
+      ...toOverrides(monitorRows as Row[], 'monitoring', 'monitor'),
+      ...toOverrides(errorMapped, 'error', 'error_group'),
+    ].slice(0, OVERRIDES_LIMIT);
+  }
+
   /**
    * Update a channel
    */
@@ -122,15 +285,19 @@ export class NotificationChannelsService {
     organizationId: string,
     input: UpdateNotificationChannelInput
   ): Promise<NotificationChannel> {
-    // If config is being updated, validate it
+    // If config is being updated, keep stored secrets the caller did not
+    // retype, then validate the merged result.
+    let mergedConfig: ChannelConfig | undefined;
     if (input.config) {
       const existing = await this.getChannel(id, organizationId);
       if (!existing) {
         throw new Error('Channel not found');
       }
 
+      mergedConfig = mergeConfigSecrets(existing.config, input.config);
+
       const provider = this.providers.get(existing.type);
-      if (!provider || !provider.validateConfig(input.config)) {
+      if (!provider || !provider.validateConfig(mergedConfig)) {
         throw new Error(`Invalid configuration for ${existing.type} channel`);
       }
     }
@@ -140,7 +307,7 @@ export class NotificationChannelsService {
     };
 
     if (input.name !== undefined) updateData.name = input.name;
-    if (input.config !== undefined) updateData.config = input.config;
+    if (mergedConfig !== undefined) updateData.config = mergedConfig;
     if (input.description !== undefined) updateData.description = input.description;
     if (input.enabled !== undefined) updateData.enabled = input.enabled;
 
@@ -183,6 +350,41 @@ export class NotificationChannelsService {
     }
 
     return provider.test(channel.config, organizationId);
+  }
+
+  /**
+   * Test a destination configuration that is not saved yet. With channelId the
+   * stored config of that channel (same organization) supplies any secret the
+   * caller left blank, so edit-mode tests work. Nothing is persisted.
+   */
+  async testUnsaved(
+    organizationId: string,
+    type: NotificationChannelType,
+    config: ChannelConfig,
+    channelId?: string
+  ): Promise<DeliveryResult> {
+    const provider = this.providers.get(type);
+    if (!provider) {
+      throw new Error(`Unsupported channel type: ${type}`);
+    }
+
+    let effective = config;
+    if (channelId) {
+      const existing = await this.getChannel(channelId, organizationId);
+      if (!existing) {
+        throw new Error('Channel not found');
+      }
+      if (existing.type !== type) {
+        throw new Error(`Invalid configuration for ${type} channel`);
+      }
+      effective = mergeConfigSecrets(existing.config, config);
+    }
+
+    if (!provider.validateConfig(effective)) {
+      throw new Error(`Invalid configuration for ${type} channel`);
+    }
+
+    return provider.test(effective, organizationId);
   }
 
   // ============================================================================

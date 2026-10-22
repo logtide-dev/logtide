@@ -8,18 +8,26 @@
 	import Label from '$lib/components/ui/label/label.svelte';
 	import Textarea from '$lib/components/ui/textarea/textarea.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import { stateTone } from '$lib/utils/severity';
 	import type {
 		NotificationChannel,
-		NotificationChannelType,
+		ChannelConfig,
 		EmailChannelConfig,
 		WebhookChannelConfig,
+		PagerDutyChannelConfig,
 	} from '$lib/api/notification-channels';
-	import { isDiscordWebhookUrl } from '@logtide/shared';
-	import Mail from '@lucide/svelte/icons/mail';
-	import Webhook from '@lucide/svelte/icons/webhook';
+	import { detectWebhookFlavor } from '@logtide/shared';
+	import DestinationTypePicker from './DestinationTypePicker.svelte';
+	import DestinationTypeIcon from './DestinationTypeIcon.svelte';
+	import {
+		getDestinationType,
+		displayTypeOf,
+		type DestinationTypeId,
+	} from './destination-types';
 	import TestTube from '@lucide/svelte/icons/test-tube';
 	import Check from '@lucide/svelte/icons/check';
 	import X from '@lucide/svelte/icons/x';
+	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 
 	interface Props {
 		open: boolean;
@@ -43,16 +51,20 @@
 	let submitting = $state(false);
 	let testing = $state(false);
 	let testResult = $state<{ success: boolean; error?: string } | null>(null);
+	// Shows validation messages once the user tried to submit.
+	let attempted = $state(false);
+
+	// Step 1 is the type picker (create mode only); null means "not picked yet".
+	let destType = $state<DestinationTypeId | null>(null);
 
 	// Form state
 	let name = $state('');
 	let description = $state('');
-	let channelType = $state<NotificationChannelType>('email');
 
 	// Email config
 	let emailRecipients = $state('');
 
-	// Webhook config
+	// Webhook config (generic, Slack, Teams, Discord)
 	let webhookUrl = $state('');
 	let webhookMethod = $state<'POST' | 'PUT'>('POST');
 	let webhookHeaders = $state('');
@@ -60,20 +72,108 @@
 	let webhookAuthToken = $state('');
 	let webhookAuthUser = $state('');
 	let webhookAuthPass = $state('');
-	// Whether the channel being edited already has a stored secret. Secrets are
-	// never sent back to the client, so on edit we keep the secret fields empty
-	// and only submit a new value when the user types one.
+	// Whether the destination being edited already has a stored secret. Secrets
+	// are never sent back to the client, so on edit we keep the secret fields
+	// empty and only submit a new value when the user types one.
 	let hasStoredAuthSecret = $state(false);
+	let storedAuthType = $state<'none' | 'bearer' | 'basic'>('none');
+
+	// PagerDuty config
+	let routingKey = $state('');
 
 	const isEditing = $derived(!!channel);
-	// Discord rejects the raw event envelope, so the backend sends an embed to
-	// these URLs instead. Surfacing it here keeps the payload change discoverable.
-	const isDiscordUrl = $derived(isDiscordWebhookUrl(webhookUrl));
+	const typeInfo = $derived(destType ? getDestinationType(destType) : null);
+	const isVendorWebhook = $derived(
+		destType === 'slack' || destType === 'teams' || destType === 'discord'
+	);
+	const isWebhookForm = $derived(destType === 'webhook' || isVendorWebhook);
+
+	// Slack, Teams and Discord reject the raw event envelope, so the backend
+	// sends their native format to these URLs. Surfacing it keeps the payload
+	// change discoverable.
+	const flavor = $derived(isWebhookForm ? detectWebhookFlavor(webhookUrl.trim()) : 'generic');
+	const FLAVOR_BADGES: Record<string, { badge: string; hint: string }> = {
+		slack: {
+			badge: 'Slack format',
+			hint: 'LogTide will send a Slack message to this URL instead of the raw JSON envelope.',
+		},
+		teams: {
+			badge: 'Teams format',
+			hint: 'LogTide will send a Microsoft Teams card to this URL instead of the raw JSON envelope.',
+		},
+		discord: {
+			badge: 'Discord format',
+			hint: 'LogTide will send a Discord embed to this URL instead of the raw JSON envelope.',
+		},
+	};
+	const flavorBadge = $derived(FLAVOR_BADGES[flavor] ?? null);
+
+	const headersError = $derived.by(() => {
+		if (destType !== 'webhook' || !webhookHeaders.trim()) return null;
+		try {
+			const parsed = JSON.parse(webhookHeaders);
+			if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				return 'Custom headers must be a JSON object';
+			}
+			return null;
+		} catch {
+			return 'Custom headers must be valid JSON';
+		}
+	});
+
+	const urlError = $derived.by(() => {
+		if (!isWebhookForm) return null;
+		const url = webhookUrl.trim();
+		if (!url) return 'Webhook URL is required';
+		try {
+			const parsed = new URL(url);
+			if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return 'Invalid webhook URL';
+		} catch {
+			return 'Invalid webhook URL';
+		}
+		return typeInfo?.validateUrl?.(url) ?? null;
+	});
+
+	const validationError = $derived.by((): string | null => {
+		if (!destType) return 'Choose a destination type';
+		if (!name.trim()) return 'Name is required';
+
+		if (destType === 'email') {
+			const recipients = parseRecipients();
+			if (recipients.length === 0) return 'At least one email recipient is required';
+			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+			const invalid = recipients.filter((e) => !emailRegex.test(e));
+			if (invalid.length > 0) return `Invalid email: ${invalid[0]}`;
+			return null;
+		}
+
+		if (destType === 'pagerduty') {
+			const key = routingKey.trim();
+			if (!key) return isEditing ? null : 'Routing key is required';
+			if (!/^[A-Za-z0-9]{20,40}$/.test(key)) {
+				return 'Routing key must be 20 to 40 letters and digits';
+			}
+			return null;
+		}
+
+		if (urlError) return urlError;
+		return headersError;
+	});
+
+	// Inline message shown under the url field.
+	const showUrlError = $derived(isWebhookForm && !!urlError && (attempted || webhookUrl.trim() !== ''));
+
+	function parseRecipients(): string[] {
+		return emailRecipients
+			.split(',')
+			.map((e) => e.trim())
+			.filter((e) => e);
+	}
 
 	function resetForm() {
+		destType = null;
 		name = '';
 		description = '';
-		channelType = 'email';
 		emailRecipients = '';
 		webhookUrl = '';
 		webhookMethod = 'POST';
@@ -83,13 +183,19 @@
 		webhookAuthUser = '';
 		webhookAuthPass = '';
 		hasStoredAuthSecret = false;
+		storedAuthType = 'none';
+		routingKey = '';
 		testResult = null;
+		attempted = false;
 	}
 
 	function populateForm(ch: NotificationChannel) {
 		name = ch.name;
 		description = ch.description || '';
-		channelType = ch.type;
+		testResult = null;
+		attempted = false;
+
+		let display = displayTypeOf(ch);
 
 		if (ch.type === 'email') {
 			const config = ch.config as EmailChannelConfig;
@@ -104,18 +210,31 @@
 			// empty; a blank value on submit means "keep the existing secret".
 			if (config.auth?.type === 'bearer') {
 				webhookAuthType = 'bearer';
+				storedAuthType = 'bearer';
 				webhookAuthToken = '';
 				hasStoredAuthSecret = true;
 			} else if (config.auth?.type === 'basic') {
 				webhookAuthType = 'basic';
+				storedAuthType = 'basic';
 				webhookAuthUser = config.auth.username;
 				webhookAuthPass = '';
 				hasStoredAuthSecret = true;
 			} else {
 				webhookAuthType = 'none';
+				storedAuthType = 'none';
 				hasStoredAuthSecret = false;
 			}
+			// A vendor form has no auth or header fields: keep the generic form for
+			// destinations that carry them so saving does not drop anything.
+			if (display !== 'webhook' && (config.auth || (config.headers && Object.keys(config.headers).length > 0))) {
+				display = 'webhook';
+			}
+		} else if (ch.type === 'pagerduty') {
+			// The routing key is write-only; leave the field empty.
+			routingKey = '';
 		}
+
+		destType = display;
 	}
 
 	$effect(() => {
@@ -126,89 +245,61 @@
 		}
 	});
 
-	function buildConfig(): EmailChannelConfig | WebhookChannelConfig {
-		if (channelType === 'email') {
-			const recipients = emailRecipients
-				.split(',')
-				.map((e) => e.trim())
-				.filter((e) => e);
-			return { recipients };
-		} else {
-			const config: WebhookChannelConfig = {
-				url: webhookUrl.trim(),
-				method: webhookMethod,
-			};
-
-			if (webhookHeaders.trim()) {
-				try {
-					config.headers = JSON.parse(webhookHeaders);
-				} catch {
-					// ignore invalid JSON
-				}
-			}
-
-			if (webhookAuthType === 'bearer') {
-				// Only send a token when the user typed a new one. On edit, a
-				// blank field means "keep the existing secret" (the stored secret
-				// is never sent to the client), so we omit auth and let the
-				// backend preserve it.
-				if (webhookAuthToken) {
-					config.auth = { type: 'bearer', token: webhookAuthToken };
-				}
-			} else if (webhookAuthType === 'basic' && webhookAuthUser) {
-				const basicAuth: { type: 'basic'; username: string; password?: string } = {
-					type: 'basic',
-					username: webhookAuthUser,
-				};
-				// Same rule for the password: only send a new one when typed.
-				if (webhookAuthPass) {
-					basicAuth.password = webhookAuthPass;
-				}
-				config.auth = basicAuth;
-			}
-
-			return config;
+	function buildConfig(): ChannelConfig {
+		if (destType === 'email') {
+			return { recipients: parseRecipients() } satisfies EmailChannelConfig;
 		}
-	}
 
-	function validate(): string | null {
-		if (!name.trim()) return 'Channel name is required';
+		if (destType === 'pagerduty') {
+			// A blank key in edit mode is omitted so the backend keeps the stored one.
+			const key = routingKey.trim();
+			return (key ? { routingKey: key } : {}) as PagerDutyChannelConfig;
+		}
 
-		if (channelType === 'email') {
-			const recipients = emailRecipients
-				.split(',')
-				.map((e) => e.trim())
-				.filter((e) => e);
-			if (recipients.length === 0) return 'At least one email recipient is required';
+		const config: WebhookChannelConfig = {
+			url: webhookUrl.trim(),
+			method: isVendorWebhook ? 'POST' : webhookMethod,
+		};
 
-			const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-			const invalid = recipients.filter((e) => !emailRegex.test(e));
-			if (invalid.length > 0) return `Invalid email: ${invalid[0]}`;
-		} else {
-			if (!webhookUrl.trim()) return 'Webhook URL is required';
+		if (destType !== 'webhook') return config;
+
+		if (webhookHeaders.trim()) {
 			try {
-				new URL(webhookUrl);
+				config.headers = JSON.parse(webhookHeaders);
 			} catch {
-				return 'Invalid webhook URL';
-			}
-			if (webhookHeaders.trim()) {
-				try {
-					JSON.parse(webhookHeaders);
-				} catch {
-					return 'Custom headers must be valid JSON';
-				}
+				// validation reports invalid JSON before we get here
 			}
 		}
 
-		return null;
+		const keepsStoredSecret = isEditing && hasStoredAuthSecret && storedAuthType === webhookAuthType;
+
+		if (webhookAuthType === 'bearer') {
+			if (webhookAuthToken) {
+				config.auth = { type: 'bearer', token: webhookAuthToken };
+			} else if (keepsStoredSecret) {
+				// Same auth type, no new token: the backend keeps the stored one.
+				config.auth = { type: 'bearer' } as WebhookChannelConfig['auth'];
+			}
+		} else if (webhookAuthType === 'basic' && webhookAuthUser) {
+			const basicAuth: { type: 'basic'; username: string; password?: string } = {
+				type: 'basic',
+				username: webhookAuthUser,
+			};
+			if (webhookAuthPass) {
+				basicAuth.password = webhookAuthPass;
+			}
+			config.auth = basicAuth as WebhookChannelConfig['auth'];
+		}
+
+		return config;
 	}
 
 	async function handleTest() {
-		if (!currentOrg || !channel) return;
+		if (!currentOrg || !typeInfo) return;
 
-		const error = validate();
-		if (error) {
-			toastStore.error(error);
+		if (validationError) {
+			attempted = true;
+			toastStore.error(validationError);
 			return;
 		}
 
@@ -216,10 +307,15 @@
 		testResult = null;
 
 		try {
-			const result = await notificationChannelsStore.test(channel.id, currentOrg.id);
+			const result = await notificationChannelsStore.testUnsaved({
+				organizationId: currentOrg.id,
+				...(isEditing && channel ? { channelId: channel.id } : {}),
+				type: typeInfo.storedType,
+				config: buildConfig(),
+			});
 			testResult = result;
 			if (result.success) {
-				toastStore.success('Test notification sent successfully');
+				toastStore.success('Test notification sent');
 			} else {
 				toastStore.error(result.error || 'Test failed');
 			}
@@ -232,14 +328,14 @@
 	}
 
 	async function handleSubmit() {
-		if (!currentOrg) {
+		if (!currentOrg || !typeInfo) {
 			toastStore.error('No organization selected');
 			return;
 		}
 
-		const error = validate();
-		if (error) {
-			toastStore.error(error);
+		if (validationError) {
+			attempted = true;
+			toastStore.error(validationError);
 			return;
 		}
 
@@ -255,26 +351,43 @@
 					description: description.trim() || null,
 					config,
 				});
-				toastStore.success('Channel updated');
+				toastStore.success('Destination updated');
 			} else {
 				result = await notificationChannelsStore.create(currentOrg.id, {
 					name: name.trim(),
-					type: channelType,
+					type: typeInfo.storedType,
 					config,
 					description: description.trim() || undefined,
 				});
-				toastStore.success('Channel created');
+				toastStore.success('Destination created');
 			}
 
 			resetForm();
 			open = false;
 			onSuccess?.(result);
 		} catch (err) {
-			toastStore.error(err instanceof Error ? err.message : 'Failed to save channel');
+			toastStore.error(err instanceof Error ? err.message : 'Failed to save destination');
 		} finally {
 			submitting = false;
 		}
 	}
+
+	const title = $derived(
+		isEditing
+			? 'Edit destination'
+			: typeInfo
+				? `Add ${typeInfo.label} destination`
+				: 'Add destination'
+	);
+	const dialogDescription = $derived(
+		isEditing
+			? 'Update the destination settings.'
+			: typeInfo
+				? typeInfo.description
+				: 'Choose where LogTide should send notifications.'
+	);
+	const okTone = stateTone('ok');
+	const failedTone = stateTone('failed');
 </script>
 
 <Dialog.Root
@@ -286,274 +399,295 @@
 >
 	<Dialog.Content class="max-w-lg max-h-[90vh] overflow-y-auto">
 		<Dialog.Header>
-			<Dialog.Title>{isEditing ? 'Edit Channel' : 'Create Notification Channel'}</Dialog.Title>
-			<Dialog.Description>
-				{isEditing
-					? 'Update the notification channel settings'
-					: 'Create a reusable notification channel for alerts and events'}
-			</Dialog.Description>
+			<Dialog.Title class="flex items-center gap-2">
+				{#if destType}
+					<DestinationTypeIcon type={destType} />
+				{/if}
+				{title}
+			</Dialog.Title>
+			<Dialog.Description>{dialogDescription}</Dialog.Description>
 		</Dialog.Header>
 
-		<form
-			class="space-y-4"
-			onsubmit={(e) => {
-				e.preventDefault();
-				handleSubmit();
-			}}
-		>
-			<!-- Channel Name -->
-			<div class="space-y-2">
-				<Label for="channel-name">Name *</Label>
-				<Input
-					id="channel-name"
-					type="text"
-					placeholder="e.g., Ops Team Email"
-					bind:value={name}
-					disabled={submitting}
-					required
-				/>
-			</div>
+		{#if !destType}
+			<DestinationTypePicker onSelect={(id) => (destType = id)} />
 
-			<!-- Channel Type -->
-			{#if !isEditing}
+			<Dialog.Footer class="gap-2">
+				<Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
+			</Dialog.Footer>
+		{:else}
+			<form
+				class="space-y-4"
+				onsubmit={(e) => {
+					e.preventDefault();
+					handleSubmit();
+				}}
+			>
 				<div class="space-y-2">
-					<Label>Type *</Label>
-					<div class="grid grid-cols-2 gap-2">
-						<Button
-							type="button"
-							variant={channelType === 'email' ? 'default' : 'outline'}
-							class="justify-start gap-2"
-							onclick={() => (channelType = 'email')}
-							disabled={submitting}
-						>
-							<Mail class="h-4 w-4" />
-							Email
-						</Button>
-						<Button
-							type="button"
-							variant={channelType === 'webhook' ? 'default' : 'outline'}
-							class="justify-start gap-2"
-							onclick={() => (channelType = 'webhook')}
-							disabled={submitting}
-						>
-							<Webhook class="h-4 w-4" />
-							Webhook
-						</Button>
-					</div>
-				</div>
-			{/if}
-
-			<!-- Email Config -->
-			{#if channelType === 'email'}
-				<div class="space-y-2">
-					<Label for="email-recipients">Recipients *</Label>
-					<Textarea
-						id="email-recipients"
-						placeholder="user@example.com, team@example.com"
-						bind:value={emailRecipients}
+					<Label for="channel-name">Name *</Label>
+					<Input
+						id="channel-name"
+						type="text"
+						placeholder="Ops team"
+						bind:value={name}
 						disabled={submitting}
-						rows={3}
+						required
 					/>
-					<p class="text-xs text-muted-foreground">Comma-separated list of email addresses</p>
 				</div>
-			{/if}
 
-			<!-- Webhook Config -->
-			{#if channelType === 'webhook'}
-				<div class="space-y-4">
+				{#if destType === 'email'}
 					<div class="space-y-2">
-						<div class="flex items-center gap-2">
-							<Label for="webhook-url">URL *</Label>
-							{#if isDiscordUrl}
-								<span
-									class="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
-								>
-									Discord format
-								</span>
-							{/if}
-						</div>
-						<Input
-							id="webhook-url"
-							type="url"
-							placeholder="https://hooks.slack.com/..."
-							bind:value={webhookUrl}
-							disabled={submitting}
-						/>
-						{#if isDiscordUrl}
-							<p class="text-xs text-muted-foreground">
-								LogTide will send a Discord embed to this URL instead of the raw JSON envelope.
-							</p>
-						{/if}
-					</div>
-
-					<div class="grid grid-cols-2 gap-4">
-						<div class="space-y-2">
-							<Label for="webhook-method">Method</Label>
-							<div class="flex gap-2">
-								<Button
-									type="button"
-									variant={webhookMethod === 'POST' ? 'default' : 'outline'}
-									size="sm"
-									onclick={() => (webhookMethod = 'POST')}
-									disabled={submitting}
-								>
-									POST
-								</Button>
-								<Button
-									type="button"
-									variant={webhookMethod === 'PUT' ? 'default' : 'outline'}
-									size="sm"
-									onclick={() => (webhookMethod = 'PUT')}
-									disabled={submitting}
-								>
-									PUT
-								</Button>
-							</div>
-						</div>
-
-						<div class="space-y-2">
-							<Label for="webhook-auth">Authentication</Label>
-							<div class="flex gap-2">
-								<Button
-									type="button"
-									variant={webhookAuthType === 'none' ? 'default' : 'outline'}
-									size="sm"
-									onclick={() => (webhookAuthType = 'none')}
-									disabled={submitting}
-								>
-									None
-								</Button>
-								<Button
-									type="button"
-									variant={webhookAuthType === 'bearer' ? 'default' : 'outline'}
-									size="sm"
-									onclick={() => (webhookAuthType = 'bearer')}
-									disabled={submitting}
-								>
-									Bearer
-								</Button>
-								<Button
-									type="button"
-									variant={webhookAuthType === 'basic' ? 'default' : 'outline'}
-									size="sm"
-									onclick={() => (webhookAuthType = 'basic')}
-									disabled={submitting}
-								>
-									Basic
-								</Button>
-							</div>
-						</div>
-					</div>
-
-					{#if webhookAuthType === 'bearer'}
-						<div class="space-y-2">
-							<Label for="webhook-token">Bearer Token</Label>
-							<Input
-								id="webhook-token"
-								type="password"
-								placeholder={hasStoredAuthSecret ? 'Leave blank to keep current token' : 'Enter token'}
-								bind:value={webhookAuthToken}
-								disabled={submitting}
-							/>
-						</div>
-					{/if}
-
-					{#if webhookAuthType === 'basic'}
-						<div class="grid grid-cols-2 gap-4">
-							<div class="space-y-2">
-								<Label for="webhook-user">Username</Label>
-								<Input
-									id="webhook-user"
-									type="text"
-									placeholder="Username"
-									bind:value={webhookAuthUser}
-									disabled={submitting}
-								/>
-							</div>
-							<div class="space-y-2">
-								<Label for="webhook-pass">Password</Label>
-								<Input
-									id="webhook-pass"
-									type="password"
-									placeholder={hasStoredAuthSecret ? 'Leave blank to keep current password' : 'Password'}
-									bind:value={webhookAuthPass}
-									disabled={submitting}
-								/>
-							</div>
-						</div>
-					{/if}
-
-					<div class="space-y-2">
-						<Label for="webhook-headers">Custom Headers (JSON)</Label>
+						<Label for="email-recipients">Recipients *</Label>
 						<Textarea
-							id="webhook-headers"
-							placeholder={'{\n  "X-Custom-Header": "value"\n}'}
-							bind:value={webhookHeaders}
+							id="email-recipients"
+							placeholder="user@example.com, team@example.com"
+							bind:value={emailRecipients}
 							disabled={submitting}
 							rows={3}
-							class="font-mono text-sm"
 						/>
+						<p class="text-xs text-muted-foreground">Comma-separated list of email addresses</p>
 					</div>
+				{/if}
+
+				{#if isWebhookForm}
+					<div class="space-y-4">
+						<div class="space-y-2">
+							<div class="flex items-center gap-2">
+								<Label for="webhook-url">{isVendorWebhook ? 'Webhook URL *' : 'URL *'}</Label>
+								{#if flavorBadge}
+									<span
+										class="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+									>
+										{flavorBadge.badge}
+									</span>
+								{/if}
+							</div>
+							<Input
+								id="webhook-url"
+								type="url"
+								placeholder={typeInfo?.urlPlaceholder ?? 'https://example.com/hooks/logtide'}
+								bind:value={webhookUrl}
+								disabled={submitting}
+								aria-invalid={showUrlError}
+							/>
+							{#if showUrlError}
+								<p class="text-xs {stateTone('failed').text}">{urlError}</p>
+							{:else if flavorBadge}
+								<p class="text-xs text-muted-foreground">{flavorBadge.hint}</p>
+							{/if}
+						</div>
+
+						{#if destType === 'webhook'}
+							<div class="grid grid-cols-2 gap-4">
+								<div class="space-y-2">
+									<Label>Method</Label>
+									<div class="flex gap-2">
+										<Button
+											type="button"
+											variant={webhookMethod === 'POST' ? 'default' : 'outline'}
+											size="sm"
+											onclick={() => (webhookMethod = 'POST')}
+											disabled={submitting}
+										>
+											POST
+										</Button>
+										<Button
+											type="button"
+											variant={webhookMethod === 'PUT' ? 'default' : 'outline'}
+											size="sm"
+											onclick={() => (webhookMethod = 'PUT')}
+											disabled={submitting}
+										>
+											PUT
+										</Button>
+									</div>
+								</div>
+
+								<div class="space-y-2">
+									<Label>Authentication</Label>
+									<div class="flex gap-2">
+										<Button
+											type="button"
+											variant={webhookAuthType === 'none' ? 'default' : 'outline'}
+											size="sm"
+											onclick={() => (webhookAuthType = 'none')}
+											disabled={submitting}
+										>
+											None
+										</Button>
+										<Button
+											type="button"
+											variant={webhookAuthType === 'bearer' ? 'default' : 'outline'}
+											size="sm"
+											onclick={() => (webhookAuthType = 'bearer')}
+											disabled={submitting}
+										>
+											Bearer
+										</Button>
+										<Button
+											type="button"
+											variant={webhookAuthType === 'basic' ? 'default' : 'outline'}
+											size="sm"
+											onclick={() => (webhookAuthType = 'basic')}
+											disabled={submitting}
+										>
+											Basic
+										</Button>
+									</div>
+								</div>
+							</div>
+
+							{#if webhookAuthType === 'bearer'}
+								<div class="space-y-2">
+									<Label for="webhook-token">Bearer token</Label>
+									<Input
+										id="webhook-token"
+										type="password"
+										placeholder={hasStoredAuthSecret && storedAuthType === 'bearer'
+											? 'Leave blank to keep current token'
+											: 'Enter token'}
+										bind:value={webhookAuthToken}
+										disabled={submitting}
+									/>
+								</div>
+							{/if}
+
+							{#if webhookAuthType === 'basic'}
+								<div class="grid grid-cols-2 gap-4">
+									<div class="space-y-2">
+										<Label for="webhook-user">Username</Label>
+										<Input
+											id="webhook-user"
+											type="text"
+											placeholder="Username"
+											bind:value={webhookAuthUser}
+											disabled={submitting}
+										/>
+									</div>
+									<div class="space-y-2">
+										<Label for="webhook-pass">Password</Label>
+										<Input
+											id="webhook-pass"
+											type="password"
+											placeholder={hasStoredAuthSecret && storedAuthType === 'basic'
+												? 'Leave blank to keep current password'
+												: 'Password'}
+											bind:value={webhookAuthPass}
+											disabled={submitting}
+										/>
+									</div>
+								</div>
+							{/if}
+
+							<div class="space-y-2">
+								<Label for="webhook-headers">Custom headers (JSON)</Label>
+								<Textarea
+									id="webhook-headers"
+									placeholder={'{\n  "X-Custom-Header": "value"\n}'}
+									bind:value={webhookHeaders}
+									disabled={submitting}
+									rows={3}
+									class="font-mono text-sm"
+									aria-invalid={!!headersError}
+								/>
+								{#if headersError}
+									<p class="text-xs {stateTone('failed').text}">{headersError}</p>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				{/if}
+
+				{#if destType === 'pagerduty'}
+					<div class="space-y-2">
+						<Label for="pagerduty-key">{isEditing ? 'Routing key' : 'Routing key *'}</Label>
+						<Input
+							id="pagerduty-key"
+							type="password"
+							autocomplete="off"
+							placeholder={isEditing ? 'Leave blank to keep current key' : 'Enter routing key'}
+							bind:value={routingKey}
+							disabled={submitting}
+						/>
+						<p class="text-xs text-muted-foreground">
+							Integration key of an Events API v2 integration
+						</p>
+						<p class="text-xs text-muted-foreground">
+							Testing creates and immediately resolves a low urgency incident.
+						</p>
+					</div>
+				{/if}
+
+				<div class="space-y-2">
+					<Label for="channel-desc">Description (optional)</Label>
+					<Input
+						id="channel-desc"
+						type="text"
+						placeholder="What this destination is for"
+						bind:value={description}
+						disabled={submitting}
+					/>
 				</div>
-			{/if}
 
-			<!-- Description -->
-			<div class="space-y-2">
-				<Label for="channel-desc">Description (optional)</Label>
-				<Input
-					id="channel-desc"
-					type="text"
-					placeholder="Optional description"
-					bind:value={description}
-					disabled={submitting}
-				/>
-			</div>
+				{#if testResult}
+					<div
+						role="status"
+						class="flex items-center gap-2 rounded-md border p-3 text-sm {testResult.success
+							? okTone.badge
+							: failedTone.badge}"
+					>
+						{#if testResult.success}
+							<Check class="h-4 w-4" aria-hidden="true" />
+							Test notification sent
+						{:else}
+							<X class="h-4 w-4" aria-hidden="true" />
+							{testResult.error || 'Test failed'}
+						{/if}
+					</div>
+				{/if}
+			</form>
 
-			<!-- Test Result -->
-			{#if testResult}
-				<div
-					class="flex items-center gap-2 p-3 rounded-md text-sm {testResult.success
-						? 'bg-green-50 text-green-800'
-						: 'bg-red-50 text-red-800'}"
-				>
-					{#if testResult.success}
-						<Check class="h-4 w-4" />
-						Test notification sent successfully
-					{:else}
-						<X class="h-4 w-4" />
-						{testResult.error || 'Test failed'}
-					{/if}
-				</div>
-			{/if}
-		</form>
-
-		<Dialog.Footer class="gap-2">
-			{#if isEditing}
+			<Dialog.Footer class="gap-2">
+				{#if !isEditing}
+					<Button
+						type="button"
+						variant="ghost"
+						onclick={() => {
+							destType = null;
+							testResult = null;
+							attempted = false;
+						}}
+						disabled={submitting}
+						class="gap-2"
+					>
+						<ArrowLeft class="h-4 w-4" aria-hidden="true" />
+						Back
+					</Button>
+				{/if}
 				<Button
 					type="button"
 					variant="outline"
 					onclick={handleTest}
-					disabled={submitting || testing}
+					disabled={submitting || testing || !!validationError}
 					class="gap-2"
 				>
 					{#if testing}
 						<Spinner size="sm" />
 					{:else}
-						<TestTube class="h-4 w-4" />
+						<TestTube class="h-4 w-4" aria-hidden="true" />
 					{/if}
 					Test
 				</Button>
-			{/if}
-			<div class="flex-1"></div>
-			<Button type="button" variant="outline" onclick={() => (open = false)} disabled={submitting}>
-				Cancel
-			</Button>
-			<Button onclick={handleSubmit} disabled={submitting}>
-				{#if submitting}
-					<Spinner size="sm" className="mr-2" />
-				{/if}
-				{isEditing ? 'Save Changes' : 'Create Channel'}
-			</Button>
-		</Dialog.Footer>
+				<div class="flex-1"></div>
+				<Button type="button" variant="outline" onclick={() => (open = false)} disabled={submitting}>
+					Cancel
+				</Button>
+				<Button onclick={handleSubmit} disabled={submitting}>
+					{#if submitting}
+						<Spinner size="sm" className="mr-2" />
+					{/if}
+					{isEditing ? 'Save changes' : 'Create destination'}
+				</Button>
+			</Dialog.Footer>
+		{/if}
 	</Dialog.Content>
 </Dialog.Root>

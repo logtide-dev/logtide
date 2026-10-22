@@ -7,11 +7,13 @@ import { authenticate } from '../auth/middleware.js';
 import { db } from '../../database/index.js';
 import { projectsService } from '../projects/service.js';
 import { usersService } from '../users/service.js';
-import { notificationChannelsService } from '../notification-channels/index.js';
+import { notificationChannelsService, serializeChannels } from '../notification-channels/index.js';
+import { OrganizationsService } from '../organizations/service.js';
 import { assertHttpTargetAllowed, resolveAndValidateHost, SsrfBlockedError } from '../../utils/ssrf-guard.js';
 import { config } from '../../config/index.js';
 
 export const monitorService = new MonitorService(db);
+const organizationsService = new OrganizationsService();
 
 const uuidSchema = z.string().uuid();
 
@@ -248,7 +250,8 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
     if (!monitor) return reply.status(404).send({ error: 'Not found' });
 
     const channels = await notificationChannelsService.getMonitorChannels(id);
-    return reply.send({ channels });
+    const isAdmin = await organizationsService.isOwnerOrAdmin(organizationId, request.user.id);
+    return reply.send({ channels: serializeChannels(channels, { isAdmin }) });
   });
 
   fastify.put('/:id/channels', async (request: any, reply) => {

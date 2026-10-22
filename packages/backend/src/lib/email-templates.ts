@@ -556,7 +556,7 @@ const severityLabels: Record<string, string> = {
 
 export function generateIncidentEmail(data: IncidentEmailData): { html: string; text: string } {
   const frontendUrl = getFrontendUrl();
-  const incidentUrl = `${frontendUrl}/dashboard/security/incidents/${data.incidentId}`;
+  const incidentUrl = `${frontendUrl}/dashboard/incidents/${data.incidentId}`;
   const severityColor = severityColors[data.severity] || colors.informational;
   const severityLabel = severityLabels[data.severity] || data.severity;
 

@@ -14,6 +14,21 @@ describe('redactDeliveryForApi', () => {
     expect(redacted.metadata).not.toHaveProperty('headers');
   });
 
+  it('removes a pagerduty routing key from the stored payload', () => {
+    const row = {
+      id: 'd',
+      metadata: {
+        payload: { routing_key: 'SECRETKEY', event_action: 'trigger', dedup_key: 'k' },
+        signingSecret: null,
+      },
+    } as any;
+    const redacted = redactDeliveryForApi(row);
+    expect(redacted.metadata.payload).not.toHaveProperty('routing_key');
+    expect(redacted.metadata.payload.event_action).toBe('trigger');
+    // the stored row is untouched
+    expect(row.metadata.payload.routing_key).toBe('SECRETKEY');
+  });
+
   it('passes through undefined and null metadata safely', () => {
     expect(redactDeliveryForApi(undefined)).toBeUndefined();
     expect(redactDeliveryForApi({ id: 'd', metadata: null } as any).metadata).toBeNull();

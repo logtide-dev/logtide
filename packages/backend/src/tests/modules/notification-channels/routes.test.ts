@@ -1040,4 +1040,182 @@ describe('Notification Channels Routes', () => {
       expect(response.statusCode).toBe(400);
     });
   });
+
+  describe('secret masking and secret-preserving update', () => {
+    const PD_KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+
+    async function insertBearerChannel(orgId: string) {
+      return db
+        .insertInto('notification_channels')
+        .values({
+          organization_id: orgId,
+          name: 'Bearer hook',
+          type: 'webhook',
+          config: JSON.stringify({
+            url: 'https://hooks.slack.com/services/T1/B2/slacktoken',
+            auth: { type: 'bearer', token: 'raw-bearer-token' },
+          }) as any,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    }
+
+    async function memberSession() {
+      const memberUser = await createTestUser({ email: 'masking-member@test.com' });
+      await db
+        .insertInto('organization_members')
+        .values({ user_id: memberUser.id, organization_id: testOrganization.id, role: 'member' })
+        .execute();
+      return createTestSession(memberUser.id);
+    }
+
+    it('GET / as admin never contains the raw bearer token', async () => {
+      await insertBearerChannel(testOrganization.id);
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/notification-channels?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain('raw-bearer-token');
+      expect(response.json().channels[0].config.auth.hasSecret).toBe(true);
+    });
+
+    it('GET / as plain member reduces the webhook url to host only', async () => {
+      await insertBearerChannel(testOrganization.id);
+      const session = await memberSession();
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/notification-channels?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${session.token}` },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().channels[0].config.url).toBe('https://hooks.slack.com/...');
+      expect(response.body).not.toContain('slacktoken');
+      expect(response.body).not.toContain('raw-bearer-token');
+    });
+
+    it('defaults endpoints are masked too', async () => {
+      const row = await insertBearerChannel(testOrganization.id);
+      await db
+        .insertInto('organization_default_channels')
+        .values({ organization_id: testOrganization.id, event_type: 'alert', channel_id: row.id })
+        .execute();
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/notification-channels/defaults?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('hasSecret');
+      expect(response.body).not.toContain('raw-bearer-token');
+      const single = await app.inject({
+        method: 'GET',
+        url: `/api/v1/notification-channels/defaults/alert?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      expect(single.body).not.toContain('raw-bearer-token');
+    });
+
+    it('PUT /:id without auth.token keeps the stored token', async () => {
+      const row = await insertBearerChannel(testOrganization.id);
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/notification-channels/${row.id}?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: {
+          config: {
+            url: 'https://hooks.slack.com/services/T1/B2/other',
+            auth: { type: 'bearer' },
+          },
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain('raw-bearer-token');
+
+      const stored = await db
+        .selectFrom('notification_channels')
+        .select('config')
+        .where('id', '=', row.id)
+        .executeTakeFirstOrThrow();
+      const config = stored.config as any;
+      expect(config.url).toBe('https://hooks.slack.com/services/T1/B2/other');
+      expect(config.auth.token).toBe('raw-bearer-token');
+    });
+
+    it('POST / pagerduty returns 201 with a masked routing key', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/notification-channels?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { name: 'On call', type: 'pagerduty', config: { routingKey: PD_KEY } },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().channel.config.routingKey).toBe('********');
+      expect(response.body).not.toContain(PD_KEY);
+
+      const stored = await db
+        .selectFrom('notification_channels')
+        .select('config')
+        .where('type', '=', 'pagerduty')
+        .executeTakeFirstOrThrow();
+      expect((stored.config as any).routingKey).toBe(PD_KEY);
+    });
+
+    it('PUT /:id pagerduty with a masked routing key keeps the stored one', async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: `/api/v1/notification-channels?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { name: 'On call', type: 'pagerduty', config: { routingKey: PD_KEY } },
+      });
+      const id = created.json().channel.id;
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/notification-channels/${id}?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { config: { routingKey: '********' } },
+      });
+      expect(response.statusCode).toBe(200);
+      const stored = await db
+        .selectFrom('notification_channels')
+        .select('config')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+      expect((stored.config as any).routingKey).toBe(PD_KEY);
+    });
+
+    it('POST / pagerduty with a url body returns 400', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/notification-channels?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { name: 'Bad', type: 'pagerduty', config: { url: 'https://example.com/x' } },
+      });
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('POST / pagerduty with a malformed routing key returns 400', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/notification-channels?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { name: 'Bad', type: 'pagerduty', config: { routingKey: 'short' } },
+      });
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('a user of another organization gets 403 reading these channels', async () => {
+      await insertBearerChannel(testOrganization.id);
+      const otherUser = await createTestUser({ email: 'orgb@test.com' });
+      await createTestOrganization({ ownerId: otherUser.id });
+      const other = await createTestSession(otherUser.id);
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/notification-channels?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${other.token}` },
+      });
+      expect(response.statusCode).toBe(403);
+    });
+  });
 });
