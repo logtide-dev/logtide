@@ -59,6 +59,8 @@
   const parsed = $derived(parseLogQuery(value));
   const clientError = $derived(parsed.ok === false ? parsed.error : null);
   const shownError = $derived(clientError ?? (serverError && !serverDismissed ? serverError : null));
+  // A refused Enter and a server rejection both answer a submit: announce them at once.
+  const assertive = $derived(refused || (clientError === null && shownError !== null));
   const underline = $derived(shownError ? errorRange(value, parsed.tokens, shownError.position) : null);
   const segments = $derived(splitAtRange(tokenSegments(value, parsed.tokens), underline));
   const context = $derived(getCompletionContext(value, caret));
@@ -285,7 +287,7 @@
   </div>
   <div aria-live="polite">
     {#if shownError}
-      <p id={ERROR_ID} role={refused ? "alert" : undefined} class="mt-1 text-xs text-destructive-text">
+      <p id={ERROR_ID} role={assertive ? "alert" : undefined} class="mt-1 text-xs text-destructive-text">
         {shownError.message} (position {shownError.position + 1})
       </p>
     {/if}
