@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { createExceptionSchema } from '@logtide/shared';
+import { createExceptionSchema, PREVIEW_RANGES } from '@logtide/shared';
 import { context } from '@logtide/shared/context';
 import { SigmaService } from './service.js';
 import { sigmaExceptionsService } from './exceptions-service.js';
@@ -8,6 +8,7 @@ import { ruleManagementService } from './rule-management-service.js';
 import { SigmaParser } from './parser.js';
 import { SigmaConverter } from './converter.js';
 import { YamlTooLargeError, assertYamlWithinLimit } from './yaml.js';
+import { previewRule, loadPreviewTarget, resolvePreviewProjectIds } from './preview-service.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { auditLogService } from '../audit-log/service.js';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
@@ -42,6 +43,15 @@ const matchesQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   days: z.coerce.number().int().min(1).max(30).default(7),
 });
+
+const previewBody = z.object({
+  organizationId: z.string().uuid(),
+  range: z.enum(PREVIEW_RANGES),
+  yaml: z.string().min(1).optional(),
+});
+
+// One preview at a time per organization (in process). Released in finally.
+const runningPreviews = new Set<string>();
 
 const BULK_AUDIT_ACTION = {
   enable: 'rule.enabled',
@@ -161,6 +171,66 @@ export async function sigmaRuleRoutes(fastify: FastifyInstance) {
     });
     return reply.send(result);
   });
+
+  // -------------------------------------------------------------------------
+  // History preview
+  // -------------------------------------------------------------------------
+
+  fastify.post(
+    '/api/v1/sigma/rules/:id/preview',
+    { config: { rateLimit: { max: 6, timeWindow: '1 minute' } } },
+    async (request: any, reply) => {
+      const { id } = ruleParams.parse(request.params);
+      const body = previewBody.parse(request.body);
+
+      const denied = await requireMember(request, reply, body.organizationId);
+      if (denied) return denied;
+
+      const target = await loadPreviewTarget(id, body.organizationId);
+      if (!target) {
+        return reply.code(404).send({ error: 'Sigma rule not found' });
+      }
+
+      let rule = target.rule;
+      if (body.yaml !== undefined) {
+        try {
+          assertYamlWithinLimit(body.yaml);
+        } catch (error) {
+          if (error instanceof YamlTooLargeError) {
+            return reply.code(400).send({ error: error.message });
+          }
+          throw error;
+        }
+        const parsed = SigmaParser.parse(body.yaml);
+        if (!parsed.rule) {
+          return reply.code(400).send({ error: 'Invalid rule', errors: parsed.errors });
+        }
+        // Keep the stored id so exceptions of this rule still apply.
+        rule = { ...parsed.rule, id };
+      }
+
+      if (runningPreviews.has(body.organizationId)) {
+        return reply.code(429).send({ error: 'A preview is already running for this organization' });
+      }
+      runningPreviews.add(body.organizationId);
+      try {
+        const [projectIds, exceptions] = await Promise.all([
+          resolvePreviewProjectIds(body.organizationId, target.projectId),
+          sigmaExceptionsService.loadActiveForRules(body.organizationId, [id], new Date()),
+        ]);
+        const result = await previewRule({
+          organizationId: body.organizationId,
+          rule,
+          projectIds,
+          range: body.range,
+          exceptions: exceptions.get(id) ?? [],
+        });
+        return reply.send(result);
+      } finally {
+        runningPreviews.delete(body.organizationId);
+      }
+    }
+  );
 
   // -------------------------------------------------------------------------
   // Exceptions
