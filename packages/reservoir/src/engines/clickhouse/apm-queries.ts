@@ -251,14 +251,14 @@ function entryModeCondition(scope: EntryScope, mode: EntryMode, queryParams: Rec
 }
 
 /**
- * `LIMIT 1` probe over the scope (never the operation): `'kinds'` looks for
- * an entry span, `'any-kind'` for any span with a kind. The root fallback
- * applies only when kinds were omitted and no span in scope has a kind.
+ * `LIMIT 1` probe over the scope (never the operation) for one span of the
+ * entry kinds. With kinds omitted and no such span in scope, the root spans
+ * of the scope are used instead, whatever other kinds are present (Wave D
+ * ruling C1, conformance O08 and LH07).
  */
-export function entryProbeSql(scope: EntryScope, probe: 'kinds' | 'any-kind'): NativeQuery {
+export function entryProbeSql(scope: EntryScope): NativeQuery {
   const queryParams: Record<string, unknown> = {};
-  const conditions = entryScopeConditions(scope, queryParams);
-  conditions.push(probe === 'kinds' ? entryModeCondition(scope, 'kinds', queryParams) : "kind IS NOT NULL AND kind != ''");
+  const conditions = [...entryScopeConditions(scope, queryParams), entryModeCondition(scope, 'kinds', queryParams)];
   return { query: `SELECT 1 FROM spans WHERE ${conditions.join(' AND ')} LIMIT 1`, parameters: [queryParams] };
 }
 

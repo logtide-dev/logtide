@@ -367,7 +367,7 @@ describe('clickhouse apm specifics: entry spans', () => {
     // nokind: a root and a child, no span has a kind.
     { traceId: trace(1), spanId: span(1), service: 'nokind', operation: 'run', durationMs: 30, second: 1 },
     { traceId: trace(1), spanId: span(2), parentSpanId: span(1), service: 'nokind', operation: 'step', durationMs: 10, second: 2 },
-    // mixed: the same shape plus one INTERNAL span, so no root fallback.
+    // mixed: the same shape plus one INTERNAL span; still no entry span, so the root fallback applies.
     { traceId: trace(2), spanId: span(3), service: 'mixed', operation: 'run', durationMs: 30, second: 3 },
     { traceId: trace(2), spanId: span(4), parentSpanId: span(3), service: 'mixed', operation: 'step', durationMs: 10, second: 4 },
     { traceId: trace(2), spanId: span(5), parentSpanId: span(3), service: 'mixed', operation: 'loop', durationMs: 5, second: 5, kind: 'INTERNAL' as const },
@@ -379,12 +379,14 @@ describe('clickhouse apm specifics: entry spans', () => {
   const subject = useSpecificSpans(spans, tracesOf(spans));
   const window = { projectId: project, from: SPECIFICS_FROM, to: SPECIFICS_TO };
 
-  it('falls back to root spans only when no span in scope has a kind', async () => {
+  it('falls back to root spans whenever no span of the entry kinds is in scope', async () => {
     const nokind = await subject().getOperationStats({ ...window, service: 'nokind' });
     expect(nokind.map((r) => [r.operation, r.count, r.avgMs])).toEqual([['run', 1, 30]]);
-    expect(await subject().getOperationStats({ ...window, service: 'mixed' })).toEqual([]);
+    const mixed = await subject().getOperationStats({ ...window, service: 'mixed' });
+    expect(mixed.map((r) => [r.operation, r.count, r.avgMs])).toEqual([['run', 1, 30]]);
     const latency = await subject().getLatencyHistogram({ ...window, service: 'mixed' });
-    expect(latency.counts).toEqual(Array(17).fill(0));
+    expect(latency.counts).toEqual([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(await subject().getOperationStats({ ...window, service: 'mixed', kinds: ['SERVER'] })).toEqual([]);
   });
 
   it('latency buckets clamp at 1 ms and put durations above 60 s in the overflow bucket', async () => {

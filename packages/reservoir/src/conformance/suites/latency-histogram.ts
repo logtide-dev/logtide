@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { LATENCY_HISTOGRAM_BOUNDS_MS } from '../../core/constants.js';
 import type { LatencyHistogramParams } from '../../core/types.js';
 import type { ConformanceContext } from '../harness.js';
-import { PROJECT_A, PROJECT_B, WINDOW } from '../corpus.js';
+import { minutes, PROJECT_A, PROJECT_B, WINDOW } from '../corpus.js';
 
 const ZEROS = Array.from({ length: 17 }, () => 0);
 
@@ -46,6 +46,12 @@ export function describeLatencyHistogramConformance(ctx: ConformanceContext): vo
     it('LH06 another project only sees its own spans', async () => {
       const result = await histogram({ projectId: PROJECT_B });
       expect(result.counts).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]);
+    });
+
+    it('LH07 a scope whose spans only have non-entry kinds falls back to its roots', async () => {
+      // Only LOOP (INTERNAL, root, 45 ms) starts in this window; the CONSUMER jobs start a second later.
+      const result = await histogram({ service: 'worker', from: minutes(40), to: new Date(minutes(40).getTime() + 500) });
+      expect(result.counts).toEqual([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     });
   });
 }

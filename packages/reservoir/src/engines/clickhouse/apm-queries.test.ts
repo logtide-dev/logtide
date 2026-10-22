@@ -187,10 +187,10 @@ describe('clickhouse operation stats sql', () => {
     expect(query).toContain('GROUP BY service_name, operation_name ORDER BY n DESC, service_name ASC, operation_name ASC LIMIT {p_limit:UInt32}');
   });
 
-  it('the kind probe looks for any span with a kind in scope', () => {
-    const native = entryProbeSql(normalizeEntryParams({ ...statsBase, service: 'api' }), 'any-kind');
-    expect(native.query).toMatch(/^SELECT 1 FROM spans WHERE project_id = \{p_pid:String\} .* AND kind IS NOT NULL AND kind != '' LIMIT 1$/);
-    expect(entryProbeSql(normalizeEntryParams(statsBase), 'kinds').query).toContain('kind IN {p_kinds:Array(String)} LIMIT 1');
+  it('the entry probe looks for one span of the entry kinds in scope, never by operation', () => {
+    const native = entryProbeSql(normalizeEntryParams({ ...statsBase, service: 'api', operation: 'GET /x' }));
+    expect(native.query).toMatch(/^SELECT 1 FROM spans WHERE project_id = \{p_pid:String\} .* AND kind IN \{p_kinds:Array\(String\)\} LIMIT 1$/);
+    expect(native.query).not.toContain('operation_name');
   });
 
   it('latency buckets count the bounds below each duration', () => {
@@ -213,17 +213,13 @@ describe('clickhouse operation stats and latency engine flow', () => {
     expect(calls()).toHaveLength(1);
   });
 
-  it('falls back to root spans only when no span in scope has a kind', async () => {
-    const none = stubEngine([[], [], [statRow]]);
+  it('falls back to root spans whenever no span of the entry kinds is in scope', async () => {
+    const none = stubEngine([[], [statRow]]);
     expect(await none.engine.getOperationStats(statsBase)).toHaveLength(1);
     expect(none.calls().map((c) => c.query)).toEqual([
       expect.stringContaining('kind IN {p_kinds:Array(String)}'),
-      expect.stringContaining("kind IS NOT NULL AND kind != '' LIMIT 1"),
       expect.stringContaining("(parent_span_id IS NULL OR parent_span_id = '')"),
     ]);
-    const someKind = stubEngine([[], [{ '1': 1 }]]);
-    expect(await someKind.engine.getOperationStats(statsBase)).toEqual([]);
-    expect(someKind.calls()).toHaveLength(2);
   });
 
   it('explicit kinds never fall back and an empty kinds list is rejected', async () => {
@@ -243,12 +239,9 @@ describe('clickhouse operation stats and latency engine flow', () => {
     expect(histogram.query).toContain('kind IN {p_kinds:Array(String)}');
     expect(histogram.query).toContain('operation_name = {p_op:String}');
 
-    const roots = stubEngine([[], [], [{ bucket: 0, n: '1' }]]);
+    const roots = stubEngine([[], [{ bucket: 0, n: '1' }]]);
     expect((await roots.engine.getLatencyHistogram(statsBase)).counts[0]).toBe(1);
-    expect(roots.calls()[2].query).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
-
-    const internalOnly = stubEngine([[], [{ '1': 1 }]]);
-    expect((await internalOnly.engine.getLatencyHistogram(statsBase)).counts).toEqual(Array(17).fill(0));
-    expect(internalOnly.calls()).toHaveLength(2);
+    expect(roots.calls()).toHaveLength(2);
+    expect(roots.calls()[1].query).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
   });
 });
