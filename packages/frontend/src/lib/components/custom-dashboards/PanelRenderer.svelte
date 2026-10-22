@@ -2,8 +2,9 @@
   // Generic panel shell. Knows nothing about specific panel types - looks up
   // the registry by panel.config.type and renders the matching component.
 
-  import type { PanelInstance } from '@logtide/shared';
+  import type { PanelInstance, PanelTimeRange } from '@logtide/shared';
   import { getPanelDefinition } from './panel-registry';
+  import { panelDrilldown } from './drilldown';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import GripVertical from '@lucide/svelte/icons/grip-vertical';
   import Settings2 from '@lucide/svelte/icons/settings-2';
@@ -11,6 +12,7 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Pause from '@lucide/svelte/icons/pause';
   import Play from '@lucide/svelte/icons/play';
+  import ExternalLink from '@lucide/svelte/icons/external-link';
 
   interface Props {
     panel: PanelInstance;
@@ -19,6 +21,8 @@
     error: string | null;
     editMode: boolean;
     paused?: boolean;
+    /** Dashboard-level time range override; shapes the drill-down window. */
+    timeRangeOverride?: PanelTimeRange | null;
     onEdit?: (panelId: string) => void;
     onRemove?: (panelId: string) => void;
     onRefresh?: (panelId: string) => void;
@@ -33,6 +37,7 @@
     error,
     editMode,
     paused = false,
+    timeRangeOverride = null,
     onEdit,
     onRemove,
     onRefresh,
@@ -42,6 +47,7 @@
 
   const def = $derived(getPanelDefinition(panel.config.type));
   const PanelComponent = $derived(def.component);
+  const drilldown = $derived(editMode ? null : panelDrilldown(panel.config, timeRangeOverride));
 
   function handleResizePointerDown(ev: PointerEvent) {
     ev.preventDefault();
@@ -77,6 +83,7 @@
             : 'text-muted-foreground hover:text-foreground'}"
           onclick={() => onTogglePause?.()}
           title={paused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
+          aria-label={paused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
         >
           {#if paused}
             <Play class="w-3.5 h-3.5" />
@@ -85,12 +92,23 @@
           {/if}
         </button>
       {/if}
+      {#if drilldown}
+        <a
+          href={drilldown.href}
+          class="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+          title={drilldown.label}
+          aria-label={drilldown.label}
+        >
+          <ExternalLink class="w-3.5 h-3.5" aria-hidden="true" />
+        </a>
+      {/if}
       {#if !editMode && onRefresh}
         <button
           type="button"
           class="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
           onclick={() => onRefresh?.(panel.id)}
           title="Refresh"
+          aria-label="Refresh panel"
           disabled={loading}
         >
           <RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" />
@@ -102,6 +120,7 @@
           class="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
           onclick={() => onEdit?.(panel.id)}
           title="Configure panel"
+          aria-label="Configure panel"
         >
           <Settings2 class="w-3.5 h-3.5" />
         </button>
@@ -110,6 +129,7 @@
           class="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
           onclick={() => onRemove?.(panel.id)}
           title="Remove panel"
+          aria-label="Remove panel"
         >
           <X class="w-3.5 h-3.5" />
         </button>

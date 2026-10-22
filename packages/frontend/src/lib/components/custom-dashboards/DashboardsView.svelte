@@ -595,6 +595,7 @@
         panelData={$panelDataMap}
         editMode={$editMode}
         pausedPanelIds={$pausedPanelIds}
+        timeRangeOverride={$timeRangeOverride}
         onReorder={handleReorder}
         onResizePanel={handleResizePanel}
         onEditPanel={handleEditPanel}
