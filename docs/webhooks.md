@@ -202,7 +202,7 @@ const envelope = parseWebhookEvent(body);
 Like Discord, Slack and Microsoft Teams reject the event envelope, so LogTide rewrites the body for these URLs at delivery time (every event source, retries and replays included; the delivery log keeps the envelope):
 
 - **Slack**: classic incoming webhooks (`hooks.slack.com/services/T.../B.../...`, also `hooks.slack-gov.com`) receive Block Kit: a header, an optional description, a fields section, a context line and an "Open in LogTide" button. All dynamic text is escaped so a log message cannot ping a channel. Workflow triggers (`/triggers/...`) take free-form JSON and receive the envelope unchanged.
-- **Microsoft Teams**: Office 365 connector URLs (`*.webhook.office.com`, `outlook.office.com/webhook/`) and Power Automate Workflows URLs receive an Adaptive Card kept under Teams' size limit.
+- **Microsoft Teams**: Office 365 connector URLs (`*.webhook.office.com`, `outlook.office.com/webhook/`) and Power Automate Workflows URLs receive an Adaptive Card kept under Teams' size limit. Workflows URLs (`*.logic.azure.com/workflows/...`, `*.api.powerplatform.com/powerautomate/...`) are indistinguishable from generic Azure Logic Apps and Power Automate HTTP triggers, so a Logic App that expects the event envelope will receive the card instead. Point such flows at an intermediate endpoint or a different host if you need the envelope.
 
 The signature covers the bytes actually sent, as for Discord.
 
