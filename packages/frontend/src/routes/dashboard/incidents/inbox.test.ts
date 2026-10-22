@@ -294,7 +294,7 @@ describe('inbox page', () => {
     try {
       for (let i = 0; i < 6; i++) {
         FakeEventSource.instances[i].onerror?.();
-        await vi.advanceTimersByTimeAsync(1000 * 2 ** i);
+        await vi.advanceTimersByTimeAsync(3000 * 2 ** i);
       }
       await tick();
     } finally {
