@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
-  import ConnectSnippets from '$lib/components/connect/ConnectSnippets.svelte';
+  import { ConnectSnippets } from '$lib/components/connect';
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import Key from '@lucide/svelte/icons/key';
   import Book from '@lucide/svelte/icons/book';
