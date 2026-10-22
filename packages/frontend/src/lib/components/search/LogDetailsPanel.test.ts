@@ -189,7 +189,7 @@ describe('LogDetailsPanel', () => {
     const utils = setup(log, [{ type: 'request_id', value: 'req-9', sourceField: 'metadata.requestId' }]);
     await fireEvent.click(utils.getByRole('button', { name: 'View context' }));
     expect(utils.onOpenContext).toHaveBeenCalledWith(log);
-    await fireEvent.click(utils.getByRole('button', { name: /Request Id: req-9/ }));
+    await fireEvent.click(utils.getByRole('button', { name: 'Show events with Request ID req-9' }));
     expect(utils.onOpenCorrelation).toHaveBeenCalledWith(log, 'request_id', 'req-9');
     expect(utils.getByRole('link', { name: 'Configure' })).toHaveAttribute('href', '/dashboard/settings/patterns');
   });
