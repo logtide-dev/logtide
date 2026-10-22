@@ -46,6 +46,18 @@ const fromTemplateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
 });
 
+const addPanelSchema = z.object({
+  // Validated against panelConfigSchema in the service so a bad config is a
+  // ZodError with field-level details.
+  config: z.unknown(),
+  layout: z
+    .object({
+      w: z.number().int().min(1).max(12).optional(),
+      h: z.number().int().min(1).max(20).optional(),
+    })
+    .optional(),
+});
+
 const panelDataBatchSchema = z.object({
   organizationId: z.string().uuid(),
   panelIds: z.array(z.string()).optional(),
@@ -343,6 +355,49 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       }
       if (e instanceof Error && e.message === 'Dashboard not found') {
         return reply.status(404).send({ error: e.message });
+      }
+      throw e;
+    }
+  });
+
+  // ─── Append a panel ─────────────────────────────────────────────────────
+  fastify.post('/:id/panels', async (request: any, reply) => {
+    try {
+      const { organizationId } = request.query as { organizationId?: string };
+      if (!organizationId) {
+        return reply.status(400).send({ error: 'organizationId required' });
+      }
+      if (!(await checkMembership(request.user.id, organizationId))) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+      const body = addPanelSchema.parse(request.body);
+
+      const { dashboard, panel } = await customDashboardsService.addPanel(
+        (request.params as { id: string }).id,
+        organizationId,
+        request.user.id,
+        { config: body.config, layout: body.layout }
+      );
+
+      await auditLogService.record({
+        action: 'dashboard.updated',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId,
+        metadata: { name: dashboard.name, addedPanelType: panel.config.type },
+      });
+
+      return reply.status(201).send({ dashboard, panel });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return reply
+          .status(400)
+          .send({ error: 'Validation error', details: e.errors });
+      }
+      if (e instanceof Error && e.message === 'Dashboard not found') {
+        return reply.status(404).send({ error: e.message });
+      }
+      if (e instanceof Error && e.message === 'Project does not belong to the organization') {
+        return reply.status(400).send({ error: e.message });
       }
       throw e;
     }

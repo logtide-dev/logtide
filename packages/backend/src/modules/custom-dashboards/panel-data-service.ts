@@ -844,6 +844,7 @@ const metricChartFetcher: PanelDataSource<MetricChartConfig, MetricChartData> = 
       interval: config.interval,
       aggregation: config.aggregation,
       serviceName: config.serviceName ?? undefined,
+      groupBy: config.groupBy && config.groupBy.length > 0 ? config.groupBy : undefined,
     });
 
     return {

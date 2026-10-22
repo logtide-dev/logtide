@@ -12,12 +12,14 @@ import {
   migrateDashboard,
   type CustomDashboard,
   type DashboardDocument,
+  type PanelConfig,
   type PanelInstance,
 } from '@logtide/shared';
 import {
   dashboardDocumentSchema,
   panelRegistry,
   panelInstanceSchema,
+  panelConfigSchema,
 } from './panel-registry.js';
 import { buildTemplateYaml } from './templates.js';
 
@@ -538,6 +540,78 @@ export class CustomDashboardsService {
       },
       userId
     );
+  }
+
+  /**
+   * Append one panel to a dashboard (the "Add to dashboard" contract used by
+   * the metrics explorer). The config is validated with panelConfigSchema, the
+   * panel gets a fresh id and is placed at x = 0 below the lowest existing
+   * panel. The read-modify-write runs under a row lock so concurrent adds both
+   * survive.
+   */
+  async addPanel(
+    id: string,
+    organizationId: string,
+    userId: string,
+    input: { config: unknown; layout?: { w?: number; h?: number } }
+  ): Promise<{ dashboard: CustomDashboard; panel: PanelInstance }> {
+    const config = panelConfigSchema.parse(input.config) as PanelConfig;
+
+    if ('projectId' in config && config.projectId) {
+      const project = await db
+        .selectFrom('projects')
+        .select('id')
+        .where('id', '=', config.projectId)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (!project) {
+        throw new Error('Project does not belong to the organization');
+      }
+    }
+
+    const defaults = panelRegistry[config.type].defaultLayout;
+
+    return db.transaction().execute(async (trx) => {
+      const row = await trx
+        .selectFrom('custom_dashboards')
+        .selectAll()
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        // A personal dashboard can only be edited by its creator.
+        .where((eb) => eb.or([eb('is_personal', '=', false), eb('created_by', '=', userId)]))
+        .forUpdate()
+        .executeTakeFirst();
+      if (!row) {
+        throw new Error('Dashboard not found');
+      }
+
+      const current = this.mapRow(row as unknown as DashboardRow);
+      const nextY = current.panels.reduce((max, p) => Math.max(max, p.layout.y + p.layout.h), 0);
+      const panel = panelInstanceSchema.parse({
+        id: this.generatePanelId(),
+        layout: {
+          x: 0,
+          y: nextY,
+          w: input.layout?.w ?? defaults.w,
+          h: input.layout?.h ?? defaults.h,
+        },
+        config,
+      }) as PanelInstance;
+
+      const updated = await trx
+        .updateTable('custom_dashboards')
+        .set({
+          panels: JSON.stringify([...current.panels, panel]) as unknown as PanelInstance[],
+          schema_version: CURRENT_SCHEMA_VERSION,
+          updated_at: new Date(),
+        })
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      return { dashboard: this.mapRow(updated as unknown as DashboardRow), panel };
+    });
   }
 
   /**
