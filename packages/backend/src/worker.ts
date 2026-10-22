@@ -4,7 +4,8 @@ import path from 'path';
 import { context } from '@logtide/shared/context';
 import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
 import { loadExternalHooks } from './hooks/index.js';
-import { processAlertNotification, type AlertNotificationData } from './queue/jobs/alert-notification.js';
+import { processAlertNotification, type AlertNotificationJobData } from './queue/jobs/alert-notification.js';
+import { enqueueAlertNotifications } from './queue/jobs/alert-evaluation.js';
 import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
 import { processIncidentAutoGrouping } from './queue/jobs/incident-autogrouping.js';
 import { processInvitationEmail, type InvitationEmailData } from './queue/jobs/invitation-email.js';
@@ -44,7 +45,7 @@ await loadExternalHooks();
 await enrichmentService.initialize();
 
 // Create worker for alert notifications
-const alertWorker = createWorker<AlertNotificationData>('alert-notifications', async (job) => {
+const alertWorker = createWorker<AlertNotificationJobData>('alert-notifications', async (job) => {
   await processAlertNotification(job);
 });
 
@@ -388,37 +389,30 @@ async function checkAlerts() {
       const checkDuration = Date.now() - checkStartTime;
 
       if (triggeredAlerts.length > 0) {
+        const byKind = { triggered: 0, renotify: 0, resolved: 0 };
+        for (const alert of triggeredAlerts) byKind[alert.kind]++;
 
         if (isInternalLoggingEnabled()) {
-          hub.captureLog('warn', `${triggeredAlerts.length} alert(s) triggered`, {
+          hub.captureLog('warn', `${triggeredAlerts.length} alert notification(s): ${byKind.triggered} triggered, ${byKind.renotify} renotify, ${byKind.resolved} resolved`, {
             alertCount: triggeredAlerts.length,
+            triggeredCount: byKind.triggered,
+            renotifyCount: byKind.renotify,
+            resolvedCount: byKind.resolved,
             alertRuleIds: triggeredAlerts.map((a) => a.rule_id),
             checkDuration_ms: checkDuration,
           });
         }
 
-        // Add notification jobs to queue
+        // Add notification jobs to queue (one key per notification, see alert-evaluation.ts)
         const { createQueue } = await import('./queue/connection.js');
-        const notificationQueue = createQueue('alert-notifications');
+        const notificationQueue = createQueue<AlertNotificationJobData>('alert-notifications');
+        const queued = await enqueueAlertNotifications(triggeredAlerts, notificationQueue);
 
-        for (const alert of triggeredAlerts) {
-          // One key per notification, colon-free for both queue adapters:
-          // the alert_history id, or the rule plus the start of the episode
-          // for a resolution (one per episode).
-          const resolved = alert.kind === 'resolved';
-          await notificationQueue.add(resolved ? 'send-resolved' : 'send-notification', alert, {
-            jobKey: resolved
-              ? `alert-resolved-${alert.rule_id}-${Date.parse(alert.firing_since)}`
-              : `alert-notif-${alert.historyId}`,
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog(queued === triggeredAlerts.length ? 'info' : 'error', `${queued} of ${triggeredAlerts.length} alert notification(s) queued`, {
+            queuedCount: queued,
+            alertCount: triggeredAlerts.length,
           });
-
-          if (isInternalLoggingEnabled()) {
-            hub.captureLog('info', `Alert notification queued`, {
-              alertRuleId: alert.rule_id,
-              ruleName: alert.rule_name,
-              logCount: alert.log_count,
-            });
-          }
         }
       } else {
         if (isInternalLoggingEnabled()) {
