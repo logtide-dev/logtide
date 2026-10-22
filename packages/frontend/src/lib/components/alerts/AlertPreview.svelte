@@ -14,6 +14,7 @@
 		TabsList,
 		TabsTrigger,
 	} from "$lib/components/ui/tabs";
+	import type { MetadataFilterInput } from "@logtide/shared";
 	import Spinner from "$lib/components/Spinner.svelte";
 	import X from "@lucide/svelte/icons/x";
 	import AlertCircle from "@lucide/svelte/icons/alert-circle";
@@ -31,6 +32,8 @@
 		levels: ("debug" | "info" | "warn" | "error" | "critical")[];
 		threshold: number;
 		timeWindow: number;
+		query?: string;
+		metadataFilters?: MetadataFilterInput[];
 		visible: boolean;
 		onClose?: () => void;
 		onSuggestionApply?: (suggestion: PreviewSuggestion) => void;
@@ -43,6 +46,8 @@
 		levels,
 		threshold,
 		timeWindow,
+		query,
+		metadataFilters,
 		visible = $bindable(),
 		onClose,
 		onSuggestionApply,
@@ -72,6 +77,8 @@
 				threshold,
 				timeWindow,
 				previewRange: timeRange,
+				...(query ? { query } : {}),
+				...(metadataFilters && metadataFilters.length > 0 ? { metadataFilters } : {}),
 			});
 
 			if (requestId !== loadSeq) return;
@@ -112,7 +119,7 @@
 {#if visible}
 	<Card class="bg-muted/30 border-primary/20">
 		<CardHeader class="flex flex-row items-center justify-between py-3">
-			<CardTitle class="text-base font-medium">Alert Preview</CardTitle>
+			<CardTitle class="text-base font-medium">Alert preview</CardTitle>
 			<div class="flex gap-2 items-center">
 				<!-- Time Range Selector -->
 				<div class="flex gap-1">
@@ -133,6 +140,7 @@
 					variant="ghost"
 					onclick={() => loadPreview()}
 					disabled={loading}
+					aria-label="Refresh preview"
 					class="h-7 w-7"
 				>
 					<RefreshCw class="h-3.5 w-3.5 {loading ? 'animate-spin' : ''}" />
@@ -141,6 +149,7 @@
 					size="icon"
 					variant="ghost"
 					onclick={handleClose}
+					aria-label="Close preview"
 					class="h-7 w-7"
 				>
 					<X class="h-3.5 w-3.5" />
@@ -203,7 +212,7 @@
 								>Timeline</TabsTrigger
 							>
 							<TabsTrigger value="samples" class="text-xs"
-								>Sample Incidents</TabsTrigger
+								>Sample incidents</TabsTrigger
 							>
 							<TabsTrigger value="statistics" class="text-xs"
 								>Statistics</TabsTrigger

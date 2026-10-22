@@ -38,7 +38,7 @@
 		</div>
 		<div class="text-center p-2 rounded bg-muted/50">
 			<div class="text-lg font-semibold">{thresholdAnalysis.percentAboveThreshold}%</div>
-			<div class="text-xs text-muted-foreground">Above Threshold</div>
+			<div class="text-xs text-muted-foreground">Above threshold</div>
 		</div>
 	</div>
 
