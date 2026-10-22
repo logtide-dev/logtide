@@ -24,7 +24,8 @@ import {
   type RateOfChangeSignal,
 } from './lifecycle.js';
 import { openAlertIncident, resolveAlertIncident } from './incident-sync.js';
-import type { AlertEvaluationResult, AlertNotificationKind } from './types.js';
+import type { AlertEvaluationResult, AlertNotificationJobData, AlertNotificationKind } from './types.js';
+import { notificationChannelsService } from '../notification-channels/index.js';
 import { reservoir } from '../../database/reservoir.js';
 import { hooks, HookRejectionError } from '../../hooks/index.js';
 
@@ -330,7 +331,7 @@ export class AlertsService {
       const current = await this.getLifecycleState(id, organizationId);
       if (!current) return null;
       if (current.state === 'firing') {
-        await resolveAlertIncident(current, 'manual', new Date());
+        await this.resolveFiringRule(current);
       }
       updateData.state = 'ok';
     }
@@ -355,7 +356,7 @@ export class AlertsService {
     const current = await this.getLifecycleState(id, organizationId);
     if (!current) return false;
     if (current.state === 'firing') {
-      await resolveAlertIncident(current, 'manual', new Date());
+      await this.resolveFiringRule(current);
     }
 
     const result = await db
@@ -383,13 +384,67 @@ export class AlertsService {
     return rule ? this.mapAlertRule(rule) : null;
   }
 
+  /**
+   * A user disabled or deleted a firing rule: resolve its incident as manual
+   * and, when the episode had notified anyone, queue the same `resolved` job
+   * the evaluator sends on recovery (webhook alert.resolved, PagerDuty
+   * resolve). The rule's channels are snapshotted into the job because a
+   * delete removes the links before the job runs. Queue failures are logged
+   * and never block the disable or delete.
+   */
+  private async resolveFiringRule(
+    rule: Pick<
+      Selectable<AlertRulesTable>,
+      'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'last_triggered_at' | 'last_notified_at'
+    >
+  ): Promise<void> {
+    const now = new Date();
+    const incidentId = await resolveAlertIncident(rule, 'manual', now);
+
+    const lastTriggeredAt = toDateOrNull(rule.last_triggered_at);
+    const lastNotifiedAt = toDateOrNull(rule.last_notified_at);
+    const notified =
+      lastNotifiedAt !== null && (lastTriggeredAt === null || lastNotifiedAt.getTime() >= lastTriggeredAt.getTime());
+    if (!notified) return;
+
+    try {
+      const channels = await notificationChannelsService.getAlertRuleChannels(rule.id, rule.organization_id);
+      const result: AlertEvaluationResult = {
+        kind: 'resolved',
+        rule_id: rule.id,
+        rule_name: rule.name,
+        organization_id: rule.organization_id,
+        project_id: rule.project_id ?? null,
+        alert_type: rule.alert_type,
+        log_count: 0,
+        threshold: rule.threshold,
+        time_window: rule.time_window,
+        firing_since: (lastTriggeredAt ?? now).toISOString(),
+        resolved_at: now.toISOString(),
+        incident_id: incidentId,
+        ...(channels.length > 0 ? { channel_ids: channels.map((c) => c.id) } : {}),
+      };
+      const { createQueue } = await import('../../queue/connection.js');
+      const { enqueueAlertNotifications } = await import('../../queue/jobs/alert-evaluation.js');
+      await enqueueAlertNotifications([result], createQueue<AlertNotificationJobData>('alert-notifications'));
+    } catch (error) {
+      console.error(`[Alerts] Failed to queue the resolve of rule ${rule.id}:`, error);
+    }
+  }
+
   private async getLifecycleState(
     id: string,
     organizationId: string
-  ): Promise<{ id: string; organization_id: string; state: AlertRuleState } | undefined> {
+  ): Promise<
+    | Pick<
+        Selectable<AlertRulesTable>,
+        'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'state' | 'last_triggered_at' | 'last_notified_at'
+      >
+    | undefined
+  > {
     return db
       .selectFrom('alert_rules')
-      .select(['id', 'organization_id', 'state'])
+      .select(['id', 'organization_id', 'project_id', 'name', 'alert_type', 'threshold', 'time_window', 'state', 'last_triggered_at', 'last_notified_at'])
       .where('id', '=', id)
       .where('organization_id', '=', organizationId)
       .executeTakeFirst();
