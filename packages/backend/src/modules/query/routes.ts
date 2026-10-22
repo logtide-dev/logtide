@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { CONTEXT_DEFAULT_SIZE, CONTEXT_MAX_SIZE, LogNotFoundError, queryService } from './service.js';
 import type { LogLevel } from '@logtide/shared';
 import { db } from '../../database/index.js';
-import { LogQueryError } from './build-log-filter.js';
+import { buildLogFilter, LogQueryError, type SearchMode } from './build-log-filter.js';
 import { logExplorerRoutes } from './explorer-routes.js';
 import {
   LOG_FILTER_QUERYSTRING_PROPERTIES,
@@ -616,17 +616,24 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
       querystring: {
         type: 'object',
         properties: {
+          projectId: { type: 'string' },
           service: { type: 'string' },
           level: { type: 'string', enum: ['debug', 'info', 'warn', 'error', 'critical'] },
+          // No schema length limit: buildLogFilter rejects a too long q with a
+          // position, like every other q problem.
+          q: { type: 'string' },
+          searchMode: { type: 'string', enum: ['fulltext', 'substring'], default: 'fulltext' },
         },
       },
     },
     handler: async (request: any, reply) => {
       if (!await requireFullAccess(request, reply)) return;
 
-      const { service, level, projectId: queryProjectId } = request.query as {
+      const { service, level, q, searchMode, projectId: queryProjectId } = request.query as {
         service?: string;
         level?: LogLevel;
+        q?: string;
+        searchMode?: SearchMode;
         projectId?: string;
       };
 
@@ -651,10 +658,23 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      // Validate q before any SSE header goes out, so a bad query is a plain
+      // 400 with the same body as GET /api/v1/logs. The filtering itself
+      // happens in the engine on every poll (queryLogs -> prepare), so the
+      // 100-row poll limit applies after the query, not before it.
+      try {
+        buildLogFilter({ q, searchMode, service, level });
+      } catch (err) {
+        if (err instanceof LogQueryError) {
+          return reply.code(400).send({ error: err.message, position: err.position });
+        }
+        throw err;
+      }
+
       void auditLogService.record({
         action: 'data.logs_streamed',
         target: { type: 'project', id: projectId },
-        metadata: { service, level },
+        metadata: { service, level, q, searchMode },
         organizationId: null,
       }, { buffered: true });
 
@@ -685,6 +705,8 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
             projectId,
             service,
             level,
+            q,
+            searchMode,
             from: lastTimestamp,
             to: new Date(),
             limit: 100,
