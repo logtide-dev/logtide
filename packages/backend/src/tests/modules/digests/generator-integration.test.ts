@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DigestGeneratorService } from '../../../modules/digests/generator.js';
+import { sql } from 'kysely';
 import { db } from '../../../database/connection.js';
 import { reservoir } from '../../../database/reservoir.js';
 import { DIGEST_SECTION_KEYS } from '@logtide/shared';
@@ -279,6 +280,9 @@ describe('DigestGeneratorService Integration', () => {
       });
     }
     await db.insertInto('monitor_results').values(results).execute();
+    // Other suites refresh the cagg past today, which hides new rows from the
+    // real-time view, so materialize today's bucket explicitly
+    await sql`CALL refresh_continuous_aggregate('monitor_uptime_daily', NULL, date_trunc('day', NOW() + INTERVAL '1 day'))`.execute(db);
 
     await generator.generateAndSendDigest({
       organizationId: org.id,
