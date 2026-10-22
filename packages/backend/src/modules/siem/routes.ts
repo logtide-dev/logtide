@@ -9,6 +9,9 @@ import { OrganizationsService } from '../organizations/service.js';
 import { db } from '../../database/index.js';
 import { auditLogService } from '../audit-log/service.js';
 import { registerIncidentRoutes } from '../incidents/routes.js';
+import { incidentsService } from '../incidents/service.js';
+import { IncidentError } from '../incidents/types.js';
+import { projectsService } from '../projects/service.js';
 
 const siemService = new SiemService(db);
 const dashboardService = new SiemDashboardService(db);
@@ -277,8 +280,20 @@ export async function siemRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Create incident
+        if (
+          body.projectId &&
+          !(await projectsService.projectBelongsToOrg(body.projectId, body.organizationId))
+        ) {
+          return reply.status(404).send({ error: 'Project not found' });
+        }
+        if (body.assigneeId) {
+          await incidentsService.assertAssignableUser(body.organizationId, body.assigneeId);
+        }
+
+        // Create incident. A hand-made incident is 'manual'; only one built
+        // from detection events is a sigma incident.
         const incident = await siemService.createIncident({
+          source: body.detectionEventIds && body.detectionEventIds.length > 0 ? 'sigma' : 'manual',
           organizationId: body.organizationId,
           projectId: body.projectId,
           title: body.title,
@@ -308,6 +323,9 @@ export async function siemRoutes(fastify: FastifyInstance) {
             error: 'Validation error',
             details: error.errors,
           });
+        }
+        if (error instanceof IncidentError) {
+          return reply.status(error.statusCode).send({ error: error.message, code: error.code });
         }
         console.error('Error creating incident:', error);
         return reply.status(500).send({
