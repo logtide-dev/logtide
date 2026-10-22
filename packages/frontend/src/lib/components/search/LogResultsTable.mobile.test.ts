@@ -94,3 +94,27 @@ describe('LogResultsTable on a phone', () => {
     expect(onLoadMore).toHaveBeenCalled();
   });
 });
+
+describe('phone row time and meta', () => {
+  it('shows the time only for today and date plus time for older rows', () => {
+    const now = new Date().toISOString();
+    const { container } = render(LogResultsTable, {
+      props: props({ logs: [makeLog({ time: now }), makeLog({ time: '2020-01-02T10:00:00.000Z' })] }),
+    });
+    const rows = container.querySelectorAll('[data-log-row]');
+    expect(rows[0].textContent).not.toMatch(/[A-Z][a-z]{2} \d/);
+    expect(rows[1]).toHaveTextContent('Jan 2');
+  });
+
+  it('lets service and project wrap on very narrow screens', () => {
+    window.matchMedia = ((query: string) => ({
+      matches: true,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    const { container } = render(LogResultsTable, { props: props() });
+    const meta = within(container.querySelector('[data-log-row]') as HTMLElement).getByText(/checkout/);
+    expect(meta.className).toContain('line-clamp-2');
+  });
+});

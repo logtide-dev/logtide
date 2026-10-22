@@ -21,5 +21,8 @@ export function mediaQuery(query: string): Readable<boolean> {
   });
 }
 
+/** Very narrow phones (below 360 px): rows give their meta line room to wrap. */
+export const isNarrow = mediaQuery('(max-width: 359.98px)');
+
 /** True below the md breakpoint. */
 export const isMobile = mediaQuery(MOBILE_QUERY);

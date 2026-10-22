@@ -4,7 +4,7 @@
   import { resolveMetadataPath, formatMetadataCell, type LogSearchQuery } from "@logtide/shared";
   import { formatTimestamp, formatRelative, getDisplayZoneLabel } from "$lib/utils/datetime";
   import { displayPreferences, type DisplayPreferences } from "$lib/stores/display-preferences";
-  import { isMobile } from "$lib/stores/media-query";
+  import { isMobile, isNarrow } from "$lib/stores/media-query";
   import SeverityBadge from "$lib/components/app/SeverityBadge.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
   import Spinner from "$lib/components/Spinner.svelte";
@@ -72,7 +72,9 @@
   const MAX_MESSAGE_CHARS = 2000;
   const AT_TOP_PX = 8;
   // Phone rows are stacked: a meta line plus a message clamped to two lines.
-  const MOBILE_ROW_HEIGHT = 76;
+  const MOBILE_ROW_HEIGHT = 92;
+  // Below 360 px the service and project line may wrap to two lines.
+  const NARROW_ROW_HEIGHT = 108;
 
   let scroller = $state<HTMLDivElement | null>(null);
   let header = $state<HTMLTableSectionElement | null>(null);
@@ -81,7 +83,7 @@
   let atTop = true;
   let centeredFor: string | null = null;
 
-  const rowHeight = $derived($isMobile ? MOBILE_ROW_HEIGHT : ROW_HEIGHT[density]);
+  const rowHeight = $derived($isMobile ? ($isNarrow ? NARROW_ROW_HEIGHT : MOBILE_ROW_HEIGHT) : ROW_HEIGHT[density]);
   const win = $derived(computeWindow({ scrollTop, viewportHeight, rowHeight, count: logs.length }));
   const keys = $derived(uniqueKeys(logs));
   const visible = $derived(logs.slice(win.start, win.end));
@@ -112,8 +114,11 @@
     return formatTimestamp(time, { precision: "ms", withDate: true });
   }
 
-  function shortTimeText(time: string, _prefs: DisplayPreferences): string {
-    return formatTimestamp(time, { precision: "second", withDate: true });
+  /** Phones: time only for today, date and time for older rows. */
+  function phoneTimeText(time: string, _prefs: DisplayPreferences): string {
+    const today = formatTimestamp(new Date(), { dateOnly: true });
+    const day = formatTimestamp(time, { dateOnly: true });
+    return formatTimestamp(time, { precision: 'second', withDate: day !== today });
   }
 
   function relativeText(time: string, _prefs: DisplayPreferences): string {
@@ -224,12 +229,12 @@
   });
 </script>
 
-<div class="rounded-md border overflow-hidden">
+<div class="overflow-hidden md:rounded-md md:border">
   <div
     bind:this={scroller}
     data-testid="log-results-scroll"
     class="overflow-auto"
-    style="height: max(420px, calc(100dvh - 22rem));"
+    style="height: {$isMobile ? 'max(420px, calc(100dvh - 12rem))' : 'max(420px, calc(100dvh - 22rem))'};"
     onscroll={handleScroll}
   >
     {#if $isMobile}
@@ -249,17 +254,19 @@
             class="block w-full overflow-hidden border-b px-3 py-2 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring {selected
               ? 'bg-accent'
               : ''}"
-            style="height: {MOBILE_ROW_HEIGHT}px;"
+            style="height: {rowHeight}px;"
             onclick={() => onSelect(log)}
           >
-            <span class="flex items-center gap-2 text-xs">
-              <span class="shrink-0 font-mono" title={relativeText(log.time, $displayPreferences)}
-                >{shortTimeText(log.time, $displayPreferences)}</span
+            <span class="flex items-center justify-between gap-2 text-xs">
+              <span class="min-w-0 truncate font-mono text-muted-foreground" title={relativeText(log.time, $displayPreferences)}
+                >{phoneTimeText(log.time, $displayPreferences)}</span
               >
               <span class="shrink-0"><SeverityBadge kind="level" value={log.level} /></span>
-              <span class="min-w-0 truncate text-muted-foreground">{log.service} &middot; {name}</span>
             </span>
-            <span class="mt-1 line-clamp-2 break-words font-mono text-xs leading-4">
+            <span class="mt-0.5 block text-[11px] {$isNarrow ? 'line-clamp-2 break-words' : 'truncate'} leading-4 text-muted-foreground"
+              >{log.service} &middot; {name}</span
+            >
+            <span class="mt-0.5 line-clamp-2 break-words font-mono text-xs leading-4">
               {#each messageHighlights(messageText(log.message), highlightQuery) as seg}
                 {#if seg.match}<mark class="rounded-sm bg-warning/30 text-inherit">{seg.text}</mark
                   >{:else}{seg.text}{/if}
