@@ -11,6 +11,16 @@ export type {
   ExceptionWithFrames,
   ErrorGroupFilters,
   ErrorGroupTrendBucket,
+  ErrorGroupPatch,
+  ErrorGroupBulkRequest,
+  ErrorGroupBulkResult,
+  ErrorGroupTrendsResult,
+  ErrorGroupEvent,
+  ErrorGroupEventLog,
+  ErrorGroupEventsResult,
+  ErrorGroupTraceMatch,
+  ErrorGroupSort,
+  ErrorGroupBulkAction,
 } from '@logtide/shared';
 
 import type {
@@ -19,6 +29,12 @@ import type {
   ExceptionWithFrames,
   ErrorGroupFilters,
   ErrorGroupTrendBucket,
+  ErrorGroupPatch,
+  ErrorGroupBulkRequest,
+  ErrorGroupBulkResult,
+  ErrorGroupTrendsResult,
+  ErrorGroupEventsResult,
+  ErrorGroupEventDirection,
 } from '@logtide/shared';
 
 export interface ErrorGroupLog {
@@ -28,6 +44,15 @@ export interface ErrorGroupLog {
   message: string;
   traceId?: string;
   metadata?: Record<string, any>;
+}
+
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+async function failure(response: Response, what: string): Promise<Error> {
+  const error = await response.json().catch(() => ({}));
+  return new Error(error.error || `Failed to ${what} (HTTP ${response.status})`);
 }
 
 export async function getExceptionByLogId(
@@ -91,7 +116,9 @@ export async function getErrorGroups(
     organizationId: filters.organizationId,
   });
 
-  if (filters.projectId) {
+  if (filters.projectIds && filters.projectIds.length > 0) {
+    searchParams.append('projectId', filters.projectIds.join(','));
+  } else if (filters.projectId) {
     searchParams.append('projectId', filters.projectId);
   }
   if (filters.status) {
@@ -102,6 +129,21 @@ export async function getErrorGroups(
   }
   if (filters.search) {
     searchParams.append('search', filters.search);
+  }
+  if (filters.from) {
+    searchParams.append('from', toIso(filters.from));
+  }
+  if (filters.to) {
+    searchParams.append('to', toIso(filters.to));
+  }
+  if (filters.sort) {
+    searchParams.append('sort', filters.sort);
+  }
+  if (filters.assignedTo) {
+    searchParams.append('assignedTo', filters.assignedTo);
+  }
+  if (filters.service) {
+    searchParams.append('service', filters.service);
   }
   if (filters.limit) {
     searchParams.append('limit', filters.limit.toString());
@@ -329,4 +371,90 @@ export async function getErrorGroupLogs(params: {
 export async function hasException(logId: string, organizationId: string): Promise<boolean> {
   const exception = await getExceptionByLogId(logId, organizationId);
   return exception !== null;
+}
+
+export async function getErrorGroupTrends(params: {
+  organizationId: string;
+  ids: string[];
+  from: Date | string;
+  to: Date | string;
+  buckets?: number;
+}): Promise<ErrorGroupTrendsResult> {
+  const token = getAuthToken();
+  const searchParams = new URLSearchParams({
+    organizationId: params.organizationId,
+    ids: params.ids.join(','),
+    from: toIso(params.from),
+    to: toIso(params.to),
+  });
+  if (params.buckets) {
+    searchParams.append('buckets', params.buckets.toString());
+  }
+
+  const response = await fetch(`${getApiUrl()}/api/v1/error-groups/trends?${searchParams}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) throw await failure(response, 'get error trends');
+  return response.json();
+}
+
+export async function getErrorGroupEvents(params: {
+  groupId: string;
+  organizationId: string;
+  cursor?: string;
+  direction?: ErrorGroupEventDirection;
+  limit?: number;
+}): Promise<ErrorGroupEventsResult> {
+  const token = getAuthToken();
+  const searchParams = new URLSearchParams({ organizationId: params.organizationId });
+  if (params.cursor) searchParams.append('cursor', params.cursor);
+  if (params.direction) searchParams.append('direction', params.direction);
+  if (params.limit) searchParams.append('limit', params.limit.toString());
+
+  const response = await fetch(
+    `${getApiUrl()}/api/v1/error-groups/${params.groupId}/events?${searchParams}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (!response.ok) throw await failure(response, 'get error events');
+  return response.json();
+}
+
+export async function updateErrorGroup(
+  groupId: string,
+  organizationId: string,
+  patch: ErrorGroupPatch
+): Promise<ErrorGroup> {
+  const token = getAuthToken();
+
+  const response = await fetch(`${getApiUrl()}/api/v1/error-groups/${groupId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ organizationId, ...patch }),
+  });
+
+  if (!response.ok) throw await failure(response, 'update error group');
+  return response.json();
+}
+
+export async function bulkUpdateErrorGroups(
+  req: ErrorGroupBulkRequest
+): Promise<ErrorGroupBulkResult> {
+  const token = getAuthToken();
+
+  const response = await fetch(`${getApiUrl()}/api/v1/error-groups/bulk`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(req),
+  });
+
+  if (!response.ok) throw await failure(response, 'update error groups');
+  return response.json();
 }

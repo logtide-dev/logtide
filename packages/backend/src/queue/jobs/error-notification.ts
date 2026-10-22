@@ -16,7 +16,7 @@ import { createQueue } from '../connection.js';
 import { generateErrorEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { ExceptionLanguage } from '../../modules/exceptions/types.js';
-import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
+import type { EmailChannelConfig, NotificationChannel, WebhookChannelConfig } from '@logtide/shared';
 
 export interface ErrorNotificationJobData {
   exceptionId: string;
@@ -30,6 +30,8 @@ export interface ErrorNotificationJobData {
   isNewErrorGroup: boolean;
   /** True when a previously resolved error group recurred (a regression). */
   isRegression?: boolean;
+  /** True when an ignored error group reopened because its ignore limit was reached. */
+  isEscalating?: boolean;
 }
 
 // Create the queue
@@ -54,6 +56,28 @@ function createTransporter() {
 }
 
 
+/** Notification kind for an occurrence; escalation wins over regression. */
+function notificationKind(data: ErrorNotificationJobData): 'Escalating' | 'Regression' | 'New Error' | 'Error' {
+  if (data.isEscalating) return 'Escalating';
+  if (data.isRegression) return 'Regression';
+  if (data.isNewErrorGroup) return 'New Error';
+  return 'Error';
+}
+
+/**
+ * Resolve the notification channels for an error group: the channels attached
+ * to the group, else the organization defaults for errors. This is the single
+ * call site a shared default-channel resolver replaces later.
+ */
+export async function resolveErrorChannels(
+  errorGroupId: string,
+  organizationId: string
+): Promise<NotificationChannel[]> {
+  const groupChannels = await notificationChannelsService.getErrorGroupChannels(errorGroupId);
+  if (groupChannels.length > 0) return groupChannels;
+  return notificationChannelsService.getOrganizationDefaults(organizationId, 'error');
+}
+
 /**
  * Send webhook notification for error
  */
@@ -74,9 +98,9 @@ async function sendErrorWebhook(
     organizationId: data.organizationId,
     projectId: data.projectId ?? null,
     data: {
-      title: `${data.isRegression ? 'Regression' : data.isNewErrorGroup ? 'New Error' : 'Error'}: ${data.exceptionType}`,
+      title: `${notificationKind(data)}: ${data.exceptionType}`,
       message: data.exceptionMessage || `An error occurred in ${data.service}`,
-      severity: data.isRegression || data.isNewErrorGroup ? 'high' : 'medium',
+      severity: data.isEscalating || data.isRegression || data.isNewErrorGroup ? 'high' : 'medium',
       organization: {
         id: data.organizationId,
         name: orgName,
@@ -91,6 +115,7 @@ async function sendErrorWebhook(
       service: data.service,
       is_new: data.isNewErrorGroup,
       is_regression: data.isRegression ?? false,
+      is_escalating: data.isEscalating ?? false,
       link: `${frontendUrl}/dashboard/errors/${errorGroupId}`,
     },
   });
@@ -121,21 +146,27 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
   // first one inside the window matches and updates a row.
   const cooldownMinutes = config.ERROR_NOTIFICATION_COOLDOWN_MINUTES ?? 15;
   const cooldownCutoff = new Date(Date.now() - cooldownMinutes * 60_000);
+  // A regression or an escalation is a state change the team must hear about,
+  // so it is never swallowed by the cooldown of an earlier notification.
+  const bypassCooldown = !!(data.isRegression || data.isEscalating);
 
-  const claimed = await db
+  let claimQuery = db
     .updateTable('error_groups')
     .set({ last_notified_at: new Date() })
     .where('fingerprint', '=', data.fingerprint)
     .where('organization_id', '=', data.organizationId)
-    .where('status', '!=', 'ignored')
-    .where((eb) =>
+    .where('status', '!=', 'ignored');
+
+  if (!bypassCooldown) {
+    claimQuery = claimQuery.where((eb) =>
       eb.or([
         eb('last_notified_at', 'is', null),
         eb('last_notified_at', '<=', cooldownCutoff),
       ])
-    )
-    .returning('id')
-    .executeTakeFirst();
+    );
+  }
+
+  const claimed = await claimQuery.returning('id').executeTakeFirst();
 
   if (!claimed) {
     // Slot not claimed: group is missing, ignored, or already notified within
@@ -184,12 +215,7 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
   }
 
   // STEP 1: Get notification channels for this error group (or org defaults)
-  let errorChannels = await notificationChannelsService.getErrorGroupChannels(errorGroup.id);
-
-  // If no specific channels, use organization defaults for errors
-  if (errorChannels.length === 0) {
-    errorChannels = await notificationChannelsService.getOrganizationDefaults(data.organizationId, 'error');
-  }
+  const errorChannels = await resolveErrorChannels(errorGroup.id, data.organizationId);
 
   // STEP 2: Collect email recipients and webhook URLs from channels
   const channelEmailRecipients = new Set<string>();
@@ -223,11 +249,7 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
 
   console.log(`[ErrorNotification] Notifying ${members.length} members`);
 
-  const notificationTitle = data.isRegression
-    ? `Regression: ${data.exceptionType}`
-    : data.isNewErrorGroup
-    ? `New Error: ${data.exceptionType}`
-    : `Error: ${data.exceptionType}`;
+  const notificationTitle = `${notificationKind(data)}: ${data.exceptionType}`;
 
   const notificationMessage = data.exceptionMessage
     ? `${data.exceptionMessage.substring(0, 100)}${data.exceptionMessage.length > 100 ? '...' : ''}`
@@ -249,6 +271,7 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
         language: data.language,
         service: data.service,
         isNewErrorGroup: data.isNewErrorGroup,
+        isEscalating: data.isEscalating ?? false,
         link: `/dashboard/errors/${errorGroup.id}`,
       },
     }).catch((err) => console.error(`[ErrorNotification] Failed to create notification for ${member.id}:`, err))
@@ -277,11 +300,7 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
       projectName: project.name,
       fingerprint: data.fingerprint,
     });
-    const subject = data.isRegression
-      ? `[Regression] ${data.exceptionType} in ${data.service}`
-      : data.isNewErrorGroup
-      ? `[New Error] ${data.exceptionType} in ${data.service}`
-      : `[Error] ${data.exceptionType} in ${data.service}`;
+    const subject = `[${notificationKind(data)}] ${data.exceptionType} in ${data.service}`;
 
     const emailPromises = emailRecipients.map((email) =>
       transporter.sendMail({

@@ -739,6 +739,13 @@ export interface ErrorGroupsTable {
   sample_log_id: string | null;
   merge_key: string | null;
   last_notified_at: Timestamp | null;
+  // ux16 W5 triage fields
+  assigned_to: string | null;
+  regressed_at: Timestamp | null;
+  ignored_until: Timestamp | null;
+  ignore_until_count: number | null;
+  ignored_event_count: Generated<number>;
+  // end ux16 W5 triage fields
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }

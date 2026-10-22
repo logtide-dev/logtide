@@ -2,34 +2,76 @@
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { untrack } from 'svelte';
 	import { currentOrganization } from '$lib/stores/organization';
+	import { authStore } from '$lib/stores/auth';
+	import { scopeStore, resolveRange, writeScopeToUrl } from '$lib/stores/scope';
 	import {
 		getErrorGroups,
+		getErrorGroupTrends,
+		bulkUpdateErrorGroups,
 		type ErrorGroup,
-		type ErrorGroupStatus,
-		type ExceptionLanguage,
 	} from '$lib/api/exceptions';
+	import { projectsAPI } from '$lib/api/projects';
+	import { organizationsAPI } from '$lib/api/organizations';
 	import { toastStore } from '$lib/stores/toast';
+	import { layoutStore } from '$lib/stores/layout';
+	import { EXCEPTION_LANGUAGES } from '@logtide/shared';
+	import PageHeader from '$lib/components/app/PageHeader.svelte';
+	import ScopeBar from '$lib/components/app/ScopeBar.svelte';
+	import Pagination from '$lib/components/app/Pagination.svelte';
+	import { rangeLabel as formatRangeLabel } from '$lib/components/time-range/labels';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { Badge } from '$lib/components/ui/badge';
-	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import Input from '$lib/components/ui/input/input.svelte';
 	import * as Select from '$lib/components/ui/select';
-	import { SkeletonTable, TableLoadingOverlay } from '$lib/components/ui/skeleton';
-	import { ErrorGroupCard } from '$lib/components/exceptions';
-	import Bug from '@lucide/svelte/icons/bug';
+	import { ErrorsTable, BulkActionBar } from '$lib/components/exceptions';
+	import type { AssigneeMember, IgnoreOptions } from '$lib/components/exceptions';
+	import {
+		DEFAULT_ERRORS_LIST_STATE,
+		parseErrorsListState,
+		writeErrorsListState,
+		type ErrorsListState,
+	} from '$lib/components/exceptions/errors-url-state';
+	import { createRequestGuard } from '$lib/components/exceptions/request-guard';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Search from '@lucide/svelte/icons/search';
-	import Filter from '@lucide/svelte/icons/filter';
 	import X from '@lucide/svelte/icons/x';
-	import { layoutStore } from '$lib/stores/layout';
 
-	// State
-	let groups = $state<ErrorGroup[]>([]);
-	let maxWidthClass = $state("max-w-7xl");
-	let containerPadding = $state("px-6 py-8");
+	const PAGE_SIZE = 20;
+	const TREND_BUCKETS = 24;
+	const MAX_TREND_RANGE_MS = 90 * 24 * 60 * 60 * 1000;
+
+	const STATUS_OPTIONS = [
+		{ value: 'open', label: 'Open' },
+		{ value: 'resolved', label: 'Resolved' },
+		{ value: 'ignored', label: 'Ignored' },
+		{ value: 'all', label: 'All' },
+	];
+	const LANGUAGE_LABELS: Record<string, string> = {
+		nodejs: 'Node.js',
+		python: 'Python',
+		java: 'Java',
+		go: 'Go',
+		php: 'PHP',
+		kotlin: 'Kotlin',
+		csharp: 'C#',
+		rust: 'Rust',
+		ruby: 'Ruby',
+		unknown: 'Unknown',
+	};
+	const LANGUAGE_OPTIONS = [
+		{ value: '', label: 'All languages' },
+		...EXCEPTION_LANGUAGES.map((l) => ({ value: l as string, label: LANGUAGE_LABELS[l] ?? l })),
+	];
+	const ASSIGNEE_OPTIONS = [
+		{ value: '', label: 'Anyone' },
+		{ value: 'me', label: 'Assigned to me' },
+		{ value: 'unassigned', label: 'Unassigned' },
+	];
+
+	let maxWidthClass = $state('max-w-7xl');
+	let containerPadding = $state('px-6 py-8');
 
 	$effect(() => {
 		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
@@ -44,383 +86,335 @@
 		});
 		return unsubscribe;
 	});
+
+	let groups = $state<ErrorGroup[]>([]);
+	let trends = $state<Record<string, number[]>>({});
 	let total = $state(0);
-	let loading = $state(false);
-	let hasLoadedOnce = $state(false);
-	let error = $state('');
-	let lastLoadedOrg = $state<string | null>(null);
-	let refreshing = $state(false);
-	let loadSeq = 0;
+	let loading = $state(true);
+	let error = $state<string | null>(null);
+	let selected = $state<string[]>([]);
+	let bulkBusy = $state(false);
+	let reloadTick = $state(0);
+	let projects = $state<{ id: string; name: string }[]>([]);
+	let members = $state<AssigneeMember[]>([]);
+	let searchInput = $state('');
 
-	// Filters
-	let statusFilter = $state<ErrorGroupStatus | ''>('');
-	let languageFilter = $state<ExceptionLanguage | ''>('');
-	let searchQuery = $state('');
+	const guard = createRequestGuard();
 
-	// Pagination
-	let currentPage = $state(1);
-	let pageSize = $state(20);
+	// The URL is the single source of list state; scope lives in the scope store.
+	const listState = $derived(parseErrorsListState(page.url));
+	const rangeText = $derived(formatRangeLabel($scopeStore.range));
+	const scopeSearch = $derived.by(() => {
+		const url = writeScopeToUrl(new URL(page.url.origin + page.url.pathname), $scopeStore);
+		return url.search;
+	});
+	const serviceFilter = $derived(listState.service);
 
-	// Derived
-	let totalPages = $derived(Math.ceil(total / pageSize));
-	let hasActiveFilters = $derived(statusFilter !== '' || languageFilter !== '' || searchQuery !== '');
-
-	// Initialize filters from URL params
 	$effect(() => {
-		if (!browser) return;
-
-		const params = page.url.searchParams;
-		const statusParam = params.get('status');
-		const languageParam = params.get('language');
-		const searchParam = params.get('search');
-		const pageParam = params.get('page');
-
-		if (statusParam && ['open', 'resolved', 'ignored'].includes(statusParam)) {
-			statusFilter = statusParam as ErrorGroupStatus;
-		}
-		if (languageParam && ['nodejs', 'python', 'java', 'go', 'php', 'kotlin', 'csharp', 'rust', 'ruby', 'unknown'].includes(languageParam)) {
-			languageFilter = languageParam as ExceptionLanguage;
-		}
-		if (searchParam) {
-			searchQuery = searchParam;
-		}
-		if (pageParam) {
-			const parsedPage = Number.parseInt(pageParam, 10);
-			if (Number.isFinite(parsedPage) && parsedPage >= 1) {
-				currentPage = parsedPage;
-			}
-		}
+		searchInput = listState.search;
 	});
 
-	// Load when org changes
-	$effect(() => {
-		if (!$currentOrganization) return;
-		if ($currentOrganization.id === lastLoadedOrg) return;
+	function updateState(patch: Partial<ErrorsListState>, resetPage = true) {
+		const next: ErrorsListState = {
+			...listState,
+			...patch,
+			page: resetPage && patch.page === undefined ? 1 : (patch.page ?? listState.page),
+		};
+		goto(writeErrorsListState(page.url, next), {
+			replaceState: true,
+			keepFocus: true,
+			noScroll: true,
+		});
+	}
 
-		// Reset to the first page when switching organizations so the offset
-		// query stays within the new org's result range
-		currentPage = 1;
-		loadErrorGroups();
-		lastLoadedOrg = $currentOrganization.id;
+	// Projects for the scope bar and members for the assignee pickers.
+	let loadedMetaForOrg: string | null = null;
+	$effect(() => {
+		const orgId = $currentOrganization?.id;
+		if (!browser || !orgId || orgId === loadedMetaForOrg) return;
+		loadedMetaForOrg = orgId;
+		projectsAPI
+			.getProjects(orgId)
+			.then((res) => {
+				if (orgId === $currentOrganization?.id) projects = res.projects.map((p) => ({ id: p.id, name: p.name }));
+			})
+			.catch(() => {
+				projects = [];
+			});
+		organizationsAPI
+			.getOrganizationMembers(orgId)
+			.then((res) => {
+				if (orgId !== $currentOrganization?.id) return;
+				members = res.members.map((m) => ({ id: m.user.id, name: m.user.name, email: m.user.email }));
+			})
+			.catch(() => {
+				members = [];
+			});
 	});
 
-	async function loadErrorGroups() {
-		if (!$currentOrganization) return;
+	// Org switch resets the page so the offset stays inside the new result set.
+	let lastOrg: string | null = null;
+	$effect(() => {
+		const orgId = $currentOrganization?.id ?? null;
+		if (orgId && lastOrg && orgId !== lastOrg && untrack(() => listState.page) > 1) {
+			untrack(() => updateState({ page: 1 }, false));
+		}
+		if (orgId) lastOrg = orgId;
+	});
 
-		const seq = ++loadSeq;
+	$effect(() => {
+		const orgId = $currentOrganization?.id;
+		const scope = $scopeStore;
+		const state = listState;
+		void reloadTick;
+		if (!browser || !orgId) return;
+		untrack(() => {
+			selected = [];
+			void load(orgId, scope, state);
+		});
+	});
+
+	async function load(orgId: string, scope: typeof $scopeStore, state: ErrorsListState) {
+		const token = guard.next();
 		loading = true;
-		error = '';
+		error = null;
+
+		const { from, to } = resolveRange(scope.range);
+		const userId = $authStore.user?.id;
 
 		try {
 			const response = await getErrorGroups({
-				organizationId: $currentOrganization.id,
-				status: statusFilter || undefined,
-				language: languageFilter || undefined,
-				search: searchQuery || undefined,
-				limit: pageSize,
-				offset: (currentPage - 1) * pageSize,
+				organizationId: orgId,
+				projectIds: scope.projectIds.length > 0 ? scope.projectIds : undefined,
+				status: state.status === 'all' ? undefined : state.status,
+				language: state.language || undefined,
+				search: state.search || undefined,
+				from,
+				to,
+				sort: state.sort,
+				assignedTo: state.assignee === 'me' ? userId : state.assignee === 'unassigned' ? 'unassigned' : undefined,
+				service: state.service || undefined,
+				limit: PAGE_SIZE,
+				offset: (state.page - 1) * PAGE_SIZE,
 			});
-
-			// Ignore stale responses if a newer load has started
-			if (seq !== loadSeq) return;
+			if (!guard.isLatest(token)) return;
 
 			groups = response.groups;
 			total = response.total;
+			trends = {};
 
-			// Clamp the current page if it now exceeds the available pages
-			const pages = Math.max(1, Math.ceil(total / pageSize));
-			if (currentPage > pages) {
-				currentPage = pages;
+			const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+			if (state.page > pages) {
+				updateState({ page: pages }, false);
+				return;
 			}
+			void loadTrends(orgId, response.groups, from, to, token);
 		} catch (e) {
-			if (seq !== loadSeq) return;
-			error = e instanceof Error ? e.message : 'Failed to load error groups';
-			toastStore.error(error);
+			if (!guard.isLatest(token)) return;
+			error = e instanceof Error ? e.message : 'Failed to load errors';
+			groups = [];
+			total = 0;
 		} finally {
-			if (seq === loadSeq) {
-				loading = false;
-				hasLoadedOnce = true;
+			if (guard.isLatest(token)) loading = false;
+		}
+	}
+
+	// Trends are cosmetic: a failure leaves the sparklines empty.
+	async function loadTrends(orgId: string, rows: ErrorGroup[], from: Date, to: Date, token: number) {
+		if (rows.length === 0) return;
+		const start = to.getTime() - from.getTime() > MAX_TREND_RANGE_MS ? new Date(to.getTime() - MAX_TREND_RANGE_MS) : from;
+		try {
+			const result = await getErrorGroupTrends({
+				organizationId: orgId,
+				ids: rows.map((g) => g.id),
+				from: start,
+				to,
+				buckets: TREND_BUCKETS,
+			});
+			if (guard.isLatest(token)) trends = result.trends;
+		} catch {
+			// non-fatal
+		}
+	}
+
+	function refresh() {
+		reloadTick += 1;
+		toastStore.success('Errors refreshed');
+	}
+
+	function handleSort(key: string) {
+		if (key === 'last_seen' || key === 'first_seen' || key === 'events') updateState({ sort: key });
+	}
+
+	function handleWiden(preset: '24h' | '7d' | '30d') {
+		scopeStore.setRange({ kind: 'preset', preset });
+		goto(writeScopeToUrl(page.url, scopeStore.get()), { replaceState: true, keepFocus: true, noScroll: true });
+	}
+
+	function clearFilters() {
+		updateState({ status: DEFAULT_ERRORS_LIST_STATE.status, language: '', search: '', assignee: '', service: '' });
+	}
+
+	function openGroup(group: ErrorGroup) {
+		goto(`/dashboard/errors/${encodeURIComponent(group.id)}${scopeSearch}`);
+	}
+
+	async function runBulk(
+		action: 'resolve' | 'reopen' | 'ignore' | 'assign',
+		doneText: string,
+		extra: { assignedTo?: string | null; ignoredUntil?: string | null; ignoreUntilCount?: number | null } = {}
+	) {
+		const orgId = $currentOrganization?.id;
+		if (!orgId || selected.length === 0) return;
+		bulkBusy = true;
+		try {
+			const result = await bulkUpdateErrorGroups({ organizationId: orgId, ids: selected, action, ...extra });
+			const n = result.updated.length;
+			toastStore.success(`${n.toLocaleString('en-US')} ${n === 1 ? 'error' : 'errors'} ${doneText}`);
+			if (result.skipped.length > 0) {
+				toastStore.warning(`${result.skipped.length.toLocaleString('en-US')} skipped`);
 			}
+			selected = [];
+			reloadTick += 1;
+		} catch (e) {
+			toastStore.error(e instanceof Error ? e.message : 'Failed to update errors');
+		} finally {
+			bulkBusy = false;
 		}
 	}
 
-	async function handleRefresh() {
-		refreshing = true;
-		await loadErrorGroups();
-		refreshing = false;
-		toastStore.success('Error groups refreshed');
+	function bulkIgnore(options: IgnoreOptions) {
+		return runBulk('ignore', 'ignored', {
+			ignoredUntil: options.ignoredUntil ?? null,
+			ignoreUntilCount: options.ignoreUntilCount ?? null,
+		});
 	}
 
-	function handleSearch() {
-		currentPage = 1;
-		updateUrl();
-		loadErrorGroups();
+	function statusLabel(value: string): string {
+		return STATUS_OPTIONS.find((o) => o.value === value)?.label ?? 'Open';
 	}
-
-	function handleStatusChange(status: ErrorGroupStatus | '') {
-		statusFilter = status;
-		currentPage = 1;
-		updateUrl();
-		loadErrorGroups();
-	}
-
-	function handleLanguageChange(language: ExceptionLanguage | '') {
-		languageFilter = language;
-		currentPage = 1;
-		updateUrl();
-		loadErrorGroups();
-	}
-
-	function handleResetFilters() {
-		statusFilter = '';
-		languageFilter = '';
-		searchQuery = '';
-		currentPage = 1;
-		updateUrl();
-		loadErrorGroups();
-	}
-
-	function updateUrl() {
-		const params = new URLSearchParams();
-		if (statusFilter) params.set('status', statusFilter);
-		if (languageFilter) params.set('language', languageFilter);
-		if (searchQuery) params.set('search', searchQuery);
-		if (currentPage > 1) params.set('page', String(currentPage));
-
-		const newUrl = params.toString() ? `?${params}` : '/dashboard/errors';
-		goto(newUrl, { replaceState: true, noScroll: true });
-	}
-
-	function goToPage(page: number) {
-		if (page >= 1 && page <= totalPages && page !== currentPage) {
-			currentPage = page;
-			updateUrl();
-			loadErrorGroups();
-		}
-	}
-
-	function viewErrorGroup(group: ErrorGroup) {
-		goto(`/dashboard/errors/${group.id}?organizationId=${$currentOrganization?.id}`);
-	}
-
-	// Status options for select
-	const statusOptions = [
-		{ value: '', label: 'All Statuses' },
-		{ value: 'open', label: 'Open' },
-		{ value: 'resolved', label: 'Resolved' },
-		{ value: 'ignored', label: 'Ignored' },
-	];
-
-	// Language options for select
-	const languageOptions = [
-		{ value: '', label: 'All Languages' },
-		{ value: 'nodejs', label: 'Node.js' },
-		{ value: 'python', label: 'Python' },
-		{ value: 'java', label: 'Java' },
-		{ value: 'go', label: 'Go' },
-		{ value: 'php', label: 'PHP' },
-		{ value: 'kotlin', label: 'Kotlin' },
-		{ value: 'csharp', label: 'C#' },
-		{ value: 'rust', label: 'Rust' },
-		{ value: 'ruby', label: 'Ruby' },
-		{ value: 'unknown', label: 'Unknown' },
-	];
 </script>
 
 <svelte:head>
-	<title>Error Groups - LogTide</title>
+	<title>Errors - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto {containerPadding} {maxWidthClass}">
-	<!-- Header -->
-	<div class="flex items-center justify-between mb-6">
-		<div>
-			<div class="flex items-center gap-3 mb-2">
-				<Bug class="w-8 h-8 text-red-500" />
-				<h1 class="text-3xl font-bold tracking-tight">Error Groups</h1>
+	<PageHeader title="Errors" description="Grouped exceptions from your logs">
+		{#snippet actions()}
+			<div class="flex flex-wrap items-center gap-2">
+				<ScopeBar mode="multi" {projects} />
+				<Button variant="outline" size="sm" onclick={refresh} disabled={loading}>
+					<RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
+					Refresh
+				</Button>
 			</div>
-			<p class="text-muted-foreground">
-				Grouped exceptions from your application logs
-			</p>
+		{/snippet}
+	</PageHeader>
+
+	<div class="mb-4 flex flex-wrap items-center gap-2">
+		<div class="relative min-w-[14rem] flex-1">
+			<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+			<Input
+				type="search"
+				placeholder="Search by exception type or message"
+				aria-label="Search errors"
+				class="pl-9"
+				bind:value={searchInput}
+				onkeydown={(e) => e.key === 'Enter' && updateState({ search: searchInput.trim() })}
+				onblur={() => searchInput.trim() !== listState.search && updateState({ search: searchInput.trim() })}
+			/>
 		</div>
-		<Button variant="outline" onclick={handleRefresh} disabled={refreshing}>
-			<RefreshCw class="w-4 h-4 mr-2 {refreshing ? 'animate-spin' : ''}" />
-			Refresh
-		</Button>
+
+		<Select.Root type="single" value={listState.status} onValueChange={(v) => updateState({ status: (v || 'open') as ErrorsListState['status'] })}>
+			<Select.Trigger class="w-36" aria-label="Status">{statusLabel(listState.status)}</Select.Trigger>
+			<Select.Content>
+				{#each STATUS_OPTIONS as option (option.value)}
+					<Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
+				{/each}
+			</Select.Content>
+		</Select.Root>
+
+		<Select.Root type="single" value={listState.language} onValueChange={(v) => updateState({ language: (v || '') as ErrorsListState['language'] })}>
+			<Select.Trigger class="w-40" aria-label="Language">
+				{LANGUAGE_OPTIONS.find((o) => o.value === listState.language)?.label ?? 'All languages'}
+			</Select.Trigger>
+			<Select.Content>
+				{#each LANGUAGE_OPTIONS as option (option.value)}
+					<Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
+				{/each}
+			</Select.Content>
+		</Select.Root>
+
+		<Select.Root type="single" value={listState.assignee} onValueChange={(v) => updateState({ assignee: (v || '') as ErrorsListState['assignee'] })}>
+			<Select.Trigger class="w-44" aria-label="Assignee">
+				{ASSIGNEE_OPTIONS.find((o) => o.value === listState.assignee)?.label ?? 'Anyone'}
+			</Select.Trigger>
+			<Select.Content>
+				{#each ASSIGNEE_OPTIONS as option (option.value)}
+					<Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
+				{/each}
+			</Select.Content>
+		</Select.Root>
+
+		{#if serviceFilter}
+			<Badge variant="secondary" class="gap-1">
+				Service: {serviceFilter}
+				<button
+					type="button"
+					class="ml-1 rounded-sm hover:text-destructive"
+					aria-label="Remove service filter"
+					onclick={() => updateState({ service: '' })}
+				>
+					<X class="h-3 w-3" aria-hidden="true" />
+				</button>
+			</Badge>
+		{/if}
 	</div>
 
-	<!-- Filters -->
-	<Card class="mb-6">
-		<CardHeader>
-			<CardTitle class="flex items-center gap-2">
-				<Filter class="w-5 h-5" />
-				Filters
-			</CardTitle>
-		</CardHeader>
-		<CardContent>
-			<div class="grid gap-4 md:grid-cols-4">
-				<!-- Search -->
-				<div class="md:col-span-2">
-					<div class="relative">
-						<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-						<Input
-							type="search"
-							placeholder="Search by exception type or message..."
-							class="pl-9"
-							bind:value={searchQuery}
-							onkeydown={(e) => e.key === 'Enter' && handleSearch()}
-						/>
-					</div>
-				</div>
+	<p class="mb-3 text-sm text-muted-foreground">Last seen in {rangeText}</p>
 
-				<!-- Status filter -->
-				<Select.Root
-					type="single"
-					value={statusFilter}
-					onValueChange={(v) => handleStatusChange((v as ErrorGroupStatus | '') || '')}
-				>
-					<Select.Trigger>
-						{statusOptions.find(o => o.value === statusFilter)?.label || 'All Statuses'}
-					</Select.Trigger>
-					<Select.Content>
-						{#each statusOptions as option}
-							<Select.Item value={option.value}>{option.label}</Select.Item>
-						{/each}
-					</Select.Content>
-				</Select.Root>
+	{#if selected.length > 0}
+		<div class="mb-3">
+			<BulkActionBar
+				count={selected.length}
+				{members}
+				busy={bulkBusy}
+				onResolve={() => runBulk('resolve', 'resolved')}
+				onReopen={() => runBulk('reopen', 'reopened')}
+				onIgnore={bulkIgnore}
+				onAssign={(userId) => runBulk('assign', 'updated', { assignedTo: userId })}
+				onClear={() => (selected = [])}
+			/>
+		</div>
+	{/if}
 
-				<!-- Language filter -->
-				<Select.Root
-					type="single"
-					value={languageFilter}
-					onValueChange={(v) => handleLanguageChange((v as ExceptionLanguage | '') || '')}
-				>
-					<Select.Trigger>
-						{languageOptions.find(o => o.value === languageFilter)?.label || 'All Languages'}
-					</Select.Trigger>
-					<Select.Content>
-						{#each languageOptions as option}
-							<Select.Item value={option.value}>{option.label}</Select.Item>
-						{/each}
-					</Select.Content>
-				</Select.Root>
-			</div>
+	<ErrorsTable
+		{groups}
+		{trends}
+		{loading}
+		{error}
+		bind:selected
+		sort={{ key: listState.sort, dir: 'desc' }}
+		state={listState}
+		rangeLabel={rangeText}
+		{scopeSearch}
+		onRetry={() => (reloadTick += 1)}
+		onWidenRange={handleWiden}
+		onShowAllStatuses={() => updateState({ status: 'all' })}
+		onClearFilters={clearFilters}
+		onOpen={openGroup}
+		onSort={handleSort}
+	/>
 
-			{#if hasActiveFilters}
-				<div class="mt-4 flex items-center gap-2">
-					<span class="text-sm text-muted-foreground">Active filters:</span>
-					{#if statusFilter}
-						<Badge variant="secondary" class="gap-1">
-							Status: {statusFilter}
-							<button onclick={() => handleStatusChange('')} class="ml-1 hover:text-destructive">
-								<X class="w-3 h-3" />
-							</button>
-						</Badge>
-					{/if}
-					{#if languageFilter}
-						<Badge variant="secondary" class="gap-1">
-							Language: {languageFilter}
-							<button onclick={() => handleLanguageChange('')} class="ml-1 hover:text-destructive">
-								<X class="w-3 h-3" />
-							</button>
-						</Badge>
-					{/if}
-					{#if searchQuery}
-						<Badge variant="secondary" class="gap-1">
-							Search: {searchQuery.slice(0, 20)}{searchQuery.length > 20 ? '...' : ''}
-							<button onclick={() => { searchQuery = ''; handleSearch(); }} class="ml-1 hover:text-destructive">
-								<X class="w-3 h-3" />
-							</button>
-						</Badge>
-					{/if}
-					<Button variant="ghost" size="sm" onclick={handleResetFilters}>
-						Clear all
-					</Button>
-				</div>
-			{/if}
-		</CardContent>
-	</Card>
-
-	<!-- Results -->
-	<Card>
-		<CardHeader>
-			<CardTitle>
-				{#if total > 0}
-					{total} error group{total !== 1 ? 's' : ''}
-				{:else}
-					No error groups
-				{/if}
-			</CardTitle>
-		</CardHeader>
-		<CardContent>
-			{#if !hasLoadedOnce || (loading && groups.length === 0)}
-				<SkeletonTable rows={5} columns={4} />
-			{:else if error}
-				<div class="text-center py-12 text-destructive">
-					<Bug class="w-12 h-12 mx-auto mb-4 opacity-50" />
-					<p>{error}</p>
-					<Button variant="outline" onclick={handleRefresh} class="mt-4">
-						Try Again
-					</Button>
-				</div>
-			{:else if groups.length === 0}
-				<div class="text-center py-12">
-					<Bug class="w-16 h-16 mx-auto mb-4 text-muted-foreground/50" />
-					<h3 class="text-lg font-semibold mb-2">No Error Groups Found</h3>
-					<p class="text-muted-foreground mb-4">
-						{#if hasActiveFilters}
-							No error groups match your current filters.
-						{:else}
-							Error groups will appear here when exceptions are detected in your logs.
-						{/if}
-					</p>
-					{#if hasActiveFilters}
-						<Button variant="outline" onclick={handleResetFilters}>
-							Clear Filters
-						</Button>
-					{/if}
-				</div>
-			{:else}
-				<TableLoadingOverlay loading={loading}>
-				<div class="space-y-3">
-					{#each groups as group}
-						<ErrorGroupCard {group} onclick={() => viewErrorGroup(group)} />
-					{/each}
-				</div>
-				</TableLoadingOverlay>
-
-				<!-- Pagination -->
-				{#if totalPages > 1}
-					<div class="flex items-center justify-between mt-6 px-2">
-						<div class="text-sm text-muted-foreground">
-							Showing {(currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, total)} of {total} groups
-						</div>
-						<div class="flex items-center gap-2">
-							<Button
-								variant="outline"
-								size="sm"
-								onclick={() => goToPage(currentPage - 1)}
-								disabled={currentPage === 1 || loading}
-							>
-								<ChevronLeft class="w-4 h-4" />
-								Previous
-							</Button>
-							<span class="text-sm text-muted-foreground px-2">
-								Page {currentPage} of {totalPages}
-							</span>
-							<Button
-								variant="outline"
-								size="sm"
-								onclick={() => goToPage(currentPage + 1)}
-								disabled={currentPage === totalPages || loading}
-							>
-								Next
-								<ChevronRight class="w-4 h-4" />
-							</Button>
-						</div>
-					</div>
-				{/if}
-			{/if}
-		</CardContent>
-	</Card>
+	{#if total > 0 && !error}
+		<div class="mt-4">
+			<Pagination
+				page={listState.page}
+				pageSize={PAGE_SIZE}
+				{total}
+				onPageChange={(p) => updateState({ page: p }, false)}
+			/>
+		</div>
+	{/if}
 </div>

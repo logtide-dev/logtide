@@ -58,8 +58,8 @@
 	<div class="space-y-2">
 		<!-- Exception type and language -->
 		<div class="flex items-center gap-2 flex-wrap">
-			<AlertTriangle class="w-5 h-5 text-red-500 flex-shrink-0" />
-			<code class="font-mono text-lg font-semibold text-red-600 dark:text-red-400">
+			<AlertTriangle class="w-5 h-5 text-destructive-text flex-shrink-0" aria-hidden="true" />
+			<code class="font-mono text-lg font-semibold text-destructive-text">
 				{exception.exception.exceptionType}
 			</code>
 			<LanguageBadge language={exception.exception.language} />
@@ -79,7 +79,7 @@
 				<span>{exception.frames.length} frames</span>
 			</div>
 			<div class="flex items-center gap-1">
-				<span class="text-blue-500">{appCodeCount} app code</span>
+				<span class="text-info-text">{appCodeCount} app code</span>
 			</div>
 		</div>
 	</div>
@@ -94,7 +94,7 @@
 				onclick={() => (showAppCodeOnly = !showAppCodeOnly)}
 			>
 				<Filter class="w-3 h-3 mr-1" />
-				{showAppCodeOnly ? 'Showing App Code' : 'Show App Code Only'}
+				{showAppCodeOnly ? 'Showing app code only' : 'Show app code only'}
 			</Button>
 
 			<Button
@@ -103,17 +103,17 @@
 				class="h-7 text-xs"
 				onclick={() => (showRaw = !showRaw)}
 			>
-				{showRaw ? 'Hide Raw' : 'Show Raw'}
+				{showRaw ? 'Hide raw trace' : 'Show raw trace'}
 			</Button>
 		</div>
 
 		<Button variant="outline" size="sm" class="h-7 text-xs" onclick={copyStackTrace}>
 			{#if copied}
 				<Check class="w-3 h-3 mr-1" />
-				Copied!
+				Copied
 			{:else}
 				<Copy class="w-3 h-3 mr-1" />
-				Copy Stack Trace
+				Copy stack trace
 			{/if}
 		</Button>
 	</div>
@@ -143,10 +143,10 @@
 			>
 				{#if showAllFrames}
 					<ChevronUp class="w-3 h-3 mr-1" />
-					Show Less
+					Show less
 				{:else}
 					<ChevronDown class="w-3 h-3 mr-1" />
-					Show {filteredFrames.length - maxFramesInitial} More Frames
+					Show {filteredFrames.length - maxFramesInitial} more frames
 				{/if}
 			</Button>
 		</div>
