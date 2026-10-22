@@ -1,15 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
-const h = vi.hoisted(() => ({ copyToClipboard: vi.fn() }));
-vi.mock('$lib/utils/clipboard', () => ({ copyToClipboard: h.copyToClipboard }));
-
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import EmptyLogs from './EmptyLogs.svelte';
-import { toastStore } from '$lib/stores/toast';
-
-beforeEach(() => {
-  h.copyToClipboard.mockReset().mockResolvedValue(true);
-});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -25,14 +17,11 @@ describe('EmptyLogs', () => {
     expect(screen.queryByText(/No Logs Yet|Get API Key|Read Docs|Quick Start/)).toBeNull();
   });
 
-  it('labels the copy button and confirms without an exclamation mark', async () => {
-    const success = vi.spyOn(toastStore, 'success').mockImplementation(() => {});
-    render(EmptyLogs);
-    await fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(h.copyToClipboard).toHaveBeenCalledTimes(1);
-    expect(success).toHaveBeenCalledWith('Code copied');
+  it('renders the shared connect snippets and no hand-built DSN', () => {
+    const { container } = render(EmptyLogs);
+    expect(screen.getByRole('radiogroup', { name: 'Platform' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /^Copy /i }).length).toBeGreaterThan(0);
+    expect(container.innerHTML).not.toContain('https://YOUR_API_KEY');
   });
 
   it('uses no raw palette colours', () => {
