@@ -4,7 +4,8 @@
  * Handles CRUD operations for exceptions, stack frames, and error groups.
  */
 
-import type { Expression, ExpressionBuilder, Kysely, SqlBool } from 'kysely';
+import type { Expression, ExpressionBuilder, Kysely, Selectable, SqlBool } from 'kysely';
+import type { StoredLogRecord } from '@logtide/reservoir';
 import { sql } from 'kysely';
 import type { Database } from '../../database/types.js';
 import { reservoir } from '../../database/reservoir.js';
@@ -17,7 +18,76 @@ import type {
   ErrorGroupTrendBucket,
   ExceptionWithFrames,
   ExceptionLanguage,
+  ExceptionRecord,
+  StackFrameRecord,
 } from './types.js';
+
+type ExceptionRow = Selectable<Database['exceptions']>;
+type StackFrameRow = Selectable<Database['stack_frames']>;
+
+export function mapExceptionRow(exception: ExceptionRow): ExceptionRecord {
+  return {
+    id: exception.id,
+    organizationId: exception.organization_id,
+    projectId: exception.project_id,
+    logId: exception.log_id,
+    exceptionType: exception.exception_type,
+    exceptionMessage: exception.exception_message,
+    language: exception.language as ExceptionLanguage,
+    fingerprint: exception.fingerprint,
+    rawStackTrace: exception.raw_stack_trace,
+    frameCount: exception.frame_count,
+    createdAt: exception.created_at,
+  };
+}
+
+export function mapFrameRow(f: StackFrameRow): StackFrameRecord {
+  return {
+    id: f.id,
+    exceptionId: f.exception_id,
+    frameIndex: f.frame_index,
+    filePath: f.file_path,
+    functionName: f.function_name,
+    lineNumber: f.line_number,
+    columnNumber: f.column_number,
+    isAppCode: f.is_app_code,
+    codeContext: f.code_context as Record<string, unknown> | null,
+    metadata: f.metadata as Record<string, unknown> | null,
+    originalFile: f.original_file,
+    originalLine: f.original_line,
+    originalColumn: f.original_column,
+    originalFunction: f.original_function,
+    createdAt: f.created_at,
+  };
+}
+
+/**
+ * Fetch logs by id through the reservoir. getByIds is project scoped, so the
+ * ids are grouped by project and fetched once per project. Rows without a
+ * project are skipped (nothing to fetch). Returns a map keyed by log id.
+ */
+export async function fetchLogsByProject(
+  rows: Array<{ log_id: string; project_id: string | null }>
+): Promise<Map<string, StoredLogRecord>> {
+  const idsByProject = new Map<string, string[]>();
+  for (const e of rows) {
+    const pid = e.project_id ?? '';
+    if (!pid) continue;
+    const list = idsByProject.get(pid);
+    if (list) list.push(e.log_id);
+    else idsByProject.set(pid, [e.log_id]);
+  }
+
+  const stored = (
+    await Promise.all(
+      Array.from(idsByProject.entries()).map(([pid, ids]) =>
+        reservoir.getByIds({ ids, projectId: pid })
+      )
+    )
+  ).flat() as StoredLogRecord[];
+
+  return new Map(stored.map((l) => [l.id, l]));
+}
 
 type ErrorGroupEb = ExpressionBuilder<Database, 'error_groups'>;
 
@@ -216,37 +286,22 @@ export class ExceptionService {
       .orderBy('frame_index', 'asc')
       .execute();
 
+    const errorGroup = await this.db
+      .selectFrom('error_groups')
+      .select('id')
+      .where('organization_id', '=', organizationId)
+      .where('fingerprint', '=', exception.fingerprint)
+      .where((eb) =>
+        exception.project_id === null
+          ? eb('project_id', 'is', null)
+          : eb('project_id', '=', exception.project_id)
+      )
+      .executeTakeFirst();
+
     return {
-      exception: {
-        id: exception.id,
-        organizationId: exception.organization_id,
-        projectId: exception.project_id,
-        logId: exception.log_id,
-        exceptionType: exception.exception_type,
-        exceptionMessage: exception.exception_message,
-        language: exception.language as ExceptionLanguage,
-        fingerprint: exception.fingerprint,
-        rawStackTrace: exception.raw_stack_trace,
-        frameCount: exception.frame_count,
-        createdAt: exception.created_at,
-      },
-      frames: frames.map((f) => ({
-        id: f.id,
-        exceptionId: f.exception_id,
-        frameIndex: f.frame_index,
-        filePath: f.file_path,
-        functionName: f.function_name,
-        lineNumber: f.line_number,
-        columnNumber: f.column_number,
-        isAppCode: f.is_app_code,
-        codeContext: f.code_context as Record<string, unknown> | null,
-        metadata: f.metadata as Record<string, unknown> | null,
-        originalFile: f.original_file,
-        originalLine: f.original_line,
-        originalColumn: f.original_column,
-        originalFunction: f.original_function,
-        createdAt: f.created_at,
-      })),
+      exception: mapExceptionRow(exception),
+      frames: frames.map(mapFrameRow),
+      errorGroupId: errorGroup?.id ?? null,
     };
   }
 
@@ -271,36 +326,8 @@ export class ExceptionService {
       .execute();
 
     return {
-      exception: {
-        id: exception.id,
-        organizationId: exception.organization_id,
-        projectId: exception.project_id,
-        logId: exception.log_id,
-        exceptionType: exception.exception_type,
-        exceptionMessage: exception.exception_message,
-        language: exception.language as ExceptionLanguage,
-        fingerprint: exception.fingerprint,
-        rawStackTrace: exception.raw_stack_trace,
-        frameCount: exception.frame_count,
-        createdAt: exception.created_at,
-      },
-      frames: frames.map((f) => ({
-        id: f.id,
-        exceptionId: f.exception_id,
-        frameIndex: f.frame_index,
-        filePath: f.file_path,
-        functionName: f.function_name,
-        lineNumber: f.line_number,
-        columnNumber: f.column_number,
-        isAppCode: f.is_app_code,
-        codeContext: f.code_context as Record<string, unknown> | null,
-        metadata: f.metadata as Record<string, unknown> | null,
-        originalFile: f.original_file,
-        originalLine: f.original_line,
-        originalColumn: f.original_column,
-        originalFunction: f.original_function,
-        createdAt: f.created_at,
-      })),
+      exception: mapExceptionRow(exception),
+      frames: frames.map(mapFrameRow),
     };
   }
 
@@ -637,33 +664,14 @@ export class ExceptionService {
       return { logs: [], total: params.occurrenceCount };
     }
 
-    // Step 2: Fetch logs via reservoir. getByIds is project-scoped, so we
-    // group the requested ids by project and issue one call per project to
-    // handle error groups that span projects (project_id is nullable per
-    // exception row).
-    const idsByProject = new Map<string, string[]>();
-    for (const e of exceptions) {
-      const pid = e.project_id ?? '';
-      if (!pid) continue; // skip rows with no project — nothing to fetch
-      const list = idsByProject.get(pid);
-      if (list) list.push(e.log_id);
-      else idsByProject.set(pid, [e.log_id]);
-    }
+    // Step 2: Fetch logs via reservoir, one call per project (getByIds is
+    // project scoped and project_id is nullable per exception row).
+    const logMap = await fetchLogsByProject(exceptions);
 
-    const storedLogs = (
-      await Promise.all(
-        Array.from(idsByProject.entries()).map(([pid, ids]) =>
-          reservoir.getByIds({ ids, projectId: pid })
-        )
-      )
-    ).flat();
-
-    // Build lookup map and return in the same order
-    const logMap = new Map(storedLogs.map((l: { id: string; time: Date; service: string; message: string; traceId?: string; metadata?: any }) => [l.id, l]));
     const logs = logIds
-      .map(id => logMap.get(id))
-      .filter((l): l is { id: string; time: Date; service: string; message: string; traceId?: string; metadata?: any } => Boolean(l))
-      .map(l => ({
+      .map((id) => logMap.get(id))
+      .filter((l): l is StoredLogRecord => Boolean(l))
+      .map((l) => ({
         id: l.id,
         time: l.time,
         service: l.service,
