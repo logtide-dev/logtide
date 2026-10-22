@@ -1153,6 +1153,15 @@ describe('Alert Notification Job', () => {
             expect(sendMailMock.mock.calls[0][0].to).toBe('sigma-default@example.com');
         });
 
+        it('falls back to the owners and admins when sigma has no channel and no default', async () => {
+            const { organization, project, user: owner } = await createTestContext();
+
+            await runSigma(organization.id, project.id);
+
+            expect(sendMailMock).toHaveBeenCalledTimes(1);
+            expect(sendMailMock.mock.calls[0][0].to).toBe(owner.email);
+        });
+
         it('still reads alert rule channels and alert defaults for alert jobs', async () => {
             const { organization, project } = await createTestContext();
             mockGetOrganizationDefaults.mockImplementation(async (_org: string, type: string) =>
