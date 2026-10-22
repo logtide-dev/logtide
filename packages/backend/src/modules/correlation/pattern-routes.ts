@@ -121,18 +121,16 @@ const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
  * Get organization ID from user's organizations
  */
 async function getUserOrganizationId(userId: string, requestedOrgId?: string): Promise<string | null> {
+  // No silent fallback to "the user's first organization": that picked the newest org
+  // the user belongs to, not the one on screen.
+  if (!requestedOrgId) {
+    throw Object.assign(new Error('organizationId is required'), { statusCode: 400 });
+  }
   const organizations = await organizationsService.getUserOrganizations(userId);
   if (organizations.length === 0) return null;
-
-  // If a specific org is requested, verify it's a valid uuid and user is a member
-  if (requestedOrgId) {
-    if (!uuidRegex.test(requestedOrgId)) return null;
-    const org = organizations.find((o) => o.id === requestedOrgId);
-    return org ? org.id : null;
-  }
-
-  // Default to first organization
-  return organizations[0].id;
+  if (!uuidRegex.test(requestedOrgId)) return null;
+  const org = organizations.find((o) => o.id === requestedOrgId);
+  return org ? org.id : null;
 }
 
 export default async function patternRoutes(fastify: FastifyInstance) {
