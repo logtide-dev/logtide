@@ -341,6 +341,7 @@
   <DetectionPacksGalleryDialog
     bind:open={showPacks}
     organizationId={$currentOrganization.id}
+    categories={['security']}
     onSuccess={() => load()}
   />
 
