@@ -417,8 +417,7 @@
     const token = logsGuard.begin();
 
     if (projectsFailed) {
-      histogramGuard.invalidate();
-      facetsGuard.invalidate();
+      stopSideRequests();
       rows = [];
       total = null;
       loading = false;
@@ -426,8 +425,7 @@
       return false;
     }
     if (ids.length === 0) {
-      histogramGuard.invalidate();
-      facetsGuard.invalidate();
+      stopSideRequests();
       rows = [];
       total = 0;
       loading = false;
@@ -465,6 +463,14 @@
     } finally {
       if (logsGuard.isCurrent(token)) loading = false;
     }
+  }
+
+  /** Drops in-flight histogram and facets answers (live tail, empty scope). */
+  function stopSideRequests() {
+    histogramGuard.invalidate();
+    facetsGuard.invalidate();
+    histogramLoading = false;
+    facetsLoading = false;
   }
 
   async function loadHistogram(r: Run) {
@@ -589,7 +595,7 @@
     stopLive();
     runSeq += 1;
     logsGuard.invalidate();
-    histogramGuard.invalidate();
+    stopSideRequests();
     loading = false;
     loadingMore = false;
     nextCursor = null;
@@ -1260,7 +1266,7 @@
       <div class="flex min-h-9 items-center">
         <LiveTailControls
           {live}
-          state={liveSnap?.state ?? "connecting"}
+          state={liveSnap?.state ?? "disconnected"}
           pausedBy={liveSnap?.pausedBy ?? null}
           limit={liveLimit}
           disabled={projects.length === 0}
