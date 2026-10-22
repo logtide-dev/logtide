@@ -70,6 +70,14 @@ describe('HeaderBreadcrumb', () => {
     expect(project.getAttribute('href')).toBe('/dashboard/projects/p-1/overview');
   });
 
+  it('keeps a readable minimum width for the project on narrow screens', () => {
+    at('/dashboard/projects/p-1/overview');
+    const { container } = render(HeaderBreadcrumb);
+    const cls = container.querySelector('[data-breadcrumb-project]')!.getAttribute('class')!;
+    expect(cls).toContain('min-w-[4rem]');
+    expect(cls).not.toContain('min-w-0');
+  });
+
   it('shows Org / Project when the URL scopes exactly one project', () => {
     at('/dashboard/traces/abc?project=p-2');
     const { container } = render(HeaderBreadcrumb);

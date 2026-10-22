@@ -20,6 +20,16 @@
   }
 
   let { groups, isActive, ariaLabel = 'Section navigation' }: Props = $props();
+
+  let pillRow: HTMLElement | undefined = $state();
+
+  // The pill row scrolls sideways on narrow screens: keep the active pill visible.
+  $effect(() => {
+    // Re-run when the active entry changes (isActive reads the page store).
+    groups.forEach((g) => g.items.forEach((i) => isActive(i.href)));
+    const active = pillRow?.querySelector<HTMLElement>('[aria-current="page"]');
+    active?.scrollIntoView?.({ inline: 'center', block: 'nearest' });
+  });
 </script>
 
 <!-- Desktop sidebar -->
@@ -52,7 +62,7 @@
 </nav>
 
 <!-- Mobile pill row -->
-<nav class="lg:hidden -mx-1 overflow-x-auto" aria-label="{ariaLabel} (compact)">
+<nav bind:this={pillRow} class="lg:hidden -mx-1 overflow-x-auto" aria-label="{ariaLabel} (compact)">
   <div class="flex gap-1 pb-4 min-w-max px-1">
     {#each groups as group (group.label)}
       {#each group.items as item (item.href)}

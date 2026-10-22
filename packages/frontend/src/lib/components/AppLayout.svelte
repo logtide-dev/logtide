@@ -345,7 +345,7 @@
         {/if}
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex flex-shrink-0 items-center gap-1 sm:gap-2">
         <!-- Command Palette Trigger -->
         <button
           onclick={() => shortcutsStore.openCommandPalette()}

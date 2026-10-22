@@ -68,12 +68,12 @@
 	const asCell = (s: unknown) => s as Snippet<[AlertRule]>;
 
 	const columns: DataTableColumn<AlertRule>[] = [
-		{ key: 'name', header: 'Name', class: 'min-w-[12rem]', cell: asCell(nameCell) },
-		{ key: 'scope', header: 'Scope', cell: asCell(scopeCell) },
+		{ key: 'name', header: 'Name', class: 'min-w-[10rem] md:min-w-[12rem]', cell: asCell(nameCell) },
+		{ key: 'scope', header: 'Scope', class: 'hidden md:table-cell', cell: asCell(scopeCell) },
 		{ key: 'state', header: 'State', cell: asCell(stateCell) },
-		{ key: 'lastTriggered', header: 'Last triggered', cell: asCell(lastTriggeredCell) },
-		{ key: 'triggers', header: 'Triggers (24 h)', cell: asCell(triggersCell) },
-		{ key: 'notify', header: 'Will notify', class: 'min-w-[12rem]', cell: asCell(notifyCell) },
+		{ key: 'lastTriggered', header: 'Last triggered', class: 'hidden lg:table-cell', cell: asCell(lastTriggeredCell) },
+		{ key: 'triggers', header: 'Triggers (24 h)', class: 'hidden lg:table-cell', cell: asCell(triggersCell) },
+		{ key: 'notify', header: 'Will notify', class: 'hidden min-w-[12rem] lg:table-cell', cell: asCell(notifyCell) },
 		{ key: 'enabled', header: 'Enabled', cell: asCell(enabledCell) },
 		{ key: 'actions', header: 'Actions', cell: asCell(actionsCell) },
 	];
