@@ -197,6 +197,19 @@ const envelope = parseWebhookEvent(body);
 
 ---
 
+## Slack and Teams destinations
+
+Like Discord, Slack and Microsoft Teams reject the event envelope, so LogTide rewrites the body for these URLs at delivery time (every event source, retries and replays included; the delivery log keeps the envelope):
+
+- **Slack**: classic incoming webhooks (`hooks.slack.com/services/T.../B.../...`, also `hooks.slack-gov.com`) receive Block Kit: a header, an optional description, a fields section, a context line and an "Open in LogTide" button. All dynamic text is escaped so a log message cannot ping a channel. Workflow triggers (`/triggers/...`) take free-form JSON and receive the envelope unchanged.
+- **Microsoft Teams**: Office 365 connector URLs (`*.webhook.office.com`, `outlook.office.com/webhook/`) and Power Automate Workflows URLs receive an Adaptive Card kept under Teams' size limit.
+
+The signature covers the bytes actually sent, as for Discord.
+
+## PagerDuty channels
+
+A notification channel of type PagerDuty holds an Events API v2 routing key and posts to `https://events.pagerduty.com/v2/enqueue` through the same dispatcher (persisted, retried with backoff on 429 and 5xx, dead-lettered after the last attempt). A new incident that routes to the channel sends a `trigger` event with the dedup key `incident:<incident id>`, the incident title as summary, the severity mapped to PagerDuty's critical, error, warning or info, and a link back to the incident. The channel Test button triggers and immediately resolves, so it never leaves an open incident behind.
+
 ## Discord destinations
 
 A webhook whose URL is a Discord webhook endpoint receives a Discord message instead of the envelope, because Discord rejects any body without `content`, `embeds` or file parts with HTTP 400.
