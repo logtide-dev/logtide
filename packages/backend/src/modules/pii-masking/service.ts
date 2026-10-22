@@ -711,7 +711,7 @@ export class PiiMaskingService {
       if (err?.code !== '23505') throw err;
       // Unique-constraint collision: another worker inserted first. Re-read
       // and return the winning salt. Never fall back to the local (unpersisted)
-      // salt — that would silently diverge from what's stored in the DB.
+      // salt, that would silently diverge from what's stored in the DB.
       const retry = await db
         .selectFrom('organization_pii_salts')
         .select(['salt'])

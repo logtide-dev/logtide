@@ -771,6 +771,25 @@ describe('AdminService', () => {
         });
     });
 
+    describe('getActiveIssues incident sources', () => {
+        it('counts open and investigating incidents of every source, not resolved ones', async () => {
+            const { organization } = await createTestContext();
+            await db.deleteFrom('incidents').execute();
+            const base = { organization_id: organization.id, severity: 'high' as const, title: 'Incident' };
+            await db.insertInto('incidents').values([
+                { ...base, source: 'sigma', status: 'open' },
+                { ...base, source: 'alert', status: 'open' },
+                { ...base, source: 'monitor', status: 'investigating' },
+                { ...base, source: 'manual', status: 'open' },
+                { ...base, source: 'alert', status: 'resolved' },
+            ]).execute();
+
+            const result = await adminService.getActiveIssues();
+
+            expect(result.openIncidents).toBe(4);
+        });
+    });
+
     describe('checkVersion', () => {
         it('should return version check result structure', async () => {
             const result = await adminService.checkVersion();
