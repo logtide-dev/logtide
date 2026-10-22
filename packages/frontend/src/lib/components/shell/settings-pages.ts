@@ -1,23 +1,43 @@
 /**
- * Static list of settings pages for the command palette. Re-check against the
- * W11/W14 final routes in Wave D.
+ * Settings pages for the command palette. Built from the same list as the settings
+ * sidebar (settings-nav.ts), so names, routes and role visibility never drift.
  */
+import { visibleSettingsGroups, type SettingsNavContext } from '$lib/components/settings/settings-nav';
+
 export interface SettingsPage {
   label: string;
   href: string;
   keywords: string[];
 }
 
-export const SETTINGS_PAGES: SettingsPage[] = [
-  { label: 'General settings', href: '/dashboard/settings/general', keywords: ['organization', 'name', 'retention', 'display'] },
-  { label: 'Members', href: '/dashboard/settings/members', keywords: ['team', 'invite', 'roles', 'users'] },
-  { label: 'Audit log', href: '/dashboard/settings/audit-log', keywords: ['history', 'activity', 'changes'] },
-  { label: 'PII masking', href: '/dashboard/settings/pii-masking', keywords: ['privacy', 'redact', 'sensitive'] },
-  { label: 'Pipelines', href: '/dashboard/settings/pipelines', keywords: ['parsing', 'enrichment', 'geoip'] },
-  { label: 'Patterns', href: '/dashboard/settings/patterns', keywords: ['grouping', 'log patterns'] },
-  { label: 'Notification destinations', href: '/dashboard/settings/notifications/destinations', keywords: ['email', 'slack', 'webhook', 'channels'] },
-  { label: 'Notification routing', href: '/dashboard/settings/notifications/routing', keywords: ['rules', 'who gets notified'] },
-  { label: 'Notification digests', href: '/dashboard/settings/notifications/digests', keywords: ['summary', 'report', 'email'] },
-  { label: 'Delivery log', href: '/dashboard/settings/notifications/delivery-log', keywords: ['notifications', 'history', 'failed'] },
-  { label: 'Account settings', href: '/dashboard/account', keywords: ['profile', 'password', 'preferences'] },
-];
+/** Extra search words per settings nav item id. */
+const KEYWORDS: Record<string, string[]> = {
+  'account-profile': ['account', 'name', 'email', 'avatar'],
+  'account-preferences': ['account', 'display', 'time zone', 'timezone', 'clock', 'theme'],
+  'account-security': ['account', 'password', 'sessions', 'two factor'],
+  general: ['organization', 'name', 'slug', 'retention'],
+  members: ['team', 'invite', 'roles', 'users'],
+  billing: ['plan', 'subscription', 'invoice', 'payment'],
+  usage: ['quota', 'limits', 'plan'],
+  'audit-log': ['history', 'activity', 'changes'],
+  'pii-masking': ['privacy', 'redact', 'sensitive'],
+  pipelines: ['parsing', 'enrichment', 'geoip'],
+  patterns: ['identifiers', 'correlation', 'extract'],
+  'notification-destinations': ['email', 'slack', 'webhook', 'channels'],
+  'notification-routing': ['rules', 'who gets notified'],
+  'notification-digests': ['summary', 'report', 'email'],
+  'notification-delivery-log': ['notifications', 'history', 'failed'],
+};
+
+/** Settings pages visible to the viewer, named exactly like the settings sidebar. */
+export function settingsPages(ctx: SettingsNavContext): SettingsPage[] {
+  return visibleSettingsGroups(ctx)
+    .filter((group) => group.label !== 'Projects')
+    .flatMap((group) =>
+      group.items.map((item) => ({
+        label: item.label,
+        href: item.href,
+        keywords: [group.label.toLowerCase(), ...(KEYWORDS[item.id] ?? [])],
+      }))
+    );
+}

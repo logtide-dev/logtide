@@ -38,6 +38,9 @@ vi.mock('$lib/api/incidents', () => ({
     })),
   },
 }));
+vi.mock('$lib/api/auth', () => ({
+  authAPI: { getAuthConfig: vi.fn(async () => ({ billingEnabled: true })) },
+}));
 vi.mock('$lib/api/alerts', () => ({
   alertsAPI: {
     getAlertRules: vi.fn(async () => ({ alertRules: [{ id: 'r1', name: 'High errors' }] })),
@@ -46,7 +49,7 @@ vi.mock('$lib/api/alerts', () => ({
 
 import { registerDefaultPaletteProviders } from './providers';
 import { listPaletteProviders, loadPaletteGroups, clearPaletteCache } from './registry';
-import { SETTINGS_PAGES } from '../settings-pages';
+import { organizationStore } from '$lib/stores/organization';
 import { shortcutsStore } from '$lib/stores/shortcuts';
 import { themeStore } from '$lib/stores/theme';
 
@@ -93,24 +96,50 @@ describe('default palette providers', () => {
     expect((await group('projects')).items[0].href).toBe('/dashboard/projects/p1/overview');
   });
 
-  it('lists the settings pages', async () => {
+  function setRole(role: 'owner' | 'admin' | 'member') {
+    organizationStore.clear();
+    organizationStore.setCurrentOrganization({
+      id: 'org-1',
+      name: 'Acme',
+      slug: 'acme',
+      ownerId: 'u1',
+      role,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    } as never);
+  }
+
+  it('lists the settings pages with the sidebar names', async () => {
+    setRole('owner');
+    const items = (await group('settings')).items;
+    const byHref = Object.fromEntries(items.map((i) => [i.href, i.label]));
+    expect(byHref).toMatchObject({
+      '/dashboard/settings/account/profile': 'Profile',
+      '/dashboard/settings/account/preferences': 'Preferences',
+      '/dashboard/settings/account/security': 'Security',
+      '/dashboard/settings/general': 'General',
+      '/dashboard/settings/members': 'Members',
+      '/dashboard/settings/billing': 'Billing',
+      '/dashboard/settings/usage': 'Usage',
+      '/dashboard/settings/audit-log': 'Audit log',
+      '/dashboard/settings/pii-masking': 'PII masking',
+      '/dashboard/settings/pipelines': 'Pipelines',
+      '/dashboard/settings/patterns': 'Identifier extraction',
+      '/dashboard/settings/notifications/destinations': 'Destinations',
+      '/dashboard/settings/notifications/routing': 'Routing',
+      '/dashboard/settings/notifications/digests': 'Digests',
+      '/dashboard/settings/notifications/delivery-log': 'Delivery log',
+    });
+    expect(items.map((i) => i.href)).not.toContain('/dashboard/account');
+    expect(items.map((i) => i.label)).not.toContain('Patterns');
+  });
+
+  it('hides admin-only settings pages from members', async () => {
+    setRole('member');
     const hrefs = (await group('settings')).items.map((i) => i.href);
-    for (const href of [
-      '/dashboard/settings/general',
-      '/dashboard/settings/members',
-      '/dashboard/settings/audit-log',
-      '/dashboard/settings/pii-masking',
-      '/dashboard/settings/pipelines',
-      '/dashboard/settings/patterns',
-      '/dashboard/settings/notifications/destinations',
-      '/dashboard/settings/notifications/routing',
-      '/dashboard/settings/notifications/digests',
-      '/dashboard/settings/notifications/delivery-log',
-      '/dashboard/account',
-    ]) {
-      expect(hrefs).toContain(href);
-    }
-    expect(SETTINGS_PAGES.length).toBe(hrefs.length);
+    expect(hrefs).not.toContain('/dashboard/settings/audit-log');
+    expect(hrefs).not.toContain('/dashboard/settings/billing');
+    expect(hrefs).toContain('/dashboard/settings/usage');
   });
 
   it('toggle theme action calls themeStore.toggle', async () => {
