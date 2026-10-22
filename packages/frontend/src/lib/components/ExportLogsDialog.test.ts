@@ -271,6 +271,32 @@ describe('ExportLogsDialog', () => {
     expect(rows[3][5]).toHaveLength(50_000);
   });
 
+  it('neutralises formula cells in CSV only', async () => {
+    getLogs.mockResolvedValueOnce(
+      page([
+        makeLog({ message: '=cmd|calc', service: '+svc', metadata: { a: '@x', b: '-1+1', c: '\tTab' } }),
+        makeLog({ message: '\rcr', service: 'safe=ok', metadata: null }),
+      ]),
+    );
+    setup({ totalLogs: 2, customColumns: ['a', 'b', 'c'] });
+    await chooseCsv();
+    await exportNow();
+    const rows = parseCsv(await exportedText());
+    expect(rows[1][5]).toBe("'=cmd|calc");
+    expect(rows[1][2]).toBe("'+svc");
+    expect(rows[1].slice(8, 11)).toEqual(["'@x", "'-1+1", "'\tTab"]);
+    expect(rows[2][5]).toBe("'\rcr");
+    expect(rows[2][2]).toBe('safe=ok');
+  });
+
+  it('keeps JSON export raw', async () => {
+    getLogs.mockResolvedValueOnce(page([makeLog({ message: '=cmd' })]));
+    setup({ totalLogs: 1 });
+    await exportNow();
+    const text = await exportedText();
+    expect(JSON.parse(text)[0].message).toBe('=cmd');
+  });
+
   it('toasts without "successfully"', async () => {
     getLogs.mockResolvedValueOnce(page([makeLog(), makeLog()]));
     setup();

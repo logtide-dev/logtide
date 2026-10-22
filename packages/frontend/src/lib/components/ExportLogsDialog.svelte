@@ -102,7 +102,13 @@
 	}
 
 	// RFC 4180: fields holding a comma, a quote or a line break are quoted, quotes doubled.
-	function escapeCsvField(field: string): string {
+	// Spreadsheet formula injection: cells starting with = + - @ tab or CR get a leading apostrophe (CSV only).
+	function neutralizeFormula(field: string): string {
+		return /^[=+\-@\t\r]/.test(field) ? `'${field}` : field;
+	}
+
+	function escapeCsvField(raw: string): string {
+		const field = neutralizeFormula(raw);
 		if (field.includes(",") || field.includes("\n") || field.includes("\r") || field.includes('"')) {
 			return `"${field.replace(/"/g, '""')}"`;
 		}
