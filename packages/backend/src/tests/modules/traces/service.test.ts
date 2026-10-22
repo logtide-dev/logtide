@@ -5,6 +5,7 @@ import { db } from '../../../database/index.js';
 import { metering } from '../../../modules/metering/index.js';
 import { piiMaskingService } from '../../../modules/pii-masking/service.js';
 import type { TransformedSpan, AggregatedTrace } from '../../../modules/otlp/trace-transformer.js';
+import { reservoir } from '../../../database/reservoir.js';
 import crypto from 'crypto';
 
 describe('TracesService', () => {
@@ -1396,6 +1397,185 @@ describe('TracesService', () => {
       );
       expect(oldEdge).toBeUndefined();
       expect(newEdge).toBeDefined();
+    });
+  });
+});
+
+// ============================================================================
+// W4: operations, latency histogram, list params, p95
+// ============================================================================
+describe('TracesService apm', () => {
+  let service: TracesService;
+  let context: Awaited<ReturnType<typeof createTestContext>>;
+
+  beforeEach(async () => {
+    service = new TracesService();
+    context = await createTestContext();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const stat = (over: Record<string, unknown> = {}) => ({
+    service: 'api',
+    operation: 'GET /a',
+    count: 10,
+    errorCount: 0,
+    avgMs: 10,
+    p50Ms: 9,
+    p95Ms: 50,
+    p99Ms: 80,
+    ...over,
+  });
+
+  it('listTraces forwards operation, attributeFilters, sortBy and sortOrder to queryTraces', async () => {
+    const spy = vi.spyOn(reservoir, 'queryTraces').mockResolvedValue({ traces: [], total: 0 });
+    const attributeFilters = [
+      { key: 'http.method', op: 'equals' as const, value: 'GET', include_missing: false },
+    ];
+
+    await service.listTraces({
+      projectId: context.project.id,
+      operation: 'GET /a',
+      attributeFilters,
+      sortBy: 'duration',
+      sortOrder: 'asc',
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: context.project.id,
+        operation: 'GET /a',
+        attributeFilters,
+        sortBy: 'duration',
+        sortOrder: 'asc',
+      })
+    );
+  });
+
+  it('getOperations sorts by p95 desc and derives errorRate and throughputPerMin', async () => {
+    const to = new Date('2026-10-22T12:00:00.000Z');
+    const from = new Date(to.getTime() - 60 * 60 * 1000);
+    const spy = vi.spyOn(reservoir, 'getOperationStats').mockResolvedValue([
+      stat({ operation: 'fast', p95Ms: 20, count: 30 }),
+      stat({ operation: 'slow', p95Ms: 900, count: 120, errorCount: 12 }),
+      stat({ operation: 'mid', p95Ms: 200, count: 60 }),
+    ]);
+
+    const rows = await service.getOperations({ projectId: context.project.id, from, to, limit: 10 });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: context.project.id, from, to, limit: 10 })
+    );
+    expect(rows.map((r) => r.operation)).toEqual(['slow', 'mid', 'fast']);
+    expect(rows[0].errorRate).toBeCloseTo(0.1);
+    expect(rows[0].throughputPerMin).toBe(2);
+  });
+
+  it('getOperations returns 0 rates for a zero-length window and for count 0', async () => {
+    const at = new Date('2026-10-22T12:00:00.000Z');
+    vi.spyOn(reservoir, 'getOperationStats').mockResolvedValue([
+      stat({ operation: 'a', count: 5, errorCount: 1 }),
+      stat({ operation: 'b', count: 0, errorCount: 0 }),
+    ]);
+
+    const rows = await service.getOperations({ projectId: context.project.id, from: at, to: at });
+
+    for (const row of rows) {
+      expect(row.throughputPerMin).toBe(0);
+      expect(Number.isFinite(row.errorRate)).toBe(true);
+    }
+    expect(rows.find((r) => r.operation === 'b')!.errorRate).toBe(0);
+    expect(rows.find((r) => r.operation === 'a')!.errorRate).toBeCloseTo(0.2);
+  });
+
+  it('getLatencyHistogram passes bounds and counts through unchanged', async () => {
+    const histogram = { bounds: [1, 10, 100], counts: [0, 3, 4, 1] };
+    const spy = vi.spyOn(reservoir, 'getLatencyHistogram').mockResolvedValue(histogram);
+
+    const result = await service.getLatencyHistogram({
+      projectId: context.project.id,
+      service: 'api',
+      operation: 'GET /a',
+    });
+
+    expect(result).toEqual(histogram);
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: context.project.id, service: 'api', operation: 'GET /a' })
+    );
+  });
+
+  describe('getStats p95', () => {
+    it('comes from getOperationStats, not the trace sample', async () => {
+      const opSpy = vi.spyOn(reservoir, 'getOperationStats').mockResolvedValue([stat({ p95Ms: 321 })]);
+      const traceSpy = vi.spyOn(reservoir, 'queryTraces');
+
+      const stats = await service.getStats(context.project.id);
+
+      expect(opSpy).toHaveBeenCalled();
+      expect(traceSpy).not.toHaveBeenCalled();
+      expect(stats.p95_duration_ms).toBe(321);
+    });
+
+    it('uses the selected operation row', async () => {
+      vi.spyOn(reservoir, 'getOperationStats').mockResolvedValue([
+        stat({ operation: 'a', p95Ms: 40 }),
+        stat({ operation: 'b', p95Ms: 700 }),
+      ]);
+      const histSpy = vi.spyOn(reservoir, 'getLatencyHistogram');
+
+      const stats = await service.getStats(context.project.id, undefined, undefined, { operation: 'b' });
+
+      expect(stats.p95_duration_ms).toBe(700);
+      expect(histSpy).not.toHaveBeenCalled();
+    });
+
+    it('interpolates from histogram buckets when several operations match', async () => {
+      vi.spyOn(reservoir, 'getOperationStats').mockResolvedValue([
+        stat({ operation: 'a', p95Ms: 40 }),
+        stat({ operation: 'b', p95Ms: 700 }),
+      ]);
+      // 100 spans, all in the (10, 100] bucket: p95 sits 95 percent into it.
+      vi.spyOn(reservoir, 'getLatencyHistogram').mockResolvedValue({
+        bounds: [1, 10, 100],
+        counts: [0, 0, 100, 0],
+      });
+
+      const stats = await service.getStats(context.project.id);
+
+      expect(stats.p95_duration_ms).toBeCloseTo(10 + 0.95 * 90, 1);
+    });
+
+    it('is 0 when there are no spans', async () => {
+      vi.spyOn(reservoir, 'getOperationStats').mockResolvedValue([]);
+
+      const stats = await service.getStats(context.project.id);
+
+      expect(stats.p95_duration_ms).toBe(0);
+    });
+
+    it('reads real entry spans from the database', async () => {
+      const empty = await service.getStats(context.project.id);
+      expect(empty.p95_duration_ms).toBe(0);
+
+      const start = new Date(Date.now() - 60_000);
+      for (let d = 10; d <= 100; d += 10) {
+        await createTestSpan({
+          projectId: context.project.id,
+          organizationId: context.organization.id,
+          serviceName: 'api',
+          operationName: 'GET /a',
+          kind: 'SERVER',
+          startTime: start,
+          durationMs: d,
+        });
+      }
+
+      const stats = await service.getStats(context.project.id);
+
+      expect(stats.p95_duration_ms).toBeGreaterThanOrEqual(10);
+      expect(stats.p95_duration_ms).toBeLessThanOrEqual(100);
     });
   });
 });
