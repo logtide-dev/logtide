@@ -6,11 +6,10 @@
   import { scopeStore } from '$lib/stores/scope';
   import { monitoringStore, monitors, monitorsLoading, monitorsError } from '$lib/stores/monitoring';
   import { toastStore } from '$lib/stores/toast';
-  import { type CreateMonitorInput, type Monitor, type MonitorType } from '$lib/api/monitoring';
+  import type { Monitor } from '$lib/api/monitoring';
   import { ProjectsAPI } from '$lib/api/projects';
   import { getAuthToken } from '$lib/utils/auth';
   import { getApiBaseUrl } from '$lib/config';
-  import { logsAPI } from '$lib/api/logs';
   import type { Project } from '@logtide/shared';
   import Button from '$lib/components/ui/button/button.svelte';
   import { Badge } from '$lib/components/ui/badge';
@@ -23,6 +22,7 @@
   import ScopeBar from '$lib/components/app/ScopeBar.svelte';
   import StatusBadgeEmbed from '$lib/components/monitoring/StatusBadgeEmbed.svelte';
   import MonitorList from '$lib/components/monitoring/MonitorList.svelte';
+  import MonitorForm from '$lib/components/monitoring/MonitorForm.svelte';
   import { parseUptimeUrl, writeUptimeUrl, type UptimeTab } from '$lib/components/monitoring/uptime-url';
   import Activity from '@lucide/svelte/icons/activity';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -65,12 +65,6 @@
 
 
   // Display labels for the shared Select dropdowns
-  const monitorTypeLabels: Record<string, string> = {
-    http: 'HTTP / HTTPS',
-    tcp: 'TCP',
-    heartbeat: 'Heartbeat (Push)',
-    log_heartbeat: 'Log Based',
-  };
   const incidentSeverityLabels: Record<string, string> = {
     minor: 'Minor',
     major: 'Major',
@@ -89,21 +83,27 @@
     members_only: 'Members only',
   };
 
-  let showCreateForm = $state(false);
-  let editingMonitor = $state<Monitor | null>(null);
-  let submitting = $state(false);
+  let formOpen = $state(false);
+  let formMode = $state<'create' | 'edit' | 'duplicate'>('create');
+  let formMonitor = $state<Monitor | null>(null);
 
-  let formName = $state('');
-  let formType = $state<MonitorType>('http');
-  let formTarget = $state('');
-  let formInterval = $state(60);
-  let formTimeout = $state(10);
-  let formThreshold = $state(2);
-  let formGracePeriod = $state<number | null>(null);
-  let formAutoResolve = $state(true);
-  let formEnabled = $state(true);
-  let availableServices = $state<string[]>([]);
-  let serviceSearchOpen = $state(false);
+  function openCreate() {
+    formMode = 'create';
+    formMonitor = null;
+    formOpen = true;
+  }
+
+  function openEdit(monitor: Monitor) {
+    formMode = 'edit';
+    formMonitor = monitor;
+    formOpen = true;
+  }
+
+  function openDuplicate(monitor: Monitor) {
+    formMode = 'duplicate';
+    formMonitor = monitor;
+    formOpen = true;
+  }
 
   $effect(() => {
     const orgId = org?.id;
@@ -150,158 +150,6 @@
     if (org && projectId) monitoringStore.load(org.id, projectId);
   }
 
-  $effect(() => {
-    if (formType === 'log_heartbeat' && projectId && org) {
-      logsAPI.getServices({ projectId }).then((services) => {
-        availableServices = services;
-      }).catch(() => { availableServices = []; });
-    }
-  });
-
-  function resetForm() {
-    formName = '';
-    formType = 'http';
-    formTarget = '';
-    formInterval = 60;
-    formTimeout = 10;
-    formThreshold = 2;
-    formGracePeriod = null;
-    formAutoResolve = true;
-    formEnabled = true;
-  }
-
-  function openCreate() {
-    resetForm();
-    editingMonitor = null;
-    showCreateForm = true;
-  }
-
-  function openEdit(monitor: Monitor) {
-    formName = monitor.name;
-    formType = monitor.type;
-    formTarget = monitor.target ?? '';
-    formInterval = monitor.intervalSeconds;
-    formTimeout = monitor.timeoutSeconds;
-    formThreshold = monitor.failureThreshold;
-    formGracePeriod = monitor.gracePeriodSeconds;
-    formAutoResolve = monitor.autoResolve;
-    formEnabled = monitor.enabled;
-    editingMonitor = monitor;
-    showCreateForm = true;
-  }
-
-  function openDuplicate(monitor: Monitor) {
-    formName = `${monitor.name} (copy)`;
-    formType = monitor.type;
-    formTarget = monitor.target ?? '';
-    formInterval = monitor.intervalSeconds;
-    formTimeout = monitor.timeoutSeconds;
-    formThreshold = monitor.failureThreshold;
-    formGracePeriod = monitor.gracePeriodSeconds;
-    formAutoResolve = monitor.autoResolve;
-    formEnabled = monitor.enabled;
-    editingMonitor = null; // submit creates a new monitor
-    showCreateForm = true;
-  }
-
-  function closeForm() {
-    showCreateForm = false;
-    editingMonitor = null;
-    resetForm();
-  }
-
-  let formError = $state<string | null>(null);
-
-  const defaultGracePeriod = $derived(
-    Number.isFinite(formInterval) ? String(Math.round(formInterval * 1.5)) : ''
-  );
-
-  function validateForm(): string | null {
-    if (!Number.isFinite(formInterval) || formInterval < 30 || formInterval > 86400) {
-      return 'Check interval must be between 30 and 86400 seconds';
-    }
-    if (formType !== 'heartbeat' && formType !== 'log_heartbeat') {
-      if (!Number.isFinite(formTimeout) || formTimeout < 1 || formTimeout > 60) {
-        return 'Timeout must be between 1 and 60 seconds';
-      }
-    }
-    if (!Number.isFinite(formThreshold) || formThreshold < 1 || formThreshold > 20) {
-      return 'Failure threshold must be between 1 and 20';
-    }
-    if (formType === 'log_heartbeat' && formGracePeriod != null) {
-      if (!Number.isFinite(formGracePeriod) || formGracePeriod < 60 || formGracePeriod > 86400) {
-        return 'Silence threshold must be between 60 and 86400 seconds';
-      }
-    }
-    if (formType === 'log_heartbeat') {
-      if (!formTarget || !formTarget.trim()) {
-        return 'Service name is required for log-based monitors';
-      }
-    }
-    if (!editingMonitor) {
-      if (formType === 'http') {
-        if (!formTarget || !(formTarget.startsWith('http://') || formTarget.startsWith('https://'))) {
-          return 'HTTP target must start with http:// or https://';
-        }
-      }
-      if (formType === 'tcp') {
-        if (!formTarget || !formTarget.includes(':')) {
-          return 'TCP target must be in host:port format';
-        }
-      }
-    }
-    return null;
-  }
-
-  async function handleSubmit(e: Event) {
-    e.preventDefault();
-    if (!org) return;
-
-    const validationError = validateForm();
-    if (validationError) {
-      formError = validationError;
-      return;
-    }
-    formError = null;
-
-    submitting = true;
-    try {
-      if (editingMonitor) {
-        await monitoringStore.update(editingMonitor.id, org.id, {
-          name: formName,
-          target: formTarget || null,
-          intervalSeconds: formInterval,
-          timeoutSeconds: formTimeout,
-          gracePeriodSeconds: formType === 'log_heartbeat' ? formGracePeriod : null,
-          failureThreshold: formThreshold,
-          autoResolve: formAutoResolve,
-          enabled: formEnabled,
-        });
-        toastStore.success('Monitor updated');
-      } else {
-        const input: CreateMonitorInput = {
-          organizationId: org.id,
-          projectId: projectId!,
-          name: formName,
-          type: formType,
-          target: formTarget || null,
-          intervalSeconds: formInterval,
-          timeoutSeconds: formTimeout,
-          gracePeriodSeconds: formType === 'log_heartbeat' ? formGracePeriod : null,
-          failureThreshold: formThreshold,
-          autoResolve: formAutoResolve,
-          enabled: formEnabled,
-        };
-        await monitoringStore.create(input);
-        toastStore.success('Monitor created');
-      }
-      closeForm();
-    } catch (err) {
-      toastStore.error(err instanceof Error ? err.message : 'Failed to save monitor');
-    } finally {
-      submitting = false;
-    }
-  }
 
   const selectedProject = $derived(projects.find((p) => p.id === projectId));
   let statusPagePassword = $state('');
@@ -670,180 +518,15 @@
       {/if}
 
 
-      <Dialog.Root open={showCreateForm} onOpenChange={(o) => { if (!o) closeForm(); }}>
-        <Dialog.Content class="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <Dialog.Header>
-            <Dialog.Title>{editingMonitor ? 'Edit Monitor' : 'New Monitor'}</Dialog.Title>
-          </Dialog.Header>
-          <form onsubmit={handleSubmit} class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div class="sm:col-span-2">
-              <label class="mb-1 block text-sm font-medium">Name</label>
-              <input
-                bind:value={formName}
-                required
-                minlength="1"
-                maxlength="255"
-                class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="My API"
-              />
-            </div>
-
-            {#if !editingMonitor}
-              <div>
-                <label class="mb-1 block text-sm font-medium">Project</label>
-                <Select.Root type="single" value={projectId} onValueChange={(v) => { if (v) scopeStore.setProjects([v]); }}>
-                  <Select.Trigger class="w-full">
-                    {projects.find((p) => p.id === projectId)?.name ?? 'Select project'}
-                  </Select.Trigger>
-                  <Select.Content>
-                    {#each projects as p (p.id)}
-                      <Select.Item value={p.id}>{p.name}</Select.Item>
-                    {/each}
-                  </Select.Content>
-                </Select.Root>
-              </div>
-              <div>
-                <label class="mb-1 block text-sm font-medium">Type</label>
-                <Select.Root type="single" value={formType} onValueChange={(v) => { if (v) formType = v as MonitorType; }}>
-                  <Select.Trigger class="w-full">
-                    {monitorTypeLabels[formType] ?? formType}
-                  </Select.Trigger>
-                  <Select.Content>
-                    {#each Object.entries(monitorTypeLabels) as [value, label]}
-                      <Select.Item {value}>{label}</Select.Item>
-                    {/each}
-                  </Select.Content>
-                </Select.Root>
-              </div>
-            {/if}
-
-            {#if formType === 'log_heartbeat'}
-              <div class={!editingMonitor ? '' : 'sm:col-span-2'}>
-                <label class="mb-1 block text-sm font-medium">Service name</label>
-                <div class="relative">
-                  <input
-                    bind:value={formTarget}
-                    onfocus={() => { serviceSearchOpen = true; }}
-                    onblur={() => { setTimeout(() => { serviceSearchOpen = false; }, 150); }}
-                    class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                    placeholder="e.g. logtide-worker"
-                  />
-                  {#if serviceSearchOpen && availableServices.length > 0}
-                    <div class="absolute z-10 mt-1 w-full rounded-md border bg-popover shadow-md max-h-40 overflow-y-auto">
-                      {#each availableServices.filter((s) => !formTarget || s.toLowerCase().includes(formTarget.toLowerCase())) as svc (svc)}
-                        <button
-                          type="button"
-                          class="w-full px-3 py-1.5 text-left text-sm hover:bg-muted"
-                          onmousedown={() => { formTarget = svc; serviceSearchOpen = false; }}
-                        >
-                          {svc}
-                        </button>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-                <p class="mt-1 text-xs text-muted-foreground">Monitor checks if this service sent logs recently</p>
-              </div>
-            {:else if formType === 'heartbeat'}
-              <div class="sm:col-span-2">
-                <div class="rounded-md border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950 px-3 py-2 text-sm text-blue-800 dark:text-blue-200">
-                  <p class="font-medium mb-1">Push-based heartbeat</p>
-                  <p class="text-xs">After creating this monitor, you'll get an endpoint URL. Your service must send periodic POST requests to it.</p>
-                </div>
-              </div>
-            {:else}
-              <div class={!editingMonitor ? '' : 'sm:col-span-2'}>
-                <label class="mb-1 block text-sm font-medium">
-                  {formType === 'tcp' ? 'Target (host:port)' : 'URL'}
-                </label>
-                <input
-                  bind:value={formTarget}
-                  class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder={formType === 'tcp' ? 'db.example.com:5432' : 'https://example.com/health'}
-                />
-              </div>
-            {/if}
-
-            <div>
-              <label class="mb-1 block text-sm font-medium">Check interval (seconds)</label>
-              <input
-                type="number"
-                bind:value={formInterval}
-                min="30"
-                max="86400"
-                class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-
-            {#if formType !== 'heartbeat' && formType !== 'log_heartbeat'}
-              <div>
-                <label class="mb-1 block text-sm font-medium">Timeout (seconds)</label>
-                <input
-                  type="number"
-                  bind:value={formTimeout}
-                  min="1"
-                  max="60"
-                  class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-              </div>
-            {/if}
-
-            {#if formType === 'log_heartbeat'}
-              <div>
-                <label class="mb-1 block text-sm font-medium">Silence threshold (seconds)</label>
-                <input
-                  type="number"
-                  bind:value={formGracePeriod}
-                  min="60"
-                  max="86400"
-                  placeholder={defaultGracePeriod}
-                  class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-                <p class="mt-1 text-xs text-muted-foreground">Mark as down after this many seconds without logs. Default: {defaultGracePeriod}s (interval × 1.5)</p>
-              </div>
-            {/if}
-
-            <div>
-              <label class="mb-1 block text-sm font-medium">Failure threshold</label>
-              <input
-                type="number"
-                bind:value={formThreshold}
-                min="1"
-                max="20"
-                class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-              <p class="mt-1 text-xs text-muted-foreground">Consecutive failures before alerting</p>
-            </div>
-
-            <div class="flex items-center gap-4">
-              <label class="flex items-center gap-2 text-sm">
-                <input type="checkbox" bind:checked={formAutoResolve} class="rounded" />
-                Auto-resolve incident on recovery
-              </label>
-            </div>
-
-            <div class="flex items-center gap-4">
-              <label class="flex items-center gap-2 text-sm">
-                <input type="checkbox" bind:checked={formEnabled} class="rounded" />
-                Enabled
-              </label>
-            </div>
-
-            {#if formError}
-              <div class="sm:col-span-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {formError}
-              </div>
-            {/if}
-
-            <div class="sm:col-span-2 flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onclick={closeForm}>Cancel</Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? 'Saving...' : editingMonitor ? 'Save changes' : 'Create monitor'}
-              </Button>
-            </div>
-          </form>
-        </Dialog.Content>
-      </Dialog.Root>
+      <MonitorForm
+        bind:open={formOpen}
+        mode={formMode}
+        monitor={formMonitor}
+        orgId={org?.id ?? ''}
+        projectId={projectId ?? ''}
+        {projects}
+        onSaved={reloadMonitors}
+      />
     </Tabs.Content>
 
     <!-- ================================================================
