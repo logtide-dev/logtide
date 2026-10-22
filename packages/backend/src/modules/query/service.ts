@@ -2,6 +2,7 @@ import { db } from '../../database/index.js';
 import { reservoir } from '../../database/reservoir.js';
 import type { TimeBucket, StoredLogRecord, IReservoir } from '@logtide/reservoir';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
+import { resolveFieldKey } from '@logtide/shared';
 import type { LogLevel, LogSearchQuery, MetadataFilter } from '@logtide/shared';
 import { hooks } from '../../hooks/index.js';
 import { context } from '@logtide/shared/context';
@@ -66,6 +67,13 @@ export type { LogHistogramResponse };
 export interface LogFacetsResponse {
   facets: { field: string; values: { value: string; count: number }[]; otherCount: number }[];
 }
+
+export interface LogFieldsResponse {
+  fields: { key: string; occurrences: number }[];
+}
+
+/** Most metadata keys GET /api/v1/logs/fields returns. */
+export const FIELDS_MAX_RESULTS = 200;
 
 const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -289,6 +297,56 @@ export class QueryService {
       })),
     };
     await CacheManager.set(cacheKey, response, CACHE_TTL.QUERY);
+    return response;
+  }
+
+  /**
+   * Metadata keys seen in the most recent `sampleSize` logs of the projects
+   * (top-level and one nested level, dot-joined). The beforeQuery hook runs
+   * through prepare, so a hook narrows the project set and the window like
+   * on search. Keys the query language reads as built-ins (level, service,
+   * host, trace, session, span and their aliases) are dropped. Sorted by
+   * occurrences desc, then key; at most FIELDS_MAX_RESULTS.
+   */
+  async discoverFields(params: {
+    projectId: string | string[];
+    from?: Date;
+    to?: Date;
+    sampleSize: number;
+  }): Promise<LogFieldsResponse> {
+    const { sampleSize, ...rest } = params;
+    const prepared = await this.prepare(rest);
+    const { filter } = prepared;
+    if (filter.matchNothing) return { fields: [] };
+
+    const scoped = prepared.params.projectId;
+    const projectIds = [...new Set(Array.isArray(scoped) ? scoped : [scoped])].filter(
+      (id): id is string => typeof id === 'string' && id !== '',
+    );
+    if (projectIds.length === 0) return { fields: [] };
+    const projectId = projectIds.length === 1 ? projectIds[0] : projectIds;
+
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(projectId), {
+      kind: 'fields',
+      from: filter.from.toISOString(),
+      to: filter.to.toISOString(),
+      sampleSize,
+    });
+    const cached = await CacheManager.get<LogFieldsResponse>(cacheKey);
+    if (cached && Array.isArray(cached.fields)) return cached;
+
+    const keys = await reservoir.discoverMetadataKeys({ projectId, from: filter.from, to: filter.to, sampleSize });
+    const fields = keys
+      .filter(({ key }) => {
+        const ref = resolveFieldKey(key);
+        return !(ref && 'builtin' in ref);
+      })
+      .map(({ key, occurrences }) => ({ key, occurrences }))
+      .sort((a, b) => b.occurrences - a.occurrences || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .slice(0, FIELDS_MAX_RESULTS);
+
+    const response: LogFieldsResponse = { fields };
+    await CacheManager.set(cacheKey, response, CACHE_TTL.STATS);
     return response;
   }
 

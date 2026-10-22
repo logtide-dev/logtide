@@ -3,7 +3,7 @@ import request from 'supertest';
 import type { FastifyInstance } from 'fastify';
 import { build } from '../../server.js';
 import { hooks } from '../../hooks/index.js';
-import { createTestContext } from '../helpers/index.js';
+import { createTestContext, createTestProject, createTestSession } from '../helpers/index.js';
 import { seedLogs } from '../modules/query/seed.js';
 
 type Params = Record<string, string | string[]>;
@@ -15,6 +15,8 @@ describe('Logs explorer API', () => {
   let app: FastifyInstance;
   let apiKey: string;
   let projectId: string;
+  let organizationId: string;
+  let userId: string;
 
   beforeAll(async () => {
     app = await build();
@@ -30,6 +32,8 @@ describe('Logs explorer API', () => {
     const ctx = await createTestContext();
     apiKey = ctx.apiKey.plainKey;
     projectId = ctx.project.id;
+    organizationId = ctx.organization.id;
+    userId = ctx.user.id;
   });
 
   afterEach(() => {
@@ -250,6 +254,105 @@ describe('Logs explorer API', () => {
         { value: 'info', count: 1 },
         { value: 'warn', count: 1 },
       ]);
+    });
+  });
+
+  describe('GET /api/v1/logs/fields', () => {
+    type Field = { key: string; occurrences: number };
+    const fields = (params: Params) => get('/api/v1/logs/fields', params);
+
+    it('lists top-level and nested metadata keys', async () => {
+      await seedLogs(projectId, [
+        { message: 'a', metadata: { region: 'eu', user: { id: 1, name: 'ann' }, hostname: 'web-1' } },
+        { message: 'b', metadata: { region: 'us', user: { id: 2 } } },
+      ]);
+      const res = await fields({});
+      expect(res.status).toBe(200);
+      const list = res.body.fields as Field[];
+      const keys = list.map((f) => f.key);
+      expect(keys).toContain('region');
+      expect(keys).toContain('user.id');
+      expect(keys).toContain('user.name');
+      expect(keys).not.toContain('hostname');
+      expect(list.find((f) => f.key === 'region')!.occurrences).toBe(2);
+      expect(list.find((f) => f.key === 'user.name')!.occurrences).toBe(1);
+      expect(res.body).not.toHaveProperty('keys');
+    });
+
+    it('drops built-in names and sorts by occurrences then key', async () => {
+      await seedLogs(projectId, [
+        { message: 'a', metadata: { zone: 'z1', alpha: 1, level: 'x', service: 'y', trace_id: 't', span: 's', session_id: 'q' } },
+        { message: 'b', metadata: { zone: 'z2', beta: 2 } },
+      ]);
+      const res = await fields({});
+      expect(res.status).toBe(200);
+      expect(res.body.fields).toEqual([
+        { key: 'zone', occurrences: 2 },
+        { key: 'alpha', occurrences: 1 },
+        { key: 'beta', occurrences: 1 },
+      ]);
+    });
+
+    it('merges keys across projects', async () => {
+      const second = await createTestProject({ organizationId, userId });
+      await seedLogs(projectId, [
+        { message: 'a', metadata: { region: 'eu', only_first: true } },
+        { message: 'b', metadata: { region: 'us' } },
+      ]);
+      await seedLogs(second.id, [{ message: 'c', metadata: { region: 'eu', only_second: true } }]);
+      const session = await createTestSession(userId);
+
+      const res = await request(app.server)
+        .get('/api/v1/logs/fields')
+        .query({ projectId: [projectId, second.id] })
+        .set('Authorization', `Bearer ${session.token}`);
+      expect(res.status).toBe(200);
+      const list = res.body.fields as Field[];
+      expect(list.find((f) => f.key === 'region')!.occurrences).toBe(3);
+      expect(list.map((f) => f.key)).toEqual(expect.arrayContaining(['only_first', 'only_second']));
+    });
+
+    it('honours the time range', async () => {
+      const old = new Date(Date.now() - 3 * HOUR);
+      await seedLogs(projectId, [
+        { message: 'old', time: old, metadata: { legacy_key: 1 } },
+        { message: 'new', metadata: { fresh_key: 1 } },
+      ]);
+      const res = await fields({
+        from: new Date(old.getTime() - MINUTE).toISOString(),
+        to: new Date(old.getTime() + MINUTE).toISOString(),
+      });
+      expect(res.status).toBe(200);
+      expect((res.body.fields as Field[]).map((f) => f.key)).toEqual(['legacy_key']);
+    });
+
+    it('advertises a 60 per minute rate limit', async () => {
+      const res = await fields({});
+      expect(res.status).toBe(200);
+      expect(res.headers['x-ratelimit-limit']).toBe('60');
+    });
+
+    it('returns 400 for sampleSize 10', async () => {
+      expect((await fields({ sampleSize: '10' })).status).toBe(400);
+      expect((await fields({ sampleSize: '5001' })).status).toBe(400);
+      expect((await fields({ sampleSize: '100' })).status).toBe(200);
+    });
+
+    it('beforeQuery hooks narrow the project set', async () => {
+      const second = await createTestProject({ organizationId, userId });
+      await seedLogs(projectId, [{ message: 'a', metadata: { only_first: 1 } }]);
+      await seedLogs(second.id, [{ message: 'b', metadata: { only_second: 1 } }]);
+      const session = await createTestSession(userId);
+      hooks.register('beforeQuery', (ctx) => {
+        ctx.params.projectId = projectId;
+      });
+
+      const res = await request(app.server)
+        .get('/api/v1/logs/fields')
+        .query({ projectId: [projectId, second.id] })
+        .set('Authorization', `Bearer ${session.token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.fields).toEqual([{ key: 'only_first', occurrences: 1 }]);
     });
   });
 });

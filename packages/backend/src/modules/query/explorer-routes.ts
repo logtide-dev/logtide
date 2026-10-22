@@ -1,12 +1,18 @@
 // Logs explorer read endpoints (count, histogram, facets, fields). They share
 // the filter params and the prepare path of GET /api/v1/logs, so the query
-// language, legacy params, beforeQuery hooks and tenancy apply identically.
+// language, legacy params, beforeQuery hooks and tenancy apply identically
+// (fields takes only the projects and the window).
 
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { requireFullAccess } from '../auth/guards.js';
 import { auditLogService } from '../audit-log/service.js';
 import { LogQueryError } from './build-log-filter.js';
-import { FACETS_DEFAULT_LIMIT, FACETS_MAX_LIMIT } from '@logtide/reservoir';
+import {
+  DISCOVER_DEFAULT_SAMPLE_SIZE,
+  DISCOVER_MAX_SAMPLE_SIZE,
+  FACETS_DEFAULT_LIMIT,
+  FACETS_MAX_LIMIT,
+} from '@logtide/reservoir';
 import {
   ExplorerParamError,
   HISTOGRAM_MAX_BUCKET_SECONDS,
@@ -20,6 +26,8 @@ import {
 import { queryService, type LogQueryParams } from './service.js';
 
 const EXPLORER_RATE_LIMIT = { max: 120, timeWindow: '1 minute' };
+const FIELDS_RATE_LIMIT = { max: 60, timeWindow: '1 minute' };
+const FIELDS_MIN_SAMPLE_SIZE = 100;
 
 interface LogReadRequest {
   params: LogQueryParams;
@@ -161,6 +169,53 @@ export const logExplorerRoutes: FastifyPluginAsync = async (fastify) => {
         q: read.params.q,
         fields: parsed.fields.map((f) => f.key),
       });
+      return result;
+    },
+  });
+
+  // GET /api/v1/logs/fields - metadata keys seen in recent logs
+  fastify.get('/api/v1/logs/fields', {
+    config: { rateLimit: FIELDS_RATE_LIMIT },
+    schema: {
+      description: 'Discover metadata fields',
+      tags: ['query'],
+      querystring: {
+        type: 'object',
+        properties: {
+          projectId: LOG_FILTER_QUERYSTRING_PROPERTIES.projectId,
+          from: LOG_FILTER_QUERYSTRING_PROPERTIES.from,
+          to: LOG_FILTER_QUERYSTRING_PROPERTIES.to,
+          sampleSize: {
+            type: 'integer',
+            minimum: FIELDS_MIN_SAMPLE_SIZE,
+            maximum: DISCOVER_MAX_SAMPLE_SIZE,
+            default: DISCOVER_DEFAULT_SAMPLE_SIZE,
+          },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      if (!(await requireFullAccess(request, reply))) return;
+      const query = request.query as { projectId?: string | string[]; from?: string; to?: string; sampleSize?: number };
+      // Only the window is read: this endpoint takes no filter params.
+      const read = readLogFilterRequest({ from: query.from, to: query.to });
+      if (!read.ok) return reply.code(400).send(read.body);
+      const projectId = await resolveAccessibleProjects(request, reply, query.projectId);
+      if (projectId === null) return;
+
+      let result;
+      try {
+        result = await queryService.discoverFields({
+          projectId,
+          from: read.value.from,
+          to: read.value.to,
+          sampleSize: query.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE,
+        });
+      } catch (err) {
+        return handleQueryError(reply, err);
+      }
+
+      recordStatsViewed(projectId, { kind: 'fields' });
       return result;
     },
   });
