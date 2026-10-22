@@ -198,6 +198,38 @@ describe('Email Templates - Alert Email', () => {
 });
 
 describe('Email Templates - Error Email', () => {
+  const base = {
+    exceptionType: 'TypeError',
+    language: 'nodejs',
+    service: 'api',
+    isNewErrorGroup: false,
+    errorGroupId: 'error-789',
+    organizationName: 'Org',
+    projectName: 'Project',
+  };
+
+  it('renders the regression flag in html and text', () => {
+    const result = generateErrorEmail({ ...base, isRegression: true });
+    expect(result.html).toContain('regression');
+    expect(result.text).toContain('REGRESSION');
+    expect(result.html).not.toContain('escalating');
+  });
+
+  it('renders the escalating flag in html and text', () => {
+    const result = generateErrorEmail({ ...base, isEscalating: true });
+    expect(result.html).toContain('escalating');
+    expect(result.text).toContain('ESCALATING');
+    expect(result.html).not.toContain('regression');
+  });
+
+  it('renders neither flag by default', () => {
+    const result = generateErrorEmail(base);
+    expect(result.html).not.toContain('regression');
+    expect(result.html).not.toContain('escalating');
+    expect(result.text).not.toContain('REGRESSION');
+    expect(result.text).not.toContain('ESCALATING');
+  });
+
   it('should generate HTML and text versions', () => {
     const result = generateErrorEmail({
       exceptionType: 'TypeError',

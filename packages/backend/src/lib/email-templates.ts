@@ -451,6 +451,10 @@ export interface ErrorEmailData {
   language: string;
   service: string;
   isNewErrorGroup: boolean;
+  /** A previously resolved error group recurred. */
+  isRegression?: boolean;
+  /** An ignored error group reopened because its ignore limit was reached. */
+  isEscalating?: boolean;
   errorGroupId: string;
   organizationName: string;
   projectName: string;
@@ -494,6 +498,8 @@ export function generateErrorEmail(data: ErrorEmailData): { html: string; text: 
         { label: 'Project', value: data.projectName },
       ])}
       ${data.isNewErrorGroup ? alertBox('This is a <strong>new error</strong> that hasn\'t been seen before.', 'warning') : ''}
+      ${data.isRegression ? alertBox('This error was resolved and is now a <strong>regression</strong>: it has occurred again.', 'warning') : ''}
+      ${data.isEscalating ? alertBox('This error was ignored and is now <strong>escalating</strong>: its ignore limit was reached.', 'warning') : ''}
       ${cta('View Error Details', errorUrl)}
     `),
     { preheader: `${data.isNewErrorGroup ? 'New ' : ''}${data.exceptionType} in ${data.service}` }
@@ -513,7 +519,7 @@ Language: ${languageLabel}
 Organization: ${data.organizationName}
 Project: ${data.projectName}
 
-Occurred: ${formatEmailDate()}
+${data.isRegression ? 'REGRESSION: this error was resolved and has occurred again.\n\n' : ''}${data.isEscalating ? 'ESCALATING: this error was ignored and its ignore limit was reached.\n\n' : ''}Occurred: ${formatEmailDate()}
 
 View details: ${errorUrl}
 
