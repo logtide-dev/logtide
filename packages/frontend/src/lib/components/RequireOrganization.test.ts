@@ -25,7 +25,9 @@ vi.mock('$lib/api/auth', () => ({
   },
 }));
 
+import { goto } from '$app/navigation';
 import RequireOrganization from './RequireOrganization.svelte';
+import { page } from '$app/state';
 import { authStore } from '$lib/stores/auth';
 import { organizationStore, currentOrganization } from '$lib/stores/organization';
 
@@ -49,6 +51,7 @@ describe('RequireOrganization', () => {
     getOrganizations.mockReset();
     authStore.setAuth({ id: 'user-1', email: 'a@b.c', name: 'Test User' }, 'token-1');
     organizationStore.clear();
+    (page as { url: URL }).url = new URL('http://localhost/dashboard/logs');
   });
 
   // Regression for #288: the org object cached in localStorage was never
@@ -108,5 +111,24 @@ describe('RequireOrganization', () => {
     await waitFor(() => expect(getOrganizations).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('page content')).toBeInTheDocument();
     consoleError.mockRestore();
+  });
+
+  it('renders admin pages for an instance admin with no organization', async () => {
+    (page as { url: URL }).url = new URL('http://localhost/dashboard/admin/users');
+    getOrganizations.mockResolvedValue({ organizations: [] });
+
+    render(RequireOrganization, {
+      props: { children: createRawSnippet(() => ({ render: () => '<p>admin content</p>' })) },
+    });
+
+    expect(await screen.findByText('admin content')).toBeInTheDocument();
+    expect(goto).not.toHaveBeenCalledWith('/onboarding');
+    expect(screen.queryByText('Create your first organization')).toBeNull();
+  });
+
+  it('still sends a user with no organization to onboarding outside admin', async () => {
+    getOrganizations.mockResolvedValue({ organizations: [] });
+    render(RequireOrganization);
+    await waitFor(() => expect(goto).toHaveBeenCalledWith('/onboarding'));
   });
 });
