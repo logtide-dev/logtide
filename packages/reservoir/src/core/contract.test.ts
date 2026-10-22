@@ -101,6 +101,7 @@ it('exports the contract values from the package index', async () => {
   expect(r.FACETS_MAX_FIELDS).toBe(20);
   expect(r.DISCOVER_DEFAULT_SAMPLE_SIZE).toBe(1000);
   expect(r.DISCOVER_MAX_SAMPLE_SIZE).toBe(5000);
+  expect(r.DISCOVER_MAX_KEYS).toBe(500);
   expect(r.OPERATION_STATS_DEFAULT_LIMIT).toBe(100);
   expect(r.OPERATION_STATS_MAX_LIMIT).toBe(500);
   expect(typeof r.NotImplementedError).toBe('function');

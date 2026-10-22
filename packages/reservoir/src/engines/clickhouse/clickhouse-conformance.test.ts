@@ -241,9 +241,9 @@ describe('clickhouse json specifics: metadata keys', () => {
     ]);
   });
 
-  it('objects expand one level, children with a dot are skipped', async () => {
+  it('objects expand one level, children with a dot are listed', async () => {
     const keys = (await discover(3)).map((k) => k.key);
-    expect(keys).toEqual(['a', 'b', 'http.method', 'old']);
+    expect(keys).toEqual(['a', 'b', 'http.method', 'http.x.y', 'old']);
   });
 });
 

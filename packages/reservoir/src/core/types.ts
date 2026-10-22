@@ -741,7 +741,7 @@ export interface LogFacetsResult {
   facets: LogFacet[];
 }
 
-/** Metadata keys seen in the most recent `sampleSize` logs of the range. */
+/** Metadata keys seen in the most recent `sampleSize` logs of the range (at most DISCOVER_MAX_KEYS keys). */
 export interface DiscoverMetadataKeysParams {
   projectId: string | string[];
   from: Date;
@@ -751,7 +751,7 @@ export interface DiscoverMetadataKeysParams {
 }
 
 export interface MetadataKeyOccurrence {
-  /** Top-level key, or `parent.child` for one nested level. */
+  /** Top-level key, or `parent.child` for one nested level (the child name may contain dots). */
   key: string;
   /** Number of sampled logs that have the key. */
   occurrences: number;

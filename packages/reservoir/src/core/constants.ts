@@ -12,6 +12,8 @@ export const FACETS_MAX_FIELDS = 20;
 
 export const DISCOVER_DEFAULT_SAMPLE_SIZE = 1000;
 export const DISCOVER_MAX_SAMPLE_SIZE = 5000;
+/** Most keys one discoverMetadataKeys call returns (busiest first, then key byte order). */
+export const DISCOVER_MAX_KEYS = 500;
 
 export const OPERATION_STATS_DEFAULT_LIMIT = 100;
 export const OPERATION_STATS_MAX_LIMIT = 500;

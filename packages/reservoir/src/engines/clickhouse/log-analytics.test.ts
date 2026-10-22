@@ -240,10 +240,11 @@ describe('clickhouse metadata key discovery', () => {
     expect(params).toMatchObject({ p_pids: ['p1', 'p2'], p_n: 10 });
   });
 
-  it('objects expand one level, skipping children with a dot in their name', () => {
+  it('objects expand one level, children with a dot in their name included', () => {
     const query = translateDiscoverKeys({ ...discoverBase, sampleSize: 10 }).query as string;
     expect(query).toContain("if(JSONType(kv.2) = 'Object'");
-    expect(query).toContain("arrayFilter(c -> position(c, '.') = 0, JSONExtractKeys(kv.2))");
+    expect(query).toContain("arrayMap(c -> concat(kv.1, '.', c), JSONExtractKeys(kv.2))");
+    expect(query).not.toContain('arrayFilter');
     expect(query).toContain('arrayDistinct(');
   });
 

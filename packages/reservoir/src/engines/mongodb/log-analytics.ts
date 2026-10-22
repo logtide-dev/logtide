@@ -22,6 +22,7 @@ import type {
 } from '../../core/types.js';
 import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
 import { toNumber } from './bson-number.js';
+import { DISCOVER_MAX_KEYS } from '../../core/constants.js';
 
 /**
  * `(bucket start ms, level) -> count` over the filtered logs. Buckets are
@@ -120,9 +121,6 @@ export function assembleFacets(fields: LogFacetField[], rows: FacetRow[], limit:
 // ----------------------------------------------------------------------------
 // Metadata key discovery
 // ----------------------------------------------------------------------------
-
-/** Most keys one discovery call returns. */
-export const DISCOVER_MAX_KEYS = 500;
 
 /**
  * Keys of one log's metadata, as the shared `countMetadataKeys` counts them:

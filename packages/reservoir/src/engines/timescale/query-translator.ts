@@ -17,10 +17,8 @@ import type {
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
 import { compileJsonFilters, jsonValueExpr, scalarTextExpr } from './json-path.js';
-import { DISCOVER_DEFAULT_SAMPLE_SIZE } from '../../core/constants.js';
+import { DISCOVER_DEFAULT_SAMPLE_SIZE, DISCOVER_MAX_KEYS } from '../../core/constants.js';
 
-/** Most keys one discovery call returns (plan S9). */
-const DISCOVER_MAX_KEYS = 500;
 
 const INTERVAL_MAP: Record<AggregationInterval, string> = {
   '1m': '1 minute',

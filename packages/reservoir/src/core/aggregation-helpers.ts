@@ -5,7 +5,7 @@
 // zero filling, ordering, limits and cursor encoding are identical on
 // TimescaleDB, ClickHouse and MongoDB.
 
-import { LATENCY_HISTOGRAM_BOUNDS_MS } from './constants.js';
+import { DISCOVER_MAX_KEYS, LATENCY_HISTOGRAM_BOUNDS_MS } from './constants.js';
 import type {
   LogLevel,
   LogHistogramParams,
@@ -132,8 +132,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 /**
  * Key occurrences over sampled metadata: a top-level key whose value is not a
  * plain object counts as itself, a plain-object value counts `parent.child`
- * per child (not expanded further). A log counts once per key. Ordered by
- * occurrences desc, then key byte order.
+ * per child (not expanded further; a child name may itself contain a dot).
+ * A log counts once per key. Ordered by occurrences desc, then key byte
+ * order, cut to DISCOVER_MAX_KEYS.
  */
 export function countMetadataKeys(metadatas: (Record<string, unknown> | null | undefined)[]): MetadataKeyOccurrence[] {
   const counts = new Map<string, number>();
@@ -151,7 +152,8 @@ export function countMetadataKeys(metadatas: (Record<string, unknown> | null | u
   }
   return [...counts]
     .map(([key, occurrences]) => ({ key, occurrences }))
-    .sort((a, b) => b.occurrences - a.occurrences || compareByteOrder(a.key, b.key));
+    .sort((a, b) => b.occurrences - a.occurrences || compareByteOrder(a.key, b.key))
+    .slice(0, DISCOVER_MAX_KEYS);
 }
 
 // ----------------------------------------------------------------------------
