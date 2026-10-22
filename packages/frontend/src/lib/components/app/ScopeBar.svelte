@@ -11,7 +11,6 @@
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import TimeRangePicker from "$lib/components/TimeRangePicker.svelte";
   import { rangeLabel, zoneLabel } from "$lib/components/time-range/labels";
-  import { resolveZone } from "$lib/components/time-range/zone";
   import { displayPreferences } from "$lib/stores/display-preferences";
   import {
     rangesEqual,
@@ -124,11 +123,16 @@
     syncUrl();
   }
 
-  let zone = $derived(resolveZone($displayPreferences.timeZone));
-  let zoneText = $derived(zoneLabel(zone));
-  let disabledTimeLabel = $derived(
-    rangeLabel($scopeStore.range, { zone, hour12: $displayPreferences.hour12 })
-  );
+  // The formatter reads the preferences at call time, so touch the store to
+  // re-derive when the zone or the clock changes.
+  let zoneText = $derived.by(() => {
+    void $displayPreferences;
+    return zoneLabel();
+  });
+  let disabledTimeLabel = $derived.by(() => {
+    void $displayPreferences;
+    return rangeLabel($scopeStore.range);
+  });
 
   const rowBase =
     "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-muted";

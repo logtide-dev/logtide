@@ -61,11 +61,10 @@
   // ── Controlled mode ──────────────────────────────────────────────────────
   let open = $state(false);
   let zone = $derived(resolveZone($displayPreferences.timeZone));
-  let triggerLabel = $derived(
-    value
-      ? rangeLabel(value, { zone, hour12: $displayPreferences.hour12 })
-      : ""
-  );
+  let triggerLabel = $derived.by(() => {
+    void $displayPreferences;
+    return value ? rangeLabel(value) : "";
+  });
 
   function handleControlledSelect(next: TimeRangeValue) {
     onValueChange?.(next);
