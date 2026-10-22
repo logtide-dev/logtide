@@ -359,7 +359,8 @@ export class TracesService {
     if (rows.length === 0) return 0;
 
     const matching = filter.operation ? rows.filter((r) => r.operation === filter.operation) : rows;
-    if (matching.length === 0) return 0;
+    // An operation outside the busiest rows is not "no data": use the histogram.
+    if (matching.length === 0 && !(filter.operation && rows.length >= STATS_P95_OPERATION_LIMIT)) return 0;
     if (matching.length === 1 && rows.length < STATS_P95_OPERATION_LIMIT) return matching[0].p95Ms;
 
     const histogram = await reservoir.getLatencyHistogram({
@@ -564,16 +565,26 @@ export class TracesService {
       from: from ?? new Date((to ?? new Date()).getTime() - 30 * DAY_MS),
     };
     const p95_duration_ms = await this.getP95(projectId, p95Window.from, p95Window.to, filter);
-    const base = await this.getBaseStats(projectId, from, to);
+    // Same window as p95 so the four cards describe one population.
+    const base = await this.getBaseStats(projectId, p95Window.from, p95Window.to, filter);
     return { ...base, p95_duration_ms };
   }
 
-  private async getBaseStats(projectId: string, from?: Date, to?: Date) {
-    // Stats require aggregation (count, sum, avg, max) - use Kysely for timescale
-    if (reservoir.getEngineType() === 'timescale') {
+  private async getBaseStats(
+    projectId: string,
+    from?: Date,
+    to?: Date,
+    filter: { service?: string; operation?: string } = {}
+  ) {
+    // Stats require aggregation (count, sum, avg, max) - use Kysely for timescale.
+    // An operation filter is a span match, which only queryTraces can express, so
+    // it takes the generic path on every engine.
+    if (reservoir.getEngineType() === 'timescale' && !filter.operation) {
       let query = db
         .selectFrom('traces')
         .where('project_id', '=', projectId);
+
+      if (filter.service) query = query.where('service_name', '=', filter.service);
 
       if (from) query = query.where('start_time', '>=', from);
       if (to) query = query.where('start_time', '<=', to);
@@ -609,6 +620,8 @@ export class TracesService {
       projectId,
       from: from || new Date(0),
       to: to || new Date(),
+      serviceName: filter.service || undefined,
+      operation: filter.operation || undefined,
       limit: 100000,
     });
 
