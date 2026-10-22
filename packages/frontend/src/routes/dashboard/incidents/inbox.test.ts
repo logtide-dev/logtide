@@ -148,6 +148,30 @@ describe('inbox page', () => {
     expect(url.searchParams.get('source')).toBe('sigma');
   });
 
+  it('400 invalid_assignee drops the stale assignee from the URL', async () => {
+    setUrl('?assignee=me&source=alert');
+    h.list.mockRejectedValueOnce(
+      Object.assign(new Error('Assignee is not a member of this organization'), {
+        status: 400,
+        code: 'invalid_assignee',
+      })
+    );
+    await renderPage();
+    await waitFor(() => expect(h.goto).toHaveBeenCalled());
+    const [url, opts] = h.goto.mock.calls.at(-1)!;
+    expect((url as URL).searchParams.has('assignee')).toBe(false);
+    expect((url as URL).searchParams.get('source')).toBe('alert');
+    expect(opts.replaceState).toBe(true);
+  });
+
+  it('other list errors keep the assignee and show the error state', async () => {
+    setUrl('?assignee=me');
+    h.list.mockRejectedValueOnce(new Error('boom'));
+    await renderPage();
+    expect(await screen.findByText('Could not load incidents')).toBeTruthy();
+    expect(h.goto).not.toHaveBeenCalled();
+  });
+
   it('changing a filter updates the URL (replaceState) and resets page to 1 and clears selection', async () => {
     setUrl('?page=2');
     h.list.mockResolvedValue({ incidents: [inc('a'), inc('b')], total: 60 });
