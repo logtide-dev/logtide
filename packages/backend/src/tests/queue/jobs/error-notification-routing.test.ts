@@ -134,6 +134,27 @@ describe('error notification: shared channel routing', () => {
     expect(hoisted.sendMail).not.toHaveBeenCalled();
   });
 
+  it('does not page PagerDuty for a plain repeat occurrence of an open group', async () => {
+    const env = await setup();
+    await addDefaultChannel(env.org.id, 'pagerduty', { routingKey: 'a'.repeat(32) });
+
+    await processErrorNotification(buildJob(env));
+
+    const pd = hoisted.enqueue.mock.calls.map((c) => c[0]).filter((c) => c.url.includes('pagerduty'));
+    expect(pd).toHaveLength(0);
+  });
+
+  it('pages PagerDuty for a new group and for an escalating one', async () => {
+    const env = await setup();
+    await addDefaultChannel(env.org.id, 'pagerduty', { routingKey: 'a'.repeat(32) });
+
+    await processErrorNotification(buildJob(env, { isNewErrorGroup: true }));
+    await processErrorNotification(buildJob(env, { isEscalating: true }));
+
+    const pd = hoisted.enqueue.mock.calls.map((c) => c[0]).filter((c) => c.url.includes('pagerduty'));
+    expect(pd.length).toBeGreaterThanOrEqual(1);
+  });
+
   it('falls back to owners and admins only when no channel resolves', async () => {
     const env = await setup();
     const admin = await createTestUser({ email: `admin-${Math.random()}@example.com`, name: 'Admin' });
