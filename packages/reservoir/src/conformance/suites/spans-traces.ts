@@ -1,6 +1,7 @@
 // Span and trace query conformance (plan D3, D6, Wave D rulings C2 and C3):
-// span `attributeFilters` follow the metadata semantics over `attributes`;
-// a trace matches `operation` and `attributeFilters` when ONE of its spans
+// span `attributeFilters` follow the metadata semantics over `attributes`,
+// or over `resourceAttributes` for a key starting with `resource.` (the rest
+// of the key); a trace matches `operation` and `attributeFilters` when ONE of its spans
 // starting inside [from, to] matches all of them together; `serviceName`
 // keeps its trace-level meaning, also while that span match is active;
 // trace sorting by start time or duration, default start time desc.
@@ -41,6 +42,24 @@ export function describeSpanTraceQueryConformance(ctx: ConformanceContext): void
 
     it('SQ04 start time ascending', async () => {
       expect(await spans({ sortBy: 'start_time', sortOrder: 'asc', limit: 1 })).toEqual(['PAGE-1']);
+    });
+
+    const workerSpans = sorted(['LOOP', ...range('JOB-', 1, 4)]);
+    const ordersSpans = sorted([...range('POST-', 1, 10), ...range('SELECT-', 1, 10)]);
+
+    it('SQ05 a resource. key reads the resource attributes, an unprefixed key never does', async () => {
+      expect(sorted(await spans({ attributeFilters: [equals('resource.deployment.environment', 'staging')] }))).toEqual(workerSpans);
+      expect(await spans({ attributeFilters: [equals('deployment.environment', 'staging')] })).toEqual([]);
+    });
+
+    it('SQ06 a resource. key prefers the literal dotted key, then the nested path', async () => {
+      expect(sorted(await spans({ attributeFilters: [equals('resource.service.version', '2.0.0')] }))).toEqual(workerSpans);
+      expect(sorted(await spans({ attributeFilters: [equals('resource.service.version', '1.4.0')] }))).toEqual(ordersSpans);
+    });
+
+    it('SQ07 resource and span attribute filters combine on one span', async () => {
+      const ids = await spans({ attributeFilters: [equals('resource.deployment.environment', 'prod'), equals('http.method', 'POST')] });
+      expect(sorted(ids)).toEqual(sorted(range('POST-', 1, 10)));
     });
 
     it('TQ01 a trace matches an operation of any of its spans', async () => {
@@ -101,6 +120,14 @@ export function describeSpanTraceQueryConformance(ctx: ConformanceContext): void
     it('TQ13 the window also bounds the span of attribute filters', async () => {
       // The only spans with http.status_code 500 in TF1 to TF3 are GET-96 to GET-100 (960 s to 1,000 s).
       expect(await traces({ to: seconds(500), attributeFilters: [equals('http.status_code', '500')] })).toEqual([]);
+    });
+
+    it('TQ14 trace attribute filters read resource attributes on the matching span', async () => {
+      expect(await traces({ operation: 'process job', attributeFilters: [equals('resource.deployment.environment', 'staging')] }))
+        .toEqual(['TW1']);
+      expect(sorted(await traces({ attributeFilters: [equals('resource.service.version', '1.4.0'), equals('db.system', 'postgresql')] })))
+        .toEqual(range('TO', 1, 10, 2));
+      expect(await traces({ operation: 'GET /users', attributeFilters: [equals('resource.deployment.environment', 'prod')] })).toEqual([]);
     });
   });
 }

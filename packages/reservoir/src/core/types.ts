@@ -367,7 +367,11 @@ export interface SpanQueryParams {
   operation?: string;
   kind?: SpanKind | SpanKind[];
   statusCode?: SpanStatusCode | SpanStatusCode[];
-  /** Filters over span `attributes`, with the metadata filter semantics of logs. */
+  /**
+   * Filters over span `attributes`, with the metadata filter semantics of
+   * logs; a key starting with `resource.` reads `resourceAttributes` with the
+   * rest of the key instead.
+   */
   attributeFilters?: MetadataFilter[];
   from: Date;
   to: Date;

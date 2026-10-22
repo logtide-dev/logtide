@@ -150,6 +150,8 @@ interface SpanRow {
   durationMs: number;
   status: SpanStatusCode;
   attributes: Record<string, unknown>;
+  /** Resource attributes, read by `resource.`-prefixed attribute filters (Wave D ruling C2). */
+  resource?: Record<string, unknown>;
   start: Date;
 }
 
@@ -161,6 +163,10 @@ const TW1 = traceHex(0x301);
 const TB1 = traceHex(0x401);
 const TX1 = traceHex(0x501);
 const pad2 = (n: number) => String(n).padStart(2, '0');
+// Resource attributes: the orders spans carry a nested service version, the
+// worker spans an OpenTelemetry-style literal dotted key.
+const ORDERS_RESOURCE = { 'deployment.environment': 'prod', service: { version: '1.4.0' } };
+const WORKER_RESOURCE = { 'deployment.environment': 'staging', 'service.version': '2.0.0' };
 
 function buildSpanRows(): SpanRow[] {
   const rows: SpanRow[] = [];
@@ -187,23 +193,23 @@ function buildSpanRows(): SpanRow[] {
     rows.push({
       id: `POST-${k}`, project: PROJECT_A, traceId: postTrace(k), spanId: spanHex(0x3000 + k), service: 'api', kind: 'SERVER',
       operation: 'POST /orders', durationMs: 100 * k, status: k >= 9 ? 'ERROR' : 'OK',
-      attributes: { 'http.method': 'POST', 'http.status_code': k >= 9 ? 500 : 201 }, start,
+      attributes: { 'http.method': 'POST', 'http.status_code': k >= 9 ? 500 : 201 }, resource: ORDERS_RESOURCE, start,
     });
     rows.push({
       id: `SELECT-${k}`, project: PROJECT_A, traceId: postTrace(k), spanId: spanHex(0x3100 + k), parentSpanId: spanHex(0x3000 + k),
       service: 'api', kind: 'CLIENT', operation: 'SELECT orders', durationMs: 5 * k, status: 'OK',
-      attributes: { 'db.system': 'postgresql' }, start: new Date(start.getTime() + 1000),
+      attributes: { 'db.system': 'postgresql' }, resource: ORDERS_RESOURCE, start: new Date(start.getTime() + 1000),
     });
   }
   rows.push({
     id: 'LOOP', project: PROJECT_A, traceId: TW1, spanId: spanHex(0x4001), service: 'worker', kind: 'INTERNAL',
-    operation: 'job loop', durationMs: 45, status: 'UNSET', attributes: {}, start: minutes(40),
+    operation: 'job loop', durationMs: 45, status: 'UNSET', attributes: {}, resource: WORKER_RESOURCE, start: minutes(40),
   });
   for (let j = 1; j <= 4; j++) {
     rows.push({
       id: `JOB-${j}`, project: PROJECT_A, traceId: TW1, spanId: spanHex(0x4100 + j), parentSpanId: spanHex(0x4001),
       service: 'worker', kind: 'CONSUMER', operation: 'process job', durationMs: 10 * j, status: j === 4 ? 'ERROR' : 'OK',
-      attributes: {}, start: new Date(minutes(40).getTime() + j * 1000),
+      attributes: {}, resource: WORKER_RESOURCE, start: new Date(minutes(40).getTime() + j * 1000),
     });
   }
   rows.push({
@@ -234,6 +240,7 @@ function spanRecord(row: SpanRow): SpanRecord {
   };
   if (row.parentSpanId !== undefined) record.parentSpanId = row.parentSpanId;
   if (row.kind !== undefined) record.kind = row.kind;
+  if (row.resource !== undefined) record.resourceAttributes = structuredClone(row.resource);
   return record;
 }
 

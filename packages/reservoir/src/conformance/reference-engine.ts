@@ -94,7 +94,7 @@ function toClause(f: MetadataFilter): FieldClause {
   }
 }
 
-/** D3 metadata semantics over `metadata` (logs) or `attributes` (spans). */
+/** D3 metadata semantics over `metadata` (logs) or one span attribute map. */
 function filtersMatch(
   values: Record<string, unknown> | undefined,
   filters: MetadataFilter[] | undefined,
@@ -110,6 +110,26 @@ function filtersMatch(
     }
   }
   return true;
+}
+
+const RESOURCE_PREFIX = 'resource.';
+
+/**
+ * Span attribute filters (Wave D ruling C2): a key starting with `resource.`
+ * reads `resourceAttributes` with the rest of the key, any other key reads
+ * `attributes`; every filter must hold.
+ */
+function spanFiltersMatch(span: SpanRecord, filters: MetadataFilter[] | undefined): boolean {
+  const attributes: MetadataFilter[] = [];
+  const resource: MetadataFilter[] = [];
+  for (const f of filters ?? []) {
+    if (f.key.startsWith(RESOURCE_PREFIX) && f.key.length > RESOURCE_PREFIX.length) {
+      resource.push({ ...f, key: f.key.slice(RESOURCE_PREFIX.length) });
+    } else {
+      attributes.push(f);
+    }
+  }
+  return filtersMatch(span.attributes, attributes) && filtersMatch(span.resourceAttributes, resource);
 }
 
 function hostnameOf(log: LogRecord): string | undefined {
@@ -371,7 +391,7 @@ export class ReferenceEngine {
       && (!operations || operations.includes(s.operationName))
       && (!kinds || (s.kind !== undefined && kinds.includes(s.kind)))
       && (!statuses || (s.statusCode !== undefined && statuses.includes(s.statusCode)))
-      && filtersMatch(s.attributes, params.attributeFilters));
+      && spanFiltersMatch(s, params.attributeFilters));
     const key = SPAN_SORT_KEYS[params.sortBy ?? 'start_time'] ?? SPAN_SORT_KEYS.start_time;
     const dir = params.sortOrder === 'desc' ? -1 : 1;
     rows.sort((a, b) => dir * compareValues(key(a), key(b)) || compareByteOrder(a.spanId, b.spanId));
@@ -403,7 +423,7 @@ export class ReferenceEngine {
         && s.traceId === t.traceId
         && inRange(s.time.getTime(), params)
         && (params.operation === undefined || s.operationName === params.operation)
-        && filtersMatch(s.attributes, params.attributeFilters));
+        && spanFiltersMatch(s, params.attributeFilters));
     });
     const key = params.sortBy === 'duration' ? (t: TraceRecord) => t.durationMs : (t: TraceRecord) => t.startTime.getTime();
     const dir = params.sortOrder === 'asc' ? 1 : -1;
