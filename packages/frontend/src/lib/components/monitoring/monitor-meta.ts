@@ -138,3 +138,16 @@ export function filterMonitors<T extends FilterableMonitor>(
     return s === status;
   });
 }
+
+/** "45 s", "4 min 12 s", "2 h 5 min", "3 d 4 h". */
+export function formatDuration(totalSeconds: number | null | undefined): string {
+  if (totalSeconds == null || !Number.isFinite(totalSeconds) || totalSeconds < 0) return '-';
+  const s = Math.floor(totalSeconds);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return s % 60 === 0 ? `${m} min` : `${m} min ${s % 60} s`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 === 0 ? `${h} h` : `${h} h ${m % 60} min`;
+  const d = Math.floor(h / 24);
+  return h % 24 === 0 ? `${d} d` : `${d} d ${h % 24} h`;
+}

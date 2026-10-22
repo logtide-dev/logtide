@@ -60,3 +60,15 @@ describe('MONITOR_TYPE_OPTIONS', () => {
     ]);
   });
 });
+
+describe('formatDuration', () => {
+  it('formats seconds, minutes, hours and days', async () => {
+    const { formatDuration } = await import('./monitor-meta');
+    expect(formatDuration(45)).toBe('45 s');
+    expect(formatDuration(252)).toBe('4 min 12 s');
+    expect(formatDuration(3600)).toBe('1 h');
+    expect(formatDuration(7500)).toBe('2 h 5 min');
+    expect(formatDuration(3 * 86400 + 4 * 3600)).toBe('3 d 4 h');
+    expect(formatDuration(null)).toBe('-');
+  });
+});
