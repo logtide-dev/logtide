@@ -183,7 +183,7 @@ describe('org config role gates: PII masking', () => {
     expect(test.statusCode).toBe(200);
   });
 
-  it('role check uses the resolved org (admin in org1, member in org2)', async () => {
+  it('role check uses the explicitly requested org (admin in org1, member in org2)', async () => {
     const tag = uniq();
     const user = await createTestUser({ email: `multi-${tag}@example.com` });
     const otherOwner = await createTestUser({ email: `other-${tag}@example.com` });
@@ -201,8 +201,9 @@ describe('org config role gates: PII masking', () => {
       headers: bearer(token),
       payload: rulePayload(),
     });
-    expect(noOrgId.statusCode).toBe(201);
-    expect(JSON.parse(noOrgId.payload).data.organizationId).toBe(org1.id);
+    expect(noOrgId.statusCode).toBe(400);
+    const none = await db.selectFrom('pii_masking_rules').select('id').where('organization_id', '=', org1.id).execute();
+    expect(none).toHaveLength(0);
 
     const explicitOrg2 = await createRuleAs(token, org2.id);
     expect(explicitOrg2.statusCode).toBe(403);
@@ -501,7 +502,7 @@ describe('org config role gates: identifier patterns', () => {
     expect(test.statusCode).toBe(200);
   });
 
-  it('role check uses the resolved org when organizationId is omitted', async () => {
+  it('patterns write without organizationId is rejected, not resolved to the newest org', async () => {
     const tag = uniq();
     const user = await createTestUser({ email: `pm-${tag}@example.com` });
     const o2Owner = await createTestUser({ email: `po2-${tag}@example.com` });
@@ -512,14 +513,13 @@ describe('org config role gates: identifier patterns', () => {
     await db.insertInto('organization_members').values({ organization_id: org1.id, user_id: user.id, role: 'member' }).execute();
     const { token } = await createTestSession(user.id);
 
-    // newest org (org1) is the default and the user is only a member there
     const res = await app.inject({
       method: 'POST',
       url: '/v1/patterns',
       headers: bearer(token),
       payload: { name: `p_${uniq()}`, displayName: 'Pattern', pattern: 'ORD-\\d+' },
     });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(400);
     expect((await create(token, org2.id)).statusCode).toBe(201);
   });
 

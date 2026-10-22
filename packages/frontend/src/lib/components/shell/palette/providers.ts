@@ -27,7 +27,9 @@ import { savedSearchesAPI } from '$lib/api/saved-searches';
 import { incidentsAPI } from '$lib/api/incidents';
 import { savedSearchUrl } from '$lib/components/search/explorer-url';
 import { INCIDENT_ACTIVE_STATUSES } from '@logtide/shared';
-import { SETTINGS_PAGES } from '../settings-pages';
+import { settingsPages } from '../settings-pages';
+import { organizationStore } from '$lib/stores/organization';
+import { authAPI } from '$lib/api/auth';
 import { OPEN_ORG_SWITCHER_EVENT } from '../events';
 import { registerPaletteProvider } from './registry';
 import type { PaletteItem } from './types';
@@ -234,13 +236,21 @@ export function registerDefaultPaletteProviders(): void {
     id: 'settings',
     heading: 'Settings',
     order: 70,
-    items: () =>
-      SETTINGS_PAGES.map((page) => ({
+    items: async () => {
+      const role = get(organizationStore).currentOrganization?.role ?? null;
+      let billingEnabled = false;
+      try {
+        billingEnabled = (await authAPI.getAuthConfig()).billingEnabled === true;
+      } catch {
+        billingEnabled = false;
+      }
+      return settingsPages({ role, billingEnabled }).map((page) => ({
         id: `settings:${page.href}`,
         label: page.label,
         icon: icon(Settings),
         href: page.href,
         keywords: page.keywords,
-      })),
+      }));
+    },
   });
 }

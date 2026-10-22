@@ -8,6 +8,7 @@
     type PiiMaskingRule,
     type PiiAction,
     type PiiPatternType,
+    type CreatePiiRuleInput,
   } from '$lib/api/pii-masking';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
@@ -61,9 +62,20 @@
   let rules = $state<PiiMaskingRule[]>([]);
 
   // Computed rule groups
-  let contentRules = $derived(rules.filter((r) => r.patternType === 'builtin' || (r.patternType === 'custom' && r.regexPattern)));
-  let fieldRules = $derived(rules.filter((r) => r.patternType === 'field_name'));
-  let customRules = $derived(rules.filter((r) => r.patternType === 'custom'));
+  // With a project selected the API returns organization rows and project rows. A project
+  // row overrides the organization row of the same name, so the shadowed one is hidden.
+  let visibleRules = $derived(
+    selectedProjectId
+      ? rules.filter(
+          (r) =>
+            r.projectId !== null ||
+            !rules.some((o) => o.projectId === selectedProjectId && o.name === r.name)
+        )
+      : rules
+  );
+  let contentRules = $derived(visibleRules.filter((r) => r.patternType === 'builtin' || (r.patternType === 'custom' && r.regexPattern)));
+  let fieldRules = $derived(visibleRules.filter((r) => r.patternType === 'field_name'));
+  let customRules = $derived(visibleRules.filter((r) => r.patternType === 'custom'));
 
   // Dialog states
   let editDialogOpen = $state(false);
@@ -122,39 +134,81 @@
     unsubOrgStore();
   });
 
-  onMount(async () => {
+  let mounted = $state(false);
+  let loadedOrgId: string | null = null;
+
+  onMount(() => {
     if (!token) {
       goto('/login');
       return;
     }
-    if (currentOrgId) {
-      projectsAPI
-        .getProjects(currentOrgId)
-        .then((res) => {
-          projects = res.projects;
-        })
-        .catch(() => {
-          projects = [];
-        });
-    }
-    await loadRules();
+    mounted = true;
+  });
+
+  // Reload when the current organization changes: settings paths are kept on organization
+  // switch, so the project list, scope and rules must follow it.
+  $effect(() => {
+    const orgId = currentOrgId;
+    if (!mounted || !orgId || orgId === loadedOrgId) return;
+    loadedOrgId = orgId;
+    selectedProjectId = '';
+    projects = [];
+    projectsAPI
+      .getProjects(orgId)
+      .then((res) => {
+        if (currentOrgId === orgId) projects = res.projects;
+      })
+      .catch(() => {
+        if (currentOrgId === orgId) projects = [];
+      });
+    void loadRules();
   });
 
   async function loadRules() {
+    const orgId = currentOrgId;
+    if (!orgId) return;
     loading = true;
     try {
-      rules = await piiMaskingAPI.listRules(selectedProjectId || undefined);
+      const loaded = await piiMaskingAPI.listRules(orgId, selectedProjectId || undefined);
+      if (currentOrgId === orgId) rules = loaded;
     } catch (e) {
       console.error('Failed to load PII masking rules:', e);
       toastStore.error('Could not load PII masking rules');
     } finally {
-      loading = false;
+      if (currentOrgId === orgId) loading = false;
     }
   }
 
   function handleScopeChange(e: Event) {
     selectedProjectId = (e.currentTarget as HTMLSelectElement).value;
     void loadRules();
+  }
+
+  // Rows that must be copied into a new row before changing them: synthetic built-ins, and
+  // (with a project selected) organization rows, so a change made "for this project" never
+  // rewrites the organization default.
+  function needsOverride(rule: PiiMaskingRule): boolean {
+    return rule.id.startsWith('builtin:') || (!!selectedProjectId && rule.projectId !== selectedProjectId);
+  }
+
+  function isInherited(rule: PiiMaskingRule): boolean {
+    return !!selectedProjectId && rule.projectId !== selectedProjectId;
+  }
+
+  function overrideInput(rule: PiiMaskingRule, patch: Partial<CreatePiiRuleInput>): CreatePiiRuleInput {
+    return {
+      name: rule.name,
+      displayName: rule.displayName,
+      description: rule.description || undefined,
+      patternType: rule.patternType,
+      regexPattern: rule.regexPattern || undefined,
+      fieldNames: rule.fieldNames.length > 0 ? rule.fieldNames : undefined,
+      action: rule.action,
+      priority: rule.priority,
+      enabled: rule.enabled,
+      ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+      ...patch,
+    };
   }
 
   function openCreateDialog() {
@@ -219,7 +273,7 @@
           return;
         }
 
-        await piiMaskingAPI.createRule({
+        await piiMaskingAPI.createRule(currentOrgId!, {
           name: formName,
           displayName: formDisplayName,
           description: formDescription || undefined,
@@ -233,9 +287,10 @@
         });
         toastStore.success('Rule created');
       } else if (editingRule) {
-        // For built-in rules without a real ID, create a DB row to override
-        if (editingRule.id.startsWith('builtin:')) {
-          await piiMaskingAPI.createRule({
+        // Built-ins have no row yet, and inherited organization rows must not be rewritten
+        // from a project view: both create a new row (a project row when a project is selected).
+        if (needsOverride(editingRule)) {
+          await piiMaskingAPI.createRule(currentOrgId!, {
             name: editingRule.name,
             displayName: formDisplayName,
             description: formDescription || undefined,
@@ -248,7 +303,7 @@
             ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
           });
         } else {
-          await piiMaskingAPI.updateRule(editingRule.id, {
+          await piiMaskingAPI.updateRule(currentOrgId!, editingRule.id, {
             displayName: formDisplayName,
             description: formDescription || undefined,
             regexPattern: formRegexPattern || undefined,
@@ -272,11 +327,11 @@
   }
 
   async function handleDelete() {
-    if (!editingRule || editingRule.id.startsWith('builtin:')) return;
+    if (!editingRule || editingRule.id.startsWith('builtin:') || isInherited(editingRule)) return;
 
     deleting = true;
     try {
-      await piiMaskingAPI.deleteRule(editingRule.id);
+      await piiMaskingAPI.deleteRule(currentOrgId!, editingRule.id);
       toastStore.success('Rule deleted');
       deleteDialogOpen = false;
       editingRule = null;
@@ -291,22 +346,12 @@
 
   async function handleToggleEnabled(rule: PiiMaskingRule) {
     try {
-      if (rule.id.startsWith('builtin:')) {
-        await piiMaskingAPI.createRule({
-          name: rule.name,
-          displayName: rule.displayName,
-          description: rule.description || undefined,
-          patternType: rule.patternType,
-          regexPattern: rule.regexPattern || undefined,
-          fieldNames: rule.fieldNames.length > 0 ? rule.fieldNames : undefined,
-          action: rule.action,
-          enabled: !rule.enabled,
-          ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
-        });
-        // Builtin override changes the ID, need full reload
+      if (needsOverride(rule)) {
+        await piiMaskingAPI.createRule(currentOrgId!, overrideInput(rule, { enabled: !rule.enabled }));
+        // The override is a new row with a new ID, need full reload
         await loadRules();
       } else {
-        await piiMaskingAPI.updateRule(rule.id, { enabled: !rule.enabled });
+        await piiMaskingAPI.updateRule(currentOrgId!, rule.id, { enabled: !rule.enabled });
         // Update locally to avoid full page refresh
         rules = rules.map((r) => r.id === rule.id ? { ...r, enabled: !r.enabled } : r);
       }
@@ -319,22 +364,12 @@
 
   async function handleActionChange(rule: PiiMaskingRule, newAction: PiiAction) {
     try {
-      if (rule.id.startsWith('builtin:')) {
-        await piiMaskingAPI.createRule({
-          name: rule.name,
-          displayName: rule.displayName,
-          description: rule.description || undefined,
-          patternType: rule.patternType,
-          regexPattern: rule.regexPattern || undefined,
-          fieldNames: rule.fieldNames.length > 0 ? rule.fieldNames : undefined,
-          action: newAction,
-          enabled: rule.enabled,
-          ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
-        });
-        // Builtin override changes the ID, need full reload
+      if (needsOverride(rule)) {
+        await piiMaskingAPI.createRule(currentOrgId!, overrideInput(rule, { action: newAction }));
+        // The override is a new row with a new ID, need full reload
         await loadRules();
       } else {
-        await piiMaskingAPI.updateRule(rule.id, { action: newAction });
+        await piiMaskingAPI.updateRule(currentOrgId!, rule.id, { action: newAction });
         // Update locally to avoid full page refresh
         rules = rules.map((r) => r.id === rule.id ? { ...r, action: newAction } : r);
       }
@@ -364,8 +399,10 @@
       }
 
       const result = await piiMaskingAPI.testMasking(
+        currentOrgId!,
         testMessage || undefined,
-        metadata
+        metadata,
+        selectedProjectId || undefined
       );
 
       testResultMessage = result.message || '';
@@ -568,7 +605,7 @@
                         >
                           <Pencil class="w-4 h-4" />
                         </Button>
-                        {#if !rule.id.startsWith('builtin:')}
+                        {#if !rule.id.startsWith('builtin:') && !isInherited(rule)}
                           <Button
                             variant="ghost"
                             size="icon"

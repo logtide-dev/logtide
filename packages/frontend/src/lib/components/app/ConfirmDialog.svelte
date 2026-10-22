@@ -32,7 +32,7 @@
   let cancelEl = $state<HTMLElement | null>(null);
 
   const working = $derived(busy || submitting);
-  const textOk = $derived(requireText === undefined || typed.trim() === requireText);
+  const textOk = $derived(requireText === undefined || typed.trim() === requireText.trim());
   const uid = $props.id();
   const inputId = `confirm-text-${uid}`;
 

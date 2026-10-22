@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 
 const h = vi.hoisted(() => ({
   goto: vi.fn(),
@@ -80,6 +80,22 @@ describe('pipelines list page', () => {
     expect(screen.queryByRole('button', { name: /New pipeline/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete Org pipe' })).toBeNull();
     expect(screen.getByTestId('read-only-notice').textContent).toContain('log pipelines');
+  });
+
+  it('member can open a pipeline to view its steps', async () => {
+    organizationStore.setCurrentOrganization(org('member') as never);
+    render(Page);
+    await screen.findByText('Org pipe');
+    expect(screen.queryByRole('button', { name: 'Edit Org pipe' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'View Org pipe' }));
+    expect(h.goto).toHaveBeenCalledWith('/dashboard/settings/pipelines/a');
+  });
+
+  it('owner has no View button, only Edit', async () => {
+    render(Page);
+    await screen.findByText('Org pipe');
+    expect(screen.queryByRole('button', { name: 'View Org pipe' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit Org pipe' })).toBeInTheDocument();
   });
 
   it('owner sees New pipeline and delete asks for confirmation', async () => {

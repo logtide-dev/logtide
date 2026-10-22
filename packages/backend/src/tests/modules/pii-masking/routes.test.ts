@@ -115,11 +115,21 @@ describe('PII Masking Routes', () => {
 
             const res = await app.inject({
                 method: 'GET',
-                url: '/v1/pii-masking/rules',
+                url: `/v1/pii-masking/rules?organizationId=${testOrganization.id}`,
                 headers: { Authorization: `Bearer ${otherSession.token}` },
             });
 
             expect(res.statusCode).toBe(403);
+        });
+
+        it('should return 400 when organizationId is missing instead of picking the newest org', async () => {
+            const res = await app.inject({
+                method: 'GET',
+                url: '/v1/pii-masking/rules',
+                headers: authHeaders(),
+            });
+
+            expect(res.statusCode).toBe(400);
         });
 
         it('should filter by projectId', async () => {
@@ -168,7 +178,7 @@ describe('PII Masking Routes', () => {
 
             const res = await app.inject({
                 method: 'POST',
-                url: '/v1/pii-masking/rules',
+                url: `/v1/pii-masking/rules?organizationId=${testOrganization.id}`,
                 headers: { Authorization: `Bearer ${session.token}` },
                 payload: {
                     name: 'test',
@@ -302,7 +312,7 @@ describe('PII Masking Routes', () => {
 
             const res = await app.inject({
                 method: 'PUT',
-                url: `/v1/pii-masking/rules/some-id`,
+                url: `/v1/pii-masking/rules/some-id?organizationId=${testOrganization.id}`,
                 headers: { Authorization: `Bearer ${session.token}` },
                 payload: { displayName: 'test' },
             });
@@ -363,7 +373,7 @@ describe('PII Masking Routes', () => {
 
             const res = await app.inject({
                 method: 'DELETE',
-                url: `/v1/pii-masking/rules/some-id`,
+                url: `/v1/pii-masking/rules/some-id?organizationId=${testOrganization.id}`,
                 headers: { Authorization: `Bearer ${session.token}` },
             });
 
@@ -445,7 +455,7 @@ describe('PII Masking Routes', () => {
 
             const res = await app.inject({
                 method: 'POST',
-                url: '/v1/pii-masking/test',
+                url: `/v1/pii-masking/test?organizationId=${testOrganization.id}`,
                 headers: { Authorization: `Bearer ${session.token}` },
                 payload: { message: 'test' },
             });

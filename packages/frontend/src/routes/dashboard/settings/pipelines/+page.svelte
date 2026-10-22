@@ -178,6 +178,16 @@
                   aria-label={`Enable ${pipeline.name}`}
                   onCheckedChange={() => handleToggle(pipeline)}
                 />
+                {#if !canEdit}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onclick={() => goto(`/dashboard/settings/pipelines/${pipeline.id}`)}
+                    aria-label={`View ${pipeline.name}`}
+                  >
+                    View
+                  </Button>
+                {/if}
                 {#if canEdit}
                   <Button
                     variant="ghost"

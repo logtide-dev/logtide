@@ -372,6 +372,36 @@ describe('Invitations Routes', () => {
             expect(response.statusCode).toBe(201);
         });
 
+        it('should return 403 when an admin invites a new admin', async () => {
+            const admin = await createTestUser({ email: 'admin-inviter@test.com' });
+            await db
+                .insertInto('organization_members')
+                .values({ user_id: admin.id, organization_id: testOrganization.id, role: 'admin' })
+                .execute();
+            const adminSession = await createTestSession(admin.id);
+
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/invitations/${testOrganization.id}/invite`,
+                headers: { Authorization: `Bearer ${adminSession.token}` },
+                payload: { email: 'second-admin@test.com', role: 'admin' },
+            });
+
+            expect(response.statusCode).toBe(403);
+            expect(JSON.parse(response.payload).error).toContain('owner can invite admins');
+        });
+
+        it('should let the owner invite an admin', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/invitations/${testOrganization.id}/invite`,
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { email: 'owner-made-admin@test.com', role: 'admin' },
+            });
+
+            expect(response.statusCode).toBe(201);
+        });
+
         it('should return 403 for regular member', async () => {
             // Create regular member
             const member = await createTestUser({ email: 'member@test.com' });

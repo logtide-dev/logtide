@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 const h = vi.hoisted(() => ({
   goto: vi.fn(),
   deleteOrganization: vi.fn(),
+  updateOrganization: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
@@ -11,7 +12,7 @@ vi.mock('$app/navigation', () => ({ goto: h.goto }));
 vi.mock('$lib/api/organizations', () => ({
   OrganizationsAPI: class {
     deleteOrganization = h.deleteOrganization;
-    updateOrganization = vi.fn();
+    updateOrganization = h.updateOrganization;
   },
 }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: h.toast }));
@@ -61,6 +62,7 @@ describe('general page', () => {
     localStorage.clear();
     h.goto.mockReset();
     h.deleteOrganization.mockReset();
+    h.updateOrganization.mockReset();
     h.toast.success.mockReset();
     h.toast.error.mockReset();
     authStore.setAuth({ id: 'user-1', email: 'a@b.c', name: 'Test User' }, 'token-1');
@@ -101,6 +103,16 @@ describe('general page', () => {
     expect(screen.getByLabelText('Organization name')).not.toBeDisabled();
     const link = screen.getByRole('link', { name: 'Members page' });
     expect(link.getAttribute('href')).toBe('/dashboard/settings/members');
+  });
+
+  it('saves the organization name without leading or trailing spaces', async () => {
+    h.updateOrganization.mockResolvedValue({ organization: { ...baseOrg, name: 'Acme', retentionDays: 30 } });
+    organizationStore.setCurrentOrganization({ ...baseOrg, retentionDays: 30 });
+    render(Page);
+    await fireEvent.input(screen.getByLabelText('Organization name'), { target: { value: '  Acme  ' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(h.updateOrganization).toHaveBeenCalledTimes(1));
+    expect(h.updateOrganization.mock.calls[0][1].name).toBe('Acme');
   });
 
   it('owner delete requires typing the exact name', async () => {

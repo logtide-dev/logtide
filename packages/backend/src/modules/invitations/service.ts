@@ -62,6 +62,19 @@ export class InvitationsService {
       throw new Error('Only owners and admins can invite members');
     }
 
+    // Same boundary as updateMemberRole: only the owner creates admins.
+    if (role === 'admin') {
+      const inviter = await db
+        .selectFrom('organization_members')
+        .select(['role'])
+        .where('user_id', '=', invitedBy)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (inviter?.role !== 'owner') {
+        throw new Error('Only the organization owner can invite admins');
+      }
+    }
+
     // Check if user exists
     const existingUser = await db
       .selectFrom('users')

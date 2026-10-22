@@ -9,15 +9,16 @@ describe('roles', () => {
     expect(roleLabel('member')).toBe('Member');
   });
 
-  it('lists exactly the seven capabilities', () => {
+  it('lists exactly the eight capabilities', () => {
     expect(ROLE_CAPABILITIES.map((c) => c.label)).toEqual([
       'View and use all organization data',
       'Manage members and invitations',
       'Change PII masking, pipelines and identifier extraction',
+      'Change status page settings',
       'Manage notification destinations and digests',
       'View the audit log and billing',
       'Edit organization name and URL slug',
-      'Promote admins, transfer ownership and delete the organization',
+      'Invite or promote admins, transfer ownership and delete the organization',
     ]);
   });
 

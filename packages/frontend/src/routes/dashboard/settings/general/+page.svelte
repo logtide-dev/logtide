@@ -69,7 +69,7 @@
     try {
       const api = new OrganizationsAPI(() => token);
       const response = await api.updateOrganization(currentOrg.id, {
-        name: orgName,
+        name: orgName.trim(),
         slug: orgSlug,
         description: orgDescription || undefined,
       });

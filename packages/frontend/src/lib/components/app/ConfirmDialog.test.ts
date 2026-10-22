@@ -76,6 +76,17 @@ describe('ConfirmDialog', () => {
     expect(confirmBtn()).not.toBeDisabled();
   });
 
+  it('accepts a name saved with leading or trailing spaces', async () => {
+    render(ConfirmDialog, { ...base, requireText: 'Acme ', onConfirm: vi.fn() });
+    const input = screen.getByLabelText(/to confirm/);
+    await fireEvent.input(input, { target: { value: 'Acme' } });
+    expect(confirmBtn()).not.toBeDisabled();
+    await fireEvent.input(input, { target: { value: 'Acme ' } });
+    expect(confirmBtn()).not.toBeDisabled();
+    await fireEvent.input(input, { target: { value: 'acme' } });
+    expect(confirmBtn()).toBeDisabled();
+  });
+
   it('clears the typed text when reopened', async () => {
     const { rerender } = render(ConfirmDialog, {
       ...base,

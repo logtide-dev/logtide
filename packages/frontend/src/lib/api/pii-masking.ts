@@ -73,17 +73,24 @@ class PiiMaskingAPI {
     return response.json();
   }
 
-  async listRules(projectId?: string): Promise<PiiMaskingRule[]> {
-    const params = new URLSearchParams();
-    if (projectId) params.set('projectId', projectId);
-    const qs = params.toString();
-    const url = `${getApiBaseUrl()}/pii-masking/rules${qs ? `?${qs}` : ''}`;
+  // Every call names the organization explicitly: the backend no longer falls back
+  // to the user's newest organization.
+  private orgQuery(organizationId: string, extra?: Record<string, string | undefined>): string {
+    const params = new URLSearchParams({ organizationId });
+    for (const [k, v] of Object.entries(extra ?? {})) {
+      if (v) params.set(k, v);
+    }
+    return `?${params.toString()}`;
+  }
+
+  async listRules(organizationId: string, projectId?: string): Promise<PiiMaskingRule[]> {
+    const url = `${getApiBaseUrl()}/pii-masking/rules${this.orgQuery(organizationId, { projectId })}`;
     const response = await this.fetch<{ success: boolean; data: PiiMaskingRule[] }>(url);
     return response.data;
   }
 
-  async createRule(input: CreatePiiRuleInput): Promise<PiiMaskingRule> {
-    const url = `${getApiBaseUrl()}/pii-masking/rules`;
+  async createRule(organizationId: string, input: CreatePiiRuleInput): Promise<PiiMaskingRule> {
+    const url = `${getApiBaseUrl()}/pii-masking/rules${this.orgQuery(organizationId)}`;
     const response = await this.fetch<{ success: boolean; data: PiiMaskingRule }>(url, {
       method: 'POST',
       body: JSON.stringify(input),
@@ -91,8 +98,8 @@ class PiiMaskingAPI {
     return response.data;
   }
 
-  async updateRule(id: string, input: UpdatePiiRuleInput): Promise<PiiMaskingRule> {
-    const url = `${getApiBaseUrl()}/pii-masking/rules/${id}`;
+  async updateRule(organizationId: string, id: string, input: UpdatePiiRuleInput): Promise<PiiMaskingRule> {
+    const url = `${getApiBaseUrl()}/pii-masking/rules/${id}${this.orgQuery(organizationId)}`;
     const response = await this.fetch<{ success: boolean; data: PiiMaskingRule }>(url, {
       method: 'PUT',
       body: JSON.stringify(input),
@@ -100,19 +107,20 @@ class PiiMaskingAPI {
     return response.data;
   }
 
-  async deleteRule(id: string): Promise<void> {
-    const url = `${getApiBaseUrl()}/pii-masking/rules/${id}`;
+  async deleteRule(organizationId: string, id: string): Promise<void> {
+    const url = `${getApiBaseUrl()}/pii-masking/rules/${id}${this.orgQuery(organizationId)}`;
     await this.fetch<{ success: boolean }>(url, {
       method: 'DELETE',
     });
   }
 
   async testMasking(
+    organizationId: string,
     message?: string,
     metadata?: Record<string, unknown>,
     projectId?: string
   ): Promise<TestMaskingResult> {
-    const url = `${getApiBaseUrl()}/pii-masking/test`;
+    const url = `${getApiBaseUrl()}/pii-masking/test${this.orgQuery(organizationId)}`;
     const response = await this.fetch<{ success: boolean; data: TestMaskingResult }>(url, {
       method: 'POST',
       body: JSON.stringify({ message, metadata, projectId }),

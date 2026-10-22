@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { nextQuotaReset, formatResetDate, isMonthlyQuota } from './quota';
+import { nextQuotaReset, formatResetDate, isMonthlyQuota, capabilityLabel } from './quota';
 
 describe('quota helpers', () => {
   it('nextQuotaReset from Dec 31 2026 returns Jan 1 2027 UTC', () => {
@@ -19,5 +19,14 @@ describe('quota helpers', () => {
     expect(isMonthlyQuota({ kind: 'quota', capability: 'ingestion.max_events_monthly' })).toBe(true);
     expect(isMonthlyQuota({ kind: 'quota', capability: 'storage.max_bytes' })).toBe(false);
     expect(isMonthlyQuota({ kind: 'limit', capability: 'projects.max' })).toBe(false);
+  });
+});
+
+describe('capability labels', () => {
+  it.each([
+    ['saved_searches.max_per_org', 'Saved searches'],
+    ['status_page.subscribers.max', 'Status page subscribers'],
+  ])('labels %s with a friendly name', (key, label) => {
+    expect(capabilityLabel(key)).toBe(label);
   });
 });

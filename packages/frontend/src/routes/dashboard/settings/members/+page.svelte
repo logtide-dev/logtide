@@ -530,7 +530,7 @@
   </details>
 </div>
 
-<InviteMemberDialog bind:open={inviteDialogOpen} onSubmit={handleInvite} />
+<InviteMemberDialog bind:open={inviteDialogOpen} onSubmit={handleInvite} inviterRole={currentOrg?.role ?? null} />
 
 <ConfirmDialog
   bind:open={removeOpen}
