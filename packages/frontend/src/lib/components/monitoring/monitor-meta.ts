@@ -151,3 +151,31 @@ export function formatDuration(totalSeconds: number | null | undefined): string 
   const d = Math.floor(h / 24);
   return h % 24 === 0 ? `${d} d` : `${d} d ${h % 24} h`;
 }
+
+export const STATUS_UPDATE_SEVERITIES = [
+  { value: 'minor', label: 'Minor' },
+  { value: 'major', label: 'Major' },
+  { value: 'critical', label: 'Critical' },
+] as const;
+
+export const STATUS_UPDATE_STATUSES = [
+  { value: 'investigating', label: 'Investigating' },
+  { value: 'identified', label: 'Identified' },
+  { value: 'monitoring', label: 'Monitoring' },
+  { value: 'resolved', label: 'Resolved' },
+] as const;
+
+export function statusUpdateSeverityLabel(value: string): string {
+  return STATUS_UPDATE_SEVERITIES.find((s) => s.value === value)?.label ?? value;
+}
+
+export function statusUpdateStatusLabel(value: string): string {
+  return STATUS_UPDATE_STATUSES.find((s) => s.value === value)?.label ?? value;
+}
+
+/** Severity module key for a status update severity, so badges share one palette. */
+export function statusUpdateSeverityTone(value: string): string {
+  if (value === 'critical') return 'critical';
+  if (value === 'major') return 'high';
+  return 'medium';
+}
