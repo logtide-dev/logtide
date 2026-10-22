@@ -790,7 +790,7 @@
 <Dialog bind:open={editDialogOpen}>
   <DialogContent class="max-w-lg">
     <DialogHeader>
-      <DialogTitle>{isCreating ? 'Create custom rule' : 'Edit Rule'}</DialogTitle>
+      <DialogTitle>{isCreating ? 'Create custom rule' : 'Edit rule'}</DialogTitle>
       <DialogDescription>
         {isCreating
           ? 'Define a custom PII masking rule with a regex pattern or field names.'

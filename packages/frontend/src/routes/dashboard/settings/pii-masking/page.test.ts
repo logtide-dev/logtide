@@ -177,6 +177,14 @@ describe('PII masking page', () => {
     expect(screen.getByRole('button', { name: 'Delete Custom ID' })).toBeInTheDocument();
   });
 
+  it('titles the edit dialog in sentence case', async () => {
+    render(Page);
+    await screen.findByText('Custom ID');
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit Custom ID' }));
+    expect(await screen.findByText('Edit rule')).toBeInTheDocument();
+    expect(screen.queryByText('Edit Rule')).toBeNull();
+  });
+
   it('sends the current organization with every call and follows an organization switch', async () => {
     render(Page);
     await screen.findByText('Custom ID');
