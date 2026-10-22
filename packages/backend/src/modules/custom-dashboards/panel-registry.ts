@@ -125,6 +125,8 @@ const metricAggregationEnum = z.enum([
 ]);
 const metricIntervalEnum = z.enum(['1m', '5m', '15m', '1h', '6h', '1d']);
 
+const METRIC_GROUP_BY_KEY = /^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/;
+
 const metricChartSchema = z.object({
   type: z.literal('metric_chart'),
   title: z.string().min(1).max(100),
@@ -135,6 +137,10 @@ const metricChartSchema = z.object({
   interval: metricIntervalEnum,
   timeRange: timeRangeEnum,
   serviceName: z.string().max(200).nullable(),
+  // Optional so every document saved before this field existed stays valid.
+  // The key charset is the first injection barrier; the reservoir
+  // parameterizes group-by keys as well.
+  groupBy: z.array(z.string().regex(METRIC_GROUP_BY_KEY)).max(2).optional(),
 });
 
 const metricStatSchema = z.object({

@@ -189,6 +189,8 @@ export interface MetricChartConfig {
   interval: MetricInterval;
   timeRange: PanelTimeRange;
   serviceName: string | null;
+  /** optional, max 2 metric attribute keys; one series per label combination */
+  groupBy?: string[];
 }
 
 export interface MetricStatConfig {

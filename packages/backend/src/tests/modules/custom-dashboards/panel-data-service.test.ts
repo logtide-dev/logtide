@@ -867,6 +867,45 @@ describe('alert_status panel', () => {
 // ─── metric_chart ────────────────────────────────────────────────────────────
 
 describe('metric_chart panel', () => {
+  it('metric_chart passes groupBy to aggregateMetrics', async () => {
+    const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValue({
+      metricName: 'http_requests',
+      metricType: 'sum',
+      timeseries: [
+        { bucket: new Date(), value: 1, labels: { host: 'a' } },
+        { bucket: new Date(), value: 2, labels: { host: 'b' } },
+      ],
+      executionTimeMs: 1,
+    } as Awaited<ReturnType<typeof reservoir.aggregateMetrics>>);
+
+    const base = {
+      type: 'metric_chart' as const,
+      title: 'Grouped',
+      source: 'metrics' as const,
+      projectId,
+      metricName: 'http_requests',
+      aggregation: 'sum' as const,
+      interval: '1h' as const,
+      timeRange: '24h' as const,
+      serviceName: null,
+    };
+
+    const r = (await fetchPanelData({ ...base, groupBy: ['host'] }, ctx())) as {
+      series: Array<{ labels?: Record<string, string> }>;
+    };
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0].groupBy).toEqual(['host']);
+    expect(r.series.map((x) => x.labels)).toEqual([{ host: 'a' }, { host: 'b' }]);
+
+    // Absent or empty groupBy is not forwarded.
+    await fetchPanelData(base, ctx());
+    await fetchPanelData({ ...base, groupBy: [] }, ctx());
+    expect(spy.mock.calls[1][0].groupBy).toBeUndefined();
+    expect(spy.mock.calls[2][0].groupBy).toBeUndefined();
+
+    spy.mockRestore();
+  });
+
   it('happy path: returns series from mocked aggregation', async () => {
     const now = new Date();
     const bucket = new Date(now.getTime() - 10 * 60 * 1000);

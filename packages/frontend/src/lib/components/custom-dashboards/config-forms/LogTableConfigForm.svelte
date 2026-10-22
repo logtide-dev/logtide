@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { LogTableConfig, LogLevelKey, BuiltinLogColumn, Project } from '@logtide/shared';
+  import type { LogTableConfig, LogLevelKey, BuiltinLogColumn } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
@@ -12,10 +11,13 @@
     SelectValue,
   } from '$lib/components/ui/select';
   import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
-  import { ProjectsAPI } from '$lib/api/projects';
-  import { authStore } from '$lib/stores/auth';
-  import { organizationStore } from '$lib/stores/organization';
-  import { get } from 'svelte/store';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+    createMetadataKeyOptions,
+  } from '../pickers/options-state.svelte';
 
   interface Props {
     config: LogTableConfig;
@@ -23,6 +25,17 @@
   }
 
   let { config, onChange }: Props = $props();
+
+  const services = createServiceOptions('logs', () => config.projectId);
+  const metadataKeys = createMetadataKeyOptions(() => config.projectId);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('logs', projectId, config.service))) {
+      onChange({ ...config, projectId, service: null });
+    }
+  }
 
   const allLevels: LogLevelKey[] = ['debug', 'info', 'warn', 'error', 'critical'];
   const allBuiltins: BuiltinLogColumn[] = ['time', 'level', 'service', 'message'];
@@ -39,22 +52,7 @@
     { value: 'live', label: 'Live (WebSocket)' },
   ];
 
-  let projects = $state<Project[]>([]);
   let newColumn = $state('');
-
-  onMount(async () => {
-    // Best-effort project list; the form stays usable org-wide on failure.
-    try {
-      const token = get(authStore).token;
-      const orgId = get(organizationStore).currentOrganization?.id;
-      if (!token || !orgId) return;
-      const api = new ProjectsAPI(() => token);
-      const response = await api.getProjects(orgId);
-      projects = response.projects;
-    } catch {
-      projects = [];
-    }
-  });
 
   function update<K extends keyof LogTableConfig>(key: K, value: LogTableConfig[K]) {
     onChange({ ...config, [key]: value });
@@ -95,12 +93,6 @@
     [next[index], next[target]] = [next[target], next[index]];
     update('columns', next);
   }
-
-  const selectedProjectLabel = $derived(
-    config.projectId === null
-      ? 'All projects'
-      : (projects.find((p) => p.id === config.projectId)?.name ?? 'Selected project')
-  );
 </script>
 
 <div class="space-y-4">
@@ -115,22 +107,12 @@
   </div>
 
   <div class="space-y-1.5">
-    <Label>Project</Label>
-    <Select
-      type="single"
-      value={config.projectId ?? '__all__'}
-      onValueChange={(v) => v && update('projectId', v === '__all__' ? null : v)}
-    >
-      <SelectTrigger>
-        <SelectValue>{selectedProjectLabel}</SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__all__">All projects</SelectItem>
-        {#each projects as project (project.id)}
-          <SelectItem value={project.id}>{project.name}</SelectItem>
-        {/each}
-      </SelectContent>
-    </Select>
+    <Label for="lt-project">Project</Label>
+    <ProjectSelect
+      id="lt-project"
+      value={config.projectId}
+      onChange={handleProjectChange}
+    />
   </div>
 
   <div class="space-y-1.5">
@@ -193,15 +175,13 @@
 
   <div class="space-y-1.5">
     <Label for="lt-service">Service (optional)</Label>
-    <Input
+    <SuggestInput
       id="lt-service"
-      type="text"
       placeholder="Leave empty for all services"
       value={config.service ?? ''}
-      oninput={(e) => {
-        const val = (e.currentTarget as HTMLInputElement).value;
-        update('service', val.length > 0 ? val : null);
-      }}
+      options={services.list}
+      loading={services.loading}
+      onChange={(v) => update('service', v.length > 0 ? v : null)}
     />
   </div>
 
@@ -270,7 +250,14 @@
       </ul>
     {/if}
     <div class="flex gap-2">
-      <Input id="lt-col-input" placeholder="e.g. http_host or geo.city" bind:value={newColumn} />
+      <SuggestInput
+        id="lt-col-input"
+        placeholder="e.g. http_host or geo.city"
+        value={newColumn}
+        options={metadataKeys.list}
+        loading={metadataKeys.loading}
+        onChange={(v) => (newColumn = v)}
+      />
       <Button
         aria-label="Add column"
         variant="secondary"

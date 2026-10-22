@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SingleStatConfig } from '@logtide/shared';
+  import { stateTone } from '$lib/utils/severity';
   import TrendingUp from '@lucide/svelte/icons/trending-up';
   import TrendingDown from '@lucide/svelte/icons/trending-down';
   import Minus from '@lucide/svelte/icons/minus';
@@ -44,9 +45,7 @@
     {#if config.compareWithPrevious}
       {@const positive = trendIsPositive(typed.metric, typed.trend)}
       <div
-        class="flex items-center gap-1 text-xs"
-        class:text-green-600={positive}
-        class:text-red-600={!positive}
+        class="flex items-center gap-1 text-xs {positive ? stateTone('ok').text : stateTone('down').text}"
       >
         {#if typed.trend === 0}
           <Minus class="w-3 h-3" />

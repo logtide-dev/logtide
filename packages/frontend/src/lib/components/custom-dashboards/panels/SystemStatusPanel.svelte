@@ -8,6 +8,7 @@
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
   import XOctagon from '@lucide/svelte/icons/x-octagon';
   import HelpCircle from '@lucide/svelte/icons/help-circle';
+  import { stateTone } from '$lib/utils/severity';
 
   interface SystemStatusData {
     overallStatus: 'operational' | 'degraded' | 'outage' | 'no_monitors';
@@ -30,27 +31,27 @@
   function bannerStyle(s: SystemStatusData['overallStatus'] | undefined) {
     if (s === 'operational') {
       return {
-        bg: 'bg-green-500/10 border-green-500/30',
-        text: 'text-green-700 dark:text-green-400',
-        dot: 'bg-green-500 shadow-green-500/50',
+        bg: 'bg-success/10 border-success/30',
+        text: stateTone('ok').text,
+        dot: stateTone('ok').dot,
         label: 'All systems operational',
         icon: CheckCircle2,
       };
     }
     if (s === 'degraded') {
       return {
-        bg: 'bg-yellow-500/10 border-yellow-500/30',
-        text: 'text-yellow-700 dark:text-yellow-400',
-        dot: 'bg-yellow-400 shadow-yellow-400/50',
+        bg: 'bg-warning/10 border-warning/30',
+        text: stateTone('acknowledged').text,
+        dot: stateTone('acknowledged').dot,
         label: 'Partial system outage',
         icon: AlertTriangle,
       };
     }
     if (s === 'outage') {
       return {
-        bg: 'bg-red-500/10 border-red-500/30',
-        text: 'text-red-700 dark:text-red-400',
-        dot: 'bg-red-500 shadow-red-500/50',
+        bg: 'bg-destructive/10 border-destructive/30',
+        text: stateTone('down').text,
+        dot: stateTone('down').dot,
         label: 'Major system outage',
         icon: XOctagon,
       };
@@ -87,12 +88,12 @@
 
     {#if config.showCounts && typed && typed.totalMonitors > 0}
       <div class="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm flex-shrink-0">
-        <div class="flex items-center gap-1.5 text-green-700 dark:text-green-400">
+        <div class="flex items-center gap-1.5 {stateTone('ok').text}">
           <span class="font-semibold">{typed.upCount}</span>
           <span class="hidden sm:inline">up</span>
         </div>
         {#if typed.downCount > 0}
-          <div class="flex items-center gap-1.5 text-red-700 dark:text-red-400">
+          <div class="flex items-center gap-1.5 {stateTone('down').text}">
             <span class="font-semibold">{typed.downCount}</span>
             <span class="hidden sm:inline">down</span>
           </div>

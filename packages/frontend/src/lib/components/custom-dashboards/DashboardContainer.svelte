@@ -8,15 +8,16 @@
   //     it's clamped at render time to the effective number of columns.
   //   - Auto-flow placement in both view and edit mode so the post-save
   //     layout matches what the user saw while editing.
-  //   - `grid-auto-flow: dense` lets smaller panels fill leftover gaps so
-  //     mixed sizes don't leave holes in the grid.
+  //   - Panels render strictly in array order, the order the user dropped
+  //     them in. There is no `grid-auto-flow: dense`: it would move later
+  //     panels up into gaps and silently rearrange the dashboard.
   //
   // The container itself is dumb - it gets `panels` + `panelData` + edit mode
   // flag, dispatches reorder/edit/remove events upward.
 
   import { onMount } from 'svelte';
   import { dndzone } from 'svelte-dnd-action';
-  import type { PanelInstance, PanelLayout } from '@logtide/shared';
+  import type { PanelInstance, PanelLayout, PanelTimeRange } from '@logtide/shared';
   import PanelRenderer from './PanelRenderer.svelte';
   import { getPanelDefinition } from './panel-registry';
   import type { PanelDataEntry } from '$lib/stores/custom-dashboards';
@@ -26,6 +27,7 @@
     panelData: Record<string, PanelDataEntry>;
     editMode: boolean;
     pausedPanelIds?: Set<string>;
+    timeRangeOverride?: PanelTimeRange | null;
     onReorder?: (panels: PanelInstance[]) => void;
     onResizePanel?: (panelId: string, layout: PanelLayout) => void;
     onEditPanel?: (panelId: string) => void;
@@ -39,6 +41,7 @@
     panelData,
     editMode,
     pausedPanelIds = new Set<string>(),
+    timeRangeOverride = null,
     onReorder,
     onResizePanel,
     onEditPanel,
@@ -206,7 +209,7 @@
 <div
   bind:this={gridEl}
   class="grid gap-4"
-  style="grid-template-columns: repeat({effectiveCols}, minmax(0, 1fr)); grid-auto-rows: 80px; grid-auto-flow: dense;"
+  style="grid-template-columns: repeat({effectiveCols}, minmax(0, 1fr)); grid-auto-rows: 80px;"
   use:dndzone={{
     items: panels,
     flipDurationMs: 200,
@@ -226,6 +229,7 @@
         error={entry.error}
         {editMode}
         paused={pausedPanelIds.has(panel.id)}
+        {timeRangeOverride}
         onEdit={onEditPanel}
         onRemove={onRemovePanel}
         onRefresh={onRefreshPanel}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import type { Component } from 'svelte';
+  import { stateTone } from '$lib/utils/severity';
 
   interface Props {
     title: string;
@@ -46,7 +47,7 @@
           <p class="text-xs text-muted-foreground">{description}</p>
         {/if}
         {#if trend}
-          <p class="text-xs {trend.isPositive ? 'text-green-600' : 'text-red-600'}">
+          <p class="text-xs {trend.isPositive ? stateTone('ok').text : stateTone('down').text}">
             {formatTrend(trend)}
           </p>
         {/if}
@@ -65,7 +66,7 @@
         <p class="text-xs text-muted-foreground">{description}</p>
       {/if}
       {#if trend}
-        <p class="text-xs {trend.isPositive ? 'text-green-600' : 'text-red-600'}">
+        <p class="text-xs {trend.isPositive ? stateTone('ok').text : stateTone('down').text}">
           {trend.isPositive ? '+' : ''}{trend.value.toFixed(2)}% from last period
         </p>
       {/if}

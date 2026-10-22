@@ -2,6 +2,7 @@
   import type { AlertStatusConfig } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
 
   interface Props {
     config: AlertStatusConfig;
@@ -23,6 +24,15 @@
       type="text"
       value={config.title}
       oninput={(e) => update('title', (e.currentTarget as HTMLInputElement).value)}
+    />
+  </div>
+
+  <div class="space-y-1.5">
+    <Label for="as-project">Project</Label>
+    <ProjectSelect
+      id="as-project"
+      value={config.projectId}
+      onChange={(projectId) => onChange({ ...config, projectId })}
     />
   </div>
 
@@ -52,7 +62,7 @@
   </label>
 
   <p class="text-xs text-muted-foreground">
-    Leave the rule list empty to show all rules in scope. Filtering by specific rule
-    IDs requires opening the panel JSON directly (or using a future picker).
+    Shows every alert rule in the selected project, or in the whole organization when
+    no project is selected.
   </p>
 </div>

@@ -12,13 +12,16 @@ import {
   migrateDashboard,
   type CustomDashboard,
   type DashboardDocument,
+  type PanelConfig,
   type PanelInstance,
 } from '@logtide/shared';
 import {
   dashboardDocumentSchema,
   panelRegistry,
   panelInstanceSchema,
+  panelConfigSchema,
 } from './panel-registry.js';
+import { buildTemplateYaml } from './templates.js';
 
 interface DashboardRow {
   id: string;
@@ -170,6 +173,37 @@ export class CustomDashboardsService {
       .executeTakeFirstOrThrow();
 
     return this.mapRow(row as unknown as DashboardRow);
+  }
+
+  /**
+   * Copy a dashboard the caller can see: same panels and configs with fresh
+   * panel ids, same scope (project, personal flag), never the default.
+   */
+  async duplicate(
+    id: string,
+    organizationId: string,
+    userId: string,
+    opts: { name?: string } = {}
+  ): Promise<CustomDashboard> {
+    const source = await this.getById(id, organizationId, userId);
+    if (!source) {
+      throw new Error('Dashboard not found');
+    }
+
+    const suffix = ' (copy)';
+    const name = opts.name ?? `${source.name.slice(0, 200 - suffix.length)}${suffix}`;
+
+    return this.create(
+      {
+        organizationId,
+        projectId: source.projectId,
+        name,
+        description: source.description,
+        isPersonal: source.isPersonal,
+        panels: source.panels.map((p) => ({ ...p, id: this.generatePanelId() })),
+      },
+      userId
+    );
   }
 
   async update(
@@ -352,7 +386,7 @@ export class CustomDashboardsService {
         layout: { x: 0, y: 0, w: 3, h: 2 },
         config: {
           type: 'single_stat',
-          title: 'Total Logs Today',
+          title: 'Total logs today',
           source: 'logs',
           metric: 'total_logs',
           projectId: null,
@@ -364,7 +398,7 @@ export class CustomDashboardsService {
         layout: { x: 3, y: 0, w: 3, h: 2 },
         config: {
           type: 'single_stat',
-          title: 'Error Rate',
+          title: 'Error rate',
           source: 'logs',
           metric: 'error_rate',
           projectId: null,
@@ -376,7 +410,7 @@ export class CustomDashboardsService {
         layout: { x: 6, y: 0, w: 3, h: 2 },
         config: {
           type: 'single_stat',
-          title: 'Active Services',
+          title: 'Active services',
           source: 'logs',
           metric: 'active_services',
           projectId: null,
@@ -400,7 +434,7 @@ export class CustomDashboardsService {
         layout: { x: 0, y: 2, w: 12, h: 4 },
         config: {
           type: 'activity_overview',
-          title: 'Activity Overview (Last 24 Hours)',
+          title: 'Activity overview (last 24 hours)',
           source: 'mixed',
           projectId: null,
           timeRange: '24h',
@@ -412,7 +446,7 @@ export class CustomDashboardsService {
         layout: { x: 0, y: 6, w: 6, h: 4 },
         config: {
           type: 'top_n_table',
-          title: 'Top Services',
+          title: 'Top services',
           source: 'logs',
           dimension: 'service',
           limit: 5,
@@ -425,7 +459,7 @@ export class CustomDashboardsService {
         layout: { x: 6, y: 6, w: 6, h: 4 },
         config: {
           type: 'top_n_table',
-          title: 'Top Error Messages',
+          title: 'Top error messages',
           source: 'logs',
           dimension: 'error_message',
           limit: 5,
@@ -506,6 +540,108 @@ export class CustomDashboardsService {
       },
       userId
     );
+  }
+
+  /**
+   * Append one panel to a dashboard (the "Add to dashboard" contract used by
+   * the metrics explorer). The config is validated with panelConfigSchema, the
+   * panel gets a fresh id and is placed at x = 0 below the lowest existing
+   * panel. The read-modify-write runs under a row lock so concurrent adds both
+   * survive.
+   */
+  async addPanel(
+    id: string,
+    organizationId: string,
+    userId: string,
+    input: { config: unknown; layout?: { w?: number; h?: number } }
+  ): Promise<{ dashboard: CustomDashboard; panel: PanelInstance }> {
+    const config = panelConfigSchema.parse(input.config) as PanelConfig;
+
+    if ('projectId' in config && config.projectId) {
+      const project = await db
+        .selectFrom('projects')
+        .select('id')
+        .where('id', '=', config.projectId)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (!project) {
+        throw new Error('Project does not belong to the organization');
+      }
+    }
+
+    const defaults = panelRegistry[config.type].defaultLayout;
+
+    return db.transaction().execute(async (trx) => {
+      const row = await trx
+        .selectFrom('custom_dashboards')
+        .selectAll()
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        // A personal dashboard can only be edited by its creator.
+        .where((eb) => eb.or([eb('is_personal', '=', false), eb('created_by', '=', userId)]))
+        .forUpdate()
+        .executeTakeFirst();
+      if (!row) {
+        throw new Error('Dashboard not found');
+      }
+
+      const current = this.mapRow(row as unknown as DashboardRow);
+      const nextY = current.panels.reduce((max, p) => Math.max(max, p.layout.y + p.layout.h), 0);
+      const panel = panelInstanceSchema.parse({
+        id: this.generatePanelId(),
+        layout: {
+          x: 0,
+          y: nextY,
+          w: input.layout?.w ?? defaults.w,
+          h: input.layout?.h ?? defaults.h,
+        },
+        config,
+      }) as PanelInstance;
+
+      const updated = await trx
+        .updateTable('custom_dashboards')
+        .set({
+          panels: JSON.stringify([...current.panels, panel]) as unknown as PanelInstance[],
+          schema_version: CURRENT_SCHEMA_VERSION,
+          updated_at: new Date(),
+        })
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      return { dashboard: this.mapRow(updated as unknown as DashboardRow), panel };
+    });
+  }
+
+  /**
+   * Instantiate a starter template. The template YAML goes through importYaml
+   * (validation, fresh panel ids); a projectId must belong to the organization.
+   */
+  async createFromTemplate(
+    templateId: string,
+    organizationId: string,
+    userId: string,
+    opts: { projectId?: string | null; name?: string } = {}
+  ): Promise<CustomDashboard> {
+    const yamlText = buildTemplateYaml(templateId, opts);
+    if (yamlText === null) {
+      throw new Error('Template not found');
+    }
+
+    if (opts.projectId) {
+      const project = await db
+        .selectFrom('projects')
+        .select('id')
+        .where('id', '=', opts.projectId)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (!project) {
+        throw new Error('Project does not belong to the organization');
+      }
+    }
+
+    return this.importYaml(yamlText, organizationId, userId);
   }
 
   /**

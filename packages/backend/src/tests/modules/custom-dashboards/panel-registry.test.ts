@@ -523,3 +523,37 @@ describe('panel time range presets (#305)', () => {
     });
   }
 });
+
+describe('metric_chart groupBy', () => {
+  const base = {
+    type: 'metric_chart',
+    title: 'CPU',
+    source: 'metrics',
+    projectId: null,
+    metricName: 'cpu_usage',
+    aggregation: 'avg',
+    interval: '5m',
+    timeRange: '1h',
+    serviceName: null,
+  };
+
+  it('metric_chart accepts groupBy with 1 or 2 keys', () => {
+    expect(() => panelConfigSchema.parse({ ...base, groupBy: ['host'] })).not.toThrow();
+    expect(() => panelConfigSchema.parse({ ...base, groupBy: ['host', 'http.method'] })).not.toThrow();
+  });
+
+  it('metric_chart rejects 3 groupBy keys', () => {
+    expect(() => panelConfigSchema.parse({ ...base, groupBy: ['a', 'b', 'c'] })).toThrow();
+  });
+
+  it('metric_chart rejects groupBy key with SQL characters', () => {
+    for (const key of ["host'; DROP TABLE logs;--", 'a b', 'a-b', '1abc', '', 'x"y', 'a/b']) {
+      expect(() => panelConfigSchema.parse({ ...base, groupBy: [key] }), key).toThrow();
+    }
+  });
+
+  it('metric_chart without groupBy still valid', () => {
+    const parsed = panelConfigSchema.parse(base) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('groupBy');
+  });
+});

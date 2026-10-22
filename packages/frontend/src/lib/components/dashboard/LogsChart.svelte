@@ -3,6 +3,8 @@
   import * as echarts from 'echarts';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { themeStore } from '$lib/stores/theme';
+  import { displayPreferences } from '$lib/stores/display-preferences';
+  import { formatTimestamp } from '$lib/utils/format-time';
   import { chartColors, getEChartsTheme, getAxisStyle, getTooltipStyle, getLegendStyle } from '$lib/utils/echarts-theme';
 
   import type { TimelineEvent } from '$lib/api/dashboard';
@@ -30,7 +32,7 @@
   let chart: echarts.ECharts | null = null;
 
   function formatTimeLabel(time: string): string {
-    return new Date(time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return formatTimestamp(time, 'time', displayPreferences.get());
   }
 
   function buildEventSeries(): echarts.SeriesOption[] {
@@ -237,7 +239,7 @@
 
 <Card>
   <CardHeader>
-    <CardTitle>Logs Timeline (Last 24 Hours)</CardTitle>
+    <CardTitle>Logs timeline (last 24 hours)</CardTitle>
   </CardHeader>
   <CardContent>
     <div bind:this={chartContainer} class="h-[300px] w-full"></div>

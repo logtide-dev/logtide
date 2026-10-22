@@ -10,6 +10,8 @@ import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { auditLogService } from '../audit-log/service.js';
+import { listDashboardTemplates } from './templates.js';
+import { listPickerOptions, projectBelongsToOrg } from './options-service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -34,6 +36,36 @@ const importYamlSchema = z.object({
   yaml: z.string().min(1),
 });
 
+const duplicateSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+});
+
+const fromTemplateSchema = z.object({
+  organizationId: z.string().uuid(),
+  templateId: z.string().min(1).max(64),
+  projectId: z.string().uuid().optional().nullable(),
+  name: z.string().min(1).max(200).optional(),
+});
+
+const addPanelSchema = z.object({
+  // Validated against panelConfigSchema in the service so a bad config is a
+  // ZodError with field-level details.
+  config: z.unknown(),
+  layout: z
+    .object({
+      w: z.number().int().min(1).max(12).optional(),
+      h: z.number().int().min(1).max(20).optional(),
+    })
+    .optional(),
+});
+
+const optionsQuerySchema = z.object({
+  organizationId: z.string().uuid(),
+  kind: z.enum(['metric-names', 'services']),
+  source: z.enum(['logs', 'traces', 'metrics']).optional(),
+  projectId: z.string().uuid().optional(),
+});
+
 const panelDataBatchSchema = z.object({
   organizationId: z.string().uuid(),
   panelIds: z.array(z.string()).optional(),
@@ -45,6 +77,24 @@ const panelDataBatchSchema = z.object({
 async function checkMembership(userId: string, orgId: string): Promise<boolean> {
   const orgs = await organizationsService.getUserOrganizations(userId);
   return orgs.some((o) => o.id === orgId);
+}
+
+/**
+ * Run a dashboard-creating callback under the per-org limit lock, after
+ * checking `dashboards.max_custom`. Every endpoint that adds a dashboard row
+ * goes through this so the capability check cannot be forgotten. A
+ * CapabilityError propagates to the global error handler.
+ */
+async function createWithinLimit<T>(organizationId: string, create: () => Promise<T>): Promise<T> {
+  return withLimitLock(organizationId, 'dashboards.max_custom', async () => {
+    await context.runAsSystem('dashboards:create-limit-check', async () => {
+      await context.with({ organizationId }, async () => {
+        const count = await customDashboardsService.countForOrg(organizationId);
+        await assertWithinLimit('dashboards.max_custom', count);
+      });
+    });
+    return create();
+  });
 }
 
 export async function customDashboardsRoutes(fastify: FastifyInstance) {
@@ -96,15 +146,8 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      const dashboard = await withLimitLock(body.organizationId, 'dashboards.max_custom', async () => {
-        await context.runAsSystem('dashboards:create-limit-check', async () => {
-          await context.with({ organizationId: body.organizationId }, async () => {
-            const count = await customDashboardsService.countForOrg(body.organizationId);
-            await assertWithinLimit('dashboards.max_custom', count);
-          });
-        });
-
-        return customDashboardsService.create(
+      const dashboard = await createWithinLimit(body.organizationId, () =>
+        customDashboardsService.create(
           {
             organizationId: body.organizationId,
             projectId: body.projectId ?? null,
@@ -114,8 +157,8 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
             panels: body.panels,
           },
           request.user.id
-        );
-      });
+        )
+      );
 
       await auditLogService.record({
         action: 'dashboard.created',
@@ -146,20 +189,9 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      const dashboard = await withLimitLock(body.organizationId, 'dashboards.max_custom', async () => {
-        await context.runAsSystem('dashboards:create-limit-check', async () => {
-          await context.with({ organizationId: body.organizationId }, async () => {
-            const count = await customDashboardsService.countForOrg(body.organizationId);
-            await assertWithinLimit('dashboards.max_custom', count);
-          });
-        });
-
-        return customDashboardsService.importYaml(
-          body.yaml,
-          body.organizationId,
-          request.user.id
-        );
-      });
+      const dashboard = await createWithinLimit(body.organizationId, () =>
+        customDashboardsService.importYaml(body.yaml, body.organizationId, request.user.id)
+      );
 
       await auditLogService.record({
         action: 'dashboard.imported',
@@ -183,6 +215,122 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       }
       throw e;
     }
+  });
+
+  // ─── Duplicate ──────────────────────────────────────────────────────────
+  fastify.post('/:id/duplicate', async (request: any, reply) => {
+    try {
+      const { organizationId } = request.query as { organizationId?: string };
+      if (!organizationId) {
+        return reply.status(400).send({ error: 'organizationId required' });
+      }
+      if (!(await checkMembership(request.user.id, organizationId))) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+      const body = duplicateSchema.parse(request.body ?? {});
+      const sourceId = (request.params as { id: string }).id;
+
+      const dashboard = await createWithinLimit(organizationId, () =>
+        customDashboardsService.duplicate(sourceId, organizationId, request.user.id, {
+          name: body.name,
+        })
+      );
+
+      await auditLogService.record({
+        action: 'dashboard.created',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId,
+        metadata: { name: dashboard.name, duplicatedFrom: sourceId },
+      });
+
+      return reply.status(201).send({ dashboard });
+    } catch (e) {
+      if (e instanceof CapabilityError) {
+        throw e;
+      }
+      if (e instanceof z.ZodError) {
+        return reply
+          .status(400)
+          .send({ error: 'Validation error', details: e.errors });
+      }
+      if (e instanceof Error && e.message === 'Dashboard not found') {
+        return reply.status(404).send({ error: e.message });
+      }
+      throw e;
+    }
+  });
+
+  // ─── Starter templates (must come before /:id routes) ───────────────────
+  fastify.get('/templates', async (_request, reply) => {
+    return reply.send({ templates: listDashboardTemplates() });
+  });
+
+  fastify.post('/from-template', async (request: any, reply) => {
+    try {
+      const body = fromTemplateSchema.parse(request.body);
+      if (!(await checkMembership(request.user.id, body.organizationId))) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const dashboard = await createWithinLimit(body.organizationId, () =>
+        customDashboardsService.createFromTemplate(
+          body.templateId,
+          body.organizationId,
+          request.user.id,
+          { projectId: body.projectId ?? null, name: body.name }
+        )
+      );
+
+      await auditLogService.record({
+        action: 'dashboard.imported',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId: body.organizationId,
+        metadata: { name: dashboard.name, templateId: body.templateId },
+      });
+
+      return reply.status(201).send({ dashboard });
+    } catch (e) {
+      if (e instanceof CapabilityError) {
+        throw e;
+      }
+      if (e instanceof z.ZodError) {
+        return reply
+          .status(400)
+          .send({ error: 'Validation error', details: e.errors });
+      }
+      if (e instanceof Error && e.message === 'Template not found') {
+        return reply.status(404).send({ error: e.message });
+      }
+      if (e instanceof Error && e.message === 'Project does not belong to the organization') {
+        return reply.status(400).send({ error: e.message });
+      }
+      throw e;
+    }
+  });
+
+  // ─── Picker options (must come before /:id routes) ──────────────────────
+  fastify.get('/options', async (request: any, reply) => {
+    const parsed = optionsQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: 'Validation error', details: parsed.error.errors });
+    }
+    const q = parsed.data;
+    if (!(await checkMembership(request.user.id, q.organizationId))) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+    if (q.projectId && !(await projectBelongsToOrg(q.projectId, q.organizationId))) {
+      return reply.status(400).send({ error: 'Project does not belong to the organization' });
+    }
+
+    const options = await listPickerOptions({
+      organizationId: q.organizationId,
+      projectId: q.projectId ?? null,
+      kind: q.kind,
+      source: q.source,
+    });
+    return reply.send({ options });
   });
 
   // ─── Get by ID ──────────────────────────────────────────────────────────
@@ -240,6 +388,49 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       }
       if (e instanceof Error && e.message === 'Dashboard not found') {
         return reply.status(404).send({ error: e.message });
+      }
+      throw e;
+    }
+  });
+
+  // ─── Append a panel ─────────────────────────────────────────────────────
+  fastify.post('/:id/panels', async (request: any, reply) => {
+    try {
+      const { organizationId } = request.query as { organizationId?: string };
+      if (!organizationId) {
+        return reply.status(400).send({ error: 'organizationId required' });
+      }
+      if (!(await checkMembership(request.user.id, organizationId))) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+      const body = addPanelSchema.parse(request.body);
+
+      const { dashboard, panel } = await customDashboardsService.addPanel(
+        (request.params as { id: string }).id,
+        organizationId,
+        request.user.id,
+        { config: body.config, layout: body.layout }
+      );
+
+      await auditLogService.record({
+        action: 'dashboard.updated',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId,
+        metadata: { name: dashboard.name, addedPanelType: panel.config.type },
+      });
+
+      return reply.status(201).send({ dashboard, panel });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return reply
+          .status(400)
+          .send({ error: 'Validation error', details: e.errors });
+      }
+      if (e instanceof Error && e.message === 'Dashboard not found') {
+        return reply.status(404).send({ error: e.message });
+      }
+      if (e instanceof Error && e.message === 'Project does not belong to the organization') {
+        return reply.status(400).send({ error: e.message });
       }
       throw e;
     }
