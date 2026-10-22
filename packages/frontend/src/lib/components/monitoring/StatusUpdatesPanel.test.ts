@@ -138,6 +138,18 @@ describe('StatusUpdatesPanel', () => {
     });
   });
 
+  it('keeps prefilled components when the monitors arrive after the dialog opened', async () => {
+    setUrl('?tab=status-updates&create=1&title=API%20down&monitorIds=m2');
+    const view = renderPanel(parseUptimeUrl(page.url).prefill);
+    view.rerender({ monitors: [] });
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByLabelText('Billing')).toBeNull();
+    await view.rerender({ monitors: MONITORS });
+    await waitFor(() =>
+      expect((within(dialog).getByLabelText('Billing') as HTMLInputElement).checked).toBe(true)
+    );
+  });
+
   it('closing the dialog removes create=1 from the URL', async () => {
     setUrl('?tab=status-updates&create=1&title=x');
     renderPanel(parseUptimeUrl(page.url).prefill);

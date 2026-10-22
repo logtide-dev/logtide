@@ -50,6 +50,10 @@
   let titleError = $state<string | null>(null);
   let submitting = $state(false);
 
+  // Prefilled component ids wait here until the monitors list has loaded, so a direct load of
+  // the publish link does not drop them while the shell is still fetching monitors.
+  let pendingMonitorIds: string[] | null = null;
+
   // Fill the form every time the dialog opens, from the prefill when there is one.
   $effect(() => {
     if (!open) return;
@@ -60,9 +64,21 @@
       severity = pre?.severity ?? 'minor';
       status = 'investigating';
       message = pre?.message ?? '';
-      const known = new Set(monitors.map((m) => m.id));
-      monitorIds = (pre?.monitorIds ?? []).filter((m) => known.has(m));
+      monitorIds = [];
+      pendingMonitorIds = pre?.monitorIds?.length ? [...pre.monitorIds] : null;
       sourceIncidentId = pre?.sourceIncidentId ?? null;
+    });
+  });
+
+  $effect(() => {
+    if (!open) return;
+    const list = monitors;
+    if (!pendingMonitorIds || list.length === 0) return;
+    const known = new Set(list.map((m) => m.id));
+    const wanted = pendingMonitorIds;
+    pendingMonitorIds = null;
+    untrack(() => {
+      monitorIds = wanted.filter((m) => known.has(m));
     });
   });
 

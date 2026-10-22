@@ -59,6 +59,8 @@
   let values = $state<MonitorFormValues>(defaultValues('http'));
   let errors = $state<Record<string, string>>({});
   let channelIds = $state<string[]>([]);
+  // Destinations are only written back after they loaded, so a failed or slow load cannot wipe them.
+  let channelsState = $state<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
   let selectedProjectId = $state('');
   let submitting = $state(false);
   let availableServices = $state<string[]>([]);
@@ -79,15 +81,18 @@
           ? valuesFromMonitor(source, currentMode === 'edit' ? 'edit' : 'duplicate')
           : defaultValues('http');
       channelIds = [];
+      channelsState = source && currentMode !== 'create' ? 'loading' : 'idle';
       if (source && currentMode !== 'create') {
         const wanted = source.id;
         getMonitorChannels(wanted, orgId)
           .then((res) => {
             if (!open || monitor?.id !== wanted) return;
             channelIds = res.channels.map((c) => c.id);
+            channelsState = 'loaded';
           })
           .catch(() => {
-            // Destinations stay empty; saving then keeps the defaults.
+            if (!open || monitor?.id !== wanted) return;
+            channelsState = 'failed';
           });
       }
     });
@@ -132,6 +137,7 @@
   async function handleSubmit(e: Event) {
     e.preventDefault();
     if (submitting) return;
+    if (editing && channelsState === 'loading') return;
     const found = validateMonitorForm(values, editing);
     errors = found;
     if (Object.keys(found).length > 0) return;
@@ -147,7 +153,7 @@
         saved = await monitoringStore.create(payload);
       }
 
-      if (editing || channelIds.length > 0) {
+      if ((editing && channelsState === 'loaded') || (!editing && channelIds.length > 0)) {
         try {
           await setMonitorChannels(saved.id, orgId, channelIds);
         } catch (err) {
@@ -290,6 +296,11 @@
             onSelectionChange={(ids) => (channelIds = ids)}
             placeholder="Use the organization defaults"
           />
+          {#if channelsState === 'failed'}
+            <p class="text-xs text-destructive-text" role="alert">
+              Could not load the current destinations. They will stay unchanged when you save.
+            </p>
+          {/if}
           <WillNotify eventType="monitoring" projectId={selectedProjectId} {channelIds} />
         </div>
       </fieldset>
@@ -328,7 +339,7 @@
 
       <div class="flex justify-end gap-2 pt-2 sm:col-span-2">
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
-        <Button type="submit" disabled={submitting}>
+        <Button type="submit" disabled={submitting || (editing && channelsState === 'loading')}>
           {submitting ? 'Saving...' : editing ? 'Save changes' : 'Create monitor'}
         </Button>
       </div>

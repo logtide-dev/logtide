@@ -182,6 +182,26 @@ describe('MonitorForm', () => {
     await waitFor(() => expect(props.onSaved).toHaveBeenCalled());
   });
 
+  it('edit mode does not overwrite destinations when they failed to load', async () => {
+    api.getMonitorChannels.mockRejectedValue(new Error('boom'));
+    renderForm({ mode: 'edit', monitor: existing() });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load the current destinations/);
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(store.update).toHaveBeenCalledTimes(1));
+    expect(api.setMonitorChannels).not.toHaveBeenCalled();
+  });
+
+  it('edit mode keeps Save disabled until destinations have loaded', async () => {
+    let resolve!: (v: { channels: { id: string }[] }) => void;
+    api.getMonitorChannels.mockReturnValue(new Promise((r) => (resolve = r)));
+    renderForm({ mode: 'edit', monitor: existing() });
+    expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(true);
+    resolve({ channels: [] });
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false)
+    );
+  });
+
   it('renders WillNotify with eventType monitoring and the selected channel ids', async () => {
     renderForm();
     const node = screen.getByTestId('will-notify');
