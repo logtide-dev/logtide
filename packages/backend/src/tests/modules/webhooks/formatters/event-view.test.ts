@@ -41,9 +41,11 @@ describe('describeEvent', () => {
 
   it('describes alert.triggered', () => {
     const view = describeEvent(
-      envelope('alert.triggered', { alert_name: 'API 5xx', log_count: 12, threshold: 10, time_window: 300 })
+      envelope('alert.triggered', { alert_name: 'API 5xx', log_count: 12, threshold: 10, time_window: 5 })
     )!;
     expect(view.title).toBe('Alert triggered: API 5xx');
+    expect(view.description).toBe('12 logs in 5 min (threshold: 10)');
+    expect(view.fields).toContainEqual({ name: 'Time window', value: '5 min' });
     expect(view.tone).toBe('high');
   });
 
