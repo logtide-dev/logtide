@@ -10,7 +10,7 @@ describe('mobile table columns', () => {
   it('incidents hides secondary columns and keeps a title width', () => {
     expect(incidents).toMatch(/key: 'title'[^\n]*min-w-\[11rem\]/);
     for (const k of ['source', 'project', 'assignee', 'age', 'lastEvent']) {
-      expect(incidents).toMatch(new RegExp(`key: '${k}'[^\n]*hidden md:table-cell`));
+      expect(incidents).toMatch(new RegExp(`key: '${k}'[^\n]*hidden[^\n]*md:table-cell`));
     }
   });
   it('incidents keeps project, age and last event on one line', () => {
