@@ -4,6 +4,7 @@ import {
   previewRule,
   PREVIEW_MAX_LOGS,
   PREVIEW_PAGE_SIZE,
+  PREVIEW_DEADLINE_CHECK_EVERY,
   PREVIEW_TIMEOUT_MS,
   PREVIEW_MAX_SAMPLES,
 } from '../../../modules/sigma/preview-service.js';
@@ -87,13 +88,13 @@ describe('previewRule', () => {
     });
     expect(out.truncated).toBe(true);
     expect(out.truncatedReason).toBe('timeout');
-    expect(out.scanned).toBe(2 * PREVIEW_PAGE_SIZE);
-    expect(out.matches).toBe(2000);
+    expect(out.scanned).toBe(PREVIEW_PAGE_SIZE);
+    expect(out.matches).toBe(PREVIEW_PAGE_SIZE);
   });
 
   it('a finished scan is not reported as timeout even when the clock ran out', async () => {
     let t = Date.UTC(2026, 0, 1);
-    const query = fakeQuery(500, () => 'noise');
+    const query = fakeQuery(PREVIEW_DEADLINE_CHECK_EVERY - 1, () => 'noise');
     const out = await previewRule(base, {
       now: () => new Date(t),
       query: async (p) => {
@@ -102,6 +103,17 @@ describe('previewRule', () => {
       },
     });
     expect(out.truncated).toBe(false);
+  });
+
+  it('the deadline is enforced inside a page, not only between pages', async () => {
+    let t = Date.UTC(2026, 0, 1);
+    const out = await previewRule(base, {
+      now: () => new Date((t += PREVIEW_TIMEOUT_MS / 4)),
+      query: fakeQuery(PREVIEW_PAGE_SIZE, () => 'noise'),
+    });
+    expect(out.truncated).toBe(true);
+    expect(out.truncatedReason).toBe('timeout');
+    expect(out.scanned).toBeLessThan(PREVIEW_PAGE_SIZE);
   });
 
   it('suppressed matches are counted separately and excluded from samples', async () => {

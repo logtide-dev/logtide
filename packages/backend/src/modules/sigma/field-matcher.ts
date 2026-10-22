@@ -13,10 +13,11 @@
  */
 
 import isSafeRegex from 'safe-regex2';
+import { boundedRegexTest } from './regex-guard.js';
 
 /** Longest |re pattern we compile; longer ones never match. */
 const MAX_REGEX_PATTERN_LENGTH = 512;
-const regexCache = new Map<string, RegExp | null>();
+const regexCache = new Map<string, boolean>();
 
 export type FieldModifier =
   | 'contains'
@@ -308,18 +309,15 @@ export class SigmaFieldMatcher {
     try {
       const flags = caseSensitive ? '' : 'i';
       const key = `${flags}/${pattern}`;
-      let regex = regexCache.get(key);
-      if (regex === undefined) {
-        // Rule YAML is user-controlled (also via the preview endpoint on the API
-        // process): refuse patterns that can backtrack catastrophically.
-        regex =
-          pattern.length <= MAX_REGEX_PATTERN_LENGTH && isSafeRegex(pattern)
-            ? new RegExp(pattern, flags)
-            : null;
+      let allowed = regexCache.get(key);
+      if (allowed === undefined) {
+        // Cheap static pre-filter. It is NOT sufficient (overlapping alternation
+        // like (a|aa)+$ passes it), so the match itself is also time-boxed.
+        allowed = pattern.length <= MAX_REGEX_PATTERN_LENGTH && isSafeRegex(pattern);
         if (regexCache.size >= 1000) regexCache.clear();
-        regexCache.set(key, regex);
+        regexCache.set(key, allowed);
       }
-      return regex ? regex.test(value) : false;
+      return allowed ? boundedRegexTest(pattern, flags, value) : false;
     } catch (error) {
       console.warn(`[SigmaFieldMatcher] Invalid regex pattern: ${pattern}`, error);
       return false;
