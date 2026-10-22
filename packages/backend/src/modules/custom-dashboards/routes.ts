@@ -11,6 +11,7 @@ import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
 import { auditLogService } from '../audit-log/service.js';
 import { listDashboardTemplates } from './templates.js';
+import { listPickerOptions, projectBelongsToOrg } from './options-service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -56,6 +57,13 @@ const addPanelSchema = z.object({
       h: z.number().int().min(1).max(20).optional(),
     })
     .optional(),
+});
+
+const optionsQuerySchema = z.object({
+  organizationId: z.string().uuid(),
+  kind: z.enum(['metric-names', 'services']),
+  source: z.enum(['logs', 'traces', 'metrics']).optional(),
+  projectId: z.string().uuid().optional(),
 });
 
 const panelDataBatchSchema = z.object({
@@ -298,6 +306,31 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       }
       throw e;
     }
+  });
+
+  // ─── Picker options (must come before /:id routes) ──────────────────────
+  fastify.get('/options', async (request: any, reply) => {
+    const parsed = optionsQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: 'Validation error', details: parsed.error.errors });
+    }
+    const q = parsed.data;
+    if (!(await checkMembership(request.user.id, q.organizationId))) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+    if (q.projectId && !(await projectBelongsToOrg(q.projectId, q.organizationId))) {
+      return reply.status(400).send({ error: 'Project does not belong to the organization' });
+    }
+
+    const options = await listPickerOptions({
+      organizationId: q.organizationId,
+      projectId: q.projectId ?? null,
+      kind: q.kind,
+      source: q.source,
+    });
+    return reply.send({ options });
   });
 
   // ─── Get by ID ──────────────────────────────────────────────────────────
