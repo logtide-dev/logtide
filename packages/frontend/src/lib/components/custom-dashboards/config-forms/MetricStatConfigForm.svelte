@@ -3,6 +3,12 @@
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
   import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+    createMetricNameOptions,
+  } from '../pickers/options-state.svelte';
   import {
     Select,
     SelectContent,
@@ -18,6 +24,17 @@
   }
 
   let { config, onChange }: Props = $props();
+
+  const services = createServiceOptions('metrics', () => config.projectId);
+  const metricNames = createMetricNameOptions(() => config.projectId);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('metrics', projectId, config.serviceName))) {
+      onChange({ ...config, projectId, serviceName: null });
+    }
+  }
 
   const aggregations: MetricAggregation[] = ['avg', 'sum', 'min', 'max', 'count', 'last', 'p50', 'p95', 'p99'];
 
@@ -42,19 +59,19 @@
     <ProjectSelect
       id="ms-project"
       value={config.projectId}
-      onChange={(projectId) => onChange({ ...config, projectId })}
+      onChange={handleProjectChange}
     />
   </div>
 
   <div class="space-y-1.5">
     <Label for="ms-metric">Metric name</Label>
-    <Input
+    <SuggestInput
       id="ms-metric"
-      type="text"
       placeholder="e.g. process.cpu.utilization"
       value={config.metricName}
-      oninput={(e) => update('metricName', (e.currentTarget as HTMLInputElement).value)}
-      class="font-mono text-sm"
+      options={metricNames.list}
+      loading={metricNames.loading}
+      onChange={(v) => update('metricName', v)}
     />
   </div>
 
@@ -98,15 +115,13 @@
   <div class="grid grid-cols-2 gap-3">
     <div class="space-y-1.5">
       <Label for="ms-service">Service (optional)</Label>
-      <Input
+      <SuggestInput
         id="ms-service"
-        type="text"
         placeholder="all"
         value={config.serviceName ?? ''}
-        oninput={(e) => {
-          const v = (e.currentTarget as HTMLInputElement).value;
-          update('serviceName', v.length > 0 ? v : null);
-        }}
+        options={services.list}
+        loading={services.loading}
+        onChange={(v) => update('serviceName', v.length > 0 ? v : null)}
       />
     </div>
     <div class="space-y-1.5">

@@ -3,6 +3,11 @@
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
   import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+  } from '../pickers/options-state.svelte';
   import {
     Select,
     SelectContent,
@@ -18,6 +23,16 @@
   }
 
   let { config, onChange }: Props = $props();
+
+  const services = createServiceOptions('logs', () => config.projectId);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('logs', projectId, config.service))) {
+      onChange({ ...config, projectId, service: null });
+    }
+  }
 
   const modeOptions: Array<{ value: GeoMapConfig['mode']; label: string }> = [
     { value: 'country', label: 'By country' },
@@ -54,7 +69,7 @@
     <ProjectSelect
       id="geomap-project"
       value={config.projectId}
-      onChange={(projectId) => onChange({ ...config, projectId })}
+      onChange={handleProjectChange}
     />
   </div>
 
@@ -146,14 +161,12 @@
 
   <div class="space-y-1.5">
     <Label for="geomap-service">Service (optional)</Label>
-    <Input
+    <SuggestInput
       id="geomap-service"
-      type="text"
       value={config.service ?? ''}
-      oninput={(e) => {
-        const v = (e.currentTarget as HTMLInputElement).value.trim();
-        update('service', v === '' ? null : v);
-      }}
+      options={services.list}
+      loading={services.loading}
+      onChange={(v) => update('service', v.length > 0 ? v : null)}
     />
   </div>
 

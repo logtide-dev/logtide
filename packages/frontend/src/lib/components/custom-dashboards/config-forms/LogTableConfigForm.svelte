@@ -12,6 +12,12 @@
   } from '$lib/components/ui/select';
   import { TIME_RANGE_OPTIONS, timeRangeLabel } from '../time-range-options';
   import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+    createMetadataKeyOptions,
+  } from '../pickers/options-state.svelte';
 
   interface Props {
     config: LogTableConfig;
@@ -19,6 +25,17 @@
   }
 
   let { config, onChange }: Props = $props();
+
+  const services = createServiceOptions('logs', () => config.projectId);
+  const metadataKeys = createMetadataKeyOptions(() => config.projectId);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('logs', projectId, config.service))) {
+      onChange({ ...config, projectId, service: null });
+    }
+  }
 
   const allLevels: LogLevelKey[] = ['debug', 'info', 'warn', 'error', 'critical'];
   const allBuiltins: BuiltinLogColumn[] = ['time', 'level', 'service', 'message'];
@@ -94,7 +111,7 @@
     <ProjectSelect
       id="lt-project"
       value={config.projectId}
-      onChange={(projectId) => update('projectId', projectId)}
+      onChange={handleProjectChange}
     />
   </div>
 
@@ -158,15 +175,13 @@
 
   <div class="space-y-1.5">
     <Label for="lt-service">Service (optional)</Label>
-    <Input
+    <SuggestInput
       id="lt-service"
-      type="text"
       placeholder="Leave empty for all services"
       value={config.service ?? ''}
-      oninput={(e) => {
-        const val = (e.currentTarget as HTMLInputElement).value;
-        update('service', val.length > 0 ? val : null);
-      }}
+      options={services.list}
+      loading={services.loading}
+      onChange={(v) => update('service', v.length > 0 ? v : null)}
     />
   </div>
 
@@ -235,7 +250,14 @@
       </ul>
     {/if}
     <div class="flex gap-2">
-      <Input id="lt-col-input" placeholder="e.g. http_host or geo.city" bind:value={newColumn} />
+      <SuggestInput
+        id="lt-col-input"
+        placeholder="e.g. http_host or geo.city"
+        value={newColumn}
+        options={metadataKeys.list}
+        loading={metadataKeys.loading}
+        onChange={(v) => (newColumn = v)}
+      />
       <Button
         aria-label="Add column"
         variant="secondary"
