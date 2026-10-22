@@ -9,6 +9,7 @@
 	import Spinner from "$lib/components/Spinner.svelte";
 	import { ChannelSelector } from "$lib/components/notification-channels";
 	import SeverityBadge from "$lib/components/app/SeverityBadge.svelte";
+	import WillNotify from "$lib/components/notification-channels/WillNotify.svelte";
 
 	interface Props {
 		open: boolean;
@@ -60,7 +61,7 @@
 				channelIds: selectedChannelIds,
 			});
 
-			toastStore.success("Notification channels updated");
+			toastStore.success("Destinations updated");
 			open = false;
 			onSuccess?.();
 		} catch (error) {
@@ -74,22 +75,6 @@
 		}
 	}
 
-	function getLevelColor(level: string): string {
-		switch (level) {
-			case "informational":
-				return "bg-blue-100 text-blue-800";
-			case "low":
-				return "bg-green-100 text-green-800";
-			case "medium":
-				return "bg-yellow-100 text-yellow-800";
-			case "high":
-				return "bg-orange-100 text-orange-800";
-			case "critical":
-				return "bg-red-100 text-red-800";
-			default:
-				return "bg-gray-100 text-gray-800";
-		}
-	}
 </script>
 
 <Dialog.Root
@@ -102,7 +87,7 @@
 	<Dialog.Content class="max-w-lg">
 		<Dialog.Header>
 			<Dialog.Title class="flex items-center gap-2">
-				Edit notification channels
+				Edit destinations
 			</Dialog.Title>
 			{#if rule}
 				<Dialog.Description class="flex items-center gap-2">
@@ -130,6 +115,7 @@
 					<p class="text-xs text-muted-foreground">
 						Choose the channels that receive a notification when this rule matches
 					</p>
+					<WillNotify eventType="sigma" channelIds={selectedChannelIds} />
 				</div>
 			</div>
 		{/if}
