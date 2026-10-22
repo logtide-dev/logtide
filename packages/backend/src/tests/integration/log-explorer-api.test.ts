@@ -176,6 +176,13 @@ describe('Logs explorer API', () => {
     type Facet = { field: string; values: { value: string; count: number }[]; otherCount: number };
     const byField = (body: { facets: Facet[] }, field: string) => body.facets.find((f) => f.field === field)!;
 
+    it('answers 400, not 500, when the default window ends up reversed', async () => {
+      const res = await facets({ fields: 'service', to: '2020-01-01T00:00:00Z' });
+      expect(res.status).toBe(400);
+      const fields = await get('/api/v1/logs/fields', { to: '2020-01-01T00:00:00Z' });
+      expect(fields.status).toBe(400);
+    });
+
     it('counts top values per field', async () => {
       const res = await facets({ fields: 'service,level,region' });
       expect(res.status).toBe(200);
