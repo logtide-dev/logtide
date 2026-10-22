@@ -38,3 +38,41 @@ export function deferred<T>(): Deferred<T> {
   });
   return { promise, resolve, reject };
 }
+
+/**
+ * A WebSocket double driven by the test: `emit` delivers a JSON message,
+ * `drop` closes it from the server side. `close()` only records the call,
+ * like a browser socket whose close event the caller no longer listens to.
+ */
+export class FakeWebSocket {
+  onopen: ((ev: Event) => void) | null = null;
+  onmessage: ((ev: MessageEvent) => void) | null = null;
+  onclose: ((ev: CloseEvent) => void) | null = null;
+  onerror: ((ev: Event) => void) | null = null;
+  closed = false;
+  closeCode: number | null = null;
+  readyState = 1;
+
+  close(code = 1000): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.closeCode = code;
+    this.readyState = 3;
+  }
+
+  emit(data: unknown): void {
+    const payload = typeof data === 'string' ? data : JSON.stringify(data);
+    this.onmessage?.({ data: payload } as MessageEvent);
+  }
+
+  drop(code: number, reason = ''): void {
+    this.closed = true;
+    this.closeCode = code;
+    this.readyState = 3;
+    this.onclose?.({ code, reason, wasClean: code === 1000 } as CloseEvent);
+  }
+
+  asWebSocket(): WebSocket {
+    return this as unknown as WebSocket;
+  }
+}
