@@ -8,7 +8,7 @@
 	import Label from "$lib/components/ui/label/label.svelte";
 	import Spinner from "$lib/components/Spinner.svelte";
 	import { ChannelSelector } from "$lib/components/notification-channels";
-	import { Badge } from "$lib/components/ui/badge";
+	import SeverityBadge from "$lib/components/app/SeverityBadge.svelte";
 
 	interface Props {
 		open: boolean;
@@ -102,14 +102,12 @@
 	<Dialog.Content class="max-w-lg">
 		<Dialog.Header>
 			<Dialog.Title class="flex items-center gap-2">
-				Edit Notification Channels
+				Edit notification channels
 			</Dialog.Title>
 			{#if rule}
 				<Dialog.Description class="flex items-center gap-2">
 					<span>{rule.title}</span>
-					<Badge variant="outline" class={getLevelColor(rule.level || "medium")}>
-						{(rule.level || "medium").toUpperCase()}
-					</Badge>
+					<SeverityBadge kind="severity" value={rule.level || "medium"} />
 				</Dialog.Description>
 			{/if}
 		</Dialog.Header>
@@ -117,20 +115,20 @@
 		{#if loading}
 			<div class="flex items-center justify-center py-8">
 				<Spinner />
-				<span class="ml-2 text-muted-foreground">Loading channels...</span>
+				<span class="ml-2 text-muted-foreground">Loading channels</span>
 			</div>
 		{:else}
 			<div class="space-y-4 py-4">
 				<div class="space-y-2">
-					<Label>Notification Channels</Label>
+					<Label>Notification channels</Label>
 					<ChannelSelector
 						selectedIds={selectedChannelIds}
 						onSelectionChange={(ids) => (selectedChannelIds = ids)}
 						disabled={submitting}
-						placeholder="Select channels..."
+						placeholder="Select channels"
 					/>
 					<p class="text-xs text-muted-foreground">
-						Select channels to receive notifications when this Sigma rule matches
+						Choose the channels that receive a notification when this rule matches
 					</p>
 				</div>
 			</div>
@@ -149,7 +147,7 @@
 				{#if submitting}
 					<Spinner size="sm" className="mr-2" />
 				{/if}
-				Save Changes
+				Save changes
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

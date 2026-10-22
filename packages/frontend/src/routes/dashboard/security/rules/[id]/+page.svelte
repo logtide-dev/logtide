@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import type { DetectionEvent, SigmaRuleDetail } from '@logtide/shared';
   import { currentOrganization } from '$lib/stores/organization';
-  import { sigmaAPI, SigmaApiError } from '$lib/api/sigma';
+  import { sigmaAPI, SigmaApiError, type SigmaRule } from '$lib/api/sigma';
   import { toastStore } from '$lib/stores/toast';
   import { layoutStore } from '$lib/stores/layout';
   import PageHeader from '$lib/components/app/PageHeader.svelte';
@@ -18,6 +18,11 @@
   import MitreTacticBadge from '$lib/components/siem/shared/MitreTacticBadge.svelte';
   import MitreTechniqueBadge from '$lib/components/siem/shared/MitreTechniqueBadge.svelte';
   import RuleYamlPanel from '$lib/components/siem/rules/RuleYamlPanel.svelte';
+  import RulePreviewPanel from '$lib/components/siem/rules/RulePreviewPanel.svelte';
+  import RuleExceptionsPanel from '$lib/components/siem/rules/RuleExceptionsPanel.svelte';
+  import WillNotify from '$lib/components/notification-channels/WillNotify.svelte';
+  import EditSigmaChannelsDialog from '$lib/components/EditSigmaChannelsDialog.svelte';
+  import { notificationChannelsAPI } from '$lib/api/notification-channels';
   import RuleMatchesTable from '$lib/components/siem/rules/RuleMatchesTable.svelte';
   import { sourceLabel } from '$lib/components/siem/rules/rule-source';
   import { extractReferences } from '$lib/components/siem/rules/yaml-references';
@@ -38,6 +43,8 @@
   let draftYaml = $state<string | null>(null);
   let toggling = $state(false);
   let showDelete = $state(false);
+  let showChannels = $state(false);
+  let channelIds = $state<string[]>([]);
 
   let maxWidthClass = $state('max-w-7xl');
   let containerPadding = $state('px-6 py-8');
@@ -93,6 +100,24 @@
       if (current === matchSequence) matchesLoading = false;
     }
   }
+
+  async function loadChannels(id: string) {
+    try {
+      const channels = await notificationChannelsAPI.getSigmaRuleChannels(id);
+      if (rule?.id === id) channelIds = channels.map((c) => c.id);
+    } catch {
+      channelIds = [];
+    }
+  }
+
+  const loadedRuleId = $derived(rule?.id);
+
+  $effect(() => {
+    const rid = loadedRuleId;
+    if (!browser || !rid) return;
+    channelIds = [];
+    loadChannels(rid);
+  });
 
   $effect(() => {
     const id = ruleId;
@@ -288,9 +313,40 @@
           onPage={(offset) => $currentOrganization && loadMatches(rule!.id, $currentOrganization.id, offset)}
         />
       </section>
+      <section aria-labelledby="rule-preview" class="space-y-3">
+        <h2 id="rule-preview" class="text-lg font-semibold">Preview on history</h2>
+        <p class="text-sm text-muted-foreground">
+          Run this rule against recent logs to see what it would have matched.
+          {#if draftYaml}Unsaved YAML edits are used for the preview.{/if}
+        </p>
+        <RulePreviewPanel
+          organizationId={rule.organizationId}
+          ruleId={rule.id}
+          getDraftYaml={() => draftYaml}
+        />
+      </section>
+
+      <section aria-labelledby="rule-exceptions" class="space-y-3">
+        <h2 id="rule-exceptions" class="text-lg font-semibold">Exceptions</h2>
+        <RuleExceptionsPanel organizationId={rule.organizationId} ruleId={rule.id} ruleTitle={rule.title} />
+      </section>
+
+      <section aria-labelledby="rule-destinations" class="space-y-3">
+        <h2 id="rule-destinations" class="text-lg font-semibold">Destinations</h2>
+        <WillNotify eventType="sigma" projectId={rule.projectId} {channelIds} />
+        <Button variant="outline" onclick={() => (showChannels = true)}>Edit destinations</Button>
+      </section>
     </div>
   {/if}
 </div>
+
+{#if rule}
+  <EditSigmaChannelsDialog
+    bind:open={showChannels}
+    rule={rule as unknown as SigmaRule}
+    onSuccess={() => rule && loadChannels(rule.id)}
+  />
+{/if}
 
 <ConfirmDialog
   bind:open={showDelete}
