@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { StorageConfig } from '../../core/types.js';
-import { MongoDBEngine } from './mongodb-engine.js';
+import { MongoDBEngine, addMetricLabelFilters, metricLabelExpr } from './mongodb-engine.js';
 import { MongoDBQueryTranslator } from './query-translator.js';
 import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
 
@@ -442,5 +442,25 @@ describe('MongoDBEngine', () => {
       const result = await engine.ingestMetrics([]);
       expect(result).toEqual({ ingested: 0, failed: 0, durationMs: 0 });
     });
+  });
+});
+
+describe('metric labels', () => {
+  it('a label is the literal attribute key, read with $getField (dots allowed)', () => {
+    expect(metricLabelExpr('http.request.method')).toEqual({
+      $getField: { field: { $literal: 'http.request.method' }, input: '$attributes' },
+    });
+  });
+
+  it('plain keys filter natively, dotted and $ keys through $expr on the literal key', () => {
+    const filter: Record<string, unknown> = { project_id: 'p1', $and: [{ x: 1 }] };
+    addMetricLabelFilters(filter, { host: 'web-1', 'http.request.method': 'GET', $where: 'x' });
+    expect(filter['attributes.host']).toBe('web-1');
+    expect(filter['attributes.http.request.method']).toBeUndefined();
+    expect(filter.$and).toEqual([
+      { x: 1 },
+      { $expr: { $eq: [metricLabelExpr('http.request.method'), { $literal: 'GET' }] } },
+      { $expr: { $eq: [metricLabelExpr('$where'), { $literal: 'x' }] } },
+    ]);
   });
 });

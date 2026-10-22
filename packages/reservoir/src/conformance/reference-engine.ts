@@ -33,8 +33,19 @@ import {
   type CountParams,
   type CountResult,
   type DiscoverMetadataKeysParams,
+  type AggregationInterval,
   type DistinctParams,
   type DistinctResult,
+  type IngestMetricsResult,
+  type MetricAggregateParams,
+  type MetricAggregateResult,
+  type MetricAggregationFn,
+  type MetricLabelParams,
+  type MetricLabelResult,
+  type MetricQueryParams,
+  type MetricQueryResult,
+  type MetricRecord,
+  type StoredMetricRecord,
   type TopValuesParams,
   type TopValuesResult,
   type EngineCapabilities,
@@ -141,6 +152,42 @@ function hostnameOf(log: LogRecord): string | undefined {
   return typeof fromMetadata === 'string' ? fromMetadata : log.hostname;
 }
 
+/** A metric label: the literal attribute key (dots included), string values only. */
+function metricLabel(metric: MetricRecord, key: string): string | undefined {
+  const attributes = metric.attributes;
+  if (!attributes || !Object.prototype.hasOwnProperty.call(attributes, key)) return undefined;
+  const value = attributes[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+const METRIC_INTERVAL_MS: Record<AggregationInterval, number> = {
+  '1m': 60_000,
+  '5m': 300_000,
+  '15m': 900_000,
+  '1h': 3_600_000,
+  '6h': 21_600_000,
+  '1d': 86_400_000,
+  '1w': 604_800_000,
+};
+
+function aggregatePoints(points: StoredMetricRecord[], aggregation: MetricAggregationFn): number {
+  const values = points.map((p) => p.value);
+  switch (aggregation) {
+    case 'sum':
+      return values.reduce((a, b) => a + b, 0);
+    case 'count':
+      return values.length;
+    case 'avg':
+      return values.reduce((a, b) => a + b, 0) / values.length;
+    case 'min':
+      return Math.min(...values);
+    case 'max':
+      return Math.max(...values);
+    default:
+      throw new Error(`${NAME}: unsupported metric aggregation ${aggregation}`);
+  }
+}
+
 /** Built-in columns topValues and distinct accept (the translators' ALLOWED_COLUMNS). */
 const BUILTIN_FIELD_READERS: Record<string, (log: StoredLogRecord) => string | undefined> = {
   service: (log) => log.service,
@@ -221,6 +268,7 @@ function page<T>(rows: T[], limit: number | undefined, offset: number | undefine
 export class ReferenceEngine {
   private logs: StoredLogRecord[] = [];
   private spans: SpanRecord[] = [];
+  private metrics: StoredMetricRecord[] = [];
   private traces = new Map<string, TraceRecord>();
   private nextId = 1;
 
@@ -533,6 +581,85 @@ export class ReferenceEngine {
     });
     rows.sort((a, b) => b.count - a.count || compareByteOrder(a.service, b.service) || compareByteOrder(a.operation, b.operation));
     return rows.slice(0, params.limit ?? OPERATION_STATS_DEFAULT_LIMIT);
+  }
+
+  // --------------------------------------------------------------------------
+  // Metrics (the subset the metric label cases use)
+  // --------------------------------------------------------------------------
+
+  async ingestMetrics(metrics: MetricRecord[]): Promise<IngestMetricsResult> {
+    for (const metric of metrics) {
+      this.metrics.push({ ...structuredClone(metric), id: `metric-${this.nextId++}`, hasExemplars: false });
+    }
+    return { ingested: metrics.length, failed: 0, durationMs: 0 };
+  }
+
+  private matchMetrics(params: {
+    projectId: string | string[];
+    organizationId?: string | string[];
+    metricName?: string | string[];
+    metricType?: string | string[];
+    serviceName?: string | string[];
+    from?: Date;
+    to?: Date;
+    fromExclusive?: boolean;
+    toExclusive?: boolean;
+    attributes?: Record<string, string>;
+  }): StoredMetricRecord[] {
+    const projects = asList(params.projectId)!;
+    const orgs = asList(params.organizationId);
+    const names = asList(params.metricName);
+    const types = asList(params.metricType);
+    const services = asList(params.serviceName);
+    return this.metrics.filter((m) =>
+      projects.includes(m.projectId)
+      && (!orgs || orgs.includes(m.organizationId))
+      && (!names || names.includes(m.metricName))
+      && (!types || types.includes(m.metricType))
+      && (!services || services.includes(m.serviceName))
+      && (params.from === undefined || (params.fromExclusive ? m.time > params.from : m.time >= params.from))
+      && (params.to === undefined || (params.toExclusive ? m.time < params.to : m.time <= params.to))
+      // A label filter compares the literal attribute key with a string value.
+      && Object.entries(params.attributes ?? {}).every(([key, value]) => metricLabel(m, key) === value));
+  }
+
+  async queryMetrics(params: MetricQueryParams): Promise<MetricQueryResult> {
+    const rows = this.matchMetrics(params).sort((a, b) => a.time.getTime() - b.time.getTime());
+    if (params.sortOrder !== 'asc') rows.reverse();
+    const { rows: metrics, ...rest } = page(rows, params.limit, params.offset);
+    return { metrics: structuredClone(metrics), ...rest };
+  }
+
+  async aggregateMetrics(params: MetricAggregateParams): Promise<MetricAggregateResult> {
+    const bucketMs = METRIC_INTERVAL_MS[params.interval];
+    const groupBy = params.groupBy ?? [];
+    const groups = new Map<string, { bucket: number; labels: Record<string, string>; points: StoredMetricRecord[] }>();
+    for (const m of this.matchMetrics(params)) {
+      const bucket = Math.floor(m.time.getTime() / bucketMs) * bucketMs;
+      const labels = Object.fromEntries(groupBy.map((key) => [key, metricLabel(m, key) ?? '']));
+      const groupKey = JSON.stringify([bucket, groupBy.map((key) => labels[key])]);
+      const group = groups.get(groupKey) ?? { bucket, labels, points: [] };
+      group.points.push(m);
+      groups.set(groupKey, group);
+    }
+    const timeseries = [...groups.values()]
+      .sort((a, b) => a.bucket - b.bucket)
+      .map((g) => ({
+        bucket: new Date(g.bucket),
+        value: aggregatePoints(g.points, params.aggregation),
+        ...(groupBy.length > 0 ? { labels: g.labels } : {}),
+      }));
+    return { metricName: params.metricName, metricType: params.metricType ?? 'gauge', timeseries };
+  }
+
+  async getMetricLabelValues(params: MetricLabelParams, labelKey: string): Promise<MetricLabelResult> {
+    const values = new Set<string>();
+    for (const m of this.matchMetrics(params)) {
+      const value = metricLabel(m, labelKey);
+      if (value !== undefined && value !== '') values.add(value);
+    }
+    const sorted = [...values].sort(compareByteOrder);
+    return { values: params.limit ? sorted.slice(0, params.limit) : sorted };
   }
 
   async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {

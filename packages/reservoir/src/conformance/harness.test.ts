@@ -3,6 +3,7 @@ import {
   CORPUS_LOGS,
   CORPUS_SPANS,
   CORPUS_TRACES,
+  CORPUS_METRICS,
   PROJECT_A,
   PROJECT_B,
   PROJECT_C,
@@ -31,6 +32,7 @@ describe('corpus', () => {
     expect(CORPUS_LOGS).toHaveLength(40);
     expect(CORPUS_SPANS).toHaveLength(131);
     expect(CORPUS_TRACES).toHaveLength(16);
+    expect(CORPUS_METRICS.map((m) => m.id)).toEqual(['MX1', 'MX2', 'MX3', 'MX4', 'MX5']);
     const logKeys = new Set(CORPUS_LOGS.map((l) => `${l.record.projectId}|${l.record.time.toISOString()}|${l.record.message}`));
     expect(logKeys.size).toBe(40);
     expect(new Set(CORPUS_SPANS.map((s) => `${s.record.projectId}|${s.record.traceId}|${s.record.spanId}`)).size).toBe(131);

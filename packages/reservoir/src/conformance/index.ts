@@ -37,7 +37,7 @@
 // Capabilities (one describe each, in this order): baseline, text query,
 // direct filters, field clauses, histogram, facets, metadata keys, operation
 // stats, latency histogram, span and trace queries, sessions, metadata paths,
-// top values and distinct.
+// top values and distinct, metric labels.
 //
 // Ownership: F3 owns the suite and the corpus. Engine workstreams may add
 // cases and fix harness code, never weaken, delete or loosen an expectation
@@ -62,3 +62,4 @@ export { describeSpanTraceQueryConformance } from './suites/spans-traces.js';
 export { describeSessionsConformance } from './suites/sessions.js';
 export { describeMetadataPathConformance, METADATA_PATH_CASES } from './suites/metadata-paths.js';
 export { describeTopValuesConformance } from './suites/top-values.js';
+export { describeMetricsConformance } from './suites/metrics.js';

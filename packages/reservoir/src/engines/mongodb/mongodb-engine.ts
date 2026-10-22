@@ -1252,11 +1252,13 @@ export class MongoDBEngine extends StorageEngine {
 
     const bucketExpr = this.buildBucketExpr(params.interval, intervalMs);
 
+    // Group fields are named by position (`label_0`): a label key with a dot
+    // is not a valid field name inside `$group._id`.
     const groupId: Document = { bucket: bucketExpr };
     if (params.groupBy && params.groupBy.length > 0) {
-      for (const key of params.groupBy) {
-        groupId[`label_${key}`] = `$attributes.${key}`;
-      }
+      params.groupBy.forEach((key, i) => {
+        groupId[`label_${i}`] = metricLabelExpr(key);
+      });
     }
 
     const aggExpr = AGG_ACCUMULATORS[params.aggregation] ?? AGG_ACCUMULATORS.avg;
@@ -1308,9 +1310,9 @@ export class MongoDBEngine extends StorageEngine {
 
       if (params.groupBy && params.groupBy.length > 0) {
         const labels: Record<string, string> = {};
-        for (const key of params.groupBy) {
-          labels[key] = String(row._id[`label_${key}`] ?? '');
-        }
+        params.groupBy.forEach((key, i) => {
+          labels[key] = String(row._id[`label_${i}`] ?? '');
+        });
         bucket.labels = labels;
       }
 
@@ -1400,7 +1402,7 @@ export class MongoDBEngine extends StorageEngine {
 
     const pipeline: Document[] = [
       { $match: filter },
-      { $group: { _id: `$attributes.${labelKey}` } },
+      { $group: { _id: metricLabelExpr(labelKey) } },
       { $match: { _id: { $nin: [null, ''] } } },
       { $sort: { _id: 1 } },
       { $limit: limit },
@@ -1672,9 +1674,7 @@ export class MongoDBEngine extends StorageEngine {
 
     // Attribute label filtering
     if (params.attributes) {
-      for (const [key, val] of Object.entries(params.attributes)) {
-        filter[`attributes.${key}`] = val;
-      }
+      addMetricLabelFilters(filter, params.attributes);
     }
 
     return filter;
@@ -1700,9 +1700,7 @@ export class MongoDBEngine extends StorageEngine {
       filter.service_name = svc.length === 1 ? svc[0] : { $in: svc };
     }
     if (params.attributes) {
-      for (const [key, val] of Object.entries(params.attributes)) {
-        filter[`attributes.${key}`] = val;
-      }
+      addMetricLabelFilters(filter, params.attributes);
     }
 
     return filter;
@@ -1752,6 +1750,36 @@ export class MongoDBEngine extends StorageEngine {
 
     return filter;
   }
+}
+
+// =============================================================================
+// Metric labels
+// =============================================================================
+// Metric attributes are stored as sent: flat keys that often contain dots
+// (`http.request.method`, the OTel norm). A label is that literal key, as
+// on TimescaleDB (`attributes->>key`) and ClickHouse (`JSONExtractString`).
+// Dot notation would read a nested path instead, so dotted keys go through
+// `$getField`.
+
+/** The value of the literal label key (null when absent). */
+export function metricLabelExpr(key: string): Document {
+  return { $getField: { field: { $literal: key }, input: '$attributes' } };
+}
+
+/**
+ * Adds label equality filters: a plain key as a native clause (indexes stay
+ * usable), a dotted or `$` key as one `$expr` over the literal key.
+ */
+export function addMetricLabelFilters(filter: Document, attributes: Record<string, string>): void {
+  const exprs: Document[] = [];
+  for (const [key, val] of Object.entries(attributes)) {
+    if (key !== '' && !key.includes('.') && !key.startsWith('$')) {
+      filter[`attributes.${key}`] = val;
+    } else {
+      exprs.push({ $expr: { $eq: [metricLabelExpr(key), { $literal: val }] } });
+    }
+  }
+  if (exprs.length > 0) filter.$and = [...((filter.$and as Document[] | undefined) ?? []), ...exprs];
 }
 
 // =============================================================================

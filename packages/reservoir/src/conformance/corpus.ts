@@ -8,7 +8,7 @@
 // Changing a record here changes the expectations of every engine: only F3
 // (or the orchestrator) may do it. R-* may add records for new cases.
 
-import type { LogLevel, LogRecord, SpanKind, SpanRecord, SpanStatusCode, TraceRecord } from '../core/types.js';
+import type { LogLevel, LogRecord, MetricRecord, SpanKind, SpanRecord, SpanStatusCode, TraceRecord } from '../core/types.js';
 
 export const CONFORMANCE_BASE = new Date('2026-01-05T10:00:00.000Z');
 export const PROJECT_A = '00000000-0000-4000-8000-0000000000a1';
@@ -347,6 +347,40 @@ function traceRecord(row: TraceRow): TraceRecord {
 
 export const CORPUS_TRACES: readonly { readonly id: string; readonly record: TraceRecord }[] = Object.freeze(
   buildTraceRows().map((row) => Object.freeze({ id: row.id, record: traceRecord(row) })),
+);
+
+// ----------------------------------------------------------------------------
+// Metrics
+// ----------------------------------------------------------------------------
+
+/** The counter of the metrics cases. */
+export const METRIC_REQUESTS = 'http.server.request.count';
+
+// OTel metric attributes are flat keys with dots (`http.request.method`),
+// read as literal keys on every engine; MX5 nests the same name instead.
+const METRIC_ROWS: { id: string; t: number; value: number; attributes: Record<string, unknown> }[] = [
+  { id: 'MX1', t: 1, value: 10, attributes: { 'http.request.method': 'GET', 'server.address': 'api-1' } },
+  { id: 'MX2', t: 2, value: 5, attributes: { 'http.request.method': 'POST', 'server.address': 'api-1' } },
+  { id: 'MX3', t: 3, value: 7, attributes: { 'http.request.method': 'GET', 'server.address': 'api-2' } },
+  { id: 'MX4', t: 20, value: 3, attributes: { 'http.request.method': 'GET', 'server.address': 'api-1' } },
+  { id: 'MX5', t: 4, value: 100, attributes: { http: { request: { method: 'PUT' } } } },
+];
+
+export const CORPUS_METRICS: readonly { readonly id: string; readonly record: MetricRecord }[] = Object.freeze(
+  METRIC_ROWS.map((row) => Object.freeze({
+    id: row.id,
+    record: {
+      time: minutes(row.t),
+      organizationId: ORG_ID,
+      projectId: PROJECT_A,
+      metricName: METRIC_REQUESTS,
+      metricType: 'sum',
+      value: row.value,
+      isMonotonic: true,
+      serviceName: 'api',
+      attributes: structuredClone(row.attributes),
+    } satisfies MetricRecord,
+  })),
 );
 
 /** A corpus span record by its fixture id, e.g. `corpusSpan('PAGE-3').spanId`. */
