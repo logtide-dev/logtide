@@ -122,7 +122,7 @@ export function writeMetricsUrl(params: URLSearchParams, state: MetricQueryState
   const next = new URLSearchParams(params);
   for (const key of QUERY_KEYS) next.delete(key);
 
-  next.set('tab', state.tab);
+  if (state.tab !== DEFAULT_QUERY.tab) next.set('tab', state.tab);
   if (state.metric) next.set('metric', state.metric);
   if (state.aggregation !== DEFAULT_QUERY.aggregation) next.set('agg', state.aggregation);
   if (state.groupBy.length > 0) {

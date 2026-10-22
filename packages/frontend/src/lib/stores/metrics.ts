@@ -269,7 +269,7 @@ function createMetricsStore() {
         overviewLoading: false,
         services: [...new Set(result.services.map((svc) => svc.serviceName))].sort(),
       }));
-      await loadSparklines();
+      if (read().query.tab === 'overview') await loadSparklines();
     } catch (error) {
       if (token !== seq.overview) return;
       update((x) => ({ ...x, overviewError: (error as Error).message, overviewLoading: false }));
@@ -281,6 +281,7 @@ function createMetricsStore() {
     const s = read();
     if (!s.projectId || !s.range) return;
     if (loaded.overview !== ctxKey(s)) void loadOverview();
+    else if (s.query.tab === 'overview' && s.overview) void loadSparklines();
     if (s.query.tab === 'explorer' && s.query.metric) {
       const key = queryKey(s);
       if (loaded.timeseries !== key) void loadTimeseries();
@@ -369,7 +370,6 @@ function createMetricsStore() {
         seq.labels++;
         if (next.metric) void loadLabelKeys();
       }
-      if (patch.service !== undefined && patch.service !== before.service) void loadSparklines();
       refresh();
     },
 

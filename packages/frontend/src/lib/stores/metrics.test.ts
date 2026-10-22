@@ -200,6 +200,23 @@ describe('metricsStore query', () => {
 });
 
 describe('metricsStore overview', () => {
+  it('does not fetch sparklines on the explorer tab', async () => {
+    api.getOverview.mockResolvedValue({
+      services: [
+        { serviceName: 'a', metrics: [{ metricName: 'm1', metricType: 'gauge', serviceName: 'a', latestValue: 1, avgValue: 1, minValue: 1, maxValue: 1, pointCount: 1 }] },
+      ],
+    });
+    metricsStore.setQuery({ tab: 'explorer' });
+    metricsStore.setContext({ projectId: 'p1', from: T0, to: T1 });
+    await flush();
+    expect(api.getOverview).toHaveBeenCalledTimes(1);
+    expect(api.aggregateMetrics).not.toHaveBeenCalled();
+    metricsStore.setQuery({ tab: 'overview' });
+    await flush();
+    expect(api.aggregateMetrics).toHaveBeenCalledTimes(1);
+  });
+
+
   it('keeps the service list when a service filter is set and fetches sparklines for it only', async () => {
     api.getOverview.mockResolvedValue({
       services: [

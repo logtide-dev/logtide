@@ -108,7 +108,7 @@
   function goToTraces(serviceName: string) {
     const from = timeRange.from.toISOString();
     const to = timeRange.to.toISOString();
-    goto(`/dashboard/traces?service=${encodeURIComponent(serviceName)}&from=${from}&to=${to}&projectId=${projectId}`);
+    goto(`/dashboard/traces?service=${encodeURIComponent(serviceName)}&from=${from}&to=${to}&project=${projectId}`);
   }
 
   function goToLogs(serviceName: string) {

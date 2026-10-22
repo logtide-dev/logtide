@@ -19,6 +19,8 @@
     loadLabelValues: (key: string) => Promise<string[]>;
     services: string[];
     onChange: (patch: Partial<MetricQueryState>) => void;
+    /** Only the service select, for tabs that have no metric query. */
+    serviceOnly?: boolean;
   }
 
   let {
@@ -29,6 +31,7 @@
     loadLabelValues,
     services,
     onChange,
+    serviceOnly = false,
   }: Props = $props();
 
   const AGGREGATIONS: { value: MetricAggregationFn; label: string; hint?: string }[] = [
@@ -114,6 +117,7 @@
 
 <div class="space-y-3">
   <div class="flex flex-wrap items-end gap-3">
+    {#if !serviceOnly}
     <div class="min-w-[240px] flex-1 space-y-1">
       <span class="text-xs font-medium text-muted-foreground">Metric</span>
       <MetricCombobox
@@ -192,6 +196,8 @@
       </select>
     </div>
 
+    {/if}
+
     <div class="space-y-1">
       <label class="text-xs font-medium text-muted-foreground" for="metric-service">Service</label>
       <select
@@ -208,6 +214,7 @@
     </div>
   </div>
 
+  {#if !serviceOnly}
   {#if aggHint}
     <p class="text-xs text-muted-foreground">{aggHint}</p>
   {/if}
@@ -292,5 +299,6 @@
 
   {#if multiValue}
     <p class="text-xs text-muted-foreground">Each selected value is shown as its own series.</p>
+  {/if}
   {/if}
 </div>
