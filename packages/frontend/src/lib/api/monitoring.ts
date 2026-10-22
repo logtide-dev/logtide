@@ -183,7 +183,9 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || `HTTP ${response.status}`);
+    throw Object.assign(new Error(error.error || `HTTP ${response.status}`), {
+      status: response.status,
+    });
   }
 
   if (response.status === 204) return null as T;
