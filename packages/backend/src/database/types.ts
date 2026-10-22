@@ -654,6 +654,8 @@ export interface StatusPageSubscribersTable {
   confirm_expires_at: Timestamp | null;
   confirmed_at: Timestamp | null;
   last_confirmation_sent_at: Timestamp | null;
+  confirmation_send_count: Generated<number>;
+  confirmation_window_started_at: Timestamp | null;
   created_at: Generated<Timestamp>;
 }
 

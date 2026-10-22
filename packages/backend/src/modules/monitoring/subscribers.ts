@@ -5,7 +5,7 @@ import { db as defaultDb } from '../../database/index.js';
 import type { Database } from '../../database/types.js';
 import { config } from '../../config/index.js';
 import { getMailer } from '../../lib/mailer.js';
-import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
+import { assertWithinLimit, withLimitLock, CapabilityError } from '../../capabilities/index.js';
 import { StatusPageService } from './status-page.js';
 import { generateConfirmationEmail, statusPageUrl } from './status-emails.js';
 
@@ -17,12 +17,22 @@ import { generateConfirmationEmail, statusPageUrl } from './status-emails.js';
  * - Unsubscribe token: `<subscriberId>.<base64url HMAC>` derived from
  *   API_KEY_SECRET, so it needs no storage and can be verified in constant time.
  * - subscribe() never reveals whether an address is already known: callers
- *   always answer with the same body.
+ *   always answer with the same body, and never an error that depends on the
+ *   address or on the org's plan limit.
+ * - Only confirmed subscribers count against status_page.subscribers.max; the
+ *   limit is enforced when the address is confirmed. Unconfirmed rows are
+ *   bounded per page and the mails per address per day, so strangers can
+ *   neither fill the quota nor use the page as a mail relay.
  */
 
 export const CONFIRM_TOKEN_TTL_MS = 48 * 60 * 60 * 1000;
 export const RESEND_COOLDOWN_MS = 60 * 1000;
 export const SUBSCRIBERS_CAPABILITY = 'status_page.subscribers.max';
+/** Confirmation mails one address can receive per window from one status page. */
+export const MAX_CONFIRMATIONS_PER_ADDRESS = 3;
+export const CONFIRMATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Unconfirmed rows one status page keeps; beyond it new addresses are silently ignored. */
+export const MAX_PENDING_PER_PAGE = 200;
 const ADMIN_PAGE_SIZE = 50;
 
 export function normalizeEmail(email: string): string {
@@ -69,23 +79,38 @@ export interface SubscribeInput {
 export class StatusSubscribersService {
   constructor(private db: Kysely<Database> = defaultDb) {}
 
-  /** Confirmed rows plus pending rows whose confirmation link is still valid, org-wide. */
-  async countForOrg(organizationId: string, now: Date = new Date()): Promise<number> {
+  /** Confirmed subscribers, org-wide. Pending rows never count against the quota. */
+  async countConfirmedForOrg(organizationId: string): Promise<number> {
     const row = await this.db
       .selectFrom('status_page_subscribers')
       .select((eb) => eb.fn.countAll().as('c'))
       .where('organization_id', '=', organizationId)
-      .where((eb) =>
-        eb.or([eb('confirmed_at', 'is not', null), eb('confirm_expires_at', '>', now)])
-      )
+      .where('confirmed_at', 'is not', null)
       .executeTakeFirstOrThrow();
     return Number(row.c);
   }
 
+  /** True when the org is at its subscriber limit (counting confirmed rows only). */
+  private async atSubscriberLimit(organizationId: string): Promise<boolean> {
+    const current = await this.countConfirmedForOrg(organizationId);
+    try {
+      await context.runAsSystem('status-subscribers:limit-check', async () => {
+        await context.with({ organizationId }, async () => {
+          await assertWithinLimit(SUBSCRIBERS_CAPABILITY, current);
+        });
+      });
+      return false;
+    } catch (err) {
+      if (err instanceof CapabilityError) return true;
+      throw err;
+    }
+  }
+
   /**
    * Creates (or re-arms) a pending subscription and mails the confirmation
-   * link. Known addresses and the resend cooldown are silent no-ops. Throws
-   * CapabilityError when the org-wide subscriber limit is reached.
+   * link. Known addresses, the resend cooldown, the per-address mail cap, the
+   * per-page pending cap and a full subscriber quota are all silent no-ops, so
+   * the caller's answer never depends on them.
    */
   async subscribe(input: SubscribeInput): Promise<void> {
     const emailNormalized = normalizeEmail(input.email);
@@ -106,7 +131,13 @@ export class StatusSubscribersService {
 
       const existing = await this.db
         .selectFrom('status_page_subscribers')
-        .select(['id', 'confirmed_at', 'last_confirmation_sent_at'])
+        .select([
+          'id',
+          'confirmed_at',
+          'last_confirmation_sent_at',
+          'confirmation_send_count',
+          'confirmation_window_started_at',
+        ])
         .where('project_id', '=', input.projectId)
         .where('organization_id', '=', input.organizationId)
         .where('email_normalized', '=', emailNormalized)
@@ -120,12 +151,21 @@ export class StatusSubscribersService {
           ? new Date(existing.last_confirmation_sent_at).getTime()
           : 0;
         if (now.getTime() - last < RESEND_COOLDOWN_MS) return null;
+
+        const windowStart = existing.confirmation_window_started_at
+          ? new Date(existing.confirmation_window_started_at)
+          : null;
+        const inWindow = !!windowStart && now.getTime() - windowStart.getTime() < CONFIRMATION_WINDOW_MS;
+        if (inWindow && existing.confirmation_send_count >= MAX_CONFIRMATIONS_PER_ADDRESS) return null;
+
         await this.db
           .updateTable('status_page_subscribers')
           .set({
             confirm_token_hash: hashToken(fresh),
             confirm_expires_at: new Date(now.getTime() + CONFIRM_TOKEN_TTL_MS),
             last_confirmation_sent_at: now,
+            confirmation_send_count: inWindow ? existing.confirmation_send_count + 1 : 1,
+            confirmation_window_started_at: inWindow ? windowStart : now,
           })
           .where('id', '=', existing.id)
           .where('organization_id', '=', input.organizationId)
@@ -133,12 +173,17 @@ export class StatusSubscribersService {
         return fresh;
       }
 
-      const current = await this.countForOrg(input.organizationId, now);
-      await context.runAsSystem('status-subscribers:limit-check', async () => {
-        await context.with({ organizationId: input.organizationId }, async () => {
-          await assertWithinLimit(SUBSCRIBERS_CAPABILITY, current);
-        });
-      });
+      const pending = await this.db
+        .selectFrom('status_page_subscribers')
+        .select((eb) => eb.fn.countAll().as('c'))
+        .where('project_id', '=', input.projectId)
+        .where('organization_id', '=', input.organizationId)
+        .where('confirmed_at', 'is', null)
+        .executeTakeFirstOrThrow();
+      if (Number(pending.c) >= MAX_PENDING_PER_PAGE) return null;
+
+      // Do not mail people who could not be confirmed anyway.
+      if (await this.atSubscriberLimit(input.organizationId)) return null;
 
       await this.db
         .insertInto('status_page_subscribers')
@@ -150,6 +195,8 @@ export class StatusSubscribersService {
           confirm_token_hash: hashToken(fresh),
           confirm_expires_at: new Date(now.getTime() + CONFIRM_TOKEN_TTL_MS),
           last_confirmation_sent_at: now,
+          confirmation_send_count: 1,
+          confirmation_window_started_at: now,
         })
         .execute();
       return fresh;
@@ -181,21 +228,37 @@ export class StatusSubscribersService {
     }
   }
 
-  /** Consumes a confirmation token. False when unknown, expired or already used. */
+  /**
+   * Consumes a confirmation token. False when unknown, expired, already used,
+   * or when the org's subscriber limit is reached (the quota is enforced here,
+   * on confirmed addresses only).
+   */
   async confirm(organizationId: string, projectId: string, token: string): Promise<boolean> {
     if (typeof token !== 'string' || token.length < 16 || token.length > 200) return false;
-    const now = new Date();
-    const row = await this.db
-      .updateTable('status_page_subscribers')
-      .set({ confirmed_at: now, confirm_token_hash: null, confirm_expires_at: null })
-      .where('organization_id', '=', organizationId)
-      .where('project_id', '=', projectId)
-      .where('confirm_token_hash', '=', hashToken(token))
-      .where('confirmed_at', 'is', null)
-      .where('confirm_expires_at', '>', now)
-      .returning('id')
-      .executeTakeFirst();
-    return !!row;
+    return withLimitLock(organizationId, SUBSCRIBERS_CAPABILITY, async () => {
+      const now = new Date();
+      const valid = await this.db
+        .selectFrom('status_page_subscribers')
+        .select('id')
+        .where('organization_id', '=', organizationId)
+        .where('project_id', '=', projectId)
+        .where('confirm_token_hash', '=', hashToken(token))
+        .where('confirmed_at', 'is', null)
+        .where('confirm_expires_at', '>', now)
+        .executeTakeFirst();
+      if (!valid) return false;
+      if (await this.atSubscriberLimit(organizationId)) return false;
+
+      const row = await this.db
+        .updateTable('status_page_subscribers')
+        .set({ confirmed_at: now, confirm_token_hash: null, confirm_expires_at: null })
+        .where('id', '=', valid.id)
+        .where('organization_id', '=', organizationId)
+        .where('confirmed_at', 'is', null)
+        .returning('id')
+        .executeTakeFirst();
+      return !!row;
+    });
   }
 
   /** Removes a subscriber by a signed token. False when the token is not authentic. */

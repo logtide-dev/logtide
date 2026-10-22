@@ -457,6 +457,16 @@ export async function heartbeatRoutes(fastify: FastifyInstance) {
 // Public status page - no auth, scrubbed data
 // ============================================================================
 
+/** Subscribe work running after its response was sent (see the subscribe route). */
+const pendingSubscribes = new Set<Promise<void>>();
+
+/** Resolves once every subscribe started so far has finished. Used by tests. */
+export async function settleSubscribeWork(): Promise<void> {
+  while (pendingSubscribes.size > 0) {
+    await Promise.all([...pendingSubscribes]);
+  }
+}
+
 export async function publicStatusRoutes(fastify: FastifyInstance) {
   fastify.get('/:orgSlug/:projectSlug', {
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
@@ -518,8 +528,14 @@ export async function publicStatusRoutes(fastify: FastifyInstance) {
   const subscribeBodySchema = z.object({ email: z.string().trim().email().max(254) });
   const tokenBodySchema = z.object({ token: z.string().min(1).max(200) });
 
+  // Keyed on the client address only. The global generator keys on a hash of
+  // any X-Api-Key / Authorization header, which a caller controls: these
+  // routes skip authentication, so a random header would mint a fresh bucket
+  // per request and defeat the limit.
+  const keyByIp = (request: { ip: string }) => `status-subscription:${request.ip}`;
+
   fastify.post('/:orgSlug/:projectSlug/subscribe', {
-    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+    config: { rateLimit: { max: 5, timeWindow: '1 minute', keyGenerator: keyByIp } },
   }, async (request: any, reply) => {
     const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
     const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);
@@ -529,19 +545,30 @@ export async function publicStatusRoutes(fastify: FastifyInstance) {
     const parse = subscribeBodySchema.safeParse(request.body);
     if (!parse.success) return reply.status(400).send({ error: 'Enter a valid email address' });
 
-    await statusSubscribersService.subscribe({
-      organizationId: project.organization_id,
-      projectId: project.id,
-      orgSlug,
-      projectSlug: project.slug,
-      projectName: project.name,
-      email: parse.data.email,
-    });
+    // Fire and forget: the lookup, the write and the SMTP send run after the
+    // response, so timing never tells a known address from a new one (same
+    // approach as the password reset request).
+    const work: Promise<void> = statusSubscribersService
+      .subscribe({
+        organizationId: project.organization_id,
+        projectId: project.id,
+        orgSlug,
+        projectSlug: project.slug,
+        projectName: project.name,
+        email: parse.data.email,
+      })
+      .catch((err) => {
+        console.error('[StatusSubscribers] subscribe failed:', err instanceof Error ? err.message : err);
+      })
+      .finally(() => {
+        pendingSubscribes.delete(work);
+      });
+    pendingSubscribes.add(work);
     return reply.status(202).send({ ok: true });
   });
 
   fastify.post('/:orgSlug/:projectSlug/subscribe/confirm', {
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    config: { rateLimit: { max: 30, timeWindow: '1 minute', keyGenerator: keyByIp } },
   }, async (request: any, reply) => {
     const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
     const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);
@@ -553,7 +580,7 @@ export async function publicStatusRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post('/:orgSlug/:projectSlug/unsubscribe', {
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    config: { rateLimit: { max: 30, timeWindow: '1 minute', keyGenerator: keyByIp } },
   }, async (request: any, reply) => {
     const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
     const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);

@@ -655,7 +655,7 @@ describe('MonitorService ssl and dns (W12)', () => {
       checkConfig: { recordType: 'MX', expectedValue: 'mx.example.com' },
     });
     await service.runCheck(m);
-    expect(checker.runDnsCheck).toHaveBeenLastCalledWith('example.com', 'MX', 'mx.example.com', m.timeoutSeconds);
+    expect(checker.runDnsCheck).toHaveBeenLastCalledWith('example.com', 'MX', 'mx.example.com', m.timeoutSeconds, undefined, expect.any(Boolean));
   });
 
   it('maps display fields on create, list and update', async () => {
