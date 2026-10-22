@@ -1062,6 +1062,40 @@ describe('metric_stat panel', () => {
     expect(r.unit).toBe('%');
   });
 
+  it('rate over a 1h window uses sub-day buckets and returns a non-null value', async () => {
+    const now = Date.now();
+    const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValueOnce({
+      metricName: 'http_requests',
+      metricType: 'sum',
+      timeseries: [
+        { bucket: new Date(now - 180_000), value: 0 },
+        { bucket: new Date(now - 120_000), value: 120 },
+        { bucket: new Date(now - 60_000), value: 360 },
+      ],
+      executionTimeMs: 1,
+    } as Awaited<ReturnType<typeof reservoir.aggregateMetrics>>);
+
+    const r = (await fetchPanelData(
+      {
+        type: 'metric_stat',
+        title: 'Rate',
+        source: 'metrics',
+        projectId,
+        metricName: 'http_requests',
+        aggregation: 'rate',
+        timeRange: '1h',
+        serviceName: null,
+        unit: null,
+      },
+      ctx(),
+    )) as { value: number | null };
+
+    expect(spy.mock.calls[0][0].aggregation).toBe('last');
+    expect(spy.mock.calls[0][0].interval).toBe('1m');
+    spy.mockRestore();
+    expect(r.value).toBe(4);
+  });
+
   it('sums across all buckets for sum aggregation (no undercount)', async () => {
     const now = new Date();
     const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValueOnce({

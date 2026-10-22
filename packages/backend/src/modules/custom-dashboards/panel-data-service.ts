@@ -35,6 +35,7 @@ import type { PanelTimeRange } from '@logtide/shared';
 import { dashboardService } from '../dashboard/service.js';
 import { alertsService } from '../alerts/service.js';
 import { metricsService } from '../metrics/service.js';
+import { pickAutoInterval } from '../metrics/aggregate-options.js';
 import { monitorService } from '../monitoring/routes.js';
 import { SiemDashboardService } from '../siem/dashboard-service.js';
 import { db } from '../../database/index.js';
@@ -905,7 +906,9 @@ const metricStatFetcher: PanelDataSource<MetricStatConfig, MetricStatData> = {
             metricName: config.metricName,
             from,
             to: now,
-            interval: '1d',
+            // Rate needs at least two buckets inside the window (the first
+            // bucket has no previous value), so size buckets to the range.
+            interval: pickAutoInterval(from, now),
             aggregation: 'rate',
             serviceName: config.serviceName ?? undefined,
           })
