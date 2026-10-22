@@ -9,14 +9,26 @@
     value = $bindable(),
     placeholder = $bindable(),
     class: className,
+    numberOfMonths,
     ...restProps
   }: RangeCalendarPrimitive.RootProps = $props();
+
+  // two months side by side only fit on wider screens; phones get one
+  let narrow = $state(false);
+  $effect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    narrow = mq.matches;
+    const on = (e: MediaQueryListEvent) => (narrow = e.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  });
+  const monthCount = $derived(numberOfMonths ?? (narrow ? 1 : 2));
 </script>
 
 <RangeCalendarPrimitive.Root
   bind:value
   bind:placeholder
-  numberOfMonths={2}
+  numberOfMonths={monthCount}
   weekdayFormat="short"
   class={cn("p-3", className)}
   {...restProps}

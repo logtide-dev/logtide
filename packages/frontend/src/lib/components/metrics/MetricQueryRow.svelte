@@ -157,7 +157,7 @@
       </Button>
       {#if groupOpen}
         <div
-          class="absolute z-20 mt-1 max-h-64 w-64 overflow-y-auto rounded-md border bg-popover p-2 text-popover-foreground shadow-md"
+          class="absolute z-20 mt-1 max-h-64 w-64 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-md border bg-popover p-2 text-popover-foreground shadow-md"
           role="group"
           aria-label="Group by labels"
         >
