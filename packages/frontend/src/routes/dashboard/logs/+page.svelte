@@ -985,33 +985,11 @@
     applyFilters();
   }
 
-  // Compute current export filters for the dialog
-  let exportFilters = $derived({
-    projectId:
-      selectedProjects.length === 1
-        ? selectedProjects[0]
-        : selectedProjects,
-    service:
-      selectedServices.length > 0
-        ? selectedServices.length === 1
-          ? selectedServices[0]
-          : selectedServices
-        : undefined,
-    level:
-      selectedLevels.length > 0
-        ? selectedLevels.length === 1
-          ? selectedLevels[0]
-          : selectedLevels
-        : undefined,
-    hostname:
-      selectedHostnames.length > 0
-        ? selectedHostnames.length === 1
-          ? selectedHostnames[0]
-          : selectedHostnames
-        : undefined,
-    traceId: traceId || undefined,
-    sessionId: sessionId || undefined,
-    q: searchQuery || undefined,
+  // Export scope for the dialog (interim mapping until the page rebuild:
+  // only the query string and the selected projects travel).
+  let exportScope = $derived({
+    q: searchQuery,
+    projectIds: selectedProjects,
     from: getTimeRange().from.toISOString(),
     to: getTimeRange().to.toISOString(),
   });
@@ -2013,7 +1991,9 @@
 <ExportLogsDialog
   bind:open={exportDialogOpen}
   totalLogs={totalLogs}
-  filters={exportFilters}
+  scope={exportScope}
+  projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+  {customColumns}
 />
 
 <CorrelationTimelineDialog
