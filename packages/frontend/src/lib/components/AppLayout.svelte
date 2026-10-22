@@ -38,13 +38,14 @@
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import Check from "@lucide/svelte/icons/check";
   import SearchIcon from "@lucide/svelte/icons/search";
-  import { formatTimeAgo } from "$lib/utils/datetime";
+  import { formatRelative } from "$lib/utils/datetime";
   import Footer from "$lib/components/Footer.svelte";
   import EmailVerificationBanner from "$lib/components/EmailVerificationBanner.svelte";
   import TermsAcceptanceModal from "$lib/components/TermsAcceptanceModal.svelte";
   import OnboardingChecklist from "$lib/components/OnboardingChecklist.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import SidebarNav from "$lib/components/shell/SidebarNav.svelte";
+  import HeaderBreadcrumb from "$lib/components/shell/HeaderBreadcrumb.svelte";
   import { logoPath } from "$lib/utils/theme";
 
 
@@ -246,7 +247,7 @@
       // does not cause the hint to reappear on the next mount.
       shortcutsStore.markHintShown();
       hintTimer = setTimeout(() => {
-        toastStore.info(`Pro tip: Press ${mod}+K to open command palette, or ? for shortcuts`, 8000);
+        toastStore.info(`Tip: press ${mod}+K for the command palette, or ? for shortcuts`, 8000);
       }, 3000);
     }
 
@@ -331,20 +332,15 @@
 
   <div class="flex flex-col min-h-screen transition-[margin] duration-200 {sidebarVisible ? 'lg:ml-64' : 'lg:ml-0'}">
     <header
-      class="h-16 border-b border-border bg-card px-6 flex items-center justify-between"
+      class="h-16 border-b border-border bg-card px-4 sm:px-6 flex items-center justify-between gap-2"
     >
-      <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2 sm:gap-4 min-w-0">
         <Button variant="ghost" size="icon" class="lg:hidden" aria-label="Open menu" onclick={() => (mobileMenuOpen = true)}>
           <Menu class="w-5 h-5" />
         </Button>
 
         {#if $currentOrganization}
-          <div
-            class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-secondary/50"
-          >
-            <Building2 class="w-4 h-4 text-muted-foreground" />
-            <span class="text-sm font-medium">{$currentOrganization.name}</span>
-          </div>
+          <HeaderBreadcrumb />
         {/if}
       </div>
 
@@ -353,25 +349,29 @@
         <button
           onclick={() => shortcutsStore.openCommandPalette()}
           class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-muted/50 text-muted-foreground text-sm hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer"
-          title="Command Palette"
+          title="Command palette"
         >
           <SearchIcon class="w-4 h-4" />
-          <span class="text-xs">Search...</span>
+          <span class="text-xs">Search</span>
           <kbd class="ml-2 px-1.5 py-0.5 rounded border border-border bg-background text-[10px] font-mono">{getPlatform().modSymbol}K</kbd>
         </button>
+        <Button variant="ghost" size="icon" class="md:hidden" aria-label="Search" onclick={() => shortcutsStore.openCommandPalette()}>
+          <SearchIcon class="w-5 h-5" />
+        </Button>
 
         <!-- Layout Controls -->
         <DropdownMenu>
           <DropdownMenuTrigger
-            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:bg-accent hover:text-accent-foreground h-10 w-10"
+            class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:bg-accent hover:text-accent-foreground h-10 w-10 hidden lg:inline-flex"
             title="Layout settings"
+            aria-label="Layout settings"
           >
             <LayoutGrid class="w-5 h-5" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" class="w-56">
-            <DropdownMenuLabel>Layout Settings</DropdownMenuLabel>
+            <DropdownMenuLabel>Layout settings</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel class="text-xs font-normal text-muted-foreground py-1">Content Width</DropdownMenuLabel>
+            <DropdownMenuLabel class="text-xs font-normal text-muted-foreground py-1">Content width</DropdownMenuLabel>
             <DropdownMenuItem
               onclick={() => layoutStore.setContentDensity('compact')}
               class="cursor-pointer"
@@ -422,10 +422,10 @@
               <div class="flex items-center gap-2 w-full">
                 {#if sidebarVisible}
                   <PanelLeftClose class="w-4 h-4" />
-                  <span>Hide Sidebar</span>
+                  <span>Hide sidebar</span>
                 {:else}
                   <PanelLeft class="w-4 h-4" />
-                  <span>Show Sidebar</span>
+                  <span>Show sidebar</span>
                 {/if}
               </div>
             </DropdownMenuItem>
@@ -437,6 +437,7 @@
         <DropdownMenu>
           <DropdownMenuTrigger
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:bg-accent hover:text-accent-foreground h-10 w-10 relative"
+            aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
           >
             <Bell class="w-5 h-5" />
             {#if unreadCount > 0}
@@ -448,7 +449,7 @@
               </Badge>
             {/if}
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" class="w-96">
+          <DropdownMenuContent align="end" class="w-96 max-w-[calc(100vw-2rem)]">
             <div class="flex items-center justify-between px-4 py-2">
               <DropdownMenuLabel class="p-0">Notifications</DropdownMenuLabel>
               <div class="flex items-center gap-2">
@@ -536,6 +537,7 @@
                               }}
                               class="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-destructive/20 rounded"
                               title="Delete notification"
+                              aria-label="Delete notification"
                             >
                               <X class="w-3 h-3 text-destructive" />
                             </button>
@@ -564,7 +566,7 @@
                           </div>
                         {/if}
                         <p class="text-xs text-muted-foreground mt-1">
-                          {formatTimeAgo(notification.createdAt, currentTime)}
+                          {formatRelative(notification.createdAt, currentTime)}
                         </p>
                       </div>
                     </div>
@@ -578,6 +580,7 @@
         <DropdownMenu>
           <DropdownMenuTrigger
             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-10 w-10 p-0"
+            aria-label="Account menu"
           >
             <div
               class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-semibold"
@@ -603,14 +606,14 @@
                 class="cursor-pointer"
               >
                 <Settings class="w-4 h-4 mr-2" />
-                User Settings
+                Account settings
               </DropdownMenuItem>
               <DropdownMenuItem
                 onclick={() => goto("/dashboard/settings")}
                 class="cursor-pointer"
               >
                 <Building2 class="w-4 h-4 mr-2" />
-                Organization Settings
+                Organization settings
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
@@ -619,7 +622,7 @@
               class="text-destructive cursor-pointer"
             >
               <LogOut class="w-4 h-4 mr-2" />
-              Logout
+              Log out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

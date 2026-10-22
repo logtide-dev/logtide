@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { organizationStore } from "$lib/stores/organization";
   import { toastStore } from "$lib/stores/toast";
   import { OrganizationsAPI } from "$lib/api/organizations";
@@ -19,13 +20,20 @@
     CommandList,
     CommandSeparator,
   } from "$lib/components/ui/command";
-  import Button from "$lib/components/ui/button/button.svelte";
-  import { Separator } from "$lib/components/ui/separator";
   import CreateOrganizationDialog from "./CreateOrganizationDialog.svelte";
+  import { switchOrganization, resetOrgScopedState } from "$lib/components/shell/org-switch";
+  import { OPEN_ORG_SWITCHER_EVENT } from "$lib/components/shell/events";
   import Building2 from "@lucide/svelte/icons/building-2";
   import Check from "@lucide/svelte/icons/check";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Plus from "@lucide/svelte/icons/plus";
+
+  interface Props {
+    /** 'breadcrumb' renders a compact text trigger for the header. */
+    variant?: "breadcrumb" | "block";
+  }
+
+  let { variant = "block" }: Props = $props();
 
   let open = $state(false);
   let showCreateDialog = $state(false);
@@ -46,14 +54,22 @@
     unsubOrgStore();
   });
 
+  // The command palette action "Switch organization" opens this popover.
+  onMount(() => {
+    const openSwitcher = () => (open = true);
+    window.addEventListener(OPEN_ORG_SWITCHER_EVENT, openSwitcher);
+    return () => window.removeEventListener(OPEN_ORG_SWITCHER_EVENT, openSwitcher);
+  });
+
   let organizations = $derived(orgState.organizations);
   let currentOrg = $derived(orgState.currentOrganization);
   let token = $derived(authState.token);
 
   function selectOrganization(org: OrganizationWithRole) {
-    organizationStore.setCurrentOrganization(org);
+    const alreadyActive = currentOrg?.id === org.id;
+    switchOrganization(org);
     open = false;
-    toastStore.success(`Switched to ${org.name}`);
+    if (!alreadyActive) toastStore.success(`Switched to ${org.name}`);
   }
 
   async function handleCreateOrganization(data: {
@@ -75,7 +91,9 @@
       };
 
       organizationStore.addOrganization(newOrg);
-      toastStore.success(`Organization "${data.name}" created successfully!`);
+      resetOrgScopedState();
+      toastStore.success(`Organization "${data.name}" created`);
+      goto("/dashboard/projects?create=1");
     } catch (e) {
       const errorMsg =
         e instanceof Error ? e.message : "Failed to create organization";
@@ -85,37 +103,54 @@
 </script>
 
 <Popover bind:open>
-  <PopoverTrigger
-    class="inline-flex items-center justify-between w-full h-10 px-4 py-2 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 rounded-md border border-input bg-background"
-    role="combobox"
-    aria-expanded={open}
-  >
-    <div class="flex items-center gap-2 min-w-0 flex-1">
-      <div
-        class="w-6 h-6 rounded bg-primary/10 flex items-center justify-center text-primary flex-shrink-0"
-      >
-        {#if currentOrg}
-          <span class="text-xs font-semibold"
-            >{currentOrg.name.charAt(0).toUpperCase()}</span
-          >
-        {:else}
-          <Building2 class="w-4 h-4" />
-        {/if}
+  {#if variant === "breadcrumb"}
+    <PopoverTrigger
+      class="inline-flex items-center gap-1.5 min-w-0 max-w-[10rem] rounded-md px-2 py-1 text-sm font-medium hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      role="combobox"
+      aria-expanded={open}
+      aria-label="Switch organization"
+      title={currentOrg?.name}
+      data-org-switcher
+    >
+      <Building2 class="w-4 h-4 text-muted-foreground flex-shrink-0" />
+      <span class="truncate">{currentOrg?.name || "Select organization"}</span>
+      <ChevronDown class="w-3.5 h-3.5 opacity-50 flex-shrink-0" />
+    </PopoverTrigger>
+  {:else}
+    <PopoverTrigger
+      class="inline-flex items-center justify-between w-full h-10 px-4 py-2 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 rounded-md border border-input bg-background"
+      role="combobox"
+      aria-expanded={open}
+      aria-label="Switch organization"
+      data-org-switcher
+    >
+      <div class="flex items-center gap-2 min-w-0 flex-1">
+        <div
+          class="w-6 h-6 rounded bg-primary/10 flex items-center justify-center text-primary flex-shrink-0"
+        >
+          {#if currentOrg}
+            <span class="text-xs font-semibold"
+              >{currentOrg.name.charAt(0).toUpperCase()}</span
+            >
+          {:else}
+            <Building2 class="w-4 h-4" />
+          {/if}
+        </div>
+        <span class="truncate text-sm flex-1 text-left">
+          {currentOrg?.name || "Select organization"}
+        </span>
       </div>
-      <span class="truncate text-sm flex-1 text-left">
-        {currentOrg?.name || "Select organization"}
-      </span>
-    </div>
-    <ChevronDown class="ml-2 w-4 h-4 opacity-50 flex-shrink-0" />
-  </PopoverTrigger>
+      <ChevronDown class="ml-2 w-4 h-4 opacity-50 flex-shrink-0" />
+    </PopoverTrigger>
+  {/if}
 
   <PopoverContent class="w-56 p-0" align="start">
     <Command>
-      <CommandInput placeholder="Search organizations..." />
+      <CommandInput placeholder="Search organizations" />
       <CommandList>
         <CommandEmpty>No organization found.</CommandEmpty>
 
-        <CommandGroup heading="Your Organizations">
+        <CommandGroup heading="Your organizations">
           {#each organizations as org}
             <CommandItem
               value={org.name}
@@ -158,7 +193,7 @@
               >
                 <Plus class="w-3 h-3" />
               </div>
-              <span class="text-sm">Create Organization</span>
+              <span class="text-sm">Create organization</span>
             </div>
           </CommandItem>
         </CommandGroup>
