@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { legacyRedirect } from './legacy-routes';
+import {
+  legacyRedirect,
+  sessionsRedirectTarget,
+  sessionDetailRedirectTarget,
+  webVitalsRedirectTarget,
+} from './legacy-routes';
+import { GET as sessionsGet } from '../../routes/dashboard/projects/[id]/sessions/+server';
+import { GET as sessionDetailGet } from '../../routes/dashboard/projects/[id]/sessions/[sessionId]/+server';
+import { GET as performanceGet } from '../../routes/dashboard/projects/[id]/performance/+server';
 import { GET as searchGet } from '../../routes/dashboard/search/+server';
 import { GET as monitoringGet } from '../../routes/dashboard/monitoring/+server';
 import { GET as monitorDetailGet } from '../../routes/dashboard/monitoring/[id]/+server';
@@ -59,5 +67,40 @@ describe('legacy route handlers', () => {
     } as never) as Response;
     expect(res.status).toBe(308);
     expect(res.headers.get('location')).toBe('/dashboard/uptime/a%2Fb%20c?tab=1');
+  });
+});
+
+describe('project route redirect targets', () => {
+  it('preserves unrelated query params', () => {
+    expect(sessionsRedirectTarget('p1', '?errors=1&x=1')).toBe('/dashboard/sessions?project=p1&errors=1&x=1');
+    expect(webVitalsRedirectTarget('p1', '?range=7d')).toBe('/dashboard/web-vitals?project=p1&range=7d');
+  });
+
+  it('path id wins over project param', () => {
+    expect(sessionsRedirectTarget('p1', '?project=other&projectId=other2&x=1')).toBe(
+      '/dashboard/sessions?project=p1&x=1',
+    );
+  });
+
+  it('encodes session id', () => {
+    expect(sessionDetailRedirectTarget('p1', 'a b/c', '')).toBe('/dashboard/sessions/a%20b%2Fc?project=p1');
+  });
+
+  it('no search yields clean url', () => {
+    expect(sessionsRedirectTarget('p1', '')).toBe('/dashboard/sessions?project=p1');
+    expect(webVitalsRedirectTarget('p1', '?')).toBe('/dashboard/web-vitals?project=p1');
+  });
+
+  it('server handlers answer 308 with the built target', () => {
+    const res = sessionsGet({ params: { id: 'p1' }, url: new URL('http://x/a?x=1') } as never) as Response;
+    expect(res.status).toBe(308);
+    expect(res.headers.get('location')).toBe('/dashboard/sessions?project=p1&x=1');
+    const d = sessionDetailGet({
+      params: { id: 'p1', sessionId: 's 1' },
+      url: new URL('http://x/a'),
+    } as never) as Response;
+    expect(d.headers.get('location')).toBe('/dashboard/sessions/s%201?project=p1');
+    const w = performanceGet({ params: { id: 'p1' }, url: new URL('http://x/a') } as never) as Response;
+    expect(w.headers.get('location')).toBe('/dashboard/web-vitals?project=p1');
   });
 });

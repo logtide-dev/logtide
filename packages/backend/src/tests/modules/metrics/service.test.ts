@@ -560,3 +560,95 @@ describe('MetricsService', () => {
     });
   });
 });
+
+describe('MetricsService.aggregateWithOptions', () => {
+  const service = new MetricsService();
+  const from = new Date('2025-01-01T00:00:00Z');
+  const to = new Date('2025-01-02T00:00:00Z');
+  const base = { projectId: 'proj-1', metricName: 'requests_total', from, to };
+
+  beforeEach(() => {
+    mockAggregateMetrics.mockReset();
+  });
+
+  it('aggregation=rate calls reservoir with last', async () => {
+    mockAggregateMetrics.mockResolvedValueOnce({
+      metricName: 'requests_total',
+      metricType: 'sum',
+      timeseries: [
+        { bucket: new Date('2025-01-01T00:00:00Z'), value: 100 },
+        { bucket: new Date('2025-01-01T00:15:00Z'), value: 1000 },
+      ],
+    });
+
+    const result = await service.aggregateWithOptions({ ...base, interval: '15m', aggregation: 'rate' });
+
+    expect(mockAggregateMetrics).toHaveBeenCalledWith(expect.objectContaining({ aggregation: 'last', interval: '15m' }));
+    expect(result.timeseries).toHaveLength(1);
+    expect(result.timeseries[0].value).toBe(1);
+  });
+
+  it('interval=auto returns resolved interval', async () => {
+    mockAggregateMetrics.mockResolvedValueOnce({ metricName: 'm', metricType: 'gauge', timeseries: [] });
+
+    const result = await service.aggregateWithOptions({ ...base, interval: 'auto', aggregation: 'avg' });
+
+    expect(result.interval).toBe('15m');
+    expect(result.bucketSeconds).toBe(900);
+    expect(mockAggregateMetrics).toHaveBeenCalledWith(expect.objectContaining({ interval: '15m' }));
+    expect(result.seriesTotal).toBe(0);
+  });
+
+  it('multi-value attribute issues one reservoir call per value and labels them', async () => {
+    mockAggregateMetrics.mockImplementation(async (p: any) => ({
+      metricName: 'm',
+      metricType: 'gauge',
+      timeseries: [{ bucket: new Date('2025-01-01T00:00:00Z'), value: p.attributes.method === 'GET' ? 1 : 2 }],
+    }));
+
+    const result = await service.aggregateWithOptions({
+      ...base,
+      interval: '1h',
+      aggregation: 'avg',
+      attributes: { method: ['GET', 'POST'], env: ['prod'] },
+    });
+
+    expect(mockAggregateMetrics).toHaveBeenCalledTimes(2);
+    expect(mockAggregateMetrics).toHaveBeenCalledWith(expect.objectContaining({ attributes: { method: 'GET', env: 'prod' } }));
+    const labels = result.timeseries.map((p) => p.labels);
+    expect(labels).toContainEqual({ method: 'GET' });
+    expect(labels).toContainEqual({ method: 'POST' });
+    expect(result.seriesTotal).toBe(2);
+  });
+
+  it('single-value attributes pass through without extra labels', async () => {
+    mockAggregateMetrics.mockResolvedValueOnce({
+      metricName: 'm',
+      metricType: 'gauge',
+      timeseries: [{ bucket: new Date('2025-01-01T00:00:00Z'), value: 3 }],
+    });
+
+    const result = await service.aggregateWithOptions({
+      ...base, interval: '1h', aggregation: 'avg', attributes: { env: ['prod'] },
+    });
+
+    expect(result.timeseries[0].labels).toBeUndefined();
+    expect(mockAggregateMetrics).toHaveBeenCalledWith(expect.objectContaining({ attributes: { env: 'prod' } }));
+  });
+
+  it('caps series at 20 and reports totals', async () => {
+    mockAggregateMetrics.mockResolvedValueOnce({
+      metricName: 'm',
+      metricType: 'gauge',
+      timeseries: Array.from({ length: 50 }, (_, i) => ({
+        bucket: new Date('2025-01-01T00:00:00Z'), value: i, labels: { host: `h${i}` },
+      })),
+    });
+
+    const result = await service.aggregateWithOptions({ ...base, interval: '1h', aggregation: 'avg', groupBy: ['host'] });
+
+    expect(result.seriesTotal).toBe(50);
+    expect(result.seriesShown).toBe(20);
+    expect(result.timeseries).toHaveLength(20);
+  });
+});

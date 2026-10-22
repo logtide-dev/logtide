@@ -47,6 +47,7 @@ import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from './modules
 import { statusIncidentRoutes } from './modules/status-incidents/routes.js';
 import { maintenanceRoutes } from './modules/maintenances/routes.js';
 import { sessionsRoutes } from './modules/sessions/routes.js';
+import { webVitalsRoutes } from './modules/web-vitals/routes.js';
 import { sourcemapsRoutes } from './modules/sourcemaps/index.js';
 import { auditLogRoutes, auditLogService } from './modules/audit-log/index.js';
 import { bootstrapService } from './modules/bootstrap/index.js';
@@ -241,6 +242,7 @@ export async function build(opts = {}) {
   await fastify.register(tracesRoutes);
   await fastify.register(metricsRoutes, { prefix: '/api/v1/metrics' });
   await fastify.register(sessionsRoutes, { prefix: '/api/v1/sessions' });
+  await fastify.register(webVitalsRoutes, { prefix: '/api/v1/web-vitals' });
   await fastify.register(sourcemapsRoutes);
   await fastify.register(websocketPlugin);
   await fastify.register(websocketRoutes);

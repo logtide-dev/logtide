@@ -3,6 +3,7 @@ import { metricsService } from './service.js';
 import { requireFullAccess } from '../auth/guards.js';
 import { verifyProjectAccess } from '../auth/verify-project-access.js';
 import type { AggregationInterval, MetricAggregationFn } from '@logtide/reservoir';
+import { TooManyFilterValuesError } from './aggregate-options.js';
 
 /**
  * Resolve the effective projectId for the request.
@@ -27,6 +28,28 @@ function parseAttributes(query: Record<string, unknown>): Record<string, string>
       attrs[match[1]] = query[key] as string;
       found = true;
     }
+  }
+
+  return found ? attrs : undefined;
+}
+
+/**
+ * Parse `attributes[key]=v` query params into multi-value filters. A repeated
+ * key (`attributes[key]=a&attributes[key]=b`) yields several values. Used by
+ * `/aggregate`; `/data` keeps the single-value `parseAttributes`.
+ */
+export function parseAttributeFilters(query: Record<string, unknown>): Record<string, string[]> | undefined {
+  const attrs: Record<string, string[]> = {};
+  let found = false;
+
+  for (const key of Object.keys(query)) {
+    const match = key.match(/^attributes\[(.+)]$/);
+    if (!match) continue;
+    const raw = query[key];
+    const values = (Array.isArray(raw) ? raw : [raw]).filter((v): v is string => typeof v === 'string');
+    if (values.length === 0) continue;
+    attrs[match[1]] = [...new Set(values)];
+    found = true;
   }
 
   return found ? attrs : undefined;
@@ -283,12 +306,12 @@ const metricsRoutes: FastifyPluginAsync = async (fastify) => {
           metricName: { type: 'string' },
           from: { type: 'string', format: 'date-time' },
           to: { type: 'string', format: 'date-time' },
-          interval: { type: 'string', enum: ['1m', '5m', '15m', '1h', '6h', '1d', '1w'], default: '1h' },
-          aggregation: { type: 'string', enum: ['avg', 'sum', 'min', 'max', 'count', 'last', 'p50', 'p95', 'p99'], default: 'avg' },
+          interval: { type: 'string', enum: ['auto', '1m', '5m', '15m', '1h', '6h', '1d', '1w'], default: 'auto' },
+          aggregation: { type: 'string', enum: ['avg', 'sum', 'min', 'max', 'count', 'last', 'rate', 'p50', 'p95', 'p99'], default: 'avg' },
           groupBy: {
             oneOf: [
               { type: 'string' },
-              { type: 'array', items: { type: 'string' } },
+              { type: 'array', items: { type: 'string' }, maxItems: 2 },
             ],
           },
           serviceName: { type: 'string' },
@@ -338,6 +361,12 @@ const metricsRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      const fromDate = new Date(from);
+      const toDate = new Date(to);
+      if (fromDate.getTime() > toDate.getTime()) {
+        return reply.code(400).send({ error: 'from must be before to' });
+      }
+
       if (request.user?.id) {
         const hasAccess = await verifyProjectAccess(projectId, request.user.id);
         if (!hasAccess) {
@@ -347,22 +376,29 @@ const metricsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const attributes = parseAttributes(request.query);
+      const attributes = parseAttributeFilters(request.query);
       const groupByArr = groupBy
         ? Array.isArray(groupBy) ? groupBy : [groupBy]
         : undefined;
 
-      return metricsService.aggregateMetrics({
-        projectId,
-        metricName,
-        from: new Date(from),
-        to: new Date(to),
-        interval: (interval || '1h') as AggregationInterval,
-        aggregation: (aggregation || 'avg') as MetricAggregationFn,
-        groupBy: groupByArr,
-        attributes,
-        serviceName,
-      });
+      try {
+        return await metricsService.aggregateWithOptions({
+          projectId,
+          metricName,
+          from: fromDate,
+          to: toDate,
+          interval: (interval || 'auto') as AggregationInterval | 'auto',
+          aggregation: (aggregation || 'avg') as MetricAggregationFn | 'rate',
+          groupBy: groupByArr,
+          attributes,
+          serviceName,
+        });
+      } catch (err) {
+        if (err instanceof TooManyFilterValuesError) {
+          return reply.code(400).send({ error: 'Too many filter values (max 10 combinations)' });
+        }
+        throw err;
+      }
     },
   });
 

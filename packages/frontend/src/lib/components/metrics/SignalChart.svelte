@@ -4,6 +4,8 @@
   import { getAxisStyle, getTooltipStyle } from '$lib/utils/echarts-theme';
   import { themeStore } from '$lib/stores/theme';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Skeleton } from '$lib/components/ui/skeleton';
+  import { formatTimestamp } from '$lib/utils/datetime';
   import Activity from '@lucide/svelte/icons/activity';
 
   interface SeriesData {
@@ -117,7 +119,7 @@
         boundaryGap: false,
         data: allBuckets.map(b => {
           const d = new Date(b);
-          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+          return formatTimestamp(d, { precision: 'minute' });
         }),
         ...axisStyle,
       },
@@ -141,9 +143,7 @@
   </CardHeader>
   <CardContent>
     {#if loading}
-      <div class="flex items-center justify-center h-[200px]">
-        <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-      </div>
+      <Skeleton class="h-[200px] w-full" />
     {:else if empty}
       <div class="flex flex-col items-center justify-center h-[200px] text-muted-foreground">
         <Activity class="w-8 h-8 mb-2 opacity-40" />

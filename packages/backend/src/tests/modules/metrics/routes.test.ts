@@ -638,6 +638,96 @@ describe('Metrics Routes', () => {
   });
 
   // ==========================================================================
+  // GET /api/v1/metrics/aggregate - explorer options
+  // ==========================================================================
+  describe('GET /api/v1/metrics/aggregate - explorer options', () => {
+    const range = () => ({
+      from: new Date(Date.now() - 3600000).toISOString(),
+      to: new Date(Date.now() + 3600000).toISOString(),
+    });
+    const get = (query: Record<string, unknown>) => {
+      // Build the query string by hand: supertest would index repeated keys (key[0]=...).
+      const qs = Object.entries(query)
+        .flatMap(([k, v]) => (Array.isArray(v) ? v : [v]).map((x) => `${encodeURIComponent(k)}=${encodeURIComponent(String(x))}`))
+        .join('&');
+      return request(app.server)
+        .get(`/api/v1/metrics/aggregate?${qs}`)
+        .set('Authorization', `Bearer ${sessionToken}`);
+    };
+
+    it('defaults to interval auto and reports the resolved interval', async () => {
+      const response = await get({ projectId, metricName: 'http.request.duration', ...range() });
+
+      expect(response.status).toBe(200);
+      expect(response.body.interval).toBe('5m');
+      expect(response.body.bucketSeconds).toBe(300);
+      expect(response.body).toHaveProperty('seriesTotal');
+      expect(response.body).toHaveProperty('seriesShown');
+    });
+
+    it('accepts aggregation=rate', async () => {
+      const response = await get({
+        projectId, metricName: 'http.request.count', aggregation: 'rate', interval: '1m', ...range(),
+      });
+
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.body.timeseries)).toBe(true);
+    });
+
+    it('accepts repeated attributes as multi-value filters', async () => {
+      const response = await get({
+        projectId,
+        metricName: 'http.request.duration',
+        'attributes[method]': ['GET', 'POST'],
+        ...range(),
+      });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('returns 400 when attribute filters exceed 10 combinations', async () => {
+      const vals = Array.from({ length: 11 }, (_, i) => String(i));
+      const response = await get({
+        projectId, metricName: 'http.request.duration', 'attributes[method]': vals, ...range(),
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('Too many filter values (max 10 combinations)');
+    });
+
+    it('groupBy with three keys returns 400', async () => {
+      const response = await get({
+        projectId, metricName: 'http.request.duration', groupBy: ['a', 'b', 'c'], ...range(),
+      });
+
+      expect(response.status).toBe(400);
+    });
+
+    it('groupBy with two keys is accepted', async () => {
+      const response = await get({
+        projectId, metricName: 'http.request.duration', groupBy: ['method', 'path'], ...range(),
+      });
+
+      expect(response.status).toBe(200);
+    });
+
+    it('400 when from after to', async () => {
+      const { from, to } = range();
+      const response = await get({ projectId, metricName: 'http.request.duration', from: to, to: from });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('from must be before to');
+    });
+
+    it("403 for another organization's project", async () => {
+      const other = await createTestContext();
+      const response = await get({ projectId: other.project.id, metricName: 'http.request.duration', ...range() });
+
+      expect(response.status).toBe(403);
+    });
+  });
+
+  // ==========================================================================
   // Access control
   // ==========================================================================
   describe('access control', () => {

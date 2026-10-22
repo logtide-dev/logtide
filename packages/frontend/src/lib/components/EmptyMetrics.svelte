@@ -84,7 +84,7 @@ otel.SetMeterProvider(provider)`
   async function copyCode(code: string) {
     const success = await copyToClipboard(code);
     if (success) {
-      toastStore.success('Code copied!');
+      toastStore.success('Code copied');
     } else {
       toastStore.error('Could not copy. Please select and copy manually.');
     }
@@ -97,7 +97,7 @@ otel.SetMeterProvider(provider)`
     <div class="w-20 h-20 mx-auto bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
       <BarChart3 class="w-10 h-10 text-primary" />
     </div>
-    <h2 class="text-2xl font-bold mb-2">No Metrics Yet</h2>
+    <h2 class="text-2xl font-bold mb-2">No metrics yet</h2>
     <p class="text-muted-foreground max-w-md mx-auto">
       Send OTLP metrics from your application to explore counters, gauges and histograms here.
     </p>
@@ -108,8 +108,8 @@ otel.SetMeterProvider(provider)`
     <a href="/dashboard/projects" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
-          <Key class="w-8 h-8 mx-auto text-green-500 mb-2" />
-          <h3 class="font-medium">Get API Key</h3>
+          <Key class="w-8 h-8 mx-auto text-primary mb-2" />
+          <h3 class="font-medium">Get API key</h3>
           <p class="text-sm text-muted-foreground">Generate credentials</p>
         </CardContent>
       </Card>
@@ -117,8 +117,8 @@ otel.SetMeterProvider(provider)`
     <a href="https://logtide.dev/docs/opentelemetry" target="_blank" rel="noopener noreferrer" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
-          <Book class="w-8 h-8 mx-auto text-purple-500 mb-2" />
-          <h3 class="font-medium">OTLP Docs</h3>
+          <Book class="w-8 h-8 mx-auto text-primary mb-2" />
+          <h3 class="font-medium">OTLP docs</h3>
           <p class="text-sm text-muted-foreground">Setup guide</p>
         </CardContent>
       </Card>
@@ -126,7 +126,7 @@ otel.SetMeterProvider(provider)`
     <a href="https://opentelemetry.io/docs/" target="_blank" rel="noopener noreferrer" class="block">
       <Card class="h-full hover:border-primary/50 transition-all cursor-pointer text-center">
         <CardContent class="pt-6">
-          <Network class="w-8 h-8 mx-auto text-blue-500 mb-2" />
+          <Network class="w-8 h-8 mx-auto text-primary mb-2" />
           <h3 class="font-medium">OpenTelemetry</h3>
           <p class="text-sm text-muted-foreground">Official docs</p>
         </CardContent>
@@ -139,7 +139,7 @@ otel.SetMeterProvider(provider)`
     <CardHeader>
       <div class="flex items-center gap-2">
         <Terminal class="w-5 h-5 text-muted-foreground" />
-        <CardTitle class="text-lg">Send Metrics with OpenTelemetry</CardTitle>
+        <CardTitle class="text-lg">Send metrics with OpenTelemetry</CardTitle>
       </div>
       <CardDescription>
         Configure your application to export OTLP metrics to LogTide
@@ -160,6 +160,7 @@ otel.SetMeterProvider(provider)`
               <Button
                 variant="ghost"
                 size="sm"
+                aria-label="Copy code"
                 class="absolute top-2 right-2"
                 onclick={() => copyCode(code)}
               >
@@ -183,15 +184,15 @@ otel.SetMeterProvider(provider)`
             Explore metrics by name and service
           </li>
           <li class="flex items-center gap-2">
-            <Gauge class="w-4 h-4 text-blue-500" />
+            <Gauge class="w-4 h-4 text-primary" />
             Track golden signals at a glance
           </li>
           <li class="flex items-center gap-2">
-            <Activity class="w-4 h-4 text-green-500" />
+            <Activity class="w-4 h-4 text-primary" />
             Visualize time series over any range
           </li>
           <li class="flex items-center gap-2">
-            <TrendingUp class="w-4 h-4 text-red-500" />
+            <TrendingUp class="w-4 h-4 text-primary" />
             Spot trends and anomalies early
           </li>
         </ul>
