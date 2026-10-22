@@ -290,3 +290,58 @@ export function buildPublishToStatusPageUrl(
   p.set('sourceIncidentId', incident.id);
   return `/dashboard/uptime?${p.toString()}`;
 }
+
+// ---------------------------------------------------------------------------
+// Detail view helpers
+// ---------------------------------------------------------------------------
+
+function humanize(value: string | null | undefined): string {
+  if (!value) return 'none';
+  return value.replace(/_/g, ' ');
+}
+
+function statusText(value: string | null | undefined): string {
+  if (value && value in INCIDENT_STATUS_LABEL) return INCIDENT_STATUS_LABEL[value as IncidentStatus];
+  return humanize(value);
+}
+
+/** One sentence for a history row. Accepts both the old and the new action spellings. */
+export function describeHistoryEntry(entry: Pick<IncidentHistoryEntry, 'action' | 'fieldName' | 'oldValue' | 'newValue' | 'metadata'>): string {
+  switch (entry.action) {
+    case 'created':
+      return 'Incident created';
+    case 'status_change':
+    case 'status_changed': {
+      const base = `Status changed from ${statusText(entry.oldValue)} to ${statusText(entry.newValue)}`;
+      return entry.metadata?.reason === 'recovered' ? `${base} (recovered)` : base;
+    }
+    case 'assignment_change':
+    case 'assignee_changed':
+      return entry.newValue ? 'Assignee changed' : 'Assignee removed';
+    case 'severity_change':
+    case 'severity_changed':
+      return `Severity changed from ${humanize(entry.oldValue)} to ${humanize(entry.newValue)}`;
+    case 'field_changed': {
+      const name = humanize(entry.fieldName);
+      return `${name.charAt(0).toUpperCase()}${name.slice(1)} updated`;
+    }
+    default: {
+      const text = humanize(entry.action);
+      return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+    }
+  }
+}
+
+/** "Ongoing" without an end, otherwise the largest whole unit (minutes, hours, days). */
+export function formatIncidentDuration(start: string | Date, end: string | Date | null | undefined): string {
+  if (!end) return 'Ongoing';
+  const ms = new Date(end).getTime() - new Date(start).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return 'Ongoing';
+  const mins = Math.floor(ms / 60000);
+  const hours = Math.floor(ms / 3600000);
+  const days = Math.floor(ms / 86400000);
+  const unit = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`;
+  if (days > 0) return unit(days, 'day');
+  if (hours > 0) return unit(hours, 'hour');
+  return unit(mins, 'minute');
+}

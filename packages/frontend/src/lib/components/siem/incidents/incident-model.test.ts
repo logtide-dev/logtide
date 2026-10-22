@@ -193,3 +193,22 @@ describe('incident-model', () => {
     expect(buildPublishToStatusPageUrl({ ...base, severity: 'low' })).not.toContain('API down & slow');
   });
 });
+
+describe('detail view helpers', () => {
+  it('describeHistoryEntry labels statuses with Acknowledged and accepts both spellings', async () => {
+    const { describeHistoryEntry } = await import('./incident-model');
+    const row = { fieldName: null, metadata: null, oldValue: 'open', newValue: 'investigating' };
+    expect(describeHistoryEntry({ ...row, action: 'status_change' })).toBe('Status changed from Open to Acknowledged');
+    expect(describeHistoryEntry({ ...row, action: 'status_changed' })).toBe('Status changed from Open to Acknowledged');
+    expect(describeHistoryEntry({ ...row, action: 'created' })).toBe('Incident created');
+    expect(describeHistoryEntry({ ...row, action: 'assignment_change', newValue: null })).toBe('Assignee removed');
+  });
+
+  it('formatIncidentDuration picks the largest unit and handles ongoing', async () => {
+    const { formatIncidentDuration } = await import('./incident-model');
+    expect(formatIncidentDuration('2026-10-22T10:00:00Z', null)).toBe('Ongoing');
+    expect(formatIncidentDuration('2026-10-22T10:00:00Z', '2026-10-22T10:01:00Z')).toBe('1 minute');
+    expect(formatIncidentDuration('2026-10-22T10:00:00Z', '2026-10-22T12:30:00Z')).toBe('2 hours');
+    expect(formatIncidentDuration('2026-10-22T10:00:00Z', '2026-10-25T10:00:00Z')).toBe('3 days');
+  });
+});
