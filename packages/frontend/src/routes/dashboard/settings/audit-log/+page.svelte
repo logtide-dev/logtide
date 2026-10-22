@@ -33,6 +33,7 @@
 	import EmptyState from '$lib/components/app/EmptyState.svelte';
 	import Timestamp from '$lib/components/app/Timestamp.svelte';
 	import TimeRangePicker from '$lib/components/TimeRangePicker.svelte';
+	import { DEFAULT_RANGE, resolveRange, type TimeRangeValue } from '$lib/stores/scope-url';
 	import type { OrganizationWithRole } from '@logtide/shared';
 	import { canManageMembers } from '@logtide/shared';
 	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
@@ -84,6 +85,16 @@
 	let outcomeFilter = $state<AuditOutcome | ''>('');
 	let fromFilter = $state('');
 	let toFilter = $state('');
+	// The picker is controlled; no range is applied until the user picks one.
+	let rangeValue = $state<TimeRangeValue>(DEFAULT_RANGE);
+
+	function handleRangeChange(next: TimeRangeValue) {
+		rangeValue = next;
+		const { from, to } = resolveRange(next);
+		fromFilter = from.toISOString();
+		toFilter = to.toISOString();
+		applyFilters();
+	}
 
 	// Pagination
 	let currentPage = $state(1);
@@ -166,6 +177,7 @@
 		outcomeFilter = '';
 		fromFilter = '';
 		toFilter = '';
+		rangeValue = DEFAULT_RANGE;
 		currentPage = 1;
 		void loadEntries();
 	}
@@ -397,14 +409,10 @@
 				</div>
 
 				<div class="mt-4">
-					<TimeRangePicker
-						initialType="custom"
-						onchange={(range) => {
-							fromFilter = range.from.toISOString();
-							toFilter = range.to.toISOString();
-							applyFilters();
-						}}
-					/>
+					<TimeRangePicker value={rangeValue} onValueChange={handleRangeChange} />
+					{#if !fromFilter && !toFilter}
+						<p class="mt-1 text-xs text-muted-foreground">Showing all events. Pick a range to narrow them.</p>
+					{/if}
 				</div>
 			</CardContent>
 		</Card>

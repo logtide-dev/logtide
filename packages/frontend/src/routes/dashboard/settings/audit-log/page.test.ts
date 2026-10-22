@@ -87,4 +87,20 @@ describe('audit log page', () => {
       await screen.findByText('owner@example.com transferred ownership of the organization')
     ).toBeInTheDocument();
   });
+
+  it('loads all events first, then filters by the range picked in the controlled picker', async () => {
+    organizationStore.setCurrentOrganization(org('owner') as never);
+    render(Page);
+    await waitFor(() => expect(h.getAuditLog).toHaveBeenCalledTimes(1));
+    expect(h.getAuditLog.mock.calls[0][0].from).toBeUndefined();
+    expect(h.getAuditLog.mock.calls[0][0].to).toBeUndefined();
+
+    await fireEvent.click(screen.getByRole('button', { name: /Last 24 hours/ }));
+    await fireEvent.click(await screen.findByText('Last 7 days'));
+
+    await waitFor(() => expect(h.getAuditLog).toHaveBeenCalledTimes(2));
+    const { from, to } = h.getAuditLog.mock.calls[1][0];
+    expect(Math.abs(Date.parse(to) - Date.parse(from) - 7 * 24 * 3600 * 1000)).toBeLessThan(1000);
+    expect(screen.getByRole('button', { name: /Last 7 days/ })).toBeInTheDocument();
+  });
 });
