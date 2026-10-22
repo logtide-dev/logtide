@@ -31,7 +31,13 @@ export function decideEntry(input: EntryInput): EntryDecision {
   const ids = { organizationId: server.organizationId, projectId: server.projectId };
 
   if (server.completed || server.skipped) {
-    return { kind: 'redirect', to: '/dashboard' };
+    if (input.organizationCount > 0) {
+      return { kind: 'redirect', to: '/dashboard' };
+    }
+    // Finished (or skipped) before, but the user has no organization any more
+    // (deleted or removed): RequireOrganization sends them here, so offer the
+    // workspace step instead of bouncing back to /dashboard forever.
+    return { kind: 'step', step: 'workspace', organizationId: null, projectId: null };
   }
 
   if (input.emailVerificationRequired && input.emailVerified === false) {
