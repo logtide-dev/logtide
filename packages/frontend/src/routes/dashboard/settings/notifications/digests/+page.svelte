@@ -24,6 +24,7 @@
   } from '$lib/components/ui/select';
   import { Separator } from '$lib/components/ui/separator';
   import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
   import {
     canManageMembers,
     DIGEST_SECTION_KEYS,
@@ -249,6 +250,10 @@
     description="Periodic email summaries of log activity, errors, security detections and uptime."
     appliesTo="organization"
   />
+
+  {#if !canManage}
+    <ReadOnlyNotice what="digest settings" />
+  {/if}
 
   {#if loading}
     <p class="text-sm text-muted-foreground">Loading digest settings...</p>

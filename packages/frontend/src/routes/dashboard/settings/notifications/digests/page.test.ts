@@ -164,3 +164,28 @@ describe('digest sections card', () => {
     expect(saveConfig.mock.calls[0][1].sections).toEqual({});
   });
 });
+
+describe('digest page read-only state', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    getConfig.mockReset();
+    authStore.setAuth({ id: 'user-1', email: 'a@b.c', name: 'Test User' }, 'token-1');
+    organizationStore.clear();
+    getConfig.mockResolvedValue({ config: serverConfig(), recipients: [] });
+  });
+
+  it('explains why the controls are disabled for a member', async () => {
+    organizationStore.setCurrentOrganization({ ...baseOrg, role: 'member' } as never);
+    render(Page);
+    const notice = await screen.findByTestId('read-only-notice');
+    expect(notice.textContent).toContain('digest settings');
+    expect(screen.getByRole('button', { name: /Save settings/ })).toBeDisabled();
+  });
+
+  it('shows no notice to an admin', async () => {
+    organizationStore.setCurrentOrganization({ ...baseOrg, role: 'admin' } as never);
+    render(Page);
+    await screen.findByRole('button', { name: /Save settings/ });
+    expect(screen.queryByTestId('read-only-notice')).toBeNull();
+  });
+});
