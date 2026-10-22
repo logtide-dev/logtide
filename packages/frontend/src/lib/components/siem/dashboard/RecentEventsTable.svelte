@@ -29,7 +29,7 @@
 			<Activity class="w-4 h-4 text-primary" />
 			Recent security events
 		</CardTitle>
-		<Button variant="ghost" size="sm" onclick={() => goto('/dashboard/security/incidents')}>
+		<Button variant="ghost" size="sm" onclick={() => goto('/dashboard/incidents?source=sigma')}>
 			View all
 			<ArrowRight class="w-3.5 h-3.5 ml-1" />
 		</Button>
