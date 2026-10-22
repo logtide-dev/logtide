@@ -44,7 +44,7 @@ vi.mock('../../../config/index.js', () => ({
 }));
 
 // Mock nodemailer
-const mockSendMail = vi.fn().mockResolvedValue({ messageId: 'test-id' });
+const { mockSendMail } = vi.hoisted(() => ({ mockSendMail: vi.fn().mockResolvedValue({ messageId: 'test-id' }) }));
 vi.mock('nodemailer', () => ({
   default: {
     createTransport: vi.fn(() => ({
@@ -698,6 +698,7 @@ describe('Error webhook envelope', () => {
 
     mockGetErrorGroupChannels.mockResolvedValueOnce([{
       id: '00000000-0000-0000-0000-000000000030',
+      organizationId: org.id,
       type: 'webhook',
       enabled: true,
       config: { url: 'https://hooks.example.com/error' },

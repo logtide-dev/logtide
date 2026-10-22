@@ -16,7 +16,13 @@ import { createQueue } from '../connection.js';
 import { generateErrorEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { ExceptionLanguage } from '../../modules/exceptions/types.js';
-import type { EmailChannelConfig, NotificationChannel, WebhookChannelConfig } from '@logtide/shared';
+import {
+  resolveChannelsForEvent,
+  resolveFallbackEmails,
+  toDeliveryTargets,
+  type ResolvedRouting,
+} from '../../modules/notification-channels/resolver.js';
+import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
 
 export interface ErrorNotificationJobData {
   exceptionId: string;
@@ -65,17 +71,27 @@ function notificationKind(data: ErrorNotificationJobData): 'Escalating' | 'Regre
 }
 
 /**
- * Resolve the notification channels for an error group: the channels attached
- * to the group, else the organization defaults for errors. This is the single
- * call site a shared default-channel resolver replaces later.
+ * Resolve the destinations for an error group with the shared rule: channels
+ * attached to the group, else the organization defaults for errors, else the
+ * owners and admins email fallback (only when SMTP is configured).
  */
 export async function resolveErrorChannels(
   errorGroupId: string,
   organizationId: string
-): Promise<NotificationChannel[]> {
-  const groupChannels = await notificationChannelsService.getErrorGroupChannels(errorGroupId);
-  if (groupChannels.length > 0) return groupChannels;
-  return notificationChannelsService.getOrganizationDefaults(organizationId, 'error');
+): Promise<ResolvedRouting> {
+  return resolveChannelsForEvent({
+    organizationId,
+    eventType: 'error',
+    explicitChannels: await notificationChannelsService.getErrorGroupChannels(errorGroupId),
+  });
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'webhook';
+  }
 }
 
 /**
@@ -214,25 +230,11 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
     return;
   }
 
-  // STEP 1: Get notification channels for this error group (or org defaults)
-  const errorChannels = await resolveErrorChannels(errorGroup.id, data.organizationId);
+  // STEP 1: Resolve destinations (group channels, else org defaults, else owners/admins email)
+  const routing = await resolveErrorChannels(errorGroup.id, data.organizationId);
+  const targets = toDeliveryTargets(routing.channels);
 
-  // STEP 2: Collect email recipients and webhook URLs from channels
-  const channelEmailRecipients = new Set<string>();
-  const channelWebhookUrls = new Set<string>();
-
-  errorChannels
-    .filter((ch) => ch.enabled)
-    .forEach((ch) => {
-      if (ch.type === 'email') {
-        const emailConfig = ch.config as EmailChannelConfig;
-        emailConfig.recipients.forEach((email) => channelEmailRecipients.add(email));
-      } else if (ch.type === 'webhook') {
-        const webhookConfig = ch.config as WebhookChannelConfig;
-        channelWebhookUrls.add(webhookConfig.url);
-      }
-    });
-
+  // STEP 2: In-app notifications go to owners and admins
   // STEP 3: Get organization members (owners and admins) for in-app notifications
   const members = await db
     .selectFrom('organization_members')
@@ -280,12 +282,11 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
   await Promise.all(notificationPromises);
   console.log(`[ErrorNotification] In-app notifications sent`);
 
-  // STEP 5: Send email notifications
-  // Use channel emails if configured, otherwise use member emails
-  const emailRecipients =
-    channelEmailRecipients.size > 0
-      ? Array.from(channelEmailRecipients)
-      : members.map((m) => m.email);
+  // STEP 5: Send email notifications. Email destinations when they resolved;
+  // owners and admins only when nothing resolved at all.
+  const emailRecipients = routing.fallback
+    ? await resolveFallbackEmails(data.organizationId)
+    : targets.emailRecipients;
 
   if (isSmtpConfigured() && emailRecipients.length > 0) {
     const transporter = createTransporter();
@@ -295,6 +296,8 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
       language: data.language,
       service: data.service,
       isNewErrorGroup: data.isNewErrorGroup,
+      isRegression: data.isRegression,
+      isEscalating: data.isEscalating,
       errorGroupId: errorGroup.id,
       organizationName: org.name,
       projectName: project.name,
@@ -318,15 +321,36 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
     console.log(`[ErrorNotification] SMTP not configured, skipping email notifications`);
   }
 
-  // STEP 6: Send webhook notifications (NEW - using channels)
-  if (channelWebhookUrls.size > 0) {
-    const webhookPromises = Array.from(channelWebhookUrls).map((url) =>
+  // STEP 6: Webhook destinations (Slack, Teams and Discord URLs are formatted by the dispatcher)
+  if (targets.webhooks.length > 0) {
+    const webhookPromises = targets.webhooks.map(({ url }) =>
       sendErrorWebhook(url, data, org.name, project.name, errorGroup.id)
-        .then(() => console.log(`[ErrorNotification] Webhook sent to ${url}`))
-        .catch((err) => console.error(`[ErrorNotification] Webhook failed for ${url}:`, err))
+        .then(() => console.log(`[ErrorNotification] Webhook sent to ${hostOf(url)}`))
+        .catch((err) => console.error(`[ErrorNotification] Webhook failed for ${hostOf(url)}:`, err))
     );
 
     await Promise.all(webhookPromises);
-    console.log(`[ErrorNotification] Webhooks sent to ${channelWebhookUrls.size} URLs`);
+    console.log(`[ErrorNotification] Webhooks sent to ${targets.webhooks.length} URLs`);
+  }
+
+  // STEP 7: PagerDuty destinations
+  if (targets.pagerDuty.length > 0) {
+    await notifyPagerDutyTargets(targets.pagerDuty, {
+      organizationId: data.organizationId,
+      action: 'trigger',
+      dedupKey: `error:${errorGroup.id}`,
+      eventType: 'error.detected',
+      summary: `${notificationKind(data)}: ${data.exceptionType} in ${data.service}`,
+      severity: data.isEscalating || data.isRegression || data.isNewErrorGroup ? 'high' : 'medium',
+      link: `${getFrontendUrl()}/dashboard/errors/${errorGroup.id}`,
+      details: {
+        message: data.exceptionMessage,
+        exception_type: data.exceptionType,
+        service: data.service,
+        language: data.language,
+        organization: org.name,
+        project: project.name,
+      },
+    });
   }
 }

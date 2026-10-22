@@ -39,7 +39,7 @@ vi.mock('../../../config/index.js', () => ({
   isSmtpConfigured: vi.fn(() => true),
 }));
 
-const mockSendMail = vi.fn().mockResolvedValue({ messageId: 'test-id' });
+const { mockSendMail } = vi.hoisted(() => ({ mockSendMail: vi.fn().mockResolvedValue({ messageId: 'test-id' }) }));
 vi.mock('nodemailer', () => ({
   default: {
     createTransport: vi.fn(() => ({
@@ -113,12 +113,15 @@ function buildJob(env: Env, over: Partial<ErrorNotificationJobData> = {}): Job<E
   } as Job<ErrorNotificationJobData>;
 }
 
-const webhookChannel = {
-  id: '00000000-0000-0000-0000-000000000099',
-  type: 'webhook',
-  enabled: true,
-  config: { url: 'https://hooks.example.com/errors' },
-};
+function webhookChannelFor(organizationId: string) {
+  return {
+    id: '00000000-0000-0000-0000-000000000099',
+    organizationId,
+    type: 'webhook',
+    enabled: true,
+    config: { url: 'https://hooks.example.com/errors' },
+  };
+}
 
 async function stampNotified(env: Env) {
   await db
@@ -139,12 +142,9 @@ describe('error notification: escalation and cooldown bypass', () => {
 
   it('escalating title, subject and webhook flag', async () => {
     const env = await setup();
-    mockGetErrorGroupChannels.mockResolvedValue([webhookChannel]);
+    mockGetErrorGroupChannels.mockResolvedValue([webhookChannelFor(env.org.id)]);
 
     await processErrorNotification(buildJob(env, { isEscalating: true }));
-
-    expect(mockSendMail).toHaveBeenCalled();
-    expect(mockSendMail.mock.calls[0][0].subject).toBe('[Escalating] TypeError in api');
 
     expect(enqueueMock).toHaveBeenCalledTimes(1);
     const envelope = enqueueMock.mock.calls[0][0].payload;
@@ -160,14 +160,22 @@ describe('error notification: escalation and cooldown bypass', () => {
 
   it('a plain error keeps is_escalating false', async () => {
     const env = await setup();
-    mockGetErrorGroupChannels.mockResolvedValue([webhookChannel]);
+    mockGetErrorGroupChannels.mockResolvedValue([webhookChannelFor(env.org.id)]);
 
     await processErrorNotification(buildJob(env));
 
     const envelope = enqueueMock.mock.calls[0][0].payload;
     expect(envelope.data.is_escalating).toBe(false);
     expect(envelope.data.title).toBe('Error: TypeError');
-    expect(mockSendMail.mock.calls[0][0].subject).toBe('[Error] TypeError in api');
+  });
+
+  it('emails owners and admins with the escalating subject when nothing resolves', async () => {
+    const env = await setup();
+
+    await processErrorNotification(buildJob(env, { isEscalating: true }));
+
+    expect(mockSendMail.mock.calls[0][0].subject).toBe('[Escalating] TypeError in api');
+    expect(mockSendMail.mock.calls[0][0].html).toContain('escalating');
   });
 
   it('regression inside the cooldown window still notifies', async () => {
@@ -241,25 +249,28 @@ describe('error notification: escalation and cooldown bypass', () => {
   });
 
   describe('resolveErrorChannels', () => {
-    it('falls back to organization defaults when the group has none', async () => {
-      const defaults = [webhookChannel];
-      mockGetOrganizationDefaults.mockResolvedValue(defaults);
+    const ORG_A = '00000000-0000-0000-0000-0000000000a1';
+    const ORG_B = '00000000-0000-0000-0000-0000000000b2';
 
-      const result = await resolveErrorChannels('group-1', 'org-1');
-
-      expect(mockGetErrorGroupChannels).toHaveBeenCalledWith('group-1');
-      expect(mockGetOrganizationDefaults).toHaveBeenCalledWith('org-1', 'error');
-      expect(result).toEqual(defaults);
-    });
-
-    it('returns the group channels without reading defaults when present', async () => {
-      const groupChannels = [webhookChannel];
+    it('returns the group channels as the explicit source', async () => {
+      const groupChannels = [webhookChannelFor(ORG_A)];
       mockGetErrorGroupChannels.mockResolvedValue(groupChannels);
 
-      const result = await resolveErrorChannels('group-1', 'org-1');
+      const result = await resolveErrorChannels('group-1', ORG_A);
 
-      expect(result).toEqual(groupChannels);
-      expect(mockGetOrganizationDefaults).not.toHaveBeenCalled();
+      expect(mockGetErrorGroupChannels).toHaveBeenCalledWith('group-1');
+      expect(result.source).toBe('explicit');
+      expect(result.channels).toEqual(groupChannels);
+      expect(result.fallback).toBeNull();
+    });
+
+    it('ignores group channels of another organization', async () => {
+      mockGetErrorGroupChannels.mockResolvedValue([webhookChannelFor(ORG_B)]);
+
+      const result = await resolveErrorChannels('group-1', ORG_A);
+
+      expect(result.source).not.toBe('explicit');
+      expect(result.channels).toEqual([]);
     });
   });
 });
