@@ -35,8 +35,19 @@ vi.mock('net', async () => {
   return { ...actual, createConnection: createConnectionMock };
 });
 
+// Mock tls.connect so SSL tests do not open real sockets
+const { tlsConnectMock } = vi.hoisted(() => ({ tlsConnectMock: vi.fn() }));
+vi.mock('tls', async () => {
+  const actual = await vi.importActual<typeof import('tls')>('tls');
+  return { ...actual, connect: tlsConnectMock, default: { ...actual, connect: tlsConnectMock } };
+});
+
 import {
   parseTcpTarget,
+  parseHostPort,
+  isValidDnsHostname,
+  runSslCheck,
+  runDnsCheck,
   runHttpCheck,
   runTcpCheck,
   runHeartbeatCheck,
@@ -67,6 +78,7 @@ beforeEach(() => {
   safeFetchMock.mockReset();
   resolveAndValidateMock.mockReset();
   createConnectionMock.mockReset();
+  tlsConnectMock.mockReset();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -562,5 +574,305 @@ describe('runLogHeartbeatCheck', () => {
 
     const result = await runLogHeartbeatCheck('shared-svc', '00000000-0000-0000-0000-000000000000', 60, reservoir);
     expect(result.status).toBe('down');
+  });
+});
+
+// ===========================================================================
+// parseHostPort / isValidDnsHostname
+// ===========================================================================
+describe('parseHostPort', () => {
+  it('defaults to 443', () => {
+    expect(parseHostPort('example.com', 443)).toEqual({ host: 'example.com', port: 443 });
+  });
+
+  it('handles host:port, [::1]:8443 and a trailing dot', () => {
+    expect(parseHostPort('example.com:8443', 443)).toEqual({ host: 'example.com', port: 8443 });
+    expect(parseHostPort('[::1]:8443', 443)).toEqual({ host: '::1', port: 8443 });
+    expect(parseHostPort('[::1]', 443)).toEqual({ host: '::1', port: 443 });
+    expect(parseHostPort('example.com.', 443)).toEqual({ host: 'example.com', port: 443 });
+    expect(parseHostPort('example.com.:993', 443)).toEqual({ host: 'example.com', port: 993 });
+  });
+
+  it('throws for port 0 and 70000', () => {
+    expect(() => parseHostPort('example.com:0', 443)).toThrow();
+    expect(() => parseHostPort('example.com:70000', 443)).toThrow();
+    expect(() => parseHostPort('example.com:abc', 443)).toThrow();
+    expect(() => parseHostPort('', 443)).toThrow();
+  });
+});
+
+describe('isValidDnsHostname', () => {
+  it('rejects 10.0.0.1, host:53 and empty labels', () => {
+    expect(isValidDnsHostname('10.0.0.1')).toBe(false);
+    expect(isValidDnsHostname('::1')).toBe(false);
+    expect(isValidDnsHostname('example.com:53')).toBe(false);
+    expect(isValidDnsHostname('a..example.com')).toBe(false);
+    expect(isValidDnsHostname('')).toBe(false);
+    expect(isValidDnsHostname('exa mple.com')).toBe(false);
+  });
+
+  it('accepts regular and underscore names and one trailing dot', () => {
+    expect(isValidDnsHostname('example.com')).toBe(true);
+    expect(isValidDnsHostname('example.com.')).toBe(true);
+    expect(isValidDnsHostname('_dmarc.example.com')).toBe(true);
+    expect(isValidDnsHostname('localhost')).toBe(true);
+  });
+});
+
+// ===========================================================================
+// runSslCheck
+// ===========================================================================
+function makeTlsSocket(opts: {
+  validTo: Date;
+  authorized?: boolean;
+  authorizationError?: string | null;
+  noCert?: boolean;
+}) {
+  const socket = new EventEmitter() as EventEmitter & Record<string, any>;
+  socket.destroy = vi.fn();
+  socket.authorized = opts.authorized ?? true;
+  socket.authorizationError = opts.authorizationError ?? null;
+  socket.getPeerCertificate = () =>
+    opts.noCert
+      ? {}
+      : {
+          valid_to: opts.validTo.toUTCString(),
+          issuer: { O: 'Test CA', CN: 'Test CA R1' },
+          subject: { CN: 'example.com' },
+        };
+  return socket;
+}
+
+const daysFromNow = (n: number) => new Date(Date.now() + n * 86400000 + 3600000);
+
+describe('runSslCheck', () => {
+  it('is up with detail.daysRemaining 40 for a cert valid 40 more days (warnDays 14)', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeTlsSocket({ validTo: daysFromNow(40) });
+    tlsConnectMock.mockReturnValue(socket);
+
+    const promise = runSslCheck('example.com', 443, 10, 14);
+    setImmediate(() => socket.emit('secureConnect'));
+    const result = await promise;
+
+    expect(result.status).toBe('up');
+    expect(result.errorCode).toBeNull();
+    expect(result.detail).toMatchObject({ daysRemaining: 40, issuer: 'Test CA', subject: 'example.com' });
+    expect(typeof (result.detail as any).expiresAt).toBe('string');
+    expect(socket.destroy).toHaveBeenCalled();
+  });
+
+  it('is down cert_expiring with daysRemaining 10 when warnDays is 14', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeTlsSocket({ validTo: daysFromNow(10) });
+    tlsConnectMock.mockReturnValue(socket);
+
+    const promise = runSslCheck('example.com', 443, 10, 14);
+    setImmediate(() => socket.emit('secureConnect'));
+    const result = await promise;
+
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('cert_expiring');
+    expect((result.detail as any).daysRemaining).toBe(10);
+  });
+
+  it('is down cert_expired for a past validTo or authorizationError CERT_HAS_EXPIRED', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+
+    const past = makeTlsSocket({ validTo: daysFromNow(-3) });
+    tlsConnectMock.mockReturnValueOnce(past);
+    const p1 = runSslCheck('example.com', 443, 10, 14);
+    setImmediate(() => past.emit('secureConnect'));
+    expect((await p1).errorCode).toBe('cert_expired');
+
+    const flagged = makeTlsSocket({
+      validTo: daysFromNow(30),
+      authorized: false,
+      authorizationError: 'CERT_HAS_EXPIRED',
+    });
+    tlsConnectMock.mockReturnValueOnce(flagged);
+    const p2 = runSslCheck('example.com', 443, 10, 14);
+    setImmediate(() => flagged.emit('secureConnect'));
+    expect((await p2).errorCode).toBe('cert_expired');
+  });
+
+  it('maps other authorizationError values to ssl_error', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    for (const authorizationError of [
+      'DEPTH_ZERO_SELF_SIGNED_CERT',
+      'ERR_TLS_CERT_ALTNAME_INVALID',
+      'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    ]) {
+      const socket = makeTlsSocket({ validTo: daysFromNow(60), authorized: false, authorizationError });
+      tlsConnectMock.mockReturnValueOnce(socket);
+      const p = runSslCheck('example.com', 443, 10, 14);
+      setImmediate(() => socket.emit('secureConnect'));
+      const result = await p;
+      expect(result.status).toBe('down');
+      expect(result.errorCode).toBe('ssl_error');
+    }
+  });
+
+  it('returns ssl_error when the peer presents no certificate', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeTlsSocket({ validTo: daysFromNow(60), noCert: true });
+    tlsConnectMock.mockReturnValue(socket);
+    const p = runSslCheck('example.com', 443, 10, 14);
+    setImmediate(() => socket.emit('secureConnect'));
+    expect((await p).errorCode).toBe('ssl_error');
+  });
+
+  it('returns blocked and never calls tls.connect for a private address when allowPrivate is false', async () => {
+    resolveAndValidateMock.mockRejectedValue(new SsrfBlockedError('private address'));
+    const result = await runSslCheck('10.0.0.5', 443, 10, 14, false);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('blocked');
+    expect(tlsConnectMock).not.toHaveBeenCalled();
+    expect(resolveAndValidateMock).toHaveBeenCalledWith('10.0.0.5', false);
+  });
+
+  it('connects to the validated address with servername equal to the hostname', async () => {
+    resolveAndValidateMock.mockResolvedValue(['93.184.216.34']);
+    const socket = makeTlsSocket({ validTo: daysFromNow(40) });
+    tlsConnectMock.mockReturnValue(socket);
+
+    const promise = runSslCheck('example.com', 8443, 10, 14);
+    setImmediate(() => socket.emit('secureConnect'));
+    await promise;
+
+    expect(tlsConnectMock).toHaveBeenCalledTimes(1);
+    expect(tlsConnectMock.mock.calls[0][0]).toMatchObject({
+      host: '93.184.216.34',
+      port: 8443,
+      servername: 'example.com',
+      rejectUnauthorized: false,
+    });
+  });
+
+  it('returns timeout and destroys the socket', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeTlsSocket({ validTo: daysFromNow(40) });
+    tlsConnectMock.mockReturnValue(socket);
+
+    const result = await runSslCheck('example.com', 443, 0.001, 14);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('timeout');
+    expect(socket.destroy).toHaveBeenCalled();
+  }, 5000);
+
+  it('maps ECONNREFUSED to connection_refused', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeTlsSocket({ validTo: daysFromNow(40) });
+    tlsConnectMock.mockReturnValue(socket);
+    const p = runSslCheck('example.com', 443, 10, 14);
+    setImmediate(() =>
+      socket.emit('error', Object.assign(new Error('connect ECONNREFUSED 1.2.3.4:443'), { code: 'ECONNREFUSED' }))
+    );
+    const result = await p;
+    expect(result.errorCode).toBe('connection_refused');
+  });
+});
+
+// ===========================================================================
+// runDnsCheck
+// ===========================================================================
+function resolverReturning(value: unknown) {
+  const resolve = vi.fn().mockResolvedValue(value);
+  return { factory: () => ({ resolve }) as any, resolve };
+}
+
+function resolverFailing(code: string) {
+  const resolve = vi.fn().mockRejectedValue(Object.assign(new Error(`query ${code}`), { code }));
+  return { factory: () => ({ resolve }) as any, resolve };
+}
+
+describe('runDnsCheck', () => {
+  it('is up when an A record exists and no expected value', async () => {
+    const r = resolverReturning(['93.184.216.34']);
+    const result = await runDnsCheck('example.com', 'A', undefined, 5, r.factory);
+    expect(result.status).toBe('up');
+    expect(result.errorCode).toBeNull();
+    expect(result.detail).toEqual({ records: ['93.184.216.34'] });
+    expect(r.resolve).toHaveBeenCalledWith('example.com', 'A');
+  });
+
+  it('matches a CNAME expected value case-insensitively ignoring the trailing dot', async () => {
+    const r = resolverReturning(['Target.Example.NET.']);
+    const result = await runDnsCheck('www.example.com', 'CNAME', 'target.example.net', 5, r.factory);
+    expect(result.status).toBe('up');
+  });
+
+  it('compares MX by exchange host and ignores priority', async () => {
+    const r = resolverReturning([
+      { exchange: 'mx1.example.com', priority: 10 },
+      { exchange: 'mx2.example.com', priority: 20 },
+    ]);
+    const result = await runDnsCheck('example.com', 'MX', 'MX2.example.com.', 5, r.factory);
+    expect(result.status).toBe('up');
+    expect((result.detail as any).records).toEqual(['mx1.example.com', 'mx2.example.com']);
+  });
+
+  it('joins TXT chunks before comparing', async () => {
+    const r = resolverReturning([['v=spf1 include:', '_spf.example.com ~all'], ['other']]);
+    const result = await runDnsCheck('example.com', 'TXT', 'v=spf1 include:_spf.example.com ~all', 5, r.factory);
+    expect(result.status).toBe('up');
+  });
+
+  it('is down dns_mismatch when the expected value is absent', async () => {
+    const r = resolverReturning(['1.1.1.1']);
+    const result = await runDnsCheck('example.com', 'A', '2.2.2.2', 5, r.factory);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('dns_mismatch');
+    expect((result.detail as any).records).toEqual(['1.1.1.1']);
+  });
+
+  it('is down dns_no_records for an empty answer', async () => {
+    const r = resolverReturning([]);
+    const result = await runDnsCheck('example.com', 'A', undefined, 5, r.factory);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('dns_no_records');
+  });
+
+  it('is down dns_error for ENOTFOUND and ENODATA', async () => {
+    for (const code of ['ENOTFOUND', 'ENODATA']) {
+      const r = resolverFailing(code);
+      const result = await runDnsCheck('missing.example.com', 'A', undefined, 5, r.factory);
+      expect(result.status).toBe('down');
+      expect(result.errorCode).toBe('dns_error');
+    }
+  });
+
+  it('is down timeout for ETIMEOUT', async () => {
+    const r = resolverFailing('ETIMEOUT');
+    const result = await runDnsCheck('example.com', 'A', undefined, 5, r.factory);
+    expect(result.errorCode).toBe('timeout');
+  });
+
+  it('caps the stored records at 20 entries', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => `10.0.0.${i}`);
+    const r = resolverReturning(many);
+    const result = await runDnsCheck('example.com', 'A', undefined, 5, r.factory);
+    expect((result.detail as any).records).toHaveLength(20);
+  });
+});
+
+// ===========================================================================
+// runHttpCheck: default expected status
+// ===========================================================================
+describe('runHttpCheck expected status default', () => {
+  it('is up for 204 and down for 500 when expectedStatus is unset', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(204));
+    expect((await runHttpCheck('https://example.com', 10)).status).toBe('up');
+    safeFetchMock.mockResolvedValue(makeResponse(500));
+    expect((await runHttpCheck('https://example.com', 10)).status).toBe('down');
+    safeFetchMock.mockResolvedValue(makeResponse(301));
+    expect((await runHttpCheck('https://example.com', 10)).status).toBe('down');
+  });
+
+  it('keeps exact matching when expectedStatus is 200 and the response is 204', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(204));
+    const result = await runHttpCheck('https://example.com', 10, { expectedStatus: 200 });
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('http_error');
   });
 });

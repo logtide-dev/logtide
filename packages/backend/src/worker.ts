@@ -12,6 +12,7 @@ import { processIncidentNotification, type IncidentNotificationJob } from './que
 import { processExceptionParsing, type ExceptionParsingJobData } from './queue/jobs/exception-parsing.js';
 import { processErrorNotification, type ErrorNotificationJobData } from './queue/jobs/error-notification.js';
 import { processMonitorNotification, type MonitorNotificationJob } from './queue/jobs/monitor-notification.js';
+import { processStatusSubscriberNotification, type StatusSubscriberJob } from './queue/jobs/monitor-status-subscribers.js';
 import { processLogPipeline, type LogPipelineJobData } from './queue/jobs/log-pipeline.js';
 import { processDigestGeneration } from './queue/jobs/digest-generation.js';
 import type { DigestJobPayload } from './modules/digests/scheduler.js';
@@ -81,6 +82,11 @@ const errorNotificationWorker = createWorker<ErrorNotificationJobData>('error-no
 // Create worker for monitor notifications
 const monitorNotificationWorker = createWorker<MonitorNotificationJob>('monitor-notifications', async (job) => {
   await processMonitorNotification(job);
+});
+
+// Create worker for status page subscriber emails
+const statusSubscriberWorker = createWorker<StatusSubscriberJob>('status-subscriber-notifications', async (job) => {
+  await processStatusSubscriberNotification(job);
 });
 
 // Create worker for log pipeline processing
@@ -290,6 +296,28 @@ monitorNotificationWorker.on('failed', (job, err) => {
       error: { name: err.name, message: err.message, stack: err.stack },
       jobId: job?.id,
       monitorId: job?.data?.monitorId,
+    });
+  }
+});
+
+statusSubscriberWorker.on('completed', (job) => {
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('info', `Status subscriber notification job completed`, {
+      jobId: job.id,
+      projectId: job.data?.projectId,
+      kind: job.data?.kind,
+    });
+  }
+});
+
+statusSubscriberWorker.on('failed', (job, err) => {
+  console.error(`Status subscriber notification job ${job?.id} failed:`, err);
+
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('error', `Status subscriber notification job failed: ${err.message}`, {
+      error: { name: err.name, message: err.message, stack: err.stack },
+      jobId: job?.id,
+      projectId: job?.data?.projectId,
     });
   }
 });
@@ -920,6 +948,7 @@ async function gracefulShutdown(signal: string) {
     await exceptionWorker.close();
     await errorNotificationWorker.close();
     await monitorNotificationWorker.close();
+    await statusSubscriberWorker.close();
     await pipelineWorker.close();
     await digestWorker.close();
     await digestDispatchWorker.close();

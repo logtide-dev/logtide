@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { MONITOR_TYPES } from '@logtide/shared';
 import { MonitorService } from './service.js';
-import { parseTcpTarget } from './checker.js';
+import { parseTcpTarget, parseHostPort, isValidDnsHostname } from './checker.js';
+import type { SslCheckConfig, DnsCheckConfig, UpdateMonitorInput } from './types.js';
 import { authenticate } from '../auth/middleware.js';
 import { db } from '../../database/index.js';
 import { projectsService } from '../projects/service.js';
@@ -10,7 +11,8 @@ import { usersService } from '../users/service.js';
 import { notificationChannelsService, serializeChannels } from '../notification-channels/index.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { assertHttpTargetAllowed, resolveAndValidateHost, SsrfBlockedError } from '../../utils/ssrf-guard.js';
-import { config } from '../../config/index.js';
+import { config, isSmtpConfigured } from '../../config/index.js';
+import { statusSubscribersService } from './subscribers.js';
 
 export const monitorService = new MonitorService(db);
 const organizationsService = new OrganizationsService();
@@ -61,7 +63,11 @@ async function validateMonitorTarget(
     } else if (type === 'tcp') {
       const { host } = parseTcpTarget(target);
       await resolveAndValidateHost(host, allowPrivate);
+    } else if (type === 'ssl') {
+      const { host } = parseHostPort(target, 443);
+      await resolveAndValidateHost(host, allowPrivate);
     }
+    // dns monitors only query the configured resolver and never connect to answers
     return null;
   } catch (err) {
     if (err instanceof SsrfBlockedError) return err.message;
@@ -69,15 +75,83 @@ async function validateMonitorTarget(
   }
 }
 
+const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const;
+const HEADER_NAME_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
+const httpHeadersSchema = z
+  .record(z.string().max(1024, 'Header value must be at most 1024 characters'))
+  .refine((h) => Object.keys(h).length <= 20, { message: 'At most 20 headers are allowed' })
+  .refine((h) => Object.keys(h).every((name) => HEADER_NAME_PATTERN.test(name)), {
+    message: 'Header names may contain only letters, digits and hyphens (1 to 64 characters)',
+  });
+
 const httpConfigSchema = z.object({
-  method: z.string().optional(),
+  method: z
+    .string()
+    .transform((m) => m.toUpperCase())
+    .pipe(z.enum(HTTP_METHODS, { errorMap: () => ({ message: 'Unsupported HTTP method' }) }))
+    .optional(),
   expectedStatus: z.number().int().min(100).max(599).optional(),
-  headers: z.record(z.string()).optional(),
+  headers: httpHeadersSchema.optional(),
   bodyAssertion: z.union([
     z.object({ type: z.literal('contains'), value: z.string().min(1).max(10000) }),
     z.object({ type: z.literal('regex'), pattern: z.string().min(1).max(256) }),
   ]).optional(),
 }).optional().nullable();
+
+const emptyToNull = (v: string | null | undefined) => {
+  if (v === undefined || v === null) return v;
+  const t = v.trim();
+  return t.length === 0 ? null : t;
+};
+const displayNameSchema = z.string().max(255).transform(emptyToNull).nullable().optional();
+const groupNameSchema = z.string().max(100).transform(emptyToNull).nullable().optional();
+const displayOrderSchema = z.number().int().min(0).max(100000).optional();
+
+const sslCheckConfigSchema = z.object({ warnDays: z.number().int().min(1).max(365) }).strict();
+const dnsCheckConfigSchema = z
+  .object({
+    recordType: z.enum(['A', 'AAAA', 'CNAME', 'MX', 'TXT']),
+    expectedValue: z.string().trim().max(255).optional(),
+  })
+  .strict();
+
+/**
+ * Validate and normalise the per-type checkConfig. ssl defaults to warnDays 14
+ * and dns to record type A; other types carry no config.
+ */
+export function parseCheckConfig(
+  type: string,
+  raw: unknown
+): { ok: true; value: SslCheckConfig | DnsCheckConfig | null } | { ok: false; error: string } {
+  if (type === 'ssl') {
+    if (raw === undefined || raw === null) return { ok: true, value: { warnDays: 14 } };
+    const parsed = sslCheckConfigSchema.safeParse(raw);
+    return parsed.success
+      ? { ok: true, value: parsed.data }
+      : { ok: false, error: 'Invalid ssl check config: warnDays must be between 1 and 365' };
+  }
+  if (type === 'dns') {
+    if (raw === undefined || raw === null) return { ok: true, value: { recordType: 'A' } };
+    const parsed = dnsCheckConfigSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { ok: false, error: 'Invalid dns check config: recordType must be A, AAAA, CNAME, MX or TXT' };
+    }
+    const { recordType, expectedValue } = parsed.data;
+    return { ok: true, value: expectedValue ? { recordType, expectedValue } : { recordType } };
+  }
+  return { ok: true, value: null };
+}
+
+function isValidSslTarget(target: string): boolean {
+  if (target.includes('://') || /[\s/?#@]/.test(target)) return false;
+  try {
+    parseHostPort(target, 443);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const createMonitorSchema = z.object({
   organizationId: z.string().uuid(),
@@ -93,11 +167,17 @@ const createMonitorSchema = z.object({
   enabled: z.boolean().optional(),
   httpConfig: httpConfigSchema,
   severity: z.enum(['critical', 'high', 'medium', 'low', 'informational']).optional(),
+  displayName: displayNameSchema,
+  groupName: groupNameSchema,
+  displayOrder: displayOrderSchema,
+  checkConfig: z.unknown().optional(),
 }).refine(
   (d) => {
     if (d.type === 'http') return !!d.target && (d.target.startsWith('http://') || d.target.startsWith('https://'));
     if (d.type === 'tcp') return !!d.target && d.target.includes(':');
     if (d.type === 'log_heartbeat') return !!d.target && d.target.trim().length > 0;
+    if (d.type === 'ssl') return !!d.target && isValidSslTarget(d.target);
+    if (d.type === 'dns') return !!d.target && isValidDnsHostname(d.target);
     return true;
   },
   { message: 'Invalid target for monitor type' }
@@ -114,6 +194,10 @@ const updateMonitorSchema = z.object({
   enabled: z.boolean().optional(),
   httpConfig: httpConfigSchema,
   severity: z.enum(['critical', 'high', 'medium', 'low', 'informational']).optional(),
+  displayName: displayNameSchema,
+  groupName: groupNameSchema,
+  displayOrder: displayOrderSchema,
+  checkConfig: z.unknown().optional(),
 });
 
 // ============================================================================
@@ -160,7 +244,10 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
     const targetError = await validateMonitorTarget(input.type, input.target);
     if (targetError) return reply.status(400).send({ error: targetError });
 
-    const monitor = await monitorService.createMonitor(input);
+    const checkConfig = parseCheckConfig(input.type, input.checkConfig);
+    if (!checkConfig.ok) return reply.status(400).send({ error: checkConfig.error });
+
+    const monitor = await monitorService.createMonitor({ ...input, checkConfig: checkConfig.value });
     return reply.status(201).send({ monitor });
   });
 
@@ -173,6 +260,18 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
 
     const parse = updateMonitorSchema.safeParse(request.body);
     if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+
+    const { checkConfig: rawCheckConfig, ...updateFields } = parse.data;
+    const update: UpdateMonitorInput = updateFields;
+
+    // checkConfig is validated against the type of the stored monitor
+    if (rawCheckConfig !== undefined) {
+      const existingForConfig = await monitorService.getMonitor(id, organizationId);
+      if (!existingForConfig) return reply.status(404).send({ error: 'Not found' });
+      const checkConfig = parseCheckConfig(existingForConfig.type, rawCheckConfig);
+      if (!checkConfig.ok) return reply.status(400).send({ error: checkConfig.error });
+      update.checkConfig = checkConfig.value;
+    }
 
     // Validate target format against monitor type if target is being changed
     if (parse.data.target) {
@@ -187,13 +286,19 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
       if (existing.type === 'log_heartbeat' && !parse.data.target?.trim()) {
         return reply.status(400).send({ error: 'Log-based monitor requires a service name' });
       }
+      if (existing.type === 'ssl' && !isValidSslTarget(parse.data.target)) {
+        return reply.status(400).send({ error: 'SSL target must be host or host:port without a scheme' });
+      }
+      if (existing.type === 'dns' && !isValidDnsHostname(parse.data.target)) {
+        return reply.status(400).send({ error: 'DNS target must be a hostname' });
+      }
 
       // Reject SSRF targets (internal/private addresses) before storing.
       const targetError = await validateMonitorTarget(existing.type, parse.data.target);
       if (targetError) return reply.status(400).send({ error: targetError });
     }
 
-    const monitor = await monitorService.updateMonitor(id, organizationId, parse.data);
+    const monitor = await monitorService.updateMonitor(id, organizationId, update);
     if (!monitor) return reply.status(404).send({ error: 'Not found' });
     return reply.send({ monitor });
   });
@@ -235,6 +340,46 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
       id, organizationId, parsePositiveInt(days, 90, 365)
     );
     return reply.send({ history });
+  });
+
+  fastify.get('/:id/uptime-summary', async (request: any, reply) => {
+    const id = parseId(request.params);
+    if (!id) return reply.status(400).send({ error: 'Invalid monitor ID' });
+    const organizationId = parseOrgId((request.query as any).organizationId);
+    if (!organizationId) return reply.status(400).send({ error: 'organizationId required' });
+    if (!(await checkOrgMembership(request.user.id, organizationId))) return reply.status(403).send({ error: 'Forbidden' });
+
+    const summary = await monitorService.getUptimeSummary(id, organizationId);
+    if (!summary) return reply.status(404).send({ error: 'Not found' });
+    return reply.send(summary);
+  });
+
+  fastify.get('/:id/response-times', async (request: any, reply) => {
+    const id = parseId(request.params);
+    if (!id) return reply.status(400).send({ error: 'Invalid monitor ID' });
+    const { organizationId: rawOrgId, range } = request.query as any;
+    const organizationId = parseOrgId(rawOrgId);
+    if (!organizationId) return reply.status(400).send({ error: 'organizationId required' });
+    const parsedRange = z.enum(['24h', '7d', '30d']).safeParse(range ?? '24h');
+    if (!parsedRange.success) return reply.status(400).send({ error: 'range must be 24h, 7d or 30d' });
+    if (!(await checkOrgMembership(request.user.id, organizationId))) return reply.status(403).send({ error: 'Forbidden' });
+
+    const result = await monitorService.getResponseTimes(id, organizationId, parsedRange.data);
+    if (!result) return reply.status(404).send({ error: 'Not found' });
+    return reply.send(result);
+  });
+
+  fastify.get('/:id/outages', async (request: any, reply) => {
+    const id = parseId(request.params);
+    if (!id) return reply.status(400).send({ error: 'Invalid monitor ID' });
+    const { organizationId: rawOrgId, limit } = request.query as any;
+    const organizationId = parseOrgId(rawOrgId);
+    if (!organizationId) return reply.status(400).send({ error: 'organizationId required' });
+    if (!(await checkOrgMembership(request.user.id, organizationId))) return reply.status(403).send({ error: 'Forbidden' });
+
+    const result = await monitorService.getOutages(id, organizationId, parsePositiveInt(limit, 20, 100));
+    if (!result) return reply.status(404).send({ error: 'Not found' });
+    return reply.send(result);
   });
 
   // ---- Notification channels for monitors ----
@@ -355,6 +500,63 @@ export async function publicStatusRoutes(fastify: FastifyInstance) {
     const status = await monitorService.getPublicStatus(project.slug, project.id);
     if (!status) return reply.status(404).send({ error: 'Not found' });
     return reply.send(status);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Email subscriptions (double opt-in)
+  // ──────────────────────────────────────────────────────────────────────
+  // Subscribing is only offered on public pages with SMTP configured. The
+  // answer never depends on whether the address is already known. Confirm and
+  // unsubscribe are POST so mail scanners prefetching links change nothing; they
+  // keep working when the page is no longer public, so nobody gets stuck.
+
+  const subscribeBodySchema = z.object({ email: z.string().trim().email().max(254) });
+  const tokenBodySchema = z.object({ token: z.string().min(1).max(200) });
+
+  fastify.post('/:orgSlug/:projectSlug/subscribe', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request: any, reply) => {
+    const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
+    const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);
+    if (!project || project.status_page_visibility !== 'public' || !isSmtpConfigured()) {
+      return reply.status(404).send({ error: 'Not found' });
+    }
+    const parse = subscribeBodySchema.safeParse(request.body);
+    if (!parse.success) return reply.status(400).send({ error: 'Enter a valid email address' });
+
+    await statusSubscribersService.subscribe({
+      organizationId: project.organization_id,
+      projectId: project.id,
+      orgSlug,
+      projectSlug: project.slug,
+      projectName: project.name,
+      email: parse.data.email,
+    });
+    return reply.status(202).send({ ok: true });
+  });
+
+  fastify.post('/:orgSlug/:projectSlug/subscribe/confirm', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request: any, reply) => {
+    const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
+    const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);
+    const parse = tokenBodySchema.safeParse(request.body);
+    if (!project || !parse.success) return reply.status(400).send({ error: 'Invalid or expired link' });
+    const ok = await statusSubscribersService.confirm(project.organization_id, project.id, parse.data.token);
+    if (!ok) return reply.status(400).send({ error: 'Invalid or expired link' });
+    return reply.send({ ok: true });
+  });
+
+  fastify.post('/:orgSlug/:projectSlug/unsubscribe', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request: any, reply) => {
+    const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
+    const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);
+    const parse = tokenBodySchema.safeParse(request.body);
+    if (!project || !parse.success) return reply.status(400).send({ error: 'Invalid or expired link' });
+    const ok = await statusSubscribersService.unsubscribe(project.organization_id, project.id, parse.data.token);
+    if (!ok) return reply.status(400).send({ error: 'Invalid or expired link' });
+    return reply.send({ ok: true });
   });
 
   // ──────────────────────────────────────────────────────────────────────

@@ -12,17 +12,55 @@ import type {
   UpdateMonitorInput,
   CheckResult,
   HttpConfig,
+  SslCheckConfig,
+  DnsCheckConfig,
   PublicStatusPage,
   PublicMonitorStatus,
   PublicStatusIncident,
   PublicMaintenance,
   MonitorCurrentStatus,
 } from './types.js';
-import { runHttpCheck, runTcpCheck, runHeartbeatCheck, runLogHeartbeatCheck, parseTcpTarget } from './checker.js';
+import {
+  runHttpCheck,
+  runTcpCheck,
+  runHeartbeatCheck,
+  runLogHeartbeatCheck,
+  runSslCheck,
+  runDnsCheck,
+  parseTcpTarget,
+  parseHostPort,
+} from './checker.js';
 import { reservoir } from '../../database/reservoir.js';
-import { config } from '../../config/index.js';
+import { config, isSmtpConfigured } from '../../config/index.js';
+import { StatusPageService } from './status-page.js';
+
+const PUBLIC_HISTORY_DAYS = 90;
+const PUBLIC_RECENT_INCIDENTS_CAP = 50;
+import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
+import { incidentsService } from '../incidents/service.js';
+import {
+  getUptimeSummary,
+  getResponseTimes,
+  getOutages,
+  type ResponseTimeRange,
+} from './uptime-stats.js';
 
 const MAX_CONCURRENT_CHECKS = 20;
+
+/** JSONB columns arrive parsed from pg, but tolerate a string and anything that is not an object. */
+function parseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (value === null || value === undefined) return null;
+  let v = value;
+  if (typeof v === 'string') {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
 
 // Row type returned by the monitors LEFT JOIN monitor_status query
 interface MonitorWithStatusRow {
@@ -40,6 +78,10 @@ interface MonitorWithStatusRow {
   enabled: boolean;
   http_config: unknown;
   severity: Severity;
+  display_name?: string | null;
+  group_name?: string | null;
+  display_order?: number | null;
+  check_config?: unknown;
   created_at: Date;
   updated_at: Date;
   // Joined from monitor_status (aliased or direct)
@@ -51,6 +93,7 @@ interface MonitorWithStatusRow {
   ms_response_time_ms?: number | null;
   last_error_code?: string | null;
   incident_id?: string | null;
+  ms_detail?: unknown;
   ms_updated_at?: Date | null;
 }
 
@@ -77,6 +120,7 @@ export class MonitorService {
         'monitor_status.response_time_ms as ms_response_time_ms',
         'monitor_status.last_error_code',
         'monitor_status.incident_id',
+        'monitor_status.detail as ms_detail',
         'monitor_status.updated_at as ms_updated_at',
       ])
       .where('monitors.organization_id', '=', organizationId);
@@ -103,6 +147,7 @@ export class MonitorService {
         'monitor_status.response_time_ms as ms_response_time_ms',
         'monitor_status.last_error_code',
         'monitor_status.incident_id',
+        'monitor_status.detail as ms_detail',
         'monitor_status.updated_at as ms_updated_at',
       ])
       .where('monitors.id', '=', id)
@@ -130,6 +175,10 @@ export class MonitorService {
           enabled: input.enabled ?? true,
           http_config: input.httpConfig ? (JSON.stringify(input.httpConfig) as unknown as null) : null,
           severity: input.severity ?? 'high',
+          display_name: input.displayName ?? null,
+          group_name: input.groupName ?? null,
+          display_order: input.displayOrder ?? 0,
+          check_config: input.checkConfig ? (JSON.stringify(input.checkConfig) as unknown as null) : null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -149,6 +198,25 @@ export class MonitorService {
     organizationId: string,
     input: UpdateMonitorInput
   ): Promise<Monitor | null> {
+    // Disabling a monitor ends its outage: resolve the shared incident first and
+    // reset the check state so a re-enabled monitor starts a fresh evaluation.
+    if (input.enabled === false) {
+      const current = await this.db
+        .selectFrom('monitors')
+        .select(['id', 'organization_id', 'enabled'])
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (current?.enabled) {
+        await this.resolveMonitorIncident({ id, organizationId }, new Date(), 'manual');
+        await this.db
+          .updateTable('monitor_status')
+          .set({ incident_id: null, consecutive_failures: 0 })
+          .where('monitor_id', '=', id)
+          .execute();
+      }
+    }
+
     const row = await this.db
       .updateTable('monitors')
       .set({
@@ -162,6 +230,10 @@ export class MonitorService {
         ...(input.enabled !== undefined && { enabled: input.enabled }),
         ...(input.httpConfig !== undefined && { http_config: input.httpConfig ? (JSON.stringify(input.httpConfig) as unknown as null) : null }),
         ...(input.severity !== undefined && { severity: input.severity }),
+        ...(input.displayName !== undefined && { display_name: input.displayName }),
+        ...(input.groupName !== undefined && { group_name: input.groupName }),
+        ...(input.displayOrder !== undefined && { display_order: input.displayOrder }),
+        ...(input.checkConfig !== undefined && { check_config: input.checkConfig ? (JSON.stringify(input.checkConfig) as unknown as null) : null }),
         updated_at: new Date(),
       })
       .where('id', '=', id)
@@ -174,6 +246,18 @@ export class MonitorService {
   }
 
   async deleteMonitor(id: string, organizationId: string): Promise<void> {
+    // Resolve the open incident (reason manual) before the monitor row goes away.
+    // Scoped by organization: a monitor of another tenant resolves nothing.
+    const existing = await this.db
+      .selectFrom('monitors')
+      .select('id')
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    if (existing) {
+      await this.resolveMonitorIncident({ id, organizationId }, new Date(), 'manual');
+    }
+
     await this.db
       .deleteFrom('monitors')
       .where('id', '=', id)
@@ -265,6 +349,19 @@ export class MonitorService {
     }));
   }
 
+  /** Uptime per window (24h, 7d, 30d, 90d). Null when the monitor is not in the organization. */
+  getUptimeSummary(monitorId: string, organizationId: string) {
+    return getUptimeSummary(monitorId, organizationId);
+  }
+
+  getResponseTimes(monitorId: string, organizationId: string, range: ResponseTimeRange) {
+    return getResponseTimes(monitorId, organizationId, range);
+  }
+
+  getOutages(monitorId: string, organizationId: string, limit: number) {
+    return getOutages(monitorId, organizationId, limit);
+  }
+
   // ============================================================================
   // PUBLIC STATUS PAGE (no auth - scrubbed data)
   // ============================================================================
@@ -291,17 +388,17 @@ export class MonitorService {
 
   async getPublicStatus(projectSlug: string, verifiedProjectId?: string): Promise<PublicStatusPage | null> {
     // If the route already verified the project, use that ID directly to avoid TOCTOU
-    let project: { id: string; name: string; slug: string } | null = null;
+    let project: { id: string; name: string; slug: string; organization_id: string; status_page_visibility: string } | null = null;
     if (verifiedProjectId) {
       project = await this.db
         .selectFrom('projects')
-        .select(['id', 'name', 'slug'])
+        .select(['id', 'name', 'slug', 'organization_id', 'status_page_visibility'])
         .where('id', '=', verifiedProjectId)
         .executeTakeFirst() ?? null;
     } else {
       const row = await this.db
         .selectFrom('projects')
-        .select(['id', 'name', 'slug', 'status_page_visibility'])
+        .select(['id', 'name', 'slug', 'organization_id', 'status_page_visibility'])
         .where('slug', '=', projectSlug)
         .executeTakeFirst() ?? null;
       if (!row || row.status_page_visibility === 'disabled') return null;
@@ -309,13 +406,14 @@ export class MonitorService {
     }
 
     if (!project) return null;
+    const projectOrgId = project.organization_id;
 
     // Fetch monitors, incidents, and maintenances in parallel
     const now = new Date();
-    const since7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const since90d = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
 
-    const [monitorRowsResult, activeIncidentRows, recentIncidentRows, activeMaintenanceRows, upcomingMaintenanceRows] = await Promise.all([
+    const [statusConfig, monitorRowsResult, activeIncidentRows, recentIncidentRows, activeMaintenanceRows, upcomingMaintenanceRows] = await Promise.all([
+      new StatusPageService(this.db).getConfig(project.id, projectOrgId),
       // Monitors
       this.db
         .selectFrom('monitors')
@@ -323,13 +421,18 @@ export class MonitorService {
         .select([
           'monitors.id',
           'monitors.name',
+          'monitors.display_name',
+          'monitors.group_name',
           'monitors.type',
           'monitor_status.status',
           'monitor_status.last_checked_at',
         ])
         .where('monitors.project_id', '=', project.id)
+        .where('monitors.organization_id', '=', projectOrgId)
         .where('monitors.enabled', '=', true)
+        .orderBy('monitors.display_order', 'asc')
         .orderBy('monitors.created_at', 'asc')
+        .orderBy('monitors.id', 'asc')
         .execute(),
       // Active incidents (not resolved)
       this.db
@@ -339,14 +442,15 @@ export class MonitorService {
         .where('status', '!=', 'resolved')
         .orderBy('created_at', 'desc')
         .execute(),
-      // Recently resolved incidents (last 7 days)
+      // Recently resolved incidents (last 90 days, capped)
       this.db
         .selectFrom('status_incidents')
         .selectAll()
         .where('project_id', '=', project.id)
         .where('status', '=', 'resolved')
-        .where('resolved_at', '>=', since7d)
+        .where('resolved_at', '>=', since90d)
         .orderBy('resolved_at', 'desc')
+        .limit(PUBLIC_RECENT_INCIDENTS_CAP)
         .execute(),
       // Active maintenances (in_progress)
       this.db
@@ -388,6 +492,59 @@ export class MonitorService {
       }
     }
 
+    // Affected components: public names of the enabled monitors linked to each
+    // status update / maintenance, in the order shown on the page.
+    const maintenanceIds = [...activeMaintenanceRows, ...upcomingMaintenanceRows].map((m) => m.id);
+    const [incidentLinkRows, maintenanceLinkRows] = await Promise.all([
+      allIncidentIds.length === 0
+        ? Promise.resolve([] as { owner_id: string; name: string; display_name: string | null }[])
+        : this.db
+            .selectFrom('status_incident_monitors')
+            .innerJoin('monitors', 'monitors.id', 'status_incident_monitors.monitor_id')
+            .select([
+              'status_incident_monitors.incident_id as owner_id',
+              'monitors.name',
+              'monitors.display_name',
+            ])
+            .where('status_incident_monitors.incident_id', 'in', allIncidentIds)
+            .where('monitors.project_id', '=', project.id)
+            .where('monitors.organization_id', '=', projectOrgId)
+            .where('monitors.enabled', '=', true)
+            .orderBy('monitors.display_order', 'asc')
+            .orderBy('monitors.created_at', 'asc')
+            .orderBy('monitors.id', 'asc')
+            .execute(),
+      maintenanceIds.length === 0
+        ? Promise.resolve([] as { owner_id: string; name: string; display_name: string | null }[])
+        : this.db
+            .selectFrom('maintenance_monitors')
+            .innerJoin('monitors', 'monitors.id', 'maintenance_monitors.monitor_id')
+            .select([
+              'maintenance_monitors.maintenance_id as owner_id',
+              'monitors.name',
+              'monitors.display_name',
+            ])
+            .where('maintenance_monitors.maintenance_id', 'in', maintenanceIds)
+            .where('monitors.project_id', '=', project.id)
+            .where('monitors.organization_id', '=', projectOrgId)
+            .where('monitors.enabled', '=', true)
+            .orderBy('monitors.display_order', 'asc')
+            .orderBy('monitors.created_at', 'asc')
+            .orderBy('monitors.id', 'asc')
+            .execute(),
+    ]);
+    const groupNames = (rows: { owner_id: string; name: string; display_name: string | null }[]) => {
+      const map = new Map<string, string[]>();
+      for (const r of rows) {
+        const list = map.get(r.owner_id) ?? [];
+        list.push(r.display_name ?? r.name);
+        map.set(r.owner_id, list);
+      }
+      return map;
+    };
+    const incidentComponents = groupNames(incidentLinkRows);
+    const maintenanceComponents = groupNames(maintenanceLinkRows);
+
     const mapIncident = (row: typeof activeIncidentRows[0]): PublicStatusIncident => ({
       id: row.id,
       title: row.title,
@@ -396,6 +553,7 @@ export class MonitorService {
       createdAt: (row.created_at as Date).toISOString(),
       resolvedAt: row.resolved_at ? (row.resolved_at as Date).toISOString() : null,
       updates: updatesByIncident.get(row.id) ?? [],
+      affectedComponents: incidentComponents.get(row.id) ?? [],
     });
 
     const mapMaintenance = (row: typeof activeMaintenanceRows[0]): PublicMaintenance => ({
@@ -405,6 +563,7 @@ export class MonitorService {
       status: row.status,
       scheduledStart: (row.scheduled_start as Date).toISOString(),
       scheduledEnd: (row.scheduled_end as Date).toISOString(),
+      affectedComponents: maintenanceComponents.get(row.id) ?? [],
     });
 
     // Build monitors with uptime
@@ -413,25 +572,29 @@ export class MonitorService {
       const monitorIds = monitorRowsResult.map((m) => m.id);
       const uptimeRows = await this.db
         .selectFrom('monitor_uptime_daily')
-        .select(['bucket', 'monitor_id', 'uptime_pct'])
+        .select(['bucket', 'monitor_id', 'uptime_pct', 'total_checks'])
         .where('monitor_id', 'in', monitorIds)
+        .where('organization_id', '=', projectOrgId)
         .where('bucket', '>=', since90d)
+        .where('total_checks', '>', 0)
         .orderBy('bucket', 'asc')
         .execute();
 
-      const uptimeByMonitor = new Map<string, { bucket: string; uptimePct: number }[]>();
+      const uptimeByMonitor = new Map<string, { bucket: string; uptimePct: number; totalChecks: number }[]>();
       for (const row of uptimeRows) {
         const id = row.monitor_id;
         if (!uptimeByMonitor.has(id)) uptimeByMonitor.set(id, []);
         uptimeByMonitor.get(id)!.push({
           bucket: (row.bucket as Date).toISOString(),
-          uptimePct: row.uptime_pct ?? 0,
+          uptimePct: Number(row.uptime_pct ?? 0),
+          totalChecks: Number(row.total_checks),
         });
       }
 
       monitors = monitorRowsResult.map((m) => ({
-        name: m.name,
-        type: m.type,
+        name: m.display_name ?? m.name,
+        ...(statusConfig.showMonitorTypes ? { type: m.type } : {}),
+        groupName: m.group_name ?? null,
         status: (m.status ?? 'unknown') as 'up' | 'down' | 'unknown',
         uptimeHistory: uptimeByMonitor.get(m.id) ?? [],
       }));
@@ -448,6 +611,13 @@ export class MonitorService {
     return {
       projectName: project.name,
       projectSlug: project.slug,
+      title: statusConfig.title,
+      description: statusConfig.description,
+      logoUrl: statusConfig.logoUrl,
+      accentColor: statusConfig.accentColor,
+      showMonitorTypes: statusConfig.showMonitorTypes,
+      subscriptionsEnabled: project.status_page_visibility === 'public' && isSmtpConfigured(),
+      historyDays: PUBLIC_HISTORY_DAYS,
       overallStatus,
       monitors,
       activeIncidents: activeIncidentRows.map(mapIncident),
@@ -482,6 +652,7 @@ export class MonitorService {
         'monitor_status.response_time_ms as ms_response_time_ms',
         'monitor_status.last_error_code',
         'monitor_status.incident_id',
+        'monitor_status.detail as ms_detail',
         'monitor_status.updated_at as ms_updated_at',
       ])
       .where('monitors.enabled', '=', true)
@@ -526,6 +697,18 @@ export class MonitorService {
       } else if (monitor.type === 'tcp') {
         const { host, port } = parseTcpTarget(monitor.target!);
         result = await runTcpCheck(host, port, monitor.timeoutSeconds, allowPrivate);
+      } else if (monitor.type === 'ssl') {
+        const { host, port } = parseHostPort(monitor.target!, 443);
+        const sslConfig = monitor.checkConfig as SslCheckConfig | null;
+        result = await runSslCheck(host, port, monitor.timeoutSeconds, sslConfig?.warnDays ?? 14, allowPrivate);
+      } else if (monitor.type === 'dns') {
+        const dnsConfig = monitor.checkConfig as DnsCheckConfig | null;
+        result = await runDnsCheck(
+          monitor.target!,
+          dnsConfig?.recordType ?? 'A',
+          dnsConfig?.expectedValue,
+          monitor.timeoutSeconds
+        );
       } else if (monitor.type === 'log_heartbeat') {
         const graceSeconds = monitor.gracePeriodSeconds ?? Math.round(monitor.intervalSeconds * 1.5);
         result = await runLogHeartbeatCheck(monitor.target!, monitor.projectId, graceSeconds, reservoir);
@@ -592,6 +775,7 @@ export class MonitorService {
           responseTimeMs: row.response_time_ms ?? null,
           lastErrorCode: row.last_error_code ?? null,
           incidentId: row.incident_id ?? null,
+          detail: parseJsonObject(row.detail),
           updatedAt: row.updated_at,
         };
       } else {
@@ -614,6 +798,7 @@ export class MonitorService {
           responseTimeMs: null,
           lastErrorCode: null,
           incidentId: null,
+          detail: null,
           updatedAt: new Date(),
         };
       }
@@ -622,6 +807,7 @@ export class MonitorService {
     const prevConsecutiveFailures = currentStatusData.consecutiveFailures;
     const prevStatus = currentStatusData.status as 'up' | 'down' | 'unknown';
     const now = new Date();
+    const detailJson = result.detail ? (JSON.stringify(result.detail) as unknown as null) : null;
 
     if (result.status === 'down') {
       const newFailures = prevConsecutiveFailures + 1;
@@ -637,6 +823,7 @@ export class MonitorService {
           last_status_change_at: statusChanged ? now : currentStatusData.lastStatusChangeAt,
           last_error_code: result.errorCode,
           response_time_ms: result.responseTimeMs,
+          detail: detailJson,
           updated_at: now,
         })
         .where('monitor_id', '=', monitor.id)
@@ -648,7 +835,17 @@ export class MonitorService {
         newFailures >= monitor.failureThreshold &&
         prevConsecutiveFailures < monitor.failureThreshold
       ) {
-        await this.notifyMonitorDown(monitor, result, newFailures);
+        // One incident per outage: opened exactly at the threshold crossing, never
+        // on further failures. A failing incidents service must not break the loop.
+        const incidentId = await this.openMonitorIncident(monitor, result, newFailures, now);
+        if (incidentId) {
+          await this.db
+            .updateTable('monitor_status')
+            .set({ incident_id: incidentId })
+            .where('monitor_id', '=', monitor.id)
+            .execute();
+        }
+        await this.notifyMonitorDown(monitor, result, newFailures, incidentId);
       }
 
       if (statusChanged) {
@@ -658,9 +855,22 @@ export class MonitorService {
       const newSuccesses = (currentStatusData.consecutiveSuccesses ?? 0) + 1;
       const statusChanged = prevStatus !== 'up';
 
+      // A recovery only counts as one when the outage was ever reported, i.e. the
+      // failure threshold was reached (otherwise no down notice or incident exists).
+      const outageReported =
+        prevStatus === 'down' && prevConsecutiveFailures >= monitor.failureThreshold;
+
+      // Resolve the incident on recovery when auto-resolve is on. When the resolve
+      // call fails the incident id is kept so the UI still links to the open incident.
+      let clearIncidentId = false;
+      if (outageReported && monitor.autoResolve) {
+        clearIncidentId = await this.resolveMonitorIncident(monitor, now, 'recovered');
+      }
+
       await this.db
         .updateTable('monitor_status')
         .set({
+          ...(clearIncidentId && { incident_id: null }),
           status: 'up',
           consecutive_failures: 0,
           consecutive_successes: newSuccesses,
@@ -668,14 +878,19 @@ export class MonitorService {
           last_status_change_at: statusChanged ? now : currentStatusData.lastStatusChangeAt,
           last_error_code: null,
           response_time_ms: result.responseTimeMs,
+          detail: detailJson,
           updated_at: now,
         })
         .where('monitor_id', '=', monitor.id)
         .execute();
 
       // Send recovery notification when transitioning from down → up
-      if (prevStatus === 'down') {
-        await this.notifyMonitorRecovered(monitor, currentStatusData.lastStatusChangeAt);
+      if (outageReported) {
+        await this.notifyMonitorRecovered(
+          monitor,
+          currentStatusData.lastStatusChangeAt,
+          currentStatusData.incidentId
+        );
       }
 
       if (statusChanged) {
@@ -684,7 +899,85 @@ export class MonitorService {
     }
   }
 
-  private async notifyMonitorDown(monitor: Monitor, result: CheckResult, consecutiveFailures: number): Promise<void> {
+  /**
+   * Open (or refresh) the shared incident for this outage. Returns the incident id,
+   * or null when the incidents service failed; the check loop carries on either way.
+   */
+  private async openMonitorIncident(
+    monitor: Monitor,
+    result: CheckResult,
+    consecutiveFailures: number,
+    occurredAt: Date
+  ): Promise<string | null> {
+    const label = monitor.displayName ?? monitor.name;
+    try {
+      const { incident } = await incidentsService.openOrUpdateFromSource({
+        organizationId: monitor.organizationId,
+        projectId: monitor.projectId,
+        source: 'monitor',
+        sourceId: monitor.id,
+        title: `Monitor down: ${label}`,
+        description: `${label} is not responding${result.errorCode ? ` (${result.errorCode})` : ''}`,
+        severity: monitor.severity,
+        occurredAt,
+        metadata: {
+          monitorId: monitor.id,
+          monitorName: monitor.name,
+          monitorType: monitor.type,
+          target: monitor.target,
+          errorCode: result.errorCode,
+          statusCode: result.statusCode,
+          responseTimeMs: result.responseTimeMs,
+          consecutiveFailures,
+          link: `/dashboard/uptime/${monitor.id}`,
+        },
+      });
+      return incident.id;
+    } catch (err) {
+      this.logIncidentFailure(`open incident for monitor ${monitor.id}`, err);
+      return null;
+    }
+  }
+
+  /**
+   * Resolve the monitor's active incident. Returns true when the call succeeded
+   * (also when there was nothing to resolve), false when the service failed.
+   */
+  private async resolveMonitorIncident(
+    monitor: Pick<Monitor, 'id' | 'organizationId'>,
+    resolvedAt: Date,
+    reason: 'recovered' | 'manual'
+  ): Promise<boolean> {
+    try {
+      await incidentsService.resolveFromSource({
+        organizationId: monitor.organizationId,
+        source: 'monitor',
+        sourceId: monitor.id,
+        resolvedAt,
+        reason,
+      });
+      return true;
+    } catch (err) {
+      this.logIncidentFailure(`resolve incident for monitor ${monitor.id}`, err);
+      return false;
+    }
+  }
+
+  private logIncidentFailure(action: string, err: unknown): void {
+    console.error(`[MonitorService] Failed to ${action}:`, err);
+    if (isInternalLoggingEnabled()) {
+      hub.captureLog('error', `Failed to ${action}`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async notifyMonitorDown(
+    monitor: Monitor,
+    result: CheckResult,
+    consecutiveFailures: number,
+    incidentId: string | null = null
+  ): Promise<void> {
     try {
       await monitorNotificationQueue.add('monitor-down', {
         monitorId: monitor.id,
@@ -697,6 +990,7 @@ export class MonitorService {
         errorCode: result.errorCode,
         responseTimeMs: result.responseTimeMs,
         consecutiveFailures,
+        incidentId,
       });
       console.log(`[MonitorService] Queued down notification for monitor "${monitor.name}"`);
     } catch (err) {
@@ -704,7 +998,11 @@ export class MonitorService {
     }
   }
 
-  private async notifyMonitorRecovered(monitor: Monitor, downtimeStart: Date | null): Promise<void> {
+  private async notifyMonitorRecovered(
+    monitor: Monitor,
+    downtimeStart: Date | null,
+    incidentId: string | null = null
+  ): Promise<void> {
     try {
       let downtimeDuration: string | null = null;
       if (downtimeStart) {
@@ -724,6 +1022,7 @@ export class MonitorService {
         severity: monitor.severity,
         target: monitor.target,
         downtimeDuration,
+        incidentId,
       });
       console.log(`[MonitorService] Queued recovery notification for monitor "${monitor.name}"`);
     } catch (err) {
@@ -752,6 +1051,10 @@ export class MonitorService {
       enabled: row.enabled,
       httpConfig: row.http_config ? (typeof row.http_config === 'string' ? JSON.parse(row.http_config) : row.http_config) : null,
       severity: (row.severity ?? 'high') as Severity,
+      displayName: row.display_name ?? null,
+      groupName: row.group_name ?? null,
+      displayOrder: row.display_order ?? 0,
+      checkConfig: parseJsonObject(row.check_config) as Monitor['checkConfig'],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       status: hasStatus
@@ -765,6 +1068,7 @@ export class MonitorService {
             responseTimeMs: row.ms_response_time_ms ?? null,
             lastErrorCode: row.last_error_code ?? null,
             incidentId: row.incident_id ?? null,
+            detail: parseJsonObject(row.ms_detail),
             updatedAt: row.ms_updated_at ?? row.updated_at,
           }
         : undefined,

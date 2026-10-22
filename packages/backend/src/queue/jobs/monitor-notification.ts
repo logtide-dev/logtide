@@ -21,6 +21,18 @@ export interface MonitorNotificationJob {
   responseTimeMs?: number | null;
   consecutiveFailures?: number;
   downtimeDuration?: string | null;
+  /** Shared incident opened for this outage (F4), when there is one. */
+  incidentId?: string | null;
+}
+
+/**
+ * Where a monitor notification points: the shared incident when one exists,
+ * otherwise the monitor detail page. Relative; callers prefix the frontend URL.
+ */
+function monitorNotificationLink(job: Pick<MonitorNotificationJob, 'monitorId' | 'incidentId'>): string {
+  return job.incidentId
+    ? `/dashboard/incidents/${job.incidentId}`
+    : `/dashboard/uptime/${job.monitorId}`;
 }
 
 export const monitorNotificationQueue = createQueue<MonitorNotificationJob>('monitor-notifications');
@@ -77,7 +89,8 @@ async function sendMonitorWebhook(url: string, job: MonitorNotificationJob, orgN
       response_time_ms: job.responseTimeMs,
       consecutive_failures: job.consecutiveFailures,
       downtime_duration: job.downtimeDuration,
-      link: `${frontendUrl}/dashboard/uptime`,
+      incident_id: job.incidentId ?? null,
+      link: `${frontendUrl}${monitorNotificationLink(job)}`,
     },
   });
 
@@ -110,6 +123,7 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
   }
 
   // Get notification channels: monitor-specific → org defaults for 'monitoring'
+  // W11 resolver: replace the pair below with the shared channel resolver.
   let channels = await notificationChannelsService.getMonitorChannels(data.monitorId);
   if (channels.length === 0) {
     channels = await notificationChannelsService.getOrganizationDefaults(data.organizationId, 'monitoring');
@@ -171,7 +185,8 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
         monitorId: data.monitorId,
         status: data.status,
         severity: data.severity,
-        link: '/dashboard/uptime',
+        incidentId: data.incidentId ?? null,
+        link: monitorNotificationLink(data),
       },
     }).catch((err) => console.error(`[MonitorNotification] Failed to create notification for ${member.id}:`, err))
   );
@@ -214,6 +229,8 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
     await Promise.all(emailPromises);
     console.log(`[MonitorNotification] Emails sent to ${emailRecipients.length} recipients`);
   }
+
+  // W11 pagerduty: trigger on down, resolve on recovery (dedup key monitor:<monitorId>).
 
   // Webhook notifications
   if (channelWebhookUrls.size > 0) {

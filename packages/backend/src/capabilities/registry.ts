@@ -127,6 +127,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum digest email recipients per organization',
   },
+  'status_page.subscribers.max': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum status page email subscribers per organization (confirmed plus pending)',
+  },
   'quota.grace_percent': {
     kind: 'limit',
     defaultLimit: null,

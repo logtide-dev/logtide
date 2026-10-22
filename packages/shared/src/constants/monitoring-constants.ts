@@ -1,4 +1,4 @@
-export const MONITOR_TYPES = ['http', 'tcp', 'heartbeat', 'log_heartbeat'] as const;
+export const MONITOR_TYPES = ['http', 'tcp', 'heartbeat', 'log_heartbeat', 'ssl', 'dns'] as const;
 export type MonitorType = (typeof MONITOR_TYPES)[number];
 
 export const MONITOR_STATUS_VALUES = ['up', 'down', 'unknown'] as const;
