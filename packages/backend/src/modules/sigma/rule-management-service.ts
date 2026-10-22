@@ -1,9 +1,14 @@
 import { sql } from 'kysely';
-import type { SigmaRuleListItem, SigmaRuleListQuery } from '@logtide/shared';
+import type {
+  DetectionEvent,
+  SigmaRuleDetail,
+  SigmaRuleListItem,
+  SigmaRuleListQuery,
+} from '@logtide/shared';
 import { context } from '@logtide/shared/context';
 import { db } from '../../database/index.js';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
-import { classifySource, packIdFor, packSigmaIdPatterns } from './yaml.js';
+import { classifySource, packIdFor, packSigmaIdPatterns, reconstructYaml } from './yaml.js';
 
 export interface SigmaRuleListResult {
   rules: SigmaRuleListItem[];
@@ -219,6 +224,80 @@ export class RuleManagementService {
       .execute();
     for (const r of rows) result.set(r.sigma_rule_id, Number(r.count));
     return result;
+  }
+
+  /** One rule with its stored (or reconstructed) YAML, or null outside the org. */
+  async getDetail(id: string, organizationId: string): Promise<SigmaRuleDetail | null> {
+    const row = await db
+      .selectFrom('sigma_rules')
+      .selectAll()
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    if (!row) return null;
+
+    const [hits, exceptions] = await Promise.all([
+      this.hitsFor(organizationId, [id]),
+      this.exceptionCountsFor(organizationId, [id]),
+    ]);
+    const item = toListItem(row, hits, exceptions);
+    return {
+      ...item,
+      yaml: row.raw_yaml ?? reconstructYaml(row),
+      yamlReconstructed: row.raw_yaml == null,
+      editable: item.source === 'custom',
+    };
+  }
+
+  /** Recent detection events of one rule, newest first. */
+  async listMatches(input: {
+    ruleId: string;
+    organizationId: string;
+    limit: number;
+    offset: number;
+    days: number;
+  }): Promise<{ matches: DetectionEvent[]; total: number }> {
+    const since = sql<Date>`now() - (${input.days} * interval '1 day')`;
+    const base = db
+      .selectFrom('detection_events')
+      .where('organization_id', '=', input.organizationId)
+      .where('sigma_rule_id', '=', input.ruleId)
+      .where('time', '>=', since);
+
+    const [rows, count] = await Promise.all([
+      base
+        .selectAll()
+        .orderBy('time', 'desc')
+        .orderBy('id', 'asc')
+        .limit(input.limit)
+        .offset(input.offset)
+        .execute(),
+      base.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
+    ]);
+
+    return {
+      matches: rows.map((row) => ({
+        id: row.id,
+        time: new Date(row.time).toISOString(),
+        organizationId: row.organization_id,
+        projectId: row.project_id,
+        sigmaRuleId: row.sigma_rule_id,
+        logId: row.log_id,
+        severity: row.severity,
+        ruleTitle: row.rule_title,
+        ruleDescription: row.rule_description,
+        mitreTactics: row.mitre_tactics,
+        mitreTechniques: row.mitre_techniques,
+        service: row.service,
+        logLevel: row.log_level,
+        logMessage: row.log_message,
+        traceId: row.trace_id,
+        matchedFields: row.matched_fields,
+        incidentId: row.incident_id,
+        category: row.category ?? 'security',
+      })),
+      total: Number(count?.count ?? 0),
+    };
   }
 
   /**

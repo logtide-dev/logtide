@@ -57,7 +57,8 @@ export class SigmaService {
       input.webhookUrl || null,
       null, // No alert_rule_id
       'success',
-      conversionResult.conversionNotes
+      conversionResult.conversionNotes,
+      input.yaml
     );
 
     return {
@@ -108,7 +109,8 @@ export class SigmaService {
     webhookUrl: string | null,
     alertRuleId: string | null,
     conversionStatus: 'success' | 'partial' | 'failed',
-    conversionNotes: string
+    conversionNotes: string,
+    rawYaml: string
   ): Promise<SigmaRuleRecord> {
     // Extract MITRE tags
     const mitre = this.extractMitreTags(rule.tags);
@@ -135,6 +137,7 @@ export class SigmaService {
         tags: rule.tags || null,
         mitre_tactics: mitre.tactics.length > 0 ? mitre.tactics : null,
         mitre_techniques: mitre.techniques.length > 0 ? mitre.techniques : null,
+        raw_yaml: rawYaml,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -277,6 +280,41 @@ export class SigmaService {
       createdAt: record.created_at,
       updatedAt: record.updated_at,
     } as unknown as SigmaRuleRecord;
+  }
+
+  /**
+   * Replace the definition of a rule from edited YAML. Keeps sigma_id,
+   * enabled, channels and exceptions. Returns false when the rule is not
+   * found in the organization.
+   */
+  async updateRuleDefinition(
+    id: string,
+    organizationId: string,
+    rule: ParsedSigmaRule,
+    rawYaml: string
+  ): Promise<boolean> {
+    const mitre = this.extractMitreTags(rule.tags);
+    const res = await db
+      .updateTable('sigma_rules')
+      .set({
+        title: rule.title,
+        description: rule.description || null,
+        author: rule.author || null,
+        date: rule.date ? new Date(rule.date) : null,
+        level: rule.level,
+        status: rule.status,
+        logsource: rule.logsource as any,
+        detection: rule.detection as any,
+        tags: rule.tags || null,
+        mitre_tactics: mitre.tactics.length > 0 ? mitre.tactics : null,
+        mitre_techniques: mitre.techniques.length > 0 ? mitre.techniques : null,
+        raw_yaml: rawYaml,
+        updated_at: new Date(),
+      })
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    return Number(res.numUpdatedRows) > 0;
   }
 
   /** Count enabled sigma rules for an organization (capability limit input). */

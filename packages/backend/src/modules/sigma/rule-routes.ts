@@ -5,6 +5,9 @@ import { context } from '@logtide/shared/context';
 import { SigmaService } from './service.js';
 import { sigmaExceptionsService } from './exceptions-service.js';
 import { ruleManagementService } from './rule-management-service.js';
+import { SigmaParser } from './parser.js';
+import { SigmaConverter } from './converter.js';
+import { YamlTooLargeError, assertYamlWithinLimit } from './yaml.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { auditLogService } from '../audit-log/service.js';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
@@ -30,6 +33,14 @@ const bulkBody = z.object({
   organizationId: z.string().uuid(),
   ids: z.array(z.string().uuid()).min(1).max(200),
   action: z.enum(['enable', 'disable', 'delete']),
+});
+
+const validateBody = z.object({ organizationId: z.string().uuid(), yaml: z.string().min(1) });
+const matchesQuery = z.object({
+  organizationId: z.string().uuid(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+  days: z.coerce.number().int().min(1).max(30).default(7),
 });
 
 const BULK_AUDIT_ACTION = {
@@ -87,6 +98,69 @@ export async function sigmaRuleRoutes(fastify: FastifyInstance) {
       return reply.send({ affected });
     }
   );
+
+  // -------------------------------------------------------------------------
+  // Validate and recent matches
+  // -------------------------------------------------------------------------
+
+  fastify.post(
+    '/api/v1/sigma/validate',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request: any, reply) => {
+      const body = validateBody.parse(request.body);
+
+      const denied = await requireMember(request, reply, body.organizationId);
+      if (denied) return denied;
+
+      try {
+        assertYamlWithinLimit(body.yaml);
+      } catch (error) {
+        if (error instanceof YamlTooLargeError) {
+          return reply.code(400).send({ error: error.message });
+        }
+        throw error;
+      }
+
+      const parsed = SigmaParser.parse(body.yaml);
+      if (!parsed.rule) {
+        return reply.send({ valid: false, errors: parsed.errors, warnings: [] });
+      }
+
+      const conversion = SigmaConverter.convert(parsed.rule, { organizationId: body.organizationId });
+      return reply.send({
+        valid: true,
+        errors: [],
+        warnings: conversion.warnings,
+        summary: {
+          title: parsed.rule.title,
+          level: parsed.rule.level,
+          status: parsed.rule.status,
+          tags: parsed.rule.tags ?? [],
+        },
+      });
+    }
+  );
+
+  fastify.get('/api/v1/sigma/rules/:id/matches', async (request: any, reply) => {
+    const { id } = ruleParams.parse(request.params);
+    const query = matchesQuery.parse(request.query);
+
+    const denied = await requireMember(request, reply, query.organizationId);
+    if (denied) return denied;
+
+    if (!(await ruleExists(id, query.organizationId))) {
+      return reply.code(404).send({ error: 'Sigma rule not found' });
+    }
+
+    const result = await ruleManagementService.listMatches({
+      ruleId: id,
+      organizationId: query.organizationId,
+      limit: query.limit,
+      offset: query.offset,
+      days: query.days,
+    });
+    return reply.send(result);
+  });
 
   // -------------------------------------------------------------------------
   // Exceptions
