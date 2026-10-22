@@ -134,6 +134,19 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_DB: logtide_test
+          POSTGRES_USER: logtide_test
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       clickhouse:
         image: clickhouse/clickhouse-server:24.1
         env:
@@ -193,6 +206,10 @@ jobs:
         working-directory: packages/reservoir
         env:
           REDIS_URL: redis://localhost:6380
+          RESERVOIR_TIMESCALE_URL: postgresql://logtide_test:test_password@localhost:5433/logtide_test
+          RESERVOIR_CLICKHOUSE_URL: http://default:@localhost:18123/logtide_conformance
+          RESERVOIR_MONGODB_URL: mongodb://localhost:27017/logtide_conformance
+          RESERVOIR_CONFORMANCE_REQUIRED: '1'
         run: npx vitest run --coverage --coverage.reporter=text --coverage.reporter=lcov --coverage.reporter=json --reporter=verbose
 
       - name: Upload reservoir coverage to Codecov
