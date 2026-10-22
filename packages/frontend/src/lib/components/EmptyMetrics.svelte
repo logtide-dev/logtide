@@ -1,94 +1,14 @@
 <script lang="ts">
   import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
-  import Button from '$lib/components/ui/button/button.svelte';
-  import * as Tabs from '$lib/components/ui/tabs';
-  import { getApiUrl } from '$lib/config';
-  import { toastStore } from '$lib/stores/toast';
-  import { copyToClipboard } from '$lib/utils/clipboard';
+  import { ConnectSnippets } from '$lib/components/connect';
   import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
   import Key from '@lucide/svelte/icons/key';
   import Book from '@lucide/svelte/icons/book';
   import Network from '@lucide/svelte/icons/network';
-  import Copy from '@lucide/svelte/icons/copy';
   import Terminal from '@lucide/svelte/icons/terminal';
   import Gauge from '@lucide/svelte/icons/gauge';
   import Activity from '@lucide/svelte/icons/activity';
   import TrendingUp from '@lucide/svelte/icons/trending-up';
-
-  let selectedTab = $state('nodejs');
-  let apiUrlValue = $state('http://localhost:8080');
-
-  $effect(() => {
-    apiUrlValue = getApiUrl();
-  });
-
-  let codeExamples: Record<string, string> = $derived({
-    nodejs: `// Node.js with OpenTelemetry Metrics
-import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
-import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
-
-const reader = new PeriodicExportingMetricReader({
-  exporter: new OTLPMetricExporter({
-    url: '${apiUrlValue}/v1/otlp/metrics',
-    headers: { 'X-API-Key': 'YOUR_API_KEY' }
-  })
-});
-
-const meterProvider = new MeterProvider({ readers: [reader] });
-const meter = meterProvider.getMeter('my-service');
-
-const counter = meter.createCounter('requests_total');
-counter.add(1, { route: '/checkout' });`,
-
-    python: `# Python with OpenTelemetry Metrics
-from opentelemetry import metrics
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-
-reader = PeriodicExportingMetricReader(
-    OTLPMetricExporter(
-        endpoint="${apiUrlValue}/v1/otlp/metrics",
-        headers={"X-API-Key": "YOUR_API_KEY"},
-    )
-)
-metrics.set_meter_provider(MeterProvider(metric_readers=[reader]))
-
-meter = metrics.get_meter("my-service")
-counter = meter.create_counter("requests_total")
-counter.add(1, {"route": "/checkout"})`,
-
-    go: `// Go with OpenTelemetry Metrics
-import (
-    "context"
-    "go.opentelemetry.io/otel"
-    "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
-    "go.opentelemetry.io/otel/sdk/metric"
-)
-
-exporter, _ := otlpmetrichttp.New(context.Background(),
-    otlpmetrichttp.WithEndpoint("${apiUrlValue.replace('https://', '').replace('http://', '')}"),
-    otlpmetrichttp.WithURLPath("/v1/otlp/metrics"),
-    otlpmetrichttp.WithInsecure(), // remove for HTTPS
-    otlpmetrichttp.WithHeaders(map[string]string{
-        "X-API-Key": "YOUR_API_KEY",
-    }),
-)
-
-provider := metric.NewMeterProvider(
-    metric.WithReader(metric.NewPeriodicReader(exporter)),
-)
-otel.SetMeterProvider(provider)`
-  });
-
-  async function copyCode(code: string) {
-    const success = await copyToClipboard(code);
-    if (success) {
-      toastStore.success('Code copied');
-    } else {
-      toastStore.error('Could not copy. Please select and copy manually.');
-    }
-  }
 </script>
 
 <div class="space-y-6 py-8">
@@ -146,30 +66,7 @@ otel.SetMeterProvider(provider)`
       </CardDescription>
     </CardHeader>
     <CardContent>
-      <Tabs.Root bind:value={selectedTab}>
-        <Tabs.List class="grid grid-cols-3 mb-4">
-          <Tabs.Trigger value="nodejs">Node.js</Tabs.Trigger>
-          <Tabs.Trigger value="python">Python</Tabs.Trigger>
-          <Tabs.Trigger value="go">Go</Tabs.Trigger>
-        </Tabs.List>
-
-        {#each Object.entries(codeExamples) as [key, code]}
-          <Tabs.Content value={key}>
-            <div class="relative">
-              <pre class="bg-muted rounded-lg p-4 overflow-x-auto text-sm"><code>{code}</code></pre>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Copy code"
-                class="absolute top-2 right-2"
-                onclick={() => copyCode(code)}
-              >
-                <Copy class="w-4 h-4" />
-              </Button>
-            </div>
-          </Tabs.Content>
-        {/each}
-      </Tabs.Root>
+      <ConnectSnippets apiKey={null} platform="otlp" service="my-service" />
     </CardContent>
   </Card>
 
