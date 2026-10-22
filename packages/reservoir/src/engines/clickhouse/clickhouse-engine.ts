@@ -102,7 +102,7 @@ import type {
   ListSessionsResult,
   HasSessionsParams,
 } from '../../core/types.js';
-import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
+import { ANALYTICS_TIMEOUT_MS, FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
 import {
   assertTimeRange,
   normalizeDiscoverParams,
@@ -143,6 +143,14 @@ export interface ClickHouseEngineOptions {
   tableName?: string;
   /** Skip schema initialization (use when connecting to existing DB) */
   skipInitialize?: boolean;
+  /**
+   * Server-side time limit of the log analytics reads (count, histogram,
+   * facets, metadata key discovery), as `max_execution_time` (whole
+   * seconds, rounded up), so an unbounded range stops on the server instead
+   * of running on after the client gives up. Default ANALYTICS_TIMEOUT_MS;
+   * 0 disables it.
+   */
+  analyticsTimeoutMs?: number;
 }
 
 export class ClickHouseEngine extends StorageEngine {
@@ -730,6 +738,7 @@ export class ClickHouseEngine extends StorageEngine {
       query: native.query as string,
       query_params: (native.parameters as Record<string, unknown>[])[0],
       format: 'JSONEachRow',
+      ...this.analyticsSettings(),
     });
     const rows = await resultSet.json() as Record<string, unknown>[];
     return {
@@ -759,6 +768,7 @@ export class ClickHouseEngine extends StorageEngine {
         query: native.query as string,
         query_params: (native.parameters as Record<string, unknown>[])[0],
         format: 'JSONEachRow',
+        ...this.analyticsSettings(),
       },
       'histogram',
     );
@@ -777,6 +787,7 @@ export class ClickHouseEngine extends StorageEngine {
         query: native.query as string,
         query_params: (native.parameters as Record<string, unknown>[])[0],
         format: 'JSONEachRow',
+        ...this.analyticsSettings(),
       },
       'facets',
     );
@@ -791,6 +802,7 @@ export class ClickHouseEngine extends StorageEngine {
         query: native.query as string,
         query_params: (native.parameters as Record<string, unknown>[])[0],
         format: 'JSONEachRow',
+        ...this.analyticsSettings(),
       },
       'discover-keys',
     );
@@ -936,6 +948,17 @@ export class ClickHouseEngine extends StorageEngine {
     const client = this.getClient();
     const final = { ...args, query: chCtxComment() + args.query, query_id: (args as any).query_id ?? chQueryId(op) };
     return client.command(final);
+  }
+
+  /**
+   * Query settings of the log analytics reads: the server stops them at
+   * `max_execution_time` (TIMEOUT_EXCEEDED) instead of finishing a scan the
+   * client has already timed out on.
+   */
+  private analyticsSettings(): { clickhouse_settings?: { max_execution_time: number } } {
+    const ms = this.options.analyticsTimeoutMs ?? ANALYTICS_TIMEOUT_MS;
+    if (!(ms > 0)) return {};
+    return { clickhouse_settings: { max_execution_time: Math.ceil(ms / 1000) } };
   }
 
   private async runQuery<Format extends DataFormat>(

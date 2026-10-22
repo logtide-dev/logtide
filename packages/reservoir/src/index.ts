@@ -112,6 +112,7 @@ export {
   DEFAULT_OPERATION_KINDS,
   LATENCY_HISTOGRAM_BOUNDS_MS,
   SESSIONS_MAX_LIMIT,
+  ANALYTICS_TIMEOUT_MS,
 } from './core/constants.js';
 export {
   histogramBucketStarts,
