@@ -11,7 +11,7 @@
   import SettingsSection from '$lib/components/app/SettingsSection.svelte';
   import { displayPreferences, resolveTimeZone } from '$lib/stores/display-preferences';
   import { themeStore, type ThemePreference } from '$lib/stores/theme';
-  import { currentProjectStore } from '$lib/stores/current-project';
+  import { scopeStore } from '$lib/stores/scope';
   import { formatTimestamp, getDisplayZoneLabel } from '$lib/utils/datetime';
   import Sun from '@lucide/svelte/icons/sun';
   import Moon from '@lucide/svelte/icons/moon';
@@ -94,7 +94,7 @@
 
   const themePreference = themeStore.preference;
 
-  let projectId = $derived($currentProjectStore);
+  let projectId = $derived($scopeStore.projectIds[0] ?? null);
   let connectHref = $derived(
     projectId ? `/dashboard/projects/${projectId}/settings#connect` : '/dashboard/projects'
   );

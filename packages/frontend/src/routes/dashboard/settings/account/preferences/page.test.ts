@@ -7,12 +7,12 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 import Page from './+page.svelte';
 import { displayPreferences } from '$lib/stores/display-preferences';
 import { themeStore } from '$lib/stores/theme';
-import { currentProjectStore } from '$lib/stores/current-project';
+import { scopeStore } from '$lib/stores/scope';
 
 describe('preferences page', () => {
   beforeEach(() => {
     localStorage.clear();
-    currentProjectStore.set(null);
+    scopeStore.setProjects([]);
   });
 
   afterEach(() => {
@@ -76,7 +76,7 @@ describe('preferences page', () => {
   });
 
   it('Connect an app links to the current project settings#connect', () => {
-    currentProjectStore.set('proj-1');
+    scopeStore.setProjects(['proj-1']);
     render(Page);
     const link = screen.getByRole('link', { name: 'Connect an app' });
     expect(link.getAttribute('href')).toBe('/dashboard/projects/proj-1/settings#connect');
@@ -86,5 +86,15 @@ describe('preferences page', () => {
     const { container } = render(Page);
     expect(container.textContent).toContain('Applies to every page in this browser.');
     expect(container.textContent).not.toContain('dashboard panels');
+  });
+});
+
+describe('preferences page store imports', () => {
+  it('does not import the deprecated store facades', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync('src/routes/dashboard/settings/account/preferences/+page.svelte', 'utf8');
+    expect(src).not.toMatch(/stores\/current-project/);
+    expect(src).not.toMatch(/stores\/time-range/);
+    expect(src).toMatch(/stores\/scope/);
   });
 });
