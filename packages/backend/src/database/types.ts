@@ -1404,3 +1404,16 @@ export interface SigmaRuleExceptionsTable {
   created_by: string | null;
   created_at: Generated<Timestamp>;
 }
+
+// W8 (1.6) alert rule lifecycle, migration 065. Declaration merging extends AlertRulesTable above.
+export type AlertRuleState = 'ok' | 'firing';
+
+export interface AlertRulesTable {
+  query: string | null;
+  state: Generated<AlertRuleState>;
+  last_triggered_at: Timestamp | null;
+  last_evaluated_at: Timestamp | null;
+  last_notified_at: Timestamp | null;
+  snoozed_until: Timestamp | null;
+  renotify_minutes: number | null;
+}

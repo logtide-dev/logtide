@@ -190,7 +190,7 @@ describe('Alert Rule Evaluation', () => {
             expect(secondCheck).toHaveLength(0);
         });
 
-        it('should trigger again when NEW logs exceed threshold', async () => {
+        it('should not notify again while the rule is still firing', async () => {
             const { organization, project } = await createTestContext();
 
             const rule = await createTestAlertRule({
@@ -224,10 +224,17 @@ describe('Alert Rule Evaluation', () => {
                 });
             }
 
-            // Second check should trigger (new logs)
+            // Second check: the rule is still firing and has no re-notify
+            // interval, so it stays quiet (1.6 lifecycle semantics).
             const secondCheck = await alertsService.checkAlertRules();
-            expect(secondCheck).toHaveLength(1);
-            expect(secondCheck[0].log_count).toBe(2);
+            expect(secondCheck).toHaveLength(0);
+
+            const history = await db
+                .selectFrom('alert_history')
+                .select('id')
+                .where('rule_id', '=', rule.id)
+                .execute();
+            expect(history).toHaveLength(1);
         });
     });
 
