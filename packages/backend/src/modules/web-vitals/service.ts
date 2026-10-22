@@ -87,7 +87,8 @@ class WebVitalsService {
     });
 
     const logs = result.logs ?? [];
-    const truncated = logs.length === MAX_VITAL_SAMPLES;
+    // hasMore is true only when a row exists past the limit, so exactly 10,000 samples is not truncated.
+    const truncated = result.hasMore === true;
 
     const perMetric = new Map<WebVitalName, number[]>(WEB_VITAL_NAMES.map((n) => [n, []]));
     const perRoute = new Map<string, { samples: number; values: Map<WebVitalName, number[]> }>();

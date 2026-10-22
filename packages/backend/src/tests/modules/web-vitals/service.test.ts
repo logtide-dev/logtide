@@ -17,9 +17,9 @@ function vital(metric: unknown, value: unknown, extra: Record<string, unknown> =
     };
 }
 
-function mockLogs(logs: any[]) {
+function mockLogs(logs: any[], hasMore = false) {
     return vi.spyOn(reservoir, 'query').mockResolvedValue({
-        logs, total: logs.length, hasMore: false, limit: MAX_VITAL_SAMPLES, offset: 0,
+        logs, total: logs.length, hasMore, limit: MAX_VITAL_SAMPLES, offset: 0,
     } as any);
 }
 
@@ -128,8 +128,14 @@ describe('WebVitalsService.getSummary', () => {
         expect(result.truncated).toBe(false);
     });
 
+    it('does not flag exactly 10000 samples as truncated when nothing is left', async () => {
+        mockLogs(Array.from({ length: MAX_VITAL_SAMPLES }, () => vital('TTFB', 100)), false);
+        const result = await summary();
+        expect(result.truncated).toBe(false);
+    });
+
     it('flags truncated at 10000', async () => {
-        mockLogs(Array.from({ length: MAX_VITAL_SAMPLES }, () => vital('TTFB', 100)));
+        mockLogs(Array.from({ length: MAX_VITAL_SAMPLES }, () => vital('TTFB', 100)), true);
         const result = await summary();
         expect(result.truncated).toBe(true);
         expect(result.sampleCount).toBe(MAX_VITAL_SAMPLES);
