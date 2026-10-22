@@ -114,9 +114,9 @@ describe('panelDrilldown', () => {
     expect(parse(link.href).params.has('service')).toBe(false);
   });
 
-  it('null projectId omits the project param', () => {
+  it('null projectId links to all projects explicitly', () => {
     const link = panelDrilldown({ ...timeSeries, projectId: null } as PanelConfig)!;
-    expect(parse(link.href).params.has('project')).toBe(false);
+    expect(parse(link.href).params.get('project')).toBe('all');
   });
 
   it('geo_map adds the host clause', () => {

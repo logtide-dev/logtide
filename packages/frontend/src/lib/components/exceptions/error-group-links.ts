@@ -28,7 +28,7 @@ export function buildLogsWindowHref(a: {
 }): string {
   const at = new Date(a.time).getTime();
   const params = new URLSearchParams();
-  if (a.projectId) params.set('project', a.projectId);
+  params.set('project', a.projectId ?? 'all');
   params.set('from', new Date(at - FIVE_MINUTES_MS).toISOString());
   params.set('to', new Date(at + FIVE_MINUTES_MS).toISOString());
   if (a.logId) params.set('logId', a.logId);

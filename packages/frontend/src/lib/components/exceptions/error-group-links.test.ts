@@ -78,7 +78,7 @@ describe('error group links', () => {
     expect(without.searchParams.has('logId')).toBe(false);
     const withId = parse(buildLogsWindowHref({ projectId: null, time: '2026-10-21T10:00:00Z', logId: 'l1' }));
     expect(withId.searchParams.get('logId')).toBe('l1');
-    expect(withId.searchParams.has('project')).toBe(false);
+    expect(withId.searchParams.get('project')).toBe('all');
   });
 
   it('trace and session hrefs use the project param', () => {

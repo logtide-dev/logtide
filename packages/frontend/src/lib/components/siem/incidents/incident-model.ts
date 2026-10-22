@@ -258,10 +258,14 @@ export function buildIncidentLogsUrl(
     clauses.push(`service:(${services.map(quoteFieldValue).join(' OR ')})`);
   }
 
-  const url = writeScopeToUrl(new URL('http://x/dashboard/logs'), {
-    projectIds: incident.projectId ? [incident.projectId] : [],
-    range: { kind: 'custom', from: start.toISOString(), to: end.toISOString() },
-  });
+  const url = writeScopeToUrl(
+    new URL('http://x/dashboard/logs'),
+    {
+      projectIds: incident.projectId ? [incident.projectId] : [],
+      range: { kind: 'custom', from: start.toISOString(), to: end.toISOString() },
+    },
+    { explicitAll: true }
+  );
   if (clauses.length > 0) url.searchParams.set('q', clauses.join(' '));
   return `/dashboard/logs?${url.searchParams.toString()}`;
 }
