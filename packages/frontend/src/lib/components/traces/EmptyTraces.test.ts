@@ -8,19 +8,23 @@ import { render, screen, fireEvent } from '@testing-library/svelte';
 import EmptyTraces from '$lib/components/EmptyTraces.svelte';
 
 describe('EmptyTraces', () => {
-  it('renders the setup empty state with the OTLP endpoint from getApiUrl', async () => {
+  it('renders the setup empty state with the shared connect snippets', async () => {
     const { container } = render(EmptyTraces);
     expect(screen.getByText('No traces yet')).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'Platform' })).toBeInTheDocument();
     expect(container.textContent).toContain('https://logs.example.com/v1/otlp/traces');
   });
 
-  it('copy button copies the active snippet', async () => {
+  it('defaults to the OpenTelemetry platform', () => {
     render(EmptyTraces);
-    await fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
+    expect(screen.getByRole('radio', { name: 'OpenTelemetry OTLP' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('copy button copies a snippet with the OTLP traces endpoint', async () => {
+    render(EmptyTraces);
+    await fireEvent.click(screen.getAllByRole('button', { name: /^Copy / })[0]);
     expect(copy).toHaveBeenCalledTimes(1);
-    const copied = copy.mock.calls[0][0];
-    expect(copied).toContain('NodeSDK');
-    expect(copied).toContain('https://logs.example.com/v1/otlp/traces');
+    expect(copy.mock.calls[0][0]).toContain('https://logs.example.com/v1/otlp/traces');
   });
 
   it('has no icon-only button without an aria-label', () => {
