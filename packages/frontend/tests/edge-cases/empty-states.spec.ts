@@ -108,11 +108,9 @@ test.describe('Empty States', () => {
     await page.waitForLoadState('load');
     await page.waitForTimeout(1000);
 
-    // Should show empty state or no rows
-    const hasEmptyState = await page.locator('text=/no.*alert/i, text=/no.*history/i').isVisible().catch(() => false);
-    const tableRows = await page.locator('table tbody tr').count().catch(() => 0);
-
-    expect(hasEmptyState || tableRows === 0).toBe(true);
+    // History is the second tab on the alerts page; with no alerts fired it is an empty table
+    await page.getByRole('tab', { name: 'History' }).click();
+    await expect(page.getByText('No results')).toBeVisible({ timeout: 10000 });
   });
 
   test('Project settings shows appropriate state for new project', async ({ page }) => {

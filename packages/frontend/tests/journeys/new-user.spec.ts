@@ -39,7 +39,6 @@ test.describe('New User Journey', () => {
     await page.locator('input#name').fill(userName);
     await page.locator('input#email').fill(userEmail);
     await page.locator('input#password').fill(userPassword);
-    await page.locator('input#confirmPassword').fill(userPassword);
 
     // Submit form
     await page.locator('button[type="submit"]').click();
@@ -324,11 +323,7 @@ test.describe('New User Journey', () => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
 
-    // Wait for logs to load and verify our log appears
-    await page.waitForTimeout(3000);
-
-    // Check if the log message appears somewhere on the page
-    const logContent = await page.content();
-    expect(logContent).toContain('First log from E2E test');
+    // The ingested log shows up in the results
+    await expect(page.getByText('First log from E2E test').first()).toBeVisible({ timeout: 20000 });
   });
 });

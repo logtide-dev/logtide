@@ -157,11 +157,7 @@ test.describe('SIEM Journey', () => {
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
-    // Either we see incident details or error
-    const hasDetails = await page.locator('text=/Details Test Incident|Test Incident/').isVisible().catch(() => false);
-    const hasError = await page.locator('text=/not found|error/i').isVisible().catch(() => false);
-
-    expect(hasDetails || hasError).toBe(true);
+    await expect(page.getByRole('heading', { name: /Test Incident/ }).first()).toBeVisible({ timeout: 15000 });
   });
 
   test('6. User can change incident status', async ({ page }) => {

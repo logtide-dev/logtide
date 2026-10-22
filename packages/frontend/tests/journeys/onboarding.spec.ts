@@ -15,7 +15,6 @@ async function register(page: Page, label: string) {
   await page.locator('input#name').fill(generateTestName(label));
   await page.locator('input#email').fill(generateTestEmail());
   await page.locator('input#password').fill(PASSWORD);
-  await page.locator('input#confirmPassword').fill(PASSWORD);
   await page.locator('button[type="submit"]').click();
   await expect(page).toHaveURL(/onboarding/, { timeout: 15000 });
 }
@@ -93,7 +92,8 @@ test.describe('Onboarding journey', () => {
     await page.locator('input#org-name').fill('');
     await expect(page.getByRole('button', { name: 'Create workspace' })).toBeDisabled();
 
-    await page.getByRole('button', { name: 'Acme Corp' }).or(page.getByRole('button', { name: 'My company' })).first().click();
+    // Suggestions come from the email domain, so click whichever the form offers first
+    await page.locator('input#org-name ~ div button').first().click();
     await expect(page.getByRole('button', { name: 'Create workspace' })).toBeEnabled();
   });
 });

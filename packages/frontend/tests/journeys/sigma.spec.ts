@@ -1,6 +1,26 @@
 import { test, expect, TestApiClient, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL } from '../fixtures/auth';
 import { createTestLog, createDetectionSigmaRule, wait } from '../helpers/factories';
 
+function sigmaRuleYaml(title: string, keyword: string, level: string): string {
+  return `
+title: ${title}
+id: ${keyword}-${Date.now()}
+status: test
+level: ${level}
+description: ${title}
+author: E2E Test
+logsource:
+    category: application
+    product: logtide
+detection:
+    selection:
+        message|contains: '${keyword}'
+    condition: selection
+falsepositives:
+    - Testing
+`.trim();
+}
+
 test.describe('Sigma Journey', () => {
   let apiClient: TestApiClient;
   let userToken: string;
@@ -51,229 +71,83 @@ test.describe('Sigma Journey', () => {
     await page.waitForLoadState('load');
 
     // Verify settings page loads
-    await expect(page.locator('h1, h2').filter({ hasText: /settings|project/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Project settings' })).toBeVisible();
   });
 
-  test('2. User can import a Sigma rule via dialog', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000); // Wait for page to fully load
+  test('2. User can import a Sigma rule via the Detection rules page', async ({ page }) => {
+    const keyword = `sigma-test-${Date.now()}`;
+    const sigmaRule = createDetectionSigmaRule(keyword);
 
-    // Click create alert button
-    const createButton = page.locator('button:has-text("Create Alert"), button:has-text("Create Your First Alert")');
-    await createButton.first().click({ timeout: 10000 });
-    await page.waitForTimeout(1000);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/rules`);
+    await expect(page.getByRole('heading', { name: 'Detection rules', exact: true })).toBeVisible({ timeout: 30000 });
 
-    // Switch to Sigma tab
-    const sigmaTab = page.locator('button:has-text("Import Sigma Rule"), [role="tab"]:has-text("Sigma")');
-    if (await sigmaTab.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await sigmaTab.click();
-      await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Import rule' }).first().click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
 
-      // Fill in the Sigma rule
-      const keyword = `sigma-test-${Date.now()}`;
-      const sigmaRule = createDetectionSigmaRule(keyword);
+    await dialog.getByLabel('Rule YAML').fill(sigmaRule);
+    await expect(dialog.getByText(/Valid rule/)).toBeVisible({ timeout: 15000 });
 
-      await page.locator('textarea#sigmaYaml, textarea[placeholder*="Sigma" i]').fill(sigmaRule);
+    await dialog.getByRole('button', { name: 'Import rule' }).click();
 
-      // Add email recipient
-      const sigmaEmailInput = page.locator('input#sigmaEmails');
-      if (await sigmaEmailInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await sigmaEmailInput.fill('test@e2e-test.logtide.dev');
-      }
-
-      // Submit the form
-      await page.locator('button:has-text("Import Rule")').click();
-
-      // Wait for import to complete
-      await page.waitForTimeout(3000);
-
-      // Verify import completed (dialog should close or success message)
-      // Just verify we're still on the page without error
-      const pageContent = await page.content();
-      expect(pageContent).toBeTruthy();
-    } else {
-      // If no Sigma tab, just verify the dialog opened correctly
-      const dialog = page.locator('[role="dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-    }
+    // A successful import opens the new rule
+    await expect(page).toHaveURL(/\/dashboard\/security\/rules\/[0-9a-f-]{36}/, { timeout: 20000 });
   });
 
   test('3. User can view Sigma rules list', async ({ page }) => {
-    // First import a rule via API
-    const sigmaYaml = `
-title: List Test Rule ${Date.now()}
-id: list-test-${Date.now()}
-status: test
-level: medium
-description: Test rule for viewing in list
-author: E2E Test
-logsource:
-    category: application
-    product: logtide
-detection:
-    selection:
-        message|contains: 'list-test'
-    condition: selection
-falsepositives:
-    - Testing
-`.trim();
+    const title = `List Test Rule ${Date.now()}`;
+    await apiClient.importSigmaRule(organizationId, sigmaRuleYaml(title, 'list-test', 'medium'));
 
-    try {
-      await apiClient.importSigmaRule(projectId, sigmaYaml);
-    } catch (e) {
-      // Rule might already exist or import might fail - continue with test
-    }
-
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Look for Sigma rules section
-    const sigmaSection = page.locator('text=/sigma.*rule/i').first();
-    if (await sigmaSection.isVisible({ timeout: 5000 }).catch(() => false)) {
-      // Rules should be listed if any exist
-      const pageContent = await page.content();
-      expect(pageContent.toLowerCase()).toContain('sigma');
-    }
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/rules`);
+    await expect(page.getByRole('link', { name: title })).toBeVisible({ timeout: 30000 });
   });
 
   test('4. User can view Sigma rule details', async ({ page }) => {
-    // First import a rule via API
-    const ruleTitle = `Details Test Rule ${Date.now()}`;
-    const sigmaYaml = `
-title: ${ruleTitle}
-id: details-test-${Date.now()}
-status: test
-level: high
-description: Test rule for viewing details
-author: E2E Test
-logsource:
-    category: application
-    product: logtide
-detection:
-    selection:
-        message|contains: 'details-test'
-    condition: selection
-falsepositives:
-    - Testing
-tags:
-    - test
-    - e2e
-`.trim();
+    const title = `Details Test Rule ${Date.now()}`;
+    await apiClient.importSigmaRule(organizationId, sigmaRuleYaml(title, 'details-test', 'high'));
 
-    try {
-      await apiClient.importSigmaRule(projectId, sigmaYaml);
-    } catch (e) {
-      // Continue with test
-    }
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/rules`);
+    await page.getByRole('link', { name: title }).click();
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Find and click view button for a rule
-    const viewButton = page.locator('button:has-text("View"), button[title*="view" i]').first();
-    if (await viewButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await viewButton.click();
-      await page.waitForTimeout(500);
-
-      // Verify details dialog opens
-      const dialog = page.locator('[role="dialog"], [class*="dialog"], [class*="Dialog"]');
-      if (await dialog.isVisible({ timeout: 2000 }).catch(() => false)) {
-        // Verify rule details are shown
-        const dialogContent = await dialog.textContent();
-        expect(dialogContent).toBeTruthy();
-      }
-    }
+    await expect(page).toHaveURL(/\/dashboard\/security\/rules\/[0-9a-f-]{36}/, { timeout: 15000 });
+    await expect(page.getByRole('heading', { name: title }).first()).toBeVisible({ timeout: 15000 });
   });
 
   test('5. User can enable/disable Sigma rule', async ({ page }) => {
-    // First import a rule via API
-    const sigmaYaml = `
-title: Toggle Test Rule ${Date.now()}
-id: toggle-test-${Date.now()}
-status: test
-level: medium
-description: Test rule for toggling
-author: E2E Test
-logsource:
-    category: application
-    product: logtide
-detection:
-    selection:
-        message|contains: 'toggle-test'
-    condition: selection
-falsepositives:
-    - Testing
-`.trim();
+    const title = `Toggle Test Rule ${Date.now()}`;
+    await apiClient.importSigmaRule(organizationId, sigmaRuleYaml(title, 'toggle-test', 'medium'));
 
-    try {
-      await apiClient.importSigmaRule(projectId, sigmaYaml);
-    } catch (e) {
-      // Continue with test
-    }
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/rules`);
+    const toggle = page.getByRole('switch', { name: `Enable ${title}` });
+    await expect(toggle).toBeVisible({ timeout: 30000 });
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    const before = await toggle.getAttribute('aria-checked');
+    await toggle.click();
+    await expect(toggle).not.toHaveAttribute('aria-checked', before ?? '', { timeout: 10000 });
 
-    // Look for enable/disable toggle
-    const toggle = page.locator('button[role="switch"], [class*="Switch"], input[type="checkbox"]').first();
-    if (await toggle.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await toggle.click();
-      await page.waitForTimeout(1000);
-
-      // Toggle back
-      await toggle.click();
-      await page.waitForTimeout(1000);
-    }
+    // Toggle back
+    const after = await toggle.getAttribute('aria-checked');
+    await toggle.click();
+    await expect(toggle).not.toHaveAttribute('aria-checked', after ?? '', { timeout: 10000 });
   });
 
   test('6. User can delete Sigma rule', async ({ page }) => {
-    // First import a rule via API
-    const ruleTitle = `Delete Test Rule ${Date.now()}`;
-    const sigmaYaml = `
-title: ${ruleTitle}
-id: delete-test-${Date.now()}
-status: test
-level: low
-description: Test rule for deletion
-author: E2E Test
-logsource:
-    category: application
-    product: logtide
-detection:
-    selection:
-        message|contains: 'delete-test'
-    condition: selection
-falsepositives:
-    - Testing
-`.trim();
+    const title = `Delete Test Rule ${Date.now()}`;
+    await apiClient.importSigmaRule(organizationId, sigmaRuleYaml(title, 'delete-test', 'low'));
 
-    try {
-      await apiClient.importSigmaRule(projectId, sigmaYaml);
-    } catch (e) {
-      // Continue with test
-    }
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/rules`);
+    await expect(page.getByRole('link', { name: title })).toBeVisible({ timeout: 30000 });
+    expect((await apiClient.getSigmaRules(organizationId)).rules.some((r: { title: string }) => r.title === title)).toBe(true);
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await page.getByRole('button', { name: `Actions for ${title}` }).click();
+    await page.getByRole('menuitem', { name: 'Delete' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete rule' }).click();
 
-    // Find and click delete button for a rule
-    const deleteButton = page.locator('button:has([class*="Trash"]), button[title*="delete" i], button:has-text("Delete")').first();
-    if (await deleteButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await deleteButton.click();
-      await page.waitForTimeout(500);
+    await expect(page.getByRole('link', { name: title })).toHaveCount(0, { timeout: 15000 });
 
-      // Confirm deletion if dialog appears
-      const confirmButton = page.locator('[role="alertdialog"] button:has-text("Delete"), [class*="AlertDialog"] button:has-text("Delete")');
-      if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await confirmButton.click();
-        await page.waitForTimeout(2000);
-      }
-    }
+    // The API agrees
+    const { rules } = await apiClient.getSigmaRules(organizationId);
+    expect(rules.some((r: { title: string }) => r.title === title)).toBe(false);
   });
 
   test('7. Sigma rule detects matching logs', async ({ page }) => {
@@ -300,7 +174,7 @@ falsepositives:
 `.trim();
 
     try {
-      await apiClient.importSigmaRule(projectId, sigmaYaml);
+      await apiClient.importSigmaRule(organizationId, sigmaYaml);
     } catch (e) {
       // Continue with test
     }
@@ -344,33 +218,16 @@ falsepositives:
   });
 
   test('8. Sigma rule validation shows errors for invalid YAML', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
-    await page.waitForLoadState('load');
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/rules`);
+    await expect(page.getByRole('heading', { name: 'Detection rules', exact: true })).toBeVisible({ timeout: 30000 });
 
-    // Click create alert button
-    const createButton = page.locator('button:has-text("Create Alert"), button:has-text("Create Your First Alert")');
-    await createButton.first().click();
-    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Import rule' }).first().click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Rule YAML').fill('this is not valid yaml: [[[');
 
-    // Switch to Sigma tab
-    const sigmaTab = page.locator('button:has-text("Import Sigma Rule"), [role="tab"]:has-text("Sigma")');
-    if (await sigmaTab.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await sigmaTab.click();
-      await page.waitForTimeout(500);
-
-      // Fill in invalid YAML
-      const invalidYaml = 'this is not valid yaml: [[[';
-      await page.locator('textarea#sigmaYaml, textarea[placeholder*="Sigma" i]').fill(invalidYaml);
-
-      // Try to submit
-      await page.locator('button:has-text("Import Rule")').click();
-      await page.waitForTimeout(2000);
-
-      // Should show error message (toast or inline)
-      const hasError = await page.locator('[class*="error"], [class*="destructive"], [class*="toast"]').isVisible().catch(() => false);
-      // The form should not close on error
-      const dialogStillOpen = await page.locator('[role="dialog"]').isVisible().catch(() => false);
-      expect(hasError || dialogStillOpen).toBe(true);
-    }
+    // The rule is checked as you type: an error shows and Import stays disabled
+    await expect(dialog.locator('.text-destructive-text').first()).toBeVisible({ timeout: 15000 });
+    await expect(dialog.getByRole('button', { name: 'Import rule' })).toBeDisabled();
+    await expect(dialog).toBeVisible();
   });
 });
