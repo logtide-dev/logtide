@@ -117,6 +117,19 @@
     instance.setOption(buildOption());
   });
 
+  // When the selection is removed from outside (duration chip, clear all, URL change),
+  // forget the dedup key and wipe the drawn brush area so the same range can be re-brushed.
+  let hadSelection = false;
+  $effect(() => {
+    const has = hasSelection;
+    const instance = chart;
+    if (hadSelection && !has) {
+      lastEmitted = '';
+      instance?.dispatchAction({ type: 'brush', areas: [] });
+    }
+    hadSelection = has;
+  });
+
   function clearSelection() {
     lastEmitted = '';
     chart?.dispatchAction({ type: 'brush', areas: [] });

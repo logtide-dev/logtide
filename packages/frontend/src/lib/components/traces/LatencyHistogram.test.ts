@@ -86,6 +86,25 @@ describe('LatencyHistogram', () => {
     expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
   });
 
+  it('external selection clear wipes the brush and allows re-brushing the same range', async () => {
+    const onBrush = vi.fn();
+    const { rerender } = render(LatencyHistogram, {
+      data,
+      loading: false,
+      selection: noSelection,
+      onBrush,
+    });
+    const evt = { batch: [{ areas: [{ coordRange: [8, 7] }] }] };
+    handlers.brushSelected(evt);
+    expect(onBrush).toHaveBeenCalledTimes(1);
+    await rerender({ data, loading: false, selection: { minMs: 100, maxMs: 500 }, onBrush });
+    dispatchAction.mockClear();
+    await rerender({ data, loading: false, selection: noSelection, onBrush });
+    expect(dispatchAction).toHaveBeenCalledWith({ type: 'brush', areas: [] });
+    handlers.brushSelected(evt);
+    expect(onBrush).toHaveBeenCalledTimes(2);
+  });
+
   it('a brush event calls onBrush with the mapped range', () => {
     const onBrush = vi.fn();
     render(LatencyHistogram, { data, loading: false, selection: noSelection, onBrush });
