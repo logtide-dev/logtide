@@ -72,7 +72,8 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 
 | Type | Description |
 | --- | --- |
-| `alert.triggered` | An alert rule or anomaly detection fired. Anomaly detections carry a non-null `data.baseline_metadata` object. |
+| `alert.triggered` | An alert rule started firing, or re-notified while still firing (`data.renotify: true`). Anomaly (rate-of-change) detections carry a non-null `data.baseline_metadata` object. |
+| `alert.resolved` | A firing alert rule returned to OK. Sent only when the firing notification was sent; snoozing does not suppress it. |
 | `incident.created` | A new security incident was created (typically from a Sigma rule detection). |
 | `error.detected` | An exception group crossed its notification threshold. |
 | `monitor.status_changed` | An uptime monitor changed status (e.g. up → down). |
@@ -87,9 +88,31 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `alert_name` | yes | `string` | Name of the alert rule. |
 | `log_count` | yes | `number` | Number of matching log events in the evaluation window. |
 | `threshold` | yes | `number` | Configured threshold value. |
-| `time_window` | yes | `number` | Evaluation window in seconds. |
+| `time_window` | yes | `number` | Evaluation window in minutes. |
 | `baseline_metadata` | yes | `object \| null` | Non-null for anomaly/rate-of-change detections. Contains `baseline_value`, `current_value`, `deviation_ratio`, `baseline_type`, and `evaluation_time`. |
-| `link` | yes | `string` | URL to the alert history entry in the LogTide dashboard. |
+| `link` | yes | `string` | Incident page when an incident exists, otherwise the alerts page. |
+| `alert_rule_id` | no | `string (UUID)` | Alert rule id. Present on alert rule notifications since 1.6; absent on Sigma detections and older payloads. |
+| `renotify` | no | `boolean` | `true` when this is a repeat notification for a rule that is still firing (`renotify_minutes`), `false` on the first notification of an episode. |
+| `firing_since` | no | `string (ISO 8601)` | When the current firing episode started. Stays the same across re-notifications of one episode. |
+| `incident_id` | no | `string (UUID) \| null` | Incident opened or updated for this alert episode, or `null` when none could be opened. |
+
+**`alert.resolved`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `alert_rule_id` | yes | `string (UUID)` | Alert rule id. |
+| `alert_name` | yes | `string` | Name of the alert rule. |
+| `alert_type` | yes | `string` | `threshold` or `rate_of_change`. |
+| `title` | yes | `string` | Short notification title. |
+| `message` | yes | `string` | Human-readable summary. |
+| `log_count` | yes | `number` | Matching log events in the window at the evaluation that resolved the rule (current hourly rate for rate-of-change rules). |
+| `threshold` | yes | `number` | Configured threshold value. |
+| `time_window` | yes | `number` | Evaluation window in minutes. |
+| `firing_since` | yes | `string (ISO 8601)` | When the firing episode started. Same value as `firing_since` on the matching `alert.triggered` events. |
+| `resolved_at` | yes | `string (ISO 8601)` | When the rule was evaluated back to OK. |
+| `duration_seconds` | yes | `number` | Whole seconds between `firing_since` and `resolved_at`. |
+| `incident_id` | yes | `string (UUID) \| null` | Incident resolved together with the alert, or `null`. |
+| `link` | yes | `string` | Incident page when an incident exists, otherwise the alerts page. |
 
 **`incident.created`**
 
