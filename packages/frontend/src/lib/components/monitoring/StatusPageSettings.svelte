@@ -8,6 +8,8 @@
     updateStatusPageConfig,
   } from '$lib/api/status-page';
   import { toastStore } from '$lib/stores/toast';
+  import { organizationStore } from '$lib/stores/organization';
+  import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import * as Collapsible from '$lib/components/ui/collapsible';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
@@ -58,6 +60,10 @@
   let baseline = $state('');
   let loadSeq = 0;
 
+  // Branding, components and subscribers are owner/admin only on the server.
+  const role = $derived($organizationStore.currentOrganization?.role ?? null);
+  const canEdit = $derived(role === 'owner' || role === 'admin');
+
   const snapshot = $derived(JSON.stringify({ draft, rows }));
   const dirty = $derived(loaded && snapshot !== baseline);
   const errors = $derived(validateBranding(draft));
@@ -98,7 +104,7 @@
   });
 
   async function save() {
-    if (!dirty || invalid || saving) return;
+    if (!canEdit || !dirty || invalid || saving) return;
     saving = true;
     try {
       await Promise.all([
@@ -133,11 +139,15 @@
           <ExternalLink class="h-3.5 w-3.5" />
         </Button>
       {/if}
-      <Button size="sm" disabled={!dirty || invalid || saving} onclick={save}>
+      <Button size="sm" disabled={!canEdit || !dirty || invalid || saving} onclick={save}>
         {saving ? 'Saving...' : 'Save changes'}
       </Button>
     </div>
   </div>
+
+  {#if !canEdit}
+    <ReadOnlyNotice what="the status page settings" />
+  {/if}
 
   <StatusPageAccess {orgId} {orgSlug} {project} {onProjectChanged} />
 
@@ -148,10 +158,10 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <StatusPageBranding bind:draft disabled={!loaded || saving} />
-    <StatusPageComponents bind:rows disabled={!loaded || saving} />
+    <StatusPageBranding bind:draft disabled={!loaded || saving || !canEdit} />
+    <StatusPageComponents bind:rows disabled={!loaded || saving || !canEdit} />
 
-    {#if loaded && subscriptionsAvailable}
+    {#if loaded && subscriptionsAvailable && canEdit}
       <StatusPageSubscribers {orgId} projectId={project.id} />
     {/if}
   {/if}
