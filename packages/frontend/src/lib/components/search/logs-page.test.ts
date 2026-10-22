@@ -111,7 +111,7 @@ import { authStore } from '$lib/stores/auth';
 import { shortcutsStore } from '$lib/stores/shortcuts';
 import { displayPreferences } from '$lib/stores/display-preferences';
 import { toastStore } from '$lib/stores/toast';
-import { makeLog, resetLogIds, deferred } from './test-fixtures';
+import { makeLog, resetLogIds, deferred, FakeWebSocket } from './test-fixtures';
 
 const NOW = new Date('2026-10-21T10:42:13.000Z');
 
@@ -736,5 +736,194 @@ describe('logs page: histogram, facets, details, links, saved and recent searche
     );
     expect(logsCall().q).toBeUndefined();
     expect(scopeStore.get().projectIds).toEqual(['p2']);
+  });
+});
+
+describe('logs page: live tail', () => {
+  let sockets: FakeWebSocket[];
+
+  beforeEach(() => {
+    sockets = [];
+    h.createLogsWebSocket.mockImplementation(async () => {
+      const ws = new FakeWebSocket();
+      sockets.push(ws);
+      return ws.asWebSocket();
+    });
+  });
+
+  function liveSwitch(): HTMLElement {
+    return screen.getByRole('switch', { name: 'Live tail' });
+  }
+
+  function liveStatus(): string {
+    return screen.getByTestId('live-tail-state').textContent ?? '';
+  }
+
+  async function turnLiveOn() {
+    await fireEvent.click(liveSwitch());
+    await settle();
+    await waitFor(() => expect(sockets.length).toBeGreaterThan(0));
+  }
+
+  it('live=true starts live tail with the query', async () => {
+    await renderPage('/dashboard/logs?live=true&project=p1&q=level:error');
+    await waitFor(() => expect(h.createLogsWebSocket).toHaveBeenCalledTimes(1));
+    expect(h.createLogsWebSocket).toHaveBeenCalledWith({ projectId: 'p1', q: 'level:error' });
+    expect(h.getLogs).not.toHaveBeenCalled();
+    expect(h.completeItem).toHaveBeenCalledWith('try-live-tail');
+    expect(lastGotoUrl().searchParams.get('live')).toBe('true');
+    expect(liveSwitch().getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('narrows several projects to the first one and says so', async () => {
+    const info = vi.spyOn(toastStore, 'info').mockImplementation(() => {});
+    await renderPage();
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    await turnLiveOn();
+    expect(info).toHaveBeenCalledWith('Live tail works with one project at a time. Showing Shop.');
+    expect(scopeStore.get().projectIds).toEqual(['p1']);
+    expect(h.createLogsWebSocket).toHaveBeenCalledTimes(1);
+    expect(h.createLogsWebSocket).toHaveBeenCalledWith({ projectId: 'p1', q: undefined });
+    expect(lastGotoUrl().searchParams.get('project')).toBe('p1');
+    expect(lastGotoUrl().searchParams.get('live')).toBe('true');
+  });
+
+  it('disables the time range while live', async () => {
+    h.getLogs.mockResolvedValue(response(logsList(3)));
+    await renderPage('/dashboard/logs?project=p1');
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('scope-bar').getAttribute('data-time-disabled')).toBe('false');
+    expect(screen.getByRole('region', { name: 'Log volume' })).toBeInTheDocument();
+    await turnLiveOn();
+    expect(screen.getByTestId('scope-bar').getAttribute('data-time-disabled')).toBe('true');
+    // no histogram and no export while live
+    expect(screen.queryByRole('region', { name: 'Log volume' })).toBeNull();
+    await openMoreActions();
+    expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled();
+  });
+
+  it('streams matching logs to the top of the table', async () => {
+    h.getLogs.mockResolvedValue(response(logsList(2, 'old')));
+    await renderPage('/dashboard/logs?project=p1&q=level:info');
+    await waitFor(() => expect(rowMessages()).toEqual(['old-0', 'old-1']));
+    await turnLiveOn();
+    expect(h.createLogsWebSocket).toHaveBeenCalledWith({ projectId: 'p1', q: 'level:info' });
+    sockets[0].emit({ type: 'connected' });
+    await settle();
+    expect(liveStatus()).toContain('Live');
+    sockets[0].emit({
+      type: 'logs',
+      logs: [
+        makeLog({ message: 'streamed', level: 'info', time: '2026-10-21T10:42:14.000Z' }),
+        makeLog({ message: 'filtered out', level: 'error', time: '2026-10-21T10:42:15.000Z' }),
+      ],
+    });
+    await settle();
+    expect(rowMessages()).toEqual(['streamed', 'old-0', 'old-1']);
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('auto-pauses on scroll and the pill resumes', async () => {
+    h.getLogs.mockResolvedValue(response(logsList(30, 'old')));
+    await renderPage('/dashboard/logs?project=p1');
+    await waitFor(() => expect(rowMessages()[0]).toBe('old-0'));
+    await turnLiveOn();
+    sockets[0].emit({ type: 'connected' });
+    await settle();
+    const scroller = screen.getByTestId('log-results-scroll');
+    scroller.scrollTop = 200;
+    await fireEvent.scroll(scroller);
+    await settle();
+    expect(screen.getByText('Paused while scrolled')).toBeInTheDocument();
+    sockets[0].emit({
+      type: 'logs',
+      logs: [1, 2, 3].map((n) => makeLog({ message: `new-${n}`, time: `2026-10-21T10:43:0${n}.000Z` })),
+    });
+    await settle();
+    expect(rowMessages()).not.toContain('new-3');
+    await fireEvent.click(screen.getByRole('button', { name: '3 new logs' }));
+    await settle();
+    scroller.scrollTop = 0;
+    await fireEvent.scroll(scroller);
+    await settle();
+    expect(rowMessages().slice(0, 4)).toEqual(['new-3', 'new-2', 'new-1', 'old-0']);
+    expect(screen.queryByRole('button', { name: /new logs?$/ })).toBeNull();
+    expect(screen.queryByText('Paused while scrolled')).toBeNull();
+  });
+
+  it('shows Reconnect after five lost connections', async () => {
+    await renderPage('/dashboard/logs?live=true&project=p1');
+    await waitFor(() => expect(sockets.length).toBe(1));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    // the first connection and the five reconnect attempts all drop
+    for (let i = 0; i < 6; i++) {
+      expect(sockets.length).toBe(i + 1);
+      sockets[i].drop(1006);
+      await settle();
+      if (i < 5) expect(liveStatus()).toContain('Reconnecting');
+      await vi.advanceTimersByTimeAsync(16_000);
+      await settle();
+    }
+    expect(sockets.length).toBe(6);
+    expect(liveStatus()).toContain('Disconnected');
+    await fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+    await settle();
+    expect(sockets.length).toBe(7);
+    vi.useRealTimers();
+  });
+
+  it('turning live off re-runs the static query', async () => {
+    h.getLogs.mockResolvedValue(response(logsList(2)));
+    await renderPage('/dashboard/logs?project=p1');
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(1));
+    await turnLiveOn();
+    vi.setSystemTime(new Date(NOW.getTime() + 60_000));
+    await fireEvent.click(liveSwitch());
+    await waitFor(() => expect(h.getLogs).toHaveBeenCalledTimes(2));
+    expect(logsCall()).toMatchObject({
+      projectId: ['p1'],
+      from: '2026-10-21T09:43:13.000Z',
+      to: '2026-10-21T10:43:13.000Z',
+    });
+    expect(sockets[0].closed).toBe(true);
+    expect(lastGotoUrl().searchParams.has('live')).toBe(false);
+  });
+
+  it('a new query while live reconnects with it', async () => {
+    await renderPage('/dashboard/logs?live=true&project=p1');
+    await waitFor(() => expect(sockets.length).toBe(1));
+    await submitQuery('level:warn');
+    await waitFor(() => expect(sockets.length).toBe(2));
+    expect(h.createLogsWebSocket).toHaveBeenLastCalledWith({ projectId: 'p1', q: 'level:warn' });
+    expect(sockets[0].closed).toBe(true);
+    expect(h.getLogs).not.toHaveBeenCalled();
+  });
+
+  it('remembers the live tail buffer size', async () => {
+    localStorage.setItem('logtide_livetail_limit', '200');
+    await renderPage('/dashboard/logs?live=true&project=p1');
+    await waitFor(() => expect(sockets.length).toBe(1));
+    const select = screen.getByRole('combobox', { name: 'Rows kept in live tail' }) as HTMLSelectElement;
+    expect(select.value).toBe('200');
+    await fireEvent.change(select, { target: { value: '500' } });
+    await settle();
+    expect(localStorage.getItem('logtide_livetail_limit')).toBe('500');
+  });
+
+  it('shows why the live tail stopped', async () => {
+    await renderPage('/dashboard/logs?live=true&project=p1');
+    await waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].emit({ type: 'error', error: 'Unknown field', position: 0 });
+    sockets[0].drop(1008, 'Invalid query');
+    await settle();
+    expect(liveStatus()).toContain('Disconnected');
+    expect(screen.getByText('Live tail stopped: Unknown field')).toBeInTheDocument();
+  });
+
+  it('stops the socket when the page goes away', async () => {
+    const { unmount } = await renderPage('/dashboard/logs?live=true&project=p1');
+    await waitFor(() => expect(sockets.length).toBe(1));
+    unmount();
+    expect(sockets[0].closed).toBe(true);
   });
 });

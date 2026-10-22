@@ -61,6 +61,7 @@
   {#if live}
     <span
       role="status"
+      data-testid="live-tail-state"
       class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium {tone.badge}"
     >
       <span

@@ -17,6 +17,7 @@
   import { currentOrganization } from "$lib/stores/organization";
   import { authStore } from "$lib/stores/auth";
   import { shortcutsStore } from "$lib/stores/shortcuts";
+  import { checklistStore } from "$lib/stores/checklist";
   import { toastStore } from "$lib/stores/toast";
   import { layoutStore } from "$lib/stores/layout";
   import { displayPreferences } from "$lib/stores/display-preferences";
@@ -58,7 +59,14 @@
   import LogVolumeHistogram from "$lib/components/search/LogVolumeHistogram.svelte";
   import FacetSidebar from "$lib/components/search/FacetSidebar.svelte";
   import SavedSearchesMenu from "$lib/components/search/SavedSearchesMenu.svelte";
+  import LiveTailControls from "$lib/components/search/LiveTailControls.svelte";
   import ColumnConfigMenu from "$lib/components/search/ColumnConfigMenu.svelte";
+  import {
+    LIVE_TAIL_LIMITS,
+    createLiveTail,
+    type LiveTail,
+    type LiveTailSnapshot,
+  } from "$lib/components/search/live-tail";
   import {
     DEFAULT_BUILTIN_LAYOUT,
     createBuiltinColumnsStore,
@@ -112,6 +120,8 @@
   const VIEW_KEY = "logtide_view_mode";
   const DENSITY_KEY = "logtide_row_density";
   const FACETS_COLLAPSED_KEY = "logtide_facets_collapsed";
+  const LIVE_LIMIT_KEY = "logtide_livetail_limit";
+  const DEFAULT_LIVE_LIMIT = 100;
   const RESULTS_HEIGHT = "max(420px, calc(100dvh - 22rem))";
 
   /** One query execution: the window is resolved once and reused by every page of it. */
@@ -173,11 +183,16 @@
   let identifiers = $state.raw<Map<string, IdentifierMatch[]>>(new Map());
   let recent = $state.raw<RecentSearch[]>([]);
 
+  let live = $state(false);
+  let liveSnap = $state.raw<LiveTailSnapshot | null>(null);
+  let liveLimit = $state(DEFAULT_LIVE_LIMIT);
+
   let density = $state<"comfortable" | "compact">("comfortable");
   let terminalWrap = $state(true);
   let maxWidthClass = $state("max-w-7xl");
   let containerPadding = $state("px-6 py-8");
   let resultsTable = $state<{ reveal(id: string): void; scrollToTop(): void } | null>(null);
+  let terminalView = $state<{ scrollToTop(): void } | null>(null);
 
   let moreOpen = $state(false);
   let exportOpen = $state(false);
@@ -196,6 +211,8 @@
   let fieldsKey: string | null = null;
   let projectsSeq = 0;
   let runSeq = 0;
+  let tail: LiveTail | null = null;
+  let liveTried = false;
   const identifierRequests = new Set<string>();
   const builtinStores = new Map<string, Writable<BuiltinColumnLayout>>();
   const columnStores = new Map<string, ColumnConfigStore>();
@@ -228,9 +245,14 @@
   );
   const shownTotal = $derived(histogramTotal ?? total);
   const countText = $derived.by(() => {
-    const n = shownTotal ?? rows.length;
+    const n = live ? rows.length : (shownTotal ?? rows.length);
     return `${n.toLocaleString("en-US")} ${n === 1 ? "log" : "logs"}`;
   });
+  const pendingText = $derived.by(() => {
+    const n = liveSnap?.pendingCount ?? 0;
+    return n === 1 ? "1 new log" : `${n.toLocaleString("en-US")} new logs`;
+  });
+  const showPendingPill = $derived(live && liveSnap !== null && liveSnap.pausedBy !== null && liveSnap.pendingCount > 0);
   const asOfText = $derived.by(() => {
     $displayPreferences;
     return run ? formatTimestamp(run.asOf, { precision: "second", withDate: false }) : "";
@@ -244,7 +266,7 @@
     if (!run) return "";
     return run.preset ? `the ${TIME_RANGE_LABELS[run.preset].toLowerCase()}` : formatRange(run.from, run.to);
   });
-  const hasMore = $derived(nextCursor !== null && !capped);
+  const hasMore = $derived(!live && nextCursor !== null && !capped);
   const discoveredKeys = $derived(discovered.map((f) => f.key));
   const candidateKeys = $derived(facetCandidates(discovered));
   const savedState = $derived(toSavedState(currentState(), customColumns));
@@ -253,7 +275,7 @@
       ? { q: run.q, projectIds: run.projectIds, from: run.from.toISOString(), to: run.to.toISOString() }
       : { q: "", projectIds: [], from: new Date(0).toISOString(), to: new Date(0).toISOString() },
   );
-  const canExport = $derived(run !== null && rows.length > 0);
+  const canExport = $derived(!live && run !== null && rows.length > 0);
   const gridClass = $derived(
     detailsLog
       ? facetsCollapsed
@@ -336,7 +358,7 @@
       projectIds: scope.projectIds,
       range: scope.range,
       view,
-      live: false,
+      live,
       logId,
       logProjectId,
       savedId,
@@ -549,8 +571,118 @@
     }
   }
 
+  /** Live tail follows one project: several scoped projects narrow to the first one, with a notice. */
+  function liveProjectId(): string | null {
+    const ids = resolveIds(scope.projectIds, projects);
+    if (ids.length > 1) {
+      const first = ids[0];
+      setScope({ projectIds: [first], range: scope.range });
+      const name = projects.find((p) => p.id === first)?.name ?? first;
+      toastStore.info(`Live tail works with one project at a time. Showing ${name}.`);
+      return first;
+    }
+    return ids[0] ?? null;
+  }
+
+  /** (Re)creates the live tail for the current query and project, seeded with `initial` rows. */
+  function startLive(initial: LogEntry[]) {
+    stopLive();
+    runSeq += 1;
+    logsGuard.invalidate();
+    histogramGuard.invalidate();
+    loading = false;
+    loadingMore = false;
+    nextCursor = null;
+    capped = false;
+    error = null;
+    hasRun = true;
+    const parsed = parseLogQuery(q);
+    if (parsed.ok === false) {
+      queryError = { message: parsed.error.message, position: parsed.error.position };
+      return;
+    }
+    queryError = null;
+    const projectId = liveProjectId();
+    if (!projectId) {
+      rows = [];
+      return;
+    }
+    const liveQ = q;
+    const controller = createLiveTail({
+      connect: () => logsAPI.createLogsWebSocket({ projectId, q: liveQ || undefined }),
+      query: parsed.query,
+      limit: liveLimit,
+      onUpdate: (snapshot) => {
+        if (tail !== controller) return;
+        liveSnap = snapshot;
+        rows = snapshot.logs;
+      },
+    });
+    tail = controller;
+    controller.start(initial.filter((log) => log.projectId === projectId));
+  }
+
+  function stopLive() {
+    const current = tail;
+    tail = null;
+    current?.stop();
+    liveSnap = null;
+  }
+
+  function setLive(next: boolean) {
+    if (next === live) return;
+    if (next) {
+      live = true;
+      if (!liveTried) {
+        liveTried = true;
+        void checklistStore.completeItem("try-live-tail");
+      }
+      startLive(rows);
+    } else {
+      stopLive();
+      live = false;
+      void startRun();
+    }
+    writeUrl();
+  }
+
+  function setLiveLimit(next: number) {
+    if (!Number.isFinite(next) || next < LIVE_TAIL_LIMITS[0]) return;
+    liveLimit = Math.min(next, LIVE_TAIL_LIMITS[LIVE_TAIL_LIMITS.length - 1]);
+    try {
+      localStorage.setItem(LIVE_LIMIT_KEY, String(liveLimit));
+    } catch {
+      // storage blocked
+    }
+    tail?.setLimit(liveLimit);
+  }
+
+  /** Auto-pause while the user reads older rows; resume when back at the newest ones. */
+  function handleScrollTop(atTop: boolean) {
+    if (!live || !tail || !liveSnap) return;
+    if (!atTop) {
+      if (!liveSnap.pausedBy) tail.pause("scroll");
+    } else if (liveSnap.pausedBy === "scroll") {
+      tail.resume();
+    }
+  }
+
+  async function showPending() {
+    tail?.resume();
+    await tick();
+    if (view === "table") resultsTable?.scrollToTop();
+    else terminalView?.scrollToTop();
+  }
+
+  /** The query or the scope changed: re-run, or reconnect the live tail with it. */
+  function rerun() {
+    if (live) startLive([]);
+    else void startRun();
+  }
+
   function refresh() {
-    void startRun();
+    if (live) tail?.retry();
+    else void startRun();
   }
 
   async function retry() {
@@ -565,14 +697,15 @@
     q = next.trim();
     const parsed = parseLogQuery(q);
     if (parsed.ok) recorder.submit(toSavedState(currentState(), customColumns));
-    void startRun({ submitted: true });
+    if (live) startLive([]);
+    else void startRun({ submitted: true });
     writeUrl();
   }
 
   function clearQuery() {
     q = "";
     draftQ = "";
-    void startRun();
+    rerun();
     writeUrl();
   }
 
@@ -589,7 +722,7 @@
     }
     q = next;
     draftQ = next;
-    void startRun();
+    rerun();
     writeUrl();
   }
 
@@ -786,6 +919,11 @@
     closeContext();
     const range = linkWindow(log.time);
     if (!range) return;
+    // A window around one log is a static view.
+    if (live) {
+      stopLive();
+      live = false;
+    }
     setScope({ projectIds: [log.projectId], range });
     q = "";
     draftQ = "";
@@ -828,7 +966,7 @@
   function applyRecent(entry: RecentSearch) {
     applySearchState(entry);
     savedId = null;
-    void startRun();
+    rerun();
     writeUrl();
   }
 
@@ -841,7 +979,7 @@
     applySearchState(saved.state);
     if (Array.isArray(saved.state.columns)) columnStoreFor(projectKey).set([...saved.state.columns]);
     savedId = saved.id;
-    void startRun();
+    rerun();
     writeUrl();
   }
 
@@ -879,8 +1017,24 @@
     detailsLog = null;
     selectedId = null;
     centerOnId = null;
-    if (parsed.logId) void openLogLink(parsed.logId, parsed.logProjectId, parsed.scope.range !== undefined);
-    else void startRun();
+    // A log link is a static view; `live=true` alone starts the live tail (B10).
+    const wantLive = parsed.live && !parsed.logId;
+    if (!wantLive && live) {
+      stopLive();
+      live = false;
+    }
+    if (parsed.logId) {
+      void openLogLink(parsed.logId, parsed.logProjectId, parsed.scope.range !== undefined);
+    } else if (wantLive) {
+      live = true;
+      if (!liveTried) {
+        liveTried = true;
+        void checklistStore.completeItem("try-live-tail");
+      }
+      startLive([]);
+    } else {
+      void startRun();
+    }
     writeUrl();
   }
 
@@ -929,6 +1083,8 @@
   }
 
   function resetResults() {
+    stopLive();
+    live = false;
     runSeq += 1;
     logsGuard.invalidate();
     histogramGuard.invalidate();
@@ -987,7 +1143,7 @@
     if (key === scopeKeySeen) return;
     scopeKeySeen = key;
     if (!initialized) return;
-    void startRun();
+    rerun();
     writeUrl();
   }
 
@@ -1048,6 +1204,8 @@
       const savedDensity = localStorage.getItem(DENSITY_KEY);
       if (savedDensity === "compact" || savedDensity === "comfortable") density = savedDensity;
       facetsCollapsed = localStorage.getItem(FACETS_COLLAPSED_KEY) === "true";
+      const savedLimit = Number.parseInt(localStorage.getItem(LIVE_LIMIT_KEY) ?? "", 10);
+      if (Number.isFinite(savedLimit) && savedLimit >= 50 && savedLimit <= 1000) liveLimit = savedLimit;
     } catch {
       // storage blocked
     }
@@ -1066,6 +1224,7 @@
   });
 
   onDestroy(() => {
+    stopLive();
     runSeq += 1;
     logsGuard.invalidate();
     histogramGuard.invalidate();
@@ -1082,7 +1241,7 @@
 <div class="container mx-auto {containerPadding} {maxWidthClass}">
   <PageHeader title="Logs" description="Search, filter and tail logs across your projects">
     {#snippet actions()}
-      <ScopeBar mode="multi" projects={scopeProjects} />
+      <ScopeBar mode="multi" projects={scopeProjects} timeDisabled={live} />
     {/snippet}
   </PageHeader>
 
@@ -1096,6 +1255,20 @@
           serverError={queryError}
           onSubmit={handleSubmit}
           onEdit={() => recorder.cancel()}
+        />
+      </div>
+      <div class="flex min-h-9 items-center">
+        <LiveTailControls
+          {live}
+          state={liveSnap?.state ?? "connecting"}
+          pausedBy={liveSnap?.pausedBy ?? null}
+          limit={liveLimit}
+          disabled={projects.length === 0}
+          onToggle={setLive}
+          onPause={() => tail?.pause("manual")}
+          onResume={() => tail?.resume()}
+          onRetry={() => tail?.retry()}
+          onLimitChange={setLiveLimit}
         />
       </div>
       <SavedSearchesMenu
@@ -1154,6 +1327,10 @@
       </Popover.Root>
     </div>
 
+    {#if live && liveSnap?.error && liveSnap.state === "disconnected"}
+      <p role="alert" class="text-xs text-destructive-text">Live tail stopped: {liveSnap.error}</p>
+    {/if}
+
     {#if recent.length > 0 && draftQ.trim() === ""}
       <div class="flex flex-wrap items-center gap-1.5">
         <span class="text-xs text-muted-foreground">Recent:</span>
@@ -1179,8 +1356,8 @@
     {/if}
   </div>
 
-  {#if hasRun && resultsState !== "onboarding"}
-    <div class="mb-4 rounded-lg border bg-card p-3 text-card-foreground">
+  {#if hasRun && !live && resultsState !== "onboarding"}
+    <section aria-label="Log volume" class="mb-4 rounded-lg border bg-card p-3 text-card-foreground">
       <LogVolumeHistogram
         buckets={histogramBuckets}
         bucketSeconds={histogramBucketSeconds}
@@ -1190,7 +1367,7 @@
         onRangeSelect={selectHistogramRange}
         onRetry={() => run && void loadHistogram(run)}
       />
-    </div>
+    </section>
   {/if}
 
   <div class="grid items-start gap-4 {gridClass}">
@@ -1210,10 +1387,12 @@
     <section aria-label="Results" class="min-w-0 rounded-lg border bg-card text-card-foreground">
       <div class="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <div class="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          {#if resultsState === "results"}
+          {#if resultsState === "results" || (live && rows.length > 0)}
             <span class="font-medium">{countText}</span>
           {/if}
-          {#if run && run.preset && hasRun}
+          {#if live}
+            <span class="text-muted-foreground">Newest first, up to {liveLimit.toLocaleString("en-US")} kept</span>
+          {:else if run && run.preset && hasRun}
             <span class="text-muted-foreground" title={asOfTitle}>Results as of {asOfText}</span>
             <Button
               variant="ghost"
@@ -1285,7 +1464,18 @@
       </div>
 
       <div class="p-3">
-        {#if resultsState === "loading"}
+        {#if showPendingPill}
+          <div class="flex justify-center pb-2">
+            <Button size="sm" class="h-7 rounded-full px-3 text-xs" onclick={showPending}>{pendingText}</Button>
+          </div>
+        {/if}
+        {#if live && rows.length === 0}
+          <EmptyState
+            variant="no-data"
+            title="Waiting for new logs"
+            description="Logs that match the query appear here as they arrive."
+          />
+        {:else if resultsState === "loading"}
           <SkeletonTable rows={8} columns={6} />
         {:else if resultsState === "error"}
           <EmptyState variant="error" title="Could not load logs" description={error ?? undefined}>
@@ -1317,10 +1507,13 @@
           <TableLoadingOverlay {loading}>
             {#if view === "terminal"}
               <TerminalLogView
+                bind:this={terminalView}
                 logs={rows}
+                isLiveTail={live}
                 maxHeight={RESULTS_HEIGHT}
                 {selectedId}
                 onSelect={(log) => openDetails(log)}
+                onScrollTopChange={handleScrollTop}
               />
             {:else}
               <LogResultsTable
@@ -1339,6 +1532,7 @@
                 onFilter={(key, value) => applyFieldToggle(key, value, "include")}
                 onProjectFilter={filterProject}
                 onLoadMore={() => void loadMore()}
+                onScrollTopChange={handleScrollTop}
               />
             {/if}
           </TableLoadingOverlay>
