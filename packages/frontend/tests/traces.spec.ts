@@ -225,7 +225,7 @@ test.describe('Traces Journey', () => {
     await errorsRadio.check();
     await page.locator('body').click({ position: { x: 0, y: 0 } });
 
-    await expect(page.getByText('No traces match the current filters.')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('No traces match these filters')).toBeVisible({ timeout: 15000 });
 
     // Clearing the filters restores both traces
     await page.locator('button:has-text("Clear filters")').click();
