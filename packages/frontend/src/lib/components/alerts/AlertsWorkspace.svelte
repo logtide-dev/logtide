@@ -49,6 +49,7 @@
 	let loadingMore = $state(false);
 	let loadError = $state('');
 	let loadedOrg = $state<string | null>(null);
+	let loadedProject = $state<string | null>(null);
 	let busyIds = $state<string[]>([]);
 
 	let showCreate = $state(false);
@@ -71,6 +72,10 @@
 		if (projectId == null) return true;
 		return scopeIds.length === 0 || scopeIds.includes(projectId);
 	}
+
+	// With exactly one project in scope the server filters history and detections,
+	// so a quiet project is not buried under a busy one's newest 50 rows.
+	const serverProjectId = $derived(scopeIds.length === 1 ? scopeIds[0] : null);
 
 	const visibleRules = $derived(rules.filter((r) => inScope(r.projectId)));
 	const visibleHistory = $derived(history.filter((h) => inScope(h.projectId)));
@@ -100,14 +105,16 @@
 
 	async function loadAll(id: string) {
 		const mine = ++seq;
+		const pid = serverProjectId;
 		loading = true;
 		loadError = '';
 		try {
 			const [rulesRes, historyRes, detectionsRes, projectsRes, channelsRes] = await Promise.allSettled([
 				alertsAPI.getAlertRules(id),
-				alertsAPI.getAlertHistory(id, { limit: HISTORY_PAGE }),
+				alertsAPI.getAlertHistory(id, { limit: HISTORY_PAGE, ...(pid ? { projectId: pid } : {}) }),
 				getRecentDetections({
 					organizationId: id,
+					...(pid ? { projectId: pid } : {}),
 					category: ['reliability', 'database', 'business'],
 					limit: HISTORY_PAGE,
 				}),
@@ -139,10 +146,42 @@
 					? Object.fromEntries(channelsRes.value.map((c) => [c.id, `${c.type}: ${c.name}`]))
 					: {};
 			loadedOrg = id;
+			loadedProject = pid;
 		} finally {
 			if (mine === seq) loading = false;
 		}
 	}
+
+	// The scope narrowed to (or away from) one project: reload what the server filters.
+	async function reloadScoped(id: string, pid: string | null) {
+		const mine = ++seq;
+		loadedProject = pid;
+		const [historyRes, detectionsRes] = await Promise.allSettled([
+			alertsAPI.getAlertHistory(id, { limit: HISTORY_PAGE, ...(pid ? { projectId: pid } : {}) }),
+			getRecentDetections({
+				organizationId: id,
+				...(pid ? { projectId: pid } : {}),
+				category: ['reliability', 'database', 'business'],
+				limit: HISTORY_PAGE,
+			}),
+		]);
+		if (mine !== seq) return;
+		if (historyRes.status === 'fulfilled') {
+			history = historyRes.value.history ?? [];
+			historyTotal = historyRes.value.total ?? history.length;
+		} else {
+			history = [];
+			historyTotal = 0;
+		}
+		detections = detectionsRes.status === 'fulfilled' ? (detectionsRes.value.detections ?? []) : [];
+	}
+
+	$effect(() => {
+		const pid = serverProjectId;
+		const id = orgId;
+		if (!id || id !== loadedOrg || pid === untrack(() => loadedProject)) return;
+		untrack(() => void reloadScoped(id, pid));
+	});
 
 	$effect(() => {
 		const id = orgId;
@@ -167,7 +206,11 @@
 		const id = orgId;
 		loadingMore = true;
 		try {
-			const res = await alertsAPI.getAlertHistory(id, { limit: HISTORY_PAGE, offset: history.length });
+			const res = await alertsAPI.getAlertHistory(id, {
+				limit: HISTORY_PAGE,
+				offset: history.length,
+				...(loadedProject ? { projectId: loadedProject } : {}),
+			});
 			if (id !== orgId) return;
 			history = [...history, ...(res.history ?? [])];
 			historyTotal = res.total ?? historyTotal;

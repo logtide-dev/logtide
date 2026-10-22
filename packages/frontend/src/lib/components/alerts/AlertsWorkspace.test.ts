@@ -185,6 +185,29 @@ describe('AlertsWorkspace', () => {
     );
   });
 
+  it('asks the server for one project when exactly one is in scope, and pages with it', async () => {
+    setUrl('', '/dashboard/projects/p1/alerts');
+    mount({ embedded: true, lockedProjectId: 'p1' });
+    await screen.findByText('Rule p1-rule');
+    expect(h.getHistory).toHaveBeenCalledWith('org-1', expect.objectContaining({ projectId: 'p1' }));
+    expect(h.detections).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p1' }));
+
+    cleanup();
+    h.getHistory.mockClear();
+    h.detections.mockClear();
+    setUrl('?project=p2');
+    mount();
+    await screen.findByText('Rule p2-rule');
+    expect(h.getHistory).toHaveBeenCalledWith('org-1', expect.objectContaining({ projectId: 'p2' }));
+
+    cleanup();
+    h.getHistory.mockClear();
+    setUrl();
+    mount();
+    await screen.findByText('Rule p2-rule');
+    expect(h.getHistory.mock.calls[0][1].projectId).toBeUndefined();
+  });
+
   it('?create=1 with prefill opens Create prefilled and strips the params', async () => {
     setUrl('?create=1&projectId=p&query=x&levels=error,critical&service=api&name=n&keep=1');
     mount();
