@@ -136,6 +136,23 @@ export const webhookDeliveryService = {
       .execute();
   },
 
+  /**
+   * Retire in-flight deliveries (pending or failed, i.e. still retrying) of
+   * one logical event so a later, opposite event wins. Terminal rows are never
+   * touched. Returns how many rows were retired.
+   */
+  async supersedeInFlight(organizationId: string, eventId: string, reason: string): Promise<number> {
+    const rows = await db
+      .updateTable('webhook_deliveries')
+      .set({ status: 'dead', next_attempt_at: null, last_error: reason, updated_at: new Date() })
+      .where('organization_id', '=', organizationId)
+      .where('event_id', '=', eventId)
+      .where('status', 'in', ['pending', 'failed'])
+      .returning('id')
+      .execute();
+    return rows.length;
+  },
+
   async resetForReplay(id: string): Promise<DeliveryRow | undefined> {
     return db
       .updateTable('webhook_deliveries')

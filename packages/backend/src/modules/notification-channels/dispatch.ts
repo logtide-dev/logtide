@@ -8,6 +8,7 @@
 
 import type { WebhookEventType } from '@logtide/shared';
 import { webhookDispatcher } from '../webhooks/index.js';
+import { webhookDeliveryService } from '../webhooks/service.js';
 import {
   PAGERDUTY_EVENTS_URL,
   buildPagerDutyEvent,
@@ -33,6 +34,25 @@ export interface PagerDutyTarget {
 }
 
 export async function notifyPagerDuty(target: PagerDutyTarget, event: PagerDutyNotify): Promise<void> {
+  // Trigger and resolve are independent deliveries with their own retries, so
+  // a retrying trigger could open an incident after its resolve was sent (or
+  // the reverse). The newer action retires the still-retrying opposite one,
+  // and its dead row also stops the in-flight dedup from folding a new
+  // trigger into an old one across a resolve. Best effort: never blocks.
+  const opposite: PagerDutyAction = event.action === 'resolve' ? 'trigger' : 'resolve';
+  try {
+    await webhookDeliveryService.supersedeInFlight(
+      event.organizationId,
+      `${event.dedupKey}:${opposite}:${target.channelId}`,
+      `superseded by ${event.action}`
+    );
+  } catch (error) {
+    console.error(
+      '[PagerDuty] could not supersede in-flight deliveries:',
+      error instanceof Error ? error.message : error
+    );
+  }
+
   await webhookDispatcher.enqueue({
     url: PAGERDUTY_EVENTS_URL,
     organizationId: event.organizationId,
