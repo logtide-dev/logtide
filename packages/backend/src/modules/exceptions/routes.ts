@@ -10,48 +10,17 @@
 
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ERROR_GROUP_STATUSES, EXCEPTION_LANGUAGES } from '@logtide/shared';
+import {
+  ERROR_GROUP_STATUSES,
+  ERROR_GROUP_SORTS,
+  EXCEPTION_LANGUAGES,
+} from '@logtide/shared';
 import { ExceptionService } from './service.js';
-import { usersService } from '../users/service.js';
-import { OrganizationsService } from '../organizations/service.js';
 import { db } from '../../database/index.js';
+import { authenticate, checkOrganizationMembership } from './route-helpers.js';
+import { triageRoutes } from './triage-routes.js';
 
 const exceptionService = new ExceptionService(db);
-const organizationsService = new OrganizationsService();
-
-/**
- * Middleware to extract and validate session token
- */
-async function authenticate(request: any, reply: any) {
-  const token = request.headers.authorization?.replace('Bearer ', '');
-
-  if (!token) {
-    return reply.status(401).send({
-      error: 'No token provided',
-    });
-  }
-
-  const user = await usersService.validateSession(token);
-
-  if (!user) {
-    return reply.status(401).send({
-      error: 'Invalid or expired session',
-    });
-  }
-
-  request.user = user;
-}
-
-/**
- * Check if user is member of organization
- */
-async function checkOrganizationMembership(
-  userId: string,
-  organizationId: string
-): Promise<boolean> {
-  const organizations = await organizationsService.getUserOrganizations(userId);
-  return organizations.some((org) => org.id === organizationId);
-}
 
 /**
  * Exception API Routes
@@ -247,10 +216,16 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
           required: ['organizationId'],
           properties: {
             organizationId: { type: 'string', format: 'uuid' },
-            projectId: { type: 'string', format: 'uuid' },
+            // One uuid or a comma separated list (validated below)
+            projectId: { type: 'string', maxLength: 2000 },
             status: { type: 'string', enum: [...ERROR_GROUP_STATUSES] },
             language: { type: 'string', enum: [...EXCEPTION_LANGUAGES] },
             search: { type: 'string' },
+            from: { type: 'string', maxLength: 64 },
+            to: { type: 'string', maxLength: 64 },
+            sort: { type: 'string', enum: [...ERROR_GROUP_SORTS] },
+            assignedTo: { type: 'string', maxLength: 64 },
+            service: { type: 'string', minLength: 1, maxLength: 200 },
             limit: { type: 'integer', minimum: 1, maximum: 100 },
             offset: { type: 'integer', minimum: 0 },
           },
@@ -261,10 +236,19 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
       try {
         const schema = z.object({
           organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
+          projectId: z
+            .string()
+            .transform((v) => v.split(',').map((x) => x.trim()))
+            .pipe(z.array(z.string().uuid()).min(1).max(50))
+            .optional(),
           status: z.enum(ERROR_GROUP_STATUSES).optional(),
           language: z.enum(EXCEPTION_LANGUAGES).optional(),
           search: z.string().optional(),
+          from: z.string().datetime({ offset: true }).optional(),
+          to: z.string().datetime({ offset: true }).optional(),
+          sort: z.enum(ERROR_GROUP_SORTS).optional(),
+          assignedTo: z.union([z.literal('unassigned'), z.string().uuid()]).optional(),
+          service: z.string().min(1).max(200).optional(),
           limit: z.coerce.number().min(1).max(100).optional().default(20),
           offset: z.coerce.number().min(0).optional().default(0),
         });
@@ -285,10 +269,15 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
 
         const result = await exceptionService.getErrorGroups({
           organizationId: query.organizationId,
-          projectId: query.projectId,
+          projectIds: query.projectId,
           status: query.status,
           language: query.language,
           search: query.search,
+          from: query.from ? new Date(query.from) : undefined,
+          to: query.to ? new Date(query.to) : undefined,
+          sort: query.sort,
+          assignedTo: query.assignedTo,
+          service: query.service,
           limit: query.limit,
           offset: query.offset,
         });
@@ -841,4 +830,8 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
       }
     }
   );
+
+  // Triage routes (PATCH, bulk, trends, events, by-trace) live in their own
+  // encapsulated plugin; it inherits the auth hook added above.
+  await fastify.register(triageRoutes);
 }
