@@ -26,6 +26,7 @@ vi.mock('$lib/api/auth', () => ({
 }));
 
 import { goto } from '$app/navigation';
+import { authAPI } from '$lib/api/auth';
 import RequireOrganization from './RequireOrganization.svelte';
 import { page } from '$app/state';
 import { authStore } from '$lib/stores/auth';
@@ -130,5 +131,29 @@ describe('RequireOrganization', () => {
     getOrganizations.mockResolvedValue({ organizations: [] });
     render(RequireOrganization);
     await waitFor(() => expect(goto).toHaveBeenCalledWith('/onboarding'));
+  });
+  it('keeps the session when the token check fails on the network', async () => {
+    vi.mocked(authAPI.getMe).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    getOrganizations.mockResolvedValue({ organizations: [freshOrg] });
+
+    render(RequireOrganization, {
+      props: { children: createRawSnippet(() => ({ render: () => '<p>page content</p>' })) },
+    });
+
+    expect(await screen.findByText('page content')).toBeInTheDocument();
+    expect(goto).not.toHaveBeenCalledWith('/login');
+    expect(get(authStore).token).toBe('token-1');
+    expect(localStorage.getItem('logtide_auth')).not.toBeNull();
+  });
+
+  it('signs out and goes to login when the backend rejects the token', async () => {
+    vi.mocked(authAPI.getMe).mockRejectedValueOnce(
+      Object.assign(new Error('Invalid or expired session'), { status: 401 })
+    );
+
+    render(RequireOrganization);
+
+    await waitFor(() => expect(goto).toHaveBeenCalledWith('/login'));
+    expect(get(authStore).token).toBeNull();
   });
 });

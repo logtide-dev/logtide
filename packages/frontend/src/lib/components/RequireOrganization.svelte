@@ -70,10 +70,14 @@
         try {
           const { user } = await authAPI.getMe($authStore.token);
           authStore.updateUser(user);
-        } catch {
-          authStore.clearAuth();
-          goto('/login');
-          return;
+        } catch (e) {
+          // Only a rejected token ends the session. A network failure (including
+          // a fetch aborted by a reload or navigation) must not log the user out.
+          if ((e as { status?: number }).status === 401) {
+            authStore.clearAuth();
+            goto('/login');
+            return;
+          }
         }
       }
     } catch (e) {

@@ -144,7 +144,9 @@ export class AuthAPI {
       const error: ErrorResponse = await response
         .json()
         .catch(() => ({ error: response.statusText }));
-      throw new Error(error.error || 'Failed to get user info');
+      throw Object.assign(new Error(error.error || 'Failed to get user info'), {
+        status: response.status,
+      });
     }
 
     return response.json();
