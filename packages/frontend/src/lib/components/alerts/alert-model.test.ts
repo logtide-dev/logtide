@@ -51,7 +51,7 @@ describe('countTriggers24h', () => {
   ];
 
   it('prefers the server field', () => {
-    expect(countTriggers24h({ id: 'a', triggers24h: 9 }, history, NOW)).toBe(9);
+    expect(countTriggers24h({ id: 'a', triggersLast24h: 3 }, history, NOW)).toBe(3);
   });
 
   it('falls back to history within 24 h and ignores other rules', () => {

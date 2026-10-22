@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 import IncidentDetailActions from './IncidentDetailActions.svelte';
-import rawSource from './IncidentDetailActions.svelte?raw';
 
 function incident(over: Record<string, unknown> = {}) {
   return {
@@ -61,10 +60,6 @@ describe('IncidentDetailActions', () => {
   it('buttons are disabled while busy', () => {
     render(IncidentDetailActions, { props: props({ busy: true }) });
     expect((screen.getByRole('button', { name: 'Acknowledge' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('keeps the W10 add-exception seam marker in the source', () => {
-    expect(rawSource).toContain('<!-- SEAM:W10 add-exception -->');
   });
 
   it('Delete opens a ConfirmDialog and does not call onDelete until confirmed', async () => {

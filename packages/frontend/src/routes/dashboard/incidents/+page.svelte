@@ -6,7 +6,7 @@
 	import { currentOrganization } from '$lib/stores/organization';
 	import { authStore } from '$lib/stores/auth';
 	import { scopeStore, readScopeFromUrl } from '$lib/stores/scope';
-	import { siemStore, incidents, incidentsLoading, incidentsError, incidentsTotal, sseStatus } from '$lib/stores/siem';
+	import { siemStore, incidents, incidentsLoading, incidentsError, incidentsErrorCode, incidentsTotal, sseStatus } from '$lib/stores/siem';
 	import { layoutStore } from '$lib/stores/layout';
 	import { toastStore } from '$lib/stores/toast';
 	import { projectsAPI } from '$lib/api/projects';
@@ -136,6 +136,15 @@
 		selected = [];
 		void goto(serializeInboxUrl(next, page.url), { replaceState: true, keepFocus: true, noScroll: true });
 	}
+
+	// A stale assignee in a shared link is rejected with 400 invalid_assignee: drop it,
+	// which changes the filters and so refetches.
+	$effect(() => {
+		const code = $incidentsErrorCode;
+		if (code === 'invalid_assignee' && untrack(() => inbox.assignee) !== 'anyone') {
+			untrack(() => update({ assignee: 'anyone' }));
+		}
+	});
 
 	function reset() {
 		update({ ...clearedState(inbox) });

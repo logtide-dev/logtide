@@ -26,6 +26,9 @@ vi.mock('$lib/components/CreateAlertDialog.svelte', async () => ({
 vi.mock('$lib/components/EditAlertDialog.svelte', async () => ({
   default: (await import('../../../test-stubs/EditAlertDialog.stub.svelte')).default,
 }));
+vi.mock('$lib/components/DetectionPacksGalleryDialog.svelte', async () => ({
+  default: (await import('../../../test-stubs/DetectionPacksGalleryDialog.stub.svelte')).default,
+}));
 vi.mock('$lib/api/alerts', () => ({
   alertsAPI: {
     getAlertRules: h.getRules,
@@ -220,6 +223,36 @@ describe('AlertsWorkspace', () => {
     mount();
     await waitFor(() => expect(h.error).toHaveBeenCalledWith('Alert rule not found'));
     expect(screen.queryByTestId('edit-dialog')).toBeNull();
+  });
+
+  it('?rule=<id> highlights that rule row, scrolls to it and keeps the param', async () => {
+    const scroll = vi.fn();
+    (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = scroll;
+    setUrl('?rule=p1-rule');
+    mount();
+    const cell = await screen.findByText('Rule p1-rule');
+    const row = cell.closest('tr')!;
+    await waitFor(() => expect(row.getAttribute('data-state')).toBe('selected'));
+    expect(screen.getByText('Rule p2-rule').closest('tr')!.getAttribute('data-state')).toBeNull();
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+    expect(h.goto).not.toHaveBeenCalled();
+  });
+
+  it('?rule= with an unknown id highlights nothing', async () => {
+    setUrl('?rule=nope');
+    mount();
+    const cell = await screen.findByText('Rule p1-rule');
+    expect(cell.closest('tr')!.getAttribute('data-state')).toBeNull();
+    expect(document.querySelector('tr[data-state="selected"]')).toBeNull();
+  });
+
+  it('Detection packs opens the gallery with the reliability, database and business categories', async () => {
+    mount();
+    await screen.findByText('Rule p1-rule');
+    expect(screen.queryByTestId('packs-dialog')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Detection packs' }));
+    const dialog = await screen.findByTestId('packs-dialog');
+    expect(dialog.getAttribute('data-categories')).toBe('reliability,database,business');
   });
 
   it('toggle patches one row without reloading', async () => {

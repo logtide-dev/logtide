@@ -158,14 +158,50 @@ describe('incident detail page', () => {
     await waitFor(() => expect(h.update).toHaveBeenCalledWith('i1', 'org-1', { assigneeId: null }));
   });
 
-  it('Mark false positive updates status and leaves the SEAM:W10 marker region intact', async () => {
+  it('Mark false positive updates status and, with no detections, opens no dialog', async () => {
     h.update.mockResolvedValue(inc({ status: 'false_positive', updatedAt: '2026-10-22T11:00:00.000Z' }));
     await renderPage();
     await fireEvent.click(screen.getByRole('button', { name: 'Mark false positive' }));
     expect(h.update).toHaveBeenCalledWith('i1', 'org-1', { status: 'false_positive' });
     await waitFor(() => expect(screen.getByText('False positive')).toBeTruthy());
-    const src = (await import('$lib/components/siem/incidents/IncidentDetailActions.svelte?raw')).default;
-    expect(src).toContain('<!-- SEAM:W10 add-exception -->');
+    expect(screen.queryByRole('heading', { name: 'Add exception' })).toBeNull();
+  });
+
+  it('false positive on a sigma incident opens Add exception prefilled from the detection', async () => {
+    h.update.mockResolvedValue(inc({ status: 'false_positive', updatedAt: '2026-10-22T11:00:00.000Z' }));
+    h.get.mockResolvedValue({
+      ...detail(),
+      detections: [
+        {
+          id: 'd1',
+          time: '2026-10-22T10:00:00.000Z',
+          organizationId: 'org-1',
+          projectId: 'p1',
+          sigmaRuleId: 'rule-7',
+          logId: 'l1',
+          severity: 'high',
+          ruleTitle: 'Failed logins',
+          ruleDescription: null,
+          mitreTactics: null,
+          mitreTechniques: null,
+          service: 'auth',
+          logLevel: 'error',
+          logMessage: 'bad password',
+          traceId: null,
+          matchedFields: { user: 'bob' },
+          incidentId: 'i1',
+          category: 'security',
+        },
+      ],
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: 'Mark false positive' }));
+    expect(await screen.findByRole('heading', { name: 'Add exception' })).toBeTruthy();
+    expect((screen.getByLabelText('Field 1') as HTMLInputElement).value).toBe('service');
+    expect((screen.getByLabelText('Value 1') as HTMLInputElement).value).toBe('auth');
+    expect((screen.getByLabelText('Field 2') as HTMLInputElement).value).toBe('user');
+    expect((screen.getByLabelText('Value 2') as HTMLInputElement).value).toBe('bob');
+    expect(screen.getByRole('dialog').textContent).toContain('"Failed logins"');
   });
 
   it('an SSE incident_updated for this id merges into the page and a detection_created reloads silently', async () => {

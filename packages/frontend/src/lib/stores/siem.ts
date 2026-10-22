@@ -22,6 +22,7 @@ export interface SiemState {
 	incidents: IncidentListItem[];
 	incidentsLoading: boolean;
 	incidentsError: string | null;
+	incidentsErrorCode: string | null;
 	incidentsTotal: number;
 
 	// Real-time
@@ -53,6 +54,7 @@ const initialState: SiemState = {
 	incidents: [],
 	incidentsLoading: false,
 	incidentsError: null,
+	incidentsErrorCode: null,
 	incidentsTotal: 0,
 
 	// Real-time
@@ -157,7 +159,7 @@ function createSiemStore() {
 		): Promise<void> {
 			const seq = ++loadSeq;
 			if (!opts.silent) {
-				update((state) => ({ ...state, incidentsLoading: true, incidentsError: null }));
+				update((state) => ({ ...state, incidentsLoading: true, incidentsError: null, incidentsErrorCode: null }));
 			}
 
 			try {
@@ -170,6 +172,7 @@ function createSiemStore() {
 					incidentsTotal: response.total,
 					incidentsLoading: false,
 					incidentsError: null,
+					incidentsErrorCode: null,
 				}));
 			} catch (error) {
 				if (seq !== loadSeq) return;
@@ -179,6 +182,7 @@ function createSiemStore() {
 					...state,
 					incidentsLoading: false,
 					incidentsError: error instanceof Error ? error.message : 'Failed to load incidents',
+					incidentsErrorCode: (error as { code?: string } | null)?.code ?? null,
 				}));
 			}
 		},
@@ -419,6 +423,7 @@ export const dashboardTimeRange = derived(siemStore, ($store) => $store.dashboar
 export const incidents = derived(siemStore, ($store) => $store.incidents);
 export const incidentsLoading = derived(siemStore, ($store) => $store.incidentsLoading);
 export const incidentsError = derived(siemStore, ($store) => $store.incidentsError);
+export const incidentsErrorCode = derived(siemStore, ($store) => $store.incidentsErrorCode);
 export const incidentsTotal = derived(siemStore, ($store) => $store.incidentsTotal);
 
 export const realtimeEnabled = derived(siemStore, ($store) => $store.realtimeEnabled);

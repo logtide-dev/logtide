@@ -28,6 +28,8 @@
 		onDelete: (rule: AlertRule) => void;
 		onSnooze: (rule: AlertRule, untilIso: string) => void;
 		onUnsnooze: (rule: AlertRule) => void;
+		/** Rule to mark as the target of a deep link (`?rule=<id>`). */
+		highlightRuleId?: string | null;
 		empty?: Snippet;
 	}
 
@@ -44,6 +46,7 @@
 		onDelete,
 		onSnooze,
 		onUnsnooze,
+		highlightRuleId = null,
 		empty,
 	}: Props = $props();
 
@@ -78,7 +81,7 @@
 
 {#snippet nameCell(r: AlertRule)}
 	<span class="inline-flex items-center gap-2">
-		<span class="font-medium">{r.name}</span>
+		<span class="font-medium" data-rule-id={r.id}>{r.name}</span>
 		{#if r.alertType === 'rate_of_change'}
 			<span class="rounded border bg-secondary px-1.5 py-0.5 text-xs text-secondary-foreground">Anomaly</span>
 		{/if}
@@ -171,4 +174,11 @@
 	</span>
 {/snippet}
 
-<DataTable {columns} rows={rules} rowKey={(r: AlertRule) => r.id} {loading} {empty} />
+<DataTable
+	{columns}
+	rows={rules}
+	rowKey={(r: AlertRule) => r.id}
+	selected={highlightRuleId ? [highlightRuleId] : []}
+	{loading}
+	{empty}
+/>

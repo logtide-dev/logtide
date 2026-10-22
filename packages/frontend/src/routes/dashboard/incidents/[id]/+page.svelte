@@ -26,6 +26,8 @@
 	import IncidentSourceBadge from '$lib/components/siem/incidents/IncidentSourceBadge.svelte';
 	import IncidentTimeline from '$lib/components/siem/incidents/IncidentTimeline.svelte';
 	import IncidentSourcePanel from '$lib/components/siem/incidents/IncidentSourcePanel.svelte';
+	import AddExceptionDialog from '$lib/components/siem/shared/AddExceptionDialog.svelte';
+	import { exceptionPrefillFromDetection } from '$lib/components/siem/shared/exception-prefill';
 	import IncidentDetailActions from '$lib/components/siem/incidents/IncidentDetailActions.svelte';
 	import {
 		buildMergedTimeline,
@@ -54,6 +56,12 @@
 	let notFound = $state(false);
 	let loadError = $state('');
 	let busy = $state(false);
+	let exceptionOpen = $state(false);
+	let exceptionTarget = $state<{
+		ruleId: string;
+		ruleTitle: string;
+		prefill: ReturnType<typeof exceptionPrefillFromDetection>;
+	} | null>(null);
 
 	const orgId = $derived($currentOrganization?.id ?? null);
 	const incidentId = $derived(page.params.id ?? null);
@@ -175,8 +183,8 @@
 		}
 	});
 
-	async function apply(patch: IncidentPatch, message: string) {
-		if (!incident || !orgId || busy) return;
+	async function apply(patch: IncidentPatch, message: string): Promise<boolean> {
+		if (!incident || !orgId || busy) return false;
 		busy = true;
 		try {
 			const updated = await incidentsAPI.update(incident.id, orgId, patch);
@@ -184,8 +192,10 @@
 			siemStore.seedIncidents([incident]);
 			toastStore.success(message);
 			await loadIncident({ silent: true });
+			return true;
 		} catch (e) {
 			toastStore.error(e instanceof Error ? e.message : 'Could not update incident');
+			return false;
 		} finally {
 			busy = false;
 		}
@@ -194,7 +204,16 @@
 	const acknowledge = () => apply({ status: 'investigating' }, 'Incident acknowledged');
 	const resolve = () => apply({ status: 'resolved' }, 'Incident resolved');
 	const reopen = () => apply({ status: 'open' }, 'Incident reopened');
-	const falsePositive = () => apply({ status: 'false_positive' }, 'Marked as false positive');
+	// The incident stays marked even if the exception dialog is dismissed.
+	async function falsePositive() {
+		const ok = await apply({ status: 'false_positive' }, 'Marked as false positive');
+		const d = detections[0];
+		if (ok && d) {
+			// Snapshot, so a silent reload cannot reset the dialog while it is open.
+			exceptionTarget = { ruleId: d.sigmaRuleId, ruleTitle: d.ruleTitle, prefill: exceptionPrefillFromDetection(d) };
+			exceptionOpen = true;
+		}
+	}
 	const assign = (userId: string | null) =>
 		apply({ assigneeId: userId }, userId ? 'Assignee updated' : 'Assignee removed');
 
@@ -306,3 +325,13 @@
 		</div>
 	{/if}
 </div>
+
+{#if orgId && exceptionTarget}
+	<AddExceptionDialog
+		bind:open={exceptionOpen}
+		organizationId={orgId}
+		ruleId={exceptionTarget.ruleId}
+		ruleTitle={exceptionTarget.ruleTitle}
+		prefill={exceptionTarget.prefill}
+	/>
+{/if}

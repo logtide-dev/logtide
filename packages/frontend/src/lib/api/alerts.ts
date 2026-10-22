@@ -53,7 +53,7 @@ export interface AlertRule {
   lastEvaluatedAt?: string | null;
   snoozedUntil?: string | null;
   renotifyMinutes?: number | null;
-  triggers24h?: number;
+  triggersLast24h?: number;
   createdAt: string;
   updatedAt: string;
 }

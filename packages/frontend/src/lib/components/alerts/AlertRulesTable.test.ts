@@ -107,7 +107,7 @@ describe('AlertRulesTable', () => {
       { ruleId: 'a', triggeredAt: recent },
       { ruleId: 'other', triggeredAt: recent },
     ] as AlertHistory[];
-    mount([rule({ id: 'a', name: 'A' }), rule({ id: 'b', name: 'B', triggers24h: 7 })], { history });
+    mount([rule({ id: 'a', name: 'A' }), rule({ id: 'b', name: 'B', triggersLast24h: 7 })], { history });
     const rows = screen.getAllByRole('row');
     expect(within(rows[1]).getByText('2')).toBeTruthy();
     expect(within(rows[2]).getByText('7')).toBeTruthy();
