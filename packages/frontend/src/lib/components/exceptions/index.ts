@@ -10,3 +10,6 @@ export { default as ErrorSparkline } from './ErrorSparkline.svelte';
 export { default as ErrorStatusBadges } from './ErrorStatusBadges.svelte';
 export { default as BulkActionBar } from './BulkActionBar.svelte';
 export type { AssigneeMember, IgnoreOptions } from './error-status';
+export { default as ErrorGroupHeader } from './ErrorGroupHeader.svelte';
+export { default as LatestEventPanel } from './LatestEventPanel.svelte';
+export { default as ErrorTrendChart } from './ErrorTrendChart.svelte';
