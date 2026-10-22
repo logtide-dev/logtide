@@ -52,7 +52,6 @@
 	{#if actions.falsePositive}
 		<Button variant="outline" onclick={onFalsePositive} disabled={busy}>Mark false positive</Button>
 	{/if}
-	<!-- SEAM:W10 add-exception -->
 
 	{#if actions.publishToStatusPage}
 		<Button variant="outline" onclick={onPublish} disabled={busy}>Publish to status page</Button>
