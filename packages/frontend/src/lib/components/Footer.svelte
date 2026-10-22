@@ -1,7 +1,12 @@
+<script lang="ts" module>
+  /** The one place to bump the displayed app version. */
+  export const APP_VERSION = "v1.5.0";
+</script>
+
 <script lang="ts">
   import Github from "@lucide/svelte/icons/github";
 
-  const version = "v1.5.0";
+  const version = APP_VERSION;
   const currentYear = new Date().getFullYear();
   const githubUrl = "https://github.com/logtide-dev/logtide";
 </script>

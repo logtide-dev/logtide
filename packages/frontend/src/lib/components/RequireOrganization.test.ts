@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
+import { createRawSnippet } from 'svelte';
 import { get } from 'svelte/store';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
@@ -70,9 +71,7 @@ describe('RequireOrganization', () => {
 
     render(RequireOrganization);
 
-    await waitFor(() =>
-      expect(screen.queryByText('Loading organization...')).toBeNull()
-    );
+    await waitFor(() => expect(screen.queryByTestId('shell-skeleton')).toBeNull());
     expect(get(currentOrganization)?.id).toBe('org-1');
   });
 
@@ -83,5 +82,31 @@ describe('RequireOrganization', () => {
 
     await waitFor(() => expect(get(currentOrganization)?.id).toBe('org-1'));
     expect(get(currentOrganization)?.retentionDays).toBe(365);
+  });
+
+  it('renders the skeleton while organizations load', async () => {
+    getOrganizations.mockReturnValue(new Promise(() => {}));
+
+    render(RequireOrganization);
+
+    expect(await screen.findByTestId('shell-skeleton')).toBeInTheDocument();
+  });
+
+  it('shows an error state with Retry when the organization list fails', async () => {
+    getOrganizations.mockRejectedValueOnce(new Error('boom'));
+    getOrganizations.mockResolvedValueOnce({ organizations: [freshOrg] });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(RequireOrganization, {
+      props: { children: createRawSnippet(() => ({ render: () => '<p>page content</p>' })) },
+    });
+
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    await fireEvent.click(retry);
+
+    await waitFor(() => expect(getOrganizations).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('page content')).toBeInTheDocument();
+    consoleError.mockRestore();
   });
 });
