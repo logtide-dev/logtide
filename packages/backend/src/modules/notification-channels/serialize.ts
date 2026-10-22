@@ -27,7 +27,7 @@ function isMissingSecret(value: unknown): boolean {
   return typeof value !== 'string' || value === '' || value === SECRET_MASK;
 }
 
-function reduceUrlToHost(url: unknown): string {
+export function reduceUrlToHost(url: unknown): string {
   if (typeof url !== 'string') return '';
   try {
     const parsed = new URL(url);

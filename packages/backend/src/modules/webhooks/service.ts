@@ -5,6 +5,7 @@
 import { db } from '../../database/connection.js';
 import type { Selectable } from 'kysely';
 import type { WebhookDeliveriesTable, WebhookDeliveryAttemptsTable } from '../../database/types.js';
+import { reduceUrlToHost } from '../notification-channels/serialize.js';
 
 export type DeliveryRow = Selectable<WebhookDeliveriesTable>;
 export type DeliveryAttemptRow = Selectable<WebhookDeliveryAttemptsTable>;
@@ -169,10 +170,13 @@ export const webhookDeliveryService = {
  * API boundary. The worker reads `signingSecret`/`headers` from metadata to send
  * the request, but those must never be returned to API clients.
  */
-export function redactDeliveryForApi<T extends DeliveryRow | undefined>(row: T): T {
+export function redactDeliveryForApi<T extends DeliveryRow | undefined>(row: T, isAdmin = false): T {
   if (!row) return row;
+  // Webhook URLs carry the credential (Slack/Discord path token, Teams sig=),
+  // so members only ever see the host, like the channel API.
+  const base = isAdmin ? row : { ...row, url: reduceUrlToHost(row.url) };
   const metadata = row.metadata as Record<string, unknown> | null;
-  if (!metadata) return row;
+  if (!metadata) return base as T;
   const { signingSecret: _s, headers: _h, ...safe } = metadata;
   // PagerDuty bodies carry the integration routing key, which is a credential.
   const payload = safe.payload;
@@ -180,5 +184,5 @@ export function redactDeliveryForApi<T extends DeliveryRow | undefined>(row: T):
     const { routing_key: _r, ...payloadSafe } = payload as Record<string, unknown>;
     safe.payload = payloadSafe;
   }
-  return { ...row, metadata: safe };
+  return { ...base, metadata: safe } as T;
 }

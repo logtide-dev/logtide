@@ -222,6 +222,70 @@ describe('Webhook Deliveries Routes', () => {
     });
   });
 
+  describe('webhook URL redaction for members', () => {
+    const SLACK = 'https://hooks.slack.com/services/T1/B2/secret';
+
+    async function memberToken() {
+      const memberUser = await createTestUser({ email: 'member-url@test.com' });
+      await db
+        .insertInto('organization_members')
+        .values({ user_id: memberUser.id, organization_id: testOrganization.id, role: 'member' })
+        .execute();
+      return (await createTestSession(memberUser.id)).token;
+    }
+
+    async function makeDelivery() {
+      return webhookDeliveryService.createDelivery({
+        organizationId: testOrganization.id,
+        eventType: 'alert',
+        eventId: 'evt-url',
+        url: SLACK,
+        maxAttempts: 3,
+      });
+    }
+
+    it('hides the path token from members on list and detail', async () => {
+      const delivery = await makeDelivery();
+      const token = await memberToken();
+      const list = await app.inject({
+        method: 'GET',
+        url: `/api/v1/webhooks/deliveries?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(list.payload).not.toContain('secret');
+      expect(JSON.parse(list.payload).deliveries[0].url).toBe('https://hooks.slack.com/...');
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/v1/webhooks/deliveries/${delivery.id}`,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(detail.payload).not.toContain('secret');
+      expect(JSON.parse(detail.payload).delivery.url).toBe('https://hooks.slack.com/...');
+    });
+
+    it('gives admins the full URL', async () => {
+      const delivery = await makeDelivery();
+      const detail = await app.inject({
+        method: 'GET',
+        url: `/api/v1/webhooks/deliveries/${delivery.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      expect(JSON.parse(detail.payload).delivery.url).toBe(SLACK);
+    });
+
+    it('does not leak the URL in the replay response for admins either', async () => {
+      const delivery = await makeDelivery();
+      await webhookDeliveryService.markDead(delivery.id, 3, 'x');
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/webhooks/deliveries/${delivery.id}/replay`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).delivery.url).toBe(SLACK);
+    });
+  });
+
   describe('POST /api/v1/webhooks/deliveries/:id/replay', () => {
     it('should replay a dead delivery', async () => {
       const delivery = await webhookDeliveryService.createDelivery({
