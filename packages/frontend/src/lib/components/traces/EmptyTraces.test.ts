@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('$lib/config', () => ({ getApiUrl: () => 'https://logs.example.com' }));
-const copy = vi.fn(async () => true);
+const copy = vi.fn(async (_value: string) => true);
 vi.mock('$lib/utils/clipboard', () => ({ copyToClipboard: (v: string) => copy(v) }));
 
 import { render, screen, fireEvent } from '@testing-library/svelte';
@@ -18,7 +18,7 @@ describe('EmptyTraces', () => {
     render(EmptyTraces);
     await fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
     expect(copy).toHaveBeenCalledTimes(1);
-    const copied = copy.mock.calls[0][0] as unknown as string;
+    const copied = copy.mock.calls[0][0];
     expect(copied).toContain('NodeSDK');
     expect(copied).toContain('https://logs.example.com/v1/otlp/traces');
   });
