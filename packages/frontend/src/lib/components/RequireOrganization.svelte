@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { authStore } from '$lib/stores/auth';
   import { currentOrganization, organizationStore } from '$lib/stores/organization';
   import { OrganizationsAPI } from '$lib/api/organizations';
@@ -29,6 +30,9 @@
   }
 
   let { children }: Props = $props();
+
+  // The instance admin area works without an organization.
+  const isAdminPath = $derived(page.url.pathname.startsWith('/dashboard/admin'));
 
   let loading = $state(true);
   let checkingOrg = $state(true);
@@ -110,7 +114,7 @@
         return response.organizations;
       });
 
-      if (orgs.length === 0) {
+      if (orgs.length === 0 && !isAdminPath) {
         goto('/onboarding');
         return;
       }
@@ -135,7 +139,7 @@
 
 {#if loading || checkingOrg}
   <PageSkeleton />
-{:else if loadError && !$currentOrganization}
+{:else if loadError && !$currentOrganization && !isAdminPath}
   <div class="p-6 sm:p-8">
     <div class="mx-auto max-w-md">
       <EmptyState
@@ -149,7 +153,7 @@
       </EmptyState>
     </div>
   </div>
-{:else if !$currentOrganization}
+{:else if !$currentOrganization && !isAdminPath}
   <div class="p-6 sm:p-8">
     <div class="mx-auto max-w-md">
       <EmptyState
