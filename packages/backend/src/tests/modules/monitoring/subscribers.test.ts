@@ -389,6 +389,41 @@ describe('admin list and removal', () => {
     expect(await rowFor('mia@example.com')).toBeUndefined();
   });
 
+  it('audits status page config, components and subscriber removal without the address', async () => {
+    const ownerToken = (await createTestSession(ctx.user.id)).token;
+    const put = (url: string, payload: unknown) =>
+      app.inject({ method: 'PUT', url: `/api/v1/status-page${url}`, headers: auth(ownerToken), payload: payload as any });
+
+    expect((await put('/config', { organizationId: ctx.organization.id, projectId: ctx.project.id, title: 'T' })).statusCode).toBe(200);
+    expect((await put('/components', { organizationId: ctx.organization.id, projectId: ctx.project.id, components: [] })).statusCode).toBe(200);
+
+    await post('/subscribe', { email: 'audit-me@example.com' });
+    await post('/subscribe/confirm', { token: lastToken() });
+    const row = await rowFor('audit-me@example.com');
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/status-page/subscribers/${row!.id}?organizationId=${ctx.organization.id}`,
+      headers: auth(ownerToken),
+    });
+    expect(del.statusCode).toBe(204);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('organization_id', '=', ctx.organization.id)
+      .where('action', 'like', 'statuspage.%')
+      .execute();
+    const byAction = Object.fromEntries(rows.map((r) => [r.action, r]));
+    expect(Object.keys(byAction).sort()).toEqual([
+      'statuspage.components_updated',
+      'statuspage.config_updated',
+      'statuspage.subscriber_removed',
+    ]);
+    expect(byAction['statuspage.config_updated'].resource_id).toBe(ctx.project.id);
+    expect(byAction['statuspage.subscriber_removed'].resource_id).toBe(row!.id);
+    expect(JSON.stringify(rows)).not.toContain('audit-me@example.com');
+  });
+
   it('plain members cannot list or remove subscribers', async () => {
     const member = await createTestUser();
     await db
