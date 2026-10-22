@@ -256,7 +256,7 @@
         <UptimeWindows windows={summary.windows} />
       {/if}
 
-      <div class="rounded-lg border bg-card p-4">
+      <div id="response-time" class="scroll-mt-20 rounded-lg border bg-card p-4">
         <ResponseTimeChart points={responseTimes} range={responseRange} onRangeChange={changeRange} />
       </div>
 
