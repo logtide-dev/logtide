@@ -43,6 +43,17 @@ describe('SuggestInput', () => {
     expect(onChange).toHaveBeenCalledWith('memory_used');
   });
 
+  it('selects with mousedown, blur, then click', async () => {
+    const { input, onChange } = setup({ value: 'mem' });
+    await fireEvent.focus(input);
+    const opt = await screen.findByText('memory_used');
+    const notPrevented = await fireEvent.mouseDown(opt);
+    expect(notPrevented).toBe(false);
+    await fireEvent.blur(input);
+    await fireEvent.click(screen.getByText('memory_used'));
+    expect(onChange).toHaveBeenCalledWith('memory_used');
+  });
+
   it('renders with empty options', async () => {
     const { input } = setup({ options: [] });
     await fireEvent.focus(input);

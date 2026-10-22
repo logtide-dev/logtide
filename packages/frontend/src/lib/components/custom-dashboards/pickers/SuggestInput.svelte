@@ -20,6 +20,8 @@
   let focused = $state(false);
   let dismissed = $state(false);
   let highlighted = $state('');
+  // True between a pointer press inside the list and the click that follows.
+  let pressing = false;
 
   const filtered = $derived.by(() => {
     const needle = value.trim().toLowerCase();
@@ -40,8 +42,23 @@
   });
 
   function select(option: string) {
+    pressing = false;
     onChange(option);
     dismissed = true;
+  }
+
+  function onListPress(e: Event) {
+    // Keep focus on the input so the list is not unmounted before click fires.
+    e.preventDefault();
+    pressing = true;
+  }
+
+  function onBlur() {
+    if (pressing) {
+      pressing = false;
+      return;
+    }
+    focused = false;
   }
 
   function onInput(e: Event) {
@@ -97,7 +114,7 @@
       focused = true;
       dismissed = false;
     }}
-    onblur={() => (focused = false)}
+    onblur={onBlur}
   />
   <Popover {open}>
     <PopoverContent
@@ -111,6 +128,7 @@
         if (e.target === inputEl) e.preventDefault();
       }}
     >
+      <div role="presentation" onmousedown={onListPress} onpointerdown={onListPress}>
       <Command shouldFilter={false} bind:value={highlighted}>
         <CommandList class="max-h-56">
           {#each filtered as option (option)}
@@ -120,6 +138,7 @@
           {/each}
         </CommandList>
       </Command>
+      </div>
     </PopoverContent>
   </Popover>
 </div>
