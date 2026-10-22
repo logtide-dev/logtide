@@ -9,7 +9,3 @@
 		goto(`/dashboard/projects/${projectId}/overview`, { replaceState: true });
 	});
 </script>
-
-<div class="flex items-center justify-center py-12">
-	<span class="text-muted-foreground">Redirecting...</span>
-</div>
