@@ -229,9 +229,16 @@
 <Popover.Root bind:open={() => menuOpen, setMenuOpen}>
   <Popover.Trigger>
     {#snippet child({ props })}
-      <Button {...props} variant="outline" size="sm" class="gap-1.5">
+      <Button
+        {...props}
+        variant="outline"
+        size="sm"
+        class="gap-1.5 max-md:h-10 max-md:w-full max-md:min-w-0"
+        aria-label="Saved searches"
+      >
         <Bookmark class="size-4" aria-hidden="true" />
-        <span class="sr-only md:not-sr-only">Saved searches</span>
+        <span class="min-[480px]:max-md:hidden">Saved searches</span>
+        <span class="hidden min-[480px]:max-md:inline" aria-hidden="true">Saved</span>
       </Button>
     {/snippet}
   </Popover.Trigger>

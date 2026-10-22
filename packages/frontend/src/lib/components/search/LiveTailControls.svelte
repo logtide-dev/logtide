@@ -47,9 +47,11 @@
   }
 </script>
 
-<div class="flex flex-wrap items-center gap-2">
-  <div class="flex items-center gap-2">
-    <label for="{uid}-switch" class="cursor-pointer text-sm">Live tail</label>
+<div class="flex flex-wrap items-center gap-2 max-md:w-full">
+  <div
+    class="flex items-center gap-2 max-md:h-10 max-md:flex-1 max-md:justify-center max-md:rounded-md max-md:border max-md:border-input max-md:bg-background max-md:px-1"
+  >
+    <label for="{uid}-switch" class="cursor-pointer whitespace-nowrap text-sm">Live tail</label>
     <Switch
       id="{uid}-switch"
       aria-label="Live tail"

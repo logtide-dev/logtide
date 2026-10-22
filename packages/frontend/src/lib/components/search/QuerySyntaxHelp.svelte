@@ -5,9 +5,10 @@
 
   interface Props {
     disabled?: boolean;
+    class?: string;
   }
 
-  let { disabled = false }: Props = $props();
+  let { disabled = false, class: className = '' }: Props = $props();
 
   const ROWS: { example: string; meaning: string }[] = [
     { example: "timeout", meaning: "Message contains the word" },
@@ -31,7 +32,7 @@
         {...props}
         variant="ghost"
         size="icon"
-        class="h-9 w-9 shrink-0"
+        class="h-9 w-9 shrink-0 {className}"
         aria-label="Query syntax help"
         title="Query syntax help"
         {disabled}

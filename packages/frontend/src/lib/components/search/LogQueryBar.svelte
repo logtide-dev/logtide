@@ -204,13 +204,13 @@
 </script>
 
 <div class="w-full">
-  <div class="flex items-center gap-1">
+  <div class="relative flex items-center gap-1">
     <div class="relative min-w-0 flex-1 rounded-md bg-background">
       <div
         bind:this={overlayEl}
         data-testid="log-query-overlay"
         aria-hidden="true"
-        class="pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-pre rounded-md border border-transparent px-3 font-mono text-sm"
+        class="pointer-events-none absolute inset-0 flex items-center overflow-hidden whitespace-pre rounded-md border border-transparent px-3 font-mono text-sm max-md:pr-[5.5rem]"
       >
         <span
           >{#each segments as seg}<span
@@ -239,7 +239,7 @@
         placeholder={$isMobile ? "Search logs" : "Search logs, e.g. level:error service:api timeout"}
         {value}
         {disabled}
-        class="relative h-9 w-full rounded-md border border-input bg-transparent px-3 font-mono text-sm text-transparent caret-foreground selection:bg-primary/25 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+        class="relative h-9 w-full rounded-md border border-input bg-transparent px-3 font-mono text-sm max-md:h-11 max-md:pr-[5.5rem] text-transparent caret-foreground selection:bg-primary/25 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
         oninput={handleInput}
         onkeydown={handleKeydown}
         onkeyup={handleKeyup}
@@ -274,10 +274,10 @@
         </ul>
       {/if}
     </div>
-    <QuerySyntaxHelp {disabled} />
+    <QuerySyntaxHelp {disabled} class="max-md:absolute max-md:right-11 max-md:top-1 max-md:size-9" />
     <Button
       size="icon"
-      class="h-9 w-9 shrink-0"
+      class="h-9 w-9 shrink-0 max-md:absolute max-md:right-1 max-md:top-1 max-md:size-9"
       aria-label="Run search"
       title="Run search"
       {disabled}
