@@ -73,7 +73,11 @@ test.describe('Alert to incident journey', () => {
       .poll(
         async () => {
           await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents`);
-          return incidentRow.isVisible({ timeout: 5000 }).catch(() => false);
+          // isVisible() does not wait; give the inbox request time to fill the table
+          return incidentRow
+            .waitFor({ state: 'visible', timeout: 8000 })
+            .then(() => true)
+            .catch(() => false);
         },
         { timeout: 150_000, intervals: [10_000] }
       )
