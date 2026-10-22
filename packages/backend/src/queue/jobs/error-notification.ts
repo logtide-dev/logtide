@@ -20,6 +20,7 @@ import {
   resolveChannelsForEvent,
   resolveFallbackEmails,
   toDeliveryTargets,
+  type DeliveryTargets,
   type ResolvedRouting,
 } from '../../modules/notification-channels/resolver.js';
 import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
@@ -98,7 +99,7 @@ function hostOf(url: string): string {
  * Send webhook notification for error
  */
 async function sendErrorWebhook(
-  url: string,
+  target: DeliveryTargets['webhooks'][number],
   data: ErrorNotificationJobData,
   orgName: string,
   projectName: string,
@@ -139,10 +140,13 @@ async function sendErrorWebhook(
   // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
   // retry/backoff, DLQ, and delivery logging.
   await webhookDispatcher.enqueue({
-    url,
+    url: target.url,
+    channelId: target.channelId,
+    method: target.method,
+    headers: target.headers,
     organizationId: data.organizationId,
     eventType: 'error.detected',
-    eventId: `${errorGroupId}:${url}`,
+    eventId: `${errorGroupId}:${target.url}`,
     payload: envelope,
   });
 }
@@ -323,10 +327,10 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
 
   // STEP 6: Webhook destinations (Slack, Teams and Discord URLs are formatted by the dispatcher)
   if (targets.webhooks.length > 0) {
-    const webhookPromises = targets.webhooks.map(({ url }) =>
-      sendErrorWebhook(url, data, org.name, project.name, errorGroup.id)
-        .then(() => console.log(`[ErrorNotification] Webhook sent to ${hostOf(url)}`))
-        .catch((err) => console.error(`[ErrorNotification] Webhook failed for ${hostOf(url)}:`, err))
+    const webhookPromises = targets.webhooks.map((target) =>
+      sendErrorWebhook(target, data, org.name, project.name, errorGroup.id)
+        .then(() => console.log(`[ErrorNotification] Webhook sent to ${hostOf(target.url)}`))
+        .catch((err) => console.error(`[ErrorNotification] Webhook failed for ${hostOf(target.url)}:`, err))
     );
 
     await Promise.all(webhookPromises);

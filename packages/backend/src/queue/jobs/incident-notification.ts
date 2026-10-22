@@ -8,6 +8,7 @@ import {
   resolveChannelsForEvent,
   resolveFallbackEmails,
   toDeliveryTargets,
+  type DeliveryTargets,
 } from '../../modules/notification-channels/resolver.js';
 import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
 import { createQueue } from '../connection.js';
@@ -67,7 +68,7 @@ function hostOf(url: string): string {
 /**
  * Send webhook notification for incident
  */
-async function sendIncidentWebhook(url: string, job: IncidentNotificationJob, orgName: string): Promise<void> {
+async function sendIncidentWebhook(target: DeliveryTargets['webhooks'][number], job: IncidentNotificationJob, orgName: string): Promise<void> {
   const frontendUrl = getFrontendUrl();
 
   // Wrap in the unified envelope (WS3). organization{id,name} object stays in
@@ -94,10 +95,13 @@ async function sendIncidentWebhook(url: string, job: IncidentNotificationJob, or
   // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
   // retry/backoff, DLQ, and delivery logging.
   await webhookDispatcher.enqueue({
-    url,
+    url: target.url,
+    channelId: target.channelId,
+    method: target.method,
+    headers: target.headers,
     organizationId: job.organizationId,
     eventType: 'incident.created',
-    eventId: `${job.incidentId}:${url}`,
+    eventId: `${job.incidentId}:${target.url}`,
     payload: envelope,
   });
 }
@@ -206,10 +210,10 @@ export async function processIncidentNotification(job: IJob<IncidentNotification
 
   // STEP 4: Webhook destinations (Slack, Teams and Discord URLs are formatted by the dispatcher)
   if (targets.webhooks.length > 0) {
-    const webhookPromises = targets.webhooks.map(({ url }) =>
-      sendIncidentWebhook(url, data, org.name)
-        .then(() => console.log(`[IncidentNotification] Webhook sent to ${hostOf(url)}`))
-        .catch((err) => console.error(`[IncidentNotification] Webhook failed for ${hostOf(url)}:`, err))
+    const webhookPromises = targets.webhooks.map((target) =>
+      sendIncidentWebhook(target, data, org.name)
+        .then(() => console.log(`[IncidentNotification] Webhook sent to ${hostOf(target.url)}`))
+        .catch((err) => console.error(`[IncidentNotification] Webhook failed for ${hostOf(target.url)}:`, err))
     );
 
     await Promise.all(webhookPromises);

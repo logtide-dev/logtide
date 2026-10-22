@@ -8,6 +8,7 @@ import {
   resolveChannelsForEvent,
   resolveFallbackEmails,
   toDeliveryTargets,
+  type DeliveryTargets,
 } from '../../modules/notification-channels/resolver.js';
 import { notifyPagerDutyTargets, hostOf } from '../../modules/notification-channels/dispatch.js';
 import { createQueue } from '../connection.js';
@@ -70,7 +71,7 @@ function createTransporter() {
   return nodemailer.createTransport(opts as TransportOptions);
 }
 
-async function sendMonitorWebhook(url: string, job: MonitorNotificationJob, orgName: string): Promise<void> {
+async function sendMonitorWebhook(target: DeliveryTargets['webhooks'][number], job: MonitorNotificationJob, orgName: string): Promise<void> {
   const frontendUrl = getFrontendUrl();
   const isDown = job.status === 'down';
 
@@ -107,10 +108,13 @@ async function sendMonitorWebhook(url: string, job: MonitorNotificationJob, orgN
   // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
   // retry/backoff, DLQ, and delivery logging.
   await webhookDispatcher.enqueue({
-    url,
+    url: target.url,
+    channelId: target.channelId,
+    method: target.method,
+    headers: target.headers,
     organizationId: job.organizationId,
     eventType: 'monitor.status_changed',
-    eventId: `${job.monitorId}:${job.status}:${url}`,
+    eventId: `${job.monitorId}:${job.status}:${target.url}`,
     payload: envelope,
   });
 }
@@ -233,10 +237,10 @@ export async function processMonitorNotification(job: IJob<MonitorNotificationJo
 
   // Webhook notifications
   if (targets.webhooks.length > 0) {
-    const webhookPromises = targets.webhooks.map(({ url }) =>
-      sendMonitorWebhook(url, data, org.name)
-        .then(() => console.log(`[MonitorNotification] Webhook sent to ${hostOf(url)}`))
-        .catch((err) => console.error(`[MonitorNotification] Webhook failed for ${hostOf(url)}:`, err))
+    const webhookPromises = targets.webhooks.map((target) =>
+      sendMonitorWebhook(target, data, org.name)
+        .then(() => console.log(`[MonitorNotification] Webhook sent to ${hostOf(target.url)}`))
+        .catch((err) => console.error(`[MonitorNotification] Webhook failed for ${hostOf(target.url)}:`, err))
     );
 
     await Promise.all(webhookPromises);

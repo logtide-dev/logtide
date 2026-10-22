@@ -224,6 +224,39 @@ describe('Alert Notification Job', () => {
             );
         });
 
+        it('passes channel id, method and headers to the dispatcher', async () => {
+            const { organization, project } = await createTestContext();
+            mockGetAlertRuleChannels.mockResolvedValueOnce([{
+          id: '00000000-0000-0000-0000-0000000000aa',
+          organizationId: organization.id,
+          name: 'Authed hook',
+          type: 'webhook',
+          enabled: true,
+          config: { url: 'https://hooks.example.com/auth', method: 'PUT', headers: { 'X-Team': 'ops' }, auth: { type: 'bearer', token: 'tok-123' } },
+        }]);
+
+            await processAlertNotification({
+                data: {
+                    historyId: '00000000-0000-0000-0000-000000000001',
+                    rule_id: '00000000-0000-0000-0000-000000000002',
+                    rule_name: 'Authed Alert Rule',
+                    organization_id: organization.id,
+                    project_id: project.id,
+                    log_count: 100,
+                    threshold: 50,
+                    time_window: 5,
+                    email_recipients: [],
+                    webhook_url: undefined,
+                } as AlertNotificationData,
+            });
+
+            expect(enqueueMock).toHaveBeenCalledTimes(1);
+        const call = enqueueMock.mock.calls[0][0];
+        expect(call.channelId).toBe('00000000-0000-0000-0000-0000000000aa');
+        expect(call.method).toBe('PUT');
+        expect(call.headers).toEqual({ 'X-Team': 'ops', Authorization: 'Bearer tok-123' });
+        });
+
         it('should enqueue webhook and complete job even if delivery is deferred', async () => {
             const { organization, project } = await createTestContext();
             const { alertsService } = await import('../../../modules/alerts/index.js');

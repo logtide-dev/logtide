@@ -152,9 +152,9 @@ export async function dispatchAlertEnvelope(
   const errors: string[] = [];
   const ruleName = String((envelope.data as { alert_name?: unknown }).alert_name ?? ids.ruleId);
   const targets = toDeliveryTargets(channels.filter((ch) => ch.enabled));
-  const webhookTargets = new Map<string, string>();
+  const webhookTargets = new Map<string, (typeof targets.webhooks)[number]>();
   for (const w of targets.webhooks) {
-    if (w.url) webhookTargets.set(w.url, w.channelId);
+    if (w.url) webhookTargets.set(w.url, w);
   }
 
   // Sigma envelopes carry no alert_rule_id (see buildTriggeredEnvelope), so
@@ -185,14 +185,16 @@ export async function dispatchAlertEnvelope(
   // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
   // retry/backoff, DLQ, delivery logging, and the beforeWebhookDispatch hook
   // (#216) all live in one place.
-  for (const [url, channelId] of webhookTargets) {
+  for (const [url, target] of webhookTargets) {
     try {
       await webhookDispatcher.enqueue({
         url,
         organizationId: envelope.organizationId,
         eventType: envelope.type,
         eventId: `${ids.eventIdPrefix}:${url}`,
-        channelId,
+        channelId: target.channelId,
+        method: target.method,
+        headers: target.headers,
         ruleId: ids.ruleId,
         metadata: { ruleName },
         payload: envelope,

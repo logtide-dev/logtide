@@ -131,6 +131,36 @@ describe('Monitor webhook envelope', () => {
     expect(d.status).toBe('down');
   });
 
+  it('passes channel id, method and headers to the dispatcher', async () => {
+    const owner = await createTestUser({ name: 'Monitor Owner Auth' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org Auth' });
+    mockGetMonitorChannels.mockResolvedValueOnce([{
+      id: '00000000-0000-0000-0000-0000000000aa',
+      organizationId: org.id,
+      name: 'Authed hook',
+      type: 'webhook',
+      enabled: true,
+      config: { url: 'https://hooks.example.com/auth', method: 'PUT', headers: { 'X-Team': 'ops' }, auth: { type: 'bearer', token: 'tok-123' } },
+    }]);
+
+    await processMonitorNotification({
+      data: {
+        monitorId: 'mon-auth',
+        monitorName: 'Auth Check',
+        organizationId: org.id,
+        projectId: '00000000-0000-0000-0000-000000000000',
+        status: 'down',
+        severity: 'high',
+      } as MonitorNotificationJob,
+    } as Job<MonitorNotificationJob>);
+
+    expect(monitorEnqueueMock).toHaveBeenCalledTimes(1);
+    const call = monitorEnqueueMock.mock.calls[0][0];
+    expect(call.channelId).toBe('00000000-0000-0000-0000-0000000000aa');
+    expect(call.method).toBe('PUT');
+    expect(call.headers).toEqual({ 'X-Team': 'ops', Authorization: 'Bearer tok-123' });
+  });
+
   it('never logs the full webhook URL', async () => {
     const owner = await createTestUser({ name: 'Monitor Owner Log' });
     const org = await createTestOrganization({ ownerId: owner.id, name: 'Monitor Org Log' });

@@ -337,6 +337,43 @@ describe('Incident webhook envelope', () => {
   });
 });
 
+describe('Incident webhook request settings', () => {
+  beforeEach(() => {
+    incidentEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    mockGetIncidentChannels.mockReset();
+  });
+
+  it('passes channel id, method and headers to the dispatcher', async () => {
+    const owner = await createTestUser({ name: 'Owner Auth' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Incident Auth Org' });
+    mockGetIncidentChannels.mockResolvedValueOnce([{
+      id: '00000000-0000-0000-0000-0000000000aa',
+      organizationId: org.id,
+      name: 'Authed hook',
+      type: 'webhook',
+      enabled: true,
+      config: { url: 'https://hooks.example.com/auth', method: 'PUT', headers: { 'X-Team': 'ops' }, auth: { type: 'bearer', token: 'tok-123' } },
+    }]);
+
+    await processIncidentNotification({
+      data: {
+        incidentId: '00000000-0000-0000-0000-000000000098',
+        organizationId: org.id,
+        title: 'Auth Incident',
+        description: 'x',
+        severity: 'high',
+        affectedServices: ['api'],
+      } as IncidentNotificationJob,
+    } as Job<IncidentNotificationJob>);
+
+    expect(incidentEnqueueMock).toHaveBeenCalledTimes(1);
+    const call = incidentEnqueueMock.mock.calls[0][0];
+    expect(call.channelId).toBe('00000000-0000-0000-0000-0000000000aa');
+    expect(call.method).toBe('PUT');
+    expect(call.headers).toEqual({ 'X-Team': 'ops', Authorization: 'Bearer tok-123' });
+  });
+});
+
 describe('Incident Notification Email Generation', () => {
   // Test the email HTML generation logic
   it('should generate correct severity colors for all levels', () => {
