@@ -58,6 +58,12 @@ Designed for teams that need **GDPR compliance**, **full data ownership**, and *
 ### SIEM Dashboard
 ![LogTide Security](docs/images/security.png)
 
+### Incidents inbox
+![LogTide Incidents](docs/images/incidents.png)
+
+### Uptime and status pages
+![LogTide Uptime](docs/images/uptime.png)
+
 ---
 
 ## 🚀 Quick Start
