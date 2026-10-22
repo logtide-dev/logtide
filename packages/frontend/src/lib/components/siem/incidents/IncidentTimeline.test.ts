@@ -89,6 +89,18 @@ describe('IncidentTimeline', () => {
     expect(screen.getByText('Monitor check failed')).toBeTruthy();
   });
 
+  it('does not repeat the title as the body of an alert entry', () => {
+    render(IncidentTimeline, {
+      props: props({
+        entries: entries({
+          detections: [],
+          sourceEvents: [{ id: 's1', kind: 'alert_trigger', time: '2026-10-22T09:00:00.000Z', summary: 'Alert triggered' }],
+        }),
+      }),
+    });
+    expect(screen.getAllByText('Alert triggered')).toHaveLength(1);
+  });
+
   it('trace id renders a link to /dashboard/traces/<id>?project=<pid>', async () => {
     render(IncidentTimeline, { props: props() });
     await fireEvent.click(screen.getByRole('button', { name: /Show details/ }));

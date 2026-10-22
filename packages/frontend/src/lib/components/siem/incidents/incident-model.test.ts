@@ -9,6 +9,7 @@ import {
   buildIncidentLogsUrl,
   buildPublishToStatusPageUrl,
   toInboxFilters,
+  describeSourceEvent,
 } from './incident-model';
 
 const u = (qs: string) => new URL(`http://x/dashboard/incidents${qs}`);
@@ -210,5 +211,37 @@ describe('detail view helpers', () => {
     expect(formatIncidentDuration('2026-10-22T10:00:00Z', '2026-10-22T10:01:00Z')).toBe('1 minute');
     expect(formatIncidentDuration('2026-10-22T10:00:00Z', '2026-10-22T12:30:00Z')).toBe('2 hours');
     expect(formatIncidentDuration('2026-10-22T10:00:00Z', '2026-10-25T10:00:00Z')).toBe('3 days');
+  });
+});
+
+describe('describeSourceEvent', () => {
+  const base = { id: 'e', time: '2026-01-01T09:00:00Z' };
+
+  it('omits a body equal to the title', () => {
+    expect(describeSourceEvent({ ...base, kind: 'alert_trigger', summary: 'Alert triggered' })).toBeNull();
+    expect(describeSourceEvent({ ...base, kind: 'monitor_check', summary: 'monitor check failed' })).toBeNull();
+  });
+
+  it('uses a summary that adds information', () => {
+    expect(describeSourceEvent({ ...base, kind: 'alert_trigger', summary: '42 logs in 5 minutes' })).toBe(
+      '42 logs in 5 minutes'
+    );
+  });
+
+  it('builds value against threshold from the alert detail', () => {
+    expect(
+      describeSourceEvent({
+        ...base,
+        kind: 'alert_trigger',
+        summary: 'Alert triggered',
+        detail: { logCount: 42, threshold: 10, timeWindow: 5 },
+      })
+    ).toBe('42 logs against a threshold of 10 in 5 min');
+  });
+
+  it('uses an error or message from the detail', () => {
+    expect(
+      describeSourceEvent({ ...base, kind: 'monitor_check', summary: 'Monitor check failed', detail: { error: 'HTTP 503' } })
+    ).toBe('HTTP 503');
   });
 });
