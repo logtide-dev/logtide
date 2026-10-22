@@ -765,8 +765,10 @@ const logTableFetcher: PanelDataSource<LogTableConfig, LogTableSnapshot> = {
 const alertStatusFetcher: PanelDataSource<AlertStatusConfig, AlertStatusData> = {
   type: 'alert_status',
   async fetchData(config, ctx) {
+    // null means "all projects": pass undefined so project-scoped rules are
+    // included (a literal null would return only org-level rules).
     const rules = await alertsService.getAlertRules(ctx.organizationId, {
-      projectId: config.projectId,
+      projectId: config.projectId ?? undefined,
       enabledOnly: false,
     });
 
