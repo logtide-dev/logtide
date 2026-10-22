@@ -42,14 +42,6 @@ describe('StorageEngine 1.6 defaults', () => {
     expect(err).toBeInstanceOf(NotImplementedError);
     expect(err.message).toBe(`${method} is not implemented by PartialEngine`);
   });
-
-  it('existing engines inherit the defaults until they override them', async () => {
-    const { ClickHouseEngine } = await import('../engines/clickhouse/index.js');
-    const engine = new ClickHouseEngine(config);
-    const err = await engine.histogram({ projectId: 'p', from: new Date(0), to: new Date(1), bucketSeconds: 60 }).catch((x: unknown) => x);
-    expect(err).toBeInstanceOf(NotImplementedError);
-    expect((err as Error).message).toBe('histogram is not implemented by ClickHouseEngine');
-  });
 });
 
 describe('ReservoirBuffered 1.6 delegations', () => {

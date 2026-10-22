@@ -63,11 +63,22 @@ describe('corpus', () => {
       expect(record.endTime.getTime() - record.startTime.getTime()).toBe(record.durationMs);
     }
     const trace = (id: string) => CORPUS_TRACES.find((t) => t.id === id)!.record;
-    expect(trace('TF2')).toMatchObject({ spanCount: 34, durationMs: 1500, error: false, rootOperationName: 'page load' });
-    expect(trace('TO10')).toMatchObject({ spanCount: 2, durationMs: 1000, error: true, serviceName: 'api' });
+    expect(trace('TF2')).toMatchObject({ spanCount: 34, durationMs: 668_067, error: false, rootOperationName: 'page load' });
+    expect(trace('TO10')).toMatchObject({ spanCount: 2, durationMs: 1050, error: true, serviceName: 'api' });
     for (const id of ['TF1', 'TF2', 'TF3']) {
       const spans = CORPUS_SPANS.filter((s) => s.record.traceId === trace(id).traceId);
       expect(spans, id).toHaveLength(trace(id).spanCount);
+    }
+  });
+
+  it('summarizes every trace from its spans like the ingest path', () => {
+    for (const { id, record } of CORPUS_TRACES) {
+      const spans = CORPUS_SPANS.map((s) => s.record).filter((s) => s.projectId === record.projectId && s.traceId === record.traceId);
+      expect(spans.length, id).toBe(record.spanCount);
+      expect(record.startTime.getTime(), id).toBe(Math.min(...spans.map((s) => s.startTime.getTime())));
+      expect(record.endTime.getTime(), id).toBe(Math.max(...spans.map((s) => s.endTime.getTime())));
+      expect(record.durationMs, id).toBe(record.endTime.getTime() - record.startTime.getTime());
+      expect(record.error, id).toBe(spans.some((s) => s.statusCode === 'ERROR'));
     }
   });
 

@@ -88,8 +88,53 @@ import type {
   MetricOverviewItem,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
 } from '../../core/types.js';
+import { FACETS_DEFAULT_LIMIT } from '../../core/constants.js';
+import {
+  assertTimeRange,
+  normalizeDiscoverParams,
+  normalizeFacetsParams,
+  normalizeHistogramParams,
+  normalizeListSessionsParams,
+} from '../../core/normalize.js';
+import { decodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { ClickHouseQueryTranslator, toDateTime64 } from './query-translator.js';
+import {
+  assembleFacets,
+  assembleHistogram,
+  assembleMetadataKeys,
+  assembleSessions,
+  translateDiscoverKeys,
+  translateHasSessions,
+  translateListSessions,
+} from './log-analytics.js';
+import {
+  assembleLatencyHistogram,
+  assembleOperationStats,
+  buildSpanConditions,
+  buildTraceConditions,
+  entryProbeSql,
+  latencyHistogramSql,
+  normalizeEntryParams,
+  operationStatsSql,
+  spanOrderSql,
+  traceOrderSql,
+  type EntryMode,
+} from './apm-queries.js';
+import type { NativeQuery } from '../../core/query-translator.js';
 
 export interface ClickHouseEngineOptions {
   /** Use an existing ClickHouse client instead of creating a new one */
@@ -212,6 +257,20 @@ export class ClickHouseEngine extends StorageEngine {
       await this.runCommand({
         query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_message_fulltext message TYPE ngrambf_v1(3, 32768, 3, 0) GRANULARITY 1`,
       });
+    } catch {
+      // index may already exist
+    }
+
+    // Lowercase ngram index for the case-insensitive `lowerUTF8(message) LIKE`
+    // predicates of text search (phrases, and the prefilter of word terms).
+    // Deliberately never MATERIALIZEd: parts written after the upgrade get it at
+    // ingest, older parts are still read through the bounded primary-key scan.
+    try {
+      if (!(await this.chObjectExists('index', t, 'idx_message_lower_ngram'))) {
+        await this.runCommand({
+          query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_message_lower_ngram lowerUTF8(message) TYPE ngrambf_v1(3, 32768, 3, 0) GRANULARITY 1`,
+        });
+      }
     } catch {
       // index may already exist
     }
@@ -690,6 +749,68 @@ export class ClickHouseEngine extends StorageEngine {
     return this.count(params);
   }
 
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    // Validate (bucket size, bucket count, time range) before any query; the
+    // client already did, but the engine may be called directly.
+    const normalized = normalizeHistogramParams(params);
+    const native = this.translator.translateHistogram(normalized);
+    const resultSet = await this.runQuery(
+      {
+        query: native.query as string,
+        query_params: (native.parameters as Record<string, unknown>[])[0],
+        format: 'JSONEachRow',
+      },
+      'histogram',
+    );
+    const rows = (await resultSet.json()) as Record<string, unknown>[];
+    return assembleHistogram(normalized, rows);
+  }
+
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    // Validates fields and clamps the limit before any query (the client
+    // already did, but the engine may be called directly).
+    const normalized = normalizeFacetsParams(params);
+    const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
+    const native = this.translator.translateFacets(normalized, limit);
+    const resultSet = await this.runQuery(
+      {
+        query: native.query as string,
+        query_params: (native.parameters as Record<string, unknown>[])[0],
+        format: 'JSONEachRow',
+      },
+      'facets',
+    );
+    const rows = (await resultSet.json()) as Record<string, unknown>[];
+    return assembleFacets(normalized.fields, rows, limit);
+  }
+
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    const native = translateDiscoverKeys(normalizeDiscoverParams(params), this.tableName);
+    const resultSet = await this.runQuery(
+      {
+        query: native.query as string,
+        query_params: (native.parameters as Record<string, unknown>[])[0],
+        format: 'JSONEachRow',
+      },
+      'discover-keys',
+    );
+    return assembleMetadataKeys((await resultSet.json()) as Record<string, unknown>[]);
+  }
+
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    // Validates the window, clamps the limit and rejects an invalid cursor
+    // before any query (the client already did, but the engine may be called directly).
+    const normalized = normalizeListSessionsParams(params);
+    const cursor = normalized.cursor !== undefined ? decodeSessionCursor(normalized.cursor) : null;
+    const rows = await this.runNative(translateListSessions(normalized, normalized.limit, cursor, this.tableName), 'list-sessions');
+    return assembleSessions(rows, normalized.limit);
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    assertTimeRange(params.from, params.to);
+    return this.hasRows(translateHasSessions(params, this.tableName));
+  }
+
   async distinct(params: DistinctParams): Promise<DistinctResult> {
     const start = Date.now();
     const native = this.translator.translateDistinct(params);
@@ -963,48 +1084,8 @@ export class ClickHouseEngine extends StorageEngine {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
-    const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
-
-    // Time range
-    conditions.push(`time ${params.fromExclusive ? '>' : '>='} {p_from:DateTime64(3)}`);
-    queryParams.p_from = toDateTime64(params.from);
-    conditions.push(`time ${params.toExclusive ? '<' : '<='} {p_to:DateTime64(3)}`);
-    queryParams.p_to = toDateTime64(params.to);
-
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      conditions.push(`project_id IN {p_pids:Array(String)}`);
-      queryParams.p_pids = pids;
-    }
-    if (params.traceId) {
-      const tids = Array.isArray(params.traceId) ? params.traceId : [params.traceId];
-      conditions.push(`trace_id IN {p_tids:Array(String)}`);
-      queryParams.p_tids = tids;
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      conditions.push(`service_name IN {p_svc:Array(String)}`);
-      queryParams.p_svc = svc;
-    }
-    if (params.kind) {
-      const k = Array.isArray(params.kind) ? params.kind : [params.kind];
-      conditions.push(`kind IN {p_kind:Array(String)}`);
-      queryParams.p_kind = k;
-    }
-    if (params.statusCode) {
-      const sc = Array.isArray(params.statusCode) ? params.statusCode : [params.statusCode];
-      conditions.push(`status_code IN {p_sc:Array(String)}`);
-      queryParams.p_sc = sc;
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    // Allowlist to prevent SQL injection via user-controlled sort parameters
-    const ALLOWED_SORT_COLUMNS = new Set(['start_time', 'end_time', 'duration_ms', 'service_name', 'operation_name']);
-    const ALLOWED_SORT_ORDERS = new Set(['asc', 'desc']);
-    const sortBy = ALLOWED_SORT_COLUMNS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
-    const sortOrder = ALLOWED_SORT_ORDERS.has((params.sortOrder ?? '').toLowerCase()) ? params.sortOrder!.toUpperCase() : 'ASC';
+    const where = `WHERE ${buildSpanConditions(params, queryParams).join(' AND ')}`;
 
     const countResult = await this.runQuery({
       query: `SELECT count() AS count FROM spans ${where}`,
@@ -1014,8 +1095,8 @@ export class ClickHouseEngine extends StorageEngine {
     const total = Number((await countResult.json<{ count: string }>())[0]?.count ?? 0);
 
     const resultSet = await this.runQuery({
-      query: `SELECT * FROM spans ${where} ORDER BY ${sortBy} ${sortOrder} LIMIT ${limit} OFFSET ${offset}`,
-      query_params: queryParams,
+      query: `SELECT * FROM spans ${where} ${spanOrderSql(params)} LIMIT {p_limit:UInt32} OFFSET {p_offset:UInt32}`,
+      query_params: { ...queryParams, p_limit: limit, p_offset: offset },
       format: 'JSONEachRow',
     });
     const rows = await resultSet.json<Record<string, unknown>>();
@@ -1028,6 +1109,44 @@ export class ClickHouseEngine extends StorageEngine {
       offset,
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    const scope = normalizeEntryParams(params);
+    let rows = await this.runNative(operationStatsSql(scope, 'kinds'), 'operation-stats');
+    if (rows.length === 0 && !scope.kindsExplicit && !(await this.hasRows(entryProbeSql(scope, 'any-kind')))) {
+      rows = await this.runNative(operationStatsSql(scope, 'root'), 'operation-stats');
+    }
+    return assembleOperationStats(rows);
+  }
+
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    // The entry selection is decided for the project and service scope, before
+    // the operation filter, exactly as in getOperationStats.
+    const scope = normalizeEntryParams(params);
+    let mode: EntryMode | null = 'kinds';
+    if (!(await this.hasRows(entryProbeSql(scope, 'kinds')))) {
+      mode = (await this.hasRows(entryProbeSql(scope, 'any-kind'))) ? null : 'root';
+    }
+    if (mode === null) return assembleLatencyHistogram([]);
+    return assembleLatencyHistogram(await this.runNative(latencyHistogramSql(scope, mode), 'latency-histogram'));
+  }
+
+  /** Runs a translated query and returns its JSONEachRow rows. */
+  private async runNative(native: NativeQuery, op: string): Promise<Record<string, unknown>[]> {
+    const resultSet = await this.runQuery(
+      {
+        query: native.query as string,
+        query_params: (native.parameters as Record<string, unknown>[])[0],
+        format: 'JSONEachRow',
+      },
+      op,
+    );
+    return (await resultSet.json()) as Record<string, unknown>[];
+  }
+
+  private async hasRows(native: NativeQuery): Promise<boolean> {
+    return (await this.runNative(native, 'probe')).length > 0;
   }
 
   async getSpansByTraceId(traceId: string, projectId: string): Promise<SpanRecord[]> {
@@ -1045,38 +1164,8 @@ export class ClickHouseEngine extends StorageEngine {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
-    const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
-
-    conditions.push(`start_time >= {p_from:DateTime64(3)}`);
-    queryParams.p_from = toDateTime64(params.from);
-    conditions.push(`start_time <= {p_to:DateTime64(3)}`);
-    queryParams.p_to = toDateTime64(params.to);
-
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      conditions.push(`project_id IN {p_pids:Array(String)}`);
-      queryParams.p_pids = pids;
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      conditions.push(`service_name IN {p_svc:Array(String)}`);
-      queryParams.p_svc = svc;
-    }
-    if (params.error !== undefined) {
-      conditions.push(`error = {p_error:UInt8}`);
-      queryParams.p_error = params.error ? 1 : 0;
-    }
-    if (params.minDurationMs !== undefined) {
-      conditions.push(`duration_ms >= {p_minDur:UInt32}`);
-      queryParams.p_minDur = params.minDurationMs;
-    }
-    if (params.maxDurationMs !== undefined) {
-      conditions.push(`duration_ms <= {p_maxDur:UInt32}`);
-      queryParams.p_maxDur = params.maxDurationMs;
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where = `WHERE ${buildTraceConditions(params, queryParams).join(' AND ')}`;
 
     // Use FINAL to get deduplicated rows from ReplacingMergeTree
     const countResult = await this.runQuery({
@@ -1087,8 +1176,8 @@ export class ClickHouseEngine extends StorageEngine {
     const total = Number((await countResult.json<{ count: string }>())[0]?.count ?? 0);
 
     const resultSet = await this.runQuery({
-      query: `SELECT * FROM traces FINAL ${where} ORDER BY start_time DESC LIMIT ${limit} OFFSET ${offset}`,
-      query_params: queryParams,
+      query: `SELECT * FROM traces FINAL ${where} ${traceOrderSql(params)} LIMIT {p_limit:UInt32} OFFSET {p_offset:UInt32}`,
+      query_params: { ...queryParams, p_limit: limit, p_offset: offset },
       format: 'JSONEachRow',
     });
     const rows = await resultSet.json<Record<string, unknown>>();
