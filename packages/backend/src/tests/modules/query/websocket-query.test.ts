@@ -151,6 +151,49 @@ describe('WebSocket live tail with q', () => {
     conn.ws.terminate();
   });
 
+  it('applies the legacy metadata_filters param', async () => {
+    const [eu, us, none] = await seedLogs(projectId, [
+      { message: 'one', metadata: { region: 'eu' } },
+      { message: 'two', metadata: { region: 'us' } },
+      { message: 'three' },
+    ]);
+    const filters = JSON.stringify([{ key: 'region', op: 'equals', value: 'eu' }]);
+    const conn = await connect(app, wsPath({ metadata_filters: filters }));
+    expect((await conn.next()).type).toBe('connected');
+
+    await notify(projectId, [eu.id, us.id, none.id]);
+    const msg = await conn.next();
+    expect(msg.logs.map((log: any) => log.id)).toEqual([eu.id]);
+    conn.ws.terminate();
+  });
+
+  it('combines metadata_filters with q and a negative operator', async () => {
+    const seeded = await seedLogs(projectId, [
+      { message: 'timeout a', metadata: { region: 'eu' } },
+      { message: 'timeout b', metadata: { region: 'us' } },
+      { message: 'timeout c' },
+      { message: 'ok d', metadata: { region: 'us' } },
+    ]);
+    const filters = JSON.stringify([{ key: 'region', op: 'not_equals', value: 'eu' }]);
+    const conn = await connect(app, wsPath({ q: 'timeout', metadata_filters: filters }));
+    expect((await conn.next()).type).toBe('connected');
+
+    await notify(projectId, seeded.map((log) => log.id));
+    const msg = await conn.next();
+    expect(msg.logs.map((log: any) => log.message).sort()).toEqual(['timeout b', 'timeout c']);
+    conn.ws.terminate();
+  });
+
+  it('rejects invalid metadata_filters and closes with 1008', async () => {
+    for (const bad of ['not json', JSON.stringify([{ key: 'region', op: 'equals' }])]) {
+      const conn = await connect(app, wsPath({ metadata_filters: bad }));
+      const msg = await conn.next();
+      expect(msg.type).toBe('error');
+      expect((await conn.closed).code).toBe(1008);
+      expect(subscriberFor(projectId)).toBeUndefined();
+    }
+  });
+
   it('reports an invalid q and closes with 1008', async () => {
     const before = notificationManager.getStatus().subscriberCount;
     const conn = await connect(app, wsPath({ q: '(timeout' }));

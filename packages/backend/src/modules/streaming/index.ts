@@ -18,6 +18,7 @@ export {
 
 export {
   createLiveTailFilter,
+  metadataFiltersToClauses,
   toMatchableLog,
   type LiveTailLog,
   type LiveTailFilterOptions,

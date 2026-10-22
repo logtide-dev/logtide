@@ -108,4 +108,20 @@ describe('saved_searches.max_per_org enforcement', () => {
     expect(blocked.status).toBe(403);
     expect(res.status).toBe(201);
   });
+
+  it('keeps the list bounded by the limit: over-limit creates fail and the list stays at the limit', async () => {
+    await setLimit(orgId, 3);
+    for (let i = 0; i < 5; i++) {
+      const res = await create(orgId, token);
+      expect(res.status).toBe(i < 3 ? 201 : 403);
+    }
+
+    const list = await request(app.server)
+      .get('/api/v1/saved-searches')
+      .query({ organizationId: orgId })
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(list.status).toBe(200);
+    expect(list.body.savedSearches).toHaveLength(3);
+  });
 });

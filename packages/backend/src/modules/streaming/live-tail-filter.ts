@@ -3,7 +3,7 @@
 // before; the parsed query is evaluated with F3's `matchesLogSearch`, the
 // same oracle the engines are checked against, so live tail and search agree.
 
-import { matchesLogSearch, type LogSearchQuery } from '@logtide/shared';
+import { matchesLogSearch, type FieldClause, type LogSearchQuery, type MetadataFilter } from '@logtide/shared';
 
 export interface LiveTailLog {
   service: string;
@@ -43,6 +43,21 @@ export function toMatchableLog(log: LiveTailLog): MatchableLog {
     spanId: log.spanId ?? null,
     metadata: log.metadata ?? null,
   };
+}
+
+/**
+ * Legacy `metadata_filters` as query field clauses, so live tail evaluates them
+ * with the same matcher as `q`. Negative operators keep missing keys (the same
+ * default the REST adapter applies); an explicit `include_missing` that differs
+ * from the operator default is not expressible here and is ignored.
+ */
+export function metadataFiltersToClauses(filters: MetadataFilter[]): FieldClause[] {
+  return filters.map((f): FieldClause => {
+    const field = { metadata: f.key };
+    if (f.op === 'in' || f.op === 'not_in') return { field, op: f.op, values: [...(f.values ?? [])] };
+    if (f.op === 'exists' || f.op === 'not_exists') return { field, op: f.op };
+    return { field, op: f.op, value: f.value };
+  });
 }
 
 const hasQuery = (query: LogSearchQuery | undefined): query is LogSearchQuery =>
