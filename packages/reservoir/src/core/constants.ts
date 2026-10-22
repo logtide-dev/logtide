@@ -28,3 +28,10 @@ export const LATENCY_HISTOGRAM_BOUNDS_MS: readonly number[] = Object.freeze([
 
 /** Largest sessions page. */
 export const SESSIONS_MAX_LIMIT = 200;
+
+/**
+ * Default server-side time limit of the log analytics reads (count,
+ * histogram, facets, metadata key discovery) on ClickHouse and MongoDB:
+ * the backend's production Timescale `statement_timeout`.
+ */
+export const ANALYTICS_TIMEOUT_MS = 30_000;

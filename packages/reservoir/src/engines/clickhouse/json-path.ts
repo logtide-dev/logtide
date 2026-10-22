@@ -1,23 +1,24 @@
 // ============================================================================
 // ClickHouse JSON key resolution and scalar text (plan S4, S5)
 // ============================================================================
-// Metadata and span attributes are JSON strings. A key resolves to the
-// literal key when the object has it, else to the nested path of its dot
-// separated segments (the `resolveMetadataPath` rule). Values compare by
-// their scalar text: strings as they are, numbers by their JSON text,
-// booleans as `true`/`false`; null, objects and arrays have no text.
-// Every key, segment and value travels as a query parameter.
+// Metadata and span attributes are JSON strings. A key resolves like
+// `resolveMetadataPath`: through the first present candidate key sequence of
+// the shared `metadataPathCandidates` (the literal key first). String
+// arguments of the JSON functions read object members only, so a path never
+// indexes an array. Values compare by their scalar text: strings as they
+// are, numbers by their JSON text, booleans as `true`/`false`; null, objects
+// and arrays have no text. Every key and value travels as a query parameter.
 
+import { metadataPathCandidates } from '@logtide/shared';
 import type { MetadataFilter } from '../../core/types.js';
 
 export type ChJsonColumn = 'metadata' | 'attributes' | 'resource_attributes';
 
 const JSON_COLUMNS: ReadonlySet<string> = new Set<ChJsonColumn>(['metadata', 'attributes', 'resource_attributes']);
 
-/** SQL placeholders of a key: the whole key, plus its segments when it is dotted. */
+/** SQL placeholders of a key: one placeholder list per candidate key sequence, in precedence order. */
 export interface ChJsonKeyParams {
-  key: string;
-  segments: string[] | null;
+  candidates: string[][];
 }
 
 function checkColumn(column: string): void {
@@ -25,20 +26,24 @@ function checkColumn(column: string): void {
 }
 
 /**
- * Binds a key as query parameters: `name` holds the whole key and, for a
- * dotted key, `<name>s<j>` hold its segments.
+ * Binds a key as query parameters for the candidates of the shared
+ * `metadataPathCandidates`: `name` holds the whole key and `<name>s<j>` every
+ * other distinct key string, numbered in order of first use.
  */
 export function bindJsonKey(key: string, name: string, queryParams: Record<string, unknown>): ChJsonKeyParams {
-  queryParams[name] = key;
-  let segments: string[] | null = null;
-  if (key.includes('.')) {
-    segments = key.split('.').map((segment, j) => {
-      const segmentName = `${name}s${j}`;
-      queryParams[segmentName] = segment;
-      return `{${segmentName}:String}`;
-    });
-  }
-  return { key: `{${name}:String}`, segments };
+  const placeholders = new Map<string, string>();
+  const placeholder = (k: string): string => {
+    let p = placeholders.get(k);
+    if (!p) {
+      const paramName = placeholders.size === 0 ? name : `${name}s${placeholders.size - 1}`;
+      queryParams[paramName] = k;
+      p = `{${paramName}:String}`;
+      placeholders.set(k, p);
+    }
+    return p;
+  };
+  placeholder(key);
+  return { candidates: metadataPathCandidates(key).map((keys) => keys.map(placeholder)) };
 }
 
 /** Scalar text (see chScalarTextExpr) of a key resolved against a JSON column. */
@@ -46,20 +51,22 @@ export function chJsonScalarExpr(column: ChJsonColumn, keyParams: ChJsonKeyParam
   return chScalarTextExpr(chJsonRawExpr(column, keyParams));
 }
 
-/** The raw JSON text of the resolved value, `''` when the key does not resolve. */
+/** The raw JSON text of the resolved value (the first candidate present), `''` when the key does not resolve. */
 export function chJsonRawExpr(column: ChJsonColumn, keyParams: ChJsonKeyParams): string {
   checkColumn(column);
-  const literal = `JSONExtractRaw(${column}, ${keyParams.key})`;
-  if (!keyParams.segments) return literal;
-  return `if(JSONHas(${column}, ${keyParams.key}), ${literal}, JSONExtractRaw(${column}, ${keyParams.segments.join(', ')}))`;
+  const raws = keyParams.candidates.map((keys) => `JSONExtractRaw(${column}, ${keys.join(', ')})`);
+  if (raws.length === 1) return raws[0];
+  const branches = keyParams.candidates
+    .slice(0, -1)
+    .map((keys, i) => `JSONHas(${column}, ${keys.join(', ')}), ${raws[i]}`);
+  return `multiIf(${branches.join(', ')}, ${raws[raws.length - 1]})`;
 }
 
-/** Whether the key resolves (present with any value, null included). */
+/** Whether the key resolves (some candidate present, with any value, null included). */
 export function chJsonExistsExpr(column: ChJsonColumn, keyParams: ChJsonKeyParams): string {
   checkColumn(column);
-  const literal = `JSONHas(${column}, ${keyParams.key})`;
-  if (!keyParams.segments) return literal;
-  return `(${literal} OR JSONHas(${column}, ${keyParams.segments.join(', ')}))`;
+  const has = keyParams.candidates.map((keys) => `JSONHas(${column}, ${keys.join(', ')})`);
+  return has.length === 1 ? has[0] : `(${has.join(' OR ')})`;
 }
 
 /** Scalar text of a raw JSON value as Nullable(String): NULL for missing, null, objects and arrays. */
@@ -70,7 +77,7 @@ export function chScalarTextExpr(raw: string): string {
 /**
  * Compiles metadata filters over one JSON column into WHERE predicates
  * (ANDed by the caller). Parameters are `<prefix>k<i>` (key),
- * `<prefix>k<i>s<j>` (segments of a dotted key) and `<prefix>v<i>` (value or
+ * `<prefix>k<i>s<j>` (the other key strings of a dotted key) and `<prefix>v<i>` (value or
  * list). Negative operators match records where the key does not resolve
  * unless `include_missing` is explicitly false.
  */
@@ -101,13 +108,15 @@ export function compileJsonFilters(
         return `${scalar} = ${value()}`;
       case 'in':
         return `${scalar} IN ${values()}`;
+      // A value without text (null, object, array) differs from every value,
+      // so include_missing: false keeps it as long as the key resolves.
       case 'not_equals': {
-        const v = value();
-        return keepMissing ? `(NOT (${exists}) OR ifNull(${scalar} != ${v}, 1))` : `(${exists} AND ${scalar} != ${v})`;
+        const differs = `ifNull(${scalar} != ${value()}, 1)`;
+        return keepMissing ? `(NOT (${exists}) OR ${differs})` : `(${exists} AND ${differs})`;
       }
       case 'not_in': {
-        const vs = values();
-        return keepMissing ? `(NOT (${exists}) OR ifNull(${scalar} NOT IN ${vs}, 1))` : `(${exists} AND ${scalar} NOT IN ${vs})`;
+        const outside = `ifNull(${scalar} NOT IN ${values()}, 1)`;
+        return keepMissing ? `(NOT (${exists}) OR ${outside})` : `(${exists} AND ${outside})`;
       }
       case 'exists':
         return exists;

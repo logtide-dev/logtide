@@ -16,7 +16,7 @@ import type {
   TopValuesParams,
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
-import { compileJsonFilters, jsonValueExpr, scalarTextExpr } from './json-path.js';
+import { bindJsonKey, compileJsonFilters, scalarTextExpr } from './json-path.js';
 import { DISCOVER_DEFAULT_SAMPLE_SIZE, DISCOVER_MAX_KEYS } from '../../core/constants.js';
 
 
@@ -250,14 +250,10 @@ export class TimescaleQueryTranslator extends QueryTranslator {
         }
         expr = FACET_BUILTIN_EXPR[field.builtin];
       } else {
-        const keyIdx = idx++;
-        values.push(field.metadata);
-        let pathIdx: number | null = null;
-        if (field.metadata.includes('.')) {
-          pathIdx = idx++;
-          values.push(field.metadata.split('.'));
-        }
-        expr = scalarTextExpr(jsonValueExpr('metadata', keyIdx, pathIdx));
+        const bound = bindJsonKey('metadata', field.metadata, idx);
+        values.push(...bound.values);
+        idx = bound.nextIdx;
+        expr = scalarTextExpr(bound.key.value);
       }
       return `(${position}, ${expr})`;
     });
@@ -406,10 +402,11 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     let query: string;
 
     if (params.field.startsWith('metadata.')) {
-      // Extract JSONB once in a subquery instead of 3x per row (SELECT + IS NOT NULL + != '').
-      const jsonKey = params.field.slice('metadata.'.length);
-      const extract = `metadata->>'${jsonKey}'`;
-      query = `SELECT DISTINCT value FROM (SELECT ${extract} AS value FROM ${this.table}${where}) sub WHERE value IS NOT NULL AND value != '' ORDER BY value ASC`;
+      // Resolve the key once in a subquery instead of 3x per row (SELECT + IS NOT NULL + != '').
+      const bound = bindJsonKey('metadata', params.field.slice('metadata.'.length), idx);
+      values.push(...bound.values);
+      idx = bound.nextIdx;
+      query = `SELECT DISTINCT value FROM (SELECT ${bound.key.text} AS value FROM ${this.table}${where}) sub WHERE value IS NOT NULL AND value != '' ORDER BY value ASC`;
     } else {
       const selectExpr = params.field;
       conditions.push(`${selectExpr} IS NOT NULL`);
@@ -463,20 +460,25 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     values.push(params.to);
     idx++;
 
-    let selectExpr: string;
-    if (params.field.startsWith('metadata.')) {
-      const jsonKey = params.field.slice('metadata.'.length);
-      selectExpr = `metadata->>'${jsonKey}'`;
-    } else {
-      selectExpr = params.field;
-    }
-
-    conditions.push(`${selectExpr} IS NOT NULL`);
-    conditions.push(`${selectExpr} != ''`);
-
-    const where = ` WHERE ${conditions.join(' AND ')}`;
     const lastSeenExpr = params.includeLastSeen ? ', MAX(time) AS last_seen' : '';
-    let query = `SELECT ${selectExpr} AS value, COUNT(*) AS count${lastSeenExpr} FROM ${this.table}${where} GROUP BY value ORDER BY count DESC`;
+    let query: string;
+    if (params.field.startsWith('metadata.')) {
+      // The S5 text of the resolved key (shared candidates, literal key
+      // first), computed once per row in a subquery.
+      const bound = bindJsonKey('metadata', params.field.slice('metadata.'.length), idx);
+      values.push(...bound.values);
+      idx = bound.nextIdx;
+      const where = ` WHERE ${conditions.join(' AND ')}`;
+      query =
+        `SELECT value, COUNT(*) AS count${lastSeenExpr} FROM (SELECT ${bound.key.text} AS value, time FROM ${this.table}${where}) sub ` +
+        `WHERE value IS NOT NULL AND value != '' GROUP BY value ORDER BY count DESC`;
+    } else {
+      const selectExpr = params.field;
+      conditions.push(`${selectExpr} IS NOT NULL`);
+      conditions.push(`${selectExpr} != ''`);
+      const where = ` WHERE ${conditions.join(' AND ')}`;
+      query = `SELECT ${selectExpr} AS value, COUNT(*) AS count${lastSeenExpr} FROM ${this.table}${where} GROUP BY value ORDER BY count DESC`;
+    }
 
     if (params.limit) {
       query += ` LIMIT $${idx}`;

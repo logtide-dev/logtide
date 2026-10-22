@@ -1053,9 +1053,9 @@ describe('TimescaleEngine', () => {
 
       const [countSql, countParams] = mockQuery.mock.calls[0] as [string, unknown[]];
       const [pageSql] = mockQuery.mock.calls[1] as [string, unknown[]];
-      expect(countSql).toContain('resource_attributes ?');
-      expect(countParams).toContain('service.version');
-      expect(pageSql).toContain('resource_attributes ?');
+      expect(countSql).toContain('COALESCE(resource_attributes -> (');
+      expect(countParams).toContainEqual(['service.version', 'service', 'version']);
+      expect(pageSql).toContain('COALESCE(resource_attributes -> (');
       expect(pageSql).toContain('ORDER BY duration_ms DESC, span_id ASC');
     });
 
@@ -1640,6 +1640,19 @@ describe('TimescaleQueryTranslator', () => {
       });
 
       expect(result.query).toContain('level = ANY');
+    });
+
+    it('metadata fields resolve the bound key once, with the shared candidates and S5 text', () => {
+      const params = { projectId: 'proj-1', from: new Date('2024-01-01'), to: new Date('2024-01-02'), limit: 5 };
+      const top = translator.translateTopValues({ ...params, field: 'metadata.performance.metric', includeLastSeen: true });
+      expect(top.query).not.toContain('performance');
+      expect(top.query).toContain('FROM (SELECT CASE WHEN jsonb_typeof(COALESCE(metadata -> ($4::text[])[1], ');
+      expect(top.query).toContain("WHERE value IS NOT NULL AND value != '' GROUP BY value ORDER BY count DESC LIMIT $5");
+      expect(top.query).toContain('MAX(time) AS last_seen');
+      expect(top.parameters).toEqual(['proj-1', params.from, params.to, ['performance.metric', 'performance', 'metric'], 5]);
+      const distinct = translator.translateDistinct({ ...params, field: 'metadata.region' });
+      expect(distinct.query).toContain("SELECT CASE WHEN jsonb_typeof(metadata->$4) IN ('string', 'number', 'boolean')");
+      expect(distinct.parameters).toEqual(['proj-1', params.from, params.to, 'region', 5]);
     });
 
     it('rejects unsafe field names', () => {

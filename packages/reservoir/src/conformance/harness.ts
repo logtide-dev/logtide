@@ -12,7 +12,7 @@ import { parseLogQuery } from '@logtide/shared';
 import type { IReservoir } from '../core/reservoir-interface.js';
 import { compileLogSearch, mergeCompiledSearch } from '../core/log-search.js';
 import type { CountParams, EngineType, LogRecord, QueryParams, SpanRecord, TraceRecord } from '../core/types.js';
-import { CORPUS_LOGS, CORPUS_SPANS, CORPUS_TRACES, PROJECT_A, WINDOW } from './corpus.js';
+import { CORPUS_LOGS, CORPUS_METRICS, CORPUS_SPANS, CORPUS_TRACES, PROJECT_A, WINDOW } from './corpus.js';
 import { createConformanceReservoir, isConformanceRequired, resolveSubject } from './targets.js';
 import { describeBaselineConformance } from './suites/baseline.js';
 import { describeTextQueryConformance } from './suites/text-query.js';
@@ -25,6 +25,9 @@ import { describeOperationStatsConformance } from './suites/operation-stats.js';
 import { describeLatencyHistogramConformance } from './suites/latency-histogram.js';
 import { describeSpanTraceQueryConformance } from './suites/spans-traces.js';
 import { describeSessionsConformance } from './suites/sessions.js';
+import { describeMetadataPathConformance } from './suites/metadata-paths.js';
+import { describeTopValuesConformance } from './suites/top-values.js';
+import { describeMetricsConformance } from './suites/metrics.js';
 
 export type ConformanceEngine = EngineType | 'reference';
 
@@ -36,6 +39,12 @@ export type ConformanceSubject = Pick<
   | 'histogram'
   | 'facets'
   | 'discoverMetadataKeys'
+  | 'topValues'
+  | 'distinct'
+  | 'ingestMetrics'
+  | 'queryMetrics'
+  | 'aggregateMetrics'
+  | 'getMetricLabelValues'
   | 'ingestSpans'
   | 'upsertTrace'
   | 'querySpans'
@@ -72,6 +81,10 @@ export async function seedConformanceCorpus(subject: ConformanceSubject): Promis
   }
   for (const trace of CORPUS_TRACES) {
     await subject.upsertTrace(structuredClone(trace.record));
+  }
+  const metrics = await subject.ingestMetrics(CORPUS_METRICS.map((m) => structuredClone(m.record)));
+  if (metrics.failed > 0 || metrics.ingested !== CORPUS_METRICS.length) {
+    throw new Error(`Seeding conformance metrics failed (${metrics.ingested} ingested, ${metrics.failed} failed): ${JSON.stringify(metrics.errors ?? [])}`);
   }
 }
 
@@ -244,5 +257,8 @@ export function describeReservoirConformance(engine: ConformanceEngine, options:
     describeLatencyHistogramConformance(ctx);
     describeSpanTraceQueryConformance(ctx);
     describeSessionsConformance(ctx);
+    describeMetadataPathConformance(ctx);
+    describeTopValuesConformance(ctx);
+    describeMetricsConformance(ctx);
   });
 }

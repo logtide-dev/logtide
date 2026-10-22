@@ -123,9 +123,18 @@ describe('compileJsonFilters through $expr', () => {
     const json = JSON.stringify(resolvedValueExpr('metadata', 'a.b'));
     expect(json.match(/"object"/g)).toHaveLength(3);
     expect(json).toContain('$$REMOVE');
-    // One $getField per segment plus the literal key: the expression grows linearly.
+    // One $getField per key of every shared candidate: 29 candidates with 113
+    // keys at the 8-segment split cap, the literal key plus the nested walk above it.
     const deep = JSON.stringify(resolvedValueExpr('metadata', 'a.b.c.d.e.f.g.h'));
-    expect(deep.match(/"\$getField"/g)).toHaveLength(9);
+    expect(deep.match(/"\$getField"/g)).toHaveLength(113);
+    const long = JSON.stringify(resolvedValueExpr('metadata', 'a.b.c.d.e.f.g.h.i'));
+    expect(long.match(/"\$getField"/g)).toHaveLength(10);
+  });
+
+  it('a dotted key tries the shared candidates in order', () => {
+    const json = JSON.stringify(resolvedValueExpr('metadata', 'resource.service.name'));
+    const fields = [...json.matchAll(/"\$literal":"([^"]+)"/g)].map((m) => m[1]);
+    expect(fields).toEqual(['resource.service.name', 'resource.service', 'name', 'resource', 'service.name', 'resource', 'service', 'name']);
   });
 
   it('scalar text maps numbers and booleans with $toString and everything else to null', () => {

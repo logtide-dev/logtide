@@ -14,7 +14,7 @@ import type {
 } from '../../core/types.js';
 
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
-import { compileJsonFilters } from './json-path.js';
+import { compileJsonFilters, resolvedValueExpr, scalarTextExpr } from './json-path.js';
 
 /** Interval to milliseconds for $dateTrunc fallback */
 const INTERVAL_MS: Record<AggregationInterval, number> = {
@@ -87,12 +87,11 @@ export class MongoDBQueryTranslator extends QueryTranslator {
     this.validatePagination(params.limit);
 
     const filter = this.buildBaseFilter(params);
-    const mongoField = this.resolveMongoField(params.field);
 
     return {
       query: filter,
       parameters: [],
-      metadata: { field: params.field, mongoField, limit: params.limit ?? 1000 },
+      metadata: { field: params.field, ...this.fieldValue(params.field), limit: params.limit ?? 1000 },
     };
   }
 
@@ -101,13 +100,27 @@ export class MongoDBQueryTranslator extends QueryTranslator {
     this.validatePagination(params.limit);
 
     const filter = this.buildBaseFilter(params);
-    const mongoField = this.resolveMongoField(params.field);
 
     return {
       query: filter,
       parameters: [],
-      metadata: { field: params.field, mongoField, limit: params.limit ?? 10 },
+      metadata: { field: params.field, ...this.fieldValue(params.field), limit: params.limit ?? 10 },
     };
+  }
+
+  /**
+   * How distinct and topValues read a field: a built-in column by its path
+   * (`mongoField`, indexes usable), a `metadata.<key>` field by the S5 text of
+   * the resolved key (`valueExpr`: the shared candidates, literal dotted key
+   * first, like every other metadata read), never by dot notation, which
+   * cannot see literal dotted keys such as the browser SDK's
+   * `performance.metric`.
+   */
+  private fieldValue(field: string): { mongoField?: string; valueExpr: Document | string } {
+    if (field.startsWith('metadata.')) {
+      return { valueExpr: scalarTextExpr(resolvedValueExpr('metadata', field.slice('metadata.'.length))) };
+    }
+    return { mongoField: field, valueExpr: `$${field}` };
   }
 
   translateDelete(params: DeleteByTimeRangeParams): NativeQuery {
@@ -230,10 +243,6 @@ export class MongoDBQueryTranslator extends QueryTranslator {
     return value;
   }
 
-  /** Resolve a field name to its MongoDB document path (dot notation works natively) */
-  private resolveMongoField(field: string): string {
-    return field;
-  }
 }
 
 /**

@@ -3,9 +3,11 @@ import {
   CORPUS_LOGS,
   CORPUS_SPANS,
   CORPUS_TRACES,
+  CORPUS_METRICS,
   PROJECT_A,
   PROJECT_B,
   PROJECT_C,
+  PROJECT_D,
   WIDE_METADATA_KEY_COUNT,
   WINDOW,
   minutes,
@@ -27,11 +29,12 @@ import {
 
 describe('corpus', () => {
   it('has the binding sizes and unique composite keys', () => {
-    expect(CORPUS_LOGS).toHaveLength(30);
+    expect(CORPUS_LOGS).toHaveLength(40);
     expect(CORPUS_SPANS).toHaveLength(131);
     expect(CORPUS_TRACES).toHaveLength(16);
+    expect(CORPUS_METRICS.map((m) => m.id)).toEqual(['MX1', 'MX2', 'MX3', 'MX4', 'MX5']);
     const logKeys = new Set(CORPUS_LOGS.map((l) => `${l.record.projectId}|${l.record.time.toISOString()}|${l.record.message}`));
-    expect(logKeys.size).toBe(30);
+    expect(logKeys.size).toBe(40);
     expect(new Set(CORPUS_SPANS.map((s) => `${s.record.projectId}|${s.record.traceId}|${s.record.spanId}`)).size).toBe(131);
     expect(new Set(CORPUS_TRACES.map((t) => `${t.record.projectId}|${t.record.traceId}`)).size).toBe(16);
   });
@@ -42,6 +45,7 @@ describe('corpus', () => {
     expect(CORPUS_LOGS.find((l) => l.id === 'L91')?.record.time).toEqual(minutes(-1440));
     expect(CORPUS_LOGS.filter((l) => l.record.projectId === PROJECT_B).map((l) => l.id)).toEqual(['L90', 'L92']);
     expect(CORPUS_LOGS.filter((l) => l.record.projectId === PROJECT_C).map((l) => l.id)).toEqual(['L93', 'L94']);
+    expect(CORPUS_LOGS.filter((l) => l.record.projectId === PROJECT_D).map((l) => l.id)).toEqual(['L40', 'L41', 'L42', 'L43', 'L44', 'L45', 'L46', 'L47', 'L48', 'L49']);
     expect(Object.keys(CORPUS_LOGS.find((l) => l.id === 'L94')!.record.metadata ?? {})).toHaveLength(WIDE_METADATA_KEY_COUNT);
   });
 

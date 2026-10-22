@@ -280,6 +280,60 @@ export class TimescaleEngine extends StorageEngine {
     }
 
     await this.initializeSpanTables(pool, s);
+    await this.initializeMetricTables(pool, s);
+  }
+
+  /**
+   * Standalone metric and exemplar tables, shaped like backend migrations
+   * 026 and 027 but without the organization/project foreign keys and
+   * without the rollup aggregates (migration 028) or policies. Like the span
+   * tables, this only serves standalone installs and tests; the backend runs
+   * with `skipInitialize` and its own migrations.
+   */
+  private async initializeMetricTables(pool: pg.Pool, s: string): Promise<void> {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.metrics (
+        time TIMESTAMPTZ NOT NULL,
+        id UUID NOT NULL DEFAULT gen_random_uuid(),
+        organization_id UUID NOT NULL,
+        project_id UUID NOT NULL,
+        metric_name TEXT NOT NULL,
+        metric_type TEXT NOT NULL,
+        value DOUBLE PRECISION NOT NULL DEFAULT 0,
+        is_monotonic BOOLEAN,
+        service_name TEXT NOT NULL DEFAULT 'unknown',
+        attributes JSONB,
+        resource_attributes JSONB,
+        histogram_data JSONB,
+        has_exemplars BOOLEAN NOT NULL DEFAULT FALSE,
+        PRIMARY KEY (time, id)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.metric_exemplars (
+        time TIMESTAMPTZ NOT NULL,
+        id UUID NOT NULL DEFAULT gen_random_uuid(),
+        metric_id UUID NOT NULL,
+        organization_id UUID NOT NULL,
+        project_id UUID NOT NULL,
+        exemplar_value DOUBLE PRECISION NOT NULL,
+        exemplar_time TIMESTAMPTZ,
+        trace_id TEXT,
+        span_id TEXT,
+        attributes JSONB,
+        PRIMARY KEY (time, id)
+      )
+    `);
+    for (const table of ['metrics', 'metric_exemplars']) {
+      try {
+        await pool.query(`SELECT create_hypertable('${s}.${table}', 'time', if_not_exists => TRUE)`);
+      } catch {
+        // not a TimescaleDB instance or already a hypertable
+      }
+    }
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_metrics_project_name_time ON ${s}.metrics (project_id, metric_name, time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_metrics_attributes ON ${s}.metrics USING GIN (attributes jsonb_path_ops)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_exemplars_metric_id ON ${s}.metric_exemplars (metric_id, time DESC)`);
   }
 
   /**

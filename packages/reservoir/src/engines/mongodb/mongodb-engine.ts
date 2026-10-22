@@ -85,6 +85,7 @@ import {
 } from '../../core/normalize.js';
 import { decodeSessionCursor } from '../../core/aggregation-helpers.js';
 import {
+  ANALYTICS_TIMEOUT_MS,
   DEFAULT_OPERATION_KINDS,
   DISCOVER_DEFAULT_SAMPLE_SIZE,
   FACETS_DEFAULT_LIMIT,
@@ -140,6 +141,13 @@ export interface MongoDBEngineOptions {
    * 7.0 and later.
    */
   percentileStrategy?: 'auto' | 'native' | 'buckets';
+  /**
+   * Server-side time limit (`maxTimeMS`) of the log analytics reads (count,
+   * histogram, facets, metadata key discovery), so an unbounded range stops
+   * with MaxTimeMSExpired instead of running to completion. Default
+   * ANALYTICS_TIMEOUT_MS; 0 disables it.
+   */
+  analyticsTimeoutMs?: number;
 }
 
 /** Interval to $dateTrunc unit/binSize for MongoDB 5.0+ */
@@ -547,8 +555,14 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateCount(params);
     const filter = native.query as Document;
-    const count = await col.countDocuments(filter, { ...ctxOpts() });
+    const count = await col.countDocuments(filter, { ...ctxOpts(), ...this.analyticsOpts() });
     return { count, executionTimeMs: Date.now() - start };
+  }
+
+  /** `maxTimeMS` of the log analytics reads (see MongoDBEngineOptions.analyticsTimeoutMs). */
+  private analyticsOpts(): { maxTimeMS?: number } {
+    const ms = this.options.analyticsTimeoutMs ?? ANALYTICS_TIMEOUT_MS;
+    return ms > 0 ? { maxTimeMS: ms } : {};
   }
 
   async countEstimate(params: CountParams): Promise<CountResult> {
@@ -576,17 +590,21 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateDistinct(params);
     const filter = native.query as Document;
-    const mongoField = native.metadata!.mongoField as string;
+    const mongoField = native.metadata!.mongoField as string | undefined;
+    const valueExpr = native.metadata!.valueExpr as Document | string;
     const limit = native.metadata!.limit as number;
 
     const pipeline: Document[] = [
       { $match: filter },
-      // Pre-filter before $group to reduce the number of docs aggregated.
-      // Exclude only null and empty string. NOTE: `$gt: ''` would wrongly drop all
-      // numeric/boolean values too, since in BSON sort order those types compare
-      // below strings; use $nin so non-string metadata values survive.
-      { $match: { [mongoField]: { $exists: true, $nin: [null, ''] } } },
-      { $group: { _id: `$${mongoField}` } },
+      // Built-in columns: pre-filter before $group to reduce the number of docs
+      // aggregated. Exclude only null and empty string. NOTE: `$gt: ''` would
+      // wrongly drop all numeric/boolean values too, since in BSON sort order
+      // those types compare below strings.
+      ...(mongoField ? [{ $match: { [mongoField]: { $exists: true, $nin: [null, ''] } } }] : []),
+      // Metadata fields group by the S5 text of the resolved key: null for
+      // missing, null, objects and arrays, dropped after the group.
+      { $group: { _id: valueExpr } },
+      { $match: { _id: { $nin: [null, ''] } } },
       { $sort: { _id: 1 } },
       { $limit: limit },
       { $project: { value: '$_id', _id: 0 } },
@@ -604,19 +622,20 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateTopValues(params);
     const filter = native.query as Document;
-    const mongoField = native.metadata!.mongoField as string;
+    const valueExpr = native.metadata!.valueExpr as Document | string;
     const limit = native.metadata!.limit as number;
 
     const pipeline: Document[] = [
       { $match: filter },
       {
         $group: {
-          _id: `$${mongoField}`,
+          // A built-in column path, or the S5 text of a resolved metadata key.
+          _id: valueExpr,
           count: { $sum: 1 },
           ...(params.includeLastSeen ? { lastSeen: { $max: '$time' } } : {}),
         },
       },
-      { $match: { _id: { $ne: null } } },
+      { $match: { _id: { $nin: [null, ''] } } },
       { $sort: { count: -1 } },
       { $limit: limit },
       {
@@ -649,7 +668,7 @@ export class MongoDBEngine extends StorageEngine {
     const normalized = normalizeHistogramParams(params);
     const filter = this.translator.buildLogFilter(normalized);
     const rows = await this.logsCol()
-      .aggregate(histogramPipeline(filter, normalized.bucketSeconds * 1000), { ...ctxOpts(), allowDiskUse: true })
+      .aggregate(histogramPipeline(filter, normalized.bucketSeconds * 1000), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
       .toArray();
     return assembleHistogram(normalized, rows as HistogramRow[]);
   }
@@ -660,7 +679,7 @@ export class MongoDBEngine extends StorageEngine {
     const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
     const filter = this.translator.buildLogFilter(normalized);
     const rows = await this.logsCol()
-      .aggregate(facetsPipeline(filter, normalized.fields, limit), { ...ctxOpts(), allowDiskUse: true })
+      .aggregate(facetsPipeline(filter, normalized.fields, limit), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
       .toArray();
     return assembleFacets(normalized.fields, rows as FacetRow[], limit);
   }
@@ -669,7 +688,7 @@ export class MongoDBEngine extends StorageEngine {
     const normalized = normalizeDiscoverParams(params);
     const sampleSize = normalized.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE;
     const rows = await this.logsCol()
-      .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }), { ...ctxOpts(), allowDiskUse: true })
+      .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
       .toArray();
     return assembleMetadataKeys(rows as { _id: unknown; occurrences: unknown }[]);
   }
@@ -1247,11 +1266,13 @@ export class MongoDBEngine extends StorageEngine {
 
     const bucketExpr = this.buildBucketExpr(params.interval, intervalMs);
 
+    // Group fields are named by position (`label_0`): a label key with a dot
+    // is not a valid field name inside `$group._id`.
     const groupId: Document = { bucket: bucketExpr };
     if (params.groupBy && params.groupBy.length > 0) {
-      for (const key of params.groupBy) {
-        groupId[`label_${key}`] = `$attributes.${key}`;
-      }
+      params.groupBy.forEach((key, i) => {
+        groupId[`label_${i}`] = metricLabelExpr(key);
+      });
     }
 
     const aggExpr = AGG_ACCUMULATORS[params.aggregation] ?? AGG_ACCUMULATORS.avg;
@@ -1303,9 +1324,9 @@ export class MongoDBEngine extends StorageEngine {
 
       if (params.groupBy && params.groupBy.length > 0) {
         const labels: Record<string, string> = {};
-        for (const key of params.groupBy) {
-          labels[key] = String(row._id[`label_${key}`] ?? '');
-        }
+        params.groupBy.forEach((key, i) => {
+          labels[key] = String(row._id[`label_${i}`] ?? '');
+        });
         bucket.labels = labels;
       }
 
@@ -1395,7 +1416,7 @@ export class MongoDBEngine extends StorageEngine {
 
     const pipeline: Document[] = [
       { $match: filter },
-      { $group: { _id: `$attributes.${labelKey}` } },
+      { $group: { _id: metricLabelExpr(labelKey) } },
       { $match: { _id: { $nin: [null, ''] } } },
       { $sort: { _id: 1 } },
       { $limit: limit },
@@ -1667,9 +1688,7 @@ export class MongoDBEngine extends StorageEngine {
 
     // Attribute label filtering
     if (params.attributes) {
-      for (const [key, val] of Object.entries(params.attributes)) {
-        filter[`attributes.${key}`] = val;
-      }
+      addMetricLabelFilters(filter, params.attributes);
     }
 
     return filter;
@@ -1695,9 +1714,7 @@ export class MongoDBEngine extends StorageEngine {
       filter.service_name = svc.length === 1 ? svc[0] : { $in: svc };
     }
     if (params.attributes) {
-      for (const [key, val] of Object.entries(params.attributes)) {
-        filter[`attributes.${key}`] = val;
-      }
+      addMetricLabelFilters(filter, params.attributes);
     }
 
     return filter;
@@ -1747,6 +1764,36 @@ export class MongoDBEngine extends StorageEngine {
 
     return filter;
   }
+}
+
+// =============================================================================
+// Metric labels
+// =============================================================================
+// Metric attributes are stored as sent: flat keys that often contain dots
+// (`http.request.method`, the OTel norm). A label is that literal key, as
+// on TimescaleDB (`attributes->>key`) and ClickHouse (`JSONExtractString`).
+// Dot notation would read a nested path instead, so dotted keys go through
+// `$getField`.
+
+/** The value of the literal label key (null when absent). */
+export function metricLabelExpr(key: string): Document {
+  return { $getField: { field: { $literal: key }, input: '$attributes' } };
+}
+
+/**
+ * Adds label equality filters: a plain key as a native clause (indexes stay
+ * usable), a dotted or `$` key as one `$expr` over the literal key.
+ */
+export function addMetricLabelFilters(filter: Document, attributes: Record<string, string>): void {
+  const exprs: Document[] = [];
+  for (const [key, val] of Object.entries(attributes)) {
+    if (key !== '' && !key.includes('.') && !key.startsWith('$')) {
+      filter[`attributes.${key}`] = val;
+    } else {
+      exprs.push({ $expr: { $eq: [metricLabelExpr(key), { $literal: val }] } });
+    }
+  }
+  if (exprs.length > 0) filter.$and = [...((filter.$and as Document[] | undefined) ?? []), ...exprs];
 }
 
 // =============================================================================

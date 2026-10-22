@@ -8,13 +8,15 @@
 // Changing a record here changes the expectations of every engine: only F3
 // (or the orchestrator) may do it. R-* may add records for new cases.
 
-import type { LogLevel, LogRecord, SpanKind, SpanRecord, SpanStatusCode, TraceRecord } from '../core/types.js';
+import type { LogLevel, LogRecord, MetricRecord, SpanKind, SpanRecord, SpanStatusCode, TraceRecord } from '../core/types.js';
 
 export const CONFORMANCE_BASE = new Date('2026-01-05T10:00:00.000Z');
 export const PROJECT_A = '00000000-0000-4000-8000-0000000000a1';
 export const PROJECT_B = '00000000-0000-4000-8000-0000000000b1';
 /** Metadata key discovery edges only (dotted child keys, the key cap): logs L93 and L94. */
 export const PROJECT_C = '00000000-0000-4000-8000-0000000000c1';
+/** Metadata path resolution edges (OTLP resource and body shapes, literal splits): logs L40 and up. */
+export const PROJECT_D = '00000000-0000-4000-8000-0000000000d1';
 export const ORG_ID = '00000000-0000-4000-8000-0000000000f1';
 
 const BASE_MS = CONFORMANCE_BASE.getTime();
@@ -110,6 +112,24 @@ const LOG_ROWS: LogRow[] = [
   { id: 'L91', project: PROJECT_A, t: -1440, service: 'api', level: 'error', host: 'web-1', message: 'Connection refused by upstream db', meta: prod, sessionId: SESSION_IDS.SESS1 },
   { id: 'L93', project: PROJECT_C, t: 1, service: 'collector', level: 'info', message: 'otel resource keys', meta: { otel: { 'service.name': 'checkout', 'k8s.pod.name': 'pod-1' }, http: { method: 'GET' } } },
   { id: 'L94', project: PROJECT_C, t: 2, service: 'collector', level: 'info', message: 'wide metadata', meta: WIDE_META },
+  // Project D: one metadata shape per log, no hostname.
+  {
+    id: 'L40', project: PROJECT_D, t: 30, service: 'collector', level: 'info', message: 'otel log with a resource and a body',
+    meta: { resource: { 'service.name': 'checkout', 'host.name': 'web-1' }, 'otel.body': { user: { id: 7 }, 'http.route': '/pay' } },
+  },
+  { id: 'L41', project: PROJECT_D, t: 31, service: 'collector', level: 'info', message: 'otel log of another service', meta: { resource: { 'service.name': 'cart', 'host.name': 'web-2' } } },
+  { id: 'L42', project: PROJECT_D, t: 32, service: 'api', level: 'info', message: 'literal child next to a nested path', meta: { a: { 'b.c': 'literal-child', b: { c: 'deep' } } } },
+  { id: 'L43', project: PROJECT_D, t: 33, service: 'api', level: 'info', message: 'dotted parent next to a dotted child', meta: { 'a.b': { c: 'dotted-parent' }, a: { 'b.c': 'dotted-child' } } },
+  {
+    id: 'L44', project: PROJECT_D, t: 34, service: 'api', level: 'info', message: 'arrays and objects as values',
+    meta: { tags: ['prod', 'eu'], errors: [{ code: 'E42' }], user: { name: 'alice' }, list: { '0': 'zero' } },
+  },
+  { id: 'L45', project: PROJECT_D, t: 35, service: 'api', level: 'info', message: 'a null value', meta: { note: null } },
+  // Web vitals as the browser SDK sends them: flat literal dotted keys (L46 to L48), plus one nested (L49).
+  { id: 'L46', project: PROJECT_D, t: 36, service: 'web', level: 'info', message: 'web vital LCP good', meta: { 'performance.metric': 'LCP', 'performance.value': 2100, 'performance.rating': 'good' } },
+  { id: 'L47', project: PROJECT_D, t: 37, service: 'web', level: 'warn', message: 'web vital LCP poor', meta: { 'performance.metric': 'LCP', 'performance.value': 4200, 'performance.rating': 'poor' } },
+  { id: 'L48', project: PROJECT_D, t: 38, service: 'web', level: 'info', message: 'web vital INP good', meta: { 'performance.metric': 'INP', 'performance.value': 150, 'performance.rating': 'good' } },
+  { id: 'L49', project: PROJECT_D, t: 39, service: 'web', level: 'info', message: 'web vital CLS nested', meta: { performance: { metric: 'CLS', rating: 'good' } } },
 ];
 
 function logRecord(row: LogRow): LogRecord {
@@ -327,6 +347,40 @@ function traceRecord(row: TraceRow): TraceRecord {
 
 export const CORPUS_TRACES: readonly { readonly id: string; readonly record: TraceRecord }[] = Object.freeze(
   buildTraceRows().map((row) => Object.freeze({ id: row.id, record: traceRecord(row) })),
+);
+
+// ----------------------------------------------------------------------------
+// Metrics
+// ----------------------------------------------------------------------------
+
+/** The counter of the metrics cases. */
+export const METRIC_REQUESTS = 'http.server.request.count';
+
+// OTel metric attributes are flat keys with dots (`http.request.method`),
+// read as literal keys on every engine; MX5 nests the same name instead.
+const METRIC_ROWS: { id: string; t: number; value: number; attributes: Record<string, unknown> }[] = [
+  { id: 'MX1', t: 1, value: 10, attributes: { 'http.request.method': 'GET', 'server.address': 'api-1' } },
+  { id: 'MX2', t: 2, value: 5, attributes: { 'http.request.method': 'POST', 'server.address': 'api-1' } },
+  { id: 'MX3', t: 3, value: 7, attributes: { 'http.request.method': 'GET', 'server.address': 'api-2' } },
+  { id: 'MX4', t: 20, value: 3, attributes: { 'http.request.method': 'GET', 'server.address': 'api-1' } },
+  { id: 'MX5', t: 4, value: 100, attributes: { http: { request: { method: 'PUT' } } } },
+];
+
+export const CORPUS_METRICS: readonly { readonly id: string; readonly record: MetricRecord }[] = Object.freeze(
+  METRIC_ROWS.map((row) => Object.freeze({
+    id: row.id,
+    record: {
+      time: minutes(row.t),
+      organizationId: ORG_ID,
+      projectId: PROJECT_A,
+      metricName: METRIC_REQUESTS,
+      metricType: 'sum',
+      value: row.value,
+      isMonotonic: true,
+      serviceName: 'api',
+      attributes: structuredClone(row.attributes),
+    } satisfies MetricRecord,
+  })),
 );
 
 /** A corpus span record by its fixture id, e.g. `corpusSpan('PAGE-3').spanId`. */
