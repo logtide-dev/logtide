@@ -27,8 +27,21 @@ import {
   alertNotificationJobKey,
   enqueueAlertNotifications,
 } from '../../../queue/jobs/alert-evaluation.js';
-import { BullMQQueueAdapter } from '../../../queue/adapters/bullmq-adapter.js';
-import { GraphileQueueAdapter } from '../../../queue/adapters/graphile-adapter.js';
+
+/**
+ * The adapters are imported fresh after a module reset: under the DB test
+ * config, `setup.ts` loads `queue/connection.js` (and with it the real
+ * `bullmq` and `graphile-worker`) before this file's mocks are registered,
+ * so a static import would get the cached real modules.
+ */
+async function loadAdapters() {
+  vi.resetModules();
+  const [{ BullMQQueueAdapter }, { GraphileQueueAdapter }] = await Promise.all([
+    import('../../../queue/adapters/bullmq-adapter.js'),
+    import('../../../queue/adapters/graphile-adapter.js'),
+  ]);
+  return { BullMQQueueAdapter, GraphileQueueAdapter };
+}
 
 const RULE_ID = '6f1c9a52-3b0e-4d43-9a8e-2f6b1c0d7e11';
 const ORG_ID = '0b5e7c1a-9d2f-4e3b-8a6c-1d2e3f4a5b6c';
@@ -150,6 +163,7 @@ describe('queue adapters', () => {
 
   it('the BullMQ adapter forwards the key as jobId', async () => {
     bullAdd.mockResolvedValue({ id: 'x', name: 'send-resolved', attemptsMade: 0, timestamp: Date.now() });
+    const { BullMQQueueAdapter } = await loadAdapters();
     const adapter = new BullMQQueueAdapter<AlertNotificationJobData>('alert-notifications', {} as Redis);
 
     expect(await enqueueAlertNotifications([resolved, triggered], adapter)).toBe(2);
@@ -166,6 +180,7 @@ describe('queue adapters', () => {
 
   it('the graphile adapter forwards the key as jobKey', async () => {
     quickAddJob.mockResolvedValue({ id: 1, created_at: new Date() });
+    const { GraphileQueueAdapter } = await loadAdapters();
     const adapter = new GraphileQueueAdapter<AlertNotificationJobData>('alert-notifications', {} as Pool);
 
     expect(await enqueueAlertNotifications([resolved, triggered], adapter)).toBe(2);
