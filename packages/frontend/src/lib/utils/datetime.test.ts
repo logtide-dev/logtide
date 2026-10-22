@@ -35,6 +35,25 @@ describe('datetime', () => {
       expect(formatTimestamp(INSTANT)).toBe('Mar 5, 21:07:09');
     });
 
+    it('uses explicit prefs instead of the live store', () => {
+      prefs('UTC', false);
+      expect(formatTimestamp(INSTANT, { prefs: { hour12: true, timeZone: 'Asia/Kolkata' } })).toBe(
+        'Mar 6, 02:37:09 AM'
+      );
+      expect(formatTimestamp(INSTANT)).toBe('Mar 5, 21:07:09');
+      expect(
+        formatTimestamp(INSTANT, { withZone: true, prefs: { hour12: false, timeZone: 'Asia/Kolkata' } })
+      ).toBe('Mar 6, 02:37:09 UTC+5:30');
+    });
+
+    it('dateOnly gives month and day with no clock and no year', () => {
+      expect(formatTimestamp(INSTANT, { dateOnly: true })).toBe('Mar 5');
+      expect(formatTimestamp('2024-03-05T21:07:09Z', { dateOnly: true })).toBe('Mar 5');
+      expect(
+        formatTimestamp(INSTANT, { dateOnly: true, prefs: { hour12: false, timeZone: 'Asia/Kolkata' } })
+      ).toBe('Mar 6');
+    });
+
     it('supports minute and ms precision', () => {
       expect(formatTimestamp(INSTANT, { precision: 'minute' })).toBe('Mar 5, 21:07');
       expect(formatTimestamp(INSTANT, { precision: 'ms' })).toBe('Mar 5, 21:07:09.047');

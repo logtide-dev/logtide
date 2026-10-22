@@ -34,6 +34,7 @@ describe('formatTimestamp agrees with datetime.ts', () => {
     ['time', { precision: 'minute', withDate: false }],
     ['timeSeconds', { precision: 'second', withDate: false }],
     ['dateTime', { precision: 'minute', withDate: true }],
+    ['monthDay', { dateOnly: true }],
   ];
   const prefsList = [
     { hour12: false, timeZone: 'UTC' },
@@ -56,6 +57,11 @@ describe('formatTimestamp agrees with datetime.ts', () => {
       it(`${style} ${prefs.hour12 ? '12h' : '24h'} ${prefs.timeZone}`, () => {
         displayPreferences.set(prefs);
         expect(formatTimestamp(T, style, prefs)).toBe(formatInstant(T, opts));
+      });
+
+      it(`${style} with explicit prefs ignores the live store (${prefs.timeZone})`, () => {
+        displayPreferences.set({ hour12: !prefs.hour12, timeZone: null });
+        expect(formatTimestamp(T, style, prefs)).toBe(formatInstant(T, { ...opts, prefs }));
       });
     }
   }

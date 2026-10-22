@@ -7,6 +7,7 @@ import {
   formatMitreTechnique,
 } from '@logtide/shared';
 import { escapeHtml } from './html';
+import { severityTone } from './severity';
 
 export { getSeverityColor, getSeverityLabel };
 
@@ -54,6 +55,22 @@ export function formatTimeAgo(dateStr: string): string {
   }
 }
 
+// The export is a standalone document without the app stylesheet, so the
+// severity badge colours come from the severity module (its chart tone is
+// readable on light and dark backgrounds) instead of being repeated here.
+// Amber and gray take dark text for contrast.
+const EXPORT_BADGE_SEVERITIES = ['critical', 'high', 'medium', 'low', 'informational'] as const;
+const DARK_TEXT_SEVERITIES = new Set(['medium', 'low']);
+
+function severityBadgeCss(): string {
+  const rule = (name: string, sev: string) =>
+    `.badge-${name} { background: ${severityTone(sev).chart}; color: ${DARK_TEXT_SEVERITIES.has(sev) ? 'black' : 'white'}; }`;
+  return [
+    ...EXPORT_BADGE_SEVERITIES.map((sev) => rule(sev, sev)),
+    rule('info', 'informational'),
+  ].join(' ');
+}
+
 interface PdfExportData {
   incident: Incident;
   detections: DetectionEvent[];
@@ -83,11 +100,7 @@ export async function exportIncidentToPdf(data: PdfExportData): Promise<void> {
     .subtitle { color: #666; font-size: 14px; }
     .badges { display: flex; gap: 8px; margin-top: 12px; }
     .badge { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
-    .badge-critical { background: #a855f7; color: white; }
-    .badge-high { background: #ef4444; color: white; }
-    .badge-medium { background: #f97316; color: white; }
-    .badge-low { background: #eab308; color: black; }
-    .badge-info { background: #3b82f6; color: white; }
+    ${severityBadgeCss()}
     .badge-status { background: #e5e7eb; color: #374151; }
     .section { margin-bottom: 30px; }
     .section-title { font-size: 14px; font-weight: bold; color: #374151; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }

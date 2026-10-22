@@ -12,10 +12,19 @@ const INVALID = 'Invalid date';
 
 export type TimestampPrecision = 'minute' | 'second' | 'ms';
 
+export interface TimestampPrefs {
+  hour12: boolean;
+  timeZone: string | null;
+}
+
 export interface TimestampOptions {
   precision?: TimestampPrecision;
   withDate?: boolean;
   withZone?: boolean;
+  /** Month and day only ("Oct 21"): no clock and never a year. Ignores precision and withDate. */
+  dateOnly?: boolean;
+  /** Format with these preferences instead of the live display preferences. */
+  prefs?: TimestampPrefs;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,8 +45,8 @@ function plain(text: string): string {
  * this runtime does not know ("Not/AZone") is detected once, warned about once
  * and treated as the browser zone from then on.
  */
-function activeZone(): string | undefined {
-  const zone = resolveTimeZone(displayPreferences.get().timeZone);
+function activeZone(prefs?: TimestampPrefs): string | undefined {
+  const zone = resolveTimeZone((prefs ?? displayPreferences.get()).timeZone);
   if (!zone || invalidZones.has(zone)) return undefined;
   if (validZones.has(zone)) return zone;
   try {
@@ -69,9 +78,9 @@ function toDate(value: unknown): Date | null {
 
 type Parts = Partial<Record<Intl.DateTimeFormatPartTypes, string>>;
 
-function partsOf(d: Date, options: Intl.DateTimeFormatOptions): Parts {
+function partsOf(d: Date, options: Intl.DateTimeFormatOptions, prefs?: TimestampPrefs): Parts {
   const out: Parts = {};
-  for (const p of formatterFor(options, activeZone()).formatToParts(d)) {
+  for (const p of formatterFor(options, activeZone(prefs)).formatToParts(d)) {
     out[p.type] = p.value;
   }
   return out;
@@ -88,9 +97,9 @@ const ALL_PARTS = {
   fractionalSecondDigits: 3,
 } as Intl.DateTimeFormatOptions;
 
-function allParts(d: Date): Parts {
-  const hour12 = displayPreferences.get().hour12;
-  return partsOf(d, { ...ALL_PARTS, hourCycle: hour12 ? 'h12' : 'h23' });
+function allParts(d: Date, prefs?: TimestampPrefs): Parts {
+  const hour12 = (prefs ?? displayPreferences.get()).hour12;
+  return partsOf(d, { ...ALL_PARTS, hourCycle: hour12 ? 'h12' : 'h23' }, prefs);
 }
 
 function timeText(p: Parts, precision: TimestampPrecision, hour12: boolean): string {
@@ -101,8 +110,8 @@ function timeText(p: Parts, precision: TimestampPrecision, hour12: boolean): str
   return plain(text);
 }
 
-function dateText(p: Parts, now: Date): string {
-  const currentYear = partsOf(now, { year: 'numeric' }).year;
+function dateText(p: Parts, now: Date, prefs?: TimestampPrefs): string {
+  const currentYear = partsOf(now, { year: 'numeric' }, prefs).year;
   const base = `${p.month} ${p.day}`;
   return p.year !== currentYear ? `${base}, ${p.year}` : base;
 }
@@ -112,10 +121,10 @@ function dateText(p: Parts, now: Date): string {
 // ---------------------------------------------------------------------------
 
 /** Label of the display zone: "UTC", "UTC+2", "UTC-5", "UTC+5:30". */
-export function getDisplayZoneLabel(at: Date = new Date()): string {
+export function getDisplayZoneLabel(at: Date = new Date(), prefs?: TimestampPrefs): string {
   const d = toDate(at) ?? new Date();
   try {
-    const name = partsOf(d, { timeZoneName: 'shortOffset' }).timeZoneName ?? 'GMT';
+    const name = partsOf(d, { timeZoneName: 'shortOffset' }, prefs).timeZoneName ?? 'GMT';
     if (name === 'GMT' || name === 'UTC') return 'UTC';
     return plain(name).replace(/^GMT/, 'UTC');
   } catch {
@@ -127,12 +136,16 @@ export function getDisplayZoneLabel(at: Date = new Date()): string {
 export function formatTimestamp(value: string | number | Date, opts: TimestampOptions = {}): string {
   const d = toDate(value);
   if (!d) return INVALID;
-  const { precision = 'second', withDate = true, withZone = false } = opts;
-  const hour12 = displayPreferences.get().hour12;
-  const p = allParts(d);
+  const { precision = 'second', withDate = true, withZone = false, dateOnly = false, prefs } = opts;
+  const hour12 = (prefs ?? displayPreferences.get()).hour12;
+  const p = allParts(d, prefs);
+  if (dateOnly) {
+    const text = `${p.month} ${p.day}`;
+    return withZone ? `${text} ${getDisplayZoneLabel(d, prefs)}` : text;
+  }
   const time = timeText(p, precision, hour12);
-  let text = withDate ? `${dateText(p, new Date())}, ${time}` : time;
-  if (withZone) text += ` ${getDisplayZoneLabel(d)}`;
+  let text = withDate ? `${dateText(p, new Date(), prefs)}, ${time}` : time;
+  if (withZone) text += ` ${getDisplayZoneLabel(d, prefs)}`;
   return text;
 }
 
