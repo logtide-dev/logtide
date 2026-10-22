@@ -329,3 +329,69 @@ describe('SigmaDetectionEngine (unit)', () => {
         });
     });
 });
+
+describe('SigmaDetectionEngine single rule seams (unit)', () => {
+    const rule = (over: Record<string, any> = {}) => ({
+        id: 'rule-1',
+        title: 'Suspicious message',
+        level: 'high' as const,
+        status: 'stable' as const,
+        logsource: {},
+        detection: { selection: { 'message|contains': 'attack' }, condition: 'selection' },
+        tags: ['attack.t1059'],
+        ...over,
+    });
+
+    it('matchRule returns null when logsource does not match', () => {
+        const r = rule({ logsource: { service: 'sshd' } });
+        expect(SigmaDetectionEngine.matchRule(r as any, { message: 'attack', service: 'api' })).toBeNull();
+    });
+
+    it('matchRule result equals the evaluateBatch result for the same rule and log', async () => {
+        dbState.rows = [row()];
+        const log = { message: 'an attack', service: 'api', metadata: { x: 1 } };
+        const batch = await SigmaDetectionEngine.evaluateBatch([log], ORG);
+        const fromBatch = batch.get(0)!.matchedRules[0];
+        const direct = SigmaDetectionEngine.matchRule(rule() as any, log)!;
+        expect(direct).not.toBeNull();
+        expect({ ...direct, matchedAt: undefined }).toEqual({ ...fromBatch, matchedAt: undefined });
+    });
+
+    it('matchRule returns null for a non matching log and swallows evaluation errors', () => {
+        expect(SigmaDetectionEngine.matchRule(rule() as any, { message: 'fine' })).toBeNull();
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const broken = rule({ detection: null });
+        expect(SigmaDetectionEngine.matchRule(broken as any, { message: 'attack' })).toBeNull();
+        expect(spy).toHaveBeenCalled();
+        spy.mockRestore();
+    });
+
+    it('toLogEntry maps traceId to trace_id and keeps metadata', () => {
+        const time = new Date('2026-10-21T10:00:00Z');
+        const entry = SigmaDetectionEngine.toLogEntry({
+            id: 'log-1',
+            projectId: 'p1',
+            service: 'api',
+            level: 'error',
+            message: 'boom',
+            metadata: { a: { b: 1 } },
+            traceId: 't-1',
+            time,
+        } as any);
+        expect(entry).toEqual({
+            id: 'log-1',
+            service: 'api',
+            level: 'error',
+            message: 'boom',
+            metadata: { a: { b: 1 } },
+            trace_id: 't-1',
+            time,
+        });
+    });
+
+    it('flatten exposes metadata dot paths', () => {
+        const f = SigmaDetectionEngine.flatten({ message: 'm', metadata: { u: { n: 'x' } } });
+        expect(f['metadata.u.n']).toBe('x');
+        expect(f['u']).toEqual({ n: 'x' });
+    });
+});

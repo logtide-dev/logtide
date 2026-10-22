@@ -110,7 +110,7 @@
         {#if !syncResult}
             <div class="space-y-6 py-4">
                 <div class="space-y-2">
-                    <Label>Select Rules to Import</Label>
+                    <Label>Select rules to import</Label>
                     <p class="text-xs text-muted-foreground">
                         Select individual rules or entire categories. Search to
                         quickly find specific rules.
@@ -121,14 +121,14 @@
                 </div>
 
                 <div
-                    class="p-3 bg-blue-50 dark:bg-blue-950 rounded-md text-sm mb-4"
+                    class="p-3 bg-info/10 rounded-md text-sm mb-4"
                 >
                     <p
-                        class="text-blue-900 dark:text-blue-100 font-medium mb-2"
+                        class="text-info-text font-medium mb-2"
                     >
-                        Notification Settings (Optional)
+                        Notification settings (optional)
                     </p>
-                    <p class="text-blue-800 dark:text-blue-200 text-xs">
+                    <p class="text-info-text text-xs">
                         Select notification channels to receive alerts when these
                         Sigma rules match logs.<br />
                         Leave blank for detection-only mode (no notifications).
@@ -141,7 +141,7 @@
                         selectedIds={selectedChannelIds}
                         onSelectionChange={(ids) => (selectedChannelIds = ids)}
                         disabled={syncing}
-                        placeholder="Select channels..."
+                        placeholder="Select channels"
                     />
                     <p class="text-xs text-muted-foreground">
                         Select channels to receive notifications when detections trigger
@@ -165,7 +165,7 @@
                 >
                     {#if syncing}
                         <Loader2 class="w-4 h-4 mr-2 animate-spin" />
-                        Syncing...
+                        Syncing
                     {:else}
                         <Download class="w-4 h-4 mr-2" />
                         Import {selectedCategories.length +
@@ -181,10 +181,10 @@
             <div class="space-y-4 py-4">
                 <div class="flex items-center gap-3">
                     {#if syncResult.success}
-                        <CheckCircle class="w-8 h-8 text-green-600" />
+                        <CheckCircle class="w-8 h-8 text-success-text" aria-hidden="true" />
                         <div>
                             <h3 class="font-semibold text-lg">
-                                Sync Completed
+                                Sync completed
                             </h3>
                             <p class="text-sm text-muted-foreground">
                                 Commit: <span class="font-mono text-xs"
@@ -195,16 +195,16 @@
                             </p>
                         </div>
                     {:else}
-                        <AlertCircle class="w-8 h-8 text-red-600" />
+                        <AlertCircle class="w-8 h-8 text-destructive-text" aria-hidden="true" />
                         <div>
-                            <h3 class="font-semibold text-lg">Sync Failed</h3>
+                            <h3 class="font-semibold text-lg">Sync failed</h3>
                         </div>
                     {/if}
                 </div>
 
                 <div class="grid grid-cols-3 gap-4">
                     <div class="p-3 border rounded-md text-center">
-                        <div class="text-2xl font-bold text-green-600">
+                        <div class="text-2xl font-bold text-success-text">
                             {syncResult.imported}
                         </div>
                         <div class="text-xs text-muted-foreground">
@@ -212,13 +212,13 @@
                         </div>
                     </div>
                     <div class="p-3 border rounded-md text-center">
-                        <div class="text-2xl font-bold text-yellow-600">
+                        <div class="text-2xl font-bold text-warning-text">
                             {syncResult.skipped}
                         </div>
                         <div class="text-xs text-muted-foreground">Skipped</div>
                     </div>
                     <div class="p-3 border rounded-md text-center">
-                        <div class="text-2xl font-bold text-red-600">
+                        <div class="text-2xl font-bold text-destructive-text">
                             {syncResult.failed}
                         </div>
                         <div class="text-xs text-muted-foreground">Failed</div>
@@ -233,14 +233,14 @@
                         <div class="max-h-32 overflow-y-auto space-y-1">
                             {#each syncResult.warnings.slice(0, 5) as warning}
                                 <div
-                                    class="text-xs bg-yellow-50 text-yellow-800 p-2 rounded"
+                                    class="text-xs bg-warning/15 text-warning-text p-2 rounded"
                                 >
                                     {warning}
                                 </div>
                             {/each}
                             {#if syncResult.warnings.length > 5}
                                 <p class="text-xs text-muted-foreground">
-                                    ... and {syncResult.warnings.length - 5} more
+                                    and {syncResult.warnings.length - 5} more
                                 </p>
                             {/if}
                         </div>
@@ -255,7 +255,7 @@
                         <div class="max-h-32 overflow-y-auto space-y-1">
                             {#each syncResult.errors.slice(0, 5) as error}
                                 <div
-                                    class="text-xs bg-red-50 text-red-800 p-2 rounded font-mono"
+                                    class="text-xs bg-destructive/15 text-destructive-text p-2 rounded font-mono"
                                 >
                                     <strong>{error.rule}:</strong>
                                     {error.error}
@@ -263,7 +263,7 @@
                             {/each}
                             {#if syncResult.errors.length > 5}
                                 <p class="text-xs text-muted-foreground">
-                                    ... and {syncResult.errors.length - 5} more
+                                    and {syncResult.errors.length - 5} more
                                 </p>
                             {/if}
                         </div>

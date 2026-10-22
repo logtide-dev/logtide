@@ -66,6 +66,22 @@ tags:
   - attack.t1190
 `;
 
+    describe('importSigmaRule raw yaml', () => {
+        it('stores the imported yaml exactly', async () => {
+            const { organization } = await createTestContext();
+            const result = await sigmaService.importSigmaRule({
+                yaml: validSigmaYaml,
+                organizationId: organization.id,
+            });
+            const row = await db
+                .selectFrom('sigma_rules')
+                .select('raw_yaml')
+                .where('id', '=', result.sigmaRule.id)
+                .executeTakeFirstOrThrow();
+            expect(row.raw_yaml).toBe(validSigmaYaml);
+        });
+    });
+
     describe('importSigmaRule', () => {
         it('should import a valid Sigma rule', async () => {
             const { organization } = await createTestContext();

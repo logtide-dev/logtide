@@ -156,3 +156,6 @@ export interface AlertRule {
 
 // Re-export incident types (1.6 F4)
 export * from './incident.js';
+
+// Re-export sigma rule management types (1.6 W10)
+export * from './sigma-rules.js';

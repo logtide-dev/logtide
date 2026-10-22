@@ -132,7 +132,8 @@
     <Search class="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
     <Input
       type="text"
-      placeholder="Search rules by name..."
+      placeholder="Search rules by name"
+      aria-label="Search rules by name"
       bind:value={searchQuery}
       class="pl-9"
     />
@@ -178,6 +179,7 @@
           {#each searchResults as result}
             <div class="flex items-center gap-2 p-2 hover:bg-muted/50 rounded-md transition-colors">
               <Checkbox
+                aria-label="Select {result.title || result.name}"
                 checked={selectedRules.has(result.path)}
                 onCheckedChange={() => toggleRule(result.path)}
               />
@@ -212,15 +214,22 @@
       class="flex items-center gap-2 p-2 hover:bg-muted/50 rounded-md cursor-pointer transition-colors"
       style="padding-left: {props.level * 1.5 + 0.5}rem"
     >
-      <button type="button" onclick={() => toggleNode(props.node)} class="shrink-0">
+      <button
+        type="button"
+        onclick={() => toggleNode(props.node)}
+        class="shrink-0"
+        aria-label="{expandedNodes.has(props.node.path) ? 'Collapse' : 'Expand'} {props.node.name}"
+        aria-expanded={expandedNodes.has(props.node.path)}
+      >
         {#if expandedNodes.has(props.node.path)}
-          <ChevronDown class="h-4 w-4" />
+          <ChevronDown class="h-4 w-4" aria-hidden="true" />
         {:else}
-          <ChevronRight class="h-4 w-4" />
+          <ChevronRight class="h-4 w-4" aria-hidden="true" />
         {/if}
       </button>
 
       <Checkbox
+        aria-label="Select category {props.node.name}"
         checked={selectedCategories.has(props.node.path)}
         onCheckedChange={() => toggleCategory(props.node.path)}
       />
@@ -253,6 +262,7 @@
           >
             <div class="w-4 shrink-0"></div>
             <Checkbox
+              aria-label="Select {rule.title || rule.name}"
               checked={selectedRules.has(rule.path)}
               onCheckedChange={() => toggleRule(rule.path)}
             />

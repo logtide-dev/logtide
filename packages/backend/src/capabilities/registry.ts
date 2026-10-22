@@ -107,6 +107,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum enabled Sigma rules per organization',
   },
+  'sigma.exceptions.max_per_rule': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum exceptions per detection rule',
+  },
   'dashboards.max_custom': {
     kind: 'limit',
     defaultLimit: null,

@@ -2,6 +2,7 @@
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import { Badge } from '$lib/components/ui/badge';
 	import type { AffectedService } from '$lib/api/siem';
+	import { severityTone } from '$lib/utils/severity';
 	import Server from '@lucide/svelte/icons/server';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 
@@ -17,7 +18,7 @@
 	<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<Server class="w-4 h-4 text-primary" />
-			Affected Services
+			Affected services
 		</CardTitle>
 		<Badge variant="secondary" class="text-xs">
 			{services?.length || 0} services
@@ -43,20 +44,22 @@
 							</div>
 							<div class="flex items-center gap-2 flex-shrink-0">
 								{#if service.criticalCount > 0}
-									<Badge variant="destructive" class="text-xs px-1.5 py-0.5">
-										{service.criticalCount} critical
-									</Badge>
+									<span
+										class="inline-flex items-center rounded-full border text-xs px-1.5 py-0.5 font-medium {severityTone('critical').badge}"
+									>
+										{service.criticalCount.toLocaleString('en-US')} critical
+									</span>
 								{/if}
 								{#if service.highCount > 0}
-									<Badge
-										class="bg-red-500 text-white text-xs px-1.5 py-0.5 hover:bg-red-600"
+									<span
+										class="inline-flex items-center rounded-full border text-xs px-1.5 py-0.5 font-medium {severityTone('high').badge}"
 									>
-										{service.highCount} high
-									</Badge>
+										{service.highCount.toLocaleString('en-US')} high
+									</span>
 								{/if}
 								<div class="flex items-center gap-1 text-sm text-muted-foreground">
 									<AlertTriangle class="w-3 h-3" />
-									<span>{service.detectionCount}</span>
+									<span>{service.detectionCount.toLocaleString('en-US')}</span>
 								</div>
 							</div>
 						</div>

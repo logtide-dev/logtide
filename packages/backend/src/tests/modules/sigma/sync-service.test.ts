@@ -396,6 +396,33 @@ describe('SigmaSyncService - extra methods', () => {
         .where('sigmahq_path', '=', 'rules/linux/update.yml')
         .executeTakeFirst();
       expect(updated?.sigmahq_commit).toBe('commit-abc');
+
+      // the fetched text is kept on update as well
+      const withYaml = await db
+        .selectFrom('sigma_rules')
+        .select('raw_yaml')
+        .where('sigmahq_path', '=', 'rules/linux/update.yml')
+        .executeTakeFirstOrThrow();
+      expect(withYaml.raw_yaml).toBe(VALID_YAML);
+    });
+
+    it('stores the fetched yaml as raw_yaml on insert', async () => {
+      const { sigmahqClient } = await import('../../../modules/sigma/github-client.js');
+      (sigmahqClient.fetchRule as ReturnType<typeof vi.fn>).mockResolvedValueOnce(VALID_YAML);
+
+      await service.syncFromSigmaHQ({
+        organizationId: orgId,
+        selection: { rules: ['rules/linux/raw.yml'] },
+        autoCreateAlerts: false,
+      });
+
+      const row = await db
+        .selectFrom('sigma_rules')
+        .select('raw_yaml')
+        .where('organization_id', '=', orgId)
+        .where('sigmahq_path', '=', 'rules/linux/raw.yml')
+        .executeTakeFirstOrThrow();
+      expect(row.raw_yaml).toBe(VALID_YAML);
     });
 
     it('creates alert rule when autoCreateAlerts=true and conversion succeeds', async () => {

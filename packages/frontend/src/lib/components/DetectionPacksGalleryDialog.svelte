@@ -10,6 +10,9 @@
 	import Button from "$lib/components/ui/button/button.svelte";
 	import Spinner from "$lib/components/Spinner.svelte";
 	import DetectionPackDialog from "$lib/components/DetectionPackDialog.svelte";
+	import { packCategoryBadge } from "$lib/components/siem/shared/pack-category";
+	import { packDestinationCopy } from "$lib/components/siem/shared/pack-copy";
+	import { PACK_CATEGORIES, type PackCategory } from "@logtide/shared";
 	import Package from "@lucide/svelte/icons/package";
 	import Rocket from "@lucide/svelte/icons/rocket";
 	import Shield from "@lucide/svelte/icons/shield";
@@ -22,6 +25,8 @@
 		open: boolean;
 		organizationId: string;
 		onSuccess?: () => void;
+		/** Pack categories to list. Defaults to all of them. */
+		categories?: PackCategory[];
 		onOpenChange?: (open: boolean) => void;
 	}
 
@@ -29,6 +34,7 @@
 		open = $bindable(),
 		organizationId,
 		onSuccess,
+		categories = [...PACK_CATEGORIES],
 		onOpenChange,
 	}: Props = $props();
 
@@ -42,13 +48,6 @@
 		shield: Shield,
 		database: Database,
 		"credit-card": CreditCard,
-	};
-
-	const categoryColors: Record<string, string> = {
-		reliability: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-		security: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-		database: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-		business: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
 	};
 
 	async function loadPacks() {
@@ -82,8 +81,18 @@
 		onSuccess?.();
 	}
 
-	const enabledPacks = $derived(packs.filter((p) => p.enabled));
-	const disabledPacks = $derived(packs.filter((p) => !p.enabled));
+	const visiblePacks = $derived(packs.filter((p) => categories.includes(p.category)));
+	const enabledPacks = $derived(visiblePacks.filter((p) => p.enabled));
+	const disabledPacks = $derived(visiblePacks.filter((p) => !p.enabled));
+
+	// Intro and empty text follow where the listed packs show their matches.
+	const introCopy = $derived(
+		categories.length > 0 && categories.every((c) => c === "security")
+			? packDestinationCopy("security")
+			: categories.length > 0 && categories.every((c) => c !== "security")
+				? packDestinationCopy("reliability")
+				: null,
+	);
 
 	const suggestPackUrl = `https://github.com/logtide-dev/logtide/issues/new?${new URLSearchParams({
 		title: "[Detection Pack] ",
@@ -128,10 +137,10 @@
 					<Package class="w-5 h-5 text-primary" />
 				</div>
 				<div>
-					<Dialog.Title>Detection Packs</Dialog.Title>
+					<Dialog.Title>Detection packs</Dialog.Title>
 					<Dialog.Description>
-						Pre-configured Sigma rule bundles for common production scenarios.
-						Enable a pack to instantly add SIEM detection to your logs.
+						Ready-made rule bundles for common production scenarios.
+						{introCopy ? introCopy.summary : "Enable a pack to add its rules to your organization."}
 					</Dialog.Description>
 				</div>
 			</div>
@@ -141,16 +150,18 @@
 			{#if loading}
 				<div class="flex items-center justify-center py-12">
 					<Spinner />
-					<span class="ml-3 text-muted-foreground">Loading detection packs...</span>
+					<span class="ml-3 text-muted-foreground">Loading detection packs</span>
 				</div>
-			{:else if packs.length === 0}
+			{:else if visiblePacks.length === 0}
 				<div class="py-12 text-center">
 					<div class="w-16 h-16 mx-auto mb-6 rounded-full bg-primary/10 flex items-center justify-center">
 						<Package class="w-8 h-8 text-primary" />
 					</div>
 					<h3 class="text-xl font-semibold mb-2">No detection packs available</h3>
 					<p class="text-muted-foreground">
-						Detection packs will appear here when they become available.
+						{introCopy
+							? `Nothing to list yet. ${introCopy.summary}`
+							: "Detection packs will appear here when they become available."}
 					</p>
 				</div>
 			{:else}
@@ -158,8 +169,8 @@
 				{#if enabledPacks.length > 0}
 					<div class="space-y-3">
 						<h4 class="font-medium text-sm flex items-center gap-2">
-							<CheckCircle class="w-4 h-4 text-green-600" />
-							Active Packs ({enabledPacks.length})
+							<CheckCircle class="w-4 h-4 text-success-text" />
+							Active packs ({enabledPacks.length})
 						</h4>
 						<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 							{#each enabledPacks as pack}
@@ -185,7 +196,7 @@
 												{pack.description}
 											</p>
 											<div class="flex items-center gap-2 mt-2">
-												<Badge class={categoryColors[pack.category]} variant="secondary">
+												<Badge class={packCategoryBadge(pack.category)} variant="outline">
 													{pack.category}
 												</Badge>
 												<span class="text-xs text-muted-foreground">
@@ -204,7 +215,7 @@
 				{#if disabledPacks.length > 0}
 					<div class="space-y-3">
 						<h4 class="font-medium text-sm">
-							Available Packs ({disabledPacks.length})
+							Available packs ({disabledPacks.length})
 						</h4>
 						<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 							{#each disabledPacks as pack}
@@ -224,7 +235,7 @@
 												{pack.description}
 											</p>
 											<div class="flex items-center gap-2 mt-2">
-												<Badge class={categoryColors[pack.category]} variant="secondary">
+												<Badge class={packCategoryBadge(pack.category)} variant="outline">
 													{pack.category}
 												</Badge>
 												<span class="text-xs text-muted-foreground">
