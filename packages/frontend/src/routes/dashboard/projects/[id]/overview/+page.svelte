@@ -1,3 +1,32 @@
+<script module lang="ts">
+  import { writeScopeToUrl } from '$lib/stores/scope-url';
+
+  /**
+   * Canonical drill-down link for the project overview: path plus search with
+   * `project`, then `range=24h` (or `from`/`to` when a window is given) and any extras.
+   */
+  export function buildOverviewLink(
+    path: string,
+    projectId: string,
+    extra: Record<string, string> = {},
+    window?: { from: Date; to: Date }
+  ): string {
+    const withProject = writeScopeToUrl(new URL(path, 'http://local.invalid'), { projectIds: [projectId] });
+    const url = writeScopeToUrl(withProject, {
+      range: window
+        ? { kind: 'custom', from: window.from.toISOString(), to: window.to.toISOString() }
+        : { kind: 'preset', preset: '24h' },
+    });
+    for (const [key, value] of Object.entries(extra)) url.searchParams.set(key, value);
+    return url.pathname + url.search;
+  }
+
+  /** Quote a query value when it contains whitespace or quotes. */
+  function queryValue(value: string): string {
+    return /[\s"]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+  }
+</script>
+
 <script lang="ts">
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -11,7 +40,9 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import TopServicesWidget from '$lib/components/dashboard/TopServicesWidget.svelte';
   import RecentErrorsWidget from '$lib/components/dashboard/RecentErrorsWidget.svelte';
-  import Spinner from '$lib/components/Spinner.svelte';
+  import Skeleton from '$lib/components/ui/skeleton/skeleton.svelte';
+  import EmptyState from '$lib/components/app/EmptyState.svelte';
+  import { buttonVariants } from '$lib/components/ui/button';
   import IngestionSkewBanner from '$lib/components/projects/IngestionSkewBanner.svelte';
   import { projectsAPI } from '$lib/api/projects';
   import type { ProjectSkewHealthMap } from '$lib/api/projects';
@@ -34,7 +65,7 @@
 
   const activityConfig = $derived<ActivityOverviewConfig>({
     type: 'activity_overview',
-    title: 'Activity Overview',
+    title: 'Activity overview',
     source: 'mixed',
     projectId: projectId ?? null,
     timeRange: '24h',
@@ -98,7 +129,7 @@
   function formatNumber(num: number): string {
     if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
     if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-    return num.toString();
+    return num.toLocaleString('en-US');
   }
 
   function formatThroughput(throughput: number): string {
@@ -125,52 +156,61 @@
     !hasActivity
   );
 
-  function getLast24HoursParams(): string {
-    const now = new Date();
-    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    return `from=${from.toISOString()}&to=${now.toISOString()}&project=${projectId}`;
-  }
+  const logsLink = (extra: Record<string, string> = {}) =>
+    buildOverviewLink('/dashboard/logs', projectId ?? '', extra);
 
   function handleTotalLogsClick() {
-    goto(`/dashboard/logs?${getLast24HoursParams()}`);
+    goto(logsLink());
   }
 
   function handleErrorRateClick() {
-    goto(`/dashboard/logs?level=error,critical&${getLast24HoursParams()}`);
+    goto(logsLink({ q: 'level:(error OR critical)' }));
   }
 
   function handleActiveServicesClick() {
-    goto(`/dashboard/logs?${getLast24HoursParams()}`);
+    goto(logsLink());
   }
 
   function handleThroughputClick() {
-    goto(`/dashboard/logs?${getLast24HoursParams()}`);
+    goto(logsLink());
   }
 
   function handleServiceClick(service: TopService) {
-    goto(`/dashboard/logs?service=${encodeURIComponent(service.name)}&${getLast24HoursParams()}`);
+    goto(logsLink({ q: `service:${queryValue(service.name)}` }));
   }
 
+  // Recent errors open the Errors list for this project, not the log search.
   function handleErrorClick(err: RecentError) {
-    const errorTime = new Date(err.time);
-    const from = new Date(errorTime.getTime() - 30 * 60 * 1000);
-    const to = new Date(errorTime.getTime() + 30 * 60 * 1000);
-    const params = new URLSearchParams();
-    params.set('service', err.service);
-    params.set('level', err.level);
-    params.set('from', from.toISOString());
-    params.set('to', to.toISOString());
-    params.set('project', projectId);
-    if (err.traceId) params.set('traceId', err.traceId);
-    goto(`/dashboard/logs?${params.toString()}`);
+    const search = err.message.trim().slice(0, 80);
+    goto(buildOverviewLink('/dashboard/errors', projectId ?? '', search ? { search } : {}));
   }
 </script>
 
+{#snippet retryAction()}
+  <button
+    type="button"
+    class={buttonVariants({ variant: 'outline', size: 'sm' })}
+    onclick={() => { lastLoadedKey = null; loadDashboard(); }}
+  >
+    Retry
+  </button>
+{/snippet}
+
+{#snippet connectAction()}
+  <a
+    href="/dashboard/projects/{projectId}/settings#connect"
+    class={buttonVariants({ variant: 'default', size: 'sm' })}
+  >
+    Connect
+  </a>
+{/snippet}
+
 <svelte:head>
-  <title>Project Overview - LogTide</title>
+  <title>Overview - LogTide</title>
 </svelte:head>
 
 <div class="space-y-6">
+  <h2 class="sr-only">Overview</h2>
   {#if !loading && !error}
     <IngestionSkewBanner skew={skew?.logs ?? null} signal="logs" />
     <IngestionSkewBanner skew={skew?.spans ?? null} signal="spans" />
@@ -178,31 +218,28 @@
   {/if}
 
   {#if loading}
-    <div class="flex items-center justify-center py-24">
-      <Spinner />
-      <span class="ml-3 text-muted-foreground">Loading project dashboard...</span>
+    <div data-testid="overview-skeleton" aria-busy="true" class="space-y-4">
+      <span class="sr-only" role="status">Loading</span>
+      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {#each [0, 1, 2, 3] as i (i)}
+          <Skeleton height="6rem" rounded="lg" />
+        {/each}
+      </div>
+      <Skeleton height="18rem" rounded="lg" />
     </div>
   {:else if error}
-    <div class="text-center py-24">
-      <p class="text-destructive mb-4">{error}</p>
-      <button
-        class="text-primary hover:underline"
-        onclick={() => { lastLoadedKey = null; loadDashboard(); }}
-      >
-        Retry
-      </button>
-    </div>
+    <EmptyState variant="error" title="Could not load project overview" description={error} actions={retryAction} />
   {:else if isEmpty}
-    <div class="text-center py-24">
-      <p class="text-lg text-muted-foreground mb-2">No data yet</p>
-      <p class="text-sm text-muted-foreground">
-        Start sending logs to this project to see your dashboard.
-      </p>
-    </div>
+    <EmptyState
+      variant="setup"
+      title="No data yet"
+      description="Start sending logs to this project to see your overview."
+      actions={connectAction}
+    />
   {:else if stats}
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <StatsCard
-        title="Total Logs Today"
+        title="Total logs today"
         value={formatNumber(stats.totalLogsToday.value)}
         description="Logs ingested today"
         trend={{
@@ -214,7 +251,7 @@
         onclick={handleTotalLogsClick}
       />
       <StatsCard
-        title="Error Rate"
+        title="Error rate"
         value={stats.errorRate.value.toFixed(1) + '%'}
         description="Error rate today"
         trend={{
@@ -227,7 +264,7 @@
         onclick={handleErrorRateClick}
       />
       <StatsCard
-        title="Active Services"
+        title="Active services"
         value={stats.activeServices.value.toString()}
         description="Services reporting"
         trend={{
@@ -255,7 +292,7 @@
 
     <Card>
       <CardHeader>
-        <CardTitle>Activity Overview (Last 24 Hours)</CardTitle>
+        <CardTitle>Activity overview (last 24 hours)</CardTitle>
       </CardHeader>
       <CardContent>
         {#if hasActivity}
