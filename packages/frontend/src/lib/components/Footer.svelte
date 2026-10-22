@@ -36,9 +36,9 @@
         target="_blank"
         rel="noopener noreferrer"
         class="flex items-center gap-1.5 hover:text-foreground transition-colors"
-        title="View on GitHub"
+        aria-label="View on GitHub"
       >
-        <Github class="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        <Github class="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
         GitHub
       </a>
     </div>
