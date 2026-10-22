@@ -28,6 +28,29 @@ export interface UpdateDashboardPayload {
   panels?: PanelInstance[];
 }
 
+/** Mirror of the backend DashboardTemplateSummary. */
+export interface DashboardTemplateSummary {
+  id: 'service-health' | 'errors-overview' | 'web-vitals' | 'security-overview';
+  name: string;
+  description: string;
+  panelCount: number;
+  panelTypes: PanelType[];
+}
+
+export interface CreateFromTemplatePayload {
+  organizationId: string;
+  templateId: string;
+  projectId?: string | null;
+  name?: string;
+}
+
+export interface PickerOptionsParams {
+  organizationId: string;
+  kind: 'metric-names' | 'services';
+  source?: 'logs' | 'traces' | 'metrics';
+  projectId?: string | null;
+}
+
 export interface PanelDataResult {
   data: unknown;
   error?: string;
@@ -134,6 +157,51 @@ class CustomDashboardsAPI {
     await this.request<void>(`/${id}?${params.toString()}`, {
       method: 'DELETE',
     });
+  }
+
+  async duplicate(id: string, organizationId: string, name?: string): Promise<CustomDashboard> {
+    const params = new URLSearchParams({ organizationId });
+    const result = await this.request<{ dashboard: CustomDashboard }>(
+      `/${id}/duplicate?${params.toString()}`,
+      { method: 'POST', body: JSON.stringify(name ? { name } : {}) }
+    );
+    return result.dashboard;
+  }
+
+  async listTemplates(): Promise<DashboardTemplateSummary[]> {
+    const result = await this.request<{ templates: DashboardTemplateSummary[] }>('/templates');
+    return result.templates;
+  }
+
+  async createFromTemplate(input: CreateFromTemplatePayload): Promise<CustomDashboard> {
+    const result = await this.request<{ dashboard: CustomDashboard }>('/from-template', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    return result.dashboard;
+  }
+
+  /** Append one panel; the "Add to dashboard" contract used by other pages. */
+  async addPanel(
+    id: string,
+    organizationId: string,
+    config: PanelConfig,
+    layout?: { w?: number; h?: number }
+  ): Promise<{ dashboard: CustomDashboard; panel: PanelInstance }> {
+    const params = new URLSearchParams({ organizationId });
+    return this.request<{ dashboard: CustomDashboard; panel: PanelInstance }>(
+      `/${id}/panels?${params.toString()}`,
+      { method: 'POST', body: JSON.stringify({ config, layout }) }
+    );
+  }
+
+  /** Suggestions for the panel form pickers (metric names, services). */
+  async getOptions(params: PickerOptionsParams): Promise<string[]> {
+    const q = new URLSearchParams({ organizationId: params.organizationId, kind: params.kind });
+    if (params.source) q.set('source', params.source);
+    if (params.projectId) q.set('projectId', params.projectId);
+    const result = await this.request<{ options: string[] }>(`/options?${q.toString()}`);
+    return result.options;
   }
 
   async fetchPanelData(
