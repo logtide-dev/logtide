@@ -66,6 +66,10 @@ export const AUDIT_ACTIONS = {
   'dashboard.updated': 'config_change',
   'dashboard.deleted': 'config_change',
   'dashboard.imported': 'config_change',
+  // saved log searches (target.type saved_search)
+  'search.created': 'config_change',
+  'search.updated': 'config_change',
+  'search.deleted': 'config_change',
   // notification channels
   'channel.created': 'config_change',
   'channel.updated': 'config_change',

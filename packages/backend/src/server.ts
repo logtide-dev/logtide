@@ -38,6 +38,7 @@ import { correlationRoutes, patternRoutes } from './modules/correlation/index.js
 import { piiMaskingRoutes } from './modules/pii-masking/index.js';
 import { pipelineRoutes } from './modules/log-pipeline/index.js';
 import { customDashboardsRoutes } from './modules/custom-dashboards/index.js';
+import { savedSearchesRoutes } from './modules/saved-searches/index.js';
 import { usageRoutes, meteringRecorder, meteringService } from './modules/metering/index.js';
 import { capabilitiesRoutes, adminEntitlementsRoutes } from './modules/capabilities/index.js';
 import { QuotaEvaluator } from './capabilities/index.js';
@@ -252,6 +253,7 @@ export async function build(opts = {}) {
   await fastify.register(statusPageRoutes, { prefix: '/api/v1/status-page' });
   await fastify.register(statusIncidentRoutes, { prefix: '/api/v1/status-incidents' });
   await fastify.register(maintenanceRoutes, { prefix: '/api/v1/maintenances' });
+  await fastify.register(savedSearchesRoutes, { prefix: '/api/v1/saved-searches' });
 
   return fastify;
 }

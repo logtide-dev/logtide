@@ -132,6 +132,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum status page email subscribers per organization (confirmed plus pending)',
   },
+  'saved_searches.max_per_org': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum saved log searches per organization',
+  },
   'quota.grace_percent': {
     kind: 'limit',
     defaultLimit: null,

@@ -74,3 +74,4 @@ export * from './webhook-events.js';
 export * from './receiver.js';
 
 export * from './sigma-exception.js';
+export * from './saved-search.js';

@@ -15,3 +15,10 @@ export {
   NotificationPublisher,
   notificationPublisher,
 } from './notification-publisher.js';
+
+export {
+  createLiveTailFilter,
+  toMatchableLog,
+  type LiveTailLog,
+  type LiveTailFilterOptions,
+} from './live-tail-filter.js';
