@@ -62,10 +62,41 @@ describe('toRateSeries', () => {
       { bucket: t(0), value: 1000, labels: b },
       { bucket: t(1), value: 70, labels: a },
       { bucket: t(1), value: 1120, labels: b },
-    ], 60);
+    ], 60, { groupBy: ['host'] });
     expect(out).toHaveLength(2);
     expect(out.find((p) => p.labels?.host === 'a')!.value).toBe(1);
     expect(out.find((p) => p.labels?.host === 'b')!.value).toBe(2);
+  });
+
+  it('sums per-series rates into the requested group and never mixes series', () => {
+    const a = { route: '/a', host: 'h1' };
+    const b = { route: '/b', host: 'h1' };
+    const out = toRateSeries([
+      { bucket: t(0), value: 1000000, labels: a },
+      { bucket: t(0), value: 50, labels: b },
+      { bucket: t(1), value: 1000060, labels: a },
+      { bucket: t(1), value: 110, labels: b },
+    ], 60, { groupBy: [], now: new Date('2030-01-01') });
+    expect(out).toHaveLength(1);
+    expect(out[0].value).toBe(2);
+    expect(out[0].labels).toBeUndefined();
+  });
+
+  it('divides by the real elapsed time across a missing bucket', () => {
+    const out = toRateSeries([
+      { bucket: t(0), value: 0 },
+      { bucket: t(3), value: 180 },
+    ], 60, { now: new Date('2030-01-01') });
+    expect(out.map((p) => p.value)).toEqual([1]);
+  });
+
+  it('drops the still-open last bucket', () => {
+    const out = toRateSeries([
+      { bucket: t(0), value: 0 },
+      { bucket: t(1), value: 60 },
+      { bucket: t(2), value: 120 },
+    ], 60, { now: new Date(Date.UTC(2026, 0, 1, 0, 2, 30)) });
+    expect(out).toHaveLength(1);
   });
 
   it('returns nothing for a single bucket', () => {

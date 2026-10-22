@@ -159,6 +159,11 @@ export class QueryService {
     // full table scans on large datasets.
     const to = effective.to ?? new Date();
     const from = effective.from ?? new Date(Date.now() - DEFAULT_WINDOW_MS);
+    // A default on one side can invert the window (only `to` older than 24h, or
+    // only `from` in the future); the reservoir would throw a RangeError.
+    if (from.getTime() > to.getTime()) {
+      throw new ExplorerParamError('from must not be after to');
+    }
 
     return {
       filter: { projectId: effective.projectId, from, to, ...built.filter },

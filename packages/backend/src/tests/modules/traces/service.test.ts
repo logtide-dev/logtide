@@ -934,6 +934,40 @@ describe('TracesService', () => {
       expect(result.avg_duration_ms).toBe(200);
     });
 
+    it('applies the service filter to every stat card, not only p95', async () => {
+      await createTestTrace({
+        projectId: context.project.id,
+        organizationId: context.organization.id,
+        serviceName: 'checkout',
+        durationMs: 100,
+        spanCount: 2,
+        error: true,
+      });
+      for (let i = 0; i < 3; i++) {
+        await createTestTrace({
+          projectId: context.project.id,
+          organizationId: context.organization.id,
+          serviceName: 'catalog',
+          durationMs: 50,
+          spanCount: 4,
+        });
+      }
+
+      const result = await service.getStats(context.project.id, undefined, undefined, { service: 'checkout' });
+
+      expect(result.total_traces).toBe(1);
+      expect(result.total_spans).toBe(2);
+      expect(result.error_rate).toBe(1);
+    });
+
+    it('applies the operation filter to the base stats through the span match', async () => {
+      const spy = vi.spyOn(reservoir, 'queryTraces');
+      await service.getStats(context.project.id, undefined, undefined, { service: 'checkout', operation: 'GET /x' });
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({ serviceName: 'checkout', operation: 'GET /x' })
+      );
+    });
+
     it('should handle from-only filter', async () => {
       await createTestTrace({
         projectId: context.project.id,
@@ -1545,6 +1579,20 @@ describe('TracesService apm', () => {
       const stats = await service.getStats(context.project.id);
 
       expect(stats.p95_duration_ms).toBeCloseTo(10 + 0.95 * 90, 1);
+    });
+
+    it('falls back to the histogram for an operation outside the busiest rows', async () => {
+      const many = Array.from({ length: 100 }, (_, i) => stat({ operation: `op${i}`, p95Ms: 5 }));
+      vi.spyOn(reservoir, 'getOperationStats').mockResolvedValue(many);
+      const histSpy = vi.spyOn(reservoir, 'getLatencyHistogram').mockResolvedValue({
+        bounds: [1, 10, 100],
+        counts: [0, 0, 100, 0],
+      });
+
+      const stats = await service.getStats(context.project.id, undefined, undefined, { operation: 'rare' });
+
+      expect(histSpy).toHaveBeenCalledWith(expect.objectContaining({ operation: 'rare' }));
+      expect(stats.p95_duration_ms).toBeGreaterThan(0);
     });
 
     it('is 0 when there are no spans', async () => {

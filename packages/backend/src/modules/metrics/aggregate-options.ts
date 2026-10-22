@@ -48,32 +48,64 @@ function groupKey(labels: Record<string, string> | undefined): string {
 
 /**
  * Convert `last` values of a cumulative counter into per-second rates.
- * Per label group: rate = (last - previousLast) / bucketSeconds. A negative
- * delta is a counter reset and yields `last / bucketSeconds`. The first bucket
- * of each group has no previous value and is omitted.
+ *
+ * `points` must carry one `last` value per FULL series (every attribute key in
+ * `labels`), otherwise one bucket's value would come from whichever series
+ * wrote last. Per series: rate = (last - previousLast) / elapsed seconds
+ * between the two samples (so a missing bucket does not inflate the rate). A
+ * negative delta is a counter reset and yields `last / elapsed`. The first
+ * bucket of each series has no previous value and is omitted, and so is the
+ * still-open last bucket (`bucket + bucketSeconds > now`), which is partial.
+ *
+ * Rates are then summed per bucket into the `groupBy` groups (all series into
+ * one when `groupBy` is empty).
  */
-export function toRateSeries(points: MetricTimeBucket[], bucketSeconds: number): MetricTimeBucket[] {
-  const groups = new Map<string, MetricTimeBucket[]>();
+export function toRateSeries(
+  points: MetricTimeBucket[],
+  bucketSeconds: number,
+  options: { groupBy?: string[]; now?: Date } = {},
+): MetricTimeBucket[] {
+  const nowMs = (options.now ?? new Date()).getTime();
+  const groupBy = options.groupBy ?? [];
+  const series = new Map<string, MetricTimeBucket[]>();
   for (const p of points) {
     const key = groupKey(p.labels);
-    const list = groups.get(key);
+    const list = series.get(key);
     if (list) list.push(p);
-    else groups.set(key, [p]);
+    else series.set(key, [p]);
   }
 
-  const out: MetricTimeBucket[] = [];
-  for (const list of groups.values()) {
+  const summed = new Map<string, MetricTimeBucket>();
+  for (const list of series.values()) {
     list.sort((a, b) => new Date(a.bucket).getTime() - new Date(b.bucket).getTime());
     for (let i = 1; i < list.length; i++) {
+      const bucketMs = new Date(list[i].bucket).getTime();
+      if (bucketMs + bucketSeconds * 1000 > nowMs) continue;
+      const elapsed = (bucketMs - new Date(list[i - 1].bucket).getTime()) / 1000;
+      if (elapsed <= 0) continue;
       const delta = list[i].value - list[i - 1].value;
-      const rate = (delta < 0 ? list[i].value : delta) / bucketSeconds;
-      const point: MetricTimeBucket = { bucket: list[i].bucket, value: rate };
-      if (list[i].labels) point.labels = list[i].labels;
-      out.push(point);
+      const rate = (delta < 0 ? list[i].value : delta) / elapsed;
+
+      let labels: Record<string, string> | undefined;
+      if (groupBy.length > 0 && list[i].labels) {
+        labels = {};
+        for (const k of groupBy) {
+          if (list[i].labels![k] !== undefined) labels[k] = list[i].labels![k];
+        }
+      }
+      const key = `${bucketMs}|${groupKey(labels)}`;
+      const existing = summed.get(key);
+      if (existing) existing.value += rate;
+      else {
+        const point: MetricTimeBucket = { bucket: list[i].bucket, value: rate };
+        if (labels) point.labels = labels;
+        summed.set(key, point);
+      }
     }
   }
-  out.sort((a, b) => new Date(a.bucket).getTime() - new Date(b.bucket).getTime());
-  return out;
+  return [...summed.values()].sort(
+    (a, b) => new Date(a.bucket).getTime() - new Date(b.bucket).getTime(),
+  );
 }
 
 export class TooManyFilterValuesError extends Error {

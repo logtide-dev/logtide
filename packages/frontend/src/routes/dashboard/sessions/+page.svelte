@@ -327,8 +327,16 @@
         <EmptyState
           variant="no-results"
           title="No sessions match these filters"
-          description="Try a wider time range or clear the filters."
-        />
+          description={nextCursor
+            ? 'None of the newest sessions match. Older sessions in this range have not been checked yet.'
+            : 'Try a wider time range or clear the filters.'}
+        >
+          {#snippet actions()}
+            {#if nextCursor}
+              <Button type="button" variant="outline" size="sm" onclick={goNext}>Keep searching</Button>
+            {/if}
+          {/snippet}
+        </EmptyState>
       {:else}
         <EmptyState
           variant="setup"
