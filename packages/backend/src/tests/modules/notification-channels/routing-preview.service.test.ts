@@ -203,7 +203,8 @@ describe('resolveRoutingPreview', () => {
     expect(JSON.stringify(res)).not.toContain('secret');
   });
 
-  it('ROUTING_DISPATCH_GAPS lists the three known gaps', () => {
-    expect(ROUTING_DISPATCH_GAPS).toHaveLength(3);
+  it('ROUTING_DISPATCH_GAPS lists only the pre-1.6 job gap', () => {
+    expect(ROUTING_DISPATCH_GAPS).toHaveLength(1);
+    expect(ROUTING_DISPATCH_GAPS[0]).toContain('pre-1.6');
   });
 });

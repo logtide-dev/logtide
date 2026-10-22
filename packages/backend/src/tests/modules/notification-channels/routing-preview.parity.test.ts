@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { db } from '../../../database/index.js';
 import type { NotificationChannel, NotificationEventType } from '@logtide/shared';
 import { notificationChannelsService as svc } from '../../../modules/notification-channels/service.js';
-import { createTestContext, createTestAlertRule } from '../../helpers/factories.js';
+import { createTestContext, createTestAlertRule, createTestSigmaRule } from '../../helpers/factories.js';
 
 vi.mock('../../../config/index.js', async (orig) => ({
   ...((await orig()) as object),
@@ -10,12 +10,14 @@ vi.mock('../../../config/index.js', async (orig) => ({
 }));
 
 import { resolveRoutingPreview } from '../../../modules/notification-channels/routing-preview.service.js';
+import { resolveChannelsForEvent } from '../../../modules/notification-channels/resolver.js';
+import { resolveAlertChannels } from '../../../queue/jobs/alert-notification.js';
+import { resolveErrorChannels } from '../../../queue/jobs/error-notification.js';
 
 /**
  * Contract test: the preview must resolve the same channel set as the
  * notification jobs. Jobs: specific = get<X>Channels(id); when empty,
- * getOrganizationDefaults(org, type). W11 keeps this test when it swaps in
- * the shared resolver.
+ * getOrganizationDefaults(org, type), else the owners and admins fallback.
  */
 describe('routing preview parity with job resolution', () => {
   let orgId: string;
@@ -166,25 +168,75 @@ describe('routing preview parity with job resolution', () => {
     });
   }
 
-  it('alert preview matches getAlertRuleChannels when the rule has channels', async () => {
-    const rule = await createTestAlertRule({ organizationId: orgId });
-    await svc.setAlertRuleChannels(rule.id, [chA, chB], orgId);
-    const own = await svc.getAlertRuleChannels(rule.id);
+  // Dispatch side: the resolver each job really calls (alert/sigma/error are the
+  // exported job resolvers; monitoring composes the same call inline in its job).
+  const dispatchScenarios = [
+    {
+      eventType: 'alert' as const,
+      create: async () => (await createTestAlertRule({ organizationId: orgId })).id,
+      set: (id: string, ids: string[]) => svc.setAlertRuleChannels(id, ids, orgId),
+      dispatch: (id: string) =>
+        resolveAlertChannels({ kind: 'triggered', rule_id: id, organization_id: orgId } as any),
+    },
+    {
+      eventType: 'sigma' as const,
+      create: async () => (await createTestSigmaRule({ organizationId: orgId })).id,
+      set: (id: string, ids: string[]) => svc.setSigmaRuleChannels(id, ids, orgId),
+      dispatch: (id: string) =>
+        resolveAlertChannels({
+          kind: 'triggered',
+          event_type: 'sigma',
+          rule_id: id,
+          organization_id: orgId,
+        } as any),
+    },
+    {
+      eventType: 'error' as const,
+      create: () => createErrorGroup(),
+      set: (id: string, ids: string[]) => svc.setErrorGroupChannels(id, ids),
+      dispatch: (id: string) => resolveErrorChannels(id, orgId),
+    },
+    {
+      eventType: 'monitoring' as const,
+      create: () => createMonitor(),
+      set: (id: string, ids: string[]) => svc.setMonitorChannels(id, ids, orgId),
+      dispatch: async (id: string) =>
+        resolveChannelsForEvent({
+          organizationId: orgId,
+          eventType: 'monitoring',
+          explicitChannels: await svc.getMonitorChannels(id),
+        }),
+    },
+  ];
 
-    expect(own).toHaveLength(2);
-    expect(await previewIds('alert', own)).toEqual(own.map((c) => c.id).sort());
-  });
+  for (const s of dispatchScenarios) {
+    it(`${s.eventType} preview and dispatch resolver give the same channels and fallback`, async () => {
+      const ids = (r: { channels: NotificationChannel[] }) => r.channels.map((c) => c.id).sort();
+      const preview = async (channelIds: string[]) => {
+        const res = await resolveRoutingPreview({ organizationId: orgId, eventType: s.eventType, channelIds });
+        return { ids: res.destinations.map((d) => d.id).sort(), fallback: res.fallback };
+      };
 
-  it('KNOWN GAP alert dispatch ignores organization defaults', async () => {
-    const rule = await createTestAlertRule({ organizationId: orgId });
-    await svc.setOrganizationDefaults(orgId, 'alert', [chDefault]);
+      // (a) own channels beat the org default
+      const withOwn = await s.create();
+      await s.set(withOwn, [chA, chB]);
+      await svc.setOrganizationDefaults(orgId, s.eventType, [chDefault]);
+      const dOwn = await s.dispatch(withOwn);
+      expect(ids(dOwn)).toEqual([chA, chB].sort());
+      expect(await preview([chA, chB])).toEqual({ ids: ids(dOwn), fallback: dOwn.fallback });
 
-    const jobSide = await svc.getAlertRuleChannels(rule.id);
-    const preview = await resolveRoutingPreview({ organizationId: orgId, eventType: 'alert' });
+      // (b) no own channels: the org default
+      const bare = await s.create();
+      const dBare = await s.dispatch(bare);
+      expect(ids(dBare)).toEqual([chDefault]);
+      expect(await preview([])).toEqual({ ids: ids(dBare), fallback: dBare.fallback });
 
-    // Dispatch (alert-notification.ts) never consults org defaults; the preview
-    // follows the target precedence. W11/W8 update this test when the gap closes.
-    expect(jobSide).toEqual([]);
-    expect(preview.destinations.map((d) => d.id)).toEqual([chDefault]);
-  });
+      // (c) nothing at all: the owners and admins fallback
+      await svc.setOrganizationDefaults(orgId, s.eventType, []);
+      const dNone = await s.dispatch(bare);
+      expect(dNone.channels).toEqual([]);
+      expect(dNone.fallback).toBe('owners_admins_email');
+      expect(await preview([])).toEqual({ ids: [], fallback: 'owners_admins_email' });
+    });
+  }
 });

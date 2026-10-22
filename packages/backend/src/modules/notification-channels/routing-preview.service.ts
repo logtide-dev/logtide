@@ -3,15 +3,9 @@
  *
  * Answers "who would be notified for this event type" before a rule is saved.
  *
- * What the dispatch paths do today (evidence for the rules below):
- *
- * | Event type | Job                                              | Specific channels      | Org defaults | Email fallback today                          |
- * |------------|--------------------------------------------------|------------------------|--------------|-----------------------------------------------|
- * | incident   | queue/jobs/incident-notification.ts:111-132,176-181 | getIncidentChannels    | yes          | members (all if critical/high, else owners/admins) |
- * | error      | queue/jobs/error-notification.ts:187-208,262-265 | getErrorGroupChannels  | yes          | owners/admins                                 |
- * | monitoring | queue/jobs/monitor-notification.ts:113-116,183-186 | getMonitorChannels     | yes          | same as incident                              |
- * | alert      | queue/jobs/alert-notification.ts:101-112         | getAlertRuleChannels   | NO           | none                                          |
- * | sigma      | queue/jobs/sigma-detection.ts:170-184 (via alert job) | NOT consumed      | NO           | none                                          |
+ * Every notification job (alert, sigma, incident, error, monitoring) resolves
+ * its destinations through resolveChannelsForEvent, the same function the
+ * preview uses, so they agree by construction (see the parity test).
  *
  * The preview implements the TARGET precedence for every type (spec section 9):
  * explicit channels first, else organization defaults; when nothing resolved
@@ -33,9 +27,7 @@ export interface RoutingPreviewInput {
 }
 
 export const ROUTING_DISPATCH_GAPS: readonly string[] = [
-  'alert: organization default channels are not consulted by alert-notification.ts',
-  'sigma: rule channels and organization defaults are not consumed by sigma-detection.ts',
-  'all types: email fallback differs per job today (members by severity, owners and admins, or none); target is owners and admins when nothing resolved',
+  'alert: jobs queued by a pre-1.6 worker (no kind) keep rule channels only: no organization defaults, no email fallback',
 ];
 
 export async function resolveRoutingPreview(
