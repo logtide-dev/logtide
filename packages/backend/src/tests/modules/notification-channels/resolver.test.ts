@@ -285,6 +285,19 @@ describe('resolveFallbackEmails', () => {
     const emails = await resolveFallbackEmails(org.id);
     expect(emails.sort()).toEqual(['admin@x.com', 'owner@x.com']);
   });
+
+  it('skips disabled accounts', async () => {
+    const owner = await createTestUser({ email: 'owner@x.com' });
+    const org = await createTestOrganization({ ownerId: owner.id });
+    const admin = await createTestUser({ email: 'gone-admin@x.com' });
+    await db
+      .insertInto('organization_members')
+      .values({ user_id: admin.id, organization_id: org.id, role: 'admin' })
+      .execute();
+    await db.updateTable('users').set({ disabled: true }).where('id', '=', admin.id).execute();
+
+    expect(await resolveFallbackEmails(org.id)).toEqual(['owner@x.com']);
+  });
 });
 
 describe('toPreview', () => {

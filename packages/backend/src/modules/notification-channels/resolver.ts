@@ -126,6 +126,7 @@ export async function resolveFallbackEmails(organizationId: string): Promise<str
     .select('users.email')
     .where('organization_members.organization_id', '=', organizationId)
     .where('organization_members.role', 'in', ['owner', 'admin'])
+    .where('users.disabled', '=', false)
     .execute();
 
   const emails = new Map<string, string>();

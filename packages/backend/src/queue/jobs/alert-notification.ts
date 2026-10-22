@@ -246,7 +246,7 @@ async function processFiringNotification(data: AlertNotificationData) {
     // configured) the owners and admins, never every member.
     const emailRecipients = new Set<string>(
       routing.fallback
-        ? await enabledFallbackEmails(data.organization_id)
+        ? await resolveFallbackEmails(data.organization_id)
         : toDeliveryTargets(channels).emailRecipients
     );
 
@@ -345,23 +345,6 @@ async function processResolvedNotification(data: AlertResolvedNotificationData) 
   }
 
   console.log(`Alert resolution processed: ${data.rule_name}`);
-}
-
-/**
- * Owners and admins from the shared fallback, minus disabled accounts
- * (resolveFallbackEmails does not filter them; see the W8 report handoff).
- */
-async function enabledFallbackEmails(organizationId: string): Promise<string[]> {
-  const emails = await resolveFallbackEmails(organizationId);
-  if (emails.length === 0) return emails;
-  const disabled = await db
-    .selectFrom('users')
-    .select('email')
-    .where('email', 'in', emails)
-    .where('disabled', '=', true)
-    .execute();
-  const blocked = new Set(disabled.map((r) => r.email.toLowerCase()));
-  return emails.filter((e) => !blocked.has(e.toLowerCase()));
 }
 
 function minutesSince(iso: string | undefined): number | null {
