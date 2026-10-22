@@ -57,7 +57,7 @@
 			case 'sigma_rule':
 				return `/dashboard/security/rules/${row.id}`;
 			case 'monitor':
-				return '/dashboard/uptime';
+				return `/dashboard/uptime/${row.id}`;
 			case 'error_group':
 				return `/dashboard/errors/${row.id}`;
 		}

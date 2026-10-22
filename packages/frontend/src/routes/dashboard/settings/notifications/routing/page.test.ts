@@ -131,6 +131,23 @@ describe('routing page', () => {
 		expect(screen.getByText('Rules with their own destinations')).toBeInTheDocument();
 	});
 
+	it('links a monitor override to that monitor', async () => {
+		api.getOverrides.mockResolvedValue([
+			{
+				eventType: 'monitoring',
+				kind: 'monitor',
+				id: 'mon-3',
+				name: 'API health',
+				channels: [{ id: 'c1', name: 'Ops email', type: 'email' }],
+			},
+		]);
+		organizationStore.setCurrentOrganization({ ...baseOrg });
+		render(Page);
+
+		const link = await screen.findByRole('link', { name: 'API health' });
+		expect(link.getAttribute('href')).toBe('/dashboard/uptime/mon-3');
+	});
+
 	it('shows the empty state when no rule overrides the defaults', async () => {
 		organizationStore.setCurrentOrganization({ ...baseOrg });
 		render(Page);
