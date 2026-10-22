@@ -4,6 +4,14 @@ import { SigmaDetectionEngine } from '../../../modules/sigma/detection-engine.js
 import { db } from '../../../database/index.js';
 import { createTestContext, createTestSigmaRule } from '../../helpers/factories.js';
 
+// No SMTP: the owners and admins fallback is off, so a rule with no
+// destination stays detection-only (the fallback is covered in
+// sigma-detection-routing.test.ts)
+vi.mock('../../../config/index.js', async (orig) => ({
+    ...((await orig()) as object),
+    isSmtpConfigured: vi.fn(() => false),
+}));
+
 // Mock the queue connection
 vi.mock('../../../queue/connection.js', () => ({
     createQueue: vi.fn(() => ({
