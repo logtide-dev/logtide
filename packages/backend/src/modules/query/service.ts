@@ -6,6 +6,13 @@ import type { LogLevel, LogSearchQuery, MetadataFilter } from '@logtide/shared';
 import { hooks } from '../../hooks/index.js';
 import { context } from '@logtide/shared/context';
 import { buildLogFilter, type SearchMode } from './build-log-filter.js';
+import { MAX_HISTOGRAM_BUCKETS } from '@logtide/reservoir';
+import {
+  ExplorerParamError,
+  histogramBucketCount,
+  pickBucketSeconds,
+  type LogHistogramResponse,
+} from './explorer-params.js';
 
 /** Supported search modes */
 export type { SearchMode };
@@ -52,6 +59,8 @@ export interface ApiLog {
   sessionId?: string;
   hostname?: string;
 }
+
+export type { LogHistogramResponse };
 
 const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -190,6 +199,55 @@ export class QueryService {
     const value = { count: result.count };
     await CacheManager.set(cacheKey, value, CACHE_TTL.QUERY);
     return value;
+  }
+
+  /**
+   * Log volume over time stacked by level, zero-filled. `bucketSeconds`
+   * defaults to an automatic size (about 60 buckets over the range the
+   * filters resolve to, after hooks and the default window).
+   *
+   * Throws LogQueryError for an invalid q, ExplorerParamError for an empty
+   * range or a range needing more than MAX_HISTOGRAM_BUCKETS buckets.
+   */
+  async getHistogram(params: LogQueryParams & { bucketSeconds?: number }): Promise<LogHistogramResponse> {
+    const { bucketSeconds: requested, ...rest } = params;
+    const { filter } = await this.prepare(rest);
+    if (filter.to.getTime() <= filter.from.getTime()) {
+      throw new ExplorerParamError('"to" must be after "from"');
+    }
+
+    const bucketSeconds = requested ?? pickBucketSeconds(filter.from, filter.to);
+    if (histogramBucketCount(filter.from, filter.to, bucketSeconds) > MAX_HISTOGRAM_BUCKETS) {
+      throw new ExplorerParamError(
+        requested !== undefined ? 'Bucket size is too small for this range' : 'Time range is too long for a histogram',
+      );
+    }
+
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
+      kind: 'histogram',
+      filter: JSON.stringify(filter),
+      bucketSeconds,
+    });
+    const cached = await CacheManager.get<LogHistogramResponse>(cacheKey);
+    if (cached && Array.isArray(cached.buckets)) {
+      return {
+        ...cached,
+        buckets: cached.buckets.map((bucket) => ({ ...bucket, time: new Date(bucket.time) })),
+        from: new Date(cached.from),
+        to: new Date(cached.to),
+      };
+    }
+
+    const result = await reservoir.histogram({ ...filter, bucketSeconds });
+    const response: LogHistogramResponse = {
+      buckets: result.buckets,
+      bucketSeconds: result.bucketSeconds,
+      total: result.buckets.reduce((sum, bucket) => sum + bucket.total, 0),
+      from: filter.from,
+      to: filter.to,
+    };
+    await CacheManager.set(cacheKey, response, CACHE_TTL.QUERY);
+    return response;
   }
 
   /**

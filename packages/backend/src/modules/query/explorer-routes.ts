@@ -6,6 +6,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { requireFullAccess } from '../auth/guards.js';
 import { auditLogService } from '../audit-log/service.js';
 import { LogQueryError } from './build-log-filter.js';
+import { ExplorerParamError, HISTOGRAM_MAX_BUCKET_SECONDS } from './explorer-params.js';
 import {
   LOG_FILTER_QUERYSTRING_PROPERTIES,
   readLogFilterRequest,
@@ -34,10 +35,17 @@ async function readLogRead(request: FastifyRequest, reply: FastifyReply): Promis
   return { projectId, params: { ...read.value, projectId } };
 }
 
-/** Sends the 400 `{ error, position }` body for a query error; rethrows anything else. */
+/**
+ * Sends the 400 body for a query error (`{ error, position }`) or an unusable
+ * explorer param (`{ error }`); rethrows anything else (hook rejections,
+ * capability errors, server errors reach the global error handler).
+ */
 function handleQueryError(reply: FastifyReply, err: unknown): FastifyReply {
   if (err instanceof LogQueryError) {
     return reply.code(400).send({ error: err.message, position: err.position });
+  }
+  if (err instanceof ExplorerParamError) {
+    return reply.code(400).send({ error: err.message });
   }
   throw err;
 }
@@ -75,6 +83,37 @@ export const logExplorerRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       recordStatsViewed(read.projectId, { kind: 'count', q: read.params.q });
+      return result;
+    },
+  });
+
+  // GET /api/v1/logs/histogram - log volume over time stacked by level
+  fastify.get('/api/v1/logs/histogram', {
+    config: { rateLimit: EXPLORER_RATE_LIMIT },
+    schema: {
+      description: 'Log volume histogram by level',
+      tags: ['query'],
+      querystring: {
+        type: 'object',
+        properties: {
+          ...LOG_FILTER_QUERYSTRING_PROPERTIES,
+          bucketSeconds: { type: 'integer', minimum: 1, maximum: HISTOGRAM_MAX_BUCKET_SECONDS },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const read = await readLogRead(request, reply);
+      if (!read) return;
+      const { bucketSeconds } = request.query as { bucketSeconds?: number };
+
+      let result;
+      try {
+        result = await queryService.getHistogram({ ...read.params, bucketSeconds });
+      } catch (err) {
+        return handleQueryError(reply, err);
+      }
+
+      recordStatsViewed(read.projectId, { kind: 'histogram', q: read.params.q });
       return result;
     },
   });
