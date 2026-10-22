@@ -6,10 +6,8 @@ src/lib/components/alerts/AlertPreview.svelte
 src/lib/components/exceptions/StackFrameCard.svelte
 src/lib/components/notification-channels/ChannelsList.svelte
 src/lib/components/pipelines/StepBuilder.svelte
-src/lib/components/siem/incidents/IncidentActionsDropdown.svelte
 src/routes/dashboard/errors/[id]/+page.svelte
 src/routes/dashboard/logs/+page.svelte
-src/routes/dashboard/security/incidents/[id]/+page.svelte
 src/routes/dashboard/settings/members/+page.svelte
 src/routes/dashboard/settings/patterns/+page.svelte
 src/routes/dashboard/settings/pii-masking/+page.svelte
