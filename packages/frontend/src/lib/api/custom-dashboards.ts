@@ -6,8 +6,10 @@ import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 import type {
   CustomDashboard,
+  PanelConfig,
   PanelInstance,
   PanelTimeRange,
+  PanelType,
 } from '@logtide/shared';
 
 export type { CustomDashboard, PanelInstance } from '@logtide/shared';
