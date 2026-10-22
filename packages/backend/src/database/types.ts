@@ -1195,6 +1195,18 @@ export interface DigestRecipientsTable {
   updated_at: Generated<Timestamp>;
 }
 
+// Saved log searches (migration 063)
+export interface SavedSearchesTable {
+  id: Generated<string>;
+  organization_id: string;
+  created_by: string | null;
+  name: string;
+  visibility: Generated<'private' | 'organization'>;
+  state: ColumnType<import('@logtide/shared').SavedSearchState, string, string>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -1289,4 +1301,6 @@ export interface Database {
   // Inbound webhook receivers (#155)
   receivers: ReceiversTable;
   receiver_events: ReceiverEventsTable;
+  // Saved log searches
+  saved_searches: SavedSearchesTable;
 }
