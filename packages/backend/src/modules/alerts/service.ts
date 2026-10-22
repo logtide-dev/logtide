@@ -10,7 +10,13 @@ import type {
 } from '../../database/types.js';
 import { baselineCalculator } from './baseline-calculator.js';
 import { compileAlertQuery, filterToReservoirParams, normalizeAlertQuery } from './alert-query.js';
-import { decideThreshold, type LifecycleDecision, type LifecycleSnapshot } from './lifecycle.js';
+import {
+  decideRateOfChange,
+  decideThreshold,
+  type LifecycleDecision,
+  type LifecycleSnapshot,
+  type RateOfChangeSignal,
+} from './lifecycle.js';
 import { openAlertIncident, resolveAlertIncident } from './incident-sync.js';
 import type { AlertEvaluationResult, AlertNotificationKind } from './types.js';
 import { reservoir } from '../../database/reservoir.js';
@@ -448,7 +454,7 @@ export class AlertsService {
   ): Promise<AlertEvaluationResult | null> {
     // Dispatch to rate-of-change logic if applicable
     if (rule.alert_type === 'rate_of_change') {
-      return this.checkRateOfChangeRule(rule, orgProjectsMap) as Promise<AlertEvaluationResult | null>;
+      return this.checkRateOfChangeRule(rule, orgProjectsMap, now);
     }
 
     const compiled = compileAlertQuery({
@@ -609,38 +615,68 @@ export class AlertsService {
   }
 
   /**
-   * Check a rate-of-change alert rule against baseline
+   * Evaluate a rate-of-change rule: compute its signal, decide with the
+   * state machine (rows R1-R8) and apply the decision. Notifications keep
+   * the cooldown semantics: a still-anomalous firing rule notifies again
+   * only after the cooldown.
    */
-  private async checkRateOfChangeRule(rule: any, orgProjectsMap: Map<string, string[]>) {
-    if (!rule.baseline_type || !rule.deviation_multiplier) return null;
+  private async checkRateOfChangeRule(
+    rule: Selectable<AlertRulesTable>,
+    orgProjectsMap: Map<string, string[]>,
+    now: Date
+  ): Promise<AlertEvaluationResult | null> {
+    const projectIds = rule.project_id ? [rule.project_id] : (orgProjectsMap.get(rule.organization_id) ?? []);
+    const { signal, currentValue, baselineMetadata } = await this.rateOfChangeSignal(rule, projectIds, now);
+    const decision = decideRateOfChange(lifecycleSnapshot(rule), signal, now);
+    return this.applyDecision(rule, decision, {
+      now,
+      logCount: currentValue,
+      baselineMetadata: signal === 'anomaly' ? baselineMetadata : null,
+    });
+  }
+
+  /**
+   * Rate-of-change signal for one rule at `now`:
+   * - in cooldown while ok: `skipped`, without baseline queries;
+   * - in cooldown while firing: baseline and current rate only, to tell
+   *   `recovered` from `pending` (sustained counters untouched);
+   * - outside the cooldown: the baseline, deviation and sustained pipeline,
+   *   `anomaly`, `pending` or `recovered`.
+   * No projects, no baseline, a baseline below `min_baseline_value` or an
+   * incomplete rule configuration all count as `recovered`.
+   */
+  private async rateOfChangeSignal(
+    rule: Selectable<AlertRulesTable>,
+    projectIds: string[],
+    now: Date
+  ): Promise<{ signal: RateOfChangeSignal; currentValue: number; baselineMetadata: BaselineMetadata | null }> {
+    const recovered = (currentValue = 0, baselineMetadata: BaselineMetadata | null = null) => ({
+      signal: 'recovered' as const,
+      currentValue,
+      baselineMetadata,
+    });
+    if (!rule.baseline_type || !rule.deviation_multiplier) return recovered();
 
     const deviationMultiplier = Number(rule.deviation_multiplier);
     const minBaseline = rule.min_baseline_value != null ? Number(rule.min_baseline_value) : 10;
     const cooldownMin = Number(rule.cooldown_minutes || 60);
     const sustainedMin = Number(rule.sustained_minutes || 5);
-
-    // Get project IDs
-    const projectIds = rule.project_id
-      ? [rule.project_id]
-      : (orgProjectsMap.get(rule.organization_id) || []);
-
-    if (projectIds.length === 0) return null;
-
     const ruleMetadataFilters = (rule.metadata_filters ?? []) as MetadataFilter[];
+    const metadataFilters = ruleMetadataFilters.length > 0 ? ruleMetadataFilters : undefined;
 
-    // Check cooldown: skip if last trigger was within cooldown period
+    // Cooldown: the last notification (alert_history row) of this rule.
     const lastTrigger = await db
       .selectFrom('alert_history')
       .select(['triggered_at'])
       .where('rule_id', '=', rule.id)
       .orderBy('triggered_at', 'desc')
       .executeTakeFirst();
+    const inCooldown = lastTrigger
+      ? now.getTime() < new Date(lastTrigger.triggered_at).getTime() + cooldownMin * 60 * 1000
+      : false;
 
-    if (lastTrigger) {
-      const cooldownEnd = new Date(lastTrigger.triggered_at).getTime() + cooldownMin * 60 * 1000;
-      if (Date.now() < cooldownEnd) {
-        return null;
-      }
+    if (inCooldown && rule.state !== 'firing') {
+      return { signal: 'skipped', currentValue: 0, baselineMetadata: null };
     }
 
     // Calculate baseline. Pass the rule's metadata filters so the baseline is
@@ -651,13 +687,13 @@ export class AlertsService {
       projectIds,
       rule.level,
       rule.service || null,
-      ruleMetadataFilters.length > 0 ? ruleMetadataFilters : undefined,
+      metadataFilters,
     );
 
     if (!baseline || baseline.value < minBaseline) {
       // Reset sustained state - baseline too low or no data
-      this.sustainedState.delete(rule.id);
-      return null;
+      if (!inCooldown) this.sustainedState.delete(rule.id);
+      return recovered();
     }
 
     // Get current hourly rate
@@ -665,88 +701,54 @@ export class AlertsService {
       projectIds,
       rule.level,
       rule.service || null,
-      ruleMetadataFilters.length > 0 ? ruleMetadataFilters : undefined,
+      metadataFilters,
     );
 
     const deviationRatio = baseline.value > 0 ? currentValue / baseline.value : 0;
-
-    // Check if deviation exceeds multiplier
-    if (deviationRatio < deviationMultiplier) {
-      // Reset sustained state - not exceeding threshold
-      this.sustainedState.delete(rule.id);
-      return null;
-    }
-
-    // Sustained check: anomaly must persist for sustained_minutes
-    // We track consecutive checks (each ~60s apart)
-    const requiredChecks = Math.max(1, Math.ceil(sustainedMin / 1)); // 1 check per minute
-    const state = this.sustainedState.get(rule.id);
-    const now = Date.now();
-
-    if (state && (now - state.lastCheck) < 3 * 60 * 1000) {
-      // Within 3 minutes of last check - increment counter
-      const newCount = state.count + 1;
-      this.sustainedState.set(rule.id, { count: newCount, lastCheck: now });
-
-      if (newCount < requiredChecks) {
-        return null; // Not yet sustained enough
-      }
-    } else {
-      // First check or gap too large - start counting
-      this.sustainedState.set(rule.id, { count: 1, lastCheck: now });
-      if (requiredChecks > 1) {
-        return null; // Need more checks
-      }
-    }
-
-    // Reset sustained state after trigger
-    this.sustainedState.delete(rule.id);
-
     const baselineMetadata: BaselineMetadata = {
       baseline_value: baseline.value,
       current_value: currentValue,
       deviation_ratio: Math.round(deviationRatio * 100) / 100,
       baseline_type: rule.baseline_type,
-      evaluation_time: new Date().toISOString(),
+      evaluation_time: now.toISOString(),
     };
 
-    // Record alert trigger
-    const historyRecord = await db
-      .insertInto('alert_history')
-      .values({
-        rule_id: rule.id,
-        triggered_at: new Date(),
-        log_count: currentValue,
-        baseline_metadata: baselineMetadata,
-      })
-      .returning(['id'])
-      .executeTakeFirstOrThrow();
-
-    if (hooks.hasHandlers('afterAlertTriggered')) {
-      void hooks.runAfter('afterAlertTriggered', {
-        organizationId: rule.organization_id,
-        projectId: rule.project_id ?? null,
-        ruleId: rule.id,
-        ruleName: rule.name,
-        historyId: historyRecord.id,
-        logCount: currentValue,
-        baselineMetadata: baselineMetadata as unknown as Record<string, unknown>,
-      });
+    // Check if deviation exceeds multiplier
+    if (deviationRatio < deviationMultiplier) {
+      // Reset sustained state - not exceeding threshold
+      if (!inCooldown) this.sustainedState.delete(rule.id);
+      return recovered(currentValue, baselineMetadata);
     }
 
-    return {
-      historyId: historyRecord.id,
-      rule_id: rule.id,
-      rule_name: rule.name,
-      organization_id: rule.organization_id,
-      project_id: rule.project_id,
-      log_count: currentValue,
-      threshold: rule.threshold,
-      time_window: rule.time_window,
-      email_recipients: rule.email_recipients,
-      webhook_url: rule.webhook_url,
-      baseline_metadata: baselineMetadata,
-    };
+    // Still deviating inside the cooldown: no new notification yet.
+    if (inCooldown) return { signal: 'pending', currentValue, baselineMetadata };
+
+    // Sustained check: anomaly must persist for sustained_minutes
+    // We track consecutive checks (each ~60s apart)
+    const requiredChecks = Math.max(1, Math.ceil(sustainedMin / 1)); // 1 check per minute
+    const state = this.sustainedState.get(rule.id);
+    const nowMs = now.getTime();
+
+    if (state && (nowMs - state.lastCheck) < 3 * 60 * 1000) {
+      // Within 3 minutes of last check - increment counter
+      const newCount = state.count + 1;
+      this.sustainedState.set(rule.id, { count: newCount, lastCheck: nowMs });
+
+      if (newCount < requiredChecks) {
+        return { signal: 'pending', currentValue, baselineMetadata }; // Not yet sustained enough
+      }
+    } else {
+      // First check or gap too large - start counting
+      this.sustainedState.set(rule.id, { count: 1, lastCheck: nowMs });
+      if (requiredChecks > 1) {
+        return { signal: 'pending', currentValue, baselineMetadata }; // Need more checks
+      }
+    }
+
+    // Reset sustained state after an anomaly
+    this.sustainedState.delete(rule.id);
+
+    return { signal: 'anomaly', currentValue, baselineMetadata };
   }
 
   /**
