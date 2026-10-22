@@ -57,6 +57,12 @@ export interface AlertResolvedNotificationData {
   firing_since: string;
   resolved_at: string;
   incident_id: string | null;
+  /**
+   * Channels the rule had when the resolve was queued. Set when a rule is
+   * disabled or deleted while firing: the rule's channel links may be gone by
+   * the time the job runs.
+   */
+  channel_ids?: string[];
 }
 
 export type AlertNotificationJobData = AlertNotificationData | AlertResolvedNotificationData;

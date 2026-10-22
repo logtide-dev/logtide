@@ -4,6 +4,7 @@ import { createTestContext } from '../../helpers/index.js';
 import { db } from '../../../database/index.js';
 import { monitorNotificationQueue } from '../../../queue/jobs/monitor-notification.js';
 import { insertIncident } from '../incidents/fixtures.js';
+import { notificationChannelsService } from '../../../modules/notification-channels/index.js';
 
 // F4 seam: the shared incidents service is mocked (its own suite covers it)
 const { openOrUpdateFromSource, resolveFromSource } = vi.hoisted(() => ({
@@ -930,6 +931,47 @@ describe('MonitorService incidents (W12)', () => {
     expect(after.enabled).toBe(false);
     expect(after.status!.incidentId).toBeNull();
     expect(after.status!.consecutiveFailures).toBe(0);
+  });
+
+  it('disabling or deleting a monitor whose outage was reported queues the recovery', async () => {
+    const m = await makeMonitor();
+    const channel = await notificationChannelsService.createChannel(ctx.organization.id, {
+      name: 'hook',
+      type: 'webhook',
+      config: { url: 'https://example.com/hook' },
+    } as any);
+    await notificationChannelsService.setMonitorChannels(m.id, [channel.id], ctx.organization.id);
+    await runWith(m.id, 'down');
+    vi.mocked(monitorNotificationQueue.add).mockClear();
+
+    await service.updateMonitor(m.id, ctx.organization.id, { enabled: false });
+    expect(queueCalls('monitor-recovered')).toHaveLength(1);
+    expect(queueCalls('monitor-recovered')[0][1]).toMatchObject({
+      monitorId: m.id,
+      organizationId: ctx.organization.id,
+      status: 'up',
+      channelIds: [channel.id],
+    });
+
+    const m2 = await makeMonitor();
+    await notificationChannelsService.setMonitorChannels(m2.id, [channel.id], ctx.organization.id);
+    await runWith(m2.id, 'down');
+    vi.mocked(monitorNotificationQueue.add).mockClear();
+    await service.deleteMonitor(m2.id, ctx.organization.id);
+    expect(queueCalls('monitor-recovered')).toHaveLength(1);
+    expect(queueCalls('monitor-recovered')[0][1]).toMatchObject({ monitorId: m2.id, channelIds: [channel.id] });
+  });
+
+  it('disabling a monitor that is up or whose outage was never reported queues nothing', async () => {
+    const up = await makeMonitor();
+    await runWith(up.id, 'up');
+    const pending = await makeMonitor({ failureThreshold: 3 });
+    await runWith(pending.id, 'down');
+    vi.mocked(monitorNotificationQueue.add).mockClear();
+
+    await service.updateMonitor(up.id, ctx.organization.id, { enabled: false });
+    await service.deleteMonitor(pending.id, ctx.organization.id);
+    expect(queueCalls('monitor-recovered')).toHaveLength(0);
   });
 
   it('updating without disabling does not resolve anything', async () => {

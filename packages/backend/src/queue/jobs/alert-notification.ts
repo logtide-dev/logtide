@@ -104,6 +104,13 @@ export async function processAlertNotification(job: { data: AlertNotificationJob
  * defaults, no fallback.
  */
 export async function resolveAlertChannels(data: AlertNotificationJobData): Promise<ResolvedRouting> {
+  if (data.kind === 'resolved' && data.channel_ids && data.channel_ids.length > 0) {
+    return resolveChannelsForEvent({
+      organizationId: data.organization_id,
+      eventType: 'alert',
+      explicitChannelIds: data.channel_ids,
+    });
+  }
   const isSigma = 'event_type' in data && data.event_type === 'sigma';
   const ruleChannels = isSigma
     ? await notificationChannelsService.getSigmaRuleChannels(data.rule_id, data.organization_id)

@@ -12,6 +12,13 @@
  * not just the first modifier.
  */
 
+import isSafeRegex from 'safe-regex2';
+import { boundedRegexTest } from './regex-guard.js';
+
+/** Longest |re pattern we compile; longer ones never match. */
+const MAX_REGEX_PATTERN_LENGTH = 512;
+const regexCache = new Map<string, boolean>();
+
 export type FieldModifier =
   | 'contains'
   | 'startswith'
@@ -301,8 +308,16 @@ export class SigmaFieldMatcher {
   ): boolean {
     try {
       const flags = caseSensitive ? '' : 'i';
-      const regex = new RegExp(pattern, flags);
-      return regex.test(value);
+      const key = `${flags}/${pattern}`;
+      let allowed = regexCache.get(key);
+      if (allowed === undefined) {
+        // Cheap static pre-filter. It is NOT sufficient (overlapping alternation
+        // like (a|aa)+$ passes it), so the match itself is also time-boxed.
+        allowed = pattern.length <= MAX_REGEX_PATTERN_LENGTH && isSafeRegex(pattern);
+        if (regexCache.size >= 1000) regexCache.clear();
+        regexCache.set(key, allowed);
+      }
+      return allowed ? boundedRegexTest(pattern, flags, value) : false;
     } catch (error) {
       console.warn(`[SigmaFieldMatcher] Invalid regex pattern: ${pattern}`, error);
       return false;

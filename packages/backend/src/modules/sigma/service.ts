@@ -301,8 +301,10 @@ export class SigmaService {
         description: rule.description || null,
         author: rule.author || null,
         date: rule.date ? new Date(rule.date) : null,
-        level: rule.level,
-        status: rule.status,
+        // The parser leaves both undefined when the YAML omits them, and Kysely
+        // drops undefined keys, which would keep the old values.
+        level: rule.level ?? 'medium',
+        status: rule.status ?? null,
         logsource: rule.logsource as any,
         detection: rule.detection as any,
         tags: rule.tags || null,

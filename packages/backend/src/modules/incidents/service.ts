@@ -479,12 +479,24 @@ export class IncidentsService {
       if (patch.assigneeId !== undefined) set.assignee_id = patch.assigneeId;
 
       if (Object.keys(set).length > 0) {
-        await trx
-          .updateTable('incidents')
-          .set(set)
-          .where('id', '=', id)
-          .where('organization_id', '=', organizationId)
-          .execute();
+        try {
+          await trx
+            .updateTable('incidents')
+            .set(set)
+            .where('id', '=', id)
+            .where('organization_id', '=', organizationId)
+            .execute();
+        } catch (error) {
+          // Reopening an alert or monitor incident while a newer one of the same
+          // rule or monitor is active hits the partial unique index.
+          if ((error as { code?: string } | null)?.code === '23505') {
+            throw new IncidentError(
+              'invalid_transition',
+              'Another incident for the same alert rule or monitor is already active'
+            );
+          }
+          throw error;
+        }
       }
       return true;
     });

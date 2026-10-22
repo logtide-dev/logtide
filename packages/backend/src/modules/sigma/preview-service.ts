@@ -10,6 +10,8 @@ export const PREVIEW_MAX_LOGS = 50_000;
 export const PREVIEW_PAGE_SIZE = 1_000;
 export const PREVIEW_TIMEOUT_MS = 30_000;
 export const PREVIEW_MAX_SAMPLES = 20;
+/** The deadline is also checked every this many scanned records. */
+export const PREVIEW_DEADLINE_CHECK_EVERY = 100;
 const SAMPLE_MESSAGE_MAX = 500;
 
 const RANGE_MS = { '24h': 24 * 3_600_000, '7d': 7 * 24 * 3_600_000 } as const;
@@ -77,6 +79,15 @@ export async function previewRule(
       if (result.scanned >= PREVIEW_MAX_LOGS) {
         result.truncated = true;
         result.truncatedReason = 'max_logs';
+        return result;
+      }
+      if (
+        result.scanned > 0 &&
+        result.scanned % PREVIEW_DEADLINE_CHECK_EVERY === 0 &&
+        now().getTime() >= deadline
+      ) {
+        result.truncated = true;
+        result.truncatedReason = 'timeout';
         return result;
       }
       result.scanned++;

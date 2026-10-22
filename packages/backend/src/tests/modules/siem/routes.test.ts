@@ -343,6 +343,68 @@ describe('SIEM Routes', () => {
             expect(response.statusCode).toBe(201);
         });
 
+        it('stores source manual when no detection events are linked', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/siem/incidents',
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { organizationId: testOrganization.id, title: 'By hand', severity: 'low' },
+            });
+            expect(response.statusCode).toBe(201);
+            const row = await db
+                .selectFrom('incidents')
+                .select('source')
+                .where('id', '=', JSON.parse(response.payload).id)
+                .where('organization_id', '=', testOrganization.id)
+                .executeTakeFirstOrThrow();
+            expect(row.source).toBe('manual');
+        });
+
+        it('keeps source sigma when detection events are linked', async () => {
+            const sigmaRule = await createTestSigmaRule(testOrganization.id, testProject.id);
+            const log = await createTestLog({ projectId: testProject.id, service: 'test', level: 'error', message: 'x' });
+            const detection = await createTestDetectionEvent(testOrganization.id, testProject.id, sigmaRule.id, log.id);
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/siem/incidents',
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { organizationId: testOrganization.id, title: 'From detection', severity: 'high', detectionEventIds: [detection.id] },
+            });
+            expect(response.statusCode).toBe(201);
+            const row = await db
+                .selectFrom('incidents')
+                .select('source')
+                .where('id', '=', JSON.parse(response.payload).id)
+                .where('organization_id', '=', testOrganization.id)
+                .executeTakeFirstOrThrow();
+            expect(row.source).toBe('sigma');
+        });
+
+        it('rejects a project of another organization', async () => {
+            const other = await createTestContext();
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/siem/incidents',
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { organizationId: testOrganization.id, projectId: other.project.id, title: 'Foreign project', severity: 'low' },
+            });
+            expect(response.statusCode).toBe(404);
+            expect(await db.selectFrom('incidents').select('id').where('title', '=', 'Foreign project').execute()).toHaveLength(0);
+        });
+
+        it('rejects an assignee outside the organization', async () => {
+            const other = await createTestContext();
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/siem/incidents',
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { organizationId: testOrganization.id, assigneeId: other.user.id, title: 'Foreign assignee', severity: 'low' },
+            });
+            expect(response.statusCode).toBe(400);
+            expect(JSON.parse(response.payload).code).toBe('invalid_assignee');
+            expect(await db.selectFrom('incidents').select('id').where('title', '=', 'Foreign assignee').execute()).toHaveLength(0);
+        });
+
         it('should return 403 for non-member', async () => {
             const otherUser = await db
                 .insertInto('users')
