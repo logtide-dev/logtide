@@ -396,7 +396,7 @@ export type TraceSortBy = 'start_time' | 'duration';
 export interface TraceQueryParams {
   organizationId?: string | string[];
   projectId?: string | string[];
-  /** Trace-level service (the trace's `serviceName`). */
+  /** Trace-level service (the trace's `serviceName`), also when `operation` or `attributeFilters` is set. */
   serviceName?: string | string[];
   error?: boolean;
   from: Date;
@@ -404,8 +404,9 @@ export interface TraceQueryParams {
   minDurationMs?: number;
   maxDurationMs?: number;
   /**
-   * `operation` and `attributeFilters` keep traces with at least one span
-   * matching the operation and all attribute filters together.
+   * `operation` and `attributeFilters` keep traces with at least one span,
+   * starting inside [from, to], matching the operation and all attribute
+   * filters together. A `resource.` key prefix reads `resourceAttributes`.
    */
   operation?: string;
   attributeFilters?: MetadataFilter[];

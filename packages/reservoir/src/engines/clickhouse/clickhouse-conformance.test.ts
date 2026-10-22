@@ -337,12 +337,20 @@ describe('clickhouse apm specifics: span and trace filters', () => {
   const subject = useSpecificSpans(spans, tracesOf(spans));
   const window = { projectId: project, from: SPECIFICS_FROM, to: SPECIFICS_TO };
 
-  it('serviceName pairs with the matching span while the span-match block is active', async () => {
-    const paired = await subject().queryTraces({ ...window, serviceName: 'api', operation: 'GET /x' });
-    expect(paired.traces.map((t) => t.traceId)).toEqual([T1]);
-    expect(paired.total).toBe(1);
+  it('serviceName stays trace level while the span-match block is active', async () => {
+    const matched = await subject().queryTraces({ ...window, serviceName: 'api', operation: 'GET /x' });
+    expect(matched.traces.map((t) => t.traceId)).toEqual([T2]);
+    expect(matched.total).toBe(1);
+    const frontend = await subject().queryTraces({ ...window, serviceName: 'frontend', operation: 'GET /x' });
+    expect(frontend.traces.map((t) => t.traceId)).toEqual([T1]);
     const traceLevel = await subject().queryTraces({ ...window, serviceName: 'api' });
     expect(traceLevel.traces.map((t) => t.traceId)).toEqual([T2]);
+  });
+
+  it('the matching span must start inside the window', async () => {
+    const early = { ...window, to: new Date(SPECIFICS_FROM.getTime() + 3500) };
+    // T2 starts at 3 s; its GET /x span starts at 4 s, after this window.
+    expect((await subject().queryTraces({ ...early, operation: 'GET /x' })).traces.map((t) => t.traceId)).toEqual([T1]);
   });
 
   it('resource-prefixed attribute filters read the resource attributes', async () => {

@@ -119,12 +119,15 @@ describe('clickhouse trace conditions', () => {
     expect(traceSpanMatchSql({ ...traceBase, attributeFilters: [] }, {})).toBeNull();
   });
 
-  it('serviceName pairs with the span when the block is active', () => {
+  it('serviceName stays trace level when the block is active', () => {
     const qp: Record<string, unknown> = {};
-    const active = buildTraceConditions({ ...traceBase, serviceName: ['api'], operation: 'GET /x' }, qp).join(' AND ');
-    expect(active).toContain('service_name IN {p_ssvc:Array(String)}');
-    expect(active).not.toContain('{p_svc:');
-    expect(qp.p_ssvc).toEqual(['api']);
+    const active = buildTraceConditions({ ...traceBase, serviceName: ['api'], operation: 'GET /x' }, qp);
+    expect(active).toContain('service_name IN {p_svc:Array(String)}');
+    const block = active.find((c) => c.includes('IN (SELECT'));
+    expect(block).toBeDefined();
+    expect(block).not.toContain('service_name');
+    expect(qp.p_svc).toEqual(['api']);
+    expect(qp).not.toHaveProperty('p_ssvc');
 
     const inactive = buildTraceConditions({ ...traceBase, serviceName: 'api' }, {}).join(' AND ');
     expect(inactive).toContain('service_name IN {p_svc:Array(String)}');

@@ -495,10 +495,11 @@ describeTimescaleSpecifics(
       expect(await traceIds({ serviceName: 'api', operation: 'route' })).toEqual([]);
     });
 
-    it('a trace matches a span that starts after the window', async () => {
-      expect(await traceIds({ operation: 'late op' })).toEqual(['tc']);
+    it('a trace does not match a span that starts after the window', async () => {
+      expect(await traceIds({ operation: 'late op' })).toEqual([]);
       const { total } = await subject().queryTraces({ projectId: SPECIFICS_PROJECT, ...SPECIFICS_WINDOW, operation: 'late op' });
-      expect(total).toBe(1);
+      expect(total).toBe(0);
+      expect(await traceIds({ operation: 'job' })).toEqual(['tc']);
     });
 
     it('trace attribute filters on resource attributes', async () => {

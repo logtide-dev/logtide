@@ -396,10 +396,12 @@ export class ReferenceEngine {
       if (params.minDurationMs !== undefined && t.durationMs < params.minDurationMs) return false;
       if (params.maxDurationMs !== undefined && t.durationMs > params.maxDurationMs) return false;
       if (!needsSpan) return true;
-      // One span of the trace must match the operation and every attribute filter together.
+      // One span of the trace, starting inside [from, to], must match the
+      // operation and every attribute filter together (Wave D ruling C3).
       return this.spans.some((s) =>
         s.projectId === t.projectId
         && s.traceId === t.traceId
+        && inRange(s.time.getTime(), params)
         && (params.operation === undefined || s.operationName === params.operation)
         && filtersMatch(s.attributes, params.attributeFilters));
     });
