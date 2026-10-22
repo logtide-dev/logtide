@@ -186,25 +186,6 @@
   }
 </script>
 
-{#snippet retryAction()}
-  <button
-    type="button"
-    class={buttonVariants({ variant: 'outline', size: 'sm' })}
-    onclick={() => { lastLoadedKey = null; loadDashboard(); }}
-  >
-    Retry
-  </button>
-{/snippet}
-
-{#snippet connectAction()}
-  <a
-    href="/dashboard/projects/{projectId}/settings#connect"
-    class={buttonVariants({ variant: 'default', size: 'sm' })}
-  >
-    Connect
-  </a>
-{/snippet}
-
 <svelte:head>
   <title>Overview - LogTide</title>
 </svelte:head>
@@ -228,14 +209,32 @@
       <Skeleton height="18rem" rounded="lg" />
     </div>
   {:else if error}
-    <EmptyState variant="error" title="Could not load project overview" description={error} actions={retryAction} />
+    <EmptyState variant="error" title="Could not load project overview" description={error}>
+      {#snippet actions()}
+        <button
+          type="button"
+          class={buttonVariants({ variant: 'outline', size: 'sm' })}
+          onclick={() => { lastLoadedKey = null; loadDashboard(); }}
+        >
+          Retry
+        </button>
+      {/snippet}
+    </EmptyState>
   {:else if isEmpty}
     <EmptyState
       variant="setup"
       title="No data yet"
       description="Start sending logs to this project to see your overview."
-      actions={connectAction}
-    />
+    >
+      {#snippet actions()}
+        <a
+          href="/dashboard/projects/{projectId}/settings#connect"
+          class={buttonVariants({ variant: 'default', size: 'sm' })}
+        >
+          Connect
+        </a>
+      {/snippet}
+    </EmptyState>
   {:else if stats}
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <StatsCard

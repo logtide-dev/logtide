@@ -168,7 +168,7 @@ describe('project overview page', () => {
     await fireEvent.click(screen.getByText(/Database connection refused/));
     for (const href of calls()) {
       expect(href).not.toContain('projectId=');
-      expect(href).not.toContain('/dashboard/search');
+      expect(href.split('?')[0]).toMatch(/^\/dashboard\/(logs|errors)$/);
       expect(href).not.toMatch(/[?&]level=/);
       expect(href).not.toMatch(/[?&]service=/);
     }

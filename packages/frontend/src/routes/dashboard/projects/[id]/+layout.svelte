@@ -161,13 +161,13 @@
 	}
 </script>
 
-{#snippet retryAction()}
-	<Button variant="outline" size="sm" onclick={retry}>Retry</Button>
-{/snippet}
-
 <div class="container mx-auto {containerPadding} {maxWidthClass} space-y-6">
 	{#if error}
-		<EmptyState variant="error" title="Could not load project" description={error} actions={retryAction} />
+		<EmptyState variant="error" title="Could not load project" description={error}>
+			{#snippet actions()}
+				<Button variant="outline" size="sm" onclick={retry}>Retry</Button>
+			{/snippet}
+		</EmptyState>
 	{:else if project}
 		{#if project.deletedAt}
 			<div class="flex flex-col gap-3 rounded-lg border border-dashed bg-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between">
