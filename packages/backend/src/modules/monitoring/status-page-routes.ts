@@ -10,6 +10,7 @@ import {
   componentsSchema,
   ComponentsValidationError,
 } from './status-page.js';
+import { statusSubscribersService } from './subscribers.js';
 
 const uuidSchema = z.string().uuid();
 
@@ -109,5 +110,36 @@ export async function statusPageRoutes(fastify: FastifyInstance) {
       throw err;
     }
     return reply.send({ ok: true });
+  });
+
+  // Subscribers hold email addresses: admins and owners only.
+  fastify.get('/subscribers', async (request: any, reply) => {
+    const { organizationId, projectId, page } = request.query ?? {};
+    if (!uuidSchema.safeParse(organizationId).success || !uuidSchema.safeParse(projectId).success) {
+      return reply.status(400).send({ error: 'valid organizationId and projectId required' });
+    }
+    const role = await getMemberRole(request.user.id, organizationId);
+    if (role !== 'owner' && role !== 'admin') {
+      return reply.status(403).send({ error: 'Admin or owner role required' });
+    }
+    if (!(await projectsService.projectBelongsToOrg(projectId, organizationId))) {
+      return reply.status(404).send({ error: 'Project not found' });
+    }
+    const result = await statusSubscribersService.listConfirmed(organizationId, projectId, Number(page) || 1);
+    return reply.send(result);
+  });
+
+  fastify.delete('/subscribers/:id', async (request: any, reply) => {
+    const { organizationId } = request.query ?? {};
+    if (!uuidSchema.safeParse(request.params?.id).success || !uuidSchema.safeParse(organizationId).success) {
+      return reply.status(400).send({ error: 'valid id and organizationId required' });
+    }
+    const role = await getMemberRole(request.user.id, organizationId);
+    if (role !== 'owner' && role !== 'admin') {
+      return reply.status(403).send({ error: 'Admin or owner role required' });
+    }
+    const removed = await statusSubscribersService.remove(request.params.id, organizationId);
+    if (!removed) return reply.status(404).send({ error: 'Not found' });
+    return reply.status(204).send();
   });
 }

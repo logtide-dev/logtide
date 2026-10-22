@@ -10,7 +10,8 @@ import { projectsService } from '../projects/service.js';
 import { usersService } from '../users/service.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { assertHttpTargetAllowed, resolveAndValidateHost, SsrfBlockedError } from '../../utils/ssrf-guard.js';
-import { config } from '../../config/index.js';
+import { config, isSmtpConfigured } from '../../config/index.js';
+import { statusSubscribersService } from './subscribers.js';
 
 export const monitorService = new MonitorService(db);
 
@@ -496,6 +497,63 @@ export async function publicStatusRoutes(fastify: FastifyInstance) {
     const status = await monitorService.getPublicStatus(project.slug, project.id);
     if (!status) return reply.status(404).send({ error: 'Not found' });
     return reply.send(status);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Email subscriptions (double opt-in)
+  // ──────────────────────────────────────────────────────────────────────
+  // Subscribing is only offered on public pages with SMTP configured. The
+  // answer never depends on whether the address is already known. Confirm and
+  // unsubscribe are POST so mail scanners prefetching links change nothing; they
+  // keep working when the page is no longer public, so nobody gets stuck.
+
+  const subscribeBodySchema = z.object({ email: z.string().trim().email().max(254) });
+  const tokenBodySchema = z.object({ token: z.string().min(1).max(200) });
+
+  fastify.post('/:orgSlug/:projectSlug/subscribe', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request: any, reply) => {
+    const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
+    const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);
+    if (!project || project.status_page_visibility !== 'public' || !isSmtpConfigured()) {
+      return reply.status(404).send({ error: 'Not found' });
+    }
+    const parse = subscribeBodySchema.safeParse(request.body);
+    if (!parse.success) return reply.status(400).send({ error: 'Enter a valid email address' });
+
+    await statusSubscribersService.subscribe({
+      organizationId: project.organization_id,
+      projectId: project.id,
+      orgSlug,
+      projectSlug: project.slug,
+      projectName: project.name,
+      email: parse.data.email,
+    });
+    return reply.status(202).send({ ok: true });
+  });
+
+  fastify.post('/:orgSlug/:projectSlug/subscribe/confirm', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request: any, reply) => {
+    const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
+    const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);
+    const parse = tokenBodySchema.safeParse(request.body);
+    if (!project || !parse.success) return reply.status(400).send({ error: 'Invalid or expired link' });
+    const ok = await statusSubscribersService.confirm(project.organization_id, project.id, parse.data.token);
+    if (!ok) return reply.status(400).send({ error: 'Invalid or expired link' });
+    return reply.send({ ok: true });
+  });
+
+  fastify.post('/:orgSlug/:projectSlug/unsubscribe', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request: any, reply) => {
+    const { orgSlug, projectSlug } = request.params as { orgSlug: string; projectSlug: string };
+    const project = await monitorService.getProjectByOrgAndSlug(orgSlug, projectSlug);
+    const parse = tokenBodySchema.safeParse(request.body);
+    if (!project || !parse.success) return reply.status(400).send({ error: 'Invalid or expired link' });
+    const ok = await statusSubscribersService.unsubscribe(project.organization_id, project.id, parse.data.token);
+    if (!ok) return reply.status(400).send({ error: 'Invalid or expired link' });
+    return reply.send({ ok: true });
   });
 
   // ──────────────────────────────────────────────────────────────────────
