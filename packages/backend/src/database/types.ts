@@ -115,6 +115,15 @@ export interface EmailVerificationTokensTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface PasswordResetTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: string;
+  expires_at: Timestamp;
+  used_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
 export interface OrganizationCreationLogTable {
   id: Generated<string>;
   user_id: string;
@@ -198,6 +207,8 @@ export interface ApiKeysTable {
   created_at: Generated<Timestamp>;
   last_used: Timestamp | null;
   revoked: Generated<boolean>;
+  // First 9 chars of the key (migration 071). NULL for keys created before 1.6.
+  key_prefix: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export type AlertType = 'threshold' | 'rate_of_change';
@@ -441,6 +452,10 @@ export interface UserOnboardingTable {
   tutorial_completed: Generated<boolean>;
   tutorial_step: Generated<number>;
   tutorial_skipped: Generated<boolean>;
+  // Resume position (migration 071)
+  onboarding_step: ColumnType<string | null, string | null | undefined, string | null>;
+  organization_id: ColumnType<string | null, string | null | undefined, string | null>;
+  project_id: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -1201,6 +1216,7 @@ export interface Database {
   sessions: SessionsTable;
   stream_tickets: StreamTicketsTable;
   email_verification_tokens: EmailVerificationTokensTable;
+  password_reset_tokens: PasswordResetTokensTable;
   organization_creation_log: OrganizationCreationLogTable;
   organizations: OrganizationsTable;
   organization_members: OrganizationMembersTable;

@@ -48,6 +48,8 @@
   let hasLocalProvider = $state(true); // Default to true for initial load
   let organizationsAPI = $derived(new OrganizationsAPI(() => token));
   let checkingAuthMode = $state(true);
+  let passwordResetEnabled = $state(false);
+  let hasExternalProvider = $state(false);
 
   // Check auth mode on mount - redirect if auth-free mode
   onMount(async () => {
@@ -59,8 +61,15 @@
         goto(safeRedirect(redirectUrl));
         return;
       }
+      passwordResetEnabled = config.passwordResetEnabled === true;
     } catch (e) {
       console.error('Failed to get auth config:', e);
+    }
+    try {
+      const { providers } = await authAPI.getProviders();
+      hasExternalProvider = providers.some((p) => p.type !== 'local');
+    } catch {
+      // The provider selector reports its own load failure.
     }
     checkingAuthMode = false;
   });
@@ -125,9 +134,9 @@
     });
 
     if (response.isNewUser) {
-      toastStore.success('Welcome to LogTide! Your account has been created.');
+      toastStore.success('Account created');
     } else {
-      toastStore.success('Welcome back!');
+      toastStore.success('Welcome back');
     }
 
     // If there's a redirect URL (e.g., invitation), go there
@@ -186,7 +195,7 @@
 </script>
 
 <svelte:head>
-  <title>Login - LogTide</title>
+  <title>Sign in - LogTide</title>
 </svelte:head>
 
 <div class="min-h-screen flex flex-col bg-background">
@@ -245,7 +254,12 @@
               </div>
 
               <div class="space-y-2">
-                <Label for="password">Password</Label>
+                <div class="flex items-center justify-between">
+                  <Label for="password">Password</Label>
+                  {#if passwordResetEnabled}
+                    <a href="/forgot-password" class="text-sm text-primary-text hover:underline">Forgot password?</a>
+                  {/if}
+                </div>
                 <Input
                   id="password"
                   type="password"
@@ -265,7 +279,7 @@
                   <Spinner size="sm" />
                   Signing in...
                 {:else}
-                  Sign in with Email
+                  {hasExternalProvider ? 'Sign in with email' : 'Sign in'}
                 {/if}
               </Button>
             </div>

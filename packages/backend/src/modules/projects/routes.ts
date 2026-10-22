@@ -96,6 +96,45 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // Last event time per project of an organization (registered before /:id)
+  fastify.get('/last-events', async (request: any, reply) => {
+    let organizationId: string;
+    try {
+      ({ organizationId } = orgQuerySchema.parse(request.query));
+    } catch {
+      return reply.status(400).send({
+        error: 'organizationId query parameter is required',
+      });
+    }
+
+    try {
+      const lastEvents = await projectsService.getLastEvents(organizationId, request.user.id);
+      return reply.send({ lastEvents });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('do not have access')) {
+        return reply.status(403).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  // First signal received by a project (any signal type)
+  fastify.get('/:id/first-signal', async (request: any, reply) => {
+    try {
+      const { id } = projectIdSchema.parse(request.params);
+      const signal = await projectsService.getFirstSignal(id, request.user.id);
+      if (!signal) {
+        return reply.status(404).send({ error: 'Project not found' });
+      }
+      return reply.send(signal);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Invalid project ID' });
+      }
+      throw error;
+    }
+  });
+
   // Get project capabilities (auto-detect browser SDK features)
   fastify.get('/:id/capabilities', async (request: any, reply) => {
     try {

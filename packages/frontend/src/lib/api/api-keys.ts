@@ -8,6 +8,8 @@ export interface ApiKey {
   id: string;
   projectId: string;
   name: string;
+  /** First 9 characters of the key (lp_ plus 6), null for keys created before 1.6. */
+  keyPrefix: string | null;
   type: ApiKeyType;
   allowedOrigins: string[] | null;
   createdAt: string;
@@ -24,6 +26,7 @@ export interface CreateApiKeyInput {
 export interface CreateApiKeyResponse {
   id: string;
   apiKey: string;
+  keyPrefix: string;
   type: ApiKeyType;
   message: string;
 }

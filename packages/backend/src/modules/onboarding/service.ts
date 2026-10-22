@@ -1,6 +1,9 @@
 import { db } from '../../database/connection.js';
 import type { ChecklistItemsState } from '../../database/types.js';
 
+export const ONBOARDING_STEPS = ['verify-email', 'workspace', 'connect', 'done'] as const;
+export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+
 export interface OnboardingState {
   checklistItems: ChecklistItemsState;
   checklistCollapsed: boolean;
@@ -8,6 +11,18 @@ export interface OnboardingState {
   tutorialCompleted: boolean;
   tutorialStep: number;
   tutorialSkipped: boolean;
+  /** Resume position of the 1.6 onboarding flow */
+  step: OnboardingStep | null;
+  organizationId: string | null;
+  projectId: string | null;
+}
+
+/** The organization or project sent for storage is not reachable by the user. */
+export class OnboardingScopeError extends Error {
+  constructor() {
+    super('Organization or project not found');
+    this.name = 'OnboardingScopeError';
+  }
 }
 
 const DEFAULT_STATE: OnboardingState = {
@@ -17,38 +32,93 @@ const DEFAULT_STATE: OnboardingState = {
   tutorialCompleted: false,
   tutorialStep: 0,
   tutorialSkipped: false,
+  step: null,
+  organizationId: null,
+  projectId: null,
 };
 
+const STATE_COLUMNS = [
+  'checklist_items',
+  'checklist_collapsed',
+  'checklist_dismissed',
+  'tutorial_completed',
+  'tutorial_step',
+  'tutorial_skipped',
+  'onboarding_step',
+  'organization_id',
+  'project_id',
+] as const;
+
+function asStep(value: string | null): OnboardingStep | null {
+  return (ONBOARDING_STEPS as readonly string[]).includes(value ?? '') ? (value as OnboardingStep) : null;
+}
+
 class OnboardingService {
+  private async isMember(userId: string, organizationId: string): Promise<boolean> {
+    const row = await db
+      .selectFrom('organization_members')
+      .select('id')
+      .where('organization_id', '=', organizationId)
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+    return !!row;
+  }
+
+  private async projectInOrganization(projectId: string, organizationId: string): Promise<boolean> {
+    const row = await db
+      .selectFrom('projects')
+      .select('id')
+      .where('id', '=', projectId)
+      .where('organization_id', '=', organizationId)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirst();
+    return !!row;
+  }
+
+  private async fetchRow(userId: string) {
+    return db
+      .selectFrom('user_onboarding')
+      .select([...STATE_COLUMNS])
+      .where('user_id', '=', userId)
+      .executeTakeFirst();
+  }
+
+  /**
+   * Map a stored row to the API shape. Self-healing: a stored organization the
+   * user no longer belongs to, or a stored project that is gone, soft-deleted
+   * or outside that organization, comes back as null instead of an error.
+   */
+  private async toState(userId: string, row: NonNullable<Awaited<ReturnType<OnboardingService['fetchRow']>>>): Promise<OnboardingState> {
+    let organizationId = row.organization_id;
+    let projectId = row.project_id;
+
+    if (organizationId && !(await this.isMember(userId, organizationId))) {
+      organizationId = null;
+    }
+    if (projectId && (!organizationId || !(await this.projectInOrganization(projectId, organizationId)))) {
+      projectId = null;
+    }
+
+    return {
+      checklistItems: row.checklist_items,
+      checklistCollapsed: row.checklist_collapsed,
+      checklistDismissed: row.checklist_dismissed,
+      tutorialCompleted: row.tutorial_completed,
+      tutorialStep: row.tutorial_step,
+      tutorialSkipped: row.tutorial_skipped,
+      step: asStep(row.onboarding_step),
+      organizationId,
+      projectId,
+    };
+  }
+
   /**
    * Get onboarding state for a user
    * Creates a new record if one doesn't exist
    */
   async getOnboardingState(userId: string): Promise<OnboardingState> {
-    // Try to get existing state
-    const existing = await db
-      .selectFrom('user_onboarding')
-      .select([
-        'checklist_items',
-        'checklist_collapsed',
-        'checklist_dismissed',
-        'tutorial_completed',
-        'tutorial_step',
-        'tutorial_skipped',
-      ])
-      .where('user_id', '=', userId)
-      .executeTakeFirst();
-
-    if (existing) {
-      return {
-        checklistItems: existing.checklist_items,
-        checklistCollapsed: existing.checklist_collapsed,
-        checklistDismissed: existing.checklist_dismissed,
-        tutorialCompleted: existing.tutorial_completed,
-        tutorialStep: existing.tutorial_step,
-        tutorialSkipped: existing.tutorial_skipped,
-      };
-    }
+    const existing = await this.fetchRow(userId);
+    if (existing) return this.toState(userId, existing);
 
     // Create new record with defaults (onConflict handles race conditions)
     await db
@@ -66,40 +136,43 @@ class OnboardingService {
       .execute();
 
     // Re-fetch in case of conflict (another request created it first)
-    const created = await db
-      .selectFrom('user_onboarding')
-      .select([
-        'checklist_items',
-        'checklist_collapsed',
-        'checklist_dismissed',
-        'tutorial_completed',
-        'tutorial_step',
-        'tutorial_skipped',
-      ])
-      .where('user_id', '=', userId)
-      .executeTakeFirst();
-
-    if (created) {
-      return {
-        checklistItems: created.checklist_items,
-        checklistCollapsed: created.checklist_collapsed,
-        checklistDismissed: created.checklist_dismissed,
-        tutorialCompleted: created.tutorial_completed,
-        tutorialStep: created.tutorial_step,
-        tutorialSkipped: created.tutorial_skipped,
-      };
-    }
+    const created = await this.fetchRow(userId);
+    if (created) return this.toState(userId, created);
 
     return DEFAULT_STATE;
   }
 
   /**
-   * Update onboarding state for a user
+   * Update onboarding state for a user.
+   * Throws OnboardingScopeError (nothing is stored) when the organization is not
+   * one the user belongs to, or the project is not a live project of the
+   * effective organization (the new value, else the stored one).
    */
   async updateOnboardingState(
     userId: string,
     updates: Partial<OnboardingState>
   ): Promise<OnboardingState> {
+    const stored = await this.fetchRow(userId);
+
+    // Validate the resume ids before writing anything.
+    let effectiveOrg: string | null = stored?.organization_id ?? null;
+    let clearProject = false;
+    if (updates.organizationId !== undefined) {
+      if (updates.organizationId !== null && !(await this.isMember(userId, updates.organizationId))) {
+        throw new OnboardingScopeError();
+      }
+      if (updates.organizationId !== effectiveOrg && updates.projectId === undefined) {
+        // The stored project belongs to the previous organization.
+        clearProject = true;
+      }
+      effectiveOrg = updates.organizationId;
+    }
+    if (updates.projectId !== undefined && updates.projectId !== null) {
+      if (!effectiveOrg || !(await this.projectInOrganization(updates.projectId, effectiveOrg))) {
+        throw new OnboardingScopeError();
+      }
+    }
+
     // Build update object
     const updateData: Record<string, unknown> = {
       updated_at: new Date(),
@@ -123,15 +196,23 @@ class OnboardingService {
     if (updates.tutorialSkipped !== undefined) {
       updateData.tutorial_skipped = updates.tutorialSkipped;
     }
+    if (updates.step !== undefined) {
+      updateData.onboarding_step = updates.step;
+      // Keep older readers coherent: tutorial_step mirrors the step index.
+      if (updates.step !== null && updates.tutorialStep === undefined) {
+        updateData.tutorial_step = ONBOARDING_STEPS.indexOf(updates.step);
+      }
+    }
+    if (updates.organizationId !== undefined) {
+      updateData.organization_id = updates.organizationId;
+    }
+    if (updates.projectId !== undefined) {
+      updateData.project_id = updates.projectId;
+    } else if (clearProject) {
+      updateData.project_id = null;
+    }
 
-    // Upsert: update if exists, insert if not
-    const existing = await db
-      .selectFrom('user_onboarding')
-      .select('id')
-      .where('user_id', '=', userId)
-      .executeTakeFirst();
-
-    if (existing) {
+    if (stored) {
       await db
         .updateTable('user_onboarding')
         .set(updateData)
@@ -146,9 +227,14 @@ class OnboardingService {
           checklist_collapsed: updates.checklistCollapsed ?? false,
           checklist_dismissed: updates.checklistDismissed ?? false,
           tutorial_completed: updates.tutorialCompleted ?? false,
-          tutorial_step: updates.tutorialStep ?? 0,
+          tutorial_step:
+            (updateData.tutorial_step as number | undefined) ?? updates.tutorialStep ?? 0,
           tutorial_skipped: updates.tutorialSkipped ?? false,
+          onboarding_step: updates.step ?? null,
+          organization_id: updates.organizationId ?? null,
+          project_id: updates.projectId ?? null,
         })
+        .onConflict((oc) => oc.column('user_id').doUpdateSet(updateData))
         .execute();
     }
 
@@ -166,7 +252,7 @@ class OnboardingService {
   }
 
   /**
-   * Reset onboarding state for a user
+   * Reset onboarding state for a user (also clears step, organization and project)
    */
   async resetOnboardingState(userId: string): Promise<OnboardingState> {
     await db

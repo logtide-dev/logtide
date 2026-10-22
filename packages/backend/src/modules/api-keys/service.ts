@@ -3,10 +3,18 @@ import type { ApiKeyType } from '@logtide/shared';
 import { db } from '../../database/connection.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 
+/**
+ * Length of the stored key prefix: the literal "lp_" plus 6 hex chars. Enough to
+ * tell keys apart in the UI, never enough to authenticate.
+ */
+export const API_KEY_PREFIX_LENGTH = 9;
+
 export interface ApiKey {
   id: string;
   projectId: string;
   name: string;
+  /** First 9 chars of the key, null for keys created before 1.6 */
+  keyPrefix: string | null;
   type: ApiKeyType;
   allowedOrigins: string[] | null;
   createdAt: Date;
@@ -69,9 +77,10 @@ export class ApiKeysService {
   /**
    * Create a new API key for a project
    */
-  async createApiKey(input: CreateApiKeyInput): Promise<{ id: string; apiKey: string }> {
+  async createApiKey(input: CreateApiKeyInput): Promise<{ id: string; apiKey: string; keyPrefix: string }> {
     const apiKey = this.generateApiKey();
     const keyHash = this.hashApiKey(apiKey);
+    const keyPrefix = apiKey.slice(0, API_KEY_PREFIX_LENGTH);
 
     const result = await db
       .insertInto('api_keys')
@@ -79,6 +88,7 @@ export class ApiKeysService {
         project_id: input.projectId,
         name: input.name,
         key_hash: keyHash,
+        key_prefix: keyPrefix,
         type: input.type ?? 'write',
         allowed_origins: input.allowedOrigins ?? null,
       })
@@ -88,6 +98,7 @@ export class ApiKeysService {
     return {
       id: result.id,
       apiKey, // Return plain key only once
+      keyPrefix,
     };
   }
 
@@ -194,7 +205,7 @@ export class ApiKeysService {
   async listProjectApiKeys(projectId: string): Promise<ApiKey[]> {
     const keys = await db
       .selectFrom('api_keys')
-      .select(['id', 'project_id', 'name', 'type', 'allowed_origins', 'created_at', 'last_used', 'revoked'])
+      .select(['id', 'project_id', 'name', 'key_prefix', 'type', 'allowed_origins', 'created_at', 'last_used', 'revoked'])
       .where('project_id', '=', projectId)
       .orderBy('created_at', 'desc')
       .execute();
@@ -203,6 +214,7 @@ export class ApiKeysService {
       id: k.id,
       projectId: k.project_id,
       name: k.name,
+      keyPrefix: k.key_prefix ?? null,
       type: k.type,
       allowedOrigins: k.allowed_origins,
       createdAt: new Date(k.created_at),

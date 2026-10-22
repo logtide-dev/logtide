@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/svelte';
 
-const { verifyEmail } = vi.hoisted(() => ({ verifyEmail: vi.fn() }));
+const { verifyEmail, getState } = vi.hoisted(() => ({ verifyEmail: vi.fn(), getState: vi.fn() }));
 
 vi.mock('$lib/api/auth', () => ({
   authAPI: { verifyEmail },
+}));
+
+vi.mock('$lib/api/onboarding', () => ({
+  OnboardingAPI: class {
+    getState = getState;
+  },
 }));
 
 import VerifyEmailPage from './+page.svelte';
@@ -16,6 +22,8 @@ describe('/verify-email page', () => {
   beforeEach(() => {
     localStorage.clear();
     verifyEmail.mockReset();
+    getState.mockReset();
+    getState.mockResolvedValue({ tutorialCompleted: true, tutorialSkipped: false });
     authStore.clearAuth();
   });
 
@@ -35,7 +43,28 @@ describe('/verify-email page', () => {
     render(VerifyEmailPage);
     await waitFor(() => expect(screen.getByText('Email verified')).toBeTruthy());
     expect(verifyEmail).toHaveBeenCalledWith('abc123', 'session-1');
-    expect(screen.getByRole('link', { name: 'Go to dashboard' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Go to dashboard' })).toBeTruthy());
+    expect(screen.getByRole('link', { name: 'Go to dashboard' }).getAttribute('href')).toBe('/dashboard');
+  });
+
+  it('signed in with unfinished onboarding shows Continue setup to /onboarding', async () => {
+    authStore.setAuth({ id: 'u1', email: 'a@b.c', name: 'A' }, 'session-1');
+    page.url = new URL('http://localhost/verify-email?token=abc123');
+    verifyEmail.mockResolvedValue(undefined);
+    getState.mockResolvedValue({ tutorialCompleted: false, tutorialSkipped: false });
+    render(VerifyEmailPage);
+    const link = await screen.findByRole('link', { name: 'Continue setup' });
+    expect(link.getAttribute('href')).toBe('/onboarding');
+  });
+
+  it('signed in with skipped onboarding shows Go to dashboard', async () => {
+    authStore.setAuth({ id: 'u1', email: 'a@b.c', name: 'A' }, 'session-1');
+    page.url = new URL('http://localhost/verify-email?token=abc123');
+    verifyEmail.mockResolvedValue(undefined);
+    getState.mockResolvedValue({ tutorialCompleted: false, tutorialSkipped: true });
+    render(VerifyEmailPage);
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Go to dashboard' })).toBeTruthy());
+    expect(screen.queryByRole('link', { name: 'Continue setup' })).toBeNull();
   });
 
   it('shows the failure for an invalid or used token', async () => {

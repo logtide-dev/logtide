@@ -111,6 +111,7 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
       return reply.status(201).send({
         id: result.id,
         apiKey: result.apiKey,
+        keyPrefix: result.keyPrefix,
         type: body.type,
         message: 'API key created successfully. Save this key securely - it will not be shown again.',
       });
