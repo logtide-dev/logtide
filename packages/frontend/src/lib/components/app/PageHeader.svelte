@@ -25,7 +25,7 @@
   } as const;
 </script>
 
-<header class="mb-6 space-y-2">
+<header class="mb-6 space-y-2 {actions ? 'max-md:mb-2' : ''}">
   {#if breadcrumbs && breadcrumbs.length > 0}
     <nav aria-label="Breadcrumb">
       <ol class="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
