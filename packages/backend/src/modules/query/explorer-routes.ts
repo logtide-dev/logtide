@@ -6,7 +6,12 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { requireFullAccess } from '../auth/guards.js';
 import { auditLogService } from '../audit-log/service.js';
 import { LogQueryError } from './build-log-filter.js';
-import { ExplorerParamError, HISTOGRAM_MAX_BUCKET_SECONDS } from './explorer-params.js';
+import { FACETS_DEFAULT_LIMIT, FACETS_MAX_LIMIT } from '@logtide/reservoir';
+import {
+  ExplorerParamError,
+  HISTOGRAM_MAX_BUCKET_SECONDS,
+  parseFacetFields,
+} from './explorer-params.js';
 import {
   LOG_FILTER_QUERYSTRING_PROPERTIES,
   readLogFilterRequest,
@@ -114,6 +119,48 @@ export const logExplorerRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       recordStatsViewed(read.projectId, { kind: 'histogram', q: read.params.q });
+      return result;
+    },
+  });
+
+  // GET /api/v1/logs/facets - top values per field (grammar keys)
+  fastify.get('/api/v1/logs/facets', {
+    config: { rateLimit: EXPLORER_RATE_LIMIT },
+    schema: {
+      description: 'Top values per field',
+      tags: ['query'],
+      querystring: {
+        type: 'object',
+        properties: {
+          ...LOG_FILTER_QUERYSTRING_PROPERTIES,
+          fields: { type: 'string' },
+          limit: { type: 'integer', minimum: 1, maximum: FACETS_MAX_LIMIT, default: FACETS_DEFAULT_LIMIT },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const read = await readLogRead(request, reply);
+      if (!read) return;
+      const { fields: rawFields, limit } = request.query as { fields?: string; limit?: number };
+      const parsed = parseFacetFields(rawFields);
+      if (!parsed.ok) return reply.code(400).send({ error: parsed.error });
+
+      let result;
+      try {
+        result = await queryService.getFacets({
+          ...read.params,
+          fields: parsed.fields,
+          limit: limit ?? FACETS_DEFAULT_LIMIT,
+        });
+      } catch (err) {
+        return handleQueryError(reply, err);
+      }
+
+      recordStatsViewed(read.projectId, {
+        kind: 'facets',
+        q: read.params.q,
+        fields: parsed.fields.map((f) => f.key),
+      });
       return result;
     },
   });

@@ -4,6 +4,9 @@ import {
   histogramBucketCount,
   HISTOGRAM_BUCKET_LADDER_SECONDS,
   HISTOGRAM_TARGET_BUCKETS,
+  parseFacetFields,
+  DEFAULT_FACET_FIELDS,
+  FACET_MAX_FIELDS,
 } from '../../../modules/query/explorer-params.js';
 
 const SECOND = 1000;
@@ -66,5 +69,75 @@ describe('histogramBucketCount', () => {
     expect(histogramBucketCount(from, new Date(from.getTime() + HOUR), 60)).toBe(61);
     expect(histogramBucketCount(from, new Date(from.getTime() + HOUR - 1), 60)).toBe(60);
     expect(histogramBucketCount(new Date(from.getTime() + 30 * SECOND), new Date(from.getTime() + 90 * SECOND), 60)).toBe(2);
+  });
+});
+
+describe('parseFacetFields', () => {
+  const keys = (raw: string | undefined) => {
+    const result = parseFacetFields(raw);
+    if (!result.ok) throw new Error(result.error);
+    return result.fields;
+  };
+
+  it('defaults to level, service and host', () => {
+    expect(DEFAULT_FACET_FIELDS).toBe('level,service,host');
+    const expected = [
+      { key: 'level', field: { builtin: 'level' } },
+      { key: 'service', field: { builtin: 'service' } },
+      { key: 'host', field: { builtin: 'hostname' } },
+    ];
+    expect(keys(undefined)).toEqual(expected);
+    expect(keys('')).toEqual(expected);
+    expect(keys(' , ')).toEqual(expected);
+  });
+
+  it('maps host and hostname to the hostname built-in', () => {
+    expect(keys('host')).toEqual([{ key: 'host', field: { builtin: 'hostname' } }]);
+    expect(keys('hostname')).toEqual([{ key: 'hostname', field: { builtin: 'hostname' } }]);
+  });
+
+  it('treats other keys as metadata', () => {
+    expect(keys('user.id, region')).toEqual([
+      { key: 'user.id', field: { metadata: 'user.id' } },
+      { key: 'region', field: { metadata: 'region' } },
+    ]);
+  });
+
+  it('dedupes keys', () => {
+    expect(keys('service,level,service, level')).toEqual([
+      { key: 'service', field: { builtin: 'service' } },
+      { key: 'level', field: { builtin: 'level' } },
+    ]);
+  });
+
+  it('dedupes host and hostname into one field', () => {
+    expect(keys('host,hostname')).toEqual([{ key: 'host', field: { builtin: 'hostname' } }]);
+  });
+
+  it('rejects more than 12 fields', () => {
+    expect(FACET_MAX_FIELDS).toBe(12);
+    const twelve = Array.from({ length: 12 }, (_, i) => `k${i}`).join(',');
+    expect(parseFacetFields(twelve).ok).toBe(true);
+    const thirteen = Array.from({ length: 13 }, (_, i) => `k${i}`).join(',');
+    expect(parseFacetFields(thirteen)).toEqual({ ok: false, error: 'At most 12 facet fields are allowed' });
+  });
+
+  it('rejects a key longer than 200 chars', () => {
+    expect(parseFacetFields('a'.repeat(200)).ok).toBe(true);
+    const result = parseFacetFields(`level,${'a'.repeat(201)}`);
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects keys the query language cannot write', () => {
+    for (const raw of ['user id', '1abc', 'a..b', 'a.', '$where']) {
+      const result = parseFacetFields(raw);
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  it('rejects the trace, session and span built-ins', () => {
+    for (const raw of ['trace', 'trace_id', 'session', 'session_id', 'span', 'span_id']) {
+      expect(parseFacetFields(raw)).toEqual({ ok: false, error: `Facets are not available for "${raw}"` });
+    }
   });
 });

@@ -156,4 +156,100 @@ describe('Logs explorer API', () => {
       expect(res.body.buckets.length).toBeGreaterThanOrEqual(60);
     });
   });
+
+  describe('GET /api/v1/logs/facets', () => {
+    beforeEach(async () => {
+      await seedLogs(projectId, [
+        { message: 'one', service: 'api', level: 'info', metadata: { region: 'eu', hostname: 'web-1' } },
+        { message: 'two', service: 'api', level: 'error', metadata: { region: 'eu', hostname: 'web-2' } },
+        { message: 'three', service: 'api', level: 'info', metadata: { region: 'us', hostname: 'web-1' } },
+        { message: 'four', service: 'worker', level: 'warn', metadata: {} },
+        { message: 'five', service: 'worker', level: 'info' },
+      ]);
+    });
+
+    const facets = (params: Params) => get('/api/v1/logs/facets', params);
+    type Facet = { field: string; values: { value: string; count: number }[]; otherCount: number };
+    const byField = (body: { facets: Facet[] }, field: string) => body.facets.find((f) => f.field === field)!;
+
+    it('counts top values per field', async () => {
+      const res = await facets({ fields: 'service,level,region' });
+      expect(res.status).toBe(200);
+      expect(res.body.facets.map((f: Facet) => f.field)).toEqual(['service', 'level', 'region']);
+      expect(byField(res.body, 'service').values).toEqual([
+        { value: 'api', count: 3 },
+        { value: 'worker', count: 2 },
+      ]);
+      expect(byField(res.body, 'service').otherCount).toBe(0);
+      expect(byField(res.body, 'level').values).toEqual([
+        { value: 'info', count: 3 },
+        { value: 'error', count: 1 },
+        { value: 'warn', count: 1 },
+      ]);
+      const region = byField(res.body, 'region').values;
+      expect(region).toContainEqual({ value: 'eu', count: 2 });
+      expect(region).toContainEqual({ value: 'us', count: 1 });
+      expect(region).toHaveLength(2);
+    });
+
+    it('defaults to level, service and host', async () => {
+      const res = await facets({});
+      expect(res.status).toBe(200);
+      expect(res.body.facets.map((f: Facet) => f.field)).toEqual(['level', 'service', 'host']);
+      expect(byField(res.body, 'host').values).toEqual([
+        { value: 'web-1', count: 2 },
+        { value: 'web-2', count: 1 },
+      ]);
+    });
+
+    it('reports otherCount beyond the limit', async () => {
+      const res = await facets({ fields: 'service', limit: '1' });
+      expect(res.status).toBe(200);
+      expect(res.body.facets).toEqual([{ field: 'service', values: [{ value: 'api', count: 3 }], otherCount: 2 }]);
+    });
+
+    it('applies q', async () => {
+      const res = await facets({ q: 'region:eu', fields: 'service' });
+      expect(res.status).toBe(200);
+      expect(res.body.facets).toEqual([{ field: 'service', values: [{ value: 'api', count: 2 }], otherCount: 0 }]);
+    });
+
+    it('echoes keys in request order', async () => {
+      const res = await facets({ fields: 'region,host' });
+      expect(res.status).toBe(200);
+      expect(res.body.facets.map((f: Facet) => f.field)).toEqual(['region', 'host']);
+      const hostname = await facets({ fields: 'hostname' });
+      expect(hostname.body.facets.map((f: Facet) => f.field)).toEqual(['hostname']);
+    });
+
+    it('returns 400 for 13 fields', async () => {
+      const res = await facets({ fields: Array.from({ length: 13 }, (_, i) => `k${i}`).join(',') });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('At most 12 facet fields are allowed');
+    });
+
+    it('returns 400 for a limit outside 1 to 50', async () => {
+      expect((await facets({ fields: 'service', limit: '0' })).status).toBe(400);
+      expect((await facets({ fields: 'service', limit: '51' })).status).toBe(400);
+    });
+
+    it('returns 400 with position for an invalid q', async () => {
+      const res = await facets({ q: 'timeout level:loud' });
+      expect(res.status).toBe(400);
+      expect(res.body.position).toBe(8);
+    });
+
+    it('beforeQuery hooks narrow facet counts', async () => {
+      hooks.register('beforeQuery', (ctx) => {
+        ctx.params.service = 'worker';
+      });
+      const res = await facets({ fields: 'service,level' });
+      expect(res.status).toBe(200);
+      expect(byField(res.body, 'service').values).toEqual([{ value: 'worker', count: 2 }]);
+      expect(byField(res.body, 'level').values).toEqual([
+        { value: 'info', count: 1 },
+        { value: 'warn', count: 1 },
+      ]);
+    });
+  });
 });

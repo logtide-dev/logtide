@@ -11,6 +11,7 @@ import {
   ExplorerParamError,
   histogramBucketCount,
   pickBucketSeconds,
+  type FacetFieldRequest,
   type LogHistogramResponse,
 } from './explorer-params.js';
 
@@ -61,6 +62,10 @@ export interface ApiLog {
 }
 
 export type { LogHistogramResponse };
+
+export interface LogFacetsResponse {
+  facets: { field: string; values: { value: string; count: number }[]; otherCount: number }[];
+}
 
 const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -245,6 +250,43 @@ export class QueryService {
       total: result.buckets.reduce((sum, bucket) => sum + bucket.total, 0),
       from: filter.from,
       to: filter.to,
+    };
+    await CacheManager.set(cacheKey, response, CACHE_TTL.QUERY);
+    return response;
+  }
+
+  /**
+   * Top values per field over the logs matching the filters, one reservoir
+   * call for every field. `field` echoes the requested grammar key, in
+   * request order.
+   *
+   * Throws LogQueryError for an invalid q.
+   */
+  async getFacets(params: LogQueryParams & { fields: FacetFieldRequest[]; limit: number }): Promise<LogFacetsResponse> {
+    const { fields, limit, ...rest } = params;
+    const { filter } = await this.prepare(rest);
+    if (fields.length === 0) return { facets: [] };
+
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
+      kind: 'facets',
+      filter: JSON.stringify(filter),
+      fields: JSON.stringify(fields),
+      limit,
+    });
+    const cached = await CacheManager.get<LogFacetsResponse>(cacheKey);
+    if (cached && Array.isArray(cached.facets)) return cached;
+
+    const result = await reservoir.facets({ ...filter, fields: fields.map((f) => f.field), limit });
+    // The reservoir labels fields 'level' | 'service' | 'hostname' | 'metadata.<key>'.
+    const keyByLabel = new Map(
+      fields.map((f) => ['builtin' in f.field ? f.field.builtin : `metadata.${f.field.metadata}`, f.key] as const),
+    );
+    const response: LogFacetsResponse = {
+      facets: result.facets.map((facet, index) => ({
+        field: keyByLabel.get(facet.field) ?? fields[index]?.key ?? facet.field,
+        values: facet.values,
+        otherCount: facet.otherCount,
+      })),
     };
     await CacheManager.set(cacheKey, response, CACHE_TTL.QUERY);
     return response;
