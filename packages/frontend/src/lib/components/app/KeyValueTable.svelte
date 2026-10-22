@@ -118,6 +118,7 @@
       <td class="w-px whitespace-nowrap py-0.5 text-right">
         <span class="inline-flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           <CopyButton value={copyText(value)} ariaLabel="Copy value" />
+          <CopyButton value={path} ariaLabel="Copy path" />
           {#if onFilter && !underArray}
             <Button
               variant="ghost"

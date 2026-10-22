@@ -8,6 +8,8 @@
   import IdentifierBadge from '$lib/components/IdentifierBadge.svelte';
   import BreadcrumbTimeline from '$lib/components/BreadcrumbTimeline.svelte';
   import { ExceptionDetailsDialog } from '$lib/components/exceptions';
+  import * as Tabs from '$lib/components/ui/tabs';
+  import { copyToClipboard } from '$lib/utils/clipboard';
   import { formatTimestamp } from '$lib/utils/datetime';
   import { displayPreferences, type DisplayPreferences } from '$lib/stores/display-preferences';
   import X from '@lucide/svelte/icons/x';
@@ -19,6 +21,10 @@
   import ListTree from '@lucide/svelte/icons/list-tree';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import Settings2 from '@lucide/svelte/icons/settings-2';
+  import Download from '@lucide/svelte/icons/download';
+  import Copy from '@lucide/svelte/icons/copy';
+  import Check from '@lucide/svelte/icons/check';
+  import { jsonSegments, breakEscapedNewlines, jsonClass } from './json-highlight';
   import { logPermalink } from './explorer-url';
   import { detailsMetadata, logBreadcrumbs, logHostname, metadataFilterValue } from './log-fields';
 
@@ -52,6 +58,45 @@
   const uid = $props.id();
 
   type Chip = { key: string; label: string; value: string; exclude: boolean };
+
+  const VIEW_KEY = 'logtide:log-details-view';
+  const WRAP_KEY = 'logtide:log-details-json-wrap';
+
+  function readStored(key: string): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeStored(key: string, value: string) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // blocked or full storage: the in-memory choice still applies
+    }
+  }
+
+  let view = $state<'details' | 'json'>(readStored(VIEW_KEY) === 'json' ? 'json' : 'details');
+  let wrap = $state(readStored(WRAP_KEY) !== '0');
+  let oneLineCopied = $state(false);
+
+  function setView(next: string) {
+    view = next === 'json' ? 'json' : 'details';
+    writeStored(VIEW_KEY, view);
+  }
+
+  function setWrap(next: boolean) {
+    wrap = next;
+    writeStored(WRAP_KEY, next ? '1' : '0');
+  }
+
+  $effect(() => {
+    if (!oneLineCopied) return;
+    const t = setTimeout(() => (oneLineCopied = false), 1500);
+    return () => clearTimeout(t);
+  });
 
   let breadcrumbsOpen = $state(false);
   let exceptionOpen = $state(false);
@@ -99,6 +144,34 @@
     }
   });
 
+  const oneLine = $derived.by(() => {
+    if (!log) return '';
+    try {
+      return JSON.stringify(log);
+    } catch {
+      return String(log.message ?? '');
+    }
+  });
+
+  const segments = $derived(jsonSegments(json).map(breakEscapedNewlines));
+
+  async function copyOneLine() {
+    if (await copyToClipboard(oneLine)) oneLineCopied = true;
+  }
+
+  function downloadJson() {
+    if (!log) return;
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `log-${log.id ?? 'entry'}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   // `_prefs` comes from the template so the header re-renders on a preference change.
   function timeText(time: string, _prefs: DisplayPreferences): string {
     return formatTimestamp(time, { precision: 'ms', withDate: true, withZone: true });
@@ -139,13 +212,48 @@
         {#if permalink}
           <CopyButton value={permalink} label="Copy link" />
         {/if}
-        <CopyButton value={json} label="Copy JSON" />
+        {#if view === 'details'}
+          <CopyButton value={json} label="Copy JSON" />
+        {/if}
         <Button variant="ghost" size="icon" class="size-8" aria-label="Close log details" title="Close" onclick={onClose}>
           <X />
         </Button>
       </span>
     </header>
 
+    <div class="border-b px-3 py-2">
+      <Tabs.Root value={view} onValueChange={setView}>
+        <Tabs.List class="h-9 w-full sm:w-auto" aria-label="Log view">
+          <Tabs.Trigger value="details" class="flex-1 sm:flex-none">Details</Tabs.Trigger>
+          <Tabs.Trigger value="json" class="flex-1 sm:flex-none">JSON</Tabs.Trigger>
+        </Tabs.List>
+      </Tabs.Root>
+    </div>
+
+    {#if view === 'json'}
+      <div class="flex min-h-0 flex-1 flex-col gap-2 p-3" data-testid="json-view">
+        <div class="flex flex-col items-start gap-1 sm:flex-row sm:flex-wrap sm:items-center">
+          <CopyButton value={json} label="Copy JSON" />
+          <Button variant="ghost" size="sm" class="justify-start" onclick={copyOneLine} aria-label={oneLineCopied ? 'Copied' : 'Copy as one line'}>
+            {#if oneLineCopied}<Check />{:else}<Copy />{/if}
+            {oneLineCopied ? 'Copied' : 'Copy as one line'}
+          </Button>
+          <Button variant="ghost" size="sm" class="justify-start" onclick={downloadJson} aria-label="Download as .json">
+            <Download />
+            Download .json
+          </Button>
+          <label class="flex cursor-pointer items-center gap-2 px-2 text-sm sm:ml-auto">
+            <input type="checkbox" class="size-4 accent-primary" checked={wrap} onchange={(e) => setWrap(e.currentTarget.checked)} />
+            Wrap lines
+          </label>
+        </div>
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <pre
+          tabindex="0"
+          aria-label="Log as JSON"
+          class="min-h-0 flex-1 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-xs leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}">{#each segments as seg, i (i)}<span class={jsonClass[seg.kind]}>{seg.text}</span>{/each}</pre>
+      </div>
+    {:else}
     <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
       <section aria-label="Fields" class="space-y-1.5">
         <div class="flex items-center gap-2 text-sm">
@@ -289,6 +397,7 @@
         </section>
       {/if}
     </div>
+    {/if}
   </aside>
 
   {#if log.id}

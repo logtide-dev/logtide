@@ -212,3 +212,96 @@ describe('LogDetailsPanel', () => {
     expect(utils.getByText('GET /a')).toBeInTheDocument();
   });
 });
+
+describe('LogDetailsPanel JSON view', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  async function openJson(utils: ReturnType<typeof setup>) {
+    const tab = utils.getByRole('tab', { name: 'JSON' });
+    await fireEvent.mouseDown(tab);
+    await fireEvent.click(tab);
+    await tick();
+  }
+
+  it('switches between Details and JSON and shows the exact API object', async () => {
+    const log = fullLog();
+    const utils = setup(log);
+    expect(utils.getByRole('tab', { name: 'Details' })).toHaveAttribute('aria-selected', 'true');
+    expect(utils.queryByTestId('json-view')).toBeNull();
+    await openJson(utils);
+    const pre = utils.getByLabelText('Log as JSON');
+    const shown = (pre.textContent ?? '').split('\\n\n').join('\\n');
+    expect(JSON.parse(shown)).toEqual(JSON.parse(JSON.stringify(log)));
+    expect(utils.queryByTestId('kv-stub')).toBeNull();
+    expect(utils.getByRole('button', { name: 'Copy as one line' })).toBeInTheDocument();
+  });
+
+  it('remembers the view and works with blocked localStorage', async () => {
+    const utils = setup();
+    await openJson(utils);
+    expect(localStorage.getItem('logtide:log-details-view')).toBe('json');
+    utils.unmount();
+    const again = setup();
+    expect(again.getByTestId('json-view')).toBeInTheDocument();
+    again.unmount();
+
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    const blocked = setup();
+    expect(blocked.queryByTestId('json-view')).toBeNull();
+    await openJson(blocked);
+    expect(blocked.getByTestId('json-view')).toBeInTheDocument();
+  });
+
+  it('downloads log-<id>.json through a blob and revokes the url', async () => {
+    const log = fullLog();
+    let blob: Blob | null = null;
+    const create = vi.fn((b: Blob) => {
+      blob = b;
+      return 'blob:test';
+    });
+    const revoke = vi.fn();
+    Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke });
+    let name = '';
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      name = this.download;
+    });
+    const utils = setup(log);
+    await openJson(utils);
+    await fireEvent.click(utils.getByRole('button', { name: 'Download as .json' }));
+    expect(name).toBe(`log-${log.id}.json`);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(revoke).toHaveBeenCalledWith('blob:test');
+    const text = await new Promise<string>((res) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result));
+      r.readAsText(blob!);
+    });
+    expect(text).toBe(JSON.stringify(log, null, 2));
+  });
+
+  it('renders a message with a script tag as text only', async () => {
+    const utils = setup(fullLog({ message: '<script>alert(1)</script>' }));
+    await openJson(utils);
+    const pre = utils.getByLabelText('Log as JSON');
+    expect(pre.querySelector('script')).toBeNull();
+    expect(pre.textContent).toContain('<script>alert(1)</script>');
+  });
+
+  it('toggles line wrapping', async () => {
+    const utils = setup();
+    await openJson(utils);
+    const pre = utils.getByLabelText('Log as JSON');
+    expect(pre.className).toContain('whitespace-pre-wrap');
+    await fireEvent.click(utils.getByLabelText('Wrap lines'));
+    expect(pre.className).not.toContain('whitespace-pre-wrap');
+    expect(pre.className).toContain('whitespace-pre');
+  });
+});
