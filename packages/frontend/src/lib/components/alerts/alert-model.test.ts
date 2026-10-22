@@ -164,10 +164,9 @@ describe('validateAlertQuery', () => {
   it('returns position for OR across different keys', () => {
     const result = validateAlertQuery('a:1 OR b:2');
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.message.length).toBeGreaterThan(0);
-      expect(result.position).toBe(4);
-    }
+    const failed = result as { message: string; position: number };
+    expect(failed.message.length).toBeGreaterThan(0);
+    expect(failed.position).toBe(4);
   });
 });
 

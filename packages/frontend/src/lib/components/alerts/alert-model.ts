@@ -173,7 +173,8 @@ export type QueryValidation = { ok: true } | { ok: false; message: string; posit
 export function validateAlertQuery(q: string): QueryValidation {
   const result = parseLogQuery(q);
   if (result.ok) return { ok: true };
-  return { ok: false, message: result.error.message, position: result.error.position };
+  const { error } = result as { error: { message: string; position: number } };
+  return { ok: false, message: error.message, position: error.position };
 }
 
 export interface MatchedLogsCriteria extends ComposeCriteria {

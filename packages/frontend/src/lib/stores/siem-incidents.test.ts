@@ -85,6 +85,15 @@ describe('siem store incidents', () => {
     expect(state().incidentsTotal).toBe(1);
   });
 
+  it('seedIncidents replaces the rows so stream updates merge in place', async () => {
+    await seed(['a', 'b']);
+    siemStore.seedIncidents([inc('z')]);
+    expect(state().incidents.map((i) => i.id)).toEqual(['z']);
+    expect(state().incidentsTotal).toBe(1);
+    siemStore.handleRealtimeEvent({ type: 'incident_updated', data: inc('z', { title: 'new' }) });
+    expect(state().incidents[0].title).toBe('new');
+  });
+
   it('silent load keeps rows and never sets incidentsLoading', async () => {
     await seed(['a']);
     const seen: boolean[] = [];

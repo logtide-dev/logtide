@@ -187,7 +187,7 @@
 							</div>
 							<p class="mt-2 whitespace-pre-wrap text-sm">{entry.comment.comment}</p>
 						</div>
-					{:else}
+					{:else if entry.kind === 'history'}
 						<div class="flex flex-wrap items-center gap-2 py-1 text-sm">
 							<span>{describeHistoryEntry(entry.entry)}</span>
 							{#if entry.entry.userName}

@@ -367,6 +367,11 @@ function createSiemStore() {
 			set(initialState);
 		},
 
+		/** Replace the local rows (the detail page seeds its own incident so stream updates merge in place). */
+		seedIncidents(items: IncidentListItem[]): void {
+			update((state) => ({ ...state, incidents: items, incidentsTotal: items.length }));
+		},
+
 		// Add incident to local state (for optimistic updates)
 		addIncident(incident: IncidentListItem): void {
 			update((state) => ({
