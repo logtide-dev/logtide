@@ -5,6 +5,7 @@
   import SeverityBadge from '$lib/components/app/SeverityBadge.svelte';
   import Timestamp from '$lib/components/app/Timestamp.svelte';
   import { Button } from '$lib/components/ui/button';
+  import type { Snippet } from 'svelte';
   import type { DataTableColumn, DataTableSort } from '$lib/components/app/data-table';
   import type { TraceRecord } from '$lib/api/traces';
   import { traceDetailUrl } from '$lib/utils/trace-links';
@@ -67,13 +68,17 @@
     onSort(mapped, dir);
   }
 
+  // svelte-check sees two Snippet types here; the runtime values are identical.
+  const cell = (s: unknown) => s as DataTableColumn<TraceRecord>['cell'];
+  const emptySnippet = emptyRows as unknown as Snippet;
+
   const columns: DataTableColumn<TraceRecord>[] = [
-    { key: 'start', header: 'Start', sortable: true, cell: startCell },
-    { key: 'service', header: 'Root service', cell: serviceCell },
-    { key: 'operation', header: 'Operation', cell: operationCell },
-    { key: 'duration', header: 'Duration', sortable: true, class: 'text-right', cell: durationCell },
-    { key: 'spans', header: 'Spans', class: 'text-right', cell: spansCell },
-    { key: 'status', header: 'Status', cell: statusCell },
+    { key: 'start', header: 'Start', sortable: true, cell: cell(startCell) },
+    { key: 'service', header: 'Root service', cell: cell(serviceCell) },
+    { key: 'operation', header: 'Operation', cell: cell(operationCell) },
+    { key: 'duration', header: 'Duration', sortable: true, class: 'text-right', cell: cell(durationCell) },
+    { key: 'spans', header: 'Spans', class: 'text-right', cell: cell(spansCell) },
+    { key: 'status', header: 'Status', cell: cell(statusCell) },
   ];
 </script>
 
@@ -88,6 +93,7 @@
 {#snippet operationCell(t: TraceRecord)}
   <a
     href={traceDetailUrl(t.trace_id, projectId)}
+    data-trace-link
     class="block max-w-[28rem] truncate font-mono text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     title={t.root_operation_name ?? t.trace_id}
     onclick={() => onOpen(t.trace_id)}
@@ -136,7 +142,7 @@
       rowKey={(t: TraceRecord) => t.trace_id}
       {loading}
       bind:sort={getSort, setSort}
-      empty={emptyRows}
+      empty={emptySnippet}
     />
     <Pagination {page} {pageSize} {total} {onPageChange} />
   </div>

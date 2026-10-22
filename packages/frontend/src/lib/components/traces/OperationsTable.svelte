@@ -2,6 +2,7 @@
   import DataTable from '$lib/components/app/DataTable.svelte';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
   import { Button } from '$lib/components/ui/button';
+  import type { Snippet } from 'svelte';
   import type { DataTableColumn, DataTableSort } from '$lib/components/app/data-table';
   import type { OperationRow } from '$lib/api/traces';
   import { levelTone } from '$lib/utils/severity';
@@ -74,17 +75,21 @@
     onSelect(selectedOperation === operation ? null : operation);
   }
 
+  // svelte-check sees two Snippet types here; the runtime values are identical.
+  const cell = (s: unknown) => s as DataTableColumn<OperationRow>['cell'];
+  const emptySnippet = emptyRows as unknown as Snippet;
+
   const columns = $derived<DataTableColumn<OperationRow>[]>([
     ...(showService
-      ? [{ key: 'service', header: 'Service', sortable: true, cell: serviceCell }]
+      ? [{ key: 'service', header: 'Service', sortable: true, cell: cell(serviceCell) }]
       : []),
-    { key: 'operation', header: 'Operation', sortable: true, cell: operationCell },
-    { key: 'count', header: 'Requests', sortable: true, class: 'text-right', cell: countCell },
-    { key: 'errorRate', header: 'Error rate', sortable: true, class: 'text-right', cell: errorCell },
-    { key: 'p50Ms', header: 'p50', sortable: true, class: 'text-right', cell: p50Cell },
-    { key: 'p95Ms', header: 'p95', sortable: true, class: 'text-right', cell: p95Cell },
-    { key: 'p99Ms', header: 'p99', sortable: true, class: 'text-right', cell: p99Cell },
-    { key: 'throughputPerMin', header: 'Throughput', sortable: true, class: 'text-right', cell: throughputCell },
+    { key: 'operation', header: 'Operation', sortable: true, cell: cell(operationCell) },
+    { key: 'count', header: 'Requests', sortable: true, class: 'text-right', cell: cell(countCell) },
+    { key: 'errorRate', header: 'Error rate', sortable: true, class: 'text-right', cell: cell(errorCell) },
+    { key: 'p50Ms', header: 'p50', sortable: true, class: 'text-right', cell: cell(p50Cell) },
+    { key: 'p95Ms', header: 'p95', sortable: true, class: 'text-right', cell: cell(p95Cell) },
+    { key: 'p99Ms', header: 'p99', sortable: true, class: 'text-right', cell: cell(p99Cell) },
+    { key: 'throughputPerMin', header: 'Throughput', sortable: true, class: 'text-right', cell: cell(throughputCell) },
   ]);
 </script>
 
@@ -147,6 +152,6 @@
     rowKey={(r: OperationRow) => `${r.service}::${r.operation}`}
     {loading}
     bind:sort
-    empty={emptyRows}
+    empty={emptySnippet}
   />
 {/if}

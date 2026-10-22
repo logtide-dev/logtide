@@ -3,8 +3,8 @@ import { validateAttr, removeAttrChip } from './attr';
 
 describe('validateAttr', () => {
   it('accepts blank input', () => {
-    expect(validateAttr('')).toEqual({ ok: true, chips: [] });
-    expect(validateAttr(undefined)).toEqual({ ok: true, chips: [] });
+    expect(validateAttr('')).toEqual({ ok: true, chips: [], error: '', position: 0 });
+    expect(validateAttr(undefined)).toEqual({ ok: true, chips: [], error: '', position: 0 });
   });
 
   it('returns one chip per clause with negation and quotes kept', () => {

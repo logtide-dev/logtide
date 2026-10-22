@@ -21,7 +21,7 @@ vi.mock('echarts', () => ({
 import LatencyHistogram from './LatencyHistogram.svelte';
 
 const bounds = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000];
-const counts = bounds.map((_, i) => (i === 7 ? 40 : i === 8 ? 10 : 1)).concat([0]);
+const counts: number[] = [...bounds.map((_, i) => (i === 7 ? 40 : i === 8 ? 10 : 1)), 0];
 const data = { bounds, counts };
 const noSelection = { minMs: null, maxMs: null };
 
