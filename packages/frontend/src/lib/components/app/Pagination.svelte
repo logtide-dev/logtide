@@ -25,12 +25,12 @@
   <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
     <p>{from.toLocaleString('en-US')} to {to.toLocaleString('en-US')} of {total.toLocaleString('en-US')}</p>
     {#if totalPages > 1}
-      <div class="flex items-center gap-2">
-        <span>Page {current.toLocaleString('en-US')} of {totalPages.toLocaleString('en-US')}</span>
-        <Button variant="outline" size="sm" disabled={current <= 1} onclick={() => go(current - 1)}>
+      <div class="flex items-center gap-2 max-md:w-full max-md:flex-wrap">
+        <span class="max-md:w-full">Page {current.toLocaleString('en-US')} of {totalPages.toLocaleString('en-US')}</span>
+        <Button variant="outline" size="sm" class="max-md:h-11 max-md:flex-1" disabled={current <= 1} onclick={() => go(current - 1)}>
           Previous
         </Button>
-        <Button variant="outline" size="sm" disabled={current >= totalPages} onclick={() => go(current + 1)}>
+        <Button variant="outline" size="sm" class="max-md:h-11 max-md:flex-1" disabled={current >= totalPages} onclick={() => go(current + 1)}>
           Next
         </Button>
       </div>

@@ -7,6 +7,7 @@
   import type { OperationRow } from '$lib/api/traces';
   import { levelTone } from '$lib/utils/severity';
   import { formatDuration } from './format';
+  import { isMobile } from '$lib/stores/media-query';
 
   interface Props {
     rows: OperationRow[];
@@ -146,12 +147,51 @@
     {/snippet}
   </EmptyState>
 {:else}
-  <DataTable
-    {columns}
-    rows={sorted}
-    rowKey={(r: OperationRow) => `${r.service}::${r.operation}`}
-    {loading}
-    bind:sort
-    empty={emptySnippet}
-  />
+  {#if $isMobile}
+    {#if loading}
+      <div class="space-y-2" aria-busy="true">
+        {#each [0, 1, 2] as i (i)}
+          <div class="h-16 animate-pulse rounded-md border bg-muted/40"></div>
+        {/each}
+      </div>
+    {:else if sorted.length === 0}
+      {@render emptyRows()}
+    {:else}
+      <ul data-testid="operations-list" class="max-h-60 overflow-y-auto border-t">
+        {#each sorted as r (`${r.service}::${r.operation}`)}
+          {@const selected = selectedOperation === r.operation}
+          <li class="border-b last:border-b-0">
+            <button
+              type="button"
+              class="block w-full px-3 py-2.5 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring {selected ? 'bg-accent' : ''}"
+              aria-pressed={selected}
+              onclick={() => toggle(r.operation)}
+            >
+              <span class="block break-all font-mono text-sm {selected ? 'font-semibold' : ''}">{r.operation}</span>
+              {#if showService}
+                <span class="block break-all text-xs text-muted-foreground">{r.service}</span>
+              {/if}
+              <span class="mt-1.5 grid grid-cols-3 gap-x-2 gap-y-1 text-xs">
+                <span><span class="block text-muted-foreground">Requests</span><span class="tabular-nums">{num(r.count).toLocaleString('en-US')}</span></span>
+                <span><span class="block text-muted-foreground">Error rate</span><span class="tabular-nums {num(r.errorRate) > ERROR_RATE_WARN ? levelTone('error').text : ''}">{pct(r.errorRate)}</span></span>
+                <span><span class="block text-muted-foreground">Throughput</span><span class="tabular-nums">{perMin(r.throughputPerMin)}</span></span>
+                <span><span class="block text-muted-foreground">p50</span><span class="tabular-nums">{formatDuration(num(r.p50Ms))}</span></span>
+                <span><span class="block text-muted-foreground">p95</span><span class="tabular-nums">{formatDuration(num(r.p95Ms))}</span></span>
+                <span><span class="block text-muted-foreground">p99</span><span class="tabular-nums">{formatDuration(num(r.p99Ms))}</span></span>
+              </span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  {:else}
+    <DataTable
+      {columns}
+      rows={sorted}
+      rowKey={(r: OperationRow) => `${r.service}::${r.operation}`}
+      {loading}
+      bind:sort
+      empty={emptySnippet}
+    />
+  {/if}
 {/if}

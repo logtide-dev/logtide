@@ -9,6 +9,8 @@
   import type { DataTableColumn, DataTableSort } from '$lib/components/app/data-table';
   import type { TraceRecord } from '$lib/api/traces';
   import { traceDetailUrl } from '$lib/utils/trace-links';
+  import { isMobile } from '$lib/stores/media-query';
+  import { formatRelative } from '$lib/utils/datetime';
   import { formatDuration } from './format';
 
   interface Props {
@@ -66,6 +68,18 @@
     if (!mapped) return;
     const dir = next.key !== currentKey ? 'desc' : next.dir;
     onSort(mapped, dir);
+  }
+
+  const SORT_OPTIONS = [
+    { value: 'start_time:desc', label: 'Newest first' },
+    { value: 'start_time:asc', label: 'Oldest first' },
+    { value: 'duration:desc', label: 'Slowest first' },
+    { value: 'duration:asc', label: 'Fastest first' },
+  ];
+
+  function onSortSelect(value: string) {
+    const [by, dir] = value.split(':') as ['start_time' | 'duration', 'asc' | 'desc'];
+    onSort(by, dir);
   }
 
   // svelte-check sees two Snippet types here; the runtime values are identical.
@@ -136,14 +150,68 @@
   </EmptyState>
 {:else}
   <div class="space-y-3">
-    <DataTable
-      {columns}
-      rows={traces}
-      rowKey={(t: TraceRecord) => t.trace_id}
-      {loading}
-      bind:sort={getSort, setSort}
-      empty={emptySnippet}
-    />
+    {#if $isMobile}
+      <label class="grid gap-1 text-xs font-medium text-muted-foreground">
+        Sort by
+        <select
+          class="h-11 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          value={`${sortBy}:${sortOrder}`}
+          onchange={(e) => onSortSelect(e.currentTarget.value)}
+        >
+          {#each SORT_OPTIONS as o (o.value)}
+            <option value={o.value}>{o.label}</option>
+          {/each}
+        </select>
+      </label>
+      {#if loading}
+        <div class="space-y-2" aria-busy="true">
+          {#each [0, 1, 2, 3, 4] as i (i)}
+            <div class="h-20 animate-pulse rounded-lg border bg-muted/40"></div>
+          {/each}
+        </div>
+      {:else if traces.length === 0}
+        {@render emptyRows()}
+      {:else}
+        <ul data-testid="trace-list" class="overflow-hidden rounded-lg border bg-card">
+          {#each traces as t (t.trace_id)}
+            <li class="border-b last:border-b-0">
+              <a
+                href={traceDetailUrl(t.trace_id, projectId)}
+                data-trace-link
+                class="block px-3 py-3 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                onclick={() => onOpen(t.trace_id)}
+              >
+                <span class="flex items-center justify-between gap-2 text-xs">
+                  <span class="min-w-0 font-mono text-muted-foreground" title={formatRelative(t.start_time)}>
+                    <Timestamp value={t.start_time} precision="ms" />
+                  </span>
+                  <span class="shrink-0"><SeverityBadge kind="state" value={t.error ? 'failed' : 'ok'} /></span>
+                </span>
+                <span class="mt-1 line-clamp-2 break-words font-mono text-sm">
+                  {t.root_operation_name ?? t.trace_id}
+                </span>
+                <span class="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+                  <span class="break-all">{t.root_service_name ?? t.service_name}</span>
+                  <span aria-hidden="true">&middot;</span>
+                  <span class="tabular-nums">{formatDuration(t.duration_ms)}</span>
+                  <span aria-hidden="true">&middot;</span>
+                  <span class="tabular-nums">{t.span_count.toLocaleString('en-US')} spans</span>
+                </span>
+              </a>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    {:else}
+      <DataTable
+        {columns}
+        rows={traces}
+        rowKey={(t: TraceRecord) => t.trace_id}
+        {loading}
+        bind:sort={getSort, setSort}
+        empty={emptySnippet}
+      />
+    {/if}
     <Pagination {page} {pageSize} {total} {onPageChange} />
   </div>
 {/if}
