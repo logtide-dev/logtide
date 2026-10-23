@@ -33,6 +33,9 @@
   import List from '@lucide/svelte/icons/list';
   import Download from '@lucide/svelte/icons/download';
   import Radio from '@lucide/svelte/icons/radio';
+  import ListFilter from '@lucide/svelte/icons/list-filter';
+  import { get } from 'svelte/store';
+  import { isMobile } from '$lib/stores/media-query';
   import OperationsTable from './OperationsTable.svelte';
   import LatencyHistogram from './LatencyHistogram.svelte';
   import TraceFilterBar from './TraceFilterBar.svelte';
@@ -78,6 +81,12 @@
       filters.minDuration !== undefined ||
       filters.maxDuration !== undefined ||
       !!filters.attr,
+  );
+  let filtersOpen = $state(false);
+  const filterCount = $derived(
+    [filters.service, filters.status, filters.attr].filter(Boolean).length +
+      (filters.minDuration !== undefined || filters.maxDuration !== undefined ? 1 : 0) +
+      (filters.operation ? 1 : 0),
   );
   const liveBlocked = $derived(
     !!filters.operation ||
@@ -274,7 +283,8 @@
   async function loadHistogram() {
     const pid = projectId;
     const isCurrent = histogramGuard.begin();
-    if (!pid) {
+    // The histogram is not drawn on phones, so it is not fetched either.
+    if (!pid || get(isMobile)) {
       histogram = null;
       return;
     }
@@ -356,6 +366,7 @@
     void rangeKey;
     void filters.service;
     void filters.operation;
+    void $isMobile;
     untrack(loadHistogram);
   });
 
@@ -714,27 +725,31 @@
 <div class="container mx-auto {$containerPadding} {$maxWidthClass}">
   <PageHeader title="Traces" description="Find slow operations and open an example trace">
     {#snippet actions()}
-      <ScopeBar mode="single" {projects} timeDisabled={liveTail} />
-      <div class="inline-flex items-center rounded-md border bg-background p-0.5">
+      <ScopeBar mode="single" {projects} timeDisabled={liveTail} hideZoneOnMobile />
+      <div
+        data-testid="traces-toolbar"
+        class="grid w-full grid-cols-1 gap-2 min-[480px]:grid-cols-2 md:contents"
+      >
+      <div class="grid grid-cols-2 gap-1 rounded-md border bg-background p-0.5 min-[480px]:col-span-full md:inline-flex md:items-center">
         <Button
           variant={filters.view === 'list' ? 'secondary' : 'ghost'}
           size="sm"
-          class="h-7 gap-1.5 text-xs"
+          class="h-7 gap-1.5 text-xs max-md:h-10 max-md:text-sm"
           aria-pressed={filters.view === 'list'}
           onclick={() => patch({ view: 'list', page: filters.page })}
         >
           <List class="size-3.5" aria-hidden="true" />
-          <span class="hidden sm:inline">List</span>
+          <span>List</span>
         </Button>
         <Button
           variant={filters.view === 'map' ? 'secondary' : 'ghost'}
           size="sm"
-          class="h-7 gap-1.5 text-xs"
+          class="h-7 gap-1.5 text-xs max-md:h-10 max-md:text-sm"
           aria-pressed={filters.view === 'map'}
           onclick={() => patch({ view: 'map', page: filters.page })}
         >
           <Network class="size-3.5" aria-hidden="true" />
-          <span class="hidden sm:inline">Map</span>
+          <span>Map</span>
         </Button>
       </div>
       {#if filters.view === 'list'}
@@ -745,11 +760,11 @@
                 {...props}
                 variant="outline"
                 size="sm"
-                class="gap-2"
+                class="gap-2 max-md:h-11 max-md:w-full"
                 disabled={liveTail || traces.length === 0}
               >
                 <Download class="size-4" aria-hidden="true" />
-                <span class="hidden sm:inline">Export</span>
+                <span>Export</span>
               </Button>
             {/snippet}
           </Popover.Trigger>
@@ -773,7 +788,7 @@
           </Popover.Content>
         </Popover.Root>
         <div
-          class="flex items-center gap-2"
+          class="flex items-center gap-2 max-md:h-11 max-md:w-full max-md:justify-between max-md:rounded-md max-md:border max-md:bg-background max-md:px-3 min-[480px]:max-md:col-span-full"
           title={liveBlocked ? 'Live tail ignores operation, attribute and sort settings' : undefined}
         >
           <Label for="traces-live-tail" class="m-0 flex cursor-pointer items-center gap-1.5 text-sm font-normal">
@@ -786,7 +801,7 @@
           <Switch id="traces-live-tail" bind:checked={liveTail} disabled={liveBlocked} />
           {#if liveTail}
             <select
-              class="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              class="h-9 rounded-md border border-input bg-background px-2 text-sm max-md:ml-auto"
               aria-label="Live tail limit"
               value={String(liveTailLimit)}
               onchange={(e) => setLiveLimit(e.currentTarget.value)}
@@ -798,6 +813,7 @@
           {/if}
         </div>
       {/if}
+      </div>
     {/snippet}
   </PageHeader>
 
@@ -816,49 +832,52 @@
   {:else}
     <!-- Stats -->
     {#if stats}
-      <div class="mb-6 grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardContent class="pt-6">
+      <div
+        data-testid="traces-stats"
+        class="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border max-md:mb-4 md:grid-cols-4 md:gap-4 md:overflow-visible md:rounded-none md:border-0 md:bg-transparent"
+      >
+        <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none">
+          <CardContent class="pt-6 max-md:p-3">
             <div class="flex items-center gap-3">
-              <GitBranch class="size-5 text-muted-foreground" aria-hidden="true" />
+              <GitBranch class="size-5 max-md:hidden text-muted-foreground" aria-hidden="true" />
               <div>
                 <p class="text-sm text-muted-foreground">Total traces</p>
-                <p class="text-2xl font-bold">{stats.total_traces.toLocaleString('en-US')}</p>
+                <p class="text-2xl font-bold max-md:text-xl">{stats.total_traces.toLocaleString('en-US')}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent class="pt-6">
+        <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none">
+          <CardContent class="pt-6 max-md:p-3">
             <div class="flex items-center gap-3">
-              <Layers class="size-5 text-muted-foreground" aria-hidden="true" />
+              <Layers class="size-5 max-md:hidden text-muted-foreground" aria-hidden="true" />
               <div>
                 <p class="text-sm text-muted-foreground">Total spans</p>
-                <p class="text-2xl font-bold">{stats.total_spans.toLocaleString('en-US')}</p>
+                <p class="text-2xl font-bold max-md:text-xl">{stats.total_spans.toLocaleString('en-US')}</p>
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent class="pt-6">
+        <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none">
+          <CardContent class="pt-6 max-md:p-3">
             <div class="flex items-center gap-3">
-              <Timer class="size-5 text-muted-foreground" aria-hidden="true" />
+              <Timer class="size-5 max-md:hidden text-muted-foreground" aria-hidden="true" />
               <div>
                 <p class="text-sm text-muted-foreground">p95 latency</p>
-                <p class="text-2xl font-bold" title="Approximate, from latency buckets">
+                <p class="text-2xl font-bold max-md:text-xl" title="Approximate, from latency buckets">
                   {formatDuration(stats.p95_duration_ms)}
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent class="pt-6">
+        <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none">
+          <CardContent class="pt-6 max-md:p-3">
             <div class="flex items-center gap-3">
-              <AlertCircle class="size-5 {levelTone('error').text}" aria-hidden="true" />
+              <AlertCircle class="size-5 max-md:hidden {levelTone('error').text}" aria-hidden="true" />
               <div>
                 <p class="text-sm text-muted-foreground">Error rate</p>
-                <p class="text-2xl font-bold">{pct(stats.error_rate)}</p>
+                <p class="text-2xl font-bold max-md:text-xl">{pct(stats.error_rate)}</p>
               </div>
             </div>
           </CardContent>
@@ -875,10 +894,10 @@
       {#if projectId}
         <div class="mb-6 grid gap-4 lg:grid-cols-2">
           <Card class="min-w-0">
-            <CardHeader class="pb-2">
+            <CardHeader class="pb-2 max-md:p-3 max-md:pb-2">
               <CardTitle class="text-base">Operations</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent class="max-md:px-0 max-md:pb-0">
               <OperationsTable
                 rows={operations}
                 loading={operationsLoading}
@@ -890,6 +909,7 @@
               />
             </CardContent>
           </Card>
+          {#if !$isMobile}
           <Card class="min-w-0">
             <CardContent class="pt-6">
               <LatencyHistogram
@@ -900,10 +920,30 @@
               />
             </CardContent>
           </Card>
+          {/if}
         </div>
       {/if}
 
-      <div class="mb-4 rounded-lg border bg-card p-3">
+      {#if $isMobile}
+        <Button
+          variant="outline"
+          class="mb-2 h-11 w-full justify-start gap-2"
+          aria-expanded={filtersOpen}
+          onclick={() => (filtersOpen = !filtersOpen)}
+        >
+          <ListFilter class="size-4" aria-hidden="true" />
+          <span>Filters</span>
+          {#if filterCount > 0}
+            <span
+              data-testid="filters-count"
+              class="rounded-full bg-primary px-1.5 text-xs font-medium tabular-nums text-primary-foreground"
+              >{filterCount}</span
+            >
+          {/if}
+        </Button>
+      {/if}
+      {#if !$isMobile || filtersOpen || filterCount > 0}
+      <div class="mb-4 rounded-lg border bg-card p-3 max-md:p-2.5">
         <TraceFilterBar
           services={availableServices}
           service={filters.service ?? null}
@@ -914,8 +954,12 @@
           operation={filters.operation ?? null}
           onChange={onFilterChange}
           onJumpToTrace={jumpToTrace}
+          showFields={!$isMobile || filtersOpen}
         />
       </div>
+      {:else}
+        <div class="mb-2"></div>
+      {/if}
 
       {#if hasLoadedOnce && !isLoading && traces.length === 0 && !filtersActive && !listError && !liveTail}
         <EmptyTraces />

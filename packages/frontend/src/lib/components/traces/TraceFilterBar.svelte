@@ -24,6 +24,8 @@
     operation: string | null;
     onChange: (patch: Patch) => void;
     onJumpToTrace: (traceId: string) => void;
+    /** Phones can fold the fields away; the active filter chips stay visible. */
+    showFields?: boolean;
   }
 
   let {
@@ -36,6 +38,7 @@
     operation,
     onChange,
     onJumpToTrace,
+    showFields = true,
   }: Props = $props();
 
   let attrDraft = $state('');
@@ -106,13 +109,19 @@
   }
 
   const selectClass =
-    'h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+    'h-9 max-md:h-11 max-md:w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
   const chipClass =
     'inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs text-secondary-foreground';
 </script>
 
 <div class="space-y-3">
-  <div class="flex flex-wrap items-start gap-2">
+  <div
+    class={showFields
+      ? 'grid grid-cols-1 gap-3 md:flex md:flex-wrap md:items-start md:gap-2'
+      : 'hidden'}
+  >
+    <div class="grid gap-1 md:contents">
+    <span class="text-xs font-medium text-muted-foreground md:sr-only" aria-hidden="true">Service</span>
     <select
       class={selectClass}
       aria-label="Service"
@@ -125,6 +134,9 @@
       {/each}
     </select>
 
+    </div>
+    <div class="grid gap-1 md:contents">
+    <span class="text-xs font-medium text-muted-foreground md:sr-only" aria-hidden="true">Status</span>
     <select
       class={selectClass}
       aria-label="Status"
@@ -137,10 +149,12 @@
       <option value="ok">Success only</option>
     </select>
 
-    <div class="min-w-[16rem] flex-1">
+    </div>
+    <div class="grid gap-1 md:min-w-[16rem] md:flex-1">
+      <span class="text-xs font-medium text-muted-foreground md:sr-only" aria-hidden="true">Attribute filter</span>
       <Input
         type="text"
-        class="h-9 font-mono text-xs"
+        class="h-9 max-md:h-11 font-mono text-xs"
         placeholder="http.method:GET -http.status_code:500"
         aria-label="Attribute filter"
         aria-invalid={!validation.ok}
@@ -156,17 +170,18 @@
       {/if}
     </div>
 
-    <div class="flex items-center gap-2">
+    <div class="grid gap-1 md:flex md:items-center md:gap-2">
+      <span class="text-xs font-medium text-muted-foreground md:sr-only" aria-hidden="true">Trace id</span>
       <Input
         id="trace-id-input"
         type="text"
-        class="h-9 w-56 font-mono text-xs"
+        class="h-9 font-mono text-xs max-md:h-11 max-md:w-full md:w-56"
         placeholder="Trace id"
         aria-label="Trace id"
         bind:value={traceIdDraft}
         onkeydown={onTraceKeydown}
       />
-      <Button variant="outline" size="sm" onclick={jump}>Go to trace</Button>
+      <Button variant="outline" size="sm" class="max-md:h-11 max-md:w-full" onclick={jump}>Go to trace</Button>
     </div>
   </div>
 
