@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 # Install pnpm and build dependencies
 RUN apk add --no-cache python3 make g++ && \
@@ -33,7 +33,7 @@ ENV PUBLIC_API_URL=$PUBLIC_API_URL
 RUN pnpm --filter '@logtide/frontend' build
 
 # Production stage
-FROM node:20-alpine
+FROM node:24-alpine
 
 # Install pnpm
 RUN npm install -g pnpm@10

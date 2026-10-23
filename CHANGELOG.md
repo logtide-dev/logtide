@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Docker images and CI moved from Node.js 20 to Node.js 24** (issue #315): both stages of the backend and frontend images were built `FROM node:20-alpine`, so published images (1.5.0 included) run Node 20.20.2. Node 20 reached end of life on 2026-04-30 and gets no further security releases; the October 2026 Node.js security release (22.23.4, 24.22.1, 26.12.1), which fixes a Brotli decoder out-of-bounds write (CVE-2026-111497) and two TLS certificate hostname verification bypasses (CVE-2026-105483, CVE-2026-106069) among others, has no Node 20 fix. The images now build and run on `node:24-alpine` (LTS, supported until 2028-04-30), and CI and the image publishing workflow test and build on Node 24. Native dependencies (`bcrypt`, `msgpackr-extract`) use Node-API and rebuild unchanged. `engines.node` stays `>=20.0.0` for source installs.
+
 
 ## [1.5.0] - 2026-10-20
 
