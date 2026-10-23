@@ -48,7 +48,7 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<aside class="flex flex-col gap-3 rounded-lg border border-border bg-card p-4" aria-label="Span details">
+<aside class="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 max-md:rounded-none max-md:border-0 max-md:p-0" aria-label="Span details">
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0 space-y-1.5">
       <h2 class="break-all font-mono text-sm font-semibold">{span.operation_name}</h2>
@@ -99,7 +99,7 @@
           <dd class="break-words">{span.status_message}</dd>
         {/if}
       </dl>
-      <div class="mt-4 flex flex-wrap items-center gap-2">
+      <div class="mt-4 flex flex-wrap items-center gap-2 max-md:[&>a]:h-11 max-md:[&>a]:w-full">
         <Button variant="outline" size="sm" href={spanLogsUrl(span, trace, projectId)}>View span logs</Button>
         <Button variant="outline" size="sm" href={traceLogsUrl(trace, projectId)}>View trace logs</Button>
         {#if group}

@@ -30,6 +30,8 @@
   import { createLatest } from '$lib/utils/latest';
   import { readTraceListState } from '$lib/utils/trace-filters';
   import { traceDetailUrl, traceLogsUrl } from '$lib/utils/trace-links';
+  import { isMobile } from '$lib/stores/media-query';
+  import * as Dialog from '$lib/components/ui/dialog';
 
   interface Props {
     traceId: string;
@@ -140,12 +142,12 @@
   >
     {#snippet actions()}
       {#if trace}
-        <Button variant="outline" size="sm" href={traceLogsUrl(trace, projectId)}>
+        <Button variant="outline" size="sm" class="max-md:h-11 max-md:w-full" href={traceLogsUrl(trace, projectId)}>
           <FileText class="size-4" aria-hidden="true" />
           View logs
         </Button>
       {/if}
-      <CopyButton value={shareLink} label="Copy link" />
+      <CopyButton value={shareLink} label="Copy link" class="max-md:h-11 max-md:w-full max-md:border" />
     {/snippet}
   </PageHeader>
 
@@ -164,50 +166,53 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <div class="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
-      <Card>
-        <CardContent class="pt-6">
+    <div
+      data-testid="trace-summary"
+      class="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border max-md:mb-4 md:gap-4 md:overflow-visible md:rounded-none md:border-0 md:bg-transparent lg:grid-cols-6"
+    >
+      <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none max-md:col-span-2">
+        <CardContent class="pt-6 max-md:p-3">
           <div class="flex items-center gap-3">
-            <Server class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Server class="size-5 max-md:hidden shrink-0 text-muted-foreground" aria-hidden="true" />
             <div class="min-w-0">
               <p class="text-sm text-muted-foreground">Root service</p>
-              <p class="truncate font-medium" title={trace.root_service_name || trace.service_name}>
+              <p class="truncate font-medium max-md:whitespace-normal max-md:break-all" title={trace.root_service_name || trace.service_name}>
                 {trace.root_service_name || trace.service_name}
               </p>
             </div>
           </div>
         </CardContent>
       </Card>
-      <Card>
-        <CardContent class="pt-6">
+      <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none max-md:col-span-2">
+        <CardContent class="pt-6 max-md:p-3">
           <div class="flex items-center gap-3">
-            <GitBranch class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <GitBranch class="size-5 max-md:hidden shrink-0 text-muted-foreground" aria-hidden="true" />
             <div class="min-w-0">
               <p class="text-sm text-muted-foreground">Operation</p>
-              <p class="truncate font-medium" title={trace.root_operation_name || ''}>
+              <p class="truncate font-medium max-md:whitespace-normal max-md:break-all" title={trace.root_operation_name || ''}>
                 {trace.root_operation_name || 'None'}
               </p>
             </div>
           </div>
         </CardContent>
       </Card>
-      <Card>
-        <CardContent class="pt-6">
+      <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none">
+        <CardContent class="pt-6 max-md:p-3">
           <div class="flex items-center gap-3">
-            <Clock class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Clock class="size-5 max-md:hidden shrink-0 text-muted-foreground" aria-hidden="true" />
             <div class="min-w-0">
               <p class="text-sm text-muted-foreground">Start</p>
-              <p class="whitespace-nowrap text-sm font-medium">
+              <p class="whitespace-nowrap text-sm font-medium max-md:whitespace-normal">
                 <Timestamp value={trace.start_time} precision="ms" />
               </p>
             </div>
           </div>
         </CardContent>
       </Card>
-      <Card>
-        <CardContent class="pt-6">
+      <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none">
+        <CardContent class="pt-6 max-md:p-3">
           <div class="flex items-center gap-3">
-            <Timer class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Timer class="size-5 max-md:hidden shrink-0 text-muted-foreground" aria-hidden="true" />
             <div class="min-w-0">
               <p class="text-sm text-muted-foreground">Duration</p>
               <p class="truncate font-medium">{formatDuration(trace.duration_ms)}</p>
@@ -215,10 +220,10 @@
           </div>
         </CardContent>
       </Card>
-      <Card>
-        <CardContent class="pt-6">
+      <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none">
+        <CardContent class="pt-6 max-md:p-3">
           <div class="flex items-center gap-3">
-            <Layers class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Layers class="size-5 max-md:hidden shrink-0 text-muted-foreground" aria-hidden="true" />
             <div class="min-w-0">
               <p class="text-sm text-muted-foreground">Spans</p>
               <p class="truncate font-medium">{trace.span_count.toLocaleString('en-US')}</p>
@@ -226,8 +231,8 @@
           </div>
         </CardContent>
       </Card>
-      <Card>
-        <CardContent class="pt-6">
+      <Card class="max-md:rounded-none max-md:border-0 max-md:shadow-none">
+        <CardContent class="pt-6 max-md:p-3">
           <div class="min-w-0">
             <p class="mb-1 text-sm text-muted-foreground">Status</p>
             <SeverityBadge kind="state" value={trace.error ? 'failed' : 'ok'} />
@@ -239,13 +244,13 @@
     <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
       <div class="min-w-0 flex-1">
         <Card>
-          <CardHeader>
+          <CardHeader class="max-md:p-3">
             <CardTitle>Trace timeline</CardTitle>
             <CardDescription>
               {spans.length.toLocaleString('en-US')} spans across {serviceCount.toLocaleString('en-US')} services
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent class="max-md:p-3 max-md:pt-0">
             {#if spans.length === 0}
               <EmptyState variant="no-data" title="No spans found for this trace" />
             {:else}
@@ -260,7 +265,32 @@
         </Card>
       </div>
 
-      {#if selectedSpan}
+      {#if selectedSpan && $isMobile}
+        <Dialog.Root
+          open
+          onOpenChange={(o) => {
+            if (!o) selectedSpanId = null;
+          }}
+        >
+          <Dialog.Content
+            data-testid="span-sheet"
+            class="inset-0 flex h-dvh max-h-none w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none p-0 data-[state=open]:slide-in-from-left-0 data-[state=open]:slide-in-from-top-0 data-[state=closed]:slide-out-to-left-0 data-[state=closed]:slide-out-to-top-0 sm:rounded-none [&>button]:hidden"
+          >
+            <Dialog.Title class="sr-only">Span details</Dialog.Title>
+            <Dialog.Description class="sr-only">Details of the selected span.</Dialog.Description>
+            <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              <SpanDetailPanel
+                span={selectedSpan}
+                {trace}
+                {projectId}
+                {errorGroups}
+                onClose={() => (selectedSpanId = null)}
+                onFilterTraces={filterTraces}
+              />
+            </div>
+          </Dialog.Content>
+        </Dialog.Root>
+      {:else if selectedSpan}
         <div class="w-full lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:w-[420px] lg:shrink-0 lg:overflow-y-auto">
           <SpanDetailPanel
             span={selectedSpan}

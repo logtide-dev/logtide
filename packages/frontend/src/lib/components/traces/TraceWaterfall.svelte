@@ -71,9 +71,11 @@
   }
 </script>
 
-<div class="text-sm">
+<!-- Phones: the timeline scrolls sideways inside this box; the name column stays put. -->
+<div class="max-md:overflow-x-auto" data-testid="waterfall-scroll">
+<div class="text-sm max-md:min-w-[640px]">
   <div class="mb-2 flex border-b pb-2">
-    <div class="w-[220px] shrink-0 pr-4 text-sm font-medium text-muted-foreground sm:w-[280px]">
+    <div class="w-[220px] shrink-0 pr-4 text-sm font-medium text-muted-foreground sm:w-[280px] max-md:sticky max-md:left-0 max-md:z-10 max-md:w-[170px] max-md:bg-card max-md:pr-2">
       Service and operation
     </div>
     <div class="relative flex-1">
@@ -102,7 +104,7 @@
         onkeydown={(e) => onRowKeydown(e, span.span_id, index)}
       >
         <div
-          class="flex w-[220px] shrink-0 items-center gap-1 pr-4 sm:w-[280px]"
+          class="flex w-[220px] shrink-0 items-center gap-1 pr-4 sm:w-[280px] max-md:sticky max-md:left-0 max-md:z-10 max-md:w-[170px] max-md:pr-2 {selected ? 'max-md:bg-muted' : 'max-md:bg-card'}"
           style="padding-left: {span.depth * 16}px"
         >
           {#if span.children.length > 0}
@@ -126,7 +128,7 @@
           {:else}
             <div class="w-5"></div>
           {/if}
-          <div class="min-w-0 flex-1 truncate" title="{span.service_name}: {span.operation_name}">
+          <div class="min-w-0 flex-1 md:truncate max-md:break-words max-md:leading-tight" title="{span.service_name}: {span.operation_name}">
             <span class="text-xs text-muted-foreground">{span.service_name}</span>
             <span class="mx-1 text-xs">:</span>
             <span class="text-sm font-medium">{span.operation_name}</span>
@@ -151,4 +153,5 @@
       </div>
     {/each}
   </div>
+</div>
 </div>

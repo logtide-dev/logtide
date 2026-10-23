@@ -7,11 +7,12 @@
   interface Props {
     value: string;
     label?: string;
+    class?: string;
     /** Accessible name for the icon-only variant (defaults to Copy). */
     ariaLabel?: string;
   }
 
-  let { value, label, ariaLabel }: Props = $props();
+  let { value, label, ariaLabel, class: className }: Props = $props();
 
   let copied = $state(false);
 
@@ -32,7 +33,7 @@
 </script>
 
 {#if label}
-  <Button variant="ghost" size="sm" onclick={copy} aria-label={name}>
+  <Button variant="ghost" size="sm" class={className} onclick={copy} aria-label={name}>
     {#if copied}<Check />{:else}<Copy />{/if}
     {name}
   </Button>
