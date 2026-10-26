@@ -147,7 +147,7 @@ describe('SIEM SSE route (unit)', () => {
     it('registers the GET route with a rate limit', async () => {
         const { path, opts } = await captureHandler();
         expect(path).toBe('/api/v1/siem/events');
-        expect(opts.config.rateLimit.max).toBe(10);
+        expect(opts.config.rateLimit.max).toBe(30);
         expect(opts.schema.querystring.properties.source).toEqual({ type: 'array', items: { type: 'string' } });
     });
 

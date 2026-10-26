@@ -12,7 +12,6 @@ const OWNED_PREFIXES = [
   'src/lib/components/siem/shared/',
   'src/lib/components/siem/rules/',
   'src/routes/dashboard/security/+page.svelte',
-  'src/routes/dashboard/security/+layout.svelte',
   'src/routes/dashboard/security/overview-links.ts',
   'src/routes/dashboard/security/rules/',
 ];

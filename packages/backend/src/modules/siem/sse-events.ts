@@ -129,7 +129,7 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
     {
       config: {
         rateLimit: {
-          max: 10,
+          max: 30,
           timeWindow: '1 minute',
         },
       },
