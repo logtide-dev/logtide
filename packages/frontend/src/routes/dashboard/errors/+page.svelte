@@ -16,6 +16,7 @@
 	import { organizationsAPI } from '$lib/api/organizations';
 	import { toastStore } from '$lib/stores/toast';
 	import { layoutStore } from '$lib/stores/layout';
+	import { isMobile } from '$lib/stores/media-query';
 	import { EXCEPTION_LANGUAGES } from '@logtide/shared';
 	import PageHeader from '$lib/components/app/PageHeader.svelte';
 	import ScopeBar from '$lib/components/app/ScopeBar.svelte';
@@ -26,6 +27,7 @@
 	import Input from '$lib/components/ui/input/input.svelte';
 	import * as Select from '$lib/components/ui/select';
 	import { ErrorsTable, BulkActionBar } from '$lib/components/exceptions';
+	import { BrandIcon, languageBrand } from '$lib/components/brand';
 	import type { AssigneeMember, IgnoreOptions } from '$lib/components/exceptions';
 	import {
 		DEFAULT_ERRORS_LIST_STATE,
@@ -34,6 +36,7 @@
 		type ErrorsListState,
 	} from '$lib/components/exceptions/errors-url-state';
 	import { createRequestGuard } from '$lib/components/exceptions/request-guard';
+	import ListFilter from '@lucide/svelte/icons/list-filter';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import Search from '@lucide/svelte/icons/search';
 	import X from '@lucide/svelte/icons/x';
@@ -98,6 +101,7 @@
 	let projects = $state<{ id: string; name: string }[]>([]);
 	let members = $state<AssigneeMember[]>([]);
 	let searchInput = $state('');
+	let filtersOpen = $state(false);
 
 	const guard = createRequestGuard();
 
@@ -109,6 +113,12 @@
 		return url.search;
 	});
 	const serviceFilter = $derived(listState.service);
+	// Filters that differ from the defaults; on phones they stay visible even when the panel is closed.
+	const filterCount = $derived(
+		(listState.status !== DEFAULT_ERRORS_LIST_STATE.status ? 1 : 0) +
+			(listState.language ? 1 : 0) +
+			(listState.assignee ? 1 : 0)
+	);
 
 	$effect(() => {
 		searchInput = listState.search;
@@ -302,32 +312,51 @@
 <div class="container mx-auto {containerPadding} {maxWidthClass}">
 	<PageHeader title="Errors" description="Grouped exceptions from your logs">
 		{#snippet actions()}
-			<div class="flex flex-wrap items-center gap-2">
-				<ScopeBar mode="multi" {projects} />
-				<Button variant="outline" size="sm" onclick={refresh} disabled={loading}>
-					<RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
-					Refresh
-				</Button>
-			</div>
+			<ScopeBar mode="multi" {projects} hideZoneOnMobile />
+			<Button variant="outline" size="sm" class="max-md:h-11 max-md:w-full" onclick={refresh} disabled={loading}>
+				<RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
+				Refresh
+			</Button>
 		{/snippet}
 	</PageHeader>
 
 	<div class="mb-4 flex flex-wrap items-center gap-2">
-		<div class="relative min-w-[14rem] flex-1">
+		<div class="relative min-w-[14rem] flex-1 max-md:w-full max-md:min-w-0 max-md:basis-full">
 			<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
 			<Input
 				type="search"
 				placeholder="Search by exception type or message"
 				aria-label="Search errors"
-				class="pl-9"
+				class="pl-9 max-md:h-11"
 				bind:value={searchInput}
 				onkeydown={(e) => e.key === 'Enter' && updateState({ search: searchInput.trim() })}
 				onblur={() => searchInput.trim() !== listState.search && updateState({ search: searchInput.trim() })}
 			/>
 		</div>
 
+		{#if $isMobile}
+			<Button
+				variant="outline"
+				class="h-11 w-full justify-start gap-2"
+				aria-expanded={filtersOpen}
+				onclick={() => (filtersOpen = !filtersOpen)}
+			>
+				<ListFilter class="size-4" aria-hidden="true" />
+				<span>Filters</span>
+				{#if filterCount > 0}
+					<span
+						data-testid="filters-count"
+						class="rounded-full bg-primary px-1.5 text-xs font-medium tabular-nums text-primary-foreground"
+						>{filterCount}</span
+					>
+				{/if}
+			</Button>
+		{/if}
+
+		{#if !$isMobile || filtersOpen || filterCount > 0}
+		<div class="grid w-full grid-cols-1 gap-2 min-[480px]:grid-cols-3 md:contents">
 		<Select.Root type="single" value={listState.status} onValueChange={(v) => updateState({ status: (v || 'open') as ErrorsListState['status'] })}>
-			<Select.Trigger class="w-36" aria-label="Status">{statusLabel(listState.status)}</Select.Trigger>
+			<Select.Trigger class="w-36 max-md:h-11 max-md:w-full" aria-label="Status">{statusLabel(listState.status)}</Select.Trigger>
 			<Select.Content>
 				{#each STATUS_OPTIONS as option (option.value)}
 					<Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
@@ -336,18 +365,28 @@
 		</Select.Root>
 
 		<Select.Root type="single" value={listState.language} onValueChange={(v) => updateState({ language: (v || '') as ErrorsListState['language'] })}>
-			<Select.Trigger class="w-40" aria-label="Language">
-				{LANGUAGE_OPTIONS.find((o) => o.value === listState.language)?.label ?? 'All languages'}
+			<Select.Trigger class="w-40 max-md:h-11 max-md:w-full" aria-label="Language">
+				{@const selectedBrand = languageBrand(listState.language)}
+				<span class="flex min-w-0 items-center gap-2">
+					{#if selectedBrand}<BrandIcon brand={selectedBrand} />{/if}
+					<span class="truncate">{LANGUAGE_OPTIONS.find((o) => o.value === listState.language)?.label ?? 'All languages'}</span>
+				</span>
 			</Select.Trigger>
 			<Select.Content>
 				{#each LANGUAGE_OPTIONS as option (option.value)}
-					<Select.Item value={option.value} label={option.label}>{option.label}</Select.Item>
+					{@const brand = languageBrand(option.value)}
+					<Select.Item value={option.value} label={option.label}>
+						<span class="flex items-center gap-2">
+							{#if brand}<BrandIcon {brand} />{/if}
+							{option.label}
+						</span>
+					</Select.Item>
 				{/each}
 			</Select.Content>
 		</Select.Root>
 
 		<Select.Root type="single" value={listState.assignee} onValueChange={(v) => updateState({ assignee: (v || '') as ErrorsListState['assignee'] })}>
-			<Select.Trigger class="w-44" aria-label="Assignee">
+			<Select.Trigger class="w-44 max-md:h-11 max-md:w-full" aria-label="Assignee">
 				{ASSIGNEE_OPTIONS.find((o) => o.value === listState.assignee)?.label ?? 'Anyone'}
 			</Select.Trigger>
 			<Select.Content>
@@ -356,6 +395,8 @@
 				{/each}
 			</Select.Content>
 		</Select.Root>
+		</div>
+		{/if}
 
 		{#if serviceFilter}
 			<Badge variant="secondary" class="gap-1">

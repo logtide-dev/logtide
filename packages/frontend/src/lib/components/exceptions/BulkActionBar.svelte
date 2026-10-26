@@ -29,17 +29,18 @@
   role="toolbar"
   aria-label="Bulk actions"
 >
-  <span class="text-sm font-medium">{count.toLocaleString('en-US')} selected</span>
-  <div class="flex flex-wrap items-center gap-2">
-    <Button variant="outline" size="sm" class="gap-1" disabled={busy} onclick={onResolve}>
+  <span class="text-sm font-medium max-md:flex-1">{count.toLocaleString('en-US')} selected</span>
+  <!-- Phones: count + clear on the first row, the four actions in a 2x2 grid below. -->
+  <div class="flex flex-wrap items-center gap-2 max-md:order-last max-md:grid max-md:w-full max-md:grid-cols-2">
+    <Button variant="outline" size="sm" class="gap-1 max-md:h-10" disabled={busy} onclick={onResolve}>
       <CircleCheck class="w-4 h-4" aria-hidden="true" />
       Resolve
     </Button>
-    <Button variant="outline" size="sm" class="gap-1" disabled={busy} onclick={onReopen}>
+    <Button variant="outline" size="sm" class="gap-1 max-md:h-10" disabled={busy} onclick={onReopen}>
       <RotateCcw class="w-4 h-4" aria-hidden="true" />
       Reopen
     </Button>
-    <Button variant="outline" size="sm" class="gap-1" disabled={busy} onclick={() => (ignoreOpen = true)}>
+    <Button variant="outline" size="sm" class="gap-1 max-md:h-10" disabled={busy} onclick={() => (ignoreOpen = true)}>
       <EyeOff class="w-4 h-4" aria-hidden="true" />
       Ignore
     </Button>
@@ -49,12 +50,14 @@
       disabled={busy}
       triggerLabel="Assign"
       ariaLabel="Assign selected errors"
+      triggerClass="max-md:h-10 max-md:w-full max-md:max-w-none max-md:justify-center"
       onChange={onAssign}
     />
   </div>
-  <Button variant="ghost" size="sm" class="ml-auto gap-1" disabled={busy} onclick={onClear}>
+  <Button variant="ghost" size="sm" class="ml-auto gap-1" aria-label="Clear selection" disabled={busy} onclick={onClear}>
     <X class="w-4 h-4" aria-hidden="true" />
-    Clear selection
+    <span class="max-md:hidden">Clear selection</span>
+    <span class="md:hidden">Clear</span>
   </Button>
 </div>
 

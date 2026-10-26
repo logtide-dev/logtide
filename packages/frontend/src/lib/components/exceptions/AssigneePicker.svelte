@@ -14,6 +14,8 @@
     /** Text for the trigger when it should not show the current assignee (bulk use). */
     triggerLabel?: string;
     ariaLabel?: string;
+    /** Extra classes for the trigger button (e.g. full width in a phone grid). */
+    triggerClass?: string;
     onChange: (userId: string | null) => void;
   }
 
@@ -22,6 +24,7 @@
     value,
     disabled = false,
     triggerLabel,
+    triggerClass = '',
     ariaLabel = 'Assign error',
     onChange,
   }: Props = $props();
@@ -33,7 +36,7 @@
 <DropdownMenu.Root>
   <DropdownMenu.Trigger {disabled}>
     {#snippet child({ props })}
-      <Button {...props} variant="outline" size="sm" class="gap-2 max-w-[220px]" aria-label={ariaLabel}>
+      <Button {...props} variant="outline" size="sm" class="gap-2 max-w-[220px] {triggerClass}" aria-label={ariaLabel}>
         {#if triggerLabel !== undefined}
           {triggerLabel}
         {:else if current}

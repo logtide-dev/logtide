@@ -7,6 +7,8 @@
   import Timestamp from '$lib/components/app/Timestamp.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import { Badge } from '$lib/components/ui/badge';
+  import { Checkbox } from '$lib/components/ui/checkbox';
+  import { isMobile } from '$lib/stores/media-query';
   import Folder from '@lucide/svelte/icons/folder';
   import ErrorStatusBadges from './ErrorStatusBadges.svelte';
   import ErrorSparkline from './ErrorSparkline.svelte';
@@ -70,6 +72,26 @@
     state.search !== '' || state.language !== '' || state.assignee !== '' || state.service !== ''
   );
   const isNoData = $derived(state.status === 'all' && !nonStatusFilters);
+
+  // Phones have no column headers, so sorting moves to a select (descending only).
+  const SORT_OPTIONS = [
+    { value: 'last_seen', label: 'Last seen' },
+    { value: 'first_seen', label: 'First seen' },
+    { value: 'events', label: 'Most events' },
+  ];
+
+  const selectedSet = $derived(new Set(selected));
+  const allSelected = $derived(groups.length > 0 && groups.every((g) => selectedSet.has(g.id)));
+  const someSelected = $derived(!allSelected && groups.some((g) => selectedSet.has(g.id)));
+
+  function toggleRow(id: string, on: boolean) {
+    selected = on ? [...selected.filter((s) => s !== id), id] : selected.filter((s) => s !== id);
+  }
+
+  function toggleAll(on: boolean) {
+    const ids = new Set(groups.map((g) => g.id));
+    selected = on ? [...selected.filter((s) => !ids.has(s)), ...ids] : selected.filter((s) => !ids.has(s));
+  }
 
   const emptyTitle = $derived(isNoData ? 'No errors yet' : `No errors match in ${rangeLabel}`);
 
@@ -187,6 +209,87 @@
       {/if}
     {/snippet}
   </EmptyState>
+{:else if $isMobile}
+  <div class="space-y-3">
+    <div class="flex items-end gap-3">
+      <label class="grid flex-1 gap-1 text-xs font-medium text-muted-foreground">
+        Sort by
+        <select
+          class="h-11 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          value={sort.key}
+          onchange={(e) => onSort(e.currentTarget.value)}
+        >
+          {#each SORT_OPTIONS as o (o.value)}
+            <option value={o.value}>{o.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="flex h-11 shrink-0 items-center gap-2 rounded-md border bg-background px-3 text-sm">
+        <Checkbox
+          aria-label="Select all errors on this page"
+          checked={allSelected}
+          indeterminate={someSelected}
+          disabled={loading}
+          onCheckedChange={(v) => toggleAll(v === true)}
+        />
+        All
+      </label>
+    </div>
+    {#if loading && groups.length === 0}
+      <div class="space-y-2" aria-busy="true">
+        {#each [0, 1, 2, 3, 4] as i (i)}
+          <div class="h-24 animate-pulse rounded-lg border bg-muted/40"></div>
+        {/each}
+      </div>
+    {:else}
+      <ul data-testid="errors-list" class="overflow-hidden rounded-lg border bg-card {loading ? 'opacity-60' : ''}">
+        {#each groups as g (g.id)}
+          <li class="flex items-start gap-3 border-b px-3 py-3 last:border-b-0 {selectedSet.has(g.id) ? 'bg-muted/50' : ''}">
+            <Checkbox
+              class="mt-0.5"
+              aria-label="Select {g.exceptionType}"
+              checked={selectedSet.has(g.id)}
+              onCheckedChange={(v) => toggleRow(g.id, v === true)}
+            />
+            <a
+              href={buildErrorDetailHref(g.id, scopeSearch)}
+              class="block min-w-0 flex-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onclick={(e) => handleClick(e, g)}
+            >
+              <span class="flex items-start justify-between gap-2">
+                <span class="min-w-0 break-all font-mono text-sm font-semibold">{g.exceptionType}</span>
+                <span class="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {g.occurrenceCount.toLocaleString('en-US')}
+                  {g.occurrenceCount === 1 ? 'event' : 'events'}
+                </span>
+              </span>
+              {#if g.exceptionMessage}
+                <span class="mt-0.5 line-clamp-2 break-words text-sm text-muted-foreground">{g.exceptionMessage}</span>
+              {/if}
+              <span class="mt-2 flex flex-wrap items-center gap-1">
+                <ErrorStatusBadges group={g} />
+                {#each g.affectedServices ?? [] as service (service)}
+                  <Badge variant="secondary" class="max-w-full truncate font-mono font-normal">{service}</Badge>
+                {/each}
+              </span>
+              <span class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                <span>Last seen <Timestamp value={g.lastSeen} relative /></span>
+                {#if g.projectName}
+                  <span aria-hidden="true">&middot;</span>
+                  <span class="inline-flex min-w-0 items-center gap-1">
+                    <Folder class="h-3 w-3 shrink-0" aria-hidden="true" />
+                    <span class="truncate">{g.projectName}</span>
+                  </span>
+                {/if}
+                <span aria-hidden="true">&middot;</span>
+                <span class="truncate">{g.assignedTo ? g.assignedToName || g.assignedToEmail : 'Unassigned'}</span>
+              </span>
+            </a>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
 {:else}
   <DataTable
     {columns}
