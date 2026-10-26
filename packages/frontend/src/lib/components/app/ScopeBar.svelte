@@ -21,6 +21,9 @@
     type Scope,
     type TimeRangeValue,
   } from "$lib/stores/scope";
+  import { activeScopeBar } from "$lib/stores/scope-bar";
+  import { currentOrganization } from "$lib/stores/organization";
+  import { orgProjectsStore } from "$lib/stores/org-projects";
 
   interface Props {
     mode: "multi" | "single";
@@ -57,6 +60,33 @@
 
   let lastCanonical = "";
 
+  // Projects with data, most recent event first: the fallback of a
+  // single-project page should land on something to look at.
+  // Without an active organization there is nothing to wait for.
+  let activityReady = $derived(
+    !$currentOrganization ||
+      ($orgProjectsStore.orgId === $currentOrganization.id && !$orgProjectsStore.loading)
+  );
+
+  // The header normally loads it; do it here too so a page without the header
+  // never waits forever.
+  $effect(() => {
+    const orgId = $currentOrganization?.id;
+    if (mode === "single" && orgId && $orgProjectsStore.orgId !== orgId && !$orgProjectsStore.loading) {
+      // Best effort: without activity the fallback is simply the first project.
+      orgProjectsStore.load(orgId).catch(() => {});
+    }
+  });
+  let preferredIds = $derived.by(() => {
+    if (!activityReady) return [];
+    const { lastEventAt, receiving } = $orgProjectsStore;
+    const withEvents = Object.entries(lastEventAt)
+      .filter((entry): entry is [string, string] => !!entry[1])
+      .sort((a, b) => Date.parse(b[1]) - Date.parse(a[1]))
+      .map(([id]) => id);
+    return [...withEvents, ...[...receiving].filter((id) => !withEvents.includes(id))];
+  });
+
   // Reconcile the store with the URL and the visible projects. Only what the URL
   // or the user decided is persisted; a page fallback is shown for this page
   // only (UI-1). Then the address bar gets the canonical scope once.
@@ -67,12 +97,15 @@
       projects,
       mode,
       presets,
+      preferredIds,
       write: { projects: showProjects, range: showTime },
     });
     scopeStore.reconcile(result.commit, result.effective);
     // Wait for the project list, or the first canonical URL would be rewritten
     // again as soon as the projects load.
-    const ready = !showProjects || projects.length > 0;
+    // A single-project page also waits for project activity, or a fallback to
+    // an empty project would be written to the URL and stick.
+    const ready = !showProjects || (projects.length > 0 && (mode === "multi" || activityReady));
     if (canonicalUrl && ready && result.url && result.url.href !== lastCanonical) {
       lastCanonical = result.url.href;
       goto(result.url, { replaceState: true, keepFocus: true, noScroll: true });
@@ -82,6 +115,13 @@
   // Leaving the page drops its fallback, so the next page starts from what was
   // really remembered.
   onDestroy(() => scopeStore.clearEffective());
+
+  // Tell the header project switcher this page has a project picker.
+  $effect(() => {
+    if (!showProjects) return;
+    activeScopeBar.set({ mode });
+    return () => activeScopeBar.set(null);
+  });
 
   function syncUrl() {
     const current = scopeStore.get();

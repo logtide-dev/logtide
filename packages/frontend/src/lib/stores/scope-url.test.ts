@@ -265,6 +265,39 @@ describe('reconcileScope', () => {
     }
   });
 
+  it('single falls back to the first preferred project with data', () => {
+    const r = reconcileScope({
+      stored: stored([]),
+      url: u(''),
+      projects: projs,
+      mode: 'single',
+      preferredIds: ['zz', 'p3', 'p2'],
+    });
+    expect(r.effective.projectIds).toEqual(['p3']);
+    expect(r.url!.searchParams.get('project')).toBe('p3');
+    // A fallback is never persisted.
+    expect(r.commit.projectIds).toEqual([]);
+  });
+
+  it('single prefers the url and the stored pick over projects with data', () => {
+    const fromUrl = reconcileScope({
+      stored: stored(['p1']),
+      url: u('?project=p2'),
+      projects: projs,
+      mode: 'single',
+      preferredIds: ['p3'],
+    });
+    expect(fromUrl.effective.projectIds).toEqual(['p2']);
+    const fromStored = reconcileScope({
+      stored: stored(['p1']),
+      url: u(''),
+      projects: projs,
+      mode: 'single',
+      preferredIds: ['p3'],
+    });
+    expect(fromStored.effective.projectIds).toEqual(['p1']);
+  });
+
   it('single uses the first valid stored id when url has none valid', () => {
     const r = reconcileScope({
       stored: stored(['zz', 'p3']),

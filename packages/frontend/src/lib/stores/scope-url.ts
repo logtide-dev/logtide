@@ -246,6 +246,11 @@ export function reconcileScope(input: {
   projects: { id: string }[];
   mode: 'multi' | 'single';
   presets?: TimeRangePreset[];
+  /**
+   * Single-project pages with nothing picked fall back to the first of these
+   * (projects with data, most recent first), else to the first project.
+   */
+  preferredIds?: string[];
   /** Which scope parts the canonical URL carries (a bar may hide one). */
   write?: { projects?: boolean; range?: boolean };
 }): { effective: Scope; commit: Scope; url: URL | null } {
@@ -280,7 +285,11 @@ export function reconcileScope(input: {
       if (urlIds && (urlIds.length === 0 || urlIds.some((id) => valid.has(id)))) commitIds = ids;
     } else {
       const urlPick = urlIds?.find((id) => valid.has(id));
-      const pick = urlPick ?? stored.projectIds.find((id) => valid.has(id)) ?? projects[0].id;
+      const pick =
+        urlPick ??
+        stored.projectIds.find((id) => valid.has(id)) ??
+        input.preferredIds?.find((id) => valid.has(id)) ??
+        projects[0].id;
       ids = [pick];
       if (urlPick) commitIds = stored.projectIds[0] === pick ? stored.projectIds : ids;
     }
