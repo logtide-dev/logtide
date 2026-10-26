@@ -36,6 +36,7 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import Plus from '@lucide/svelte/icons/plus';
   import ScrollText from '@lucide/svelte/icons/scroll-text';
+  import { BrandIcon } from '$lib/components/brand';
 
   let project = $state<any>(null);
   let loading = $state(false);
@@ -420,7 +421,8 @@
 {/snippet}
 
 {#snippet receiverSourceCell(r: Receiver)}
-  <span class="inline-flex items-center rounded-full border border-transparent bg-secondary px-2.5 py-0.5 text-xs font-semibold text-secondary-foreground">
+  <span class="inline-flex items-center gap-1.5 rounded-full border border-transparent bg-secondary px-2.5 py-0.5 text-xs font-semibold text-secondary-foreground">
+    {#if r.adapterType === 'github'}<BrandIcon brand="github" class="size-3.5" />{/if}
     {adapterLabel(r.adapterType)}
   </span>
 {/snippet}

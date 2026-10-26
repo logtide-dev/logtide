@@ -3,6 +3,7 @@
   import { getApiUrl } from '$lib/config';
   import { resolveEndpoints } from './endpoints';
   import { PLATFORMS, buildSnippets, type PlatformId } from './snippets';
+  import { BrandIcon, platformBrand } from '$lib/components/brand';
 
   interface Props {
     apiKey: string | null;
@@ -46,17 +47,19 @@
 <div class="space-y-4">
   <div role="radiogroup" aria-label="Platform" class="flex flex-wrap gap-2">
     {#each PLATFORMS as p, i (p.id)}
+      {@const brand = platformBrand(p.id)}
       <button
         type="button"
         role="radio"
         aria-checked={platform === p.id}
         tabindex={platform === p.id ? 0 : -1}
-        class="rounded-md border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {platform === p.id
+        class="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {platform === p.id
           ? 'border-primary bg-primary/10 text-primary-text'
           : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground'}"
         onclick={() => (platform = p.id)}
         onkeydown={(event) => onKeydown(event, i)}
       >
+        {#if brand}<BrandIcon {brand} />{/if}
         {p.label}
       </button>
     {/each}

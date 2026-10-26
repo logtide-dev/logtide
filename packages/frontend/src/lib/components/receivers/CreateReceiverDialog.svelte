@@ -9,6 +9,7 @@
   import Copy from '@lucide/svelte/icons/copy';
   import Check from '@lucide/svelte/icons/check';
   import { copyToClipboard } from '$lib/utils/clipboard';
+  import { BrandIcon } from '$lib/components/brand';
   import { getApiUrl } from '$lib/config';
   import type { CreateReceiverResponse, ReceiverAdapterType, ReceiverFieldMapping } from '$lib/api/receivers';
 
@@ -164,7 +165,10 @@
                   : 'border-input hover:border-primary/50'}"
                 onclick={() => (adapterType = option.value)}
               >
-                <div class="font-medium text-sm">{option.label}</div>
+                <div class="flex items-center gap-2 font-medium text-sm">
+                  {#if option.value === 'github'}<BrandIcon brand="github" />{/if}
+                  {option.label}
+                </div>
                 <div class="text-xs text-muted-foreground mt-1">{option.description}</div>
               </button>
             {/each}

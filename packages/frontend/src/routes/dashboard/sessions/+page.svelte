@@ -22,6 +22,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
 
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+  import { BrandIcon, browserBrand, osBrand } from '$lib/components/brand';
 
   const PAGE_SIZE = 25;
 
@@ -258,11 +259,19 @@
 {/snippet}
 
 {#snippet browserCell(s: SessionSummary)}
-  <span>{s.browser ?? ''}</span>
+  {@const brand = browserBrand(s.browser)}
+  <span class="inline-flex items-center gap-2 whitespace-nowrap">
+    {#if brand}<BrandIcon {brand} />{/if}
+    {s.browser ?? ''}
+  </span>
 {/snippet}
 
 {#snippet deviceCell(s: SessionSummary)}
-  <span>{deviceText(s)}</span>
+  {@const brand = osBrand(s.os)}
+  <span class="inline-flex items-center gap-2 whitespace-nowrap">
+    {#if brand}<BrandIcon {brand} />{/if}
+    {deviceText(s)}
+  </span>
 {/snippet}
 
 {#snippet entryCell(s: SessionSummary)}

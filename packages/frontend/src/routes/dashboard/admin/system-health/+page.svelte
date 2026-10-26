@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { BrandIcon, engineBrand } from "$lib/components/brand";
     import { formatTimestamp } from "$lib/utils/datetime";
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import {
@@ -152,11 +153,7 @@
     let engineLabel = $derived(
         isMongoDB ? 'MongoDB' : isClickHouse ? 'ClickHouse' : 'TimescaleDB'
     );
-    let engineBadgeClass = $derived(
-        isMongoDB ? 'bg-success/10 text-success-text'
-        : isClickHouse ? 'bg-warning/10 text-warning-text'
-        : 'bg-info/10 text-info-text'
-    );
+    let engineBrandSlug = $derived(engineBrand(healthStats?.storageEngine ?? 'timescale'));
 </script>
 
 <svelte:head>
@@ -175,7 +172,8 @@
     >
         {#snippet meta()}
             {#if healthStats?.storageEngine}
-                <span class="text-xs font-medium px-2 py-0.5 rounded-full {engineBadgeClass}">
+                <span class="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 text-xs font-medium">
+                    {#if engineBrandSlug}<BrandIcon brand={engineBrandSlug} class="size-3.5" />{/if}
                     {engineLabel}
                 </span>
             {/if}
