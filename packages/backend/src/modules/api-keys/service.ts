@@ -48,6 +48,9 @@ interface CachedApiKey {
 export class ApiKeysService {
   private static readonly LAST_USED_DEBOUNCE_MS = 60_000;
   private lastUsedWrites = new Map<string, number>();
+  private static readonly REVOKED_KEY_THROTTLE_MS = 60_000;
+  private static readonly REVOKED_KEY_THROTTLE_MAX_ENTRIES = 10_000;
+  private revokedKeyRecords = new Map<string, number>();
 
   /**
    * Hash an API key using SHA-256
@@ -168,6 +171,67 @@ export class ApiKeysService {
       type: result.type,
       allowedOrigins: result.allowed_origins,
     };
+  }
+
+  /**
+   * Look up a REVOKED key by its hash. Used only on the 401 path of ingest auth
+   * to attribute attempts with a revoked key to its project (health check).
+   * Keys of deleted projects are ignored.
+   */
+  async findRevokedKeyOwner(
+    apiKey: string
+  ): Promise<{ organizationId: string; projectId: string; apiKeyId: string } | null> {
+    const keyHash = this.hashApiKey(apiKey);
+    const row = await db
+      .selectFrom('api_keys')
+      .innerJoin('projects', 'api_keys.project_id', 'projects.id')
+      .select(['api_keys.id', 'api_keys.project_id', 'projects.organization_id'])
+      .where('api_keys.key_hash', '=', keyHash)
+      .where('api_keys.revoked', '=', true)
+      .where('projects.deleted_at', 'is', null)
+      .executeTakeFirst();
+    if (!row) return null;
+    return { organizationId: row.organization_id, projectId: row.project_id, apiKeyId: row.id };
+  }
+
+  /**
+   * Record an `ingestion.revoked_key` counter when `apiKey` is a revoked key.
+   * Throttled in memory to one row per key per minute so a misconfigured shipper
+   * cannot flood metering_events. Never throws.
+   */
+  async recordRevokedKeyAttempt(apiKey: string): Promise<void> {
+    try {
+      const owner = await this.findRevokedKeyOwner(apiKey);
+      if (!owner) return;
+      const now = Date.now();
+      const last = this.revokedKeyRecords.get(owner.apiKeyId);
+      if (last !== undefined && now - last < ApiKeysService.REVOKED_KEY_THROTTLE_MS) return;
+      if (this.revokedKeyRecords.size >= ApiKeysService.REVOKED_KEY_THROTTLE_MAX_ENTRIES) {
+        for (const [id, ts] of this.revokedKeyRecords) {
+          if (now - ts >= ApiKeysService.REVOKED_KEY_THROTTLE_MS) this.revokedKeyRecords.delete(id);
+        }
+        if (this.revokedKeyRecords.size >= ApiKeysService.REVOKED_KEY_THROTTLE_MAX_ENTRIES) {
+          this.revokedKeyRecords.clear();
+        }
+      }
+      this.revokedKeyRecords.set(owner.apiKeyId, now);
+      // Lazy: the metering module graph pulls in the reservoir.
+      const { metering } = await import('../metering/index.js');
+      metering.record({
+        type: 'ingestion.revoked_key',
+        quantity: 1,
+        organizationId: owner.organizationId,
+        projectId: owner.projectId,
+        metadata: { apiKeyId: owner.apiKeyId },
+      });
+    } catch {
+      // Counter only: a failed lookup must never change the auth response.
+    }
+  }
+
+  /** Test seam: forget the revoked-key throttle state. */
+  resetRevokedKeyThrottle(): void {
+    this.revokedKeyRecords.clear();
   }
 
   /**

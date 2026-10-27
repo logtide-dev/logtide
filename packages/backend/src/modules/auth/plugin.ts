@@ -150,6 +150,9 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       const result = await apiKeysService.verifyApiKey(apiKey);
 
       if (!result) {
+        // Attribute attempts with a revoked key to its project (health check).
+        // The response stays identical: never disclose that the key was revoked.
+        await apiKeysService.recordRevokedKeyAttempt(apiKey);
         reply.code(401).send({
           error: 'Unauthorized',
           message: 'Invalid API key',
