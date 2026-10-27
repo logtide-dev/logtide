@@ -37,6 +37,21 @@
   ]);
 </script>
 
+{#snippet mobileRow(m: DetectionEvent)}
+  <div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+    <span class="whitespace-nowrap"><Timestamp value={m.time} precision="second" /></span>
+    <SeverityBadge kind="severity" value={m.severity} />
+  </div>
+  <p class="mt-1 font-mono text-xs text-muted-foreground">{m.service}</p>
+  <p class="mt-1 line-clamp-3 break-words text-sm">{m.logMessage}</p>
+  {#if m.incidentId || m.logId}
+    <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+      {#if m.incidentId}{@render incidentCell(m)}{/if}
+      {#if m.logId}{@render logCell(m)}{/if}
+    </div>
+  {/if}
+{/snippet}
+
 {#snippet timeCell(m: DetectionEvent)}
   <Timestamp value={m.time} precision="second" />
 {/snippet}
@@ -77,7 +92,7 @@
 {/snippet}
 
 <div class="space-y-3">
-  <DataTable {columns} rows={matches} rowKey={(m: DetectionEvent) => m.id} {loading}>
+  <DataTable {columns} rows={matches} rowKey={(m: DetectionEvent) => m.id} {loading} mobileRow={snip(mobileRow)}>
     {#snippet empty()}No matches in the last 7 days{/snippet}
   </DataTable>
   <Pagination page={pageNumber} {pageSize} {total} onPageChange={goTo} />

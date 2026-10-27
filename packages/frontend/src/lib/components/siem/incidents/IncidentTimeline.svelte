@@ -4,6 +4,7 @@
 	import { incidentsAPI } from '$lib/api/incidents';
 	import { toastStore } from '$lib/stores/toast';
 	import { levelTone } from '$lib/utils/severity';
+	import { isMobile } from '$lib/stores/media-query';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import Avatar from '$lib/components/app/Avatar.svelte';
@@ -37,6 +38,13 @@
 	let draft = $state('');
 	let submitting = $state(false);
 	let expanded = $state<Record<string, boolean>>({});
+
+	// Phones show the newest entries first and the rest on request: a burst of
+	// detections would otherwise be a wall of identical cards.
+	const PHONE_LIMIT = 10;
+	let showAll = $state(false);
+	const visibleEntries = $derived($isMobile && !showAll ? entries.slice(0, PHONE_LIMIT) : entries);
+	const hiddenCount = $derived(entries.length - visibleEntries.length);
 
 	function toggle(id: string) {
 		expanded = { ...expanded, [id]: !expanded[id] };
@@ -87,7 +95,7 @@
 		</p>
 	{:else}
 		<ol class="relative space-y-4 border-l border-border pl-6">
-			{#each entries as entry (entry.id)}
+			{#each visibleEntries as entry (entry.id)}
 				<li class="relative">
 					<span
 						class="absolute -left-[2.1rem] flex size-7 items-center justify-center rounded-full bg-muted text-muted-foreground"
@@ -205,5 +213,10 @@
 				</li>
 			{/each}
 		</ol>
+		{#if hiddenCount > 0}
+			<Button variant="outline" class="h-11 w-full" onclick={() => (showAll = true)}>
+				Show {hiddenCount.toLocaleString('en-US')} more {hiddenCount === 1 ? 'event' : 'events'}
+			</Button>
+		{/if}
 	{/if}
 </section>

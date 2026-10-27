@@ -64,7 +64,22 @@
 	let loadKey = '';
 	let eventsSequence = 0;
 
+	// A burst of detections arrives as one stream event each: reload once
+	// after the burst instead of once per event.
+	const REALTIME_RELOAD_DELAY_MS = 1000;
+	let realtimeReloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function scheduleRealtimeReload() {
+		if (realtimeReloadTimer) clearTimeout(realtimeReloadTimer);
+		realtimeReloadTimer = setTimeout(() => {
+			realtimeReloadTimer = null;
+			loadDashboard();
+			loadRecentEvents();
+		}, REALTIME_RELOAD_DELAY_MS);
+	}
+
 	onDestroy(() => {
+		if (realtimeReloadTimer) clearTimeout(realtimeReloadTimer);
 		siemStore.stopRealtimeUpdates();
 	});
 
@@ -174,10 +189,7 @@
 			event.type === 'incident_created' ||
 			event.type === 'incident_updated'
 		) {
-			untrack(() => {
-				loadDashboard();
-				loadRecentEvents();
-			});
+			untrack(scheduleRealtimeReload);
 		}
 	});
 
@@ -207,18 +219,18 @@
 			{/if}
 		{/snippet}
 		{#snippet actions()}
-			<ScopeBar mode="multi" {projects} presets={[...SCOPE_PRESETS]} />
+			<ScopeBar mode="multi" {projects} presets={[...SCOPE_PRESETS]} hideZoneOnMobile />
 			<Button
 				variant="outline"
 				size="sm"
-				class="h-8"
+				class="h-8 max-md:h-11 max-md:flex-1"
 				onclick={handleRefresh}
 				disabled={refreshing || $dashboardLoading}
 			>
 				<RefreshCw class="w-3.5 h-3.5 mr-1.5 {refreshing ? 'animate-spin' : ''}" aria-hidden="true" />
 				Refresh
 			</Button>
-			<Button variant="outline" size="sm" class="h-8" href={incidentsLink({})}>View incidents</Button>
+			<Button variant="outline" size="sm" class="h-8 max-md:h-11 max-md:flex-1" href={incidentsLink({})}>View incidents</Button>
 		{/snippet}
 	</PageHeader>
 

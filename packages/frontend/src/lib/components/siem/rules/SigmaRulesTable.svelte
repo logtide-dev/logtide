@@ -63,6 +63,50 @@
   ]);
 </script>
 
+{#snippet mobileRow(rule: SigmaRuleListItem)}
+  {@const tactics = rule.mitreTactics ?? []}
+  <div class="flex items-start gap-2">
+    <div class="min-w-0 flex-1">
+      <a
+        href="/dashboard/security/rules/{rule.id}"
+        class="block text-sm font-medium leading-snug hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {rule.title}
+      </a>
+      {#if rule.description}
+        <p class="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{rule.description}</p>
+      {/if}
+    </div>
+    <Switch
+      checked={rule.enabled}
+      disabled={togglingId === rule.id}
+      aria-label="Enable {rule.title}"
+      onCheckedChange={(v) => onToggle(rule, v)}
+    />
+    {@render actionsCell(rule)}
+  </div>
+  <div class="mt-2 flex flex-wrap items-center gap-1.5">
+    <SeverityBadge kind="severity" value={rule.level} />
+    {#each tactics.slice(0, 1) as tactic (tactic)}
+      <MitreTacticBadge {tactic} clickable={false} />
+    {/each}
+    {#if tactics.length > 1}
+      <span class="text-xs text-muted-foreground">+{tactics.length - 1}</span>
+    {/if}
+  </div>
+  <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+    <span>{sourceLabel(rule, packNames)}</span>
+    <span aria-hidden="true">·</span>
+    <span><span class="tabular-nums">{rule.hits7d.toLocaleString('en-US')}</span> hits in 7d</span>
+    <span aria-hidden="true">·</span>
+    {#if rule.lastFiredAt}
+      <span>Last fired <Timestamp value={rule.lastFiredAt} relative /></span>
+    {:else}
+      <span>Never fired</span>
+    {/if}
+  </p>
+{/snippet}
+
 {#snippet nameCell(rule: SigmaRuleListItem)}
   <div class="min-w-0">
     <a
@@ -162,6 +206,8 @@
   selectable
   bind:selected
   bind:sort
+  mobileRow={snip(mobileRow)}
+  rowLabel={(r: SigmaRuleListItem) => r.title}
 />
 
 <ConfirmDialog

@@ -31,7 +31,8 @@
       <ol class="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
         {#each breadcrumbs as crumb, i (i)}
           {@const last = i === breadcrumbs.length - 1}
-          <li class="flex items-center gap-1.5">
+          <!-- On phones the last crumb repeats the title right below it. -->
+          <li class="flex items-center gap-1.5 {last && i > 0 ? 'max-md:hidden' : ''}">
             {#if crumb.href && !last}
               <a href={crumb.href} class="hover:text-foreground hover:underline">{crumb.label}</a>
             {:else}
@@ -39,7 +40,7 @@
                 {crumb.label}
               </span>
             {/if}
-            {#if !last}<span aria-hidden="true">/</span>{/if}
+            {#if !last}<span aria-hidden="true" class={i === breadcrumbs.length - 2 ? 'max-md:hidden' : ''}>/</span>{/if}
           </li>
         {/each}
       </ol>

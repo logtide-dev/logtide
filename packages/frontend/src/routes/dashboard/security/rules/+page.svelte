@@ -243,15 +243,15 @@
     appliesTo="organization"
   >
     {#snippet actions()}
-      <Button variant="outline" onclick={() => (showImport = true)}>
+      <Button variant="outline" class="max-md:flex-1" onclick={() => (showImport = true)}>
         <FileUp aria-hidden="true" />
         Import rule
       </Button>
-      <Button variant="outline" onclick={() => (showPacks = true)}>
+      <Button variant="outline" class="max-md:flex-1" onclick={() => (showPacks = true)}>
         <Package aria-hidden="true" />
         Detection packs
       </Button>
-      <Button onclick={() => (showSync = true)}>
+      <Button class="max-md:w-full" onclick={() => (showSync = true)}>
         <Download aria-hidden="true" />
         Sync from SigmaHQ
       </Button>
@@ -286,11 +286,11 @@
           role="region"
           aria-label="Bulk actions"
         >
-          <span class="text-sm">{selected.length.toLocaleString('en-US')} selected</span>
-          <Button size="sm" variant="outline" onclick={() => bulk('enable').catch(() => {})}>Enable</Button>
-          <Button size="sm" variant="outline" onclick={() => bulk('disable').catch(() => {})}>Disable</Button>
-          <Button size="sm" variant="destructive" onclick={() => (showBulkDelete = true)}>Delete</Button>
-          <Button size="sm" variant="ghost" onclick={() => (selected = [])}>Clear selection</Button>
+          <span class="text-sm max-md:basis-full">{selected.length.toLocaleString('en-US')} selected</span>
+          <Button size="sm" variant="outline" class="max-md:h-11 max-md:flex-1" onclick={() => bulk('enable').catch(() => {})}>Enable</Button>
+          <Button size="sm" variant="outline" class="max-md:h-11 max-md:flex-1" onclick={() => bulk('disable').catch(() => {})}>Disable</Button>
+          <Button size="sm" variant="destructive" class="max-md:h-11 max-md:flex-1" onclick={() => (showBulkDelete = true)}>Delete</Button>
+          <Button size="sm" variant="ghost" class="max-md:h-11 max-md:basis-full" onclick={() => (selected = [])}>Clear selection</Button>
         </div>
       {/if}
 

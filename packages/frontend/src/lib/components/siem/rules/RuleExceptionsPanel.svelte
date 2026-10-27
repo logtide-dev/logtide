@@ -90,6 +90,20 @@
   ]);
 </script>
 
+{#snippet mobileRow(e: SigmaException)}
+  <div class="flex items-start gap-2">
+    <div class="min-w-0 flex-1 space-y-2">
+      {@render conditionsCell(e)}
+      {#if e.reason}{@render reasonCell(e)}{/if}
+    </div>
+    {@render actionsCell(e)}
+  </div>
+  <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+    <div class="inline-flex items-center gap-1">Expires {@render expiresCell(e)}</div>
+    <div class="inline-flex items-center gap-1">Suppressed {@render hitsCell(e)}</div>
+  </div>
+{/snippet}
+
 {#snippet conditionsCell(e: SigmaException)}
   <div class="flex flex-wrap gap-1 {isExpired(e) ? 'opacity-60' : ''}">
     {#each e.conditions as c, i (i)}
@@ -133,7 +147,7 @@
 {/snippet}
 
 <div class="space-y-3">
-  <div class="flex items-center justify-between gap-3">
+  <div class="flex items-center justify-between gap-3 max-md:flex-col max-md:items-stretch">
     <p class="text-sm text-muted-foreground">
       Matches that fit an exception are skipped before any detection or notification is created.
     </p>
@@ -150,7 +164,7 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <DataTable {columns} rows={exceptions} rowKey={(e: SigmaException) => e.id} {loading}>
+    <DataTable {columns} rows={exceptions} rowKey={(e: SigmaException) => e.id} {loading} mobileRow={snip(mobileRow)}>
       {#snippet empty()}No exceptions{/snippet}
     </DataTable>
   {/if}

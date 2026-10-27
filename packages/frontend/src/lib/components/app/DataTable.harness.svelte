@@ -11,9 +11,15 @@
     selectable?: boolean;
     loading?: boolean;
     initialSelected?: string[];
+    /** Pass a phone row snippet (used only when the phone layout is active). */
+    withMobileRow?: boolean;
   }
 
-  let { rows, selectable = false, loading = false, initialSelected = [] }: Props = $props();
+  let { rows, selectable = false, loading = false, initialSelected = [], withMobileRow = false }: Props = $props();
+
+  const mobileRow = createRawSnippet<[Row]>((row) => ({
+    render: () => `<span data-testid="mobile-row">${row().name} (${row().id})</span>`,
+  }));
 
   let selected = $state<string[]>(untrack(() => [...initialSelected]));
   let sort = $state<DataTableSort | undefined>(undefined);
@@ -41,5 +47,7 @@
   {loading}
   bind:selected
   bind:sort
+  mobileRow={withMobileRow ? mobileRow : undefined}
+  rowLabel={(r: Row) => r.name}
 />
 <pre data-testid="state">{JSON.stringify({ selected, sort })}</pre>

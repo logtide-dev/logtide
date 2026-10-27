@@ -223,7 +223,7 @@
 			{#if lookupsReady}
 				<ScopeBar mode="multi" {projects} showTime={false} />
 			{/if}
-			<Button variant="outline" size="sm" class="gap-2" onclick={() => reload(true)}>
+			<Button variant="outline" size="sm" class="gap-2 max-md:h-11 max-md:w-full" onclick={() => reload(true)}>
 				<RefreshCw class="w-4 h-4" aria-hidden="true" />
 				Refresh
 			</Button>

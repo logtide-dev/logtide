@@ -37,10 +37,10 @@
 <Popover.Root>
 	<Popover.Trigger>
 		{#snippet child({ props })}
-			<Button {...props} variant="outline" size="sm" class="gap-2">
+			<Button {...props} variant="outline" size="sm" class="gap-2 max-md:h-11 max-md:w-full max-md:justify-start">
 				<span class="text-muted-foreground">{label}:</span>
-				<span>{summary}</span>
-				<ChevronDown class="w-4 h-4 opacity-50" aria-hidden="true" />
+				<span class="truncate">{summary}</span>
+				<ChevronDown class="w-4 h-4 shrink-0 opacity-50 max-md:ml-auto" aria-hidden="true" />
 			</Button>
 		{/snippet}
 	</Popover.Trigger>

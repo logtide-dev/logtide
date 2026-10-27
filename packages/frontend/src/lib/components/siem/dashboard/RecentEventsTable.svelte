@@ -5,6 +5,7 @@
 	import Timestamp from '$lib/components/app/Timestamp.svelte';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import Button from '$lib/components/ui/button/button.svelte';
+	import { isMobile } from '$lib/stores/media-query';
 	import Activity from '@lucide/svelte/icons/activity';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import Clock from '@lucide/svelte/icons/clock';
@@ -44,6 +45,30 @@
 				<Activity class="w-8 h-8 mb-2 opacity-50" />
 				<span class="text-sm">No recent events</span>
 			</div>
+		{:else if $isMobile}
+			<ul data-testid="recent-events-list">
+				{#each events.slice(0, 8) as event}
+					<li class="border-b last:border-0">
+						<button
+							type="button"
+							class="block w-full px-4 py-3 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+							onclick={() => onEventClick?.(event)}
+						>
+							<span class="flex items-start justify-between gap-2">
+								<span class="min-w-0 text-sm font-medium leading-snug">{event.ruleTitle}</span>
+								<SeverityBadge severity={event.severity} size="sm" />
+							</span>
+							<span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+								<span><Timestamp value={event.time} precision="second" /></span>
+								{#if event.service}
+									<span aria-hidden="true">·</span>
+									<span class="font-mono">{event.service}</span>
+								{/if}
+							</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
 		{:else}
 			<div class="overflow-x-auto">
 				<table class="w-full text-sm">

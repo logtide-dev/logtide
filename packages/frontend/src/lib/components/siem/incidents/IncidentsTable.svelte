@@ -65,6 +65,28 @@
 	];
 </script>
 
+{#snippet mobileRow(i: IncidentListItem)}
+	{@const a = assigneeOf(i)}
+	<a
+		href="/dashboard/incidents/{i.id}"
+		class="block rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+	>
+		<span class="block text-sm font-medium leading-snug">{i.title}</span>
+		<span class="mt-2 flex flex-wrap items-center gap-1.5">
+			<IncidentStatusBadge status={i.status} size="sm" />
+			<SeverityBadge kind="severity" value={i.severity} />
+			<IncidentSourceBadge source={i.source} />
+		</span>
+		<span class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+			<span>{projectLabel(i)}</span>
+			<span aria-hidden="true">·</span>
+			<span>{a ? a.name : 'Unassigned'}</span>
+			<span aria-hidden="true">·</span>
+			<span>Last event <Timestamp value={incidentLastEventAt(i)} relative /></span>
+		</span>
+	</a>
+{/snippet}
+
 {#snippet statusCell(i: IncidentListItem)}
 	<IncidentStatusBadge status={i.status} size="sm" />
 {/snippet}
@@ -114,6 +136,8 @@
 		selectable
 		bind:selected
 		{empty}
+		mobileRow={asCell(mobileRow)}
+		rowLabel={(i: IncidentListItem) => i.title}
 	/>
 	<Pagination {page} {pageSize} {total} {onPageChange} />
 </div>

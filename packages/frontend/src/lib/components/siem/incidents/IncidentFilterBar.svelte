@@ -72,6 +72,7 @@
 </script>
 
 <div class="flex flex-wrap items-center gap-2" data-testid="incident-filter-bar">
+	<div class="grid w-full grid-cols-1 gap-2 min-[480px]:grid-cols-3 md:contents">
 	<FilterMultiSelect
 		label="Status"
 		options={statusOptions}
@@ -91,13 +92,14 @@
 		selected={severity}
 		onChange={(next) => onChange({ severity: next as Severity[] })}
 	/>
+	</div>
 
-	<div role="group" aria-label="Assignee" class="inline-flex rounded-md border p-0.5">
+	<div role="group" aria-label="Assignee" class="inline-flex rounded-md border p-0.5 max-md:w-full">
 		{#each assigneeOptions as option (option.value)}
 			<button
 				type="button"
 				aria-pressed={assignee === option.value}
-				class="rounded px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {assignee ===
+				class="rounded px-2.5 py-1 text-xs font-medium max-md:h-9 max-md:flex-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {assignee ===
 				option.value
 					? 'bg-primary text-primary-foreground'
 					: 'text-muted-foreground hover:text-foreground'}"

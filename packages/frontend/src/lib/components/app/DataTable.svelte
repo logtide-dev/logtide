@@ -6,6 +6,7 @@
   import * as Table from '$lib/components/ui/table';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Skeleton } from '$lib/components/ui/skeleton';
+  import { isMobile } from '$lib/stores/media-query';
   import type { DataTableColumn, DataTableSort } from './data-table';
 
   interface Props {
@@ -17,6 +18,10 @@
     selected?: string[];
     sort?: DataTableSort;
     empty?: Snippet;
+    /** Phone layout: one card per row instead of the table. */
+    mobileRow?: Snippet<[T]>;
+    /** Accessible name of a row's checkbox in the phone layout. */
+    rowLabel?: (row: T) => string;
   }
 
   let {
@@ -28,6 +33,8 @@
     selected = $bindable([]),
     sort = $bindable(undefined),
     empty,
+    mobileRow,
+    rowLabel,
   }: Props = $props();
 
   const SKELETON_ROWS = 5;
@@ -65,6 +72,22 @@
     }
   }
 
+  // Phones have no column headers, so sorting moves to a select.
+  const sortOptions = $derived(
+    columns
+      .filter((c) => c.sortable)
+      .flatMap((c) => [
+        { value: `${c.key}:asc`, label: `${c.header}, ascending` },
+        { value: `${c.key}:desc`, label: `${c.header}, descending` },
+      ])
+  );
+
+  function chooseSort(value: string) {
+    if (!value) return;
+    const [key, dir] = value.split(':');
+    sort = { key, dir: dir === 'desc' ? 'desc' : 'asc' };
+  }
+
   function toggleRow(key: string, checked: boolean) {
     if (checked) {
       if (!selectedSet.has(key)) selected = [...selected, key];
@@ -74,6 +97,75 @@
   }
 </script>
 
+{#if mobileRow && $isMobile}
+  <div class="space-y-3">
+    {#if sortOptions.length > 0 || selectable}
+      <div class="flex items-end gap-3">
+        {#if sortOptions.length > 0}
+          <label class="grid flex-1 gap-1 text-xs font-medium text-muted-foreground">
+            Sort by
+            <select
+              class="h-11 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={sort ? `${sort.key}:${sort.dir}` : ''}
+              onchange={(e) => chooseSort(e.currentTarget.value)}
+            >
+              {#if !sort}<option value="">Default</option>{/if}
+              {#each sortOptions as o (o.value)}
+                <option value={o.value}>{o.label}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+        {#if selectable}
+          <label class="ml-auto flex h-11 shrink-0 items-center gap-2 rounded-md border bg-background px-3 text-sm">
+            <Checkbox
+              aria-label="Select all rows"
+              checked={allSelected}
+              indeterminate={someSelected}
+              disabled={loading || rows.length === 0}
+              onCheckedChange={(v) => toggleAll(v === true)}
+            />
+            All
+          </label>
+        {/if}
+      </div>
+    {/if}
+    {#if loading}
+      <div class="space-y-2" aria-busy="true">
+        {#each Array(SKELETON_ROWS) as _, i (i)}
+          <div data-testid="skeleton-row" class="h-20 animate-pulse rounded-lg border bg-muted/40"></div>
+        {/each}
+      </div>
+    {:else if rows.length === 0}
+      <div class="rounded-lg border px-4 py-8 text-center text-sm text-muted-foreground">
+        {#if empty}
+          {@render empty()}
+        {:else}
+          No results
+        {/if}
+      </div>
+    {:else}
+      <ul data-testid="data-table-list" class="overflow-hidden rounded-lg border bg-card">
+        {#each rows as row (rowKey(row))}
+          {@const key = rowKey(row)}
+          <li class="flex items-start gap-3 border-b px-3 py-3 last:border-b-0 {selectedSet.has(key) ? 'bg-muted/50' : ''}">
+            {#if selectable}
+              <Checkbox
+                class="mt-0.5"
+                aria-label={rowLabel ? `Select ${rowLabel(row)}` : 'Select row'}
+                checked={selectedSet.has(key)}
+                onCheckedChange={(v) => toggleRow(key, v === true)}
+              />
+            {/if}
+            <div class="min-w-0 flex-1">
+              {@render mobileRow(row)}
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+{:else}
 <Table.Root>
   <Table.Header>
     <Table.Row class="hover:bg-transparent">
@@ -156,3 +248,4 @@
     {/if}
   </Table.Body>
 </Table.Root>
+{/if}

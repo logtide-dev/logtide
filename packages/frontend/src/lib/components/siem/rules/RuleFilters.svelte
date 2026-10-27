@@ -3,7 +3,9 @@
   import { Input } from '$lib/components/ui/input';
   import { Button } from '$lib/components/ui/button';
   import type { RuleFilterValue } from './rule-filters';
+  import { isMobile } from '$lib/stores/media-query';
   import X from '@lucide/svelte/icons/x';
+  import ListFilter from '@lucide/svelte/icons/list-filter';
 
   interface Props {
     value: RuleFilterValue;
@@ -75,8 +77,14 @@
       value.enabled !== 'all',
   );
 
+  // Phones keep the search visible and fold the rest behind a Filters button.
+  let filtersOpen = $state(false);
+  const filterCount = $derived(
+    value.severity.length + value.tactic.length + value.source.length + (value.enabled !== 'all' ? 1 : 0)
+  );
+
   const chip =
-    'inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+    'inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium max-md:h-9 max-md:px-3.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
   const chipOn = 'border-primary bg-primary/10 text-foreground';
   const chipOff = 'border-border text-muted-foreground hover:text-foreground';
 </script>
@@ -85,15 +93,34 @@
   <div class="flex flex-wrap items-center gap-3">
     <Input
       type="search"
-      class="max-w-xs"
+      class="max-w-xs max-md:h-11 max-md:max-w-none max-md:basis-full"
       placeholder="Search rules"
       aria-label="Search rules"
       value={text}
       oninput={(e) => onInput((e.currentTarget as HTMLInputElement).value)}
     />
+    {#if $isMobile}
+      <Button
+        variant="outline"
+        class="h-11 w-full justify-start gap-2"
+        aria-expanded={filtersOpen}
+        onclick={() => (filtersOpen = !filtersOpen)}
+      >
+        <ListFilter class="size-4" aria-hidden="true" />
+        <span>Filters</span>
+        {#if filterCount > 0}
+          <span
+            data-testid="filters-count"
+            class="rounded-full bg-primary px-1.5 text-xs font-medium tabular-nums text-primary-foreground"
+            >{filterCount}</span
+          >
+        {/if}
+      </Button>
+    {/if}
+    {#if !$isMobile || filtersOpen || filterCount > 0}
     <select
       aria-label="MITRE tactic"
-      class="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      class="h-10 max-md:h-11 max-md:w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       value={value.tactic[0] ?? ''}
       onchange={(e) => {
         const v = (e.currentTarget as HTMLSelectElement).value;
@@ -105,10 +132,12 @@
         <option value={t.key}>{t.name}</option>
       {/each}
     </select>
+    {/if}
     {#if active}
       <Button
         variant="ghost"
         size="sm"
+        class="max-md:h-11 max-md:w-full"
         onclick={() => {
           clearTimeout(timer);
           text = '';
@@ -122,8 +151,10 @@
     {/if}
   </div>
 
-  <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+  {#if !$isMobile || filtersOpen || filterCount > 0}
+  <div class="flex flex-wrap items-center gap-x-6 gap-y-2 max-md:flex-col max-md:items-stretch max-md:gap-3">
     <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Severity">
+      {#if $isMobile}<span class="w-full text-xs font-medium text-muted-foreground">Severity</span>{/if}
       {#each SIGMA_LEVELS as level (level)}
         <button
           type="button"
@@ -136,6 +167,7 @@
       {/each}
     </div>
     <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Source">
+      {#if $isMobile}<span class="w-full text-xs font-medium text-muted-foreground">Source</span>{/if}
       {#each SOURCES as s (s.value)}
         <button
           type="button"
@@ -148,6 +180,7 @@
       {/each}
     </div>
     <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Status">
+      {#if $isMobile}<span class="w-full text-xs font-medium text-muted-foreground">Status</span>{/if}
       {#each ENABLED as e (e.value)}
         <button
           type="button"
@@ -160,4 +193,5 @@
       {/each}
     </div>
   </div>
+  {/if}
 </div>

@@ -36,25 +36,25 @@
 	let confirmDelete = $state(false);
 </script>
 
-<div class="flex flex-wrap items-center gap-2">
+<div class="flex flex-wrap items-center gap-2 max-md:w-full">
 	{#if actions.acknowledge}
-		<Button onclick={onAcknowledge} disabled={busy}>Acknowledge</Button>
+		<Button class="max-md:flex-1" onclick={onAcknowledge} disabled={busy}>Acknowledge</Button>
 		{#if actions.resolve}
-			<Button variant="outline" onclick={onResolve} disabled={busy}>Resolve</Button>
+			<Button variant="outline" class="max-md:flex-1" onclick={onResolve} disabled={busy}>Resolve</Button>
 		{/if}
 	{:else if actions.resolve}
-		<Button onclick={onResolve} disabled={busy}>Resolve</Button>
+		<Button class="max-md:flex-1" onclick={onResolve} disabled={busy}>Resolve</Button>
 	{/if}
 	{#if actions.reopen}
-		<Button onclick={onReopen} disabled={busy}>Reopen</Button>
+		<Button class="max-md:flex-1" onclick={onReopen} disabled={busy}>Reopen</Button>
 	{/if}
 
 	{#if actions.falsePositive}
-		<Button variant="outline" onclick={onFalsePositive} disabled={busy}>Mark false positive</Button>
+		<Button variant="outline" class="max-md:flex-1" onclick={onFalsePositive} disabled={busy}>Mark false positive</Button>
 	{/if}
 
 	{#if actions.publishToStatusPage}
-		<Button variant="outline" onclick={onPublish} disabled={busy}>Publish to status page</Button>
+		<Button variant="outline" class="max-md:flex-1" onclick={onPublish} disabled={busy}>Publish to status page</Button>
 	{/if}
 
 	<DropdownMenu.Root>
