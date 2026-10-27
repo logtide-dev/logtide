@@ -4,11 +4,14 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 const gotoMock = vi.fn();
 vi.mock('$app/navigation', () => ({ goto: (...a: unknown[]) => gotoMock(...a) }));
 
-const { getProjects, createProject, restoreProject, orgLoad, orgState } = vi.hoisted(() => {
+const { getProjects, getStats, createProject, restoreProject, orgLoad, orgState, healthState, getCapabilityUsage } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { writable } = require('svelte/store') as typeof import('svelte/store');
   return {
     getProjects: vi.fn(),
+    getStats: vi.fn(),
+    getCapabilityUsage: vi.fn(),
+    healthState: writable({ orgId: 'org-1' as string | null, byProject: {} as Record<string, unknown>, loading: false }),
     createProject: vi.fn(),
     restoreProject: vi.fn(),
     orgLoad: vi.fn(async () => {}),
@@ -27,6 +30,7 @@ const { getProjects, createProject, restoreProject, orgLoad, orgState } = vi.hoi
 vi.mock('$lib/api/projects', () => ({
   projectsAPI: {
     getProjects: (...a: unknown[]) => getProjects(...a),
+    getStats: (...a: unknown[]) => getStats(...a),
     createProject: (...a: unknown[]) => createProject(...a),
     restoreProject: (...a: unknown[]) => restoreProject(...a),
   },
@@ -39,6 +43,10 @@ vi.mock('$lib/stores/org-projects', () => ({
     projectName: vi.fn(),
   },
 }));
+vi.mock('$lib/stores/project-health', () => ({
+  projectHealthStore: { subscribe: healthState.subscribe, load: vi.fn(async () => {}), reset: vi.fn() },
+}));
+vi.mock('$lib/api/usage', () => ({ getCapabilityUsage: (...a: unknown[]) => getCapabilityUsage(...a) }));
 vi.mock('$lib/stores/checklist', () => ({ checklistStore: { completeItem: vi.fn() } }));
 
 const toastSuccess = vi.fn();
@@ -69,6 +77,11 @@ beforeEach(() => {
   gotoMock.mockReset();
   toastSuccess.mockReset();
   getProjects.mockReset();
+  getStats.mockReset();
+  getStats.mockResolvedValue({ projects: {} });
+  getCapabilityUsage.mockReset();
+  getCapabilityUsage.mockResolvedValue({ capabilities: [] });
+  healthState.set({ orgId: 'org-1', byProject: {}, loading: false });
   createProject.mockReset();
   restoreProject.mockReset();
   orgLoad.mockClear();
@@ -136,10 +149,10 @@ describe('projects page', () => {
     expect(toastSuccess).toHaveBeenCalledWith('Project restored');
   });
 
-  it('has no delete controls on the cards', async () => {
+  it('has no delete controls in the table', async () => {
     getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
     render(ProjectsPage);
-    await screen.findByTestId('project-card');
+    await screen.findByRole('link', { name: 'Project settings' });
     expect(screen.queryByRole('button', { name: /delete|trash/i })).toBeNull();
   });
 
@@ -147,7 +160,7 @@ describe('projects page', () => {
     getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha'), project('p-2', 'Beta')] });
     orgState.update((s) => ({ ...s, receiving: new Set(['p-2']) }));
     render(ProjectsPage);
-    await screen.findAllByTestId('project-card');
+    await screen.findAllByRole('link', { name: 'Project settings' });
     const connect = screen.getAllByRole('link', { name: 'Connect' });
     expect(connect).toHaveLength(1);
     expect(connect[0]).toHaveAttribute('href', '/dashboard/projects/p-1/settings#connect');
@@ -160,6 +173,51 @@ describe('projects page', () => {
     await fireEvent.input(search, { target: { value: 'zzz' } });
     expect(await screen.findByText('No projects found')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
-    expect(await screen.findByTestId('project-card')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Project settings' })).toBeInTheDocument();
+  });
+
+  it('renders rows with dashes when the stats endpoint fails (no error state)', async () => {
+    getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
+    getStats.mockRejectedValue(new Error('boom'));
+    render(ProjectsPage);
+    expect(await screen.findByRole('link', { name: 'Alpha' })).toBeInTheDocument();
+    await waitFor(() => expect(getStats).toHaveBeenCalledWith('org-1'));
+    expect(screen.queryByText('Could not load projects')).toBeNull();
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
+  });
+
+  it('shows stats once they load', async () => {
+    getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
+    getStats.mockResolvedValue({
+      projects: { 'p-1': { logs24h: 12345, errors24h: 10, hourly: [1, 2, 3], openIncidents: 2 } },
+    });
+    render(ProjectsPage);
+    expect(await screen.findByText('12,345')).toBeInTheDocument();
+  });
+
+  it('health filter With problems hides healthy projects', async () => {
+    getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha'), project('p-2', 'Beta')] });
+    healthState.set({
+      orgId: 'org-1',
+      loading: false,
+      byProject: {
+        'p-1': { status: 'healthy', openIssues: [] },
+        'p-2': { status: 'critical', openIssues: [{ checkKey: 'silent', severity: 'critical', muted: false }] },
+      },
+    });
+    render(ProjectsPage);
+    await screen.findByRole('link', { name: 'Alpha' });
+    await fireEvent.change(screen.getByLabelText('Filter by health'), { target: { value: 'problems' } });
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Alpha' })).toBeNull());
+    expect(screen.getByRole('link', { name: 'Beta' })).toBeInTheDocument();
+  });
+
+  it('only deleted projects still render without a table error', async () => {
+    getProjects.mockResolvedValue({
+      projects: [project('p-9', 'Old one', { deletedAt: '2026-10-01T10:00:00.000Z' })],
+    });
+    render(ProjectsPage);
+    expect(await screen.findByText('Deleted projects')).toBeInTheDocument();
+    expect(screen.queryByText('Could not load projects')).toBeNull();
   });
 });

@@ -17,7 +17,6 @@ const FILES = [
   'lib/components/shell/DashboardErrorState.svelte',
   'lib/components/shell/HeaderBreadcrumb.svelte',
   'lib/components/shell/PageSkeleton.svelte',
-  'lib/components/shell/ProjectCard.svelte',
   'lib/components/shell/SidebarNav.svelte',
   'lib/components/shell/error-details.ts',
   'lib/components/shell/events.ts',

@@ -11,13 +11,14 @@
   import Input from "$lib/components/ui/input/input.svelte";
   import { buttonVariants } from "$lib/components/ui/button";
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "$lib/components/ui/card";
-  import { Skeleton } from "$lib/components/ui/skeleton";
   import Spinner from "$lib/components/Spinner.svelte";
   import PageHeader from "$lib/components/app/PageHeader.svelte";
   import EmptyState from "$lib/components/app/EmptyState.svelte";
   import CreateProjectDialog from "$lib/components/CreateProjectDialog.svelte";
-  import ProjectCard from "$lib/components/shell/ProjectCard.svelte";
-  import { describeLastEvent } from "$lib/components/shell/last-event";
+  import ProjectsTable, { type HealthFilter } from "$lib/components/projects/ProjectsTable.svelte";
+  import QuotaNearLimitBanner from "$lib/components/projects/QuotaNearLimitBanner.svelte";
+  import { projectHealthStore } from "$lib/stores/project-health";
+  import type { ProjectStats } from "$lib/api/projects";
   import { formatDateShort } from "$lib/utils/datetime";
   import Plus from "@lucide/svelte/icons/plus";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
@@ -52,6 +53,11 @@
   let restoringProjectId = $state<string | null>(null);
 
   let searchQuery = $state("");
+  let healthFilter = $state<HealthFilter>("all");
+
+  // Per-project numbers come from one batched call and never block the list:
+  // null means "not loaded / failed" and the cells render a dash.
+  let stats = $state<Record<string, ProjectStats> | null>(null);
 
   let activeProjects = $derived(allProjects.filter((p) => !p.deletedAt));
   let deletedProjects = $derived(allProjects.filter((p) => !!p.deletedAt));
@@ -104,8 +110,18 @@
     loading = true;
     error = "";
 
-    // Last event data never blocks the grid; cards degrade without it.
+    // Last event, health and stats never block the table; cells degrade without them.
     void orgProjectsStore.load(orgId);
+    void projectHealthStore.load(orgId);
+    stats = null;
+    projectsAPI
+      .getStats(orgId)
+      .then((res) => {
+        if ($currentOrganization?.id === orgId) stats = res.projects ?? {};
+      })
+      .catch(() => {
+        if ($currentOrganization?.id === orgId) stats = null;
+      });
 
     try {
       const response = await projectsAPI.getProjects(orgId, { includeDeleted: true });
@@ -119,13 +135,12 @@
     }
   }
 
-  function statusFor(project: Project) {
-    const fresh = $orgProjectsStore.orgId === $currentOrganization?.id;
-    return describeLastEvent({
-      lastEventAt: fresh ? $orgProjectsStore.lastEventAt[project.id] : null,
-      receiving: fresh && $orgProjectsStore.receiving.has(project.id),
-    });
-  }
+  let storesFresh = $derived($orgProjectsStore.orgId === $currentOrganization?.id);
+  let lastEventAt = $derived(storesFresh ? $orgProjectsStore.lastEventAt : {});
+  let receiving = $derived(storesFresh ? $orgProjectsStore.receiving : new Set<string>());
+  let healthByProject = $derived(
+    $projectHealthStore.orgId === $currentOrganization?.id ? $projectHealthStore.byProject : {},
+  );
 
   function purgeDate(project: Project): string {
     const d = new Date(project.deletedAt as Date | string);
@@ -200,22 +215,41 @@
   </PageHeader>
 
   <div class="space-y-6">
+    {#if $currentOrganization}
+      <QuotaNearLimitBanner organizationId={$currentOrganization.id} role={$currentOrganization.role} />
+    {/if}
+
     {#if !loading && allProjects.length > 0}
-      <div class="w-full">
+      <div class="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
         <Input
           type="search"
           placeholder="Search projects by name or description"
           aria-label="Search projects"
           bind:value={searchQuery}
+          class="sm:max-w-md"
         />
+        <select
+          aria-label="Filter by health"
+          class="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          bind:value={healthFilter}
+        >
+          <option value="all">All</option>
+          <option value="problems">With problems</option>
+          <option value="no_data">No data</option>
+        </select>
       </div>
     {/if}
 
     {#if loading}
-      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3" data-testid="projects-skeleton">
-        {#each Array(6) as _}
-          <Skeleton class="h-36 rounded-lg" />
-        {/each}
+      <div data-testid="projects-skeleton">
+        <ProjectsTable
+          projects={[]}
+          loading={true}
+          stats={null}
+          health={{}}
+          lastEventAt={{}}
+          receiving={new Set()}
+        />
       </div>
     {:else if error && allProjects.length === 0}
       <EmptyState variant="error" title="Could not load projects" description={error}>
@@ -248,11 +282,18 @@
       </EmptyState>
     {:else}
       {#if filteredActive.length > 0}
-        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {#each filteredActive as project (project.id)}
-            <ProjectCard {project} status={statusFor(project)} />
-          {/each}
-        </div>
+        <ProjectsTable
+          projects={filteredActive}
+          {stats}
+          health={healthByProject}
+          {lastEventAt}
+          {receiving}
+          {healthFilter}
+        >
+          {#snippet empty()}
+            No projects match this health filter.
+          {/snippet}
+        </ProjectsTable>
       {/if}
 
       {#if filteredDeleted.length > 0}
@@ -260,7 +301,7 @@
           <h2 class="text-sm font-semibold text-muted-foreground">Deleted projects</h2>
           <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {#each filteredDeleted as project (project.id)}
-              <Card class="opacity-70 border-dashed" data-testid="deleted-project-card">
+              <Card class="opacity-70 border-dashed flex h-full flex-col" data-testid="deleted-project-card">
                 <CardHeader>
                   <div class="flex items-center gap-2">
                     <CardTitle class="text-lg truncate">{project.name}</CardTitle>
@@ -269,10 +310,10 @@
                     </span>
                   </div>
                   {#if project.description}
-                    <CardDescription class="mt-1.5">{project.description}</CardDescription>
+                    <CardDescription class="mt-1.5 line-clamp-2" title={project.description}>{project.description}</CardDescription>
                   {/if}
                 </CardHeader>
-                <CardContent>
+                <CardContent class="mt-auto">
                   <div class="space-y-4">
                     <p class="text-xs text-muted-foreground" data-testid="purge-date">
                       Permanently deleted on {purgeDate(project)}
