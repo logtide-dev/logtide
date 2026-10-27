@@ -789,6 +789,7 @@ export class NotificationChannelsService {
       incident: [],
       error: [],
       monitoring: [],
+      project_health: [],
     };
 
     for (const row of rows) {

@@ -14,6 +14,7 @@
 	import Bug from '@lucide/svelte/icons/bug';
 	import Bell from '@lucide/svelte/icons/bell';
 	import Activity from '@lucide/svelte/icons/activity';
+	import HeartPulse from '@lucide/svelte/icons/heart-pulse';
 
 	interface Props {
 		eventType: NotificationEventType;
@@ -29,6 +30,7 @@
 		incident: AlertTriangle as unknown as Component,
 		monitoring: Activity as unknown as Component,
 		error: Bug as unknown as Component,
+		project_health: HeartPulse as unknown as Component,
 	};
 
 	const Icon = $derived(ICONS[eventType]);

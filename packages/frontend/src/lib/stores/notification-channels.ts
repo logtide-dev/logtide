@@ -33,6 +33,7 @@ const initialState: NotificationChannelsState = {
     incident: [],
     error: [],
     monitoring: [],
+    project_health: [],
   },
   defaultsLoading: false,
   overrides: [],

@@ -18,6 +18,7 @@
 		incident: 'A security incident is created.',
 		monitoring: 'A monitor goes down or recovers.',
 		error: 'A new error group appears or a resolved one comes back.',
+		project_health: 'Project stopped sending data, rejected records, clock problems on the sender.',
 	};
 
 	let currentOrg = $derived($organizationStore.currentOrganization);

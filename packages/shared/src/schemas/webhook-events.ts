@@ -6,6 +6,8 @@ export const webhookEventTypeSchema = z.enum([
   'incident.created',
   'error.detected',
   'monitor.status_changed',
+  'project.health.opened',
+  'project.health.resolved',
   'channel.test',
   // Generic notification deliveries through notification channels.
   // Type-specific events (alert.triggered, etc.) use their own types via the queue jobs.
@@ -110,6 +112,23 @@ export const incidentCreatedDataSchema = z
   })
   .passthrough();
 
+/** Project health issue opened or resolved. resolved_at is null while open. */
+export const projectHealthDataSchema = z
+  .object({
+    project_id: z.string().uuid(),
+    project_name: z.string(),
+    check_key: z.string(),
+    severity: z.enum(['critical', 'warning']),
+    title: z.string(),
+    message: z.string(),
+    opened_at: z.string().datetime(),
+    resolved_at: z.string().datetime().nullable(),
+    details: z.record(z.unknown()),
+    link: z.string(),
+  })
+  .passthrough();
+export type ProjectHealthData = z.infer<typeof projectHealthDataSchema>;
+
 export const channelNotificationDataSchema = z
   .object({
     title: z.string(),
@@ -138,6 +157,8 @@ export const WEBHOOK_EVENT_DATA_SCHEMAS = {
   'incident.created': incidentCreatedDataSchema,
   'error.detected': errorDetectedDataSchema,
   'monitor.status_changed': monitorStatusChangedDataSchema,
+  'project.health.opened': projectHealthDataSchema,
+  'project.health.resolved': projectHealthDataSchema,
   'channel.test': channelNotificationDataSchema,
   'channel.notification': channelNotificationDataSchema,
 } as const;

@@ -975,6 +975,30 @@ export interface MonitorChannelsTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface ProjectHealthIssuesTable {
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string;
+  check_key: string;
+  severity: 'critical' | 'warning';
+  opened_at: Timestamp;
+  last_seen_at: Timestamp;
+  resolved_at: Timestamp | null;
+  details: ColumnType<Record<string, unknown>, string | Record<string, unknown> | undefined, string | Record<string, unknown>>;
+  notified_open_at: Timestamp | null;
+  notified_resolve_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
+export interface ProjectNotificationSettingsTable {
+  project_id: string;
+  organization_id: string;
+  health_channel_ids: ColumnType<string[], string[] | string | undefined, string[] | string>;
+  silent_minutes: Generated<number>;
+  mutes: ColumnType<Record<string, unknown>, string | Record<string, unknown> | undefined, string | Record<string, unknown>>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface IncidentChannelsTable {
   id: Generated<string>;
   incident_id: string;
@@ -1340,6 +1364,8 @@ export interface Database {
   error_group_channels: ErrorGroupChannelsTable;
   organization_default_channels: OrganizationDefaultChannelsTable;
   monitor_channels: MonitorChannelsTable;
+  project_health_issues: ProjectHealthIssuesTable;
+  project_notification_settings: ProjectNotificationSettingsTable;
   // PII masking
   pii_masking_rules: PiiMaskingRulesTable;
   organization_pii_salts: OrganizationPiiSaltsTable;

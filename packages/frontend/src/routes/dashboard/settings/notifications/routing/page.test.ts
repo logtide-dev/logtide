@@ -51,7 +51,7 @@ const opsEmail = {
 	updatedAt: '2026-08-10T00:00:00.000Z',
 };
 
-const emptyDefaults = { alert: [], sigma: [], incident: [], error: [], monitoring: [] };
+const emptyDefaults = { alert: [], sigma: [], incident: [], error: [], monitoring: [], project_health: [] };
 
 const LABELS = ['Alerts', 'Security detections', 'Security incidents', 'Uptime', 'Errors'];
 

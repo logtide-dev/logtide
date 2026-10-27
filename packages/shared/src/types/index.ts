@@ -14,6 +14,9 @@ export * from './detection-pack.js';
 export * from './notification-channel.js';
 export * from './notification-routing.js';
 
+// Re-export project health types
+export * from './project-health.js';
+
 // Re-export webhook delivery types
 export * from './webhook-delivery.js';
 
