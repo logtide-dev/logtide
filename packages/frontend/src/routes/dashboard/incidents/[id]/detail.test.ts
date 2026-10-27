@@ -204,7 +204,7 @@ describe('incident detail page', () => {
     expect(screen.getByRole('dialog').textContent).toContain('"Failed logins"');
   });
 
-  it('an SSE incident_updated for this id merges into the page and a detection_created reloads silently', async () => {
+  it('an SSE incident_updated for this id merges into the page and a burst of detections reloads once, silently', async () => {
     await renderPage();
     await waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
     expect(FakeEventSource.instances[0].url).toContain('incidentId=i1');
@@ -217,8 +217,10 @@ describe('incident detail page', () => {
     await screen.findByRole('heading', { name: 'Renamed by someone' });
 
     const before = h.get.mock.calls.length;
-    FakeEventSource.instances[0].emit({ type: 'detection_created', data: {} });
-    await waitFor(() => expect(h.get.mock.calls.length).toBeGreaterThan(before));
+    for (let i = 0; i < 3; i++) FakeEventSource.instances[0].emit({ type: 'detection_created', data: {} });
+    await waitFor(() => expect(h.get.mock.calls.length).toBeGreaterThan(before), { timeout: 3000 });
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(h.get.mock.calls.length).toBe(before + 1);
     expect(screen.queryByLabelText('Loading incident')).toBeNull();
   });
 

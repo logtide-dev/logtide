@@ -172,15 +172,24 @@
 		});
 	});
 
-	// New detections or updates also change the timeline: refresh it silently.
+	// New detections or updates also change the timeline: refresh it silently,
+	// once per burst (each detection is its own stream event).
+	const REALTIME_RELOAD_DELAY_MS = 1000;
 	let lastEvent: unknown = null;
+	let realtimeReloadTimer: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
 		const ev = $lastSseEvent;
 		if (!ev || ev === lastEvent) return;
 		lastEvent = ev;
-		if (ev.type === 'detection_created' || ev.type === 'incident_updated') {
-			untrack(() => void loadIncident({ silent: true }));
-		}
+		if (ev.type !== 'detection_created' && ev.type !== 'incident_updated') return;
+		if (realtimeReloadTimer) clearTimeout(realtimeReloadTimer);
+		realtimeReloadTimer = setTimeout(() => {
+			realtimeReloadTimer = null;
+			void loadIncident({ silent: true });
+		}, REALTIME_RELOAD_DELAY_MS);
+	});
+	$effect(() => () => {
+		if (realtimeReloadTimer) clearTimeout(realtimeReloadTimer);
 	});
 
 	async function apply(patch: IncidentPatch, message: string): Promise<boolean> {

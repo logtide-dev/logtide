@@ -53,7 +53,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
     {
       config: {
         rateLimit: {
-          max: 60,
+          max: 120,
           timeWindow: '1 minute',
         },
       },
@@ -132,7 +132,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
     {
       config: {
         rateLimit: {
-          max: 60,
+          max: 120,
           timeWindow: '1 minute',
         },
       },
