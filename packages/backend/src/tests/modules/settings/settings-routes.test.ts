@@ -297,6 +297,36 @@ describe('Settings Routes', () => {
 
       expect(response.statusCode).toBe(400);
     });
+
+    it('should persist updates.channel (was silently dropped)', async () => {
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/v1/admin/settings',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json',
+        },
+        payload: { 'updates.channel': 'beta' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().settings[SETTING_KEYS.UPDATES_CHANNEL]).toBe('beta');
+      expect(await settingsService.get(SETTING_KEYS.UPDATES_CHANNEL)).toBe('beta');
+    });
+
+    it('should reject an invalid updates.channel', async () => {
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/v1/admin/settings',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json',
+        },
+        payload: { 'updates.channel': 'nightly' },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
   });
 
   describe('DELETE /api/v1/admin/settings/:key', () => {

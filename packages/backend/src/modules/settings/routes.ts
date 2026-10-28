@@ -26,6 +26,7 @@ const updateSettingsSchema = z.object({
   'auth.signup_enabled': z.boolean().optional(),
   'auth.mode': z.enum(['standard', 'none']).optional(),
   'auth.default_user_id': z.string().uuid().nullable().optional(),
+  'updates.channel': z.enum(['stable', 'beta']).optional(),
 });
 
 // Rate limit config for admin routes
