@@ -5,6 +5,13 @@ import { EXTENSION_API_VERSION, type LogtideExtension } from './types.js';
 
 const NAME_RE = /^[a-z][a-z0-9_]{1,30}$/;
 
+/** Names that would collide with Postgres or core schemas (the name becomes a schema). */
+const RESERVED_NAMES = new Set(['public', 'information_schema', 'graphile_worker']);
+
+function isReservedName(name: string): boolean {
+  return RESERVED_NAMES.has(name) || name.startsWith('pg_');
+}
+
 /**
  * Load extension modules listed in LOGTIDE_EXTENSIONS (comma-separated paths).
  * Each module default-exports a LogtideExtension. Any failure is FATAL at
@@ -42,6 +49,11 @@ export async function loadExtensionModules(
     if (typeof ext.name !== 'string' || !NAME_RE.test(ext.name)) {
       throw new Error(
         `[Extensions] Module ${resolved} has invalid extension name '${String(ext.name)}' (must match ${NAME_RE})`
+      );
+    }
+    if (isReservedName(ext.name)) {
+      throw new Error(
+        `[Extensions] Module ${resolved} uses reserved extension name '${ext.name}' (public, information_schema, graphile_worker and pg_* are reserved)`
       );
     }
     if (ext.apiVersion !== EXTENSION_API_VERSION) {

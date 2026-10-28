@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { loadExtensionModules } from '../../extensions/loader.js';
@@ -37,5 +39,28 @@ describe('loadExtensionModules', () => {
     await expect(loadExtensionModules(`${fx('valid.mjs')},${fx('valid.mjs')}`)).rejects.toThrow(
       "duplicate extension name 'fixture'"
     );
+  });
+
+  describe('reserved names', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ext-reserved-'));
+    afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+    it.each(['public', 'information_schema', 'graphile_worker', 'pg_catalog', 'pg_anything'])(
+      "rejects '%s'",
+      async (name) => {
+        const file = path.join(tmp, `${name}.mjs`);
+        fs.writeFileSync(file, `export default { name: '${name}', apiVersion: 1, register() {} };`);
+        await expect(loadExtensionModules(file)).rejects.toThrow(
+          `[Extensions] Module ${file} uses reserved extension name '${name}'`
+        );
+      }
+    );
+
+    it('accepts names that only contain a reserved word', async () => {
+      const file = path.join(tmp, 'mypg_public.mjs');
+      fs.writeFileSync(file, "export default { name: 'mypg_public', apiVersion: 1, register() {} };");
+      const mods = await loadExtensionModules(file);
+      expect(mods[0].name).toBe('mypg_public');
+    });
   });
 });
