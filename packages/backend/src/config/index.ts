@@ -263,6 +263,11 @@ const configSchema = z.object({
   // A missing or throwing module is FATAL at boot, by design.
   HOOKS_MODULES: z.string().optional(),
 
+  // In-process extension modules. Comma-separated paths to .js/.mjs modules
+  // loaded at boot (server AND worker). Empty or unset means no extensions.
+  // A missing or invalid module is FATAL at boot, by design.
+  LOGTIDE_EXTENSIONS: z.string().optional(),
+
   // Initial Admin (for first deployment - creates admin user if no users exist)
   INITIAL_ADMIN_EMAIL: z.string().email().optional(),
   INITIAL_ADMIN_PASSWORD: z.string().min(8).optional(),
