@@ -77,6 +77,8 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `incident.created` | A new security incident was created (typically from a Sigma rule detection). |
 | `error.detected` | An exception group crossed its notification threshold. |
 | `monitor.status_changed` | An uptime monitor changed status (e.g. up → down). |
+| `project.health.opened` | A project health check found a problem (project stopped sending data, records rejected by PII masking, out-of-range timestamps, data sent with a revoked API key). Sent once when the issue opens. |
+| `project.health.resolved` | A project health issue cleared. Same `data` shape as `project.health.opened`, with `resolved_at` set. |
 | `channel.test` | A test delivery sent when verifying a notification channel. |
 
 ### Per-type `data` fields
@@ -159,6 +161,22 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `consecutive_failures` | no | `number` | How many checks in a row have failed. |
 | `downtime_duration` | no | `string \| null` | Human-readable duration of the current downtime. |
 | `link` | yes | `string` | URL to the monitor detail page. |
+
+**`project.health.opened` / `project.health.resolved`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `project_id` | yes | `string (UUID)` | Project the issue belongs to. |
+| `project_name` | yes | `string` | Project name. |
+| `check_key` | yes | `string` | `silent`, `pii_rejected`, `timestamp_skew_logs`, `timestamp_skew_spans`, `timestamp_skew_metrics` or `revoked_key`. |
+| `severity` | yes | `string` | `critical` or `warning`. |
+| `title` | yes | `string` | Short notification title. |
+| `message` | yes | `string` | Human-readable summary. |
+| `opened_at` | yes | `string (ISO 8601)` | When the issue opened. |
+| `resolved_at` | yes | `string (ISO 8601) | null` | When the issue cleared; `null` on `project.health.opened`. |
+| `details` | yes | `object` | Check-specific numbers (counts, thresholds, time offsets). |
+| `link` | yes | `string` | URL to the project page. |
+
 
 **`channel.test`**
 
