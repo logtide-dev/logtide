@@ -130,4 +130,97 @@ describe('admin entitlements routes', () => {
     });
     expect(res.statusCode).toBe(403);
   });
+
+  it('GET exposes registry defaults and the explicit overrides separately', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'alerts.max_rules', enabled: null, limit_value: 7 })
+      .execute();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/organizations/${orgId}/entitlements`,
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.entitlements['alerts.max_rules']).toEqual({ kind: 'limit', limit: 7 });
+    expect(body.defaults['alerts.max_rules']).toEqual({ kind: 'limit', limit: null });
+    expect(body.defaults['auth.sso']).toEqual({ kind: 'boolean', enabled: true });
+    expect(body.overrides).toEqual({ 'alerts.max_rules': { enabled: null, limitValue: 7 } });
+  });
+
+  it('GET rejects a malformed org id with 400', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/admin/organizations/not-a-uuid/entitlements`,
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  describe('DELETE /organizations/:id/entitlements/:capability', () => {
+    it('removes the override so the org falls back to the default', async () => {
+      await app.inject({
+        method: 'PUT',
+        url: `/api/v1/admin/organizations/${orgId}/entitlements`,
+        headers: { Authorization: `Bearer ${adminToken}` },
+        payload: { entitlements: [{ capability: 'alerts.max_rules', limitValue: 3 }] },
+      });
+      expect(await capabilities.getLimit(orgId, 'alerts.max_rules')).toBe(3);
+
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/admin/organizations/${orgId}/entitlements/alerts.max_rules`,
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toMatchObject({ removed: true });
+
+      const row = await db
+        .selectFrom('organization_entitlements')
+        .select('capability')
+        .where('organization_id', '=', orgId)
+        .where('capability', '=', 'alerts.max_rules')
+        .executeTakeFirst();
+      expect(row).toBeUndefined();
+      expect(await capabilities.getLimit(orgId, 'alerts.max_rules')).toBeNull();
+
+      const audit = await db
+        .selectFrom('audit_log')
+        .selectAll()
+        .where('action', '=', 'org.entitlements_updated')
+        .where('organization_id', '=', orgId)
+        .orderBy('time', 'desc')
+        .executeTakeFirst();
+      expect((audit!.metadata as any).reset).toEqual(['alerts.max_rules']);
+    });
+
+    it('is idempotent when no override exists', async () => {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/admin/organizations/${orgId}/entitlements/auth.sso`,
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toMatchObject({ removed: false });
+    });
+
+    it('rejects an unknown capability with 400', async () => {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/admin/organizations/${orgId}/entitlements/nope.nothing`,
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects a non-admin with 403', async () => {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/admin/organizations/${orgId}/entitlements/auth.sso`,
+        headers: { Authorization: `Bearer ${memberToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
 });

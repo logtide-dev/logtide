@@ -7,10 +7,13 @@ import { requireAdmin } from '../admin/middleware.js';
 import {
   capabilities,
   CAPABILITIES,
+  CAPABILITY_NAMES,
   isKnownCapability,
   type CapabilityName,
+  type EntitlementValue,
 } from '../../capabilities/index.js';
 import { auditLogService } from '../audit-log/index.js';
+import { validateUuidParams } from '../admin/params.js';
 
 const entitlementInputSchema = z.object({
   capability: z.string(),
@@ -69,6 +72,7 @@ function toUpsertRow(organizationId: string, input: EntitlementInput): {
 
 export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
   fastify.addHook('onRequest', authenticate);
+  fastify.addHook('preValidation', validateUuidParams);
 
   const rateLimitConfig = { max: 100, timeWindow: '1 minute' };
 
@@ -79,7 +83,33 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const list = await capabilities.list(id);
-      return reply.send({ entitlements: list });
+
+      // Registry defaults (incl. CAPABILITY_DEFAULTS_JSON) and the explicit
+      // per-org rows, so clients can tell "inherited" from "override".
+      const defaults = {} as Record<CapabilityName, EntitlementValue>;
+      for (const name of CAPABILITY_NAMES) {
+        const def = CAPABILITIES[name];
+        defaults[name] =
+          def.kind === 'boolean'
+            ? { kind: 'boolean', enabled: def.defaultEnabled }
+            : { kind: def.kind, limit: def.defaultLimit };
+      }
+      const rows = await db
+        .selectFrom('organization_entitlements')
+        .select(['capability', 'enabled', 'limit_value'])
+        .where('organization_id', '=', id)
+        .execute();
+      const overrides: Record<string, { enabled: boolean | null; limitValue: number | null }> = {};
+      for (const row of rows) {
+        if (!isKnownCapability(row.capability)) continue;
+        overrides[row.capability] = {
+          enabled: row.enabled,
+          // BIGINT comes back as a string from pg
+          limitValue: row.limit_value === null ? null : Number(row.limit_value),
+        };
+      }
+
+      return reply.send({ entitlements: list, defaults, overrides });
     }
   );
 
@@ -136,6 +166,39 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
         }
         throw error;
       }
+    }
+  );
+
+  // DELETE /api/v1/admin/organizations/:id/entitlements/:capability
+  // Removes the explicit override so the org inherits the default again.
+  fastify.delete(
+    '/organizations/:id/entitlements/:capability',
+    { preHandler: [requireAdmin], config: { allowServiceToken: true, rateLimit: rateLimitConfig } },
+    async (request, reply) => {
+      const { id, capability } = request.params as { id: string; capability: string };
+      if (!isKnownCapability(capability)) {
+        return reply.status(400).send({ error: `Unknown capability '${capability}'` });
+      }
+
+      const result = await db
+        .deleteFrom('organization_entitlements')
+        .where('organization_id', '=', id)
+        .where('capability', '=', capability)
+        .executeTakeFirst();
+      const removed = Number(result.numDeletedRows) > 0;
+
+      capabilities.invalidate(id);
+
+      if (removed) {
+        await auditLogService.record({
+          action: 'org.entitlements_updated',
+          target: { type: 'organization_entitlement', id },
+          organizationId: id,
+          metadata: { ...(request.servicePrincipal ? { actor: SERVICE_ACTOR_LABEL } : {}), reset: [capability] },
+        });
+      }
+
+      return reply.send({ removed });
     }
   );
 }
