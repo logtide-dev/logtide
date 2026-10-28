@@ -987,7 +987,15 @@ export interface ProjectHealthIssuesTable {
   details: ColumnType<Record<string, unknown>, string | Record<string, unknown> | undefined, string | Record<string, unknown>>;
   notified_open_at: Timestamp | null;
   notified_resolve_at: Timestamp | null;
+  baseline: Generated<boolean>;
   created_at: Generated<Timestamp>;
+}
+
+export interface ProjectHealthStateTable {
+  project_id: string;
+  organization_id: string;
+  first_evaluated_at: Timestamp;
+  last_receiving_at: Timestamp | null;
 }
 
 export interface ProjectNotificationSettingsTable {
@@ -1366,6 +1374,7 @@ export interface Database {
   monitor_channels: MonitorChannelsTable;
   project_health_issues: ProjectHealthIssuesTable;
   project_notification_settings: ProjectNotificationSettingsTable;
+  project_health_state: ProjectHealthStateTable;
   // PII masking
   pii_masking_rules: PiiMaskingRulesTable;
   organization_pii_salts: OrganizationPiiSaltsTable;
