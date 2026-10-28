@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 
 const ok = <T,>(v: T) => vi.fn().mockResolvedValue(v);
 
-const h = vi.hoisted(() => ({ api: {} as Record<string, ReturnType<typeof vi.fn>> }));
+const h = vi.hoisted(() => ({ api: {} as Record<string, (...args: unknown[]) => unknown> }));
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/api/admin', () => ({
@@ -13,7 +13,7 @@ vi.mock('$lib/api/admin', () => ({
 import { authStore } from '$lib/stores/auth';
 import Overview from './+page.svelte';
 
-function setApi(overrides: Record<string, ReturnType<typeof vi.fn>> = {}) {
+function setApi(overrides: Record<string, unknown> = {}) {
   h.api = {
     getSystemStats: ok({
       users: { total: 1500, active: 1200, growth: { today: 3, week: 10, month: 40 } },
@@ -56,7 +56,7 @@ function setApi(overrides: Record<string, ReturnType<typeof vi.fn>> = {}) {
       counters24h: { piiRejected: 0, detectionEnqueueFailed: 0, exceptionEnqueueFailed: 0, identifierFailed: 0, timestampSkew: 0, spanTimestampSkew: 0, metricTimestampSkew: 0 },
       enrichment: { ipReputation: { configured: true, ready: true, lastUpdate: null, source: 'x', totalIps: 0 }, geoIp: { configured: true, ready: true, lastUpdate: null, source: 'x' } },
     }),
-    ...overrides,
+    ...(overrides as Record<string, (...args: unknown[]) => unknown>),
   };
 }
 
