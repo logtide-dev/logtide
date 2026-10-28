@@ -15,7 +15,7 @@ import {
   type ProjectHealthSeverity,
 } from '@logtide/shared';
 import { db } from '../../database/connection.js';
-import type { ProjectHealthMutes } from './settings.js';
+import { clearUntilResolvedMutes, type ProjectHealthMutes } from './settings.js';
 
 /** A reopen within this window of the resolution reuses the row (flapping guard). */
 export const REOPEN_WINDOW_MS = 15 * 60 * 1000;
@@ -255,14 +255,23 @@ export async function resolveAllForProject(
   opts: { silent: boolean },
   now: Date = new Date()
 ): Promise<number> {
-  const result = await db
+  const rows = await db
     .updateTable('project_health_issues')
     .set(opts.silent ? { resolved_at: now, notified_resolve_at: now } : { resolved_at: now })
     .where('organization_id', '=', organizationId)
     .where('project_id', '=', projectId)
     .where('resolved_at', 'is', null)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0);
+    .returning('check_key')
+    .execute();
+  // Like a normal resolve, an "until resolved" mute ends with the issue.
+  if (rows.length > 0) {
+    await clearUntilResolvedMutes(
+      organizationId,
+      projectId,
+      rows.map((r) => r.check_key as ProjectHealthCheckKey)
+    );
+  }
+  return rows.length;
 }
 
 /** Open issues plus the ones resolved in the last N days, newest first. */

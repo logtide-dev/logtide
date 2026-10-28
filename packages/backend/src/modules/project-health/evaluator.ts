@@ -67,7 +67,11 @@ const toNum = (v: unknown): number => (v === null || v === undefined ? 0 : Numbe
 const toNumOrNull = (v: unknown): number | null =>
   v === null || v === undefined ? null : Number(v);
 
-async function loadCounters(projectIds: string[], now: Date): Promise<Map<string, CounterRow>> {
+async function loadCounters(
+  projectIds: string[],
+  organizationIds: string[],
+  now: Date
+): Promise<Map<string, CounterRow>> {
   const map = new Map<string, CounterRow>();
   if (projectIds.length === 0) return map;
   const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -88,7 +92,8 @@ async function loadCounters(projectIds: string[], now: Date): Promise<Map<string
       MAX((metadata->>'maxFutureMs')::float8) FILTER (WHERE type = 'ingestion.span_timestamp_skew') AS future_spans,
       MAX((metadata->>'maxFutureMs')::float8) FILTER (WHERE type = 'ingestion.metric_timestamp_skew') AS future_metrics
     FROM metering_events
-    WHERE project_id IN (${sql.join(projectIds)})
+    WHERE organization_id IN (${sql.join(organizationIds)})
+      AND project_id IN (${sql.join(projectIds)})
       AND type IN (
         'ingestion.pii_rejected', 'ingestion.revoked_key', 'ingestion.timestamp_skew',
         'ingestion.span_timestamp_skew', 'ingestion.metric_timestamp_skew'
@@ -200,7 +205,10 @@ async function notifyDue(
         await notifyProjectHealth(issue, project, 'opened', { healthChannelIds: settings.healthChannelIds });
       } else {
         if (issue.notifiedOpenAt === null || issue.notifiedResolveAt !== null) continue;
-        if (now.getTime() - issue.resolvedAt.getTime() > RESOLVE_NOTIFY_LOOKBACK_MS) continue;
+        const sinceResolved = now.getTime() - issue.resolvedAt.getTime();
+        if (sinceResolved > RESOLVE_NOTIFY_LOOKBACK_MS) continue;
+        // A flapping issue may reopen inside the window: wait it out first.
+        if (sinceResolved < REOPEN_WINDOW_MS) continue;
         if (!(await claimResolveNotification(issue.id, now))) continue;
         await notifyProjectHealth(issue, project, 'resolved', { healthChannelIds: settings.healthChannelIds });
       }
@@ -231,7 +239,7 @@ export async function runProjectHealthPass(now: Date = new Date()): Promise<Proj
 
   const projectIds = projects.map((p) => p.id);
   const [counters, settingsMap, issueRows] = await Promise.all([
-    loadCounters(projectIds, now),
+    loadCounters(projectIds, Array.from(new Set(projects.map((p) => p.organization_id))), now),
     getSettingsForProjects(projectIds),
     loadIssuesForProjects(projectIds, new Date(now.getTime() - RESOLVE_NOTIFY_LOOKBACK_MS)),
   ]);

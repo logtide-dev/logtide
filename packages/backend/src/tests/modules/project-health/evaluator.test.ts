@@ -91,7 +91,8 @@ describe('runProjectHealthPass', () => {
     expect(open).toHaveLength(1);
 
     await setLastEvent(projectId, at(1));
-    await Promise.all([runProjectHealthPass(at(2)), runProjectHealthPass(at(2))]);
+    await runProjectHealthPass(at(2));
+    await Promise.all([runProjectHealthPass(at(20)), runProjectHealthPass(at(20))]);
     expect(calls('resolved', projectId)).toHaveLength(1);
   });
 
@@ -125,10 +126,15 @@ describe('runProjectHealthPass', () => {
     // 60 min with zero rejections
     const r = await runProjectHealthPass(at(60));
     expect(r.resolved).toBe(1);
-    expect(calls('resolved', projectId)).toHaveLength(1);
     expect(await listOpenByOrg(orgId)).toHaveLength(0);
+    // the resolve waits out the 15 minute reopen window
+    expect(calls('resolved', projectId)).toHaveLength(0);
 
-    await runProjectHealthPass(at(65));
+    await runProjectHealthPass(at(70));
+    expect(calls('resolved', projectId)).toHaveLength(0);
+    await runProjectHealthPass(at(76));
+    expect(calls('resolved', projectId)).toHaveLength(1);
+    await runProjectHealthPass(at(80));
     expect(calls('resolved', projectId)).toHaveLength(1);
   });
 
@@ -139,7 +145,7 @@ describe('runProjectHealthPass', () => {
 
     await setLastEvent(projectId, at(1));
     await runProjectHealthPass(at(1));
-    expect(calls('resolved', projectId)).toHaveLength(1);
+    expect(calls('resolved', projectId)).toHaveLength(0);
 
     // Silent again 10 min after resolve (threshold 10 with last event at +1)
     await updateProjectHealthSettings(orgId, projectId, { silentMinutes: 10 });
@@ -192,6 +198,7 @@ describe('runProjectHealthPass', () => {
     await setLastEvent(projectId, at(5));
     await runProjectHealthPass(at(6));
     expect(calls('opened', projectId)).toHaveLength(1);
+    await runProjectHealthPass(at(22));
     expect(calls('resolved', projectId)).toHaveLength(1);
   });
 
@@ -244,6 +251,48 @@ describe('runProjectHealthPass', () => {
     expect(r.evaluated).toBe(0);
     expect(calls('resolved', projectId)).toHaveLength(0);
     expect(await listOpenByOrg(orgId)).toHaveLength(0);
+  });
+
+  it('flapping issue: reopen inside the window then resolve again sends exactly one resolved', async () => {
+    await updateProjectHealthSettings(orgId, projectId, { silentMinutes: 10 });
+    await setLastEvent(projectId, at(-120));
+    await runProjectHealthPass(t0);
+    expect(calls('opened', projectId)).toHaveLength(1);
+
+    await setLastEvent(projectId, at(1));
+    await runProjectHealthPass(at(1)); // resolved
+    await runProjectHealthPass(at(5));
+    await runProjectHealthPass(at(12)); // silent again, reopens the same row
+    expect((await listOpenByOrg(orgId))).toHaveLength(1);
+    expect(calls('resolved', projectId)).toHaveLength(0);
+
+    await setLastEvent(projectId, at(13));
+    await runProjectHealthPass(at(13)); // resolved again
+    await runProjectHealthPass(at(20));
+    expect(calls('resolved', projectId)).toHaveLength(0);
+    await setLastEvent(projectId, at(100));
+    await runProjectHealthPass(at(29));
+    await runProjectHealthPass(at(35));
+    expect(calls('resolved', projectId)).toHaveLength(1);
+    expect(calls('opened', projectId)).toHaveLength(1);
+  });
+
+  it('until_resolved mute does not survive soft delete and restore', async () => {
+    await setLastEvent(projectId, at(-120));
+    await setMute(orgId, projectId, 'silent', 'until_resolved', t0);
+    await setMute(orgId, projectId, 'revoked_key', '7d', t0);
+    await runProjectHealthPass(t0);
+    expect(await listOpenByOrg(orgId)).toHaveLength(1);
+
+    expect(await projectsService.deleteProject(projectId, userId)).toBe(true);
+    const mutes = (await getProjectHealthSettings(orgId, projectId)).mutes;
+    expect(mutes.silent).toBeUndefined();
+    expect(mutes.revoked_key).toBeDefined();
+
+    expect(await projectsService.restoreProject(projectId, userId)).toBe(true);
+    await db.deleteFrom('project_health_issues').where('project_id', '=', projectId).execute();
+    await runProjectHealthPass(at(5));
+    expect(calls('opened', projectId)).toHaveLength(1);
   });
 
   it('org isolation: issues of org A are never read through org B', async () => {
