@@ -135,7 +135,7 @@
   const columns: DataTableColumn<Project>[] = [
     { key: 'name', header: 'Project', sortable: true, class: 'min-w-[12rem] max-w-[22rem]', cell: asCell(nameCell) },
     { key: 'health', header: 'Health', cell: asCell(healthCell) },
-    { key: 'volume', header: 'Volume 24h', cell: asCell(volumeCell) },
+    { key: 'volume', header: 'Volume 24h', class: 'hidden xl:table-cell', cell: asCell(volumeCell) },
     { key: 'logs', header: 'Logs 24h', sortable: true, class: 'text-right tabular-nums', cell: asCell(logsCell) },
     { key: 'errorRate', header: 'Error rate', sortable: true, class: 'text-right tabular-nums', cell: asCell(rateCell) },
     { key: 'incidents', header: 'Incidents', class: 'text-right tabular-nums', cell: asCell(incidentsCell) },
@@ -165,7 +165,7 @@
 {#snippet volumeCell(p: Project)}
   {@const s = statsOf(p)}
   {#if s}
-    <Sparkline values={s.hourly} label="Logs per hour for {p.name}, last 24 hours" />
+    <Sparkline values={s.hourly} width={88} label="Logs per hour for {p.name}, last 24 hours" />
   {:else}
     <span class="text-muted-foreground">-</span>
   {/if}
@@ -218,9 +218,13 @@
         Connect
       </a>
     {:else}
-      <a href={logsHref(p.id)} class="{buttonVariants({ variant: 'outline', size: 'sm' })} gap-1">
+      <a
+        href={logsHref(p.id)}
+        aria-label="Logs"
+        title="Open logs"
+        class={buttonVariants({ variant: 'outline', size: 'icon' })}
+      >
         <FileText class="size-4" />
-        Logs
       </a>
     {/if}
     <a
