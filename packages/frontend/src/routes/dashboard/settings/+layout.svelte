@@ -39,8 +39,8 @@
     return unsubscribe;
   });
 
-  // In-app billing exists only on instances that configured the billing API;
-  // anything else (including a failed config call) keeps the entry hidden.
+  // Auth config gates settings entries that depend on the instance setup
+  // (extensions); a failed config call leaves them hidden.
   let authConfig = $state<AuthConfig | null>(null);
 
   onMount(async () => {

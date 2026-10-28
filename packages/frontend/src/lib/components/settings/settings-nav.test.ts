@@ -4,32 +4,31 @@ import { SETTINGS_GROUPS, visibleSettingsItems, visibleSettingsGroups } from './
 const labels = (items: { label: string }[]) => items.map((i) => i.label);
 
 describe('settings nav definition', () => {
-  it('visibleSettingsItems hides Audit log and Billing from members', () => {
-    const items = visibleSettingsItems({ role: 'member', authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: true } });
+  it('visibleSettingsItems hides Audit log from members', () => {
+    const items = visibleSettingsItems({ role: 'member', authConfig: { authMode: 'standard', signupEnabled: true } });
     expect(labels(items)).not.toContain('Audit log');
-    expect(labels(items)).not.toContain('Billing');
   });
 
-  it('shows Audit log and Billing to admins when billing is enabled', () => {
-    const items = visibleSettingsItems({ role: 'admin', authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: true } });
-    expect(labels(items)).toContain('Audit log');
-    expect(labels(items)).toContain('Billing');
+  it('shows Audit log to admins and owners', () => {
+    for (const role of ['admin', 'owner'] as const) {
+      const items = visibleSettingsItems({ role, authConfig: { authMode: 'standard', signupEnabled: true } });
+      expect(labels(items)).toContain('Audit log');
+    }
   });
 
-  it('hides Billing when billingEnabled is false even for owners', () => {
-    const items = visibleSettingsItems({ role: 'owner', authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: false } });
+  it('has no Billing entry in the core nav', () => {
+    const items = visibleSettingsItems({ role: 'owner', authConfig: { authMode: 'standard', signupEnabled: true } });
     expect(labels(items)).not.toContain('Billing');
-    expect(labels(items)).toContain('Audit log');
   });
 
   it('treats an unknown role as a plain member', () => {
-    const items = visibleSettingsItems({ role: null, authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: true } });
+    const items = visibleSettingsItems({ role: null, authConfig: { authMode: 'standard', signupEnabled: true } });
     expect(labels(items)).not.toContain('Audit log');
   });
 
   it('shows Usage always', () => {
     for (const role of ['owner', 'admin', 'member', null] as const) {
-      expect(labels(visibleSettingsItems({ role, authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: false } }))).toContain('Usage');
+      expect(labels(visibleSettingsItems({ role, authConfig: { authMode: 'standard', signupEnabled: true } }))).toContain('Usage');
     }
   });
 
@@ -72,7 +71,7 @@ describe('settings nav definition', () => {
   });
 
   it('drops groups that end up empty', () => {
-    const groups = visibleSettingsGroups({ role: 'member', authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: false } });
+    const groups = visibleSettingsGroups({ role: 'member', authConfig: { authMode: 'standard', signupEnabled: true } });
     for (const g of groups) expect(g.items.length).toBeGreaterThan(0);
   });
 });

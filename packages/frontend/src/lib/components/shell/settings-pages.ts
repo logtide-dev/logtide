@@ -18,7 +18,6 @@ const KEYWORDS: Record<string, string[]> = {
   'account-security': ['account', 'password', 'sessions', 'two factor'],
   general: ['organization', 'name', 'slug', 'retention'],
   members: ['team', 'invite', 'roles', 'users'],
-  billing: ['plan', 'subscription', 'invoice', 'payment'],
   usage: ['quota', 'limits', 'plan'],
   'audit-log': ['history', 'activity', 'changes'],
   'pii-masking': ['privacy', 'redact', 'sensitive'],

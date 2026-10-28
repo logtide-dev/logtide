@@ -5,7 +5,6 @@ import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 import KeyRound from '@lucide/svelte/icons/key-round';
 import Building2 from '@lucide/svelte/icons/building-2';
 import Users from '@lucide/svelte/icons/users';
-import CreditCard from '@lucide/svelte/icons/credit-card';
 import ChartColumn from '@lucide/svelte/icons/chart-column';
 import ClipboardList from '@lucide/svelte/icons/clipboard-list';
 import ShieldAlert from '@lucide/svelte/icons/shield-alert';
@@ -26,7 +25,6 @@ export type SettingsNavItem = {
   href: string;
   icon: typeof Building2;
   adminOnly?: boolean;
-  requiresBilling?: boolean;
   appliesTo: 'you' | 'organization' | 'project';
 };
 
@@ -49,7 +47,6 @@ export const SETTINGS_GROUPS: SettingsNavGroup[] = [
     items: [
       { id: 'general', label: 'General', href: '/dashboard/settings/general', icon: Building2, appliesTo: 'organization' },
       { id: 'members', label: 'Members', href: '/dashboard/settings/members', icon: Users, appliesTo: 'organization' },
-      { id: 'billing', label: 'Billing', href: '/dashboard/settings/billing', icon: CreditCard, adminOnly: true, requiresBilling: true, appliesTo: 'organization' },
       { id: 'usage', label: 'Usage', href: '/dashboard/settings/usage', icon: ChartColumn, appliesTo: 'organization' },
       { id: 'audit-log', label: 'Audit log', href: '/dashboard/settings/audit-log', icon: ClipboardList, adminOnly: true, appliesTo: 'organization' },
     ],
@@ -89,7 +86,6 @@ export interface SettingsNavContext {
 /** Whether one item is visible for the viewer. Unknown role is treated as plain member. */
 export function isSettingsItemVisible(item: SettingsNavItem, ctx: SettingsNavContext): boolean {
   if (item.adminOnly && !(ctx.role && canManageMembers(ctx.role))) return false;
-  if (item.requiresBilling && ctx.authConfig?.billingEnabled !== true) return false;
   return true;
 }
 

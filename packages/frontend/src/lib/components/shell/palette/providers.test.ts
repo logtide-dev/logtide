@@ -39,7 +39,7 @@ vi.mock('$lib/api/incidents', () => ({
   },
 }));
 vi.mock('$lib/api/auth', () => ({
-  authAPI: { getAuthConfig: vi.fn(async () => ({ billingEnabled: true })) },
+  authAPI: { getAuthConfig: vi.fn(async () => ({})) },
 }));
 vi.mock('$lib/api/alerts', () => ({
   alertsAPI: {
@@ -119,7 +119,6 @@ describe('default palette providers', () => {
       '/dashboard/settings/account/security': 'Security',
       '/dashboard/settings/general': 'General',
       '/dashboard/settings/members': 'Members',
-      '/dashboard/settings/billing': 'Billing',
       '/dashboard/settings/usage': 'Usage',
       '/dashboard/settings/audit-log': 'Audit log',
       '/dashboard/settings/pii-masking': 'PII masking',
@@ -138,7 +137,6 @@ describe('default palette providers', () => {
     setRole('member');
     const hrefs = (await group('settings')).items.map((i) => i.href);
     expect(hrefs).not.toContain('/dashboard/settings/audit-log');
-    expect(hrefs).not.toContain('/dashboard/settings/billing');
     expect(hrefs).toContain('/dashboard/settings/usage');
   });
 

@@ -64,8 +64,6 @@
   let lastLoadedDays = $state<number | null>(null);
 
   let upgradeEnabled = $state(false);
-  // In-app billing: the buttons open the Billing page instead of the handoff.
-  let billingEnabled = $state(false);
   // Set when an extension provides its own upgrade / billing page.
   let upgradeTarget = $state<{ href: string } | null>(null);
   let handoffBusy = $state<'upgrade' | 'manage' | null>(null);
@@ -75,26 +73,20 @@
     try {
       const cfg = await authAPI.getAuthConfig();
       upgradeEnabled = cfg.upgradeEnabled === true;
-      billingEnabled = cfg.billingEnabled === true;
       upgradeTarget = extensionUpgradeTarget(cfg);
     } catch {
       upgradeEnabled = false;
-      billingEnabled = false;
       upgradeTarget = null;
     }
   });
 
-  let showUpgradeCta = $derived(canShowUpgradeCta(upgradeEnabled || billingEnabled || upgradeTarget !== null, currentOrg?.role));
+  let showUpgradeCta = $derived(canShowUpgradeCta(upgradeEnabled || upgradeTarget !== null, currentOrg?.role));
   let atLimit = $derived(anyCapabilityAtLimit(capabilities));
 
   async function startHandoff(intent: 'upgrade' | 'manage') {
     if (!currentOrg || handoffBusy) return;
     if (upgradeTarget) {
       void goto(upgradeTarget.href);
-      return;
-    }
-    if (billingEnabled) {
-      void goto('/dashboard/settings/billing');
       return;
     }
     handoffBusy = intent;
@@ -219,7 +211,7 @@
 
   // Self-hosted instances without billing or an upgrade link have no plans,
   // so the word "plan" is only used when one of the two is enabled.
-  let hasPlans = $derived(upgradeEnabled || billingEnabled || upgradeTarget !== null);
+  let hasPlans = $derived(upgradeEnabled || upgradeTarget !== null);
   let limitsTitle = $derived(hasAnyLimit && hasPlans ? 'Plan limits' : 'Limits');
   let resetsAt = $derived(nextQuotaReset());
 </script>
