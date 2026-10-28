@@ -184,6 +184,42 @@ export interface HealthStats {
     overall: 'healthy' | 'degraded' | 'down';
 }
 
+/**
+ * ILIKE "contains" predicate with the term trimmed and the LIKE wildcards
+ * (%, _) and the escape character itself escaped, so a search for "100%"
+ * or "a_b" matches literally.
+ */
+export function escapeLikeTerm(term: string): string {
+    return term.replace(/[\\%_]/g, (c) => '\\' + c);
+}
+
+function ilikeContains(column: string, term: string) {
+    return sql<boolean>`${sql.ref(column)} ILIKE ${'%' + escapeLikeTerm(term) + '%'} ESCAPE '\\'`;
+}
+
+/** Normalized search term, or null when there is nothing to search for. */
+function normalizeSearch(search: string | undefined): string | null {
+    const t = search?.trim();
+    return t ? t : null;
+}
+
+/**
+ * Predicate for rows with a nullable project column: keep rows that have no
+ * project or whose project is not soft-deleted.
+ */
+function projectNotDeleted(column: string) {
+    return sql<boolean>`NOT EXISTS (SELECT 1 FROM projects dp WHERE dp.id = ${sql.ref(column)} AND dp.deleted_at IS NOT NULL)`;
+}
+
+/** alert_history rows whose rule belongs to a soft-deleted project are excluded. */
+const alertHistoryProjectNotDeleted = sql<boolean>`NOT EXISTS (
+    SELECT 1 FROM alert_rules ar JOIN projects dp ON dp.id = ar.project_id
+    WHERE ar.id = alert_history.rule_id AND dp.deleted_at IS NOT NULL
+)`;
+
+/** Window used for per-project log counts in the admin lists and details. */
+export const ADMIN_LOGS_WINDOW_DAYS = 30;
+
 /** Thrown when the target entity does not exist (routes map it to 404). */
 export class AdminNotFoundError extends Error {
     constructor(message: string) {
@@ -237,7 +273,7 @@ export class AdminService {
             ])
             .executeTakeFirstOrThrow();
 
-        // PERFORMANCE: Single query for all project stats
+        // PERFORMANCE: Single query for all project stats (soft-deleted excluded)
         const projectStats = await db
             .selectFrom('projects')
             .select([
@@ -246,6 +282,7 @@ export class AdminService {
                 sql<number>`COUNT(*) FILTER (WHERE created_at >= ${weekAgo})::int`.as('week'),
                 sql<number>`COUNT(*) FILTER (WHERE created_at >= ${monthAgo})::int`.as('month'),
             ])
+            .where('deleted_at', 'is', null)
             .executeTakeFirstOrThrow();
 
         return {
@@ -478,6 +515,7 @@ export class AdminService {
                     JOIN projects p ON p.id = lds.project_id
                     JOIN organizations o ON o.id = p.organization_id
                     WHERE lds.bucket >= ${sql.lit(thirtyDaysAgo)}
+                      AND p.deleted_at IS NULL
                     GROUP BY o.id, o.name
                     ORDER BY count DESC
                     LIMIT 10
@@ -495,6 +533,7 @@ export class AdminService {
                     JOIN projects p ON p.id = lds.project_id
                     JOIN organizations o ON o.id = p.organization_id
                     WHERE lds.bucket >= ${sql.lit(thirtyDaysAgo)}
+                      AND p.deleted_at IS NULL
                     GROUP BY p.id, p.name, o.name
                     ORDER BY count DESC
                     LIMIT 10
@@ -551,6 +590,7 @@ export class AdminService {
                 'organizations.id as org_id',
                 'organizations.name as org_name',
             ])
+            .where('projects.deleted_at', 'is', null)
             .execute();
 
         const projectIds = allProjects.map(p => p.id);
@@ -941,12 +981,14 @@ export class AdminService {
         const totalRules = await db
             .selectFrom('alert_rules')
             .select(sql<number>`COUNT(*)::int`.as('count'))
+            .where(projectNotDeleted('alert_rules.project_id'))
             .executeTakeFirstOrThrow();
 
         const activeRules = await db
             .selectFrom('alert_rules')
             .select(sql<number>`COUNT(*)::int`.as('count'))
             .where('enabled', '=', true)
+            .where(projectNotDeleted('alert_rules.project_id'))
             .executeTakeFirstOrThrow();
 
         const disabledRules = totalRules.count - activeRules.count;
@@ -956,12 +998,14 @@ export class AdminService {
             .selectFrom('alert_history')
             .select(sql<number>`COUNT(*)::int`.as('count'))
             .where('triggered_at', '>=', oneDayAgo)
+            .where(alertHistoryProjectNotDeleted)
             .executeTakeFirstOrThrow();
 
         const triggeredLast7days = await db
             .selectFrom('alert_history')
             .select(sql<number>`COUNT(*)::int`.as('count'))
             .where('triggered_at', '>=', sevenDaysAgo)
+            .where(alertHistoryProjectNotDeleted)
             .executeTakeFirstOrThrow();
 
         // Alert rules per organization
@@ -973,6 +1017,7 @@ export class AdminService {
                 'organizations.name as organizationName',
                 sql<number>`COUNT(*)::int`.as('rulesCount'),
             ])
+            .where(projectNotDeleted('alert_rules.project_id'))
             .groupBy(['organizations.id', 'organizations.name'])
             .orderBy('rulesCount', 'desc')
             .limit(10)
@@ -984,6 +1029,7 @@ export class AdminService {
             .select(sql<number>`COUNT(*)::int`.as('count'))
             .where('notified', '=', true)
             .where('error', 'is', null)
+            .where(alertHistoryProjectNotDeleted)
             .executeTakeFirstOrThrow();
 
         const notifiedFailed = await db
@@ -991,6 +1037,7 @@ export class AdminService {
             .select(sql<number>`COUNT(*)::int`.as('count'))
             .where('notified', '=', true)
             .where('error', 'is not', null)
+            .where(alertHistoryProjectNotDeleted)
             .executeTakeFirstOrThrow();
 
         return {
@@ -1281,8 +1328,9 @@ export class AdminService {
     /**
      * Get paginated list of users with optional search
      */
-    async getUsers(page: number = 1, limit: number = 50, search?: string) {
+    async getUsers(page: number = 1, limit: number = 50, rawSearch?: string) {
         const offset = (page - 1) * limit;
+        const search = normalizeSearch(rawSearch);
 
         let query = db
             .selectFrom('users')
@@ -1301,10 +1349,7 @@ export class AdminService {
 
         if (search) {
             query = query.where((eb) =>
-                eb.or([
-                    eb('email', 'ilike', `%${search}%`),
-                    eb('name', 'ilike', `%${search}%`),
-                ])
+                eb.or([ilikeContains('email', search), ilikeContains('name', search)])
             );
         }
 
@@ -1317,10 +1362,7 @@ export class AdminService {
 
         if (search) {
             countQuery = countQuery.where((eb) =>
-                eb.or([
-                    eb('email', 'ilike', `%${search}%`),
-                    eb('name', 'ilike', `%${search}%`),
-                ])
+                eb.or([ilikeContains('email', search), ilikeContains('name', search)])
             );
         }
 
@@ -1372,11 +1414,12 @@ export class AdminService {
             .where('organization_members.user_id', '=', userId)
             .execute();
 
-        // Get recent sessions count
+        // Active sessions: expired rows linger until cleanup, so skip them
         const sessionsCount = await db
             .selectFrom('sessions')
             .select(({ fn }) => fn.countAll().as('count'))
             .where('user_id', '=', userId)
+            .where('expires_at', '>', new Date())
             .executeTakeFirstOrThrow();
 
         return {
@@ -1571,8 +1614,9 @@ export class AdminService {
     }
 
     // Organization Management
-    async getOrganizations(page: number = 1, limit: number = 50, search?: string) {
+    async getOrganizations(page: number = 1, limit: number = 50, rawSearch?: string) {
         const offset = (page - 1) * limit;
+        const search = normalizeSearch(rawSearch);
 
         let query = db
             .selectFrom('organizations')
@@ -1591,10 +1635,7 @@ export class AdminService {
 
         if (search) {
             const applySearch = (eb: any) =>
-                eb.or([
-                    eb('organizations.name', 'ilike', `%${search}%`),
-                    eb('organizations.slug', 'ilike', `%${search}%`),
-                ]);
+                eb.or([ilikeContains('organizations.name', search), ilikeContains('organizations.slug', search)]);
             query = query.where(applySearch);
             // The count must apply the same filter, otherwise pagination is wrong.
             countQuery = countQuery.where(applySearch);
@@ -1631,6 +1672,7 @@ export class AdminService {
                 .selectFrom('projects')
                 .select(['organization_id', sql<number>`COUNT(*)::int`.as('count')])
                 .where('organization_id', 'in', orgIds)
+                .where('deleted_at', 'is', null)
                 .groupBy('organization_id')
                 .execute(),
         ]);
@@ -1697,6 +1739,7 @@ export class AdminService {
                 'created_at',
             ])
             .where('organization_id', '=', orgId)
+            .where('deleted_at', 'is', null)
             .execute();
 
         return {
@@ -1719,8 +1762,9 @@ export class AdminService {
     }
 
     // Project Management
-    async getProjects(page: number = 1, limit: number = 50, search?: string) {
+    async getProjects(page: number = 1, limit: number = 50, rawSearch?: string) {
         const offset = (page - 1) * limit;
+        const search = normalizeSearch(rawSearch);
 
         let query = db
             .selectFrom('projects')
@@ -1734,19 +1778,18 @@ export class AdminService {
                 'projects.created_at',
                 'projects.updated_at',
             ])
+            .where('projects.deleted_at', 'is', null)
             .orderBy('projects.created_at', 'desc');
 
         let countQuery = db
             .selectFrom('projects')
             .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
-            .select(({ fn }) => [fn.count<number>('projects.id').as('count')]);
+            .select(({ fn }) => [fn.count<number>('projects.id').as('count')])
+            .where('projects.deleted_at', 'is', null);
 
         if (search) {
             const applySearch = (eb: any) =>
-                eb.or([
-                    eb('projects.name', 'ilike', `%${search}%`),
-                    eb('organizations.name', 'ilike', `%${search}%`),
-                ]);
+                eb.or([ilikeContains('projects.name', search), ilikeContains('organizations.name', search)]);
             query = query.where(applySearch);
             // The count must apply the same filter (and join), otherwise pagination is wrong.
             countQuery = countQuery.where(applySearch);
@@ -1774,7 +1817,7 @@ export class AdminService {
         const projectIds = projects.map((p) => p.id);
 
         // PERFORMANCE: Count logs per project (last 30 days only to avoid full scan)
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const thirtyDaysAgo = new Date(Date.now() - ADMIN_LOGS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
         const now = new Date();
         const [logsCounts, apiKeysCounts, alertRulesCounts] = await Promise.all([
             // Reservoir: count per project in parallel (works with any engine)
@@ -1807,7 +1850,10 @@ export class AdminService {
         // Merge counts with projects
         const projectsWithCounts = projects.map((project) => ({
             ...project,
+            // Logs in the last ADMIN_LOGS_WINDOW_DAYS days. logsCount is the
+            // historical name, kept for compatibility; logs30d says the window.
             logsCount: logsMap.get(project.id) || 0,
+            logs30d: logsMap.get(project.id) || 0,
             apiKeysCount: apiKeysMap.get(project.id) || 0,
             alertRulesCount: alertRulesMap.get(project.id) || 0,
         }));
@@ -1833,6 +1879,8 @@ export class AdminService {
                 'organizations.name as organization_name',
                 'projects.created_at',
                 'projects.updated_at',
+                'projects.deleted_at',
+                'projects.has_logs_at',
             ])
             .where('projects.id', '=', projectId)
             .executeTakeFirst();
@@ -1884,28 +1932,30 @@ export class AdminService {
             .orderBy('created_at', 'desc')
             .execute();
 
-        // Get logs count (reservoir: works with any engine)
-        const logsCountResult = await reservoir.count({
-            projectId,
-            from: new Date(0),
-            to: new Date(),
-        });
+        // Bounded window on every engine: an all-time count/scan from epoch is
+        // a full table scan on large projects.
+        const now = new Date();
+        const windowStart = new Date(now.getTime() - ADMIN_LOGS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+        const [logsCountResult, recentLogResult] = await Promise.all([
+            reservoir.count({ projectId, from: windowStart, to: now }),
+            reservoir.query({ projectId, from: windowStart, to: now, limit: 1, sortOrder: 'desc' }),
+        ]);
 
-        // Get recent logs timestamp (reservoir: works with any engine)
-        const recentLogResult = await reservoir.query({
-            projectId,
-            from: new Date(0),
-            to: new Date(),
-            limit: 1,
-        });
+        // Newest log inside the window; older activity falls back to the
+        // ingest-maintained has_logs_at marker (minute-level precision).
+        const recentLog = recentLogResult.logs.length > 0 ? recentLogResult.logs[0].time : null;
+        const { deleted_at, has_logs_at, ...rest } = project;
 
         return {
-            ...project,
+            ...rest,
+            deletedAt: deleted_at ?? null,
             logsCount: logsCountResult.count,
+            logs30d: logsCountResult.count,
+            logsWindowDays: ADMIN_LOGS_WINDOW_DAYS,
             apiKeys,
             alertRules,
             sigmaRules,
-            lastLogTime: recentLogResult.logs.length > 0 ? recentLogResult.logs[0].time : null,
+            lastLogTime: recentLog ?? has_logs_at ?? null,
         };
     }
 
@@ -1976,13 +2026,14 @@ export class AdminService {
                         SUM(log_count)::int AS count
                     FROM logs_hourly_stats
                     WHERE bucket >= ${sql.lit(since)}
+                      AND project_id NOT IN (SELECT id FROM projects WHERE deleted_at IS NOT NULL)
                     GROUP BY bucket
                     ORDER BY bucket ASC
                 `.compile(db)
             ).catch(() => ({ rows: [] as Array<{ bucket: string; count: number }> }));
         } else {
             // ClickHouse / other: use reservoir aggregate
-            const allProjects = await db.selectFrom('projects').select('id').execute();
+            const allProjects = await db.selectFrom('projects').select('id').where('deleted_at', 'is', null).execute();
             const projectIds = allProjects.map(p => p.id);
 
             if (projectIds.length > 0) {
@@ -2034,7 +2085,7 @@ export class AdminService {
         } else {
             // ClickHouse: query spans via reservoir
             try {
-                const allProjects = await db.selectFrom('projects').select('id').execute();
+                const allProjects = await db.selectFrom('projects').select('id').where('deleted_at', 'is', null).execute();
                 const projectIds = allProjects.map(p => p.id);
 
                 if (projectIds.length > 0) {
@@ -2212,6 +2263,7 @@ export class AdminService {
                 .selectFrom('incidents')
                 .select(sql<number>`COUNT(*)::int`.as('count'))
                 .where('status', 'in', ['open', 'investigating'])
+                .where(projectNotDeleted('incidents.project_id'))
                 .executeTakeFirstOrThrow()
                 .catch((e) => { console.error('[AdminService] Failed to query incidents:', e.message); return { count: 0 }; }),
 
@@ -2222,6 +2274,7 @@ export class AdminService {
                     FROM detection_events
                     WHERE time >= ${sql.lit(oneDayAgo)}
                     AND severity IN ('critical', 'high')
+                    AND ${projectNotDeleted('detection_events.project_id')}
                 `.compile(db)
             ).then(r => r.rows[0] ?? { count: 0 })
              .catch((e) => { console.error('[AdminService] Failed to query detection_events:', e.message); return { count: 0 }; }),
@@ -2233,6 +2286,7 @@ export class AdminService {
                 .where('triggered_at', '>=', oneDayAgo)
                 .where('notified', '=', true)
                 .where('error', 'is not', null)
+                .where(alertHistoryProjectNotDeleted)
                 .executeTakeFirstOrThrow()
                 .catch((e) => { console.error('[AdminService] Failed to query alert_history:', e.message); return { count: 0 }; }),
 
@@ -2241,6 +2295,7 @@ export class AdminService {
                 .selectFrom('error_groups')
                 .select(sql<number>`COUNT(*)::int`.as('count'))
                 .where('status', '=', 'open')
+                .where(projectNotDeleted('error_groups.project_id'))
                 .executeTakeFirstOrThrow()
                 .catch((e) => { console.error('[AdminService] Failed to query error_groups:', e.message); return { count: 0 }; }),
         ]);
