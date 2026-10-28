@@ -15,7 +15,7 @@ const organizationsService = new OrganizationsService();
 
 // Any value matching this shape is accepted by Postgres' uuid type, so a
 // passing orgId can never turn into a cast error (500) downstream.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const requireSession: preHandlerHookHandler = authenticate;
 

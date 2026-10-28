@@ -2,6 +2,10 @@ import type { FastifyPluginAsync, preHandlerHookHandler } from 'fastify';
 import type { OrgRole } from '@logtide/shared';
 import type { HookRegistry } from '../hooks/registry.js';
 import type { CronJobDefinition } from '../queue/abstractions/types.js';
+import type {
+  EntitlementInput,
+  getOrganizationEntitlements,
+} from '../modules/capabilities/entitlements-service.js';
 
 /** Version of the extension API contract. Bump on breaking changes. */
 export const EXTENSION_API_VERSION = 1;
@@ -62,6 +66,45 @@ export interface ExtensionApi {
   routes(plugin: FastifyPluginAsync): void;
   /** Values exposed under `extensions.<name>` in `GET /api/v1/auth/config`. */
   publicConfig(fn: () => Record<string, unknown> | Promise<Record<string, unknown>>): void;
+  /**
+   * Core database connection and the extension's own Postgres schema
+   * (`schema` = extension name). Extension tables live only in that schema.
+   */
+  readonly database: { url: string; schema: string };
+  /**
+   * Register a folder of `.sql` migrations for the extension schema (at most
+   * once). Applied by initExtensions after every register(), in file name
+   * order, each file at most once, with search_path set to the schema.
+   */
+  migrate(dir: string): void;
+  readonly entitlements: ExtensionEntitlements;
+  readonly retention: ExtensionRetention;
+  readonly orgs: ExtensionOrgs;
+}
+
+/** Org entitlements, delegating to the core service with actor `ext:<name>`. */
+export interface ExtensionEntitlements {
+  get(orgId: string): ReturnType<typeof getOrganizationEntitlements>;
+  set(orgId: string, inputs: EntitlementInput[]): Promise<{ updated: number }>;
+  /** Remove the explicit override so the org inherits the default again. */
+  reset(orgId: string, capability: string): Promise<{ removed: boolean }>;
+}
+
+/** Org retention policy, delegating to the core service with actor `ext:<name>`. */
+export interface ExtensionRetention {
+  get(orgId: string): Promise<Record<string, unknown>>;
+  set(
+    orgId: string,
+    input: { retentionDays?: number; auditRetentionDays?: number | null }
+  ): Promise<Record<string, unknown>>;
+}
+
+/** Read-only organization lookups. Malformed ids behave like missing ones. */
+export interface ExtensionOrgs {
+  get(orgId: string): Promise<{ id: string; name: string } | null>;
+  listOwnersAndAdmins(
+    orgId: string
+  ): Promise<Array<{ userId: string; email: string; role: 'owner' | 'admin' }>>;
 }
 
 export interface LogtideExtension {

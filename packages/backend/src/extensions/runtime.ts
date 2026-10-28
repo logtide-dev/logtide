@@ -1,12 +1,22 @@
 import type { FastifyPluginAsync } from 'fastify';
+import path from 'path';
 import { config } from '../config/index.js';
+import { db } from '../database/index.js';
 import { hooks } from '../hooks/facade.js';
-import { extensionAuth } from './auth.js';
+import {
+  getOrganizationEntitlements,
+  resetOrganizationEntitlement,
+  setOrganizationEntitlements,
+} from '../modules/capabilities/entitlements-service.js';
+import { retentionService } from '../modules/retention/service.js';
+import { extensionAuth, UUID_RE } from './auth.js';
+import { runExtensionMigrations } from './migrate.js';
 import type {
   ExtensionApi,
   ExtensionCron,
   ExtensionJob,
   ExtensionLogger,
+  ExtensionOrgs,
   ExtensionProcess,
   LogtideExtension,
 } from './types.js';
@@ -31,6 +41,8 @@ interface RuntimeState {
   publicConfigFns: Map<string, PublicConfigFn>;
   jobs: ExtensionJob[];
   crons: ExtensionCron[];
+  /** Migration folder per extension, applied after every register(). */
+  migrations: Map<string, string>;
   /** False once initExtensions returns: late registrations would be lost. */
   registering: boolean;
 }
@@ -49,12 +61,39 @@ function resolveAppUrl(): string | null {
   return config.FRONTEND_URL ? config.FRONTEND_URL.replace(/\/+$/, '') : null;
 }
 
+// Malformed ids are answered like missing ones (never a Postgres cast error).
+const extensionOrgs: ExtensionOrgs = {
+  async get(orgId) {
+    if (!UUID_RE.test(orgId)) return null;
+    const org = await db
+      .selectFrom('organizations')
+      .select(['id', 'name'])
+      .where('id', '=', orgId)
+      .executeTakeFirst();
+    return org ?? null;
+  },
+  async listOwnersAndAdmins(orgId) {
+    if (!UUID_RE.test(orgId)) return [];
+    const rows = await db
+      .selectFrom('organization_members')
+      .innerJoin('users', 'users.id', 'organization_members.user_id')
+      .select(['users.id as userId', 'users.email', 'organization_members.role'])
+      .where('organization_members.organization_id', '=', orgId)
+      .where('organization_members.role', 'in', ['owner', 'admin'])
+      .orderBy('organization_members.role', 'desc')
+      .orderBy('users.email')
+      .execute();
+    return rows.map((r) => ({ userId: r.userId, email: r.email, role: r.role as 'owner' | 'admin' }));
+  },
+};
+
 function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
   const assertRegistering = (method: string) => {
     if (!state.registering) {
       throw new Error(`[Extensions] ${method}() must be called inside register()`);
     }
   };
+  const actor = `ext:${name}`;
 
   return {
     name,
@@ -73,6 +112,24 @@ function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
       }
       state.publicConfigFns.set(name, fn);
     },
+    database: { url: config.DATABASE_URL, schema: name },
+    migrate(dir) {
+      assertRegistering('migrate');
+      if (state.migrations.has(name)) {
+        throw new Error(`[Extensions] Extension '${name}' called migrate() more than once`);
+      }
+      state.migrations.set(name, path.resolve(dir));
+    },
+    entitlements: {
+      get: (orgId) => getOrganizationEntitlements(orgId),
+      set: (orgId, inputs) => setOrganizationEntitlements(orgId, inputs, actor),
+      reset: (orgId, capability) => resetOrganizationEntitlement(orgId, capability, actor),
+    },
+    retention: {
+      get: (orgId) => retentionService.getOrganizationRetentionPolicy(orgId),
+      set: (orgId, input) => retentionService.setOrganizationRetentionPolicy(orgId, input, actor),
+    },
+    orgs: extensionOrgs,
   };
 }
 
@@ -89,6 +146,7 @@ export async function initExtensions(
     publicConfigFns: new Map(),
     jobs: [],
     crons: [],
+    migrations: new Map(),
     registering: true,
   };
   const names: string[] = [];
@@ -108,6 +166,22 @@ export async function initExtensions(
     }
   } finally {
     state.registering = false;
+  }
+
+  // After every register(): server and worker both get here at boot, the
+  // advisory lock in runExtensionMigrations serializes them per schema.
+  for (const [name, dir] of state.migrations) {
+    try {
+      const applied = await runExtensionMigrations(name, dir);
+      if (applied.length > 0) {
+        console.log(`[ext:${name}] Applied migrations (${proc}): ${applied.join(', ')}`);
+      }
+    } catch (err) {
+      throw new Error(
+        `[Extensions] Extension '${name}' failed to migrate (${proc}): ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
+      );
+    }
   }
 
   if (names.length > 0) {
