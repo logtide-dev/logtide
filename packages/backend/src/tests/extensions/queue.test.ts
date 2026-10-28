@@ -5,7 +5,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import crypto from 'crypto';
 import { config } from '../../config/index.js';
-import { createWorker } from '../../queue/connection.js';
+import { startExtensionJobs } from '../../extensions/jobs.js';
 import { initExtensions } from '../../extensions/runtime.js';
 import { MailNotConfiguredError } from '../../extensions/types.js';
 import type { ExtensionApi, LogtideExtension } from '../../extensions/types.js';
@@ -87,9 +87,7 @@ describe('extension queue', () => {
       });
     });
     const runtime = await initExtensions([fx.mod], 'worker');
-    for (const j of runtime.jobs) {
-      workers.push(createWorker<unknown>(j.queue, async (q) => j.handler(q.data)));
-    }
+    workers.push(...(await startExtensionJobs(runtime)));
 
     await fx.api().queue.enqueue(job, { n: 1 });
 

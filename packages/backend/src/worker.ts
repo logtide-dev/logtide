@@ -4,8 +4,7 @@ import path from 'path';
 import { context } from '@logtide/shared/context';
 import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
 import { loadExternalHooks } from './hooks/index.js';
-import { getCronRegistry } from './queue/queue-factory.js';
-import { loadExtensionModules, initExtensions } from './extensions/index.js';
+import { loadExtensionModules, startExtensionJobs, initExtensions } from './extensions/index.js';
 import { processAlertNotification, type AlertNotificationJobData } from './queue/jobs/alert-notification.js';
 import { enqueueAlertNotifications } from './queue/jobs/alert-evaluation.js';
 import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
@@ -121,16 +120,8 @@ const receiverEventsWorker = createWorker<ReceiverEventJobData>('receiver-events
   await processReceiverEvent(job);
 });
 
-// Extension jobs and crons. Crons are registered before the runner starts:
-// graphile-worker cron items cannot change while the runner is up.
-const extensionWorkers = extensions.jobs.map((job) =>
-  createWorker<unknown>(job.queue, async (j) => {
-    await job.handler(j.data);
-  })
-);
-for (const cron of extensions.crons) {
-  await getCronRegistry(cron.task).registerCronJobs([cron]);
-}
+// Extension jobs and crons, registered before the runner starts.
+const extensionWorkers = await startExtensionJobs(extensions);
 
 // Start workers (required for graphile-worker backend, no-op for BullMQ)
 console.log(`[Worker] Using queue backend: ${getQueueBackend()}`);
