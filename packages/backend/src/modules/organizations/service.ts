@@ -4,6 +4,8 @@ import { auditLogService } from '../audit-log/service.js';
 import { config } from '../../config/index.js';
 import { withLimitLock } from '../../capabilities/limit-lock.js';
 import { validateSlug } from '../../utils/slug.js';
+import { CacheManager } from '../../utils/cache.js';
+import { capabilities } from '../../capabilities/facade.js';
 import type { Organization, OrganizationMember, OrganizationMemberWithUser, OrganizationWithRole, OrgRole } from '@logtide/shared';
 
 export interface CreateOrganizationInput {
@@ -364,8 +366,38 @@ export class OrganizationsService {
       throw new Error('Only the organization owner can delete it');
     }
 
-    // Delete organization (cascade will handle members and projects)
-    await db.deleteFrom('organizations').where('id', '=', organizationId).execute();
+    await this.removeOrganization(organizationId);
+  }
+
+  /**
+   * Delete an organization row (cascade removes members, projects, keys...)
+   * and drop the caches that would otherwise keep its API keys and
+   * entitlements alive until their TTL. No access check: callers authorize.
+   * Returns false when the organization does not exist.
+   */
+  async removeOrganization(organizationId: string): Promise<boolean> {
+    const keys = await db
+      .selectFrom('api_keys')
+      .innerJoin('projects', 'projects.id', 'api_keys.project_id')
+      .select(['api_keys.key_hash', 'api_keys.project_id'])
+      .where('projects.organization_id', '=', organizationId)
+      .execute();
+    const projectIds = await db
+      .selectFrom('projects')
+      .select('id')
+      .where('organization_id', '=', organizationId)
+      .execute();
+
+    const result = await db.deleteFrom('organizations').where('id', '=', organizationId).executeTakeFirst();
+    if (Number(result.numDeletedRows || 0) === 0) return false;
+
+    await Promise.all([
+      ...keys.map((k) => CacheManager.invalidateApiKey(k.key_hash)),
+      ...projectIds.map((p) => CacheManager.invalidateProjectCache(p.id)),
+      CacheManager.invalidateOrgCache(organizationId),
+    ]);
+    capabilities.invalidate(organizationId);
+    return true;
   }
 
   /**

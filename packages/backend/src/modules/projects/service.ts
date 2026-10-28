@@ -605,11 +605,20 @@ export class ProjectsService {
       return false;
     }
 
+    return this.softDeleteProject(projectId, project.organizationId);
+  }
+
+  /**
+   * Soft-delete without an access check (callers have already authorized:
+   * the owner path above, or the instance admin). Shared so both paths set
+   * deleted_at and invalidate caches the same way.
+   */
+  async softDeleteProject(projectId: string, organizationId: string): Promise<boolean> {
     const result = await db
       .updateTable('projects')
       .set({ deleted_at: new Date() })
       .where('id', '=', projectId)
-      .where('organization_id', '=', project.organizationId)
+      .where('organization_id', '=', organizationId)
       .where('deleted_at', 'is', null)
       .executeTakeFirst();
 
@@ -627,7 +636,7 @@ export class ProjectsService {
 
       // Open health issues end with the project, silently (no resolve
       // notification). A restore starts from a clean state.
-      await resolveAllForProject(project.organizationId, projectId, { silent: true });
+      await resolveAllForProject(organizationId, projectId, { silent: true });
     }
 
     return updated;
