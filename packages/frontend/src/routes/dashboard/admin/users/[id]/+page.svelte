@@ -391,10 +391,15 @@
                                 variant="destructive"
                                 class="w-full gap-2"
                                 onclick={() => (showDisableDialog = true)}
+                                disabled={isOwnProfile}
+                                title={isOwnProfile ? "You cannot disable your own account" : ""}
                             >
                                 <Ban class="h-4 w-4" />
                                 Disable user
                             </Button>
+                            {#if isOwnProfile}
+                                <p class="text-xs text-muted-foreground">You cannot disable or demote your own account.</p>
+                            {/if}
                         {/if}
 
                         <Separator />
