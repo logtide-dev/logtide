@@ -14,7 +14,7 @@ Set `LOGTIDE_EXTENSIONS` to a comma-separated list of module paths. Set it for b
 LOGTIDE_EXTENSIONS=/opt/logtide/ext/first.mjs,/opt/logtide/ext/second.mjs
 ```
 
-Any failure (missing file, bad shape, wrong name, wrong `apiVersion`, duplicate name, an error thrown from `register()` or from a migration) aborts startup with a message starting with `[Extensions]`. This is the same policy as `HOOKS_MODULES`.
+Any failure (missing file, bad shape, wrong or reserved name, wrong `apiVersion`, duplicate name, an error thrown from `register()` or from a migration) aborts startup with a message starting with `[Extensions]`. This is the same policy as `HOOKS_MODULES`.
 
 ## Module shape
 
@@ -28,7 +28,7 @@ export default {
 };
 ```
 
-`name` is used as the Postgres schema name, the route prefix and the prefix of queue names, so it must be unique across loaded extensions.
+`name` is used as the Postgres schema name, the route prefix and the prefix of queue names, so it must be unique across loaded extensions. The names `public`, `information_schema` and `graphile_worker`, and every name starting with `pg_`, are reserved because they collide with Postgres or core schemas; an extension using one is rejected at boot.
 
 ## API version and compatibility
 
@@ -36,11 +36,11 @@ export default {
 
 ## No internal backend imports
 
-An extension must not import anything from the backend source tree (`packages/backend/src/...`), which has no stability guarantee. Everything it needs is on the `api` object passed to `register()`. TypeScript authors can use the types in `packages/backend/src/extensions/types.ts`, but only as type-only imports. The module can import its own dependencies (for example a database driver) like any other Node module.
+An extension must not import anything from the backend source tree (`packages/backend/src/...`), which has no stability guarantee. Everything it needs is on the `api` object passed to `register()`. TypeScript authors can use the types in `packages/backend/src/extensions/types.ts` as type-only imports, or copy those declarations into their own project: an extension does not need the backend source to build or run. The module can import its own dependencies (for example a database driver) like any other Node module.
 
 ## The `ExtensionApi` object
 
-`register(api)` receives the following members. The registration methods (`routes`, `publicConfig`, `migrate`, `queue.registerJob`, `queue.schedule`) throw if called after `register()` has returned, and `migrate()` and `publicConfig()` may be called only once per extension. The other members can be used at any time.
+`register(api)` receives the following members. The registration methods (`routes`, `publicConfig`, `migrate`, `queue.registerJob`, `queue.schedule`) throw once registration has finished, that is after the `register()` of every loaded extension has returned (one shared flag for all extensions, not one per extension), and `migrate()` and `publicConfig()` may be called only once per extension. The other members can be used at any time.
 
 | Member | Signature | Notes |
 |---|---|---|
@@ -50,7 +50,7 @@ An extension must not import anything from the backend source tree (`packages/ba
 | `appUrl` | `readonly string \| null` | Public frontend URL without trailing slash, `null` when `FRONTEND_URL` is unset |
 | `auth` | `ExtensionAuth` | Route-level auth helpers, see below |
 | `routes` | `routes(plugin: FastifyPluginAsync): void` | Mount a Fastify plugin under `/api/v1/ext/<name>` |
-| `publicConfig` | `publicConfig(fn: () => Record<string, unknown> \| Promise<Record<string, unknown>>): void` | Values exposed under `extensions.<name>` in `GET /api/v1/auth/config` |
+| `publicConfig` | `publicConfig(fn: () => Record<string, unknown> \| Promise<Record<string, unknown>>): void` | Values exposed under `extensions.<name>` in `GET /api/v1/auth/config` (the `extensions` key is omitted when no extension contributes) |
 | `database` | `readonly { url: string; schema: string }` | Core connection string and the extension's own schema (equal to `name`) |
 | `migrate` | `migrate(dir: string): void` | Register a folder of `.sql` migrations |
 | `entitlements` | `{ get, set, reset }` | Organization entitlements |
@@ -93,7 +93,7 @@ interface ExtensionAuth {
 
 ### `publicConfig(fn)`
 
-`fn` is called on every `GET /api/v1/auth/config` and its result appears under `extensions.<name>`. The endpoint is unauthenticated, so return only values that are safe to show to anyone. If `fn` throws, the error is logged and that extension is left out of the response.
+`fn` is called on every `GET /api/v1/auth/config` and its result appears under `extensions.<name>`. The endpoint is unauthenticated, so return only values that are safe to show to anyone. If `fn` throws, the error is logged and that extension is left out of the response. When no extension registered a public config (or every registered `fn` threw), the `extensions` key is omitted from the response entirely, so read it as `cfg.extensions?.<name>`.
 
 ### `database` and `migrate(dir)`
 
@@ -146,8 +146,9 @@ enqueue<T>(job: string, data: T, opts?: { delayMs?: number; jobKey?: string }): 
 schedule(job: string, cronExpression: string): void
 ```
 
+- `job` must match `^[a-z][a-z0-9_-]{0,62}$` (so no `:`) and must not contain `__`: it becomes part of the queue name, and the Redis backend maps `:` to `__`. `registerJob`, `schedule` and `enqueue` throw (or reject) on any other name.
 - `registerJob` and `schedule` work inside `register()` only. The handler runs in the worker process. Registering the same job name twice throws.
-- `schedule` runs a job on a cron expression (five-field syntax). The job is enqueued with an empty payload, and the cron is registered in the worker process.
+- `schedule` runs a job on a cron expression (five-field syntax). The job must be registered with `registerJob` by the same extension, before or after the `schedule` call but within the same `register()`; otherwise startup aborts. Scheduling the same job twice throws. The job is enqueued with an empty payload, and the cron is registered in the worker process. The cron expression is passed through to the queue backend unvalidated: a malformed expression is reported by the queue backend when the worker registers or runs the cron, not by `schedule()`.
 - `enqueue` adds a job to its queue from any process. `jobKey` deduplicates; `delayMs` delays execution. Completed and failed jobs are always removed.
 - The queue name of a job is `ext:<name>:<job>`.
 
