@@ -3,48 +3,25 @@
   import { onMount } from 'svelte';
   import { authStore } from '$lib/stores/auth';
   import { toastStore } from '$lib/stores/toast';
-  import { AdminAuthAPI, type AuthProviderConfig, type CreateProviderInput } from '$lib/api/admin-auth';
+  import { AdminAuthAPI, type AuthProviderConfig, type CreateProviderInput, type TestConnectionResult } from '$lib/api/admin-auth';
+  import { getApiBaseUrl } from '$lib/config';
+  import AuthProviderCard from '$lib/components/admin/AuthProviderCard.svelte';
+  import { providerRedirectUri, disableImpact } from '$lib/components/admin/auth-provider';
+  import EmptyState from '$lib/components/app/EmptyState.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
-  import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
-  import { Alert, AlertDescription } from '$lib/components/ui/alert';
+  import { Skeleton } from '$lib/components/ui/skeleton';
   import Spinner from '$lib/components/Spinner.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
   import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
-  import { Plus, Settings, Trash2, Pencil, Building2, Server, Mail, Check, X } from '@lucide/svelte';
-  import { goto } from '$app/navigation';
-  import { browser } from '$app/environment';
-  import { untrack } from 'svelte';
-  import { UsersAPI } from '$lib/api/users';
-  import { get } from 'svelte/store';
+  import { Plus } from '@lucide/svelte';
   import { Switch } from '$lib/components/ui/switch';
   import { buildProviderConfig } from '$lib/utils/auth-provider-form';
 
   let adminAuthAPI = $derived(new AdminAuthAPI(() => $authStore.token));
 
-  const usersAPI = new UsersAPI(() => get(authStore).token);
-
-  $effect(() => {
-    if (browser && $authStore.user) {
-      if ($authStore.user.is_admin === undefined) {
-        untrack(() => {
-          usersAPI
-            .getCurrentUser()
-            .then(({ user }) => {
-              const currentUser = get(authStore).user;
-              if (currentUser) {
-                authStore.updateUser({ ...currentUser, ...user });
-                if (user.is_admin) loadProviders();
-              }
-            })
-            .catch(() => goto('/dashboard'));
-        });
-      } else if ($authStore.user.is_admin === false) {
-        untrack(() => goto('/dashboard'));
-      }
-    }
-  });
+  // The admin layout already blocks this page until the user is confirmed as admin.
 
   let providers = $state<AuthProviderConfig[]>([]);
   let loading = $state(true);
@@ -106,13 +83,10 @@
     };
   }
 
-  onMount(async () => {
-    if ($authStore.user?.is_admin) await loadProviders();
-  });
+  onMount(loadProviders);
 
   async function loadProviders() {
     try {
-      loading = true;
       error = null;
       const response = await adminAuthAPI.getProviders();
       providers = response.providers;
@@ -120,19 +94,6 @@
       error = e instanceof Error ? e.message : 'Failed to load providers';
     } finally {
       loading = false;
-    }
-  }
-
-  function getProviderIcon(type: string) {
-    switch (type) {
-      case 'local':
-        return Mail;
-      case 'oidc':
-        return Building2;
-      case 'ldap':
-        return Server;
-      default:
-        return Settings;
     }
   }
 
@@ -185,16 +146,54 @@
     }
   }
 
-  async function handleToggleEnabled(provider: AuthProviderConfig) {
+  let togglingId = $state<string | null>(null);
+  let testingId = $state<string | null>(null);
+  let testResults = $state<Record<string, TestConnectionResult>>({});
+  let disableTarget = $state<AuthProviderConfig | null>(null);
+  let showDisableDialog = $state(false);
+
+  const impact = $derived(disableTarget ? disableImpact(providers, disableTarget) : null);
+
+  function requestToggle(provider: AuthProviderConfig, enabled: boolean) {
+    if (!enabled && disableImpact(providers, provider)) {
+      disableTarget = provider;
+      showDisableDialog = true;
+      return;
+    }
+    setEnabled(provider, enabled).catch(() => {});
+  }
+
+  async function setEnabled(provider: AuthProviderConfig, enabled: boolean) {
+    togglingId = provider.id;
     try {
-      await adminAuthAPI.updateProvider(provider.id, {
-        enabled: !provider.enabled,
-      });
-      toastStore.success(provider.enabled ? 'Provider disabled' : 'Provider enabled');
+      await adminAuthAPI.updateProvider(provider.id, { enabled });
+      toastStore.success(enabled ? 'Provider enabled' : 'Provider disabled');
       await loadProviders();
     } catch (e) {
       toastStore.error(e instanceof Error ? e.message : 'Failed to update provider');
+      throw e;
+    } finally {
+      togglingId = null;
     }
+  }
+
+  async function handleTest(provider: AuthProviderConfig) {
+    testingId = provider.id;
+    try {
+      testResults = { ...testResults, [provider.id]: await adminAuthAPI.testConnection(provider.id) };
+    } catch (e) {
+      testResults = {
+        ...testResults,
+        [provider.id]: { success: false, message: e instanceof Error ? e.message : 'Test failed' },
+      };
+    } finally {
+      testingId = null;
+    }
+  }
+
+  function redirectFor(provider: AuthProviderConfig): string | null {
+    const origin = typeof window === 'undefined' ? '' : window.location.origin;
+    return providerRedirectUri(provider, getApiBaseUrl(), origin);
   }
 
   function confirmDeleteProvider(provider: AuthProviderConfig) {
@@ -299,79 +298,37 @@
   </PageHeader>
 
   {#if loading}
-    <div class="flex justify-center py-12">
-      <Spinner size="lg" />
+    <div class="space-y-4" aria-busy="true">
+      <Skeleton class="h-28 w-full" />
+      <Skeleton class="h-40 w-full" />
     </div>
   {:else if error}
-    <Alert variant="destructive">
-      <AlertDescription>{error}</AlertDescription>
-    </Alert>
+    <EmptyState variant="error" title="Could not load providers" description={error}>
+      {#snippet actions()}
+        <Button variant="outline" size="sm" onclick={() => { loading = true; loadProviders(); }}>Retry</Button>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="grid gap-4">
-      {#each providers as provider}
-        {@const ProviderIcon = getProviderIcon(provider.type)}
-        <Card>
-          <CardContent class="p-4">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-4">
-                <div class="p-2 rounded-lg bg-muted">
-                  <ProviderIcon class="h-5 w-5" />
-                </div>
-                <div>
-                  <div class="font-medium flex items-center gap-2">
-                    {provider.name}
-                    {#if provider.type === 'local'}
-                      <span class="text-xs bg-muted px-2 py-0.5 rounded">Built-in</span>
-                    {/if}
-                    {#if !provider.enabled}
-                      <span class="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded">Disabled</span>
-                    {/if}
-                  </div>
-                  <p class="text-sm text-muted-foreground">
-                    {provider.type.toUpperCase()} &middot; {provider.slug}
-                  </p>
-                </div>
-              </div>
-
-              <div class="flex items-center gap-2">
-                {#if provider.type !== 'local'}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onclick={() => openEditDialog(provider)}
-                    title="Edit"
-                  >
-                    <Pencil class="h-4 w-4" />
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onclick={() => handleToggleEnabled(provider)}
-                    title={provider.enabled ? 'Disable' : 'Enable'}
-                  >
-                    {#if provider.enabled}
-                      <Check class="h-4 w-4 text-success-text" />
-                    {:else}
-                      <X class="h-4 w-4 text-muted-foreground" />
-                    {/if}
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onclick={() => confirmDeleteProvider(provider)}
-                    title="Delete"
-                  >
-                    <Trash2 class="h-4 w-4 text-destructive" />
-                  </Button>
-                {/if}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {#each providers as provider (provider.id)}
+        <AuthProviderCard
+          {provider}
+          redirectUri={redirectFor(provider)}
+          busy={togglingId === provider.id}
+          testing={testingId === provider.id}
+          testResult={testResults[provider.id] ?? null}
+          onToggle={(enabled) => requestToggle(provider, enabled)}
+          onTest={() => handleTest(provider)}
+          onEdit={() => openEditDialog(provider)}
+          onDelete={() => confirmDeleteProvider(provider)}
+        />
       {/each}
     </div>
+    {#if providers.every((p) => p.type === 'local')}
+      <p class="text-sm text-muted-foreground">
+        No SSO provider yet. Add an OIDC or LDAP provider so users can sign in with your identity system.
+      </p>
+    {/if}
   {/if}
 </div>
 
@@ -701,4 +658,17 @@
   confirmLabel="Delete provider"
   busy={deletingProvider}
   onConfirm={handleDeleteProvider}
+/>
+
+<!-- Disable provider dialog -->
+<ConfirmDialog
+  bind:open={showDisableDialog}
+  title={`Disable ${disableTarget?.name ?? 'provider'}?`}
+  description={impact === 'last-any'
+    ? 'This is the last enabled sign-in method. Nobody will be able to sign in until you enable a provider again.'
+    : 'This is the last enabled external provider. Users will only be able to sign in with email and password.'}
+  confirmLabel="Disable provider"
+  onConfirm={async () => {
+    if (disableTarget) await setEnabled(disableTarget, false);
+  }}
 />

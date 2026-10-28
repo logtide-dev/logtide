@@ -1,5 +1,4 @@
 import { getApiBaseUrl } from '$lib/config';
-import { readApiError } from './admin';
 
 export interface AuthProviderConfig {
   id: string;
@@ -45,6 +44,44 @@ export interface ErrorResponse {
   details?: unknown;
 }
 
+/**
+ * Error text from a failed response: the backend sends { error } or { message },
+ * and validation failures add a details array of { path, message }. The body can
+ * also be empty or not JSON.
+ */
+export async function readAuthError(response: Response, fallback: string): Promise<string> {
+  let text = '';
+  try {
+    text = await response.text();
+  } catch {
+    return fallback;
+  }
+  if (!text) return fallback;
+  try {
+    const body = JSON.parse(text) as { error?: unknown; message?: unknown; details?: unknown };
+    const head =
+      typeof body?.error === 'string' && body.error.trim()
+        ? body.error
+        : typeof body?.message === 'string' && body.message.trim()
+          ? body.message
+          : fallback;
+    if (Array.isArray(body?.details)) {
+      const parts = body.details
+        .slice(0, 3)
+        .map((d: { path?: unknown; message?: unknown }) => {
+          if (!d || typeof d.message !== 'string') return null;
+          const path = Array.isArray(d.path) ? d.path.join('.') : '';
+          return path ? `${path}: ${d.message}` : d.message;
+        })
+        .filter((x: string | null): x is string => !!x);
+      if (parts.length) return `${head} (${parts.join(', ')})`;
+    }
+    return head;
+  } catch {
+    return fallback;
+  }
+}
+
 export class AdminAuthAPI {
   constructor(private getToken: () => string | null) {}
 
@@ -64,7 +101,7 @@ export class AdminAuthAPI {
     });
 
     if (!response.ok) {
-      throw new Error(await readApiError(response, 'Request failed'));
+      throw new Error(await readAuthError(response, 'Request failed'));
     }
 
     if (response.status === 204) {
@@ -108,17 +145,15 @@ export class AdminAuthAPI {
     });
   }
 
+  /** Tests the saved configuration of a provider (not unsaved form values). */
   async testConnection(id: string): Promise<TestConnectionResult> {
-    return this.request(`/admin/auth/providers/${id}/test`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
-  }
-
-  async reorderProviders(order: string[]): Promise<{ success: boolean }> {
-    return this.request('/admin/auth/providers/reorder', {
-      method: 'POST',
-      body: JSON.stringify({ order }),
-    });
+    const res = await this.request<Partial<TestConnectionResult> | undefined>(
+      `/admin/auth/providers/${id}/test`,
+      { method: 'POST', body: JSON.stringify({}) },
+    );
+    if (!res || typeof res.success !== 'boolean') {
+      return { success: false, message: 'The server returned an unexpected response' };
+    }
+    return { success: res.success, message: res.message || (res.success ? 'Connection works' : 'Connection failed') };
   }
 }
