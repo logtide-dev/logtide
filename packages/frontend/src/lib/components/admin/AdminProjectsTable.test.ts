@@ -22,7 +22,7 @@ const project = (over = {}) => ({
 
 describe('AdminProjectsTable', () => {
   it('links project and organization, formats logs and rules', () => {
-    render(AdminProjectsTable as never, { projects: [project()], onDelete: vi.fn() });
+    render(AdminProjectsTable as never, { projects: [project()], onDelete: vi.fn() } as never);
     expect(screen.getAllByRole('link', { name: 'Api' })[0]).toHaveAttribute('href', '/dashboard/admin/projects/p1');
     expect(screen.getAllByRole('link', { name: 'Acme' })[0]).toHaveAttribute('href', '/dashboard/admin/organizations/o1');
     expect(screen.getByText('1,200')).toBeInTheDocument();
@@ -32,10 +32,10 @@ describe('AdminProjectsTable', () => {
   it('calls onDelete with a labelled button and hides it for deleted rows', async () => {
     const onDelete = vi.fn();
     const p = project();
-    const { rerender } = render(AdminProjectsTable as never, { projects: [p], onDelete });
+    const { rerender } = render(AdminProjectsTable as never, { projects: [p], onDelete } as never);
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     expect(onDelete).toHaveBeenCalledWith(p);
-    await rerender({ projects: [project({ deletedAt: '2026-02-01T00:00:00Z' })], onDelete });
+    await rerender({ projects: [project({ deletedAt: '2026-02-01T00:00:00Z' })], onDelete } as never);
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
     expect(screen.getByText('Deleted')).toBeInTheDocument();
   });

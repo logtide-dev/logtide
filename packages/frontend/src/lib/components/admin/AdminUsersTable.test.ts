@@ -16,14 +16,14 @@ const user = (over = {}) => ({
 
 describe('AdminUsersTable', () => {
   it('links the email to the detail page and shows org count', () => {
-    render(AdminUsersTable as never, { users: [user()] });
+    render(AdminUsersTable as never, { users: [user()] } as never);
     const link = screen.getAllByRole('link', { name: 'a@b.co' })[0];
     expect(link).toHaveAttribute('href', '/dashboard/admin/users/u1');
     expect(screen.getByText('3')).toBeInTheDocument();
   });
 
   it('shows Never for no login and one state pill for disabled users', () => {
-    render(AdminUsersTable as never, { users: [user({ disabled: true, is_admin: true })] });
+    render(AdminUsersTable as never, { users: [user({ disabled: true, is_admin: true })] } as never);
     expect(screen.getByText('Never')).toBeInTheDocument();
     expect(screen.getByText('Disabled')).toBeInTheDocument();
     expect(screen.getByText('Admin')).toBeInTheDocument();
