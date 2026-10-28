@@ -509,6 +509,35 @@ describe('Notification Channels Routes', () => {
       expect(body.channels).toHaveLength(1);
     });
 
+    it('supports the project_health event type (GET and PUT)', async () => {
+      const [channel] = await db
+        .insertInto('notification_channels')
+        .values({
+          organization_id: testOrganization.id,
+          name: 'Health Channel',
+          type: 'email',
+          config: { recipients: ['test@example.com'] },
+        })
+        .returningAll()
+        .execute();
+
+      const put = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/notification-channels/defaults/project_health?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: { channelIds: [channel.id] },
+      });
+      expect(put.statusCode).toBe(204);
+
+      const get = await app.inject({
+        method: 'GET',
+        url: `/api/v1/notification-channels/defaults/project_health?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      expect(get.statusCode).toBe(200);
+      expect(JSON.parse(get.payload).channels).toHaveLength(1);
+    });
+
     it('should return 400 for invalid event type', async () => {
       const response = await app.inject({
         method: 'GET',

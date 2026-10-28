@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { notificationChannelsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
+import { NOTIFICATION_EVENT_TYPES } from '@logtide/shared';
 import type {
   NotificationEventType,
   NotificationChannelType,
@@ -104,7 +105,9 @@ const setChannelsSchema = z.object({
   channelIds: z.array(z.string().uuid()),
 });
 
-const eventTypeSchema = z.enum(['alert', 'sigma', 'incident', 'error', 'monitoring']);
+const eventTypeSchema = z.enum(
+  NOTIFICATION_EVENT_TYPES as unknown as [NotificationEventType, ...NotificationEventType[]]
+);
 
 // ============================================================================
 // HELPERS
