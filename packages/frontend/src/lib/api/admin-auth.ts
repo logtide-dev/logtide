@@ -1,4 +1,5 @@
 import { getApiBaseUrl } from '$lib/config';
+import { readApiError } from './admin';
 
 export interface AuthProviderConfig {
   id: string;
@@ -63,15 +64,20 @@ export class AdminAuthAPI {
     });
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
-      throw new Error(error.error || 'Request failed');
+      throw new Error(await readApiError(response, 'Request failed'));
     }
 
     if (response.status === 204) {
       return undefined as T;
     }
 
-    return response.json();
+    const text = await response.text().catch(() => '');
+    if (!text) return undefined as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return undefined as T;
+    }
   }
 
   async getProviders(): Promise<{ providers: AuthProviderConfig[] }> {
