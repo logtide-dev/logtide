@@ -18,6 +18,8 @@
   import { untrack } from 'svelte';
   import { UsersAPI } from '$lib/api/users';
   import { get } from 'svelte/store';
+  import { Switch } from '$lib/components/ui/switch';
+  import { buildProviderConfig } from '$lib/utils/auth-provider-form';
 
   let adminAuthAPI = $derived(new AdminAuthAPI(() => $authStore.token));
 
@@ -81,6 +83,29 @@
   let ldapSearchBase = $state('');
   let ldapSearchFilter = $state('(uid={{username}})');
 
+  // Shared by both types: create users on first sign-in
+  let allowAutoRegister = $state(true);
+
+  function formFields() {
+    return {
+      oidc: {
+        issuerUrl: oidcIssuerUrl,
+        clientId: oidcClientId,
+        clientSecret: oidcClientSecret,
+        redirectUri: oidcRedirectUri,
+        allowAutoRegister,
+      },
+      ldap: {
+        url: ldapUrl,
+        bindDn: ldapBindDn,
+        bindPassword: ldapBindPassword,
+        searchBase: ldapSearchBase,
+        searchFilter: ldapSearchFilter,
+        allowAutoRegister,
+      },
+    };
+  }
+
   onMount(async () => {
     if ($authStore.user?.is_admin) await loadProviders();
   });
@@ -128,6 +153,7 @@
     ldapBindPassword = '';
     ldapSearchBase = '';
     ldapSearchFilter = '(uid={{username}})';
+    allowAutoRegister = true;
   }
 
   function generateSlug(name: string): string {
@@ -141,26 +167,7 @@
     try {
       dialogLoading = true;
 
-      // Build config based on type
-      let config: Record<string, unknown> = {};
-      if (createForm.type === 'oidc') {
-        config = {
-          issuerUrl: oidcIssuerUrl,
-          clientId: oidcClientId,
-          clientSecret: oidcClientSecret,
-          redirectUri: oidcRedirectUri || undefined,
-          allowAutoRegister: true,
-        };
-      } else if (createForm.type === 'ldap') {
-        config = {
-          url: ldapUrl,
-          bindDn: ldapBindDn,
-          bindPassword: ldapBindPassword,
-          searchBase: ldapSearchBase,
-          searchFilter: ldapSearchFilter,
-          allowAutoRegister: true,
-        };
-      }
+      const config = buildProviderConfig(createForm.type as 'oidc' | 'ldap', formFields(), 'create');
 
       await adminAuthAPI.createProvider({
         ...createForm,
@@ -222,18 +229,21 @@
       config: provider.config,
     };
 
+    allowAutoRegister = (provider.config as { allowAutoRegister?: boolean }).allowAutoRegister !== false;
+
     // Populate type-specific fields
     if (provider.type === 'oidc') {
       const config = provider.config as { issuerUrl?: string; clientId?: string; clientSecret?: string; redirectUri?: string };
       oidcIssuerUrl = config.issuerUrl || '';
       oidcClientId = config.clientId || '';
-      oidcClientSecret = config.clientSecret || '';
+      // Never load the masked secret into the field: blank means "keep current"
+      oidcClientSecret = '';
       oidcRedirectUri = config.redirectUri || '';
     } else if (provider.type === 'ldap') {
       const config = provider.config as { url?: string; bindDn?: string; bindPassword?: string; searchBase?: string; searchFilter?: string };
       ldapUrl = config.url || '';
       ldapBindDn = config.bindDn || '';
-      ldapBindPassword = config.bindPassword || '';
+      ldapBindPassword = '';
       ldapSearchBase = config.searchBase || '';
       ldapSearchFilter = config.searchFilter || '(uid={{username}})';
     }
@@ -247,26 +257,9 @@
     try {
       dialogLoading = true;
 
-      // Build config based on type
-      let config: Record<string, unknown> = {};
-      if (createForm.type === 'oidc') {
-        config = {
-          issuerUrl: oidcIssuerUrl,
-          clientId: oidcClientId,
-          clientSecret: oidcClientSecret,
-          redirectUri: oidcRedirectUri || undefined,
-          allowAutoRegister: true,
-        };
-      } else if (createForm.type === 'ldap') {
-        config = {
-          url: ldapUrl,
-          bindDn: ldapBindDn,
-          bindPassword: ldapBindPassword,
-          searchBase: ldapSearchBase,
-          searchFilter: ldapSearchFilter,
-          allowAutoRegister: true,
-        };
-      }
+      // Secrets are only sent when a new value was typed; the backend keeps
+      // the stored one otherwise. allowAutoRegister keeps its current value.
+      const config = buildProviderConfig(createForm.type as 'oidc' | 'ldap', formFields(), 'edit');
 
       await adminAuthAPI.updateProvider(editingProvider.id, {
         name: createForm.name,
@@ -519,6 +512,18 @@
           </div>
         </div>
       {/if}
+
+      <div class="flex items-center justify-between gap-4 pt-4 border-t">
+        <div class="space-y-0.5">
+          <Label for="allowAutoRegister">Create accounts on first sign-in</Label>
+          <p class="text-xs text-muted-foreground">When off, only users who already have an account can sign in with this provider.</p>
+        </div>
+        <Switch
+          id="allowAutoRegister"
+          checked={allowAutoRegister}
+          onCheckedChange={(checked) => (allowAutoRegister = checked)}
+        />
+      </div>
     </div>
 
     <Dialog.Footer>
@@ -588,9 +593,11 @@
             <Input
               id="edit-clientSecret"
               type="password"
-              placeholder="your-client-secret"
+              placeholder="Leave blank to keep current"
+              autocomplete="new-password"
               bind:value={oidcClientSecret}
             />
+            <p class="text-xs text-muted-foreground">Leave blank to keep the current secret.</p>
           </div>
 
           <div class="space-y-2">
@@ -630,9 +637,11 @@
             <Input
               id="edit-ldapBindPassword"
               type="password"
-              placeholder="service-account-password"
+              placeholder="Leave blank to keep current"
+              autocomplete="new-password"
               bind:value={ldapBindPassword}
             />
+            <p class="text-xs text-muted-foreground">Leave blank to keep the current password.</p>
           </div>
 
           <div class="space-y-2">
@@ -654,6 +663,19 @@
             <p class="text-xs text-muted-foreground">Use {'{{username}}'} as placeholder for user input</p>
           </div>
         </div>
+      {/if}
+      {#if editingProvider?.type === 'oidc' || editingProvider?.type === 'ldap'}
+      <div class="flex items-center justify-between gap-4 pt-4 border-t">
+        <div class="space-y-0.5">
+          <Label for="edit-allowAutoRegister">Create accounts on first sign-in</Label>
+          <p class="text-xs text-muted-foreground">When off, only users who already have an account can sign in with this provider.</p>
+        </div>
+        <Switch
+          id="edit-allowAutoRegister"
+          checked={allowAutoRegister}
+          onCheckedChange={(checked) => (allowAutoRegister = checked)}
+        />
+      </div>
       {/if}
     </div>
 
