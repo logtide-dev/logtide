@@ -41,6 +41,15 @@ async function addMetering(orgId: string, projectId: string, type: string, time:
     .execute();
 }
 
+/** Mark a project as already evaluated and seen receiving (a mature project). */
+async function seedMatureState(orgId: string, projectId: string) {
+  const past = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  await db
+    .insertInto('project_health_state')
+    .values({ project_id: projectId, organization_id: orgId, first_evaluated_at: past, last_receiving_at: past })
+    .execute();
+}
+
 function calls(kind: 'opened' | 'resolved', projectId?: string) {
   return notify.mock.calls.filter(
     (c) => c[2] === kind && (projectId === undefined || c[1].id === projectId)
@@ -57,6 +66,7 @@ describe('runProjectHealthPass', () => {
     await db.deleteFrom('project_health_issues').execute();
     await db.deleteFrom('project_notification_settings').execute();
     await db.deleteFrom('metering_events').execute();
+    await db.deleteFrom('project_health_state').execute();
     // Only our project is evaluated in a pass: other tests' projects are gone by setup truncation.
     const ctx = await createTestContext();
     orgId = ctx.organization.id;
@@ -64,6 +74,58 @@ describe('runProjectHealthPass', () => {
     userId = ctx.user.id;
     t0 = new Date();
     t0.setUTCSeconds(0, 0);
+    // Most tests describe a mature project; the rollout tests below delete this.
+    await seedMatureState(orgId, projectId);
+  });
+
+  describe('rollout guard', () => {
+    beforeEach(async () => {
+      await db.deleteFrom('project_health_state').execute();
+    });
+
+    it('a project already idle on its first evaluation never raises silent', async () => {
+      await setLastEvent(projectId, at(-24 * 60));
+      const r1 = await runProjectHealthPass(t0);
+      const r2 = await runProjectHealthPass(at(5));
+      expect(r1.opened + r2.opened).toBe(0);
+      expect(calls('opened')).toHaveLength(0);
+      expect(await listIssues(orgId, projectId)).toHaveLength(0);
+    });
+
+    it('silent arms once the project was seen receiving, then alerts on the next stop', async () => {
+      await setLastEvent(projectId, at(-24 * 60));
+      await runProjectHealthPass(t0);
+      await setLastEvent(projectId, at(1));
+      await runProjectHealthPass(at(2));
+      await runProjectHealthPass(at(120));
+      expect(calls('opened', projectId)).toHaveLength(1);
+      expect(calls('opened', projectId)[0][0].checkKey).toBe('silent');
+    });
+
+    it('issues found on the first evaluation are baseline: visible, never notified', async () => {
+      await setLastEvent(projectId, at(-1));
+      await addMetering(orgId, projectId, 'ingestion.timestamp_skew', at(-30));
+      await runProjectHealthPass(t0);
+      const issues = await listIssues(orgId, projectId);
+      expect(issues).toHaveLength(1);
+      expect(issues[0].baseline).toBe(true);
+      expect(calls('opened')).toHaveLength(0);
+
+      // Resolves 24h+ later: still nothing sent.
+      await setLastEvent(projectId, at(25 * 60));
+      await runProjectHealthPass(at(25 * 60));
+      await runProjectHealthPass(at(25 * 60 + 20));
+      expect(calls('resolved')).toHaveLength(0);
+    });
+
+    it('a new issue after the first evaluation is notified', async () => {
+      await setLastEvent(projectId, at(-1));
+      await runProjectHealthPass(t0);
+      await addMetering(orgId, projectId, 'ingestion.pii_rejected', at(4));
+      await runProjectHealthPass(at(5));
+      expect(calls('opened', projectId)).toHaveLength(1);
+      expect(calls('opened', projectId)[0][0].checkKey).toBe('pii_rejected');
+    });
   });
 
   it('opens a silent issue and notifies exactly once across passes', async () => {

@@ -25,6 +25,12 @@ export interface ProjectHealthInputs {
     maxFutureMs?: Record<SkewSignal, number | null>;
   };
   now: Date;
+  /**
+   * False while the health cron has never seen the project receiving data
+   * (idle before health checks existed): the silent check stays off.
+   * Defaults to true.
+   */
+  silentArmed?: boolean;
 }
 
 const SKEW_CHECKS: Record<SkewSignal, ProjectHealthCheckKey> = {
@@ -48,6 +54,7 @@ export function computeOpenChecks(
   // threshold (10 min) is above the 5 min has_*_at debounce, so a project that
   // keeps sending never flaps.
   if (
+    i.silentArmed !== false &&
     i.lastEventAt !== null &&
     i.now.getTime() - i.lastEventAt.getTime() > i.silentMinutes * 60_000
   ) {

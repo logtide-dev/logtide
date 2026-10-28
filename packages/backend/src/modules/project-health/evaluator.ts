@@ -6,6 +6,9 @@
  *    (24 h), settings rows, issue rows.
  * 2. Reconcile each project: open / touch / reopen (15 min flapping guard) /
  *    resolve, clearing `untilResolved` mutes on resolve.
+ *    Rollout guard (migration 074): the silent check arms only once a pass has
+ *    seen the project receiving data, and issues opened on a project's first
+ *    pass are baseline (pre-existing, never notified).
  * 3. Notify per the state machine: an open, unmuted issue with
  *    notified_open_at null sends "opened"; a resolved issue whose open was
  *    notified sends "resolved". Both are claimed with a conditional UPDATE
@@ -35,6 +38,7 @@ import {
   type ProjectHealthSettings,
 } from './settings.js';
 import { notifyProjectHealth, type NotifiableProject } from './notifier.js';
+import { getStateForProjects, recordEvaluation } from './state.js';
 
 export interface ProjectHealthPassResult {
   evaluated: number;
@@ -143,7 +147,8 @@ async function reconcileProject(
   project: NotifiableProject,
   open: Map<ProjectHealthCheckKey, Record<string, unknown>>,
   issues: HealthIssueRow[],
-  now: Date
+  now: Date,
+  baseline: boolean
 ): Promise<{ opened: number; resolved: ProjectHealthCheckKey[] }> {
   let opened = 0;
   const resolved: ProjectHealthCheckKey[] = [];
@@ -174,6 +179,7 @@ async function reconcileProject(
       checkKey,
       details,
       now,
+      baseline,
     });
     if (created) opened++;
   }
@@ -197,6 +203,8 @@ async function notifyDue(
   now: Date
 ): Promise<void> {
   for (const issue of issues) {
+    // Baseline issues predate the first evaluation: visible, never notified.
+    if (issue.baseline) continue;
     try {
       if (issue.resolvedAt === null) {
         if (issue.notifiedOpenAt !== null) continue;
@@ -238,10 +246,11 @@ export async function runProjectHealthPass(now: Date = new Date()): Promise<Proj
   if (projects.length === 0) return result;
 
   const projectIds = projects.map((p) => p.id);
-  const [counters, settingsMap, issueRows] = await Promise.all([
+  const [counters, settingsMap, issueRows, stateMap] = await Promise.all([
     loadCounters(projectIds, Array.from(new Set(projects.map((p) => p.organization_id))), now),
     getSettingsForProjects(projectIds),
     loadIssuesForProjects(projectIds, new Date(now.getTime() - RESOLVE_NOTIFY_LOOKBACK_MS)),
+    getStateForProjects(projectIds),
   ]);
 
   const issuesByProject = new Map<string, HealthIssueRow[]>();
@@ -255,9 +264,16 @@ export async function runProjectHealthPass(now: Date = new Date()): Promise<Proj
     const project: NotifiableProject = { id: p.id, name: p.name, organizationId: p.organization_id };
     try {
       const settings = settingsMap.get(p.id) ?? defaultProjectHealthSettings();
-      const open = computeOpenChecks(buildInputs(p, counters.get(p.id), settings, now));
+      const state = stateMap.get(p.id);
+      const inputs = buildInputs(p, counters.get(p.id), settings, now);
+      const receiving =
+        inputs.lastEventAt !== null &&
+        now.getTime() - inputs.lastEventAt.getTime() <= settings.silentMinutes * 60_000;
+      inputs.silentArmed = receiving || (state?.lastReceivingAt ?? null) !== null;
+      const open = computeOpenChecks(inputs);
       const before = issuesByProject.get(p.id) ?? [];
-      const { opened, resolved } = await reconcileProject(project, open, before, now);
+      const { opened, resolved } = await reconcileProject(project, open, before, now, state === undefined);
+      await recordEvaluation(p.organization_id, p.id, receiving, now);
       result.evaluated++;
       result.opened += opened;
       result.resolved += resolved.length;

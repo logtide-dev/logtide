@@ -32,6 +32,8 @@ export interface HealthIssueRow {
   details: Record<string, unknown>;
   notifiedOpenAt: Date | null;
   notifiedResolveAt: Date | null;
+  /** Opened on the project's first evaluation: shown in the app, never notified. */
+  baseline: boolean;
 }
 
 type RawRow = {
@@ -46,6 +48,7 @@ type RawRow = {
   details: unknown;
   notified_open_at: Date | string | null;
   notified_resolve_at: Date | string | null;
+  baseline: boolean;
 };
 
 const COLUMNS = [
@@ -60,6 +63,7 @@ const COLUMNS = [
   'details',
   'notified_open_at',
   'notified_resolve_at',
+  'baseline',
 ] as const;
 
 const toDate = (v: Date | string): Date => (v instanceof Date ? v : new Date(v));
@@ -83,6 +87,7 @@ function mapRow(r: RawRow): HealthIssueRow {
           : {},
     notifiedOpenAt: toDateOrNull(r.notified_open_at),
     notifiedResolveAt: toDateOrNull(r.notified_resolve_at),
+    baseline: r.baseline === true,
   };
 }
 
@@ -128,6 +133,7 @@ export async function openIssue(input: {
   checkKey: ProjectHealthCheckKey;
   details: Record<string, unknown>;
   now: Date;
+  baseline?: boolean;
 }): Promise<HealthIssueRow | null> {
   const row = await db
     .insertInto('project_health_issues')
@@ -139,6 +145,7 @@ export async function openIssue(input: {
       opened_at: input.now,
       last_seen_at: input.now,
       details: JSON.stringify(input.details),
+      baseline: input.baseline ?? false,
     })
     .onConflict((oc) =>
       oc.columns(['project_id', 'check_key']).where('resolved_at', 'is', null).doNothing()
