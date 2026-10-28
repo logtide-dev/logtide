@@ -8,6 +8,8 @@ import {
   resetOrganizationEntitlement,
   setOrganizationEntitlements,
 } from '../modules/capabilities/entitlements-service.js';
+import { getMailer } from '../lib/mailer.js';
+import { createQueue } from '../queue/connection.js';
 import { retentionService } from '../modules/retention/service.js';
 import { extensionAuth, UUID_RE } from './auth.js';
 import { runExtensionMigrations } from './migrate.js';
@@ -16,10 +18,13 @@ import type {
   ExtensionCron,
   ExtensionJob,
   ExtensionLogger,
+  ExtensionMail,
+  ExtensionQueue,
   ExtensionOrgs,
   ExtensionProcess,
   LogtideExtension,
 } from './types.js';
+import { MailNotConfiguredError } from './types.js';
 
 type PublicConfigFn = () => Record<string, unknown> | Promise<Record<string, unknown>>;
 
@@ -87,6 +92,20 @@ const extensionOrgs: ExtensionOrgs = {
   },
 };
 
+const extensionMail: ExtensionMail = {
+  async send(msg) {
+    const mailer = getMailer();
+    if (!mailer) throw new MailNotConfiguredError();
+    await mailer.sendMail({
+      from: config.SMTP_FROM,
+      to: msg.to,
+      subject: msg.subject,
+      text: msg.text,
+      html: msg.html,
+    });
+  },
+};
+
 function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
   const assertRegistering = (method: string) => {
     if (!state.registering) {
@@ -94,6 +113,30 @@ function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
     }
   };
   const actor = `ext:${name}`;
+  const queueName = (job: string) => `ext:${name}:${job}`;
+  const queue: ExtensionQueue = {
+    registerJob(job, handler) {
+      assertRegistering('registerJob');
+      const queueId = queueName(job);
+      if (state.jobs.some((j) => j.queue === queueId)) {
+        throw new Error(`[Extensions] Job '${queueId}' is registered more than once`);
+      }
+      state.jobs.push({ queue: queueId, handler: handler as (data: unknown) => Promise<void> });
+    },
+    async enqueue(job, data, opts) {
+      await createQueue(queueName(job)).add(job, data, {
+        delay: opts?.delayMs,
+        jobKey: opts?.jobKey,
+        removeOnComplete: true,
+        removeOnFail: true,
+      });
+    },
+    schedule(job, cronExpression) {
+      assertRegistering('schedule');
+      const id = queueName(job);
+      state.crons.push({ task: id, cronExpression, payload: {}, identifier: id });
+    },
+  };
 
   return {
     name,
@@ -130,6 +173,8 @@ function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
       set: (orgId, input) => retentionService.setOrganizationRetentionPolicy(orgId, input, actor),
     },
     orgs: extensionOrgs,
+    queue,
+    mail: extensionMail,
   };
 }
 

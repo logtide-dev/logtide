@@ -4,6 +4,8 @@ import path from 'path';
 import { context } from '@logtide/shared/context';
 import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
 import { loadExternalHooks } from './hooks/index.js';
+import { getCronRegistry } from './queue/queue-factory.js';
+import { loadExtensionModules, initExtensions } from './extensions/index.js';
 import { processAlertNotification, type AlertNotificationJobData } from './queue/jobs/alert-notification.js';
 import { enqueueAlertNotifications } from './queue/jobs/alert-evaluation.js';
 import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
@@ -42,6 +44,7 @@ await initializeWorkerLogging();
 await reservoirReady;
 
 await loadExternalHooks();
+const extensions = await initExtensions(await loadExtensionModules(), 'worker');
 
 // Initialize enrichment services (downloads GeoLite2 if missing)
 await enrichmentService.initialize();
@@ -117,6 +120,17 @@ const webhookDeliveryWorker = createWorker<WebhookDeliveryJobData>('webhook-deli
 const receiverEventsWorker = createWorker<ReceiverEventJobData>('receiver-events', async (job) => {
   await processReceiverEvent(job);
 });
+
+// Extension jobs and crons. Crons are registered before the runner starts:
+// graphile-worker cron items cannot change while the runner is up.
+const extensionWorkers = extensions.jobs.map((job) =>
+  createWorker<unknown>(job.queue, async (j) => {
+    await job.handler(j.data);
+  })
+);
+for (const cron of extensions.crons) {
+  await getCronRegistry(cron.task).registerCronJobs([cron]);
+}
 
 // Start workers (required for graphile-worker backend, no-op for BullMQ)
 console.log(`[Worker] Using queue backend: ${getQueueBackend()}`);
@@ -976,6 +990,7 @@ async function gracefulShutdown(signal: string) {
   try {
     // Stop accepting new jobs
     await alertWorker.close();
+    await Promise.all(extensionWorkers.map((w) => w.close()));
     await sigmaWorker.close();
     await autoGroupWorker.close();
     await invitationWorker.close();

@@ -80,6 +80,42 @@ export interface ExtensionApi {
   readonly entitlements: ExtensionEntitlements;
   readonly retention: ExtensionRetention;
   readonly orgs: ExtensionOrgs;
+  readonly queue: ExtensionQueue;
+  readonly mail: ExtensionMail;
+}
+
+/** Background jobs and cron schedules. Queue names are `ext:<name>:<job>`. */
+export interface ExtensionQueue {
+  /** Register the handler of a job. Inside register() only; worker process runs it. */
+  registerJob<T = unknown>(job: string, handler: (data: T) => Promise<void>): void;
+  /** Enqueue a job of this extension. Completed and failed jobs are always removed. */
+  enqueue<T = unknown>(
+    job: string,
+    data: T,
+    opts?: { delayMs?: number; jobKey?: string }
+  ): Promise<void>;
+  /** Run a registered job on a cron expression. Inside register() only. */
+  schedule(job: string, cronExpression: string): void;
+}
+
+/** Thrown by `mail.send` when SMTP_HOST is not configured. */
+export class MailNotConfiguredError extends Error {
+  constructor() {
+    super('[Extensions] Mail is not configured (SMTP_HOST is unset)');
+    this.name = 'MailNotConfiguredError';
+  }
+}
+
+export interface ExtensionMailMessage {
+  to: string | string[];
+  subject: string;
+  text: string;
+  html?: string;
+}
+
+/** Outbound mail through the core SMTP settings. */
+export interface ExtensionMail {
+  send(msg: ExtensionMailMessage): Promise<void>;
 }
 
 /** Org entitlements, delegating to the core service with actor `ext:<name>`. */
