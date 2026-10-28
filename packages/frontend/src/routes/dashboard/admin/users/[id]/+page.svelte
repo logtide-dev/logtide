@@ -1,42 +1,30 @@
 <script lang="ts">
-    import { formatTimestamp } from "$lib/utils/datetime";
-    import PageHeader from "$lib/components/app/PageHeader.svelte";
-    import { onMount, untrack } from "svelte";
+    import { untrack, type Snippet } from "svelte";
     import { page } from "$app/state";
-    import { goto } from "$app/navigation";
-    import { browser } from "$app/environment";
-    import { get } from "svelte/store";
     import { adminAPI, type UserDetails } from "$lib/api/admin";
-    import { UsersAPI } from "$lib/api/users";
     import { toastStore } from "$lib/stores/toast";
+    import { authStore } from "$lib/stores/auth";
     import { Button, buttonVariants } from "$lib/components/ui/button";
     import { Badge } from "$lib/components/ui/badge";
-    import {
-        Card,
-        CardContent,
-        CardDescription,
-        CardHeader,
-        CardTitle,
-    } from "$lib/components/ui/card";
     import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
-    import { Separator } from "$lib/components/ui/separator";
-    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
     import * as Dialog from "$lib/components/ui/dialog";
-    import {
-        ArrowLeft,
-        UserCheck,
-        UserX,
-        Shield,
-        ShieldOff,
-        Mail,
-        Calendar,
-        Building2,
-        Key,
-        Ban,
-        CheckCircle,
-    } from "@lucide/svelte";
-    import { authStore } from "$lib/stores/auth";
+    import { Skeleton } from "$lib/components/ui/skeleton";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
+    import SettingsSection from "$lib/components/app/SettingsSection.svelte";
+    import DangerZone from "$lib/components/app/DangerZone.svelte";
+    import CopyButton from "$lib/components/app/CopyButton.svelte";
+    import Timestamp from "$lib/components/app/Timestamp.svelte";
+    import SeverityBadge from "$lib/components/app/SeverityBadge.svelte";
+    import DataTable from "$lib/components/app/DataTable.svelte";
+    import type { DataTableColumn } from "$lib/components/app/data-table";
+    import { generatePassword } from "$lib/components/admin/admin-list-url";
+    import { Shield, ShieldOff, Key } from "@lucide/svelte";
+    import { formatCount } from "$lib/utils/format-number";
+
+    type Membership = UserDetails["organizations"][number];
 
     const userId = $derived(page.params.id);
 
@@ -53,401 +41,292 @@
     let newPassword = $state("");
     let confirmPassword = $state("");
     let passwordError = $state("");
+    let showPassword = $state(false);
 
-    // Check if current user is looking at their own profile
     const isOwnProfile = $derived($authStore.user?.id === userId);
 
-    const usersAPI = new UsersAPI(() => get(authStore).token);
+    let requestId = 0;
 
-    $effect(() => {
-        if (browser && $authStore.user) {
-            if ($authStore.user.is_admin === undefined) {
-                untrack(() => {
-                    usersAPI
-                        .getCurrentUser()
-                        .then(({ user: current }) => {
-                            const currentUser = get(authStore).user;
-                            if (currentUser) {
-                                authStore.updateUser({
-                                    ...currentUser,
-                                    ...current,
-                                });
-                                if (current.is_admin) loadUser();
-                            }
-                        })
-                        .catch(() => goto("/dashboard"));
-                });
-            } else if ($authStore.user.is_admin === false) {
-                untrack(() => goto("/dashboard"));
-            }
-        }
-    });
-
+    /** First load shows skeletons; later refreshes keep the page and swap data in place. */
     async function loadUser() {
-        if ($authStore.user?.is_admin !== true) return;
-
-        loading = true;
+        const id = ++requestId;
+        if (!user) loading = true;
         error = "";
         try {
-            user = await adminAPI.getUserDetails(userId);
+            const result = await adminAPI.getUserDetails(userId);
+            if (id !== requestId) return;
+            user = result;
         } catch (err: any) {
-            error = err.message || "Failed to load user details";
+            if (id !== requestId) return;
+            error = err?.message || "Failed to load user details";
+            if (user) toastStore.error(error);
         } finally {
-            loading = false;
+            if (id === requestId) loading = false;
         }
     }
 
-    async function disableUser() {
-        if (!user) return;
+    $effect(() => {
+        void userId;
+        untrack(() => {
+            user = null;
+            loadUser();
+        });
+    });
+
+    /** Runs a mutation, toasts backend messages (409 lockout guards included) and rethrows. */
+    async function mutate(fn: () => Promise<unknown>, success: string, fallback: string) {
         actionLoading = true;
         try {
-            await adminAPI.updateUserStatus(user.id, true);
-            showDisableDialog = false;
+            await fn();
+            toastStore.success(success);
             await loadUser();
         } catch (err: any) {
-            error = err.message || "Failed to disable user";
+            toastStore.error(err?.message || fallback);
             throw err;
         } finally {
             actionLoading = false;
         }
     }
 
-    async function enableUser() {
-        if (!user) return;
-        actionLoading = true;
-        try {
-            await adminAPI.updateUserStatus(user.id, false);
-            showEnableDialog = false;
-            await loadUser();
-        } catch (err: any) {
-            error = err.message || "Failed to enable user";
-            throw err;
-        } finally {
-            actionLoading = false;
-        }
+    const disableUser = () =>
+        mutate(() => adminAPI.updateUserStatus(user!.id, true), "User disabled", "Failed to disable user");
+    const enableUser = () =>
+        mutate(() => adminAPI.updateUserStatus(user!.id, false), "User enabled", "Failed to enable user");
+    const promoteToAdmin = () =>
+        mutate(() => adminAPI.updateUserRole(user!.id, true), "User promoted to admin", "Failed to promote user");
+    const demoteFromAdmin = () =>
+        mutate(() => adminAPI.updateUserRole(user!.id, false), "Admin role removed", "Failed to remove admin role");
+
+    function closeResetDialog() {
+        showResetPasswordDialog = false;
+        newPassword = "";
+        confirmPassword = "";
+        passwordError = "";
+        showPassword = false;
     }
 
-    async function promoteToAdmin() {
-        if (!user) return;
-        actionLoading = true;
-        try {
-            await adminAPI.updateUserRole(user.id, true);
-            showPromoteAdminDialog = false;
-            toastStore.success("User promoted to admin");
-            await loadUser();
-        } catch (err: any) {
-            error = err.message || "Failed to promote user to admin";
-            throw err;
-        } finally {
-            actionLoading = false;
-        }
-    }
-
-    async function demoteFromAdmin() {
-        if (!user) return;
-        actionLoading = true;
-        try {
-            await adminAPI.updateUserRole(user.id, false);
-            showDemoteAdminDialog = false;
-            toastStore.success("Admin role removed from user");
-            await loadUser();
-        } catch (err: any) {
-            error = err.message || "Failed to remove admin role";
-            throw err;
-        } finally {
-            actionLoading = false;
-        }
+    function fillGeneratedPassword() {
+        const password = generatePassword(16);
+        newPassword = password;
+        confirmPassword = password;
+        showPassword = true;
     }
 
     async function resetPassword() {
         if (!user) return;
-
         passwordError = "";
-
         if (newPassword.length < 8) {
             passwordError = "Password must be at least 8 characters";
             return;
         }
-
         if (newPassword !== confirmPassword) {
             passwordError = "Passwords do not match";
             return;
         }
-
         actionLoading = true;
         try {
             await adminAPI.resetUserPassword(user.id, newPassword);
-            showResetPasswordDialog = false;
-            newPassword = "";
-            confirmPassword = "";
+            closeResetDialog();
             toastStore.success("Password reset. The user will need to log in again");
         } catch (err: any) {
-            passwordError = err.message || "Failed to reset password";
+            passwordError = err?.message || "Failed to reset password";
+            toastStore.error(passwordError);
         } finally {
             actionLoading = false;
         }
     }
 
-    function formatDate(dateString: string | null) {
-        if (!dateString) return "Never";
-        return formatTimestamp(dateString, { precision: 'minute' });
-    }
+    const asCell = (s: unknown) => s as Snippet<[Membership]>;
 
-    onMount(() => {
-        if ($authStore.user?.is_admin) loadUser();
-    });
+    const orgColumns: DataTableColumn<Membership>[] = [
+        { key: "name", header: "Organization", class: "min-w-[12rem]", cell: asCell(orgCell) },
+        { key: "role", header: "Role", cell: asCell(roleCell) },
+        { key: "joined", header: "Joined", class: "whitespace-nowrap", cell: asCell(joinedCell) },
+    ];
+
+    const displayName = $derived(user?.name || user?.email || "User");
 </script>
 
 <svelte:head>
-    <title>{user?.name ?? user?.email ?? 'User'} - LogTide</title>
+    <title>{user?.email ?? "User"} - LogTide</title>
 </svelte:head>
+
+{#snippet orgCell(o: Membership)}
+    <a
+        href="/dashboard/admin/organizations/{o.id}"
+        class="font-medium underline-offset-4 hover:text-primary hover:underline"
+    >
+        {o.name}
+    </a>
+    <p class="text-xs text-muted-foreground">{o.slug}</p>
+{/snippet}
+
+{#snippet roleCell(o: Membership)}
+    <Badge variant="outline">{o.role}</Badge>
+{/snippet}
+
+{#snippet joinedCell(o: Membership)}
+    <span class="text-muted-foreground"><Timestamp value={o.created_at} precision="minute" /></span>
+{/snippet}
 
 <div class="space-y-6">
     <PageHeader
-        title={user?.name ?? user?.email ?? 'User'}
+        title={user ? displayName : "User"}
         appliesTo="instance"
-        description="View and manage user information"
         breadcrumbs={[
-            { label: 'All users', href: '/dashboard/admin/users' },
-            { label: user?.name ?? user?.email ?? 'User' },
+            { label: "Admin", href: "/dashboard/admin" },
+            { label: "Users", href: "/dashboard/admin/users" },
+            { label: user?.email ?? "User" },
         ]}
-    />
+    >
+        {#snippet meta()}
+            {#if user}
+                <div class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <SeverityBadge kind="state" value={user.disabled ? "disabled" : "active"} />
+                    <Badge variant={user.is_admin ? "secondary" : "outline"}>{user.is_admin ? "Admin" : "User"}</Badge>
+                    <span class="inline-flex items-center gap-1">
+                        <span class="font-mono text-xs">{user.id}</span>
+                        <CopyButton value={user.id} label="Copy user ID" />
+                    </span>
+                </div>
+            {/if}
+        {/snippet}
+    </PageHeader>
 
-    {#if loading}
-        <div class="text-center py-12">
-            <p class="text-muted-foreground">Loading user details...</p>
+    {#if loading && !user}
+        <div class="space-y-4" aria-busy="true">
+            <Skeleton height="10rem" width="100%" />
+            <Skeleton height="8rem" width="100%" />
         </div>
     {:else if error && !user}
-        <Card>
-            <CardContent class="py-12">
-                <div class="text-center">
-                    <p class="text-destructive">{error}</p>
-                    <a
-                        href="/dashboard/admin/users"
-                        class={buttonVariants({
-                            variant: "outline",
-                        }) + " mt-4"}
-                    >
-                        Back to all users
-                    </a>
-                </div>
-            </CardContent>
-        </Card>
+        <EmptyState variant="error" title="Could not load this user" description={error}>
+            {#snippet actions()}
+                <Button variant="outline" size="sm" onclick={loadUser}>Retry</Button>
+                <a href="/dashboard/admin/users" class={buttonVariants({ variant: "outline", size: "sm" })}>
+                    Back to users
+                </a>
+            {/snippet}
+        </EmptyState>
     {:else if user}
-        <div class="grid gap-6 md:grid-cols-3">
-            <div class="md:col-span-2 space-y-6">
-                <Card>
-                    <CardHeader>
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <CardTitle>User information</CardTitle>
-                                <CardDescription
-                                    >Basic user details and status</CardDescription
-                                >
-                            </div>
-                            <div class="flex gap-2">
-                                {#if user.disabled}
-                                    <Badge variant="destructive" class="gap-1">
-                                        <UserX class="h-3 w-3" />
-                                        Disabled
-                                    </Badge>
-                                {:else}
-                                    <Badge variant="default" class="gap-1">
-                                        <UserCheck class="h-3 w-3" />
-                                        Active
-                                    </Badge>
-                                {/if}
-                                {#if user.is_admin}
-                                    <Badge variant="secondary" class="gap-1">
-                                        <Shield class="h-3 w-3" />
-                                        Admin
-                                    </Badge>
-                                {/if}
-                            </div>
-                        </div>
-                    </CardHeader>
-                    <CardContent class="space-y-4">
-                        <div class="grid gap-4 md:grid-cols-2">
-                            <div class="space-y-2">
-                                <Label
-                                    class="text-muted-foreground flex items-center gap-2"
-                                >
-                                    <Mail class="h-4 w-4" />
-                                    Email
-                                </Label>
-                                <p class="font-medium">{user.email}</p>
-                            </div>
-                            <div class="space-y-2">
-                                <Label class="text-muted-foreground">Name</Label
-                                >
-                                <p class="font-medium">{user.name}</p>
-                            </div>
-                            <div class="space-y-2">
-                                <Label
-                                    class="text-muted-foreground flex items-center gap-2"
-                                >
-                                    <Calendar class="h-4 w-4" />
-                                    Created
-                                </Label>
-                                <p class="text-sm">
-                                    {formatDate(user.created_at)}
-                                </p>
-                            </div>
-                            <div class="space-y-2">
-                                <Label class="text-muted-foreground"
-                                    >Last login</Label
-                                >
-                                <p class="text-sm">
-                                    {formatDate(user.last_login)}
-                                </p>
-                            </div>
-                            <div class="space-y-2">
-                                <Label class="text-muted-foreground"
-                                    >Last updated</Label
-                                >
-                                <p class="text-sm">
-                                    {formatDate(user.updated_at)}
-                                </p>
-                            </div>
-                            <div class="space-y-2">
-                                <Label class="text-muted-foreground"
-                                    >Active sessions</Label
-                                >
-                                <p class="font-medium">{user.activeSessions}</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle class="flex items-center gap-2">
-                            <Building2 class="h-5 w-5" />
-                            Organizations
-                        </CardTitle>
-                        <CardDescription
-                            >Organizations this user belongs to</CardDescription
-                        >
-                    </CardHeader>
-                    <CardContent>
-                        {#if user.organizations.length === 0}
-                            <p class="text-muted-foreground text-center py-4">
-                                No organizations
-                            </p>
+        <SettingsSection title="Profile" description="Account details and activity">
+            <dl class="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+                <div>
+                    <dt class="text-sm text-muted-foreground">Email</dt>
+                    <dd class="font-medium break-all">{user.email}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm text-muted-foreground">Name</dt>
+                    <dd class="font-medium">{user.name || "-"}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm text-muted-foreground">Created</dt>
+                    <dd><Timestamp value={user.created_at} precision="minute" /></dd>
+                </div>
+                <div>
+                    <dt class="text-sm text-muted-foreground">Last login</dt>
+                    <dd>
+                        {#if user.last_login}
+                            <Timestamp value={user.last_login} relative />
                         {:else}
-                            <div class="space-y-3">
-                                {#each user.organizations as org}
-                                    <div
-                                        class="flex items-center justify-between p-3 border rounded-lg"
-                                    >
-                                        <div>
-                                            <p class="font-medium">
-                                                {org.name}
-                                            </p>
-                                            <p
-                                                class="text-sm text-muted-foreground"
-                                            >
-                                                @{org.slug}
-                                            </p>
-                                        </div>
-                                        <div class="text-right">
-                                            <Badge variant="outline"
-                                                >{org.role}</Badge
-                                            >
-                                            <p
-                                                class="text-xs text-muted-foreground mt-1"
-                                            >
-                                                Joined {formatDate(
-                                                    org.created_at,
-                                                )}
-                                            </p>
-                                        </div>
-                                    </div>
-                                {/each}
-                            </div>
+                            <span class="text-muted-foreground">Never</span>
                         {/if}
-                    </CardContent>
-                </Card>
-            </div>
+                    </dd>
+                </div>
+                <div>
+                    <dt class="text-sm text-muted-foreground">Last updated</dt>
+                    <dd><Timestamp value={user.updated_at} precision="minute" /></dd>
+                </div>
+                <div>
+                    <dt class="text-sm text-muted-foreground">Active sessions</dt>
+                    <dd class="font-medium tabular-nums">{formatCount(user.activeSessions)}</dd>
+                </div>
+            </dl>
+        </SettingsSection>
 
-            <div class="space-y-6">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Actions</CardTitle>
-                        <CardDescription>Manage user account</CardDescription>
-                    </CardHeader>
-                    <CardContent class="space-y-3">
-                        {#if user.disabled}
-                            <Button
-                                variant="default"
-                                class="w-full gap-2"
-                                onclick={() => (showEnableDialog = true)}
-                            >
-                                <CheckCircle class="h-4 w-4" />
-                                Enable user
-                            </Button>
-                        {:else}
-                            <Button
-                                variant="destructive"
-                                class="w-full gap-2"
-                                onclick={() => (showDisableDialog = true)}
-                                disabled={isOwnProfile}
-                                title={isOwnProfile ? "You cannot disable your own account" : ""}
-                            >
-                                <Ban class="h-4 w-4" />
-                                Disable user
-                            </Button>
-                            {#if isOwnProfile}
-                                <p class="text-xs text-muted-foreground">You cannot disable or demote your own account.</p>
-                            {/if}
-                        {/if}
+        <SettingsSection
+            title="Organizations"
+            description="Organizations this user belongs to"
+        >
+            <DataTable columns={orgColumns} rows={user.organizations} rowKey={(o) => o.id}>
+                {#snippet empty()}
+                    <EmptyState variant="no-data" title="No organizations" description="This user is not a member of any organization." />
+                {/snippet}
+            </DataTable>
+        </SettingsSection>
 
-                        <Separator />
-
-                        {#if user.is_admin}
-                            <Button
-                                variant="outline"
-                                class="w-full gap-2"
-                                onclick={() => (showDemoteAdminDialog = true)}
-                                disabled={isOwnProfile}
-                                title={isOwnProfile ? "You cannot remove the admin role from yourself" : ""}
-                            >
-                                <ShieldOff class="h-4 w-4" />
-                                Remove admin role
-                            </Button>
-                        {:else}
-                            <Button
-                                variant="outline"
-                                class="w-full gap-2"
-                                onclick={() => (showPromoteAdminDialog = true)}
-                            >
-                                <Shield class="h-4 w-4" />
-                                Promote to admin
-                            </Button>
-                        {/if}
-
-                        <Separator />
-
-                        <Button
-                            variant="outline"
-                            class="w-full gap-2"
-                            onclick={() => (showResetPasswordDialog = true)}
-                        >
-                            <Key class="h-4 w-4" />
-                            Reset password
-                        </Button>
-                    </CardContent>
-                </Card>
-
-                {#if error}
-                    <Card class="border-destructive">
-                        <CardContent class="pt-6">
-                            <p class="text-sm text-destructive">{error}</p>
-                        </CardContent>
-                    </Card>
+        <SettingsSection
+            title="Role"
+            description={user.is_admin
+                ? "This user is an instance admin with full access to instance settings, users and organizations."
+                : "Promote this user to instance admin to give them full access to instance settings."}
+        >
+            <div class="flex flex-wrap items-center gap-3">
+                {#if user.is_admin}
+                    <Button
+                        variant="outline"
+                        class="gap-2"
+                        onclick={() => (showDemoteAdminDialog = true)}
+                        disabled={isOwnProfile}
+                    >
+                        <ShieldOff class="h-4 w-4" />
+                        Remove admin role
+                    </Button>
+                {:else}
+                    <Button variant="outline" class="gap-2" onclick={() => (showPromoteAdminDialog = true)}>
+                        <Shield class="h-4 w-4" />
+                        Promote to admin
+                    </Button>
+                {/if}
+                {#if isOwnProfile && user.is_admin}
+                    <p class="text-sm text-muted-foreground">
+                        You cannot remove your own admin role, so the instance always keeps an admin. Ask another admin to do it.
+                    </p>
                 {/if}
             </div>
-        </div>
+        </SettingsSection>
+
+        <SettingsSection
+            title="Password"
+            description="Set a new password. The user is logged out of all sessions."
+        >
+            <Button variant="outline" class="gap-2" onclick={() => (showResetPasswordDialog = true)}>
+                <Key class="h-4 w-4" />
+                Reset password
+            </Button>
+        </SettingsSection>
+
+        <DangerZone>
+            {#if user.disabled}
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="space-y-1">
+                        <h3 class="font-semibold">Enable account</h3>
+                        <p class="text-sm text-muted-foreground">This account is disabled. Enabling lets the user log in again.</p>
+                    </div>
+                    <Button onclick={() => (showEnableDialog = true)}>Enable user</Button>
+                </div>
+            {:else}
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="space-y-1">
+                        <h3 class="font-semibold">Disable account</h3>
+                        <p class="text-sm text-muted-foreground">
+                            The user is logged out immediately and cannot log in until the account is enabled again.
+                        </p>
+                        {#if isOwnProfile}
+                            <p class="text-sm text-muted-foreground">
+                                This is your own account. You cannot disable it, so you cannot lock yourself out.
+                            </p>
+                        {:else if user.is_admin}
+                            <p class="text-sm text-muted-foreground">
+                                The last active admin cannot be disabled.
+                            </p>
+                        {/if}
+                    </div>
+                    <Button variant="destructive" onclick={() => (showDisableDialog = true)} disabled={isOwnProfile}>
+                        Disable user
+                    </Button>
+                </div>
+            {/if}
+        </DangerZone>
     {/if}
 </div>
 
@@ -470,60 +349,6 @@
     onConfirm={enableUser}
 />
 
-<Dialog.Root bind:open={showResetPasswordDialog}>
-    <Dialog.Content class="max-w-md">
-        <Dialog.Header>
-            <Dialog.Title>Reset password</Dialog.Title>
-            <Dialog.Description>
-                Set a new password for this user. They will be logged out of all
-                sessions.
-            </Dialog.Description>
-        </Dialog.Header>
-        <div class="space-y-4 py-4">
-            <div class="space-y-2">
-                <Label for="new-password">New password</Label>
-                <Input
-                    id="new-password"
-                    type="password"
-                    placeholder="Enter new password"
-                    bind:value={newPassword}
-                    disabled={actionLoading}
-                />
-            </div>
-            <div class="space-y-2">
-                <Label for="confirm-password">Confirm password</Label>
-                <Input
-                    id="confirm-password"
-                    type="password"
-                    placeholder="Confirm new password"
-                    bind:value={confirmPassword}
-                    disabled={actionLoading}
-                />
-            </div>
-            {#if passwordError}
-                <p class="text-sm text-destructive">{passwordError}</p>
-            {/if}
-        </div>
-        <Dialog.Footer>
-            <Button
-                variant="outline"
-                disabled={actionLoading}
-                onclick={() => {
-                    showResetPasswordDialog = false;
-                    newPassword = "";
-                    confirmPassword = "";
-                    passwordError = "";
-                }}
-            >
-                Cancel
-            </Button>
-            <Button variant="destructive" onclick={resetPassword} disabled={actionLoading}>
-                {actionLoading ? "Resetting..." : "Reset password"}
-            </Button>
-        </Dialog.Footer>
-    </Dialog.Content>
-</Dialog.Root>
-
 <ConfirmDialog
     bind:open={showPromoteAdminDialog}
     title="Promote to admin"
@@ -542,3 +367,62 @@
     busy={actionLoading}
     onConfirm={demoteFromAdmin}
 />
+
+<Dialog.Root
+    bind:open={showResetPasswordDialog}
+    onOpenChange={(o) => {
+        if (!o) closeResetDialog();
+    }}
+>
+    <Dialog.Content class="max-w-md">
+        <Dialog.Header>
+            <Dialog.Title>Reset password</Dialog.Title>
+            <Dialog.Description>
+                Set a new password for this user. They will be logged out of all sessions.
+            </Dialog.Description>
+        </Dialog.Header>
+        <div class="space-y-4 py-4">
+            <div class="space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                    <Label for="new-password">New password</Label>
+                    <div class="flex items-center gap-1">
+                        {#if newPassword}
+                            <CopyButton value={newPassword} label="Copy password" />
+                        {/if}
+                        <Button type="button" variant="outline" size="sm" disabled={actionLoading} onclick={fillGeneratedPassword}>
+                            Generate password
+                        </Button>
+                    </div>
+                </div>
+                <Input
+                    id="new-password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Minimum 8 characters"
+                    bind:value={newPassword}
+                    disabled={actionLoading}
+                    autocomplete="new-password"
+                />
+            </div>
+            <div class="space-y-2">
+                <Label for="confirm-password">Confirm password</Label>
+                <Input
+                    id="confirm-password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Confirm new password"
+                    bind:value={confirmPassword}
+                    disabled={actionLoading}
+                    autocomplete="new-password"
+                />
+            </div>
+            {#if passwordError}
+                <p class="text-sm text-destructive">{passwordError}</p>
+            {/if}
+        </div>
+        <Dialog.Footer>
+            <Button variant="outline" disabled={actionLoading} onclick={closeResetDialog}>Cancel</Button>
+            <Button variant="destructive" onclick={resetPassword} disabled={actionLoading}>
+                {actionLoading ? "Resetting..." : "Reset password"}
+            </Button>
+        </Dialog.Footer>
+    </Dialog.Content>
+</Dialog.Root>
