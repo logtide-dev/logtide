@@ -216,6 +216,8 @@ export async function getProjectHealthDetail(
 ): Promise<ProjectHealthDetail> {
   const now = new Date();
   const since = new Date(now.getTime() - DAY_MS);
+  // Issues, settings and the project row are the core of the answer; skew and
+  // the counters are secondary and degrade (null / 0) instead of failing it.
   const [project, issueRows, settings, ingestion, counters] = await Promise.all([
     db
       .selectFrom('projects')
@@ -225,8 +227,10 @@ export async function getProjectHealthDetail(
       .executeTakeFirstOrThrow(),
     listIssues(organizationId, projectId),
     getProjectHealthSettings(organizationId, projectId),
-    projectsService.getIngestionHealth(organizationId, projectId),
-    sql<{ pii: number | string; revoked: number | string }>`
+    settle(() => projectsService.getIngestionHealth(organizationId, projectId)),
+    settle(
+      () =>
+        sql<{ pii: number | string; revoked: number | string }>`
       SELECT
         COALESCE(SUM(quantity) FILTER (WHERE type = 'ingestion.pii_rejected'), 0)::float8 AS pii,
         COALESCE(SUM(quantity) FILTER (WHERE type = 'ingestion.revoked_key'), 0)::float8 AS revoked
@@ -235,7 +239,8 @@ export async function getProjectHealthDetail(
         AND project_id = ${projectId}
         AND type IN ('ingestion.pii_rejected', 'ingestion.revoked_key')
         AND time >= ${since}
-    `.execute(db),
+    `.execute(db)
+    ),
   ]);
 
   const lastEvent = lastEventOf(project);
@@ -243,7 +248,7 @@ export async function getProjectHealthDetail(
   const openIssues = issueRows
     .filter((r) => r.resolvedAt === null)
     .map((r) => ({ severity: r.severity, muted: isMuted(settings.mutes[r.checkKey], now) }));
-  const row = counters.rows[0];
+  const row = counters?.rows[0];
 
   return {
     status: computeHealthStatus(lastEvent, openIssues),
@@ -253,7 +258,7 @@ export async function getProjectHealthDetail(
       receiving:
         lastEvent !== null && now.getTime() - lastEvent.getTime() <= settings.silentMinutes * 60_000,
       piiRejected24h: Number(row?.pii ?? 0),
-      skew: ingestion.skew,
+      skew: ingestion?.skew ?? { logs: null, spans: null, metrics: null },
       revokedKey24h: Number(row?.revoked ?? 0),
     },
     settings: { silentMinutes: settings.silentMinutes, healthChannelIds: settings.healthChannelIds },
@@ -311,8 +316,11 @@ export async function getProjectSummary(
       if (!monitors || monitors.length === 0) return null;
       let weighted = 0;
       let checks = 0;
-      for (const m of monitors) {
-        const w = (await getUptimeSummary(m.id, organizationId))?.windows['30d'];
+      const summaries = await mapLimit(monitors, STATS_CONCURRENCY, (m) =>
+        getUptimeSummary(m.id, organizationId)
+      );
+      for (const summary of summaries) {
+        const w = summary?.windows['30d'];
         if (w && w.uptimePct !== null && w.totalChecks > 0) {
           weighted += w.uptimePct * w.totalChecks;
           checks += w.totalChecks;

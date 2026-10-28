@@ -3,6 +3,8 @@ import { sql } from 'kysely';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { reservoir } from '../../../database/reservoir.js';
+import { projectsService } from '../../../modules/projects/service.js';
+import * as uptimeStats from '../../../modules/monitoring/uptime-stats.js';
 import { projectsRoutes } from '../../../modules/projects/routes.js';
 import { clearProjectStatsCache } from '../../../modules/projects/stats.js';
 import { getProjectHealthSettings } from '../../../modules/project-health/index.js';
@@ -12,6 +14,11 @@ import {
   createTestProject,
 } from '../../helpers/factories.js';
 import { createTestSession } from '../../helpers/auth.js';
+
+vi.mock('../../../modules/monitoring/uptime-stats.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../modules/monitoring/uptime-stats.js')>();
+  return { ...actual, getUptimeSummary: vi.fn((...args: Parameters<typeof actual.getUptimeSummary>) => actual.getUptimeSummary(...args)) };
+});
 
 describe('project stats, health and summary endpoints', () => {
   let app: FastifyInstance;
@@ -174,7 +181,45 @@ describe('project stats, health and summary endpoints', () => {
     });
   });
 
+  describe('GET /:id/health secondary sources', () => {
+    it('a failing skew source does not 500 the response', async () => {
+      const { project, token } = await setup();
+      vi.spyOn(projectsService, 'getIngestionHealth').mockRejectedValue(new Error('boom'));
+      const res = await call(token, 'GET', `/${project.id}/health`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().checks.skew).toEqual({ logs: null, spans: null, metrics: null });
+      expect(res.json().checks.piiRejected24h).toBe(0);
+    });
+  });
+
   describe('GET /:id/summary', () => {
+    it('runs per-monitor uptime lookups with bounded concurrency', async () => {
+      const { org, project, token } = await setup();
+      for (let i = 0; i < 12; i++) {
+        await db
+          .insertInto('monitors')
+          .values({ organization_id: org.id, project_id: project.id, name: `m${i}`, type: 'http', target: 'https://x.test' } as never)
+          .execute();
+      }
+      let inFlight = 0;
+      let peak = 0;
+      vi.mocked(uptimeStats.getUptimeSummary).mockImplementation((async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 15));
+        inFlight--;
+        return null;
+      }) as never);
+      try {
+        const res = await call(token, 'GET', `/${project.id}/summary`);
+        expect(res.statusCode).toBe(200);
+        expect(peak).toBeGreaterThan(1);
+        expect(peak).toBeLessThanOrEqual(5);
+      } finally {
+        vi.mocked(uptimeStats.getUptimeSummary).mockReset();
+      }
+    });
+
     it('returns tiles, each field independently null on failure', async () => {
       const { project, token } = await setup();
       let res = await call(token, 'GET', `/${project.id}/summary`);
@@ -242,6 +287,17 @@ describe('project stats, health and summary endpoints', () => {
       expect(
         (await call(token, 'PUT', `/${project.id}/notification-settings`, { silentMinutes: 30 })).statusCode
       ).toBe(403);
+    });
+
+    it('409 when changing mutes or settings of a soft-deleted project', async () => {
+      const { project, token } = await setup();
+      await db.updateTable('projects').set({ deleted_at: new Date() }).where('id', '=', project.id).execute();
+      const m = await call(token, 'PUT', `/${project.id}/health/mutes/silent`, { duration: '24h' });
+      expect(m.statusCode).toBe(409);
+      expect(m.json().error).toBe('Cannot update a deleted project');
+      const n = await call(token, 'PUT', `/${project.id}/notification-settings`, { silentMinutes: 30 });
+      expect(n.statusCode).toBe(409);
+      expect(n.json().error).toBe('Cannot update a deleted project');
     });
 
     it('400 on invalid check key, duration and silentMinutes', async () => {

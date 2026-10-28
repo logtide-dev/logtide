@@ -210,6 +210,9 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     }
     const project = await adminProject(request, reply);
     if (!project) return;
+    if (project.deletedAt) {
+      return reply.status(409).send({ error: 'Cannot update a deleted project' });
+    }
     await setMute(project.organizationId, project.id, checkKey, body.data.duration);
     return reply.status(204).send();
   });
@@ -231,6 +234,9 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     }
     const project = await adminProject(request, reply);
     if (!project) return;
+    if (project.deletedAt) {
+      return reply.status(409).send({ error: 'Cannot update a deleted project' });
+    }
 
     const ids = Array.from(new Set(body.data.healthChannelIds ?? []));
     if (ids.length > 0) {
