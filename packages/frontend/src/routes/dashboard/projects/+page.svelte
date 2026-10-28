@@ -235,6 +235,7 @@
         >
           <option value="all">All</option>
           <option value="problems">With problems</option>
+          <option value="inactive">Inactive</option>
           <option value="no_data">No data</option>
         </select>
       </div>

@@ -20,7 +20,12 @@ export const PROJECT_HEALTH_CHECKS: Record<
   revoked_key: { severity: 'warning', title: 'Data sent with a revoked API key' },
 };
 
-export type ProjectHealthStatus = 'healthy' | 'warning' | 'critical' | 'no_data';
+/**
+ * inactive: the project received data in the past but nothing within its silent
+ * threshold, and the silent check is not alerting (it was already idle when
+ * health checks started, or the silent issue is muted).
+ */
+export type ProjectHealthStatus = 'healthy' | 'warning' | 'critical' | 'inactive' | 'no_data';
 
 export type ProjectHealthMuteDuration = '24h' | '7d' | 'until_resolved';
 

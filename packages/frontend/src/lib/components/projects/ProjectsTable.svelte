@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type HealthFilter = 'all' | 'problems' | 'no_data';
+  export type HealthFilter = 'all' | 'problems' | 'inactive' | 'no_data';
 </script>
 
 <script lang="ts">
@@ -76,7 +76,9 @@
 
   function hasProblems(p: Project): boolean {
     const h = health[p.id];
-    return !!h && h.status !== 'no_data' && describeHealth(h).kind !== 'healthy';
+    if (!h || h.status === 'no_data') return false;
+    const kind = describeHealth(h).kind;
+    return kind === 'critical' || kind === 'warning';
   }
 
   function rateClass(p: Project): string {
@@ -112,6 +114,7 @@
   const rows = $derived.by(() => {
     let list = projects;
     if (healthFilter === 'problems') list = list.filter(hasProblems);
+    else if (healthFilter === 'inactive') list = list.filter((p) => health[p.id]?.status === 'inactive');
     else if (healthFilter === 'no_data') list = list.filter(isNoData);
     if (!sort) return list;
     const { key, dir } = sort;

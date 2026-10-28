@@ -30,6 +30,14 @@ describe('describeHealth', () => {
     expect(m.kind).toBe('healthy');
   });
 
+  it('inactive when idle and nothing alerting', () => {
+    expect(describeHealth({ status: 'inactive', openIssues: [] })).toEqual({ kind: 'inactive', text: 'Inactive' });
+  });
+
+  it('open warnings win over inactive', () => {
+    expect(describeHealth({ status: 'warning', openIssues: [issue('warning')] }).kind).toBe('warning');
+  });
+
   it('no data yet', () => {
     expect(describeHealth({ status: 'no_data', openIssues: [] }).text).toBe('No data yet');
   });

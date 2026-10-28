@@ -11,6 +11,7 @@ import type {
   ProjectHealthSeverity,
   ProjectHealthStatus,
 } from '@logtide/shared';
+import { PROJECT_HEALTH_SILENT_DEFAULT_MINUTES } from '@logtide/shared';
 import { db } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from './service.js';
@@ -64,15 +65,23 @@ function lastEventOf(p: {
   return times.length ? new Date(Math.max(...times)) : null;
 }
 
-/** no_data if never received; else worst unmuted open severity; else healthy. */
+/**
+ * no_data if never received; else worst unmuted open severity; else inactive
+ * when nothing arrived within the silent threshold; else healthy.
+ */
 export function computeHealthStatus(
   lastEventAt: Date | string | null,
-  openIssues: Array<{ severity: ProjectHealthSeverity; muted: boolean }>
+  openIssues: Array<{ severity: ProjectHealthSeverity; muted: boolean }>,
+  idle?: { silentMinutes: number; now: Date }
 ): ProjectHealthStatus {
   if (lastEventAt === null) return 'no_data';
   const unmuted = openIssues.filter((i) => !i.muted);
   if (unmuted.some((i) => i.severity === 'critical')) return 'critical';
   if (unmuted.some((i) => i.severity === 'warning')) return 'warning';
+  if (idle) {
+    const last = (lastEventAt instanceof Date ? lastEventAt : new Date(lastEventAt)).getTime();
+    if (idle.now.getTime() - last > idle.silentMinutes * 60_000) return 'inactive';
+  }
   return 'healthy';
 }
 
@@ -184,7 +193,9 @@ export async function getOrganizationHealthSummary(
 
   const result: Record<string, ProjectHealthSummaryEntry> = {};
   for (const p of projects) {
-    const mutes = settings.get(p.id)?.mutes ?? {};
+    const projectSettings = settings.get(p.id);
+    const mutes = projectSettings?.mutes ?? {};
+    const silentMinutes = projectSettings?.silentMinutes ?? PROJECT_HEALTH_SILENT_DEFAULT_MINUTES;
     const openIssues = issues
       .filter((i) => i.projectId === p.id)
       .map((i) => ({
@@ -192,7 +203,10 @@ export async function getOrganizationHealthSummary(
         severity: i.severity,
         muted: isMuted(mutes[i.checkKey], now),
       }));
-    result[p.id] = { status: computeHealthStatus(lastEventOf(p), openIssues), openIssues };
+    result[p.id] = {
+      status: computeHealthStatus(lastEventOf(p), openIssues, { silentMinutes, now }),
+      openIssues,
+    };
   }
   return result;
 }
@@ -251,7 +265,7 @@ export async function getProjectHealthDetail(
   const row = counters?.rows[0];
 
   return {
-    status: computeHealthStatus(lastEvent, openIssues),
+    status: computeHealthStatus(lastEvent, openIssues, { silentMinutes: settings.silentMinutes, now }),
     lastEventAt: lastEvent ? lastEvent.toISOString() : null,
     issues,
     checks: {

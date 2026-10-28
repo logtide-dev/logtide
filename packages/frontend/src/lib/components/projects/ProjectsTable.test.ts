@@ -86,6 +86,18 @@ describe('ProjectsTable', () => {
     expect(names()).toEqual(['Beta']);
   });
 
+  it('health filter Inactive keeps only inactive projects; With problems excludes them', () => {
+    const health = {
+      a: { status: 'inactive' as const, openIssues: [] },
+      b: { status: 'warning' as const, openIssues: [{ checkKey: 'revoked_key' as const, severity: 'warning' as const, muted: false }] },
+    };
+    const r = render(ProjectsTable, { ...base, healthFilter: 'inactive', health });
+    expect(names()).toEqual(['Alpha']);
+    r.unmount();
+    render(ProjectsTable, { ...base, healthFilter: 'problems', health });
+    expect(names()).toEqual(['Beta']);
+  });
+
   it('shows dashes when stats are unavailable', () => {
     render(ProjectsTable, { ...base, stats: null });
     expect(screen.queryAllByTestId('error-rate')).toHaveLength(0);

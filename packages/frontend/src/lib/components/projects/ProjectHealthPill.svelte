@@ -2,7 +2,7 @@
   import type { ProjectHealthSummaryEntry } from '$lib/api/project-health';
 
   export interface HealthPillModel {
-    kind: 'healthy' | 'warning' | 'critical' | 'no_data';
+    kind: 'healthy' | 'warning' | 'critical' | 'inactive' | 'no_data';
     text: string;
   }
 
@@ -19,6 +19,8 @@
         text: `${warnings.toLocaleString('en-US')} ${warnings === 1 ? 'warning' : 'warnings'}`,
       };
     }
+    // Idle without an alerting silent check: neutral, not a problem.
+    if (entry.status === 'inactive') return { kind: 'inactive', text: 'Inactive' };
     return { kind: 'healthy', text: 'Healthy' };
   }
 </script>
@@ -37,12 +39,14 @@
     healthy: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
     warning: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
     critical: 'bg-red-500/10 text-red-700 dark:text-red-400',
+    inactive: 'bg-muted text-muted-foreground',
     no_data: 'bg-muted text-muted-foreground',
   };
   const DOT: Record<HealthPillModel['kind'], string> = {
     healthy: 'bg-emerald-500',
     warning: 'bg-amber-500',
     critical: 'bg-red-500',
+    inactive: 'bg-muted-foreground',
     no_data: 'bg-muted-foreground/50',
   };
 </script>
