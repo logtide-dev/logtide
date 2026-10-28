@@ -5,6 +5,7 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import type { ExtensionRuntime } from '../../extensions/runtime.js';
 import { z } from 'zod';
 import { settingsService, SETTING_KEYS } from './service.js';
 import { usersService } from '../users/service.js';
@@ -243,14 +244,25 @@ export async function settingsRoutes(fastify: FastifyInstance) {
  * Public auth config endpoint (no auth required)
  * Returns auth mode and signup status for frontend
  */
-export async function publicSettingsRoutes(fastify: FastifyInstance) {
+export async function publicSettingsRoutes(
+  fastify: FastifyInstance,
+  opts: { extensions?: ExtensionRuntime } = {}
+) {
+  // Extension values under `extensions.<name>`, key omitted when none registered.
+  const getExtensionsConfig = async (): Promise<{ extensions?: Record<string, Record<string, unknown>> }> => {
+    if (!opts.extensions) return {};
+    const extensions = await opts.extensions.publicConfig();
+    return Object.keys(extensions).length > 0 ? { extensions } : {};
+  };
+
   // GET /api/v1/auth/config - Get public auth configuration
   fastify.get('/config', async (_request, reply) => {
     try {
-      const [authMode, signupEnabled, passwordResetConfig] = await Promise.all([
+      const [authMode, signupEnabled, passwordResetConfig, extensionsConfig] = await Promise.all([
         settingsService.getAuthMode(),
         settingsService.isSignupEnabled(),
         getPasswordResetConfig(),
+        getExtensionsConfig(),
       ]);
 
       return reply.send({
@@ -263,6 +275,7 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         ...passwordResetConfig,
         // Terms seam: termsUrl, privacyUrl, termsVersion only when active.
         ...(getActiveTerms() ?? {}),
+        ...extensionsConfig,
       });
     } catch (error) {
       console.error('Error fetching auth config:', error);
@@ -274,6 +287,7 @@ export async function publicSettingsRoutes(fastify: FastifyInstance) {
         ...(isEmailVerificationRequired() ? { emailVerificationRequired: true } : {}),
         ...(await getPasswordResetConfig().catch(() => ({}))),
         ...(getActiveTerms() ?? {}),
+        ...(await getExtensionsConfig().catch(() => ({}))),
       });
     }
   });
