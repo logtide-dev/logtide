@@ -22,7 +22,6 @@
         type OrgListParams,
     } from "$lib/components/admin/org-list-params";
 
-    // The list API also returns the owner; the shared client type predates it.
     type OrgRow = OrganizationBasic;
 
     const PAGE_SIZE = 50;
@@ -75,6 +74,17 @@
                     noScroll: true,
                 });
             }
+        });
+    });
+
+    // Follow URL changes made from outside the page (sidebar link, back/forward).
+    $effect(() => {
+        const fromUrl = parseOrgListParams(new URLSearchParams(appPage.url?.search ?? ""));
+        untrack(() => {
+            if (buildOrgListSearch(fromUrl) === buildOrgListSearch(applied)) return;
+            applied = fromUrl;
+            searchText = fromUrl.q;
+            sort = fromUrl.sort;
         });
     });
 
