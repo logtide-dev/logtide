@@ -25,6 +25,7 @@
     } from "@lucide/svelte";
     import { Badge } from "$lib/components/ui/badge";
     import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
+    import { PROJECT_TRASH_DIALOG_TEXT, PROJECT_TRASH_RETENTION_DAYS } from "$lib/utils/project-trash";
     import { goto } from "$app/navigation";
 
     const projectId = $derived(page.params.id);
@@ -119,17 +120,17 @@
                 <CardHeader
                     class="flex flex-row items-center justify-between space-y-0 pb-2"
                 >
-                    <CardTitle class="text-sm font-medium">Total logs</CardTitle
+                    <CardTitle class="text-sm font-medium">Logs ({project.logsWindowDays ?? 30}d)</CardTitle
                     >
                     <Database class="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
                     <div class="text-2xl font-bold">
-                        {formatNumber(project.logsCount)}
+                        {formatNumber(project.logs30d ?? project.logsCount)}
                     </div>
                     {#if project.lastLogTime}
                         <p class="text-xs text-muted-foreground mt-1">
-                            Last: {formatDate(project.lastLogTime)}
+                            Last log: {formatDate(project.lastLogTime)}
                         </p>
                     {:else}
                         <p class="text-xs text-muted-foreground mt-1">
@@ -396,15 +397,19 @@
                     <div>
                         <h4 class="font-semibold">Delete project</h4>
                         <p class="text-sm text-muted-foreground mt-1">
-                            This will permanently delete the project, all logs,
-                            API keys, alert rules, and sigma rules. This action
-                            cannot be undone.
+                            {#if project.deletedAt}
+                                This project is already in the trash since {formatDate(project.deletedAt)}.
+                            {:else}
+                                Moves the project to the trash: it stops accepting data and is
+                                permanently deleted after {PROJECT_TRASH_RETENTION_DAYS} days.
+                            {/if}
                         </p>
                     </div>
                     <Button
                         variant="destructive"
                         onclick={() => (showDeleteDialog = true)}
                         class="ml-4"
+                        disabled={!!project.deletedAt}
                     >
                         <Trash2 class="mr-2 h-4 w-4" />
                         Delete project
@@ -418,7 +423,7 @@
 <ConfirmDialog
     bind:open={showDeleteDialog}
     title="Delete project"
-    description="This permanently deletes all logs, API keys, alert rules and sigma rules of this project. This cannot be undone."
+    description={PROJECT_TRASH_DIALOG_TEXT(project?.name ?? "This project")}
     confirmLabel="Delete project"
     requireText={project?.name ?? ""}
     busy={deleting}

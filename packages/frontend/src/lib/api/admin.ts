@@ -242,7 +242,9 @@ export interface ProjectBasic {
     organization_name: string;
     created_at: string;
     updated_at: string;
+    /** Logs in the last 30 days (same value as logs30d, historical name). */
     logsCount: number;
+    logs30d?: number;
     apiKeysCount: number;
     alertRulesCount: number;
 }
@@ -255,7 +257,12 @@ export interface ProjectDetails {
     organization_name: string;
     created_at: string;
     updated_at: string;
+    /** Soft-delete time; the project is in the trash when set. */
+    deletedAt?: string | null;
+    /** Logs in the last `logsWindowDays` days (same value as logs30d). */
     logsCount: number;
+    logs30d?: number;
+    logsWindowDays?: number;
     apiKeys: Array<{
         id: string;
         name: string;

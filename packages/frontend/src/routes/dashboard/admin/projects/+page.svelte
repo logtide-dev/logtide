@@ -153,17 +153,17 @@
             <CardHeader
                 class="flex flex-row items-center justify-between space-y-0 pb-2"
             >
-                <CardTitle class="text-sm font-medium">Total logs</CardTitle>
+                <CardTitle class="text-sm font-medium">Logs (30d)</CardTitle>
                 <Database class="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
                 <div class="text-2xl font-bold">
                     {formatNumber(
-                        projects.reduce((sum, p) => sum + p.logsCount, 0),
+                        projects.reduce((sum, p) => sum + (p.logs30d ?? p.logsCount), 0),
                     )}
                 </div>
                 <p class="text-xs text-muted-foreground mt-1">
-                    Combined from all projects
+                    Projects on this page, last 30 days
                 </p>
             </CardContent>
         </Card>
@@ -233,7 +233,7 @@
                         <Table.Row>
                             <Table.Head>Project name</Table.Head>
                             <Table.Head>Organization</Table.Head>
-                            <Table.Head class="text-right">Logs</Table.Head>
+                            <Table.Head class="text-right">Logs (30d)</Table.Head>
                             <Table.Head class="text-right">API keys</Table.Head>
                             <Table.Head class="text-right">Alerts</Table.Head>
                             <Table.Head>Created</Table.Head>
@@ -257,7 +257,7 @@
                                     {project.organization_name}
                                 </Table.Cell>
                                 <Table.Cell class="text-right">
-                                    {formatNumber(project.logsCount)}
+                                    {formatNumber(project.logs30d ?? project.logsCount)}
                                 </Table.Cell>
                                 <Table.Cell class="text-right">
                                     {project.apiKeysCount}
