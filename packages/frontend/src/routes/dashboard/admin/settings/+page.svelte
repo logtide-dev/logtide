@@ -31,6 +31,12 @@
     import { untrack } from "svelte";
     import { UsersAPI } from "$lib/api/users";
     import { get } from "svelte/store";
+    import {
+        defaultUserOptions,
+        settingsFromResponse,
+        settingsPayload,
+        validateSettings,
+    } from "$lib/utils/admin-settings";
 
     let loading = $state(true);
     let saving = $state(false);
@@ -42,7 +48,7 @@
     let authMode = $state<"standard" | "none">("standard");
     let defaultUserId = $state<string | null>(null);
 
-    // Search settings state
+    // Search settings: shown for reference only, the server does not store them
     let searchDefaultMode = $state<"fulltext" | "substring">("fulltext");
     let searchSubstringIndexed = $state(true);
 
@@ -96,16 +102,18 @@
                 adminAPI.getSettings(),
                 adminAPI.getUsers(1, 100), // Load up to 100 users for selection
             ]);
-            signupEnabled = settings["auth.signup_enabled"] as boolean ?? true;
-            authMode = (settings["auth.mode"] as "standard" | "none") ?? "standard";
-            defaultUserId = (settings["auth.default_user_id"] as string) ?? null;
-            // Search settings
-            searchDefaultMode = (settings["search.default_mode"] as "fulltext" | "substring") ?? "fulltext";
-            searchSubstringIndexed = (settings["search.substring_indexed"] as boolean) ?? true;
-            // Updates settings
-            updatesChannel = (settings["updates.channel"] as "stable" | "beta") ?? "stable";
-            // Only show active admin users for default user selection
-            usersList = usersResponse.users.filter(u => !u.disabled && u.is_admin);
+            applySettings(settings);
+
+            // The saved default user may be outside the first page or not an
+            // active admin: fetch it by id so the select shows the saved value.
+            let savedUser: UserBasic | null = null;
+            if (defaultUserId) {
+                savedUser = usersResponse.users.find((u) => u.id === defaultUserId) ?? null;
+                if (!savedUser) {
+                    savedUser = await adminAPI.getUserDetails(defaultUserId).catch(() => null);
+                }
+            }
+            usersList = defaultUserOptions(usersResponse.users, savedUser);
         } catch (e: any) {
             console.error("Error loading settings:", e);
             error = e.message || "Failed to load settings";
@@ -114,19 +122,28 @@
         }
     }
 
+    function applySettings(settings: Record<string, unknown>) {
+        const form = settingsFromResponse(settings);
+        signupEnabled = form.signupEnabled;
+        authMode = form.authMode;
+        defaultUserId = form.defaultUserId;
+        updatesChannel = form.updatesChannel;
+    }
+
     async function saveSettings() {
-        saving = true;
         error = null;
         success = null;
+        const form = { signupEnabled, authMode, defaultUserId, updatesChannel };
+        const invalid = validateSettings(form);
+        if (invalid) {
+            error = invalid;
+            return;
+        }
+        saving = true;
         try {
-            await adminAPI.updateSettings({
-                "auth.signup_enabled": signupEnabled,
-                "auth.mode": authMode,
-                "auth.default_user_id": defaultUserId,
-                "search.default_mode": searchDefaultMode,
-                "search.substring_indexed": searchSubstringIndexed,
-                "updates.channel": updatesChannel,
-            });
+            const res = await adminAPI.updateSettings(settingsPayload(form));
+            // Show what the server actually stored
+            if (res?.settings) applySettings(res.settings);
             success = "Settings saved";
             setTimeout(() => {
                 success = null;
@@ -181,7 +198,12 @@
                 <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
                 Refresh
             </Button>
-            <Button size="sm" onclick={saveSettings} disabled={saving || loading}>
+            <Button
+                size="sm"
+                onclick={saveSettings}
+                disabled={saving || loading || (authMode === "none" && !defaultUserId)}
+                title={authMode === "none" && !defaultUserId ? "Select a default user for auth-free mode" : undefined}
+            >
                 <Save class="mr-2 h-4 w-4" />
                 {saving ? "Saving..." : "Save changes"}
             </Button>
@@ -348,6 +370,9 @@
                                                         {#if user.is_admin}
                                                             <span class="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">Admin</span>
                                                         {/if}
+                                                        {#if user.disabled}
+                                                            <span class="text-xs text-muted-foreground">(disabled)</span>
+                                                        {/if}
                                                     </div>
                                                 </Select.Item>
                                             {/each}
@@ -395,6 +420,7 @@
                                 <Label>Default search mode</Label>
                                 <Select.Root
                                     type="single"
+                                    disabled
                                     value={searchDefaultMode}
                                     onValueChange={(v) => {
                                         if (v && (v === 'fulltext' || v === 'substring')) {
@@ -411,7 +437,7 @@
                                     </Select.Content>
                                 </Select.Root>
                                 <p class="text-xs text-muted-foreground">
-                                    Default mode for new search sessions
+                                    Default mode for new search sessions. Not configurable on this instance yet.
                                 </p>
                             </div>
                             <div class="space-y-2">
