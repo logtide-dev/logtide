@@ -2112,9 +2112,14 @@ export class AdminService {
             return { message: 'Project already deleted', organizationId: project.organization_id, alreadyDeleted: true };
         }
 
-        await projectsService.softDeleteProject(project.id, project.organization_id);
+        // A concurrent delete may win between the read and the update.
+        const deleted = await projectsService.softDeleteProject(project.id, project.organization_id);
 
-        return { message: 'Project deleted', organizationId: project.organization_id, alreadyDeleted: false };
+        return {
+            message: deleted ? 'Project deleted' : 'Project already deleted',
+            organizationId: project.organization_id,
+            alreadyDeleted: !deleted,
+        };
     }
 
     /**
