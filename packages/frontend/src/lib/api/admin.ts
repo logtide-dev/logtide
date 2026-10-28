@@ -189,6 +189,9 @@ export interface OrganizationBasic {
     updated_at: string;
     memberCount: number;
     projectCount: number;
+    /** Earliest owner membership, null when the organization has no owner. */
+    ownerId?: string | null;
+    ownerEmail?: string | null;
 }
 
 export interface OrganizationDetails {

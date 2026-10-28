@@ -27,10 +27,21 @@
   interface Props {
     selected: PickedOrg | null;
     onSelect: (org: PickedOrg) => void;
+    /** When set, the list starts with an "All organizations" entry that calls it. */
+    onClear?: () => void;
+    placeholder?: string;
     id?: string;
+    class?: string;
   }
 
-  let { selected, onSelect, id = 'usage-org-picker' }: Props = $props();
+  let {
+    selected,
+    onSelect,
+    onClear,
+    placeholder = 'Select an organization',
+    id = 'usage-org-picker',
+    class: className = 'w-72',
+  }: Props = $props();
 
   const PAGE_SIZE = 25;
   const SEARCH_DEBOUNCE_MS = 250;
@@ -81,6 +92,11 @@
     onSelect(org);
     open = false;
   }
+
+  function clear() {
+    onClear?.();
+    open = false;
+  }
 </script>
 
 <Popover bind:open>
@@ -89,11 +105,11 @@
     role="combobox"
     aria-expanded={open}
     aria-label="Organization"
-    class="inline-flex h-9 w-72 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="inline-flex h-9 {className} items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   >
     <span class="flex min-w-0 items-center gap-2">
       <Building2 class="size-4 shrink-0 text-muted-foreground" />
-      <span class="truncate {selected ? '' : 'text-muted-foreground'}">{selected?.name ?? 'Select an organization'}</span>
+      <span class="truncate {selected ? '' : 'text-muted-foreground'}">{selected?.name ?? placeholder}</span>
     </span>
     <ChevronDown class="size-4 shrink-0 opacity-50" />
   </PopoverTrigger>
@@ -108,6 +124,14 @@
         {:else}
           <CommandEmpty>No organization found.</CommandEmpty>
           <CommandGroup>
+            {#if onClear && !query.trim()}
+              <CommandItem value="__all__" onSelect={clear} class="cursor-pointer">
+                <div class="flex w-full items-center gap-2">
+                  <span class="flex-1 text-sm">{placeholder}</span>
+                  {#if !selected}<Check class="size-4 shrink-0 text-primary" />{/if}
+                </div>
+              </CommandItem>
+            {/if}
             {#each results as org (org.id)}
               <CommandItem value={org.id} onSelect={() => pick(org)} class="cursor-pointer">
                 <div class="flex w-full items-center gap-2">

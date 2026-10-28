@@ -23,7 +23,7 @@
     } from "$lib/components/admin/org-list-params";
 
     // The list API also returns the owner; the shared client type predates it.
-    type OrgRow = OrganizationBasic & { ownerId?: string | null; ownerEmail?: string | null };
+    type OrgRow = OrganizationBasic;
 
     const PAGE_SIZE = 50;
     const SEARCH_DEBOUNCE_MS = 300;

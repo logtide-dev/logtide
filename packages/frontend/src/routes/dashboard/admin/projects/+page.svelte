@@ -7,7 +7,6 @@
         type ProjectBasic,
         type ProjectSort,
         type ProjectsSummary,
-        type OrganizationBasic,
     } from "$lib/api/admin";
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import EmptyState from "$lib/components/app/EmptyState.svelte";
@@ -16,6 +15,7 @@
     import type { DataTableSort } from "$lib/components/app/data-table";
     import StatsCard from "$lib/components/dashboard/StatsCard.svelte";
     import AdminProjectsTable from "$lib/components/admin/AdminProjectsTable.svelte";
+    import AdminOrgPicker, { type PickedOrg } from "$lib/components/admin/AdminOrgPicker.svelte";
     import {
         buildListSearch,
         parseEnum,
@@ -56,7 +56,7 @@
     let summary = $state<ProjectsSummary | null>(null);
     let summaryLoading = $state(true);
     let summaryFailed = $state(false);
-    let organizations = $state<OrganizationBasic[]>([]);
+    let pickedOrg = $state<PickedOrg | null>(null);
 
     let deleteTarget = $state<ProjectBasic | null>(null);
     let showDeleteDialog = $state(false);
@@ -148,17 +148,27 @@
         }
     }
 
-    async function loadOrganizations() {
+    // Resolve the name of a deep-linked organization filter (?organizationId=).
+    async function resolvePickedOrg(id: string) {
         try {
-            organizations = (await adminAPI.getOrganizations({ limit: 100, sort: "name", order: "asc" })).organizations;
+            const org = await adminAPI.getOrganizationDetails(id);
+            if (organizationId === id) pickedOrg = { id: org.id, name: org.name, slug: org.slug };
         } catch {
-            // The filter still works for a deep-linked organization without the list.
+            if (organizationId === id) pickedOrg = { id, name: "Selected organization", slug: "" };
         }
     }
 
     $effect(() => {
+        const id = organizationId;
         untrack(() => {
-            void Promise.allSettled([loadSummary(), loadOrganizations()]);
+            if (!id) pickedOrg = null;
+            else if (pickedOrg?.id !== id) void resolvePickedOrg(id);
+        });
+    });
+
+    $effect(() => {
+        untrack(() => {
+            void loadSummary();
         });
     });
 
@@ -169,7 +179,6 @@
     });
 
     const hasFilters = $derived(!!q || !!organizationId || deleted !== "exclude");
-    const orgKnown = $derived(organizations.some((o) => o.id === organizationId));
 
     function clearFilters() {
         searchInput = "";
@@ -268,22 +277,20 @@
                 class="pl-10 max-md:h-11"
             />
         </div>
-        <label class="grid gap-1 text-xs font-medium text-muted-foreground">
-            Organization
-            <select
-                class="{SELECT_CLASS} max-w-[14rem]"
-                value={organizationId}
-                onchange={(e) => navigate({ organizationId: e.currentTarget.value, page: 1 })}
-            >
-                <option value="">All organizations</option>
-                {#if organizationId && !orgKnown}
-                    <option value={organizationId}>Selected organization</option>
-                {/if}
-                {#each organizations as o (o.id)}
-                    <option value={o.id}>{o.name}</option>
-                {/each}
-            </select>
-        </label>
+        <div class="grid gap-1">
+            <label for="projects-org-filter" class="text-xs font-medium text-muted-foreground">Organization</label>
+            <AdminOrgPicker
+                id="projects-org-filter"
+                class="w-56 max-md:h-11"
+                placeholder="All organizations"
+                selected={pickedOrg}
+                onSelect={(org) => {
+                    pickedOrg = org;
+                    navigate({ organizationId: org.id, page: 1 });
+                }}
+                onClear={() => navigate({ organizationId: "", page: 1 })}
+            />
+        </div>
         <label class="grid gap-1 text-xs font-medium text-muted-foreground">
             Deleted projects
             <select

@@ -25,7 +25,7 @@
     import HardDrive from "@lucide/svelte/icons/hard-drive";
     import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
     import { levelLabel } from "$lib/utils/severity";
-    import UsageOrgPicker, { type PickedOrg } from "$lib/components/admin/UsageOrgPicker.svelte";
+    import AdminOrgPicker, { type PickedOrg } from "$lib/components/admin/AdminOrgPicker.svelte";
     import UsageTable, { type UsageTableRow } from "$lib/components/admin/UsageTable.svelte";
     import { createLatestGuard } from "$lib/components/admin/latest-request";
     import { isBytesMetric, metricLabel } from "$lib/components/admin/admin-labels";
@@ -223,7 +223,7 @@
     <div class="flex flex-wrap items-end gap-3">
         <div class="space-y-1">
             <label for="usage-org-picker" class="text-xs font-medium text-muted-foreground">Organization</label>
-            <UsageOrgPicker selected={selectedOrg} onSelect={onPick} />
+            <AdminOrgPicker selected={selectedOrg} onSelect={onPick} />
         </div>
 
         <div class="space-y-1">
