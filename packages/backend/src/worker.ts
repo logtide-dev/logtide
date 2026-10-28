@@ -33,6 +33,7 @@ import { initializeWorkerLogging, shutdownInternalLogging, isInternalLoggingEnab
 import { hub } from '@logtide/core';
 import { reservoir, reservoirReady } from './database/reservoir.js';
 import { db } from './database/connection.js';
+import { runProjectHealthPass } from './modules/project-health/index.js';
 
 // Initialize internal logging via @logtide/core hub
 await initializeWorkerLogging();
@@ -931,6 +932,42 @@ async function runMaintenanceTransitions() {
 
 setInterval(runMaintenanceTransitions, 60000);
 runMaintenanceTransitions();
+
+// ============================================================================
+// Project health checks (every 5 minutes, first run 60s after start)
+// ============================================================================
+
+let isRunningProjectHealth = false;
+
+async function runProjectHealth() {
+  await context.runAsSystem('cron:project-health', async () => {
+    if (isRunningProjectHealth) {
+      console.warn('[Worker] Project health pass already in progress, skipping...');
+      return;
+    }
+    isRunningProjectHealth = true;
+    try {
+      const result = await runProjectHealthPass();
+      if (result.opened > 0 || result.resolved > 0) {
+        console.log(
+          `[Worker] Project health: ${result.evaluated} evaluated, ${result.opened} opened, ${result.resolved} resolved`
+        );
+      }
+    } catch (error) {
+      console.error('[Worker] Project health pass failed:', error);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', `Project health pass failed: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
+      }
+    } finally {
+      isRunningProjectHealth = false;
+    }
+  });
+}
+
+setInterval(runProjectHealth, 5 * 60 * 1000);
+setTimeout(runProjectHealth, 60 * 1000);
 
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {
