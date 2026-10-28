@@ -29,7 +29,7 @@ import { savedSearchUrl } from '$lib/components/search/explorer-url';
 import { INCIDENT_ACTIVE_STATUSES } from '@logtide/shared';
 import { settingsPages } from '../settings-pages';
 import { organizationStore } from '$lib/stores/organization';
-import { authAPI } from '$lib/api/auth';
+import { authAPI, type AuthConfig } from '$lib/api/auth';
 import { OPEN_ORG_SWITCHER_EVENT } from '../events';
 import { registerPaletteProvider } from './registry';
 import type { PaletteItem } from './types';
@@ -238,13 +238,13 @@ export function registerDefaultPaletteProviders(): void {
     order: 70,
     items: async () => {
       const role = get(organizationStore).currentOrganization?.role ?? null;
-      let billingEnabled = false;
+      let authConfig: AuthConfig | null = null;
       try {
-        billingEnabled = (await authAPI.getAuthConfig()).billingEnabled === true;
+        authConfig = await authAPI.getAuthConfig();
       } catch {
-        billingEnabled = false;
+        authConfig = null;
       }
-      return settingsPages({ role, billingEnabled }).map((page) => ({
+      return settingsPages({ role, authConfig }).map((page) => ({
         id: `settings:${page.href}`,
         label: page.label,
         icon: icon(Settings),

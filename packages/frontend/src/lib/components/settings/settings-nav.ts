@@ -16,6 +16,9 @@ import Route from '@lucide/svelte/icons/route';
 import Newspaper from '@lucide/svelte/icons/newspaper';
 import Send from '@lucide/svelte/icons/send';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
+import type { AuthConfig } from '$lib/api/auth';
+import { activeExtensions } from '$lib/extensions/registry';
+import type { FrontendExtension } from '$lib/extensions/types';
 
 export type SettingsNavItem = {
   id: string;
@@ -78,22 +81,41 @@ export const SETTINGS_GROUPS: SettingsNavGroup[] = [
 
 export interface SettingsNavContext {
   role?: OrgRole | null;
-  billingEnabled: boolean;
+  authConfig: AuthConfig | null;
+  /** Tests only; defaults to the registered extensions. */
+  extensionList?: FrontendExtension[];
 }
 
 /** Whether one item is visible for the viewer. Unknown role is treated as plain member. */
 export function isSettingsItemVisible(item: SettingsNavItem, ctx: SettingsNavContext): boolean {
   if (item.adminOnly && !(ctx.role && canManageMembers(ctx.role))) return false;
-  if (item.requiresBilling && !ctx.billingEnabled) return false;
+  if (item.requiresBilling && ctx.authConfig?.billingEnabled !== true) return false;
   return true;
+}
+
+/** Core groups with the items of active extensions merged in. */
+function mergedSettingsGroups(ctx: SettingsNavContext): SettingsNavGroup[] {
+  const groups = SETTINGS_GROUPS.map((g) => ({ label: g.label, items: [...g.items] }));
+  for (const ext of activeExtensions(ctx.authConfig, ctx.extensionList)) {
+    for (const { group, after, keywords: _keywords, ...item } of ext.settingsNav ?? []) {
+      const target = groups.find((g) => g.label === group);
+      if (!target) continue;
+      const at = after ? target.items.findIndex((i) => i.id === after) : -1;
+      if (at >= 0) target.items.splice(at + 1, 0, item);
+      else target.items.push(item);
+    }
+  }
+  return groups;
 }
 
 /** Groups with only the visible items; groups that end up empty are dropped. */
 export function visibleSettingsGroups(ctx: SettingsNavContext): SettingsNavGroup[] {
-  return SETTINGS_GROUPS.map((g) => ({
-    label: g.label,
-    items: g.items.filter((item) => isSettingsItemVisible(item, ctx)),
-  })).filter((g) => g.items.length > 0);
+  return mergedSettingsGroups(ctx)
+    .map((g) => ({
+      label: g.label,
+      items: g.items.filter((item) => isSettingsItemVisible(item, ctx)),
+    }))
+    .filter((g) => g.items.length > 0);
 }
 
 /** Flattened visible items, also consumed by the command palette. */

@@ -5,31 +5,31 @@ const labels = (items: { label: string }[]) => items.map((i) => i.label);
 
 describe('settings nav definition', () => {
   it('visibleSettingsItems hides Audit log and Billing from members', () => {
-    const items = visibleSettingsItems({ role: 'member', billingEnabled: true });
+    const items = visibleSettingsItems({ role: 'member', authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: true } });
     expect(labels(items)).not.toContain('Audit log');
     expect(labels(items)).not.toContain('Billing');
   });
 
   it('shows Audit log and Billing to admins when billing is enabled', () => {
-    const items = visibleSettingsItems({ role: 'admin', billingEnabled: true });
+    const items = visibleSettingsItems({ role: 'admin', authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: true } });
     expect(labels(items)).toContain('Audit log');
     expect(labels(items)).toContain('Billing');
   });
 
   it('hides Billing when billingEnabled is false even for owners', () => {
-    const items = visibleSettingsItems({ role: 'owner', billingEnabled: false });
+    const items = visibleSettingsItems({ role: 'owner', authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: false } });
     expect(labels(items)).not.toContain('Billing');
     expect(labels(items)).toContain('Audit log');
   });
 
   it('treats an unknown role as a plain member', () => {
-    const items = visibleSettingsItems({ role: null, billingEnabled: true });
+    const items = visibleSettingsItems({ role: null, authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: true } });
     expect(labels(items)).not.toContain('Audit log');
   });
 
   it('shows Usage always', () => {
     for (const role of ['owner', 'admin', 'member', null] as const) {
-      expect(labels(visibleSettingsItems({ role, billingEnabled: false }))).toContain('Usage');
+      expect(labels(visibleSettingsItems({ role, authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: false } }))).toContain('Usage');
     }
   });
 
@@ -72,7 +72,7 @@ describe('settings nav definition', () => {
   });
 
   it('drops groups that end up empty', () => {
-    const groups = visibleSettingsGroups({ role: 'member', billingEnabled: false });
+    const groups = visibleSettingsGroups({ role: 'member', authConfig: { authMode: 'standard', signupEnabled: true, billingEnabled: false } });
     for (const g of groups) expect(g.items.length).toBeGreaterThan(0);
   });
 });

@@ -63,6 +63,8 @@ export interface AuthConfig {
   upgradeEnabled?: boolean;
   /** Present (true) only when the host configured the in-app billing API. */
   billingEnabled?: boolean;
+  /** Public config of enabled backend extensions, keyed by extension name. */
+  extensions?: Record<string, Record<string, unknown>>;
   /** Present (true) only when REQUIRE_EMAIL_VERIFICATION is on. */
   emailVerificationRequired?: boolean;
   /** Present (true) only when SMTP and the local provider are available. */

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { authAPI } from '$lib/api/auth';
+  import { authAPI, type AuthConfig } from '$lib/api/auth';
   import { organizationStore } from '$lib/stores/organization';
   import { layoutStore } from '$lib/stores/layout';
   import type { OrganizationWithRole } from '@logtide/shared';
@@ -41,18 +41,17 @@
 
   // In-app billing exists only on instances that configured the billing API;
   // anything else (including a failed config call) keeps the entry hidden.
-  let billingEnabled = $state(false);
+  let authConfig = $state<AuthConfig | null>(null);
 
   onMount(async () => {
     try {
-      const cfg = await authAPI.getAuthConfig();
-      billingEnabled = cfg.billingEnabled === true;
+      authConfig = await authAPI.getAuthConfig();
     } catch {
-      billingEnabled = false;
+      authConfig = null;
     }
   });
 
-  let groups = $derived(visibleSettingsGroups({ role: currentOrg?.role ?? null, billingEnabled }));
+  let groups = $derived(visibleSettingsGroups({ role: currentOrg?.role ?? null, authConfig }));
 
   function isActive(href: string): boolean {
     return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
