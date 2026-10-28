@@ -1,5 +1,6 @@
-import type { FastifyInstance } from 'fastify';
-import { adminService } from './service.js';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { adminService, AdminConflictError, AdminNotFoundError } from './service.js';
+import { validateUuidParams } from './params.js';
 import { authenticate } from '../auth/middleware.js';
 import { requireAdmin } from './middleware.js';
 import { auditLogService } from '../audit-log/index.js';
@@ -14,10 +15,23 @@ function parseLimit(value: string | undefined, defaultVal = 50, max = 200): numb
     return isNaN(n) || n < 1 ? defaultVal : Math.min(n, max);
 }
 
+/** Map typed service errors to 404/409; anything else is a 500 with `fallback`. */
+function sendServiceError(reply: FastifyReply, error: unknown, fallback: string) {
+    if (error instanceof AdminNotFoundError) {
+        return reply.status(404).send({ error: error.message });
+    }
+    if (error instanceof AdminConflictError) {
+        return reply.status(409).send({ error: error.message });
+    }
+    return reply.status(500).send({ error: fallback });
+}
+
 export async function adminRoutes(fastify: FastifyInstance) {
     // All routes require session authentication + admin role
     fastify.addHook('onRequest', authenticate);
     fastify.addHook('onRequest', requireAdmin);
+    // Malformed entity ids are a client error (400), not a DB error (500)
+    fastify.addHook('preValidation', validateUuidParams);
 
     // Apply rate limiting to admin routes (100 requests per minute)
     const rateLimitConfig = {
@@ -337,7 +351,8 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     });
                 }
 
-                const user = await adminService.updateUserStatus(id, disabled);
+                const actorId = (request as any).user?.id as string | undefined;
+                const user = await adminService.updateUserStatus(id, disabled, actorId);
 
                 await auditLogService.record({
                     action: disabled ? 'user.disabled' : 'user.enabled',
@@ -352,9 +367,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
                 });
             } catch (error) {
                 console.error('Error updating user status:', error);
-                return reply.status(500).send({
-                    error: 'Failed to update user status',
-                });
+                return sendServiceError(reply, error, 'Failed to update user status');
             }
         }
     );
@@ -401,9 +414,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
                 });
             } catch (error) {
                 console.error('Error updating user role:', error);
-                return reply.status(500).send({
-                    error: 'Failed to update user role',
-                });
+                return sendServiceError(reply, error, 'Failed to update user role');
             }
         }
     );
@@ -442,9 +453,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
                 });
             } catch (error) {
                 console.error('Error resetting password:', error);
-                return reply.status(500).send({
-                    error: 'Failed to reset password',
-                });
+                return sendServiceError(reply, error, 'Failed to reset password');
             }
         }
     );
@@ -542,9 +551,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
                 return reply.send(result);
             } catch (error: any) {
                 console.error('Error deleting organization:', error);
-                return reply.status(500).send({
-                    error: 'Failed to delete organization',
-                });
+                return sendServiceError(reply, error, 'Failed to delete organization');
             }
         }
     );
@@ -630,25 +637,22 @@ export async function adminRoutes(fastify: FastifyInstance) {
         async (request, reply) => {
             try {
                 const { id } = request.params as { id: string };
-                const project = await adminService.getProjectDetails(id);
                 const result = await adminService.deleteProject(id);
 
-                await auditLogService.record({
-                    action: 'project.deleted',
-                    target: { type: 'project', id },
-                    organizationId: project.organization_id,
-                    metadata: { via: 'admin' },
-                });
+                if (!result.alreadyDeleted) {
+                    // Same audit action as the user-facing (soft) delete
+                    await auditLogService.record({
+                        action: 'project.soft_delete',
+                        target: { type: 'project', id },
+                        organizationId: result.organizationId,
+                        metadata: { via: 'admin' },
+                    });
+                }
 
                 return reply.send(result);
             } catch (error: any) {
                 console.error('Error deleting project:', error);
-                if (error.message === 'Project not found') {
-                    return reply.status(404).send({ error: error.message });
-                }
-                return reply.status(500).send({
-                    error: 'Failed to delete project',
-                });
+                return sendServiceError(reply, error, 'Failed to delete project');
             }
         }
     );

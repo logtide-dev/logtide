@@ -9,6 +9,8 @@ import { enrichmentService } from '../siem/enrichment-service.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { projectsService } from '../projects/service.js';
+import { OrganizationsService } from '../organizations/service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf-8'));
@@ -180,6 +182,22 @@ export interface HealthStats {
         waitingRequests: number;   // Queries waiting for connection
     };
     overall: 'healthy' | 'degraded' | 'down';
+}
+
+/** Thrown when the target entity does not exist (routes map it to 404). */
+export class AdminNotFoundError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'AdminNotFoundError';
+    }
+}
+
+/** Thrown when an action would break an invariant (routes map it to 409). */
+export class AdminConflictError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'AdminConflictError';
+    }
 }
 
 export class AdminService {
@@ -1371,17 +1389,34 @@ export class AdminService {
     /**
      * Enable or disable a user account
      */
-    async updateUserStatus(userId: string, disabled: boolean) {
-        const user = await db
-            .updateTable('users')
-            .set({ disabled })
-            .where('id', '=', userId)
-            .returning(['id', 'email', 'name', 'disabled'])
-            .executeTakeFirst();
-
-        if (!user) {
-            throw new Error('User not found');
+    async updateUserStatus(userId: string, disabled: boolean, actorId?: string) {
+        if (disabled && actorId && actorId === userId) {
+            throw new AdminConflictError('You cannot disable your own account');
         }
+
+        const user = await db.transaction().execute(async (trx) => {
+            const target = await trx
+                .selectFrom('users')
+                .select(['id', 'is_admin', 'disabled'])
+                .where('id', '=', userId)
+                .forUpdate()
+                .executeTakeFirst();
+
+            if (!target) {
+                throw new AdminNotFoundError('User not found');
+            }
+
+            if (disabled && target.is_admin && !target.disabled) {
+                await this.assertAnotherActiveAdmin(trx, userId, 'Cannot disable the last active admin');
+            }
+
+            return trx
+                .updateTable('users')
+                .set({ disabled })
+                .where('id', '=', userId)
+                .returning(['id', 'email', 'name', 'disabled'])
+                .executeTakeFirstOrThrow();
+        });
 
         // If disabling, revoke all active sessions. Deleting the DB rows is not
         // enough: validateSession caches the UserProfile by token, so a disabled
@@ -1411,16 +1446,29 @@ export class AdminService {
      * Update user admin role
      */
     async updateUserRole(userId: string, isAdmin: boolean) {
-        const user = await db
-            .updateTable('users')
-            .set({ is_admin: isAdmin })
-            .where('id', '=', userId)
-            .returning(['id', 'email', 'name', 'is_admin', 'disabled'])
-            .executeTakeFirst();
+        const user = await db.transaction().execute(async (trx) => {
+            const target = await trx
+                .selectFrom('users')
+                .select(['id', 'is_admin', 'disabled'])
+                .where('id', '=', userId)
+                .forUpdate()
+                .executeTakeFirst();
 
-        if (!user) {
-            throw new Error('User not found');
-        }
+            if (!target) {
+                throw new AdminNotFoundError('User not found');
+            }
+
+            if (!isAdmin && target.is_admin && !target.disabled) {
+                await this.assertAnotherActiveAdmin(trx, userId, 'Cannot remove the last active admin');
+            }
+
+            return trx
+                .updateTable('users')
+                .set({ is_admin: isAdmin })
+                .where('id', '=', userId)
+                .returning(['id', 'email', 'name', 'is_admin', 'disabled'])
+                .executeTakeFirstOrThrow();
+        });
 
         // The session cache stores is_admin, so a demotion/promotion would not take
         // effect until the cache TTL expires. Invalidate the cached sessions so the
@@ -1433,6 +1481,24 @@ export class AdminService {
         await Promise.all(sessions.map((sn) => CacheManager.invalidateSession(sn.token)));
 
         return user;
+    }
+
+    /**
+     * Lockout guard: there must be at least one OTHER active (enabled) admin.
+     * Locks the active admin rows so two concurrent demotions cannot both pass.
+     */
+    private async assertAnotherActiveAdmin(trx: any, userId: string, message: string) {
+        const others = await trx
+            .selectFrom('users')
+            .select('id')
+            .where('is_admin', '=', true)
+            .where('disabled', '=', false)
+            .where('id', '!=', userId)
+            .forUpdate()
+            .execute();
+        if (others.length === 0) {
+            throw new AdminConflictError(message);
+        }
     }
 
     /**
@@ -1483,7 +1549,7 @@ export class AdminService {
             .executeTakeFirst();
 
         if (!user) {
-            throw new Error('User not found');
+            throw new AdminNotFoundError('User not found');
         }
 
         // Delete all active sessions to force re-login, and invalidate the session
@@ -1643,13 +1709,13 @@ export class AdminService {
     }
 
     async deleteOrganization(orgId: string) {
-        // This will cascade delete members, projects, and related data
-        await db
-            .deleteFrom('organizations')
-            .where('id', '=', orgId)
-            .execute();
+        // Same removal path as the owner-initiated delete (cascade + caches).
+        const removed = await new OrganizationsService().removeOrganization(orgId);
+        if (!removed) {
+            throw new AdminNotFoundError('Organization not found');
+        }
 
-        return { message: 'Organization deleted successfully' };
+        return { message: 'Organization deleted' };
     }
 
     // Project Management
@@ -1844,17 +1910,25 @@ export class AdminService {
     }
 
     async deleteProject(projectId: string) {
-        // This will cascade delete logs, API keys, alert rules, and sigma rules
-        const result = await db
-            .deleteFrom('projects')
+        // Soft delete, exactly like the user-facing delete: the row and its data
+        // stay until the purge worker removes them after the grace window.
+        const project = await db
+            .selectFrom('projects')
+            .select(['id', 'organization_id', 'deleted_at'])
             .where('id', '=', projectId)
             .executeTakeFirst();
 
-        if (result.numDeletedRows === 0n) {
-            throw new Error('Project not found');
+        if (!project) {
+            throw new AdminNotFoundError('Project not found');
         }
 
-        return { message: 'Project deleted successfully' };
+        if (project.deleted_at) {
+            return { message: 'Project already deleted', organizationId: project.organization_id, alreadyDeleted: true };
+        }
+
+        await projectsService.softDeleteProject(project.id, project.organization_id);
+
+        return { message: 'Project deleted', organizationId: project.organization_id, alreadyDeleted: false };
     }
 
     /**

@@ -479,6 +479,9 @@ describe('AdminService', () => {
         });
 
         it('should remove admin role from user', async () => {
+            // Another active admin must remain (last-admin guard)
+            const other = await createTestUser({ email: 'other-admin@test.com' });
+            await db.updateTable('users').set({ is_admin: true }).where('id', '=', other.id).execute();
             const user = await createTestUser();
             await db.updateTable('users').set({ is_admin: true }).where('id', '=', user.id).execute();
 
