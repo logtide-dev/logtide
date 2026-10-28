@@ -20,7 +20,7 @@ This page is for operators who run LogTide on behalf of other people (a managed 
 | `LOGTIDE_PRIVACY_URL` | unset | Privacy Policy page users must accept |
 | `LOGTIDE_TERMS_VERSION` | unset | Current terms version; changing it asks every user to accept again |
 
-An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all thirteen through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
+An empty string is treated the same as unset for all of them. The bundled `docker/docker-compose*.yml` files pass all eleven through to both the `backend` and the `worker` containers (as empty strings when unset), so setting them in your `.env` is enough.
 
 ### CAPABILITY_DEFAULTS_JSON
 
@@ -102,7 +102,7 @@ A complete reference verifier using only Node's `crypto` is in [`docs/examples/v
 
 ### Removed: in-app billing (LOGTIDE_BILLING_API_URL and LOGTIDE_BILLING_API_TOKEN)
 
-These two variables were removed in 1.6.1 and are ignored (startup logs a warning if either is set). In-app billing now ships as a separate extension; `/api/v1/auth/config` no longer carries `billingEnabled`.
+These two variables and the in-app billing proxy were removed in 1.6.1. They are ignored (startup logs a warning if either is set), and `/api/v1/auth/config` no longer carries `billingEnabled`. Hosting providers can build features like this with the extension system, see [Extensions](extensions.md).
 
 ### MAX_ORGANIZATIONS_PER_USER
 

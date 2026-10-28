@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Extension system**: operators can load ES modules with `LOGTIDE_EXTENSIONS` that add routes under `/api/v1/ext/<name>`, their own Postgres schema with SQL migrations, background jobs and crons, mail, entitlement and retention access, public config in `GET /api/v1/auth/config`, and frontend settings pages through a build-time registry. See `docs/extensions.md`.
+
+### Removed
+
+- **In-app billing proxy and Billing page**, `LOGTIDE_BILLING_API_URL` and `LOGTIDE_BILLING_API_TOKEN`. Both variables are ignored with a startup warning, and `billingEnabled` is no longer in `GET /api/v1/auth/config`.
+
 ## [1.6.0] - 2026-10-31
 
 ### Added
