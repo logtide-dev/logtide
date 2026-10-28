@@ -147,7 +147,7 @@
 {#snippet nameCell(p: Project)}
   <div class="min-w-0">
     <a
-      href={logsHref(p.id)}
+      href="/dashboard/projects/{p.id}"
       class="block truncate font-medium hover:text-primary hover:underline underline-offset-4"
     >
       {p.name}
@@ -238,7 +238,7 @@
   {@const s = statsOf(p)}
   <div class="space-y-2">
     <div class="flex items-start justify-between gap-2">
-      <a href={logsHref(p.id)} class="min-w-0 truncate font-medium hover:text-primary">{p.name}</a>
+      <a href="/dashboard/projects/{p.id}" class="min-w-0 truncate font-medium hover:text-primary">{p.name}</a>
       <ProjectHealthPill entry={health[p.id]} />
     </div>
     <p class="text-xs text-muted-foreground">

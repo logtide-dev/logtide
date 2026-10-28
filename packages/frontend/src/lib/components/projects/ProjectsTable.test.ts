@@ -30,9 +30,9 @@ function names(): string[] {
 const base = { projects, stats, health: {}, lastEventAt, receiving: new Set<string>() };
 
 describe('ProjectsTable', () => {
-  it('links the name to the scoped logs URL', () => {
+  it('links the name to the project page', () => {
     render(ProjectsTable, base);
-    expect(screen.getByRole('link', { name: 'Alpha' })).toHaveAttribute('href', '/dashboard/logs?project=a');
+    expect(screen.getByRole('link', { name: 'Alpha' })).toHaveAttribute('href', '/dashboard/projects/a');
   });
 
   it('shows Connect only for projects with no data', () => {
