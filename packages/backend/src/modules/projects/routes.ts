@@ -12,6 +12,17 @@ import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 import { emailVerificationService } from '../users/email-verification.js';
 import { termsAcceptanceService } from '../users/terms.js';
 import { db } from '../../database/connection.js';
+import {
+  getOrganizationProjectStats,
+  getOrganizationHealthSummary,
+  getProjectHealthDetail,
+  getProjectSummary,
+} from './stats.js';
+import { isCheckKey, setMute, updateProjectHealthSettings } from '../project-health/index.js';
+import {
+  PROJECT_HEALTH_SILENT_MAX_MINUTES,
+  PROJECT_HEALTH_SILENT_MIN_MINUTES,
+} from '@logtide/shared';
 
 const createProjectSchema = z.object({
   organizationId: z.string().uuid('Invalid organization ID'),
@@ -118,6 +129,126 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       }
       throw error;
     }
+  });
+
+  // Org-level batched stats and health summary (registered before /:id)
+  const orgScoped =
+    (load: (organizationId: string) => Promise<unknown>) => async (request: any, reply: any) => {
+      let organizationId: string;
+      try {
+        ({ organizationId } = orgQuerySchema.parse(request.query));
+      } catch {
+        return reply.status(400).send({ error: 'organizationId query parameter is required' });
+      }
+      try {
+        await projectsService.checkOrganizationAccess(organizationId, request.user.id);
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('do not have access')) {
+          return reply.status(403).send({ error: error.message });
+        }
+        throw error;
+      }
+      return reply.send({ projects: await load(organizationId) });
+    };
+
+  fastify.get('/stats', orgScoped(getOrganizationProjectStats));
+  fastify.get('/health-summary', orgScoped(getOrganizationHealthSummary));
+
+  // Active project the caller can read, or sends 404/400 and returns null.
+  async function readableProject(request: any, reply: any) {
+    const parsed = projectIdSchema.safeParse(request.params);
+    if (!parsed.success) {
+      reply.status(400).send({ error: 'Invalid project ID format' });
+      return null;
+    }
+    const project = await projectsService.getProjectById(parsed.data.id, request.user.id);
+    if (!project) {
+      reply.status(404).send({ error: 'Project not found' });
+      return null;
+    }
+    return project;
+  }
+
+  // Same as readableProject plus the owner/admin role check (403).
+  async function adminProject(request: any, reply: any) {
+    const project = await readableProject(request, reply);
+    if (!project) return null;
+    const member = await db
+      .selectFrom('organization_members')
+      .select('role')
+      .where('user_id', '=', request.user.id)
+      .where('organization_id', '=', project.organizationId)
+      .executeTakeFirst();
+    if (member?.role !== 'owner' && member?.role !== 'admin') {
+      reply.status(403).send({ error: 'Admin or owner role required' });
+      return null;
+    }
+    return project;
+  }
+
+  fastify.get('/:id/health', async (request: any, reply) => {
+    const project = await readableProject(request, reply);
+    if (!project) return;
+    return reply.send(await getProjectHealthDetail(project.organizationId, project.id));
+  });
+
+  fastify.get('/:id/summary', async (request: any, reply) => {
+    const project = await readableProject(request, reply);
+    if (!project) return;
+    return reply.send(await getProjectSummary(project.organizationId, project.id));
+  });
+
+  const muteBodySchema = z.object({
+    duration: z.enum(['24h', '7d', 'until_resolved']).nullable(),
+  });
+
+  fastify.put('/:id/health/mutes/:checkKey', async (request: any, reply) => {
+    const { checkKey } = request.params as { checkKey: string };
+    const body = muteBodySchema.safeParse(request.body);
+    if (!isCheckKey(checkKey) || !body.success) {
+      return reply.status(400).send({ error: 'Invalid check key or duration' });
+    }
+    const project = await adminProject(request, reply);
+    if (!project) return;
+    await setMute(project.organizationId, project.id, checkKey, body.data.duration);
+    return reply.status(204).send();
+  });
+
+  const notificationSettingsSchema = z.object({
+    healthChannelIds: z.array(z.string().uuid()).max(50).optional(),
+    silentMinutes: z
+      .number()
+      .int()
+      .min(PROJECT_HEALTH_SILENT_MIN_MINUTES)
+      .max(PROJECT_HEALTH_SILENT_MAX_MINUTES)
+      .optional(),
+  });
+
+  fastify.put('/:id/notification-settings', async (request: any, reply) => {
+    const body = notificationSettingsSchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({ error: 'Validation error', details: body.error.errors });
+    }
+    const project = await adminProject(request, reply);
+    if (!project) return;
+
+    const ids = Array.from(new Set(body.data.healthChannelIds ?? []));
+    if (ids.length > 0) {
+      const found = await db
+        .selectFrom('notification_channels')
+        .select('id')
+        .where('organization_id', '=', project.organizationId)
+        .where('id', 'in', ids)
+        .execute();
+      if (found.length !== ids.length) {
+        return reply.status(400).send({ error: 'Unknown notification channel' });
+      }
+    }
+    const settings = await updateProjectHealthSettings(project.organizationId, project.id, body.data);
+    return reply.send({
+      silentMinutes: settings.silentMinutes,
+      healthChannelIds: settings.healthChannelIds,
+    });
   });
 
   // First signal received by a project (any signal type)
