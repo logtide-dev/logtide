@@ -5,7 +5,6 @@ import { authenticate } from '../auth/middleware.js';
 import { requireAdmin } from '../admin/middleware.js';
 import { SERVICE_ACTOR_LABEL } from '../auth/middleware.js';
 import { auditLogService } from '../audit-log/index.js';
-import { db } from '../../database/index.js';
 
 // Validation schemas
 const updateRetentionSchema = z
@@ -46,30 +45,11 @@ export async function retentionRoutes(fastify: FastifyInstance) {
         const { id } = request.params as { id: string };
         const body = updateRetentionSchema.parse(request.body);
 
-        const response: Record<string, unknown> = {
-          message: 'Retention policy updated successfully',
-        };
-
-        if (body.retentionDays !== undefined) {
-          const result = await retentionService.updateOrganizationRetention(id, body.retentionDays);
-          Object.assign(response, result);
-        }
-
-        if (body.auditRetentionDays !== undefined) {
-          const auditResult = await retentionService.updateOrganizationAuditRetention(id, body.auditRetentionDays);
-          response.auditRetentionDays = auditResult.auditRetentionDays;
-        }
-
-        await auditLogService.record({
-          action: 'org.retention_updated',
-          organizationId: id,
-          target: { type: 'organization', id },
-          metadata: {
-            ...(request.servicePrincipal ? { actor: SERVICE_ACTOR_LABEL } : {}),
-            ...(body.retentionDays !== undefined ? { retentionDays: body.retentionDays } : {}),
-            ...(body.auditRetentionDays !== undefined ? { auditRetentionDays: body.auditRetentionDays } : {}),
-          },
-        });
+        const response = await retentionService.setOrganizationRetentionPolicy(
+          id,
+          body,
+          request.servicePrincipal ? SERVICE_ACTOR_LABEL : undefined
+        );
 
         return reply.send(response);
       } catch (error: any) {
@@ -102,16 +82,7 @@ export async function retentionRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const [status, org] = await Promise.all([
-          retentionService.getOrganizationRetentionStatus(id),
-          // Fetch audit_retention_days alongside (not in getOrganizationRetentionStatus to stay backward-compat)
-          db
-            .selectFrom('organizations')
-            .select('audit_retention_days')
-            .where('id', '=', id)
-            .executeTakeFirst(),
-        ]);
-        return reply.send({ ...status, auditRetentionDays: org?.audit_retention_days ?? null });
+        return reply.send(await retentionService.getOrganizationRetentionPolicy(id));
       } catch (error: any) {
         if (error.message === 'Organization not found') {
           return reply.status(404).send({ error: error.message });
