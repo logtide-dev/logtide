@@ -94,6 +94,7 @@ const STATE_TONES: Record<string, Tone> = {
   ok: GREEN,
   up: GREEN,
   down: RED,
+  active: GREEN,
   snoozed: GRAY,
   disabled: GRAY,
   pending: NEUTRAL,
