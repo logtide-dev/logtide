@@ -399,7 +399,7 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
         metadata: { type: body.type, slug: body.slug, name: body.name },
       });
 
-      return reply.status(201).send({ provider });
+      return reply.status(201).send({ provider: withMaskedConfig(provider) });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
@@ -428,7 +428,7 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
         metadata: { updates: Object.keys(body) },
       });
 
-      return reply.send({ provider });
+      return reply.send({ provider: withMaskedConfig(provider) });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
@@ -492,6 +492,11 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
 /**
  * Mask sensitive config fields for API responses
  */
+// Responses never carry stored secrets, including after create/update.
+function withMaskedConfig<T extends { type: string; config: unknown }>(provider: T): T {
+  return { ...provider, config: maskSensitiveConfig(provider.type, provider.config as Record<string, unknown>) };
+}
+
 function maskSensitiveConfig(type: string, config: Record<string, unknown>): Record<string, unknown> {
   const masked = { ...config };
 

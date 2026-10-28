@@ -660,6 +660,9 @@ describe('External Auth Routes', () => {
                 const body = JSON.parse(response.payload);
                 expect(body.provider).toBeDefined();
                 expect(body.provider.name).toBe('Updated Provider');
+                // The stored secret must never come back in the update response
+                expect(body.provider.config.clientSecret).toBe('••••••••');
+                expect(response.payload).not.toContain('secret123');
 
                 updateProviderSpy.mockRestore();
             });
