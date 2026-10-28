@@ -631,7 +631,8 @@
       </div>
     </header>
 
-    <main class="flex-1 overflow-auto bg-background">
+    <!-- overflow-x-clip, not overflow-auto: the document scrolls, and a non-scrolling scroll container here breaks position: sticky in every page. -->
+    <main class="flex-1 min-w-0 overflow-x-clip bg-background">
       <EmailVerificationBanner />
       {#if $currentOrganization}
         <QuotaBanner organizationId={$currentOrganization.id} role={$currentOrganization.role} />

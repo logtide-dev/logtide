@@ -38,10 +38,41 @@
     return item.anchor ? `${base}/settings#${item.anchor}` : base;
   }
 
+  // Scroll spy: on the settings page the active item follows the section in view.
+  let spyAnchor = $state<string | null>(null);
+
+  $effect(() => {
+    if (!onSettings || typeof window === 'undefined') {
+      spyAnchor = null;
+      return;
+    }
+    const anchors = PROJECT_NAV_ITEMS.flatMap((i) => (i.anchor ? [i.anchor] : []));
+    const update = () => {
+      let current: string | null = null;
+      for (const anchor of anchors) {
+        const el = document.getElementById(anchor);
+        if (el && el.getBoundingClientRect().top <= 120) current = anchor;
+      }
+      // At the bottom of the page the last short sections never reach the top.
+      const { scrollHeight } = document.documentElement;
+      if (current && scrollHeight > window.innerHeight && window.innerHeight + window.scrollY >= scrollHeight - 2) {
+        current = anchors[anchors.length - 1];
+      }
+      spyAnchor = current;
+    };
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  });
+
   function isActive(item: ProjectNavItem): boolean {
     if (!item.anchor) return !onSettings;
     if (!onSettings) return false;
-    return (hash.replace(/^#/, '') || 'general') === item.anchor;
+    return (spyAnchor ?? (hash.replace(/^#/, '') || 'general')) === item.anchor;
   }
 </script>
 

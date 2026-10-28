@@ -119,6 +119,11 @@
     @apply border-border;
   }
 
+  /* Reserve the scrollbar space so short and long pages keep the same layout width. */
+  html {
+    scrollbar-gutter: stable;
+  }
+
   body {
     @apply bg-background text-foreground;
   }
