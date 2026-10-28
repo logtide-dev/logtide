@@ -42,6 +42,7 @@
   import Footer from "$lib/components/Footer.svelte";
   import EmailVerificationBanner from "$lib/components/EmailVerificationBanner.svelte";
   import QuotaBanner from "$lib/components/QuotaBanner.svelte";
+  import ProjectHealthBanner from "$lib/components/projects/ProjectHealthBanner.svelte";
   import TermsAcceptanceModal from "$lib/components/TermsAcceptanceModal.svelte";
   import OnboardingChecklist from "$lib/components/OnboardingChecklist.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
@@ -634,6 +635,7 @@
       <EmailVerificationBanner />
       {#if $currentOrganization}
         <QuotaBanner organizationId={$currentOrganization.id} role={$currentOrganization.role} />
+        <ProjectHealthBanner organizationId={$currentOrganization.id} />
       {/if}
       <TermsAcceptanceModal />
       {@render children?.()}
