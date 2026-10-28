@@ -15,8 +15,8 @@
   import Switch from '$lib/components/ui/switch/switch.svelte';
   import CreateApiKeyDialog from '$lib/components/CreateApiKeyDialog.svelte';
   import { CreateReceiverDialog, ReceiverEventsDialog } from '$lib/components/receivers';
-  import PageHeader from '$lib/components/app/PageHeader.svelte';
   import SettingsSection from '$lib/components/app/SettingsSection.svelte';
+  import ProjectNotificationSettings from '$lib/components/projects/ProjectNotificationSettings.svelte';
   import DangerZone from '$lib/components/app/DangerZone.svelte';
   import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
   import DataTable from '$lib/components/app/DataTable.svelte';
@@ -82,14 +82,6 @@
     { label: 'OTLP metrics URL', value: endpoints.otlpMetricsUrl },
     { label: 'DSN template', value: buildDsn(endpoints, null) },
   ]);
-
-  const sections = [
-    { id: 'general', label: 'General' },
-    { id: 'connect', label: 'Connect' },
-    { id: 'api-keys', label: 'API keys' },
-    { id: 'inbound-webhooks', label: 'Receivers' },
-    { id: 'danger-zone', label: 'Danger zone' },
-  ];
 
   async function loadProject() {
     if (!$currentOrganization || !projectId) return;
@@ -473,24 +465,6 @@
       {/snippet}
     </EmptyState>
   {:else if project}
-    <PageHeader
-      title="Project settings"
-      appliesTo="project"
-      breadcrumbs={[
-        { label: 'Projects', href: '/dashboard/projects' },
-        { label: project.name },
-        { label: 'Settings' },
-      ]}
-    />
-
-    <nav aria-label="Settings sections" class="-mt-4 flex flex-wrap gap-x-4 gap-y-1 border-b border-border pb-2 text-sm">
-      {#each sections as section (section.id)}
-        <a href="#{section.id}" class="text-muted-foreground hover:text-foreground hover:underline">
-          {section.label}
-        </a>
-      {/each}
-    </nav>
-
     <div id="general" class="scroll-mt-20">
       <SettingsSection title="General" description="Update your project name and description">
         <div class="space-y-4">
@@ -626,6 +600,21 @@
             {/snippet}
           </DataTable>
         </div>
+      </SettingsSection>
+    </div>
+
+    <div id="notifications" class="scroll-mt-20">
+      <SettingsSection
+        title="Notifications"
+        description="Choose where project health alerts are sent and when a silent project is reported"
+      >
+        {#if $currentOrganization}
+          <ProjectNotificationSettings
+            projectId={projectId ?? ''}
+            organizationId={$currentOrganization.id}
+            canManage={$currentOrganization.role === 'owner' || $currentOrganization.role === 'admin'}
+          />
+        {/if}
       </SettingsSection>
     </div>
 

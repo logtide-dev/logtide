@@ -48,6 +48,16 @@ vi.mock('$lib/api/receivers', () => ({
     delete: m.deleteReceiver,
   },
 }));
+vi.mock('$lib/api/project-health', () => ({
+  projectHealthAPI: {
+    getProjectHealth: vi.fn().mockResolvedValue({ settings: { silentMinutes: 60, healthChannelIds: [] } }),
+    updateSettings: vi.fn(),
+  },
+}));
+vi.mock('$lib/api/notification-channels', () => ({ notificationChannelsAPI: { list: vi.fn().mockResolvedValue([]) } }));
+vi.mock('$lib/api/notification-routing', () => ({
+  notificationRoutingAPI: { preview: vi.fn().mockResolvedValue({ destinations: [], fallback: 'owners_admins_email' }) },
+}));
 vi.mock('$lib/api/first-signal', () => ({ firstSignalAPI: { get: m.firstSignal } }));
 
 import SettingsPage from './+page.svelte';
@@ -101,7 +111,6 @@ const receivers = [
 
 async function renderLoaded() {
   render(SettingsPage);
-  await screen.findByRole('heading', { name: 'Project settings' });
   await screen.findByText('Server key');
 }
 
@@ -124,17 +133,14 @@ beforeEach(() => {
 });
 
 describe('project settings page', () => {
-  it('renders the five sections with anchors other pages can link to', async () => {
+  it('renders the six sections with anchors the project side nav links to', async () => {
     await renderLoaded();
-    for (const id of ['general', 'connect', 'api-keys', 'inbound-webhooks', 'danger-zone']) {
+    for (const id of ['general', 'connect', 'api-keys', 'inbound-webhooks', 'notifications', 'danger-zone']) {
       expect(document.getElementById(id), id).not.toBeNull();
     }
-    const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    const hrefs = within(nav)
-      .getAllByRole('link')
-      .map((a) => a.getAttribute('href'));
-    expect(hrefs).toEqual(['#general', '#connect', '#api-keys', '#inbound-webhooks', '#danger-zone']);
-    expect(screen.getByText('Applies to: Project')).toBeInTheDocument();
+    // The side nav lives in the project layout now.
+    expect(screen.queryByRole('navigation', { name: 'Settings sections' })).toBeNull();
+    expect(await screen.findByTestId('project-notification-settings')).toBeInTheDocument();
   });
 
   it('shows the key prefix and a muted note for keys created before 1.6', async () => {
