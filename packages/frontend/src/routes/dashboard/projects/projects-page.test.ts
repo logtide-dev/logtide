@@ -144,6 +144,10 @@ describe('projects page', () => {
     render(ProjectsPage);
     expect(await screen.findByText('Deleted projects')).toBeInTheDocument();
     expect(screen.getByTestId('purge-date')).toHaveTextContent('Permanently deleted on Oct 31, 2026');
+    expect(screen.getByRole('link', { name: 'View project' })).toHaveAttribute(
+      'href',
+      '/dashboard/projects/p-9'
+    );
     await fireEvent.click(screen.getByRole('button', { name: /Restore/ }));
     await waitFor(() => expect(restoreProject).toHaveBeenCalledWith('org-1', 'p-9'));
     expect(toastSuccess).toHaveBeenCalledWith('Project restored');

@@ -320,7 +320,7 @@
                     </p>
                     <div class="flex gap-2">
                       <a
-                        href="/dashboard/projects/{project.id}/overview"
+                        href="/dashboard/projects/{project.id}"
                         class="{buttonVariants({ variant: 'outline', size: 'sm' })} flex-1"
                       >
                         View project
