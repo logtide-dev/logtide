@@ -3,7 +3,14 @@
     import PageHeader from "$lib/components/app/PageHeader.svelte";
     import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
-    import { adminAPI, type OrganizationDetails, type EntitlementMap, type EntitlementUpdate } from "$lib/api/admin";
+    import { adminAPI, type OrganizationDetails } from "$lib/api/admin";
+    import {
+        buildEntitlementRows,
+        formatEntitlementValue,
+        planEntitlementSave,
+        resetEntitlementRow,
+        type EntitlementRow,
+    } from "$lib/utils/entitlements-form";
     import { authStore } from "$lib/stores/auth";
     import { browser } from "$app/environment";
     import { UsersAPI } from "$lib/api/users";
@@ -55,12 +62,15 @@
     let retentionError = $state("");
 
     // Entitlements (#214)
-    let entitlements = $state<EntitlementMap>({});
+    let entitlementRows = $state<EntitlementRow[]>([]);
+    let loadedEntitlementRows = $state<EntitlementRow[]>([]);
     let entitlementsLoading = $state(true);
     let entitlementsError = $state("");
     let savingEntitlements = $state(false);
-    // Working copy of numeric caps as strings for the inputs ("" = unlimited / null).
-    let limitInputs = $state<Record<string, string>>({});
+    const entitlementPlan = $derived(planEntitlementSave(loadedEntitlementRows, entitlementRows));
+    const entitlementsDirty = $derived(
+        entitlementPlan.updates.length > 0 || entitlementPlan.resets.length > 0 || entitlementPlan.errors.length > 0
+    );
 
     async function loadEntitlements() {
         if ($authStore.user?.is_admin !== true) return;
@@ -69,14 +79,9 @@
         entitlementsError = "";
         try {
             const res = await adminAPI.getOrganizationEntitlements(orgId);
-            entitlements = res.entitlements;
-            const inputs: Record<string, string> = {};
-            for (const [cap, val] of Object.entries(entitlements)) {
-                if (val.kind === "limit" || val.kind === "quota") {
-                    inputs[cap] = val.limit === null ? "" : String(val.limit);
-                }
-            }
-            limitInputs = inputs;
+            const rows = buildEntitlementRows(res);
+            loadedEntitlementRows = rows.map((r) => ({ ...r }));
+            entitlementRows = rows;
         } catch (err: any) {
             entitlementsError = err.message || "Failed to load entitlements";
         } finally {
@@ -84,52 +89,34 @@
         }
     }
 
-    function booleanCaps(): string[] {
-        return Object.keys(entitlements)
-            .filter((c) => entitlements[c].kind === "boolean")
-            .sort();
+    function updateRow(cap: string, patch: Partial<EntitlementRow>) {
+        // Any edit cancels a pending reset: the new value becomes the override.
+        entitlementRows = entitlementRows.map((r) =>
+            r.capability === cap ? { ...r, ...patch, reset: false } : r
+        );
     }
 
-    function numericCaps(): string[] {
-        return Object.keys(entitlements)
-            .filter((c) => {
-                const k = entitlements[c].kind;
-                return k === "limit" || k === "quota";
-            })
-            .sort();
+    function resetRow(cap: string) {
+        entitlementRows = entitlementRows.map((r) => (r.capability === cap ? resetEntitlementRow(r) : r));
     }
 
     async function saveEntitlements() {
+        const plan = planEntitlementSave(loadedEntitlementRows, entitlementRows);
+        if (plan.errors.length > 0) {
+            entitlementsError = plan.errors.join("; ");
+            return;
+        }
+        if (plan.updates.length === 0 && plan.resets.length === 0) return;
+
         savingEntitlements = true;
         entitlementsError = "";
         try {
-            const updates: EntitlementUpdate[] = [];
-
-            for (const cap of booleanCaps()) {
-                const val = entitlements[cap];
-                if (val.kind === "boolean") {
-                    updates.push({ capability: cap, enabled: val.enabled });
-                }
+            for (const cap of plan.resets) {
+                await adminAPI.resetOrganizationEntitlement(orgId, cap);
             }
-
-            for (const cap of numericCaps()) {
-                const raw = (limitInputs[cap] ?? "").trim();
-                let limitValue: number | null;
-                if (raw === "") {
-                    limitValue = null; // unlimited
-                } else {
-                    const n = Number(raw);
-                    if (!Number.isInteger(n) || n < 0) {
-                        entitlementsError = `Invalid value for ${cap}: must be a non-negative integer or empty for unlimited`;
-                        savingEntitlements = false;
-                        return;
-                    }
-                    limitValue = n;
-                }
-                updates.push({ capability: cap, limitValue });
+            if (plan.updates.length > 0) {
+                await adminAPI.updateOrganizationEntitlements(orgId, plan.updates);
             }
-
-            await adminAPI.updateOrganizationEntitlements(orgId, updates);
             await loadEntitlements(); // refresh from server
         } catch (err: any) {
             entitlementsError = err.message || "Failed to save entitlements";
@@ -363,7 +350,7 @@
                     <CardTitle>Entitlements</CardTitle>
                 </div>
                 <CardDescription>
-                    Feature gates and usage caps for this organization. Empty cap = unlimited.
+                    Feature gates and usage caps for this organization. Only changed values are saved as overrides; reset a key to inherit the instance default again.
                 </CardDescription>
             </CardHeader>
             <CardContent>
@@ -371,45 +358,78 @@
                     <p class="text-muted-foreground text-sm">Loading entitlements...</p>
                 {:else}
                     <div class="space-y-6">
+                        {#snippet overrideBadge(row: EntitlementRow)}
+                            {#if row.reset}
+                                <Badge variant="outline">reset on save</Badge>
+                            {:else if row.isOverride}
+                                <Badge variant="secondary">override</Badge>
+                            {:else}
+                                <Badge variant="outline">default</Badge>
+                            {/if}
+                        {/snippet}
+
+                        {#snippet resetButton(row: EntitlementRow)}
+                            <span class="text-xs text-muted-foreground">Default: {formatEntitlementValue(row.defaultValue)}</span>
+                            {#if row.isOverride && !row.reset}
+                                <Button variant="ghost" size="sm" onclick={() => resetRow(row.capability)} disabled={savingEntitlements}>
+                                    Reset to default
+                                </Button>
+                            {/if}
+                        {/snippet}
+
                         <!-- Boolean feature gates -->
                         <div class="space-y-3">
                             <h3 class="text-sm font-medium">Feature gates</h3>
-                            {#each booleanCaps() as cap}
-                                {@const val = entitlements[cap]}
-                                {#if val.kind === "boolean"}
-                                    <div class="flex items-center justify-between">
-                                        <Label for={`ent-${cap}`} class="font-mono text-sm">{cap}</Label>
+                            {#each entitlementRows.filter((r) => r.kind === "boolean") as row (row.capability)}
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <div class="flex items-center gap-2 min-w-0">
+                                        <Label for={`ent-${row.capability}`} class="font-mono text-sm">{row.capability}</Label>
+                                        {@render overrideBadge(row)}
+                                    </div>
+                                    <div class="flex items-center gap-3">
+                                        {@render resetButton(row)}
                                         <Switch
-                                            id={`ent-${cap}`}
-                                            checked={val.enabled}
-                                            onCheckedChange={(checked) => {
-                                                entitlements = {
-                                                    ...entitlements,
-                                                    [cap]: { kind: "boolean", enabled: checked },
-                                                };
-                                            }}
+                                            id={`ent-${row.capability}`}
+                                            checked={row.enabled}
+                                            onCheckedChange={(checked) => updateRow(row.capability, { enabled: checked })}
                                             disabled={savingEntitlements}
                                         />
                                     </div>
-                                {/if}
+                                </div>
                             {/each}
                         </div>
 
                         <!-- Numeric limits and quotas -->
                         <div class="space-y-3">
                             <h3 class="text-sm font-medium">Limits & quotas</h3>
-                            {#each numericCaps() as cap}
-                                <div class="flex items-center justify-between gap-4">
-                                    <Label for={`ent-${cap}`} class="font-mono text-sm">{cap}</Label>
-                                    <Input
-                                        id={`ent-${cap}`}
-                                        type="number"
-                                        min="0"
-                                        placeholder="unlimited"
-                                        bind:value={limitInputs[cap]}
-                                        disabled={savingEntitlements}
-                                        class="w-40"
-                                    />
+                            {#each entitlementRows.filter((r) => r.kind !== "boolean") as row (row.capability)}
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <div class="flex items-center gap-2 min-w-0">
+                                        <Label for={`ent-${row.capability}`} class="font-mono text-sm">{row.capability}</Label>
+                                        {@render overrideBadge(row)}
+                                    </div>
+                                    <div class="flex flex-wrap items-center gap-3">
+                                        {@render resetButton(row)}
+                                        <div class="flex items-center gap-2 text-sm">
+                                            <Switch
+                                                checked={row.unlimited}
+                                                onCheckedChange={(checked) => updateRow(row.capability, { unlimited: checked })}
+                                                disabled={savingEntitlements}
+                                                aria-label={`Unlimited ${row.capability}`}
+                                            />
+                                            <span>Unlimited</span>
+                                        </div>
+                                        <Input
+                                            id={`ent-${row.capability}`}
+                                            type="number"
+                                            min="0"
+                                            placeholder={row.unlimited ? "unlimited" : "limit"}
+                                            value={row.unlimited ? "" : row.limitText}
+                                            oninput={(e) => updateRow(row.capability, { limitText: (e.currentTarget as HTMLInputElement).value })}
+                                            disabled={savingEntitlements || row.unlimited}
+                                            class="w-40"
+                                        />
+                                    </div>
                                 </div>
                             {/each}
                         </div>
@@ -419,7 +439,7 @@
                         {/if}
 
                         <div class="flex items-center gap-3">
-                            <Button onclick={saveEntitlements} disabled={savingEntitlements}>
+                            <Button onclick={saveEntitlements} disabled={savingEntitlements || !entitlementsDirty}>
                                 <Save class="h-4 w-4 mr-2" />
                                 {savingEntitlements ? "Saving..." : "Save entitlements"}
                             </Button>
