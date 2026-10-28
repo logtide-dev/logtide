@@ -152,7 +152,7 @@
               {#if single && !routeProjectId}
                 <CommandItem
                   value="open project overview"
-                  onSelect={() => openPage(`/dashboard/projects/${encodeURIComponent(single.id)}/overview`)}
+                  onSelect={() => openPage(`/dashboard/projects/${encodeURIComponent(single.id)}`)}
                   class="cursor-pointer"
                 >
                   <div class="flex items-center gap-2 w-full">

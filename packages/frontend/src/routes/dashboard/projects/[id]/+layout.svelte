@@ -14,7 +14,11 @@
 	import { projectQuickLinks } from '$lib/components/shell/project-links';
 	import { formatDateShort } from '$lib/utils/datetime';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
-	import * as Tabs from '$lib/components/ui/tabs';
+	import ProjectHealthPill from '$lib/components/projects/ProjectHealthPill.svelte';
+	import ProjectSummaryTiles from '$lib/components/projects/ProjectSummaryTiles.svelte';
+	import ProjectSideNav from '$lib/components/projects/ProjectSideNav.svelte';
+	import { projectPageStore } from '$lib/stores/project-page';
+	import { formatRelative } from '$lib/utils/datetime';
 	import { layoutStore } from '$lib/stores/layout';
 
 	const HARD_DELETE_GRACE_DAYS = 30;
@@ -53,31 +57,44 @@
 
 	const currentPath = $derived(page.url.pathname);
 
-	// Performance and Sessions live on the top-level Web vitals and Sessions
-	// pages now; the quick links below point there.
-	const validTabs = ['overview', 'alerts', 'settings'];
+	// Tiles cover logs, errors, traces, uptime and incidents; these stay as plain links.
+	const EXTRA_LINK_IDS = ['metrics', 'sessions', 'web-vitals'];
 
-	const currentTab = $derived.by(() => {
-		const segments = currentPath.split('/');
-		for (let i = segments.length - 1; i >= 0; i--) {
-			if (validTabs.includes(segments[i])) return segments[i];
+	const quickLinks = $derived(
+		projectId ? projectQuickLinks(projectId).filter((l) => EXTRA_LINK_IDS.includes(l.id)) : []
+	);
+
+	function isMutedNow(i: { mute: { until: string | null; untilResolved: boolean } | null }): boolean {
+		const m = i.mute;
+		if (!m) return false;
+		return m.untilResolved || (m.until !== null && new Date(m.until).getTime() > Date.now());
+	}
+
+	const pageState = $derived($projectPageStore);
+	const health = $derived(pageState.projectId === projectId ? pageState.health : null);
+	const pageLoading = $derived(pageState.projectId !== projectId || pageState.loading);
+	const summary = $derived(pageState.projectId === projectId ? pageState.summary : null);
+	const healthEntry = $derived(
+		health
+			? {
+					status: health.status,
+					openIssues: health.issues
+						.filter((i) => i.resolvedAt === null)
+						.map((i) => ({ checkKey: i.checkKey, severity: i.severity, muted: isMutedNow(i) })),
+				}
+			: undefined
+	);
+	const unmutedOpenCount = $derived(healthEntry ? healthEntry.openIssues.filter((i) => !i.muted).length : 0);
+
+	// Health and tile numbers load once per project; a deleted project has no checks.
+	$effect(() => {
+		if (!browser || !projectId || !project) return;
+		if (project.deletedAt) {
+			projectPageStore.reset();
+			return;
 		}
-		return 'overview';
+		void projectPageStore.load(projectId);
 	});
-
-	const visibleTabs = $derived.by(() => {
-		const tabs: Array<{ value: string; label: string }> = [
-			{ value: 'overview', label: 'Overview' },
-			{ value: 'alerts', label: 'Alerts' },
-		];
-		// A soft-deleted project is read-only; its settings cannot be edited.
-		if (!project?.deletedAt) {
-			tabs.push({ value: 'settings', label: 'Settings' });
-		}
-		return tabs;
-	});
-
-	const quickLinks = $derived(projectId ? projectQuickLinks(projectId) : []);
 
 	async function loadProject(orgId: string, projId: string) {
 		loading = true;
@@ -129,12 +146,6 @@
 		if (!$currentOrganization || !projectId) return;
 		lastLoadedKey = null;
 		loadProject($currentOrganization.id, projectId);
-	}
-
-	// Handle tab change
-	function handleTabChange(tab: string) {
-		const basePath = `/dashboard/projects/${projectId}`;
-		goto(`${basePath}/${tab}`);
 	}
 
 	// Date the project is permanently purged.
@@ -190,31 +201,57 @@
 			</div>
 		{/if}
 
-		<div>
-			<PageHeader
-				title={project.name}
-				description={project.description || undefined}
-				appliesTo="project"
-				breadcrumbs={[{ label: 'Projects', href: '/dashboard/projects' }, { label: project.name }]}
-			/>
+		<PageHeader
+			title={project.name}
+			description={project.description || undefined}
+			appliesTo="project"
+			breadcrumbs={[{ label: 'Projects', href: '/dashboard/projects' }, { label: project.name }]}
+		>
+			{#snippet meta()}
+				{#if !project.deletedAt}
+					<ProjectHealthPill entry={healthEntry} />
+					{#if health}
+						<span class="text-xs text-muted-foreground" data-testid="project-last-event">
+							{health.lastEventAt ? `Last event ${formatRelative(health.lastEventAt)}` : 'No events yet'}
+						</span>
+					{/if}
+				{/if}
+			{/snippet}
+		</PageHeader>
 
-			<nav aria-label="Project data" class="-mt-2 flex flex-wrap gap-2" data-testid="project-quick-links">
-				{#each quickLinks as link (link.id)}
-					<a href={link.href} class={buttonVariants({ variant: 'outline', size: 'sm' })}>{link.label}</a>
-				{/each}
-			</nav>
-		</div>
+		{#if !project.deletedAt && projectId}
+			<div class="-mt-2 space-y-3">
+				<ProjectSummaryTiles {projectId} {summary} loading={pageLoading} />
+				{#if quickLinks.length > 0}
+					<nav aria-label="More data" class="flex flex-wrap items-center gap-2 text-sm" data-testid="project-quick-links">
+						<span class="text-muted-foreground">Also explore</span>
+						{#each quickLinks as link (link.id)}
+							<a href={link.href} class={buttonVariants({ variant: 'outline', size: 'sm' })}>{link.label}</a>
+						{/each}
+					</nav>
+				{/if}
+			</div>
+		{/if}
 
-		<Tabs.Root value={currentTab} onValueChange={handleTabChange}>
-			<Tabs.List class="grid w-full" style="grid-template-columns: repeat({visibleTabs.length}, minmax(0, 1fr))">
-				{#each visibleTabs as tab (tab.value)}
-					<Tabs.Trigger value={tab.value}>{tab.label}</Tabs.Trigger>
-				{/each}
-			</Tabs.List>
-		</Tabs.Root>
-
-		<div>
-			{@render children()}
+		<div class="flex flex-col gap-6 md:flex-row md:items-start">
+			{#if projectId}
+				<ProjectSideNav
+					{projectId}
+					pathname={currentPath}
+					hash={page.url.hash}
+					issueCount={project.deletedAt ? 0 : unmutedOpenCount}
+					deleted={!!project.deletedAt}
+				/>
+			{/if}
+			<div class="min-w-0 flex-1">
+				{#if project.deletedAt && !currentPath.endsWith('/settings')}
+					<p class="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" data-testid="health-paused">
+						Health checks are paused while the project is deleted.
+					</p>
+				{:else}
+					{@render children()}
+				{/if}
+			</div>
 		</div>
 	{:else}
 		<PageSkeleton />

@@ -8,6 +8,8 @@ import {
 import { GET as sessionsGet } from '../../routes/dashboard/projects/[id]/sessions/+server';
 import { GET as sessionDetailGet } from '../../routes/dashboard/projects/[id]/sessions/[sessionId]/+server';
 import { GET as performanceGet } from '../../routes/dashboard/projects/[id]/performance/+server';
+import { GET as overviewGet } from '../../routes/dashboard/projects/[id]/overview/+server';
+import { GET as projectAlertsGet } from '../../routes/dashboard/projects/[id]/alerts/+server';
 import { GET as searchGet } from '../../routes/dashboard/search/+server';
 import { GET as monitoringGet } from '../../routes/dashboard/monitoring/+server';
 import { GET as monitorDetailGet } from '../../routes/dashboard/monitoring/[id]/+server';
@@ -102,5 +104,19 @@ describe('project route redirect targets', () => {
     expect(d.headers.get('location')).toBe('/dashboard/sessions/s%201?project=p1');
     const w = performanceGet({ params: { id: 'p1' }, url: new URL('http://x/a') } as never) as Response;
     expect(w.headers.get('location')).toBe('/dashboard/web-vitals?project=p1');
+  });
+});
+
+describe('project overview and alerts redirects', () => {
+  it('overview goes to the project page and keeps the query', () => {
+    const res = overviewGet({ params: { id: 'p1' }, url: new URL('http://x/a?x=1') } as never) as Response;
+    expect(res.status).toBe(308);
+    expect(res.headers.get('location')).toBe('/dashboard/projects/p1?x=1');
+  });
+
+  it('alerts goes to the global alerts page scoped to the project', () => {
+    const res = projectAlertsGet({ params: { id: 'p1' }, url: new URL('http://x/a?tab=rules') } as never) as Response;
+    expect(res.status).toBe(308);
+    expect(res.headers.get('location')).toBe('/dashboard/alerts?project=p1&tab=rules');
   });
 });

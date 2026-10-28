@@ -33,6 +33,11 @@ export function sessionDetailRedirectTarget(projectId: string, sessionId: string
   return withProject(`/dashboard/sessions/${encodeURIComponent(sessionId)}`, projectId, search);
 }
 
+/** /dashboard/projects/<id>/alerts -> /dashboard/alerts?project=<id> */
+export function projectAlertsRedirectTarget(projectId: string, search: string): string {
+  return withProject('/dashboard/alerts', projectId, search);
+}
+
 /** /dashboard/projects/<id>/performance -> /dashboard/web-vitals?project=<id> */
 export function webVitalsRedirectTarget(projectId: string, search: string): string {
   return withProject('/dashboard/web-vitals', projectId, search);

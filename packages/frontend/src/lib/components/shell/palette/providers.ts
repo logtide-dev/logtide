@@ -139,7 +139,7 @@ export function registerDefaultPaletteProviders(): void {
         label: p.name,
         description: p.description || undefined,
         icon: icon(FolderKanban),
-        href: `/dashboard/projects/${p.id}/overview`,
+        href: `/dashboard/projects/${p.id}`,
       }));
     },
   });

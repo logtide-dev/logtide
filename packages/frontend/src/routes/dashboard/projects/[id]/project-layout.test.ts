@@ -14,8 +14,17 @@ vi.mock('$lib/api/projects', () => ({
   projectsAPI: {
     getProjects: (...a: unknown[]) => getProjects(...a),
     getProjectCapabilities: (...a: unknown[]) => getProjectCapabilities(...a),
+    getProjectSummary: (...a: unknown[]) => getSummary(...a),
     restoreProject: (...a: unknown[]) => restoreProject(...a),
   },
+}));
+
+const { getSummary, getHealth } = vi.hoisted(() => ({ getSummary: vi.fn(), getHealth: vi.fn() }));
+vi.mock('$lib/api/project-health', () => ({
+  projectHealthAPI: { getProjectHealth: (...a: unknown[]) => getHealth(...a) },
+}));
+vi.mock('$lib/api/notification-routing', () => ({
+  notificationRoutingAPI: { preview: vi.fn().mockResolvedValue({ destinations: [], fallback: null }) },
 }));
 
 const toastError = vi.fn();
@@ -51,7 +60,7 @@ const project = (id: string, name: string, extra: Record<string, unknown> = {}) 
 
 const children = createRawSnippet(() => ({ render: () => '<div data-testid="child">child</div>' }));
 
-function setRoute(id: string, path = `/dashboard/projects/${id}/overview`) {
+function setRoute(id: string, path = `/dashboard/projects/${id}`) {
   (page as unknown as { params: { id: string }; url: URL }).params = { id };
   (page as unknown as { url: URL }).url = new URL(`http://localhost${path}`);
 }
@@ -63,6 +72,18 @@ beforeEach(() => {
   getProjects.mockReset();
   getProjectCapabilities.mockReset();
   restoreProject.mockReset();
+  getSummary.mockReset();
+  getHealth.mockReset();
+  getSummary.mockResolvedValue({ logs24h: 1200, openErrorGroups: 2, tracesP95Ms: 340, uptime30dPct: 99.9, monitorCount: 1, openIncidents: 0 });
+  getHealth.mockResolvedValue({
+    status: 'warning',
+    lastEventAt: new Date(Date.now() - 120000).toISOString(),
+    issues: [
+      { id: 'i1', checkKey: 'timestamp_skew_logs', severity: 'warning', openedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), resolvedAt: null, details: {}, mute: null },
+    ],
+    checks: { receiving: true, piiRejected24h: 0, skew: {}, revokedKey24h: 0 },
+    settings: { silentMinutes: 60, healthChannelIds: [] },
+  });
   setRoute('p-1');
   organizationStore.setCurrentOrganization(org('org-1'));
 });
@@ -80,41 +101,50 @@ describe('project layout', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Alpha' })).toBeInTheDocument();
   });
 
-  it('renders the quick links row', async () => {
+  it('renders the extra quick links not covered by the tiles', async () => {
     getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
     render(ProjectLayout, { props: { children } });
     const row = await screen.findByTestId('project-quick-links');
     const links = Array.from(row.querySelectorAll('a'));
-    expect(links.map((a) => a.textContent?.trim())).toEqual([
-      'Logs',
-      'Traces',
-      'Errors',
-      'Metrics',
-      'Sessions',
-      'Web vitals',
-      'Uptime',
-    ]);
-    expect(links[0]).toHaveAttribute('href', '/dashboard/logs?project=p-1');
-    expect(links[5]).toHaveAttribute('href', '/dashboard/web-vitals?project=p-1');
+    expect(links.map((a) => a.textContent?.trim())).toEqual(['Metrics', 'Sessions', 'Web vitals']);
+    expect(links[2]).toHaveAttribute('href', '/dashboard/web-vitals?project=p-1');
   });
 
-  it('tabs are Overview, Alerts and Settings and never depend on capabilities', async () => {
+  it('shows the health pill, last event, tiles and the side nav instead of tabs', async () => {
     getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
     render(ProjectLayout, { props: { children } });
-    await screen.findByTestId('project-quick-links');
-    const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim());
-    expect(tabs).toEqual(['Overview', 'Alerts', 'Settings']);
+    expect(await screen.findByTestId('health-pill')).toHaveTextContent('1 warning');
+    await waitFor(() => expect(screen.getByTestId('project-last-event')).toHaveTextContent('Last event 2 minutes ago'));
+    await waitFor(() => expect(screen.getByTestId('summary-tile-logs')).toHaveTextContent('1,200'));
+    expect(screen.getByTestId('project-nav-badge')).toHaveTextContent('1');
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(getSummary).toHaveBeenCalledWith('p-1');
+    expect(getHealth).toHaveBeenCalledWith('p-1');
     expect(getProjectCapabilities).not.toHaveBeenCalled();
   });
 
-  it('hides Settings for a soft-deleted project and shows the read-only banner with the purge date', async () => {
+  it('one failing source keeps the page up with dashes', async () => {
+    getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
+    getSummary.mockRejectedValue(new Error('boom'));
+    render(ProjectLayout, { props: { children } });
+    await screen.findByTestId('health-pill');
+    await waitFor(() =>
+      expect(screen.getAllByTestId('summary-tile-value').map((v) => v.textContent?.trim())).toEqual(['-', '-', '-', '-', '-'])
+    );
+    expect(screen.getByTestId('child')).toBeInTheDocument();
+  });
+
+  it('shows Health only for a soft-deleted project and shows the read-only banner with the purge date', async () => {
     getProjects.mockResolvedValue({
       projects: [project('p-1', 'Alpha', { deletedAt: '2026-10-01T10:00:00.000Z' })],
     });
     render(ProjectLayout, { props: { children } });
     expect(await screen.findByText('This project is deleted (read-only)')).toBeInTheDocument();
     expect(screen.getByText(/permanently deleted on Oct 31, 2026/)).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
+    expect(screen.getAllByRole('link', { name: /Health|General|Connect|Danger zone/ }).map((a) => a.textContent?.trim())).toEqual(['Health']);
+    expect(screen.queryByTestId('project-summary-tiles')).toBeNull();
+    expect(screen.queryByTestId('health-pill')).toBeNull();
+    expect(getHealth).not.toHaveBeenCalled();
   });
 
   it('restoring a project toasts "Project restored"', async () => {

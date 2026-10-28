@@ -13,6 +13,8 @@ test.describe('Legacy route redirects', () => {
 		['/dashboard/projects/p1/sessions', '/dashboard/sessions?project=p1'],
 		['/dashboard/projects/p1/sessions/s1?range=7d', '/dashboard/sessions/s1?project=p1&range=7d'],
 		['/dashboard/projects/p1/performance?range=7d', '/dashboard/web-vitals?project=p1&range=7d'],
+		['/dashboard/projects/p1/overview', '/dashboard/projects/p1'],
+		['/dashboard/projects/p1/alerts', '/dashboard/alerts?project=p1'],
 		['/dashboard/security/incidents', '/dashboard/incidents?source=sigma'],
 		['/dashboard/security/incidents/i1', '/dashboard/incidents/i1'],
 		['/dashboard/settings', '/dashboard/settings/general'],

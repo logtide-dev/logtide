@@ -80,7 +80,7 @@ describe('HeaderBreadcrumb', () => {
   });
 
   it('shows Org / Project on project pages using the route id', () => {
-    at('/dashboard/projects/p-1/overview');
+    at('/dashboard/projects/p-1');
     const { container } = render(HeaderBreadcrumb);
     const project = container.querySelector('[data-breadcrumb-project]')!;
     expect(project.textContent).toContain('Alpha API');
@@ -89,7 +89,7 @@ describe('HeaderBreadcrumb', () => {
   });
 
   it('lists the organization projects and marks the current one', async () => {
-    at('/dashboard/projects/p-1/overview');
+    at('/dashboard/projects/p-1');
     render(HeaderBreadcrumb);
     await fireEvent.click(screen.getByRole('combobox', { name: 'Switch project' }));
     const current = document.querySelector('[data-project-option="p-1"]')!;
@@ -123,7 +123,7 @@ describe('HeaderBreadcrumb', () => {
   });
 
   it('does not navigate when the current project is picked again', async () => {
-    at('/dashboard/projects/p-1/overview');
+    at('/dashboard/projects/p-1');
     render(HeaderBreadcrumb);
     await fireEvent.click(screen.getByRole('combobox', { name: 'Switch project' }));
     await fireEvent.click(document.querySelector('[data-project-option="p-1"]')!);
@@ -131,7 +131,7 @@ describe('HeaderBreadcrumb', () => {
   });
 
   it('keeps a readable minimum width for the project on narrow screens', () => {
-    at('/dashboard/projects/p-1/overview');
+    at('/dashboard/projects/p-1');
     const { container } = render(HeaderBreadcrumb);
     const cls = container.querySelector('[data-breadcrumb-project]')!.getAttribute('class')!;
     expect(cls).toContain('min-w-[4rem]');
@@ -158,7 +158,7 @@ describe('HeaderBreadcrumb', () => {
   });
 
   it('falls back to the org only when the project id is unknown to the active organization', () => {
-    at('/dashboard/projects/other-org-project/overview');
+    at('/dashboard/projects/other-org-project');
     const { container } = render(HeaderBreadcrumb);
     expect(screen.getByTestId('org-switcher')).toBeInTheDocument();
     expect(container.querySelector('[data-breadcrumb-project]')).toBeNull();
@@ -209,7 +209,7 @@ describe('HeaderBreadcrumb', () => {
     first.unmount();
 
     activeScopeBar.set(null);
-    at('/dashboard/projects/p-1/overview');
+    at('/dashboard/projects/p-1');
     render(HeaderBreadcrumb);
     await fireEvent.click(screen.getByRole('combobox', { name: 'Switch project' }));
     expect(document.querySelector('[data-project-option="all"]')).toBeNull();

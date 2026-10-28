@@ -93,7 +93,7 @@ describe('default palette providers', () => {
     expect((await group('monitors')).items[0].href).toBe('/dashboard/uptime/m1');
     expect((await group('alert-rules')).items[0].href).toBe('/dashboard/alerts?edit=r1');
     expect((await group('incidents')).items[0].href).toBe('/dashboard/incidents/i1');
-    expect((await group('projects')).items[0].href).toBe('/dashboard/projects/p1/overview');
+    expect((await group('projects')).items[0].href).toBe('/dashboard/projects/p1');
   });
 
   function setRole(role: 'owner' | 'admin' | 'member') {

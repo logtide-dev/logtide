@@ -37,7 +37,6 @@ const FILES = [
   'routes/dashboard/projects/+page.svelte',
   'routes/dashboard/projects/[id]/+layout.svelte',
   'routes/dashboard/projects/[id]/+page.svelte',
-  'routes/dashboard/projects/[id]/overview/+page.svelte',
 ];
 
 const sources = FILES.map((f) => ({ file: f, text: readFileSync(path.join(SRC, f), 'utf8') }));
