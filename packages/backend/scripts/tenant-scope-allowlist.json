@@ -56,12 +56,6 @@
   {
     "file": "packages/backend/src/modules/admin/service.ts",
     "table": "projects",
-    "snippet": ".deleteFrom('projects')",
-    "reason": "safe-by-PK: admin-only delete by primary key; projectId comes from admin-authenticated request"
-  },
-  {
-    "file": "packages/backend/src/modules/admin/service.ts",
-    "table": "projects",
     "snippet": ".selectFrom('projects')",
     "reason": "intentional cross-org admin: total-count subquery for pagination across all projects"
   },
@@ -74,13 +68,13 @@
   {
     "file": "packages/backend/src/modules/admin/service.ts",
     "table": "projects",
-    "snippet": "const allProjects = await db.selectFrom('projects').select('id').execute();",
+    "snippet": "const allProjects = await db.selectFrom('projects').select('id').where('deleted_at', 'is', null).execute();",
     "reason": "intentional cross-org admin: fetches all project IDs to aggregate cross-platform timeline stats"
   },
   {
     "file": "packages/backend/src/modules/admin/service.ts",
     "table": "projects",
-    "snippet": "const allProjects = await db.selectFrom('projects').select('id').execute();",
+    "snippet": "const allProjects = await db.selectFrom('projects').select('id').where('deleted_at', 'is', null).execute();",
     "reason": "intentional cross-org admin: fetches all project IDs for ClickHouse cross-platform timeline aggregate"
   },
   {
