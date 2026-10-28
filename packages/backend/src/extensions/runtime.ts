@@ -26,6 +26,17 @@ import type {
 } from './types.js';
 import { MailNotConfiguredError } from './types.js';
 
+/** Job names end up in queue ids `ext:<name>:<job>`, so no `:` and no `__`. */
+const JOB_NAME_RE = /^[a-z][a-z0-9_-]{0,62}$/;
+
+function assertJobName(method: string, job: unknown): void {
+  if (typeof job !== 'string' || !JOB_NAME_RE.test(job) || job.includes('__')) {
+    throw new Error(
+      `[Extensions] ${method}(): invalid job name '${String(job)}' (must match ${JOB_NAME_RE} and not contain '__')`
+    );
+  }
+}
+
 type PublicConfigFn = () => Record<string, unknown> | Promise<Record<string, unknown>>;
 
 /** Everything the extensions registered, consumed by server.ts and worker.ts. */
@@ -117,6 +128,7 @@ function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
   const queue: ExtensionQueue = {
     registerJob(job, handler) {
       assertRegistering('registerJob');
+      assertJobName('registerJob', job);
       const queueId = queueName(job);
       if (state.jobs.some((j) => j.queue === queueId)) {
         throw new Error(`[Extensions] Job '${queueId}' is registered more than once`);
@@ -124,6 +136,7 @@ function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
       state.jobs.push({ queue: queueId, handler: handler as (data: unknown) => Promise<void> });
     },
     async enqueue(job, data, opts) {
+      assertJobName('enqueue', job);
       await createQueue(queueName(job)).add(job, data, {
         delay: opts?.delayMs,
         jobKey: opts?.jobKey,
@@ -133,7 +146,11 @@ function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
     },
     schedule(job, cronExpression) {
       assertRegistering('schedule');
+      assertJobName('schedule', job);
       const id = queueName(job);
+      if (state.crons.some((c) => c.identifier === id)) {
+        throw new Error(`[Extensions] Job '${id}' is scheduled more than once`);
+      }
       state.crons.push({ task: id, cronExpression, payload: {}, identifier: id });
     },
   };
@@ -206,6 +223,15 @@ export async function initExtensions(
           `[Extensions] Extension '${mod.name}' failed to register (${proc}): ${err instanceof Error ? err.message : String(err)}`,
           { cause: err }
         );
+      }
+      // Checked after register() returns: registerJob may follow schedule.
+      const prefix = `ext:${mod.name}:`;
+      for (const cron of state.crons) {
+        if (cron.task.startsWith(prefix) && !state.jobs.some((j) => j.queue === cron.task)) {
+          throw new Error(
+            `[Extensions] Extension '${mod.name}' scheduled job '${cron.task.slice(prefix.length)}' (${proc}) without registering it with registerJob()`
+          );
+        }
       }
       names.push(mod.name);
     }
