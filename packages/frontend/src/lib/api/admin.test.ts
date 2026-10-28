@@ -72,6 +72,48 @@ describe('AdminAPI', () => {
     expect(init.method).toBe('DELETE');
     expect(init.body).toBeUndefined();
   });
+
+  describe('list queries', () => {
+    const urlOf = () => new URL(String(fetchMock.mock.calls[0][0]), 'http://x');
+
+    beforeEach(() => {
+      fetchMock.mockResolvedValue(json(200, { users: [], organizations: [], projects: [] }));
+    });
+
+    it('keeps the positional call signature', async () => {
+      await api.getUsers(2, 25, 'bob');
+      const q = urlOf().searchParams;
+      expect(urlOf().pathname).toMatch(/\/admin\/users$/);
+      expect([q.get('page'), q.get('limit'), q.get('search')]).toEqual(['2', '25', 'bob']);
+    });
+
+    it('sends sort, order and filters from an options object, skipping empty ones', async () => {
+      await api.getProjects({ sort: 'organization', order: 'asc', deleted: 'only', organizationId: '', search: '' });
+      const q = urlOf().searchParams;
+      expect(q.get('page')).toBe('1');
+      expect(q.get('limit')).toBe('50');
+      expect(q.get('sort')).toBe('organization');
+      expect(q.get('order')).toBe('asc');
+      expect(q.get('deleted')).toBe('only');
+      expect(q.has('organizationId')).toBe(false);
+      expect(q.has('search')).toBe(false);
+    });
+
+    it('supports user filters and the organizations list', async () => {
+      await api.getUsers({ role: 'admin', status: 'disabled', sort: 'last_login', order: 'desc' });
+      expect(urlOf().searchParams.get('role')).toBe('admin');
+      expect(urlOf().searchParams.get('status')).toBe('disabled');
+      fetchMock.mockClear();
+      await api.getOrganizations({ sort: 'members', order: 'desc', page: 3 });
+      expect(urlOf().searchParams.get('sort')).toBe('members');
+      expect(urlOf().searchParams.get('page')).toBe('3');
+    });
+
+    it('fetches the projects summary', async () => {
+      await api.getProjectsSummary();
+      expect(urlOf().pathname).toMatch(/\/admin\/projects\/summary$/);
+    });
+  });
 });
 
 describe('AdminAuthAPI', () => {

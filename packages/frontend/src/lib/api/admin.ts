@@ -156,6 +156,8 @@ export interface UserBasic {
     disabled: boolean;
     created_at: string;
     last_login: string | null;
+    /** Number of organizations the user belongs to (list endpoint only). */
+    orgCount?: number;
 }
 
 export interface UserDetails extends UserBasic {
@@ -240,8 +242,13 @@ export interface ProjectBasic {
     description: string | null;
     organization_id: string;
     organization_name: string;
+    organizationId?: string;
     created_at: string;
     updated_at: string;
+    /** Set when the project is soft-deleted (only returned with deleted=include|only). */
+    deletedAt?: string | null;
+    alertRulesEnabled?: number;
+    alertRulesTotal?: number;
     /** Logs in the last 30 days (same value as logs30d, historical name). */
     logsCount: number;
     logs30d?: number;
@@ -294,6 +301,59 @@ export interface ProjectsListResponse {
     page: number;
     limit: number;
     totalPages: number;
+}
+
+export interface ProjectsSummary {
+    totalProjects: number;
+    activeApiKeys: number;
+    alertRulesTotal: number;
+    alertRulesEnabled: number;
+    logs30d: number;
+    logsWindowDays: number;
+}
+
+export type SortOrder = 'asc' | 'desc';
+
+export interface ListOptions<S extends string = string> {
+    page?: number;
+    limit?: number;
+    search?: string;
+    sort?: S;
+    order?: SortOrder;
+}
+
+export type UserSort = 'email' | 'name' | 'created_at' | 'last_login';
+export type OrganizationSort = 'name' | 'created_at' | 'members' | 'projects';
+export type ProjectSort = 'name' | 'created_at' | 'organization';
+
+export interface UsersListOptions extends ListOptions<UserSort> {
+    role?: 'admin' | 'user';
+    status?: 'active' | 'disabled';
+}
+export type OrganizationsListOptions = ListOptions<OrganizationSort>;
+export interface ProjectsListOptions extends ListOptions<ProjectSort> {
+    organizationId?: string;
+    deleted?: 'exclude' | 'include' | 'only';
+}
+
+/** Builds the query string; accepts the legacy positional (page, limit, search) form too. */
+function listQuery(
+    first: number | object | undefined,
+    limit?: number,
+    search?: string,
+): string {
+    const opts: Record<string, unknown> =
+        typeof first === 'object' && first !== null ? (first as Record<string, unknown>) : { page: first, limit, search };
+    const params = new URLSearchParams({
+        page: String(opts.page ?? 1),
+        limit: String(opts.limit ?? 50),
+    });
+    for (const [key, value] of Object.entries(opts)) {
+        if (key === 'page' || key === 'limit') continue;
+        if (value === undefined || value === null || value === '') continue;
+        params.append(key, String(value));
+    }
+    return params.toString();
 }
 
 // Platform Timeline
@@ -587,15 +647,12 @@ export class AdminAPI {
     }
 
     // User Management
-    async getUsers(page: number = 1, limit: number = 50, search?: string): Promise<UsersListResponse> {
-        const params = new URLSearchParams({
-            page: page.toString(),
-            limit: limit.toString(),
-        });
-        if (search) {
-            params.append('search', search);
-        }
-        return this.fetch<UsersListResponse>(`/users?${params.toString()}`);
+    async getUsers(
+        pageOrOptions: number | UsersListOptions = {},
+        limit?: number,
+        search?: string,
+    ): Promise<UsersListResponse> {
+        return this.fetch<UsersListResponse>(`/users?${listQuery(pageOrOptions, limit, search)}`);
     }
 
     async getUserDetails(userId: string): Promise<UserDetails> {
@@ -624,15 +681,12 @@ export class AdminAPI {
     }
 
     // Organization Management
-    async getOrganizations(page: number = 1, limit: number = 50, search?: string): Promise<OrganizationsListResponse> {
-        const params = new URLSearchParams({
-            page: page.toString(),
-            limit: limit.toString(),
-        });
-        if (search) {
-            params.append('search', search);
-        }
-        return this.fetch<OrganizationsListResponse>(`/organizations?${params.toString()}`);
+    async getOrganizations(
+        pageOrOptions: number | OrganizationsListOptions = {},
+        limit?: number,
+        search?: string,
+    ): Promise<OrganizationsListResponse> {
+        return this.fetch<OrganizationsListResponse>(`/organizations?${listQuery(pageOrOptions, limit, search)}`);
     }
 
     async getOrganizationDetails(orgId: string): Promise<OrganizationDetails> {
@@ -672,15 +726,16 @@ export class AdminAPI {
     }
 
     // Project Management
-    async getProjects(page: number = 1, limit: number = 50, search?: string): Promise<ProjectsListResponse> {
-        const params = new URLSearchParams({
-            page: page.toString(),
-            limit: limit.toString(),
-        });
-        if (search) {
-            params.append('search', search);
-        }
-        return this.fetch<ProjectsListResponse>(`/projects?${params.toString()}`);
+    async getProjects(
+        pageOrOptions: number | ProjectsListOptions = {},
+        limit?: number,
+        search?: string,
+    ): Promise<ProjectsListResponse> {
+        return this.fetch<ProjectsListResponse>(`/projects?${listQuery(pageOrOptions, limit, search)}`);
+    }
+
+    async getProjectsSummary(): Promise<ProjectsSummary> {
+        return this.fetch<ProjectsSummary>('/projects/summary');
     }
 
     async getProjectDetails(projectId: string): Promise<ProjectDetails> {
