@@ -13,6 +13,7 @@ import {
   type ProjectHealthMute,
   type ProjectHealthMuteDuration,
 } from '@logtide/shared';
+import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 
 export type ProjectHealthMutes = Partial<Record<ProjectHealthCheckKey, ProjectHealthMute>>;
@@ -185,15 +186,34 @@ export async function setMute(
   duration: ProjectHealthMuteDuration | null,
   now: Date = new Date()
 ): Promise<ProjectHealthMute | null> {
-  const current = await getProjectHealthSettings(organizationId, projectId);
-  const mutes: ProjectHealthMutes = { ...current.mutes };
+  // Single statements so concurrent changes to different keys never clobber
+  // each other (no read-modify-write of the whole JSONB).
   if (duration === null) {
-    delete mutes[checkKey];
-  } else {
-    mutes[checkKey] = muteFor(duration, now);
+    await sql`
+      INSERT INTO project_notification_settings (project_id, organization_id)
+      VALUES (${projectId}, ${organizationId})
+      ON CONFLICT (project_id) DO UPDATE
+        SET mutes = COALESCE(project_notification_settings.mutes, '{}'::jsonb) - ${checkKey}::text,
+            updated_at = NOW()
+        WHERE project_notification_settings.organization_id = ${organizationId}
+    `.execute(db);
+    return null;
   }
-  await writeRow(organizationId, projectId, { mutes });
-  return mutes[checkKey] ?? null;
+  const mute = muteFor(duration, now);
+  await sql`
+    INSERT INTO project_notification_settings (project_id, organization_id, mutes)
+    VALUES (${projectId}, ${organizationId}, jsonb_build_object(${checkKey}::text, ${JSON.stringify(mute)}::jsonb))
+    ON CONFLICT (project_id) DO UPDATE
+      SET mutes = jsonb_set(
+            COALESCE(project_notification_settings.mutes, '{}'::jsonb),
+            ARRAY[${checkKey}::text],
+            ${JSON.stringify(mute)}::jsonb,
+            true
+          ),
+          updated_at = NOW()
+      WHERE project_notification_settings.organization_id = ${organizationId}
+  `.execute(db);
+  return mute;
 }
 
 /** Drop the `untilResolved` mutes of the given checks (their issue resolved). */
@@ -203,14 +223,21 @@ export async function clearUntilResolvedMutes(
   checkKeys: ProjectHealthCheckKey[]
 ): Promise<void> {
   if (checkKeys.length === 0) return;
-  const current = await getProjectHealthSettings(organizationId, projectId);
-  let changed = false;
-  const mutes: ProjectHealthMutes = { ...current.mutes };
-  for (const key of checkKeys) {
-    if (mutes[key]?.untilResolved) {
-      delete mutes[key];
-      changed = true;
-    }
-  }
-  if (changed) await writeRow(organizationId, projectId, { mutes });
+  // One atomic UPDATE: drop only the listed keys whose mute is untilResolved.
+  await sql`
+    UPDATE project_notification_settings
+    SET mutes = mutes - COALESCE(
+          (
+            SELECT array_agg(e.key)
+            FROM jsonb_each(mutes) AS e
+            WHERE e.key = ANY(${checkKeys}::text[])
+              AND e.value->>'untilResolved' = 'true'
+          ),
+          ARRAY[]::text[]
+        ),
+        updated_at = NOW()
+    WHERE project_id = ${projectId}
+      AND organization_id = ${organizationId}
+      AND mutes IS NOT NULL
+  `.execute(db);
 }
