@@ -92,6 +92,18 @@ describe('runExtensionMigrations', () => {
     expect(Number(rows[0].n)).toBe(1);
   });
 
+  it('runs the migrations at READ COMMITTED', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-migrate-'));
+    tmpDirs.push(dir);
+    await fs.writeFile(
+      path.join(dir, '001_level.sql'),
+      "CREATE TABLE level AS SELECT current_setting('transaction_isolation') AS value;"
+    );
+    await runExtensionMigrations('fixture', dir);
+    const { rows } = await sql<{ value: string }>`SELECT value FROM fixture.level`.execute(db);
+    expect(rows[0].value).toBe('read committed');
+  });
+
   it('rejects on invalid SQL and keeps only the earlier files applied', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ext-migrate-'));
     tmpDirs.push(dir);

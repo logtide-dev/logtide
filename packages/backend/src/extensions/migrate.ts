@@ -14,6 +14,11 @@ import { db } from '../database/index.js';
  * Each file runs inside its own savepoint with `search_path` set to the
  * schema: a failing file is rolled back alone, the files before it stay
  * applied (committed) and the call rejects naming the file.
+ *
+ * The isolation level is pinned to READ COMMITTED: under an operator
+ * default of REPEATABLE READ the second process would read a
+ * schema_migrations snapshot that misses the first process's rows and
+ * re-run the files it already applied.
  */
 export async function runExtensionMigrations(schema: string, dir: string): Promise<string[]> {
   const files = (await fs.readdir(dir, { withFileTypes: true }))
@@ -26,7 +31,7 @@ export async function runExtensionMigrations(schema: string, dir: string): Promi
   const applied: string[] = [];
   let failure: Error | undefined;
 
-  await db.transaction().execute(async (trx) => {
+  await db.transaction().setIsolationLevel('read committed').execute(async (trx) => {
     await sql`SELECT pg_advisory_xact_lock(hashtext(${`ext-migrate:${schema}`}))`.execute(trx);
     await sql`CREATE SCHEMA IF NOT EXISTS ${schemaId}`.execute(trx);
     await sql`
