@@ -13,7 +13,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { providerRegistry } from './providers/index.js';
 import { authenticationService } from './authentication-service.js';
-import { providerService } from './provider-service.js';
+import { providerService, MASKED_SECRET } from './provider-service.js';
 import { usersService } from '../users/service.js';
 import { config } from '../../config/index.js';
 import { settingsService } from '../settings/service.js';
@@ -497,11 +497,11 @@ function maskSensitiveConfig(type: string, config: Record<string, unknown>): Rec
 
   if (type === 'oidc') {
     if (masked.clientSecret) {
-      masked.clientSecret = '••••••••';
+      masked.clientSecret = MASKED_SECRET;
     }
   } else if (type === 'ldap') {
     if (masked.bindPassword) {
-      masked.bindPassword = '••••••••';
+      masked.bindPassword = MASKED_SECRET;
     }
   }
 
