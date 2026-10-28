@@ -1,22 +1,24 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { adminService, AdminConflictError, AdminNotFoundError } from './service.js';
 import { validateUuidParams } from './params.js';
+import {
+    AdminBadRequestError,
+    ORGANIZATION_SORTS,
+    PROJECT_SORTS,
+    USER_SORTS,
+    parseListQuery,
+    parseProjectFilters,
+    parseUserFilters,
+} from './list-query.js';
 import { authenticate } from '../auth/middleware.js';
 import { requireAdmin } from './middleware.js';
 import { auditLogService } from '../audit-log/index.js';
 
-function parsePage(value: string | undefined, defaultVal = 1): number {
-    const n = parseInt(value ?? String(defaultVal), 10);
-    return isNaN(n) || n < 1 ? defaultVal : n;
-}
-
-function parseLimit(value: string | undefined, defaultVal = 50, max = 200): number {
-    const n = parseInt(value ?? String(defaultVal), 10);
-    return isNaN(n) || n < 1 ? defaultVal : Math.min(n, max);
-}
-
 /** Map typed service errors to 404/409; anything else is a 500 with `fallback`. */
 function sendServiceError(reply: FastifyReply, error: unknown, fallback: string) {
+    if (error instanceof AdminBadRequestError) {
+        return reply.status(400).send({ error: error.message });
+    }
     if (error instanceof AdminNotFoundError) {
         return reply.status(404).send({ error: error.message });
     }
@@ -217,24 +219,18 @@ export async function adminRoutes(fastify: FastifyInstance) {
         },
         async (request, reply) => {
             try {
-                const { page, limit, search } = request.query as {
-                    page?: string;
-                    limit?: string;
-                    search?: string;
-                };
-
-                const result = await adminService.getUsers(
-                    parsePage(page),
-                    parseLimit(limit),
-                    search
-                );
+                const q = parseListQuery(request.query, USER_SORTS);
+                const filters = parseUserFilters(q.raw);
+                const result = await adminService.getUsers(q.page, q.limit, q.search, {
+                    sort: q.sort,
+                    order: q.order,
+                    ...filters,
+                });
 
                 return reply.send(result);
             } catch (error) {
                 console.error('Error getting users:', error);
-                return reply.status(500).send({
-                    error: 'Failed to retrieve users',
-                });
+                return sendServiceError(reply, error, 'Failed to retrieve users');
             }
         }
     );
@@ -473,24 +469,16 @@ export async function adminRoutes(fastify: FastifyInstance) {
         },
         async (request, reply) => {
             try {
-                const { page = '1', limit = '50', search } = request.query as {
-                    page?: string;
-                    limit?: string;
-                    search?: string;
-                };
-
-                const result = await adminService.getOrganizations(
-                    parsePage(page),
-                    parseLimit(limit),
-                    search
-                );
+                const q = parseListQuery(request.query, ORGANIZATION_SORTS);
+                const result = await adminService.getOrganizations(q.page, q.limit, q.search, {
+                    sort: q.sort,
+                    order: q.order,
+                });
 
                 return reply.send(result);
             } catch (error: any) {
                 console.error('Error fetching organizations:', error);
-                return reply.status(500).send({
-                    error: 'Failed to fetch organizations',
-                });
+                return sendServiceError(reply, error, 'Failed to fetch organizations');
             }
         }
     );
@@ -571,24 +559,36 @@ export async function adminRoutes(fastify: FastifyInstance) {
         },
         async (request, reply) => {
             try {
-                const { page = '1', limit = '50', search } = request.query as {
-                    page?: string;
-                    limit?: string;
-                    search?: string;
-                };
-
-                const result = await adminService.getProjects(
-                    parsePage(page),
-                    parseLimit(limit),
-                    search
-                );
+                const q = parseListQuery(request.query, PROJECT_SORTS);
+                const filters = parseProjectFilters(q.raw);
+                const result = await adminService.getProjects(q.page, q.limit, q.search, {
+                    sort: q.sort,
+                    order: q.order,
+                    ...filters,
+                });
 
                 return reply.send(result);
             } catch (error: any) {
                 console.error('Error fetching projects:', error);
-                return reply.status(500).send({
-                    error: 'Failed to fetch projects',
-                });
+                return sendServiceError(reply, error, 'Failed to fetch projects');
+            }
+        }
+    );
+
+    // GET /api/v1/admin/projects/summary - Instance-wide totals for the projects page
+    fastify.get(
+        '/projects/summary',
+        {
+            config: {
+                rateLimit: rateLimitConfig,
+            },
+        },
+        async (_request, reply) => {
+            try {
+                return reply.send(await adminService.getProjectsSummary());
+            } catch (error) {
+                console.error('Error fetching projects summary:', error);
+                return sendServiceError(reply, error, 'Failed to fetch projects summary');
             }
         }
     );

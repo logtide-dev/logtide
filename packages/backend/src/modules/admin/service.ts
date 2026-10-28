@@ -1,5 +1,6 @@
 import { db, getPoolStats } from '../../database/index.js';
-import { sql } from 'kysely';
+import { sql, type RawBuilder } from 'kysely';
+import type { SortOrder, UserSort, OrganizationSort, ProjectSort, DeletedFilter } from './list-query.js';
 import { reservoir } from '../../database/reservoir.js';
 import { GLOBAL_SCOPE } from '@logtide/reservoir';
 import { getConnection, isRedisAvailable } from '../../queue/connection.js';
@@ -219,6 +220,19 @@ const alertHistoryProjectNotDeleted = sql<boolean>`NOT EXISTS (
 
 /** Window used for per-project log counts in the admin lists and details. */
 export const ADMIN_LOGS_WINDOW_DAYS = 30;
+
+export interface AdminListOptions<S extends string> {
+    sort?: S;
+    order?: SortOrder;
+}
+
+/** ORDER BY expression with a stable id tiebreaker in the same direction (optionally NULLS LAST). */
+function orderClause(expr: RawBuilder<unknown>, order: SortOrder, idRef: string, nullsLast = false) {
+    const dir = order === 'asc' ? sql`ASC` : sql`DESC`;
+    return nullsLast
+        ? sql`${expr} ${dir} NULLS LAST, ${sql.ref(idRef)} ${dir}`
+        : sql`${expr} ${dir}, ${sql.ref(idRef)} ${dir}`;
+}
 
 /** Thrown when the target entity does not exist (routes map it to 404). */
 export class AdminNotFoundError extends Error {
@@ -1328,52 +1342,64 @@ export class AdminService {
     /**
      * Get paginated list of users with optional search
      */
-    async getUsers(page: number = 1, limit: number = 50, rawSearch?: string) {
+    async getUsers(
+        page: number = 1,
+        limit: number = 50,
+        rawSearch?: string,
+        opts: AdminListOptions<UserSort> & { role?: 'admin' | 'user'; status?: 'active' | 'disabled' } = {},
+    ) {
         const offset = (page - 1) * limit;
         const search = normalizeSearch(rawSearch);
+        const order = opts.order ?? 'desc';
 
-        let query = db
-            .selectFrom('users')
-            .select([
-                'id',
-                'email',
-                'name',
-                'is_admin',
-                'disabled',
-                'created_at',
-                'last_login',
-            ])
-            .orderBy('created_at', 'desc')
-            .limit(limit)
-            .offset(offset);
+        const applyFilters = (eb: any) => {
+            const conds: any[] = [];
+            if (search) {
+                conds.push(eb.or([ilikeContains('email', search), ilikeContains('name', search)]));
+            }
+            if (opts.role) conds.push(eb('is_admin', '=', opts.role === 'admin'));
+            if (opts.status) conds.push(eb('disabled', '=', opts.status === 'disabled'));
+            return eb.and(conds);
+        };
 
-        if (search) {
-            query = query.where((eb) =>
-                eb.or([ilikeContains('email', search), ilikeContains('name', search)])
-            );
-        }
+        const sortExpr = {
+            email: orderClause(sql.ref('users.email'), order, 'users.id'),
+            name: orderClause(sql.ref('users.name'), order, 'users.id'),
+            created_at: orderClause(sql.ref('users.created_at'), order, 'users.id'),
+            last_login: orderClause(sql.ref('users.last_login'), order, 'users.id', true),
+        }[opts.sort ?? 'created_at'];
 
-        const users = await query.execute();
-
-        // Get total count
-        let countQuery = db
-            .selectFrom('users')
-            .select(({ fn }) => fn.countAll().as('count'));
-
-        if (search) {
-            countQuery = countQuery.where((eb) =>
-                eb.or([ilikeContains('email', search), ilikeContains('name', search)])
-            );
-        }
-
-        const { count } = await countQuery.executeTakeFirstOrThrow();
+        const [users, countRow] = await Promise.all([
+            db
+                .selectFrom('users')
+                .select([
+                    'users.id',
+                    'users.email',
+                    'users.name',
+                    'users.is_admin',
+                    'users.disabled',
+                    'users.created_at',
+                    'users.last_login',
+                    sql<number>`(SELECT COUNT(*)::int FROM organization_members om WHERE om.user_id = users.id)`.as('orgCount'),
+                ])
+                .where(applyFilters)
+                .orderBy(sortExpr)
+                .limit(limit)
+                .offset(offset)
+                .execute(),
+            db
+                .selectFrom('users')
+                .select(({ fn }) => fn.countAll().as('count'))
+                .where(applyFilters)
+                .executeTakeFirstOrThrow(),
+        ]);
 
         return {
             users,
-            total: Number(count),
+            total: Number(countRow.count),
             page,
             limit,
-            totalPages: Math.ceil(Number(count) / limit),
+            totalPages: Math.ceil(Number(countRow.count) / limit),
         };
     }
 
@@ -1614,9 +1640,24 @@ export class AdminService {
     }
 
     // Organization Management
-    async getOrganizations(page: number = 1, limit: number = 50, rawSearch?: string) {
+    async getOrganizations(
+        page: number = 1,
+        limit: number = 50,
+        rawSearch?: string,
+        opts: AdminListOptions<OrganizationSort> = {},
+    ) {
         const offset = (page - 1) * limit;
         const search = normalizeSearch(rawSearch);
+        const order = opts.order ?? 'desc';
+
+        const memberCountExpr = sql`(SELECT COUNT(*) FROM organization_members omc WHERE omc.organization_id = organizations.id)`;
+        const projectCountExpr = sql`(SELECT COUNT(*) FROM projects pc WHERE pc.organization_id = organizations.id AND pc.deleted_at IS NULL)`;
+        const sortExpr = {
+            name: orderClause(sql.ref('organizations.name'), order, 'organizations.id'),
+            created_at: orderClause(sql.ref('organizations.created_at'), order, 'organizations.id'),
+            members: orderClause(memberCountExpr, order, 'organizations.id'),
+            projects: orderClause(projectCountExpr, order, 'organizations.id'),
+        }[opts.sort ?? 'created_at'];
 
         let query = db
             .selectFrom('organizations')
@@ -1627,7 +1668,7 @@ export class AdminService {
                 'organizations.created_at',
                 'organizations.updated_at',
             ])
-            .orderBy('organizations.created_at', 'desc');
+            .orderBy(sortExpr);
 
         let countQuery = db
             .selectFrom('organizations')
@@ -1658,10 +1699,10 @@ export class AdminService {
             };
         }
 
-        // PERFORMANCE: Batch queries instead of N+1 (100+ queries → 2 queries)
+        // PERFORMANCE: Batch queries instead of N+1
         const orgIds = organizations.map((o) => o.id);
 
-        const [memberCounts, projectCounts] = await Promise.all([
+        const [memberCounts, projectCounts, owners] = await Promise.all([
             db
                 .selectFrom('organization_members')
                 .select(['organization_id', sql<number>`COUNT(*)::int`.as('count')])
@@ -1675,17 +1716,37 @@ export class AdminService {
                 .where('deleted_at', 'is', null)
                 .groupBy('organization_id')
                 .execute(),
+            // Owner memberships, earliest first (id tiebreaker keeps it deterministic)
+            db
+                .selectFrom('organization_members')
+                .innerJoin('users', 'users.id', 'organization_members.user_id')
+                .select([
+                    'organization_members.organization_id',
+                    'users.id as owner_id',
+                    'users.email as owner_email',
+                ])
+                .where('organization_members.organization_id', 'in', orgIds)
+                .where('organization_members.role', '=', 'owner')
+                .orderBy('organization_members.created_at', 'asc')
+                .orderBy('organization_members.id', 'asc')
+                .execute(),
         ]);
 
-        // Build lookup maps
         const membersMap = new Map(memberCounts.map((r) => [r.organization_id, r.count]));
         const projectsMap = new Map(projectCounts.map((r) => [r.organization_id, r.count]));
+        const ownerMap = new Map<string, { id: string; email: string }>();
+        for (const o of owners) {
+            if (!ownerMap.has(o.organization_id)) {
+                ownerMap.set(o.organization_id, { id: o.owner_id, email: o.owner_email });
+            }
+        }
 
-        // Merge counts with organizations
         const orgsWithCounts = organizations.map((org) => ({
             ...org,
             memberCount: membersMap.get(org.id) || 0,
             projectCount: projectsMap.get(org.id) || 0,
+            ownerId: ownerMap.get(org.id)?.id ?? null,
+            ownerEmail: ownerMap.get(org.id)?.email ?? null,
         }));
 
         return {
@@ -1762,42 +1823,60 @@ export class AdminService {
     }
 
     // Project Management
-    async getProjects(page: number = 1, limit: number = 50, rawSearch?: string) {
+    async getProjects(
+        page: number = 1,
+        limit: number = 50,
+        rawSearch?: string,
+        opts: AdminListOptions<ProjectSort> & { organizationId?: string; deleted?: DeletedFilter } = {},
+    ) {
         const offset = (page - 1) * limit;
         const search = normalizeSearch(rawSearch);
+        const order = opts.order ?? 'desc';
+        const deleted = opts.deleted ?? 'exclude';
 
-        let query = db
-            .selectFrom('projects')
-            .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
-            .select([
-                'projects.id',
-                'projects.name',
-                'projects.description',
-                'projects.organization_id',
-                'organizations.name as organization_name',
-                'projects.created_at',
-                'projects.updated_at',
-            ])
-            .where('projects.deleted_at', 'is', null)
-            .orderBy('projects.created_at', 'desc');
+        const sortExpr = {
+            name: orderClause(sql.ref('projects.name'), order, 'projects.id'),
+            created_at: orderClause(sql.ref('projects.created_at'), order, 'projects.id'),
+            organization: orderClause(sql.ref('organizations.name'), order, 'projects.id'),
+        }[opts.sort ?? 'created_at'];
 
-        let countQuery = db
-            .selectFrom('projects')
-            .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
-            .select(({ fn }) => [fn.count<number>('projects.id').as('count')])
-            .where('projects.deleted_at', 'is', null);
+        const applyFilters = (eb: any) => {
+            const conds: any[] = [];
+            if (deleted === 'exclude') conds.push(eb('projects.deleted_at', 'is', null));
+            if (deleted === 'only') conds.push(eb('projects.deleted_at', 'is not', null));
+            if (opts.organizationId) conds.push(eb('projects.organization_id', '=', opts.organizationId));
+            if (search) {
+                conds.push(eb.or([ilikeContains('projects.name', search), ilikeContains('organizations.name', search)]));
+            }
+            return eb.and(conds);
+        };
 
-        if (search) {
-            const applySearch = (eb: any) =>
-                eb.or([ilikeContains('projects.name', search), ilikeContains('organizations.name', search)]);
-            query = query.where(applySearch);
-            // The count must apply the same filter (and join), otherwise pagination is wrong.
-            countQuery = countQuery.where(applySearch);
-        }
-
+        // The count applies the same filters (and join), otherwise pagination is wrong.
         const [projects, countResult] = await Promise.all([
-            query.limit(limit).offset(offset).execute(),
-            countQuery.executeTakeFirst(),
+            db
+                .selectFrom('projects')
+                .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
+                .select([
+                    'projects.id',
+                    'projects.name',
+                    'projects.description',
+                    'projects.organization_id',
+                    'organizations.name as organization_name',
+                    'projects.created_at',
+                    'projects.updated_at',
+                    'projects.deleted_at',
+                ])
+                .where(applyFilters)
+                .orderBy(sortExpr)
+                .limit(limit)
+                .offset(offset)
+                .execute(),
+            db
+                .selectFrom('projects')
+                .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
+                .select(({ fn }) => [fn.count<number>('projects.id').as('count')])
+                .where(applyFilters)
+                .executeTakeFirst(),
         ]);
 
         const total = Number(countResult?.count || 0);
@@ -1812,15 +1891,14 @@ export class AdminService {
             };
         }
 
-        // PERFORMANCE: Batch queries instead of N+1
-        // Get all project IDs for batch lookup
         const projectIds = projects.map((p) => p.id);
 
-        // PERFORMANCE: Count logs per project (last 30 days only to avoid full scan)
+        // Log counts: no engine offers a reliable grouped-by-project count (the
+        // Timescale daily aggregate lags by a day), so count per project on the
+        // page (bounded by limit <= 200) through the reservoir, any engine.
         const thirtyDaysAgo = new Date(Date.now() - ADMIN_LOGS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
         const now = new Date();
         const [logsCounts, apiKeysCounts, alertRulesCounts] = await Promise.all([
-            // Reservoir: count per project in parallel (works with any engine)
             Promise.all(
                 projectIds.map(async (pid) => {
                     const r = await reservoir.count({ projectId: pid, from: thirtyDaysAgo, to: now });
@@ -1836,27 +1914,36 @@ export class AdminService {
                 .execute(),
             db
                 .selectFrom('alert_rules')
-                .select(['project_id', sql<number>`COUNT(*)::int`.as('count')])
+                .select([
+                    'project_id',
+                    sql<number>`COUNT(*)::int`.as('total'),
+                    sql<number>`(COUNT(*) FILTER (WHERE enabled))::int`.as('enabled'),
+                ])
                 .where('project_id', 'in', projectIds)
                 .groupBy('project_id')
                 .execute(),
         ]);
 
-        // Build lookup maps
         const logsMap = new Map(logsCounts.map((r) => [r.project_id, r.count]));
         const apiKeysMap = new Map(apiKeysCounts.map((r) => [r.project_id, r.count]));
-        const alertRulesMap = new Map(alertRulesCounts.map((r) => [r.project_id, r.count]));
+        const alertRulesMap = new Map(alertRulesCounts.map((r) => [r.project_id, r]));
 
-        // Merge counts with projects
-        const projectsWithCounts = projects.map((project) => ({
-            ...project,
-            // Logs in the last ADMIN_LOGS_WINDOW_DAYS days. logsCount is the
-            // historical name, kept for compatibility; logs30d says the window.
-            logsCount: logsMap.get(project.id) || 0,
-            logs30d: logsMap.get(project.id) || 0,
-            apiKeysCount: apiKeysMap.get(project.id) || 0,
-            alertRulesCount: alertRulesMap.get(project.id) || 0,
-        }));
+        const projectsWithCounts = projects.map((project) => {
+            const rules = alertRulesMap.get(project.id);
+            return {
+                ...project,
+                organizationId: project.organization_id,
+                deletedAt: project.deleted_at,
+                // Logs in the last ADMIN_LOGS_WINDOW_DAYS days. logsCount is the
+                // historical name, kept for compatibility; logs30d says the window.
+                logsCount: logsMap.get(project.id) || 0,
+                logs30d: logsMap.get(project.id) || 0,
+                apiKeysCount: apiKeysMap.get(project.id) || 0,
+                alertRulesCount: rules?.total || 0,
+                alertRulesTotal: rules?.total || 0,
+                alertRulesEnabled: rules?.enabled || 0,
+            };
+        });
 
         return {
             projects: projectsWithCounts,
@@ -1864,6 +1951,55 @@ export class AdminService {
             page,
             limit,
             totalPages: Math.ceil(total / limit),
+        };
+    }
+
+    /**
+     * Instance-wide totals for the projects page header. Same definitions as the
+     * per-row fields: non-deleted projects only, non-revoked keys, logs in the
+     * last ADMIN_LOGS_WINDOW_DAYS days.
+     */
+    async getProjectsSummary() {
+        // tenant-scope-ok: intentional cross-org admin: instance-wide live project ids for the admin summary
+        const live = db.selectFrom('projects').select('projects.id').where('projects.deleted_at', 'is', null);
+        const [projectRow, keyRow, ruleRow, ids] = await Promise.all([
+            db
+                .selectFrom('projects')
+                .select(sql<number>`COUNT(*)::int`.as('count'))
+                .where('deleted_at', 'is', null)
+                .executeTakeFirstOrThrow(),
+            db
+                .selectFrom('api_keys')
+                .select(sql<number>`COUNT(*)::int`.as('count'))
+                .where('revoked', '=', false)
+                .where('project_id', 'in', live)
+                .executeTakeFirstOrThrow(),
+            db
+                .selectFrom('alert_rules')
+                .select([
+                    sql<number>`COUNT(*)::int`.as('total'),
+                    sql<number>`(COUNT(*) FILTER (WHERE enabled))::int`.as('enabled'),
+                ])
+                .where('project_id', 'in', live)
+                .executeTakeFirstOrThrow(),
+            live.execute(),
+        ]);
+
+        let logs30d = 0;
+        if (ids.length > 0) {
+            const to = new Date();
+            const from = new Date(to.getTime() - ADMIN_LOGS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+            const r = await reservoir.count({ projectId: ids.map((i) => i.id), from, to });
+            logs30d = r.count;
+        }
+
+        return {
+            totalProjects: projectRow.count,
+            activeApiKeys: keyRow.count,
+            alertRulesTotal: ruleRow.total,
+            alertRulesEnabled: ruleRow.enabled,
+            logs30d,
+            logsWindowDays: ADMIN_LOGS_WINDOW_DAYS,
         };
     }
 
