@@ -18,7 +18,7 @@ const { orgDetails } = vi.hoisted(() => ({
 }));
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$app/state', () => ({ page: { params: { id: 'org-1' }, url: { pathname: '/dashboard/admin' } } }));
+vi.mock('$app/state', () => ({ page: { params: { id: 'org-1' }, url: { pathname: '/dashboard/admin', searchParams: new URLSearchParams() } } }));
 vi.mock('$lib/api/admin', () => ({
   adminAPI: new Proxy(
     {},

@@ -75,11 +75,11 @@ describe('admin list pages: EmptyState with Retry on failed fetch', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
-  it('users: empty list uses the no-results EmptyState', async () => {
+  it('users: empty list uses the no-data EmptyState', async () => {
     h.getUsers = empty('users') as never;
     render(Users as never);
-    expect(await screen.findByText('No users found')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('No users found');
+    expect(await screen.findByText('No users yet')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('No users yet');
   });
 
   it('projects: failed fetch shows an error state with Retry', async () => {
@@ -90,10 +90,10 @@ describe('admin list pages: EmptyState with Retry on failed fetch', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
-  it('projects: empty list uses the no-results EmptyState', async () => {
+  it('projects: empty list uses the no-data EmptyState', async () => {
     h.getProjects = empty('projects') as never;
     render(Projects as never);
-    expect(await screen.findByText('No projects found')).toBeInTheDocument();
-    expect(screen.getByText('No projects have been created yet')).toBeInTheDocument();
+    expect(await screen.findByText('No projects yet')).toBeInTheDocument();
+    expect(screen.getByText('Projects appear here once an organization creates one.')).toBeInTheDocument();
   });
 });
