@@ -20,7 +20,7 @@ const ALL_TABLES = [
   'metric_exemplars', 'custom_dashboards', 'log_pipelines', 'digest_configs',
   'digest_recipients', 'receivers', 'receiver_events', 'email_verification_tokens',
   'organization_creation_log', 'saved_searches', 'sigma_rule_exceptions', 'status_page_config',
-  'status_page_subscribers',
+  'status_page_subscribers', 'project_health_issues', 'project_notification_settings',
 ];
 
 describe('tenant-tables manifest', () => {

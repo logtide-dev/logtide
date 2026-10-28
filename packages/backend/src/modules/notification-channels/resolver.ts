@@ -30,7 +30,10 @@ export interface ResolveChannelsInput {
   eventType: NotificationEventType;
   explicitChannels?: NotificationChannel[];
   explicitChannelIds?: string[];
-  /** Accepted for the F5 contract; routing is per event type in 1.6. */
+  /**
+   * Project the event belongs to. Routing stays per event type; per-project
+   * overrides (project_health) arrive as explicitChannelIds from the caller.
+   */
   projectId?: string | null;
 }
 

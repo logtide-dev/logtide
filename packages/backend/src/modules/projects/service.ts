@@ -4,6 +4,7 @@ import type { Project, StatusPageVisibility } from '@logtide/shared';
 import bcrypt from 'bcrypt';
 import { validateSlug } from '../../utils/slug.js';
 import { CacheManager } from '../../utils/cache.js';
+import { resolveAllForProject } from '../project-health/repository.js';
 
 function generateProjectSlug(name: string): string {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -623,6 +624,10 @@ export class ProjectsService {
         .where('project_id', '=', projectId)
         .execute();
       await Promise.all(keyHashes.map((k) => CacheManager.invalidateApiKey(k.key_hash)));
+
+      // Open health issues end with the project, silently (no resolve
+      // notification). A restore starts from a clean state.
+      await resolveAllForProject(project.organizationId, projectId, { silent: true });
     }
 
     return updated;

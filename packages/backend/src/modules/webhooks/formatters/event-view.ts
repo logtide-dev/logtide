@@ -138,6 +138,21 @@ function describe(envelope: Envelope): EventView {
       }
       break;
     }
+    case 'project.health.opened':
+    case 'project.health.resolved': {
+      const opened = envelope.type === 'project.health.opened';
+      if (!opened) {
+        title = `Resolved: ${title}`;
+        tone = 'success';
+      } else if (str(data.severity) === 'warning') {
+        tone = 'medium';
+      }
+      push(fields, field('Project', data.project_name));
+      push(fields, field('Severity', data.severity));
+      push(fields, field('Opened', data.opened_at));
+      push(fields, field('Resolved', data.resolved_at));
+      break;
+    }
     case 'error.detected': {
       const project = data.project as { name?: string } | undefined;
       push(fields, field('Project', project?.name));

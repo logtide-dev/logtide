@@ -86,4 +86,27 @@ describe('rawJsonFallback', () => {
     loop.self = loop;
     expect(typeof rawJsonFallback(loop)).toBe('string');
   });
+  it('describes project health events', () => {
+    const data = {
+      project_name: 'web',
+      severity: 'warning',
+      title: 'Logs with out-of-range timestamp',
+      message: 'In the last 24 hours, 900 logs arrived late.',
+      opened_at: '2026-10-28T10:00:00.000Z',
+      resolved_at: null,
+      link: 'https://app.logtide.dev/dashboard/projects/p1',
+    };
+    const opened = describeEvent(envelope('project.health.opened', data))!;
+    expect(opened.tone).toBe('medium');
+    expect(opened.title).toBe('Logs with out-of-range timestamp');
+    expect(opened.fields.map((f) => f.name)).toEqual(['Project', 'Severity', 'Opened']);
+    expect(describeEvent(envelope('project.health.opened', { ...data, severity: 'critical' }))!.tone).toBe('critical');
+
+    const resolved = describeEvent(
+      envelope('project.health.resolved', { ...data, resolved_at: '2026-10-28T11:00:00.000Z' })
+    )!;
+    expect(resolved.tone).toBe('success');
+    expect(resolved.title).toBe('Resolved: Logs with out-of-range timestamp');
+    expect(resolved.fields.map((f) => f.name)).toContain('Resolved');
+  });
 });

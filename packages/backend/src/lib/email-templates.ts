@@ -944,6 +944,72 @@ Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinatio
 }
 
 // ============================================================================
+// PROJECT HEALTH EMAIL
+// ============================================================================
+
+export interface ProjectHealthEmailData {
+  projectName: string;
+  organizationName: string;
+  kind: 'opened' | 'resolved';
+  severity: 'critical' | 'warning';
+  title: string;
+  message: string;
+  openedAt: string;
+  resolvedAt: string | null;
+  link: string;
+}
+
+export function generateProjectHealthEmail(data: ProjectHealthEmailData): { html: string; text: string } {
+  const frontendUrl = getFrontendUrl();
+  const isOpen = data.kind === 'opened';
+  const badge = isOpen
+    ? { text: data.severity === 'critical' ? 'Critical' : 'Warning', color: data.severity === 'critical' ? colors.error : colors.warning }
+    : { text: 'Resolved', color: colors.success };
+  const heading = isOpen ? `${data.title}: ${data.projectName}` : `Resolved: ${data.title} (${data.projectName})`;
+
+  const infoRows: Array<{ label: string; value: string }> = [
+    { label: 'Project', value: data.projectName },
+    { label: 'Organization', value: data.organizationName },
+    { label: 'Opened', value: data.openedAt },
+  ];
+  if (data.resolvedAt) infoRows.push({ label: 'Resolved', value: data.resolvedAt });
+
+  const html = baseTemplate(
+    card(`
+      ${header(heading, badge)}
+      ${divider()}
+      ${timestamp()}
+      ${alertBox(escapeHtml(data.message), isOpen ? (data.severity === 'critical' ? 'error' : 'warning') : 'success')}
+      ${infoBox(infoRows)}
+      ${cta('View project health', data.link)}
+    `),
+    { preheader: `[${badge.text}] ${data.projectName}: ${data.title}` }
+  );
+
+  const text = `
+PROJECT HEALTH ${isOpen ? badge.text.toUpperCase() : 'RESOLVED'}: ${data.title}
+${'='.repeat(50)}
+
+${data.message}
+
+DETAILS
+-------
+Project: ${data.projectName}
+Organization: ${data.organizationName}
+Opened: ${data.openedAt}
+${data.resolvedAt ? `Resolved: ${data.resolvedAt}` : ''}
+
+View details: ${data.link}
+
+--
+Sent by LogTide
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
+`.trim();
+
+  return { html, text };
+}
+
+// ============================================================================
 // DIGEST REPORT EMAIL (#154)
 // ============================================================================
 
