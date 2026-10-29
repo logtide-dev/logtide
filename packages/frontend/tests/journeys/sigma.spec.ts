@@ -70,8 +70,8 @@ test.describe('Sigma Journey', () => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
     await page.waitForLoadState('load');
 
-    // Verify settings page loads
-    await expect(page.getByRole('heading', { name: 'Project settings' })).toBeVisible();
+    // Verify settings page loads (the project layout owns the page header)
+    await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
   });
 
   test('2. User can import a Sigma rule via the Detection rules page', async ({ page }) => {
