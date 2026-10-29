@@ -67,14 +67,14 @@ describe('usage page wording', () => {
   });
 
   it('cloud instance with limits says Plan limits', async () => {
-    h.getAuthConfig.mockResolvedValue({ billingEnabled: true });
+    h.getAuthConfig.mockResolvedValue({ upgradeEnabled: true });
     h.getCapabilityUsage.mockResolvedValue({ capabilities: [cap({ limit: 5 })] });
     render(Page);
     expect(await screen.findByText('Plan limits')).toBeInTheDocument();
   });
 
   it('quota in grace shows the reset date in the badge', async () => {
-    h.getAuthConfig.mockResolvedValue({ billingEnabled: true });
+    h.getAuthConfig.mockResolvedValue({ upgradeEnabled: true });
     h.getCapabilityUsage.mockResolvedValue({
       capabilities: [
         cap({

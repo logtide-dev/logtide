@@ -28,6 +28,7 @@
   import PageHeader from '$lib/components/app/PageHeader.svelte';
   import { CAPABILITY_LABELS, nextQuotaReset, isMonthlyQuota } from '$lib/utils/quota';
   import { authAPI } from '$lib/api/auth';
+  import { extensionUpgradeTarget } from '$lib/extensions/registry';
   import { organizationsAPI } from '$lib/api/organizations';
   import { canShowUpgradeCta, anyCapabilityAtLimit } from '$lib/utils/upgrade-cta';
   import type { OrganizationWithRole } from '@logtide/shared';
@@ -63,8 +64,8 @@
   let lastLoadedDays = $state<number | null>(null);
 
   let upgradeEnabled = $state(false);
-  // In-app billing: the buttons open the Billing page instead of the handoff.
-  let billingEnabled = $state(false);
+  // Set when an extension provides its own upgrade / billing page.
+  let upgradeTarget = $state<{ href: string } | null>(null);
   let handoffBusy = $state<'upgrade' | 'manage' | null>(null);
   let handoffError = $state('');
 
@@ -72,20 +73,20 @@
     try {
       const cfg = await authAPI.getAuthConfig();
       upgradeEnabled = cfg.upgradeEnabled === true;
-      billingEnabled = cfg.billingEnabled === true;
+      upgradeTarget = extensionUpgradeTarget(cfg);
     } catch {
       upgradeEnabled = false;
-      billingEnabled = false;
+      upgradeTarget = null;
     }
   });
 
-  let showUpgradeCta = $derived(canShowUpgradeCta(upgradeEnabled || billingEnabled, currentOrg?.role));
+  let showUpgradeCta = $derived(canShowUpgradeCta(upgradeEnabled || upgradeTarget !== null, currentOrg?.role));
   let atLimit = $derived(anyCapabilityAtLimit(capabilities));
 
   async function startHandoff(intent: 'upgrade' | 'manage') {
     if (!currentOrg || handoffBusy) return;
-    if (billingEnabled) {
-      void goto('/dashboard/settings/billing');
+    if (upgradeTarget) {
+      void goto(upgradeTarget.href);
       return;
     }
     handoffBusy = intent;
@@ -210,7 +211,7 @@
 
   // Self-hosted instances without billing or an upgrade link have no plans,
   // so the word "plan" is only used when one of the two is enabled.
-  let hasPlans = $derived(upgradeEnabled || billingEnabled);
+  let hasPlans = $derived(upgradeEnabled || upgradeTarget !== null);
   let limitsTitle = $derived(hasAnyLimit && hasPlans ? 'Plan limits' : 'Limits');
   let resetsAt = $derived(nextQuotaReset());
 </script>

@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -43,6 +43,7 @@ import { usageRoutes, meteringRecorder, meteringService } from './modules/meteri
 import { capabilitiesRoutes, adminEntitlementsRoutes } from './modules/capabilities/index.js';
 import { QuotaEvaluator } from './capabilities/index.js';
 import { loadExternalHooks } from './hooks/index.js';
+import { loadExtensionModules, initExtensions, type ExtensionRuntime } from './extensions/index.js';
 import { storageSnapshotJob } from './modules/metering/storage-snapshot.js';
 import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes, statusPageRoutes } from './modules/monitoring/index.js';
 import { statusIncidentRoutes } from './modules/status-incidents/routes.js';
@@ -91,7 +92,14 @@ export function rateLimitKeyGenerator(request: { headers: Record<string, any>; i
   return `key:${createHash('sha256').update(String(credential)).digest('hex').slice(0, 32)}`;
 }
 
-export async function build(opts = {}) {
+export type BuildOptions = FastifyServerOptions & {
+  /** Registered extensions (from initExtensions); their routes are mounted last. */
+  extensions?: ExtensionRuntime;
+};
+
+export async function build(opts: BuildOptions = {}) {
+  const { extensions, ...fastifyOpts } = opts;
+
   // Terms seam + auth-free mode can never work together (the default user
   // could never accept): refuse to build the app. No query when inactive.
   await assertTermsCompatibleWithAuthMode();
@@ -100,7 +108,7 @@ export async function build(opts = {}) {
     logger: true,
     bodyLimit: 10 * 1024 * 1024,
     trustProxy: config.TRUST_PROXY,
-    ...opts,
+    ...fastifyOpts,
   });
 
   // Global error handler: ensure client errors return proper 4xx, not 500
@@ -194,7 +202,7 @@ export async function build(opts = {}) {
 
   await fastify.register(usersRoutes, { prefix: '/api/v1/auth' });
   await fastify.register(publicAuthRoutes, { prefix: '/api/v1/auth' });
-  await fastify.register(publicSettingsRoutes, { prefix: '/api/v1/auth' });
+  await fastify.register(publicSettingsRoutes, { prefix: '/api/v1/auth', extensions });
   await fastify.register(authenticatedAuthRoutes, { prefix: '/api/v1/auth' });
   await fastify.register(adminAuthRoutes, { prefix: '/api/v1/admin/auth' });
   await fastify.register(organizationsRoutes, { prefix: '/api/v1/organizations' });
@@ -255,6 +263,19 @@ export async function build(opts = {}) {
   await fastify.register(maintenanceRoutes, { prefix: '/api/v1/maintenances' });
   await fastify.register(savedSearchesRoutes, { prefix: '/api/v1/saved-searches' });
 
+  // Extension routes. The global auth plugin skips /api/v1/ext/, so each
+  // route picks its own auth. The extra scope keeps whatever the plugin adds
+  // (content-type parsers, hooks, decorators) away from core routes, even if
+  // the extension wrapped its plugin with fastify-plugin.
+  for (const { name, plugin } of extensions?.routes ?? []) {
+    await fastify.register(
+      async (scope) => {
+        await scope.register(plugin);
+      },
+      { prefix: `/api/v1/ext/${name}` }
+    );
+  }
+
   return fastify;
 }
 
@@ -262,6 +283,7 @@ async function start() {
   validateStorageConfig();
 
   await loadExternalHooks();
+  const extensions = await initExtensions(await loadExtensionModules(), 'server');
   await bootstrapService.runInitialBootstrap();
   await initializeInternalLogging();
   auditLogService.start();
@@ -280,7 +302,7 @@ async function start() {
     await bootstrapService.ensureDefaultSetup();
   }
 
-  const app = await build();
+  const app = await build({ extensions });
 
   const shutdown = async () => {
     console.log('[Server] Shutting down gracefully...');

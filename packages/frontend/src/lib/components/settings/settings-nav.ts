@@ -5,7 +5,6 @@ import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 import KeyRound from '@lucide/svelte/icons/key-round';
 import Building2 from '@lucide/svelte/icons/building-2';
 import Users from '@lucide/svelte/icons/users';
-import CreditCard from '@lucide/svelte/icons/credit-card';
 import ChartColumn from '@lucide/svelte/icons/chart-column';
 import ClipboardList from '@lucide/svelte/icons/clipboard-list';
 import ShieldAlert from '@lucide/svelte/icons/shield-alert';
@@ -16,6 +15,9 @@ import Route from '@lucide/svelte/icons/route';
 import Newspaper from '@lucide/svelte/icons/newspaper';
 import Send from '@lucide/svelte/icons/send';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
+import type { AuthConfig } from '$lib/api/auth';
+import { activeExtensions } from '$lib/extensions/registry';
+import type { FrontendExtension } from '$lib/extensions/types';
 
 export type SettingsNavItem = {
   id: string;
@@ -23,7 +25,6 @@ export type SettingsNavItem = {
   href: string;
   icon: typeof Building2;
   adminOnly?: boolean;
-  requiresBilling?: boolean;
   appliesTo: 'you' | 'organization' | 'project';
 };
 
@@ -46,7 +47,6 @@ export const SETTINGS_GROUPS: SettingsNavGroup[] = [
     items: [
       { id: 'general', label: 'General', href: '/dashboard/settings/general', icon: Building2, appliesTo: 'organization' },
       { id: 'members', label: 'Members', href: '/dashboard/settings/members', icon: Users, appliesTo: 'organization' },
-      { id: 'billing', label: 'Billing', href: '/dashboard/settings/billing', icon: CreditCard, adminOnly: true, requiresBilling: true, appliesTo: 'organization' },
       { id: 'usage', label: 'Usage', href: '/dashboard/settings/usage', icon: ChartColumn, appliesTo: 'organization' },
       { id: 'audit-log', label: 'Audit log', href: '/dashboard/settings/audit-log', icon: ClipboardList, adminOnly: true, appliesTo: 'organization' },
     ],
@@ -78,22 +78,40 @@ export const SETTINGS_GROUPS: SettingsNavGroup[] = [
 
 export interface SettingsNavContext {
   role?: OrgRole | null;
-  billingEnabled: boolean;
+  authConfig: AuthConfig | null;
+  /** Tests only; defaults to the registered extensions. */
+  extensionList?: FrontendExtension[];
 }
 
 /** Whether one item is visible for the viewer. Unknown role is treated as plain member. */
 export function isSettingsItemVisible(item: SettingsNavItem, ctx: SettingsNavContext): boolean {
   if (item.adminOnly && !(ctx.role && canManageMembers(ctx.role))) return false;
-  if (item.requiresBilling && !ctx.billingEnabled) return false;
   return true;
+}
+
+/** Core groups with the items of active extensions merged in. */
+function mergedSettingsGroups(ctx: SettingsNavContext): SettingsNavGroup[] {
+  const groups = SETTINGS_GROUPS.map((g) => ({ label: g.label, items: [...g.items] }));
+  for (const ext of activeExtensions(ctx.authConfig, ctx.extensionList)) {
+    for (const { group, after, keywords: _keywords, ...item } of ext.settingsNav ?? []) {
+      const target = groups.find((g) => g.label === group);
+      if (!target) continue;
+      const at = after ? target.items.findIndex((i) => i.id === after) : -1;
+      if (at >= 0) target.items.splice(at + 1, 0, item);
+      else target.items.push(item);
+    }
+  }
+  return groups;
 }
 
 /** Groups with only the visible items; groups that end up empty are dropped. */
 export function visibleSettingsGroups(ctx: SettingsNavContext): SettingsNavGroup[] {
-  return SETTINGS_GROUPS.map((g) => ({
-    label: g.label,
-    items: g.items.filter((item) => isSettingsItemVisible(item, ctx)),
-  })).filter((g) => g.items.length > 0);
+  return mergedSettingsGroups(ctx)
+    .map((g) => ({
+      label: g.label,
+      items: g.items.filter((item) => isSettingsItemVisible(item, ctx)),
+    }))
+    .filter((g) => g.items.length > 0);
 }
 
 /** Flattened visible items, also consumed by the command palette. */

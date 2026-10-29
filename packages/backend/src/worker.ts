@@ -4,6 +4,7 @@ import path from 'path';
 import { context } from '@logtide/shared/context';
 import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
 import { loadExternalHooks } from './hooks/index.js';
+import { loadExtensionModules, startExtensionJobs, initExtensions } from './extensions/index.js';
 import { processAlertNotification, type AlertNotificationJobData } from './queue/jobs/alert-notification.js';
 import { enqueueAlertNotifications } from './queue/jobs/alert-evaluation.js';
 import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
@@ -42,6 +43,7 @@ await initializeWorkerLogging();
 await reservoirReady;
 
 await loadExternalHooks();
+const extensions = await initExtensions(await loadExtensionModules(), 'worker');
 
 // Initialize enrichment services (downloads GeoLite2 if missing)
 await enrichmentService.initialize();
@@ -117,6 +119,9 @@ const webhookDeliveryWorker = createWorker<WebhookDeliveryJobData>('webhook-deli
 const receiverEventsWorker = createWorker<ReceiverEventJobData>('receiver-events', async (job) => {
   await processReceiverEvent(job);
 });
+
+// Extension jobs and crons, registered before the runner starts.
+const extensionWorkers = await startExtensionJobs(extensions);
 
 // Start workers (required for graphile-worker backend, no-op for BullMQ)
 console.log(`[Worker] Using queue backend: ${getQueueBackend()}`);
@@ -976,6 +981,7 @@ async function gracefulShutdown(signal: string) {
   try {
     // Stop accepting new jobs
     await alertWorker.close();
+    await Promise.all(extensionWorkers.map((w) => w.close()));
     await sigmaWorker.close();
     await autoGroupWorker.close();
     await invitationWorker.close();
