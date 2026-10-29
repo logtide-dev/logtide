@@ -125,8 +125,9 @@ export function getDisplayZoneLabel(at: Date = new Date(), prefs?: TimestampPref
   const d = toDate(at) ?? new Date();
   try {
     const name = partsOf(d, { timeZoneName: 'shortOffset' }, prefs).timeZoneName ?? 'GMT';
-    if (name === 'GMT' || name === 'UTC') return 'UTC';
-    return plain(name).replace(/^GMT/, 'UTC');
+    const label = plain(name).replace(/^GMT/, 'UTC');
+    // Newer ICU (Node 24, recent browsers) names a zero offset "GMT+0".
+    return /^UTC(?:[+-]0(?::00)?)?$/.test(label) ? 'UTC' : label;
   } catch {
     return 'UTC';
   }
