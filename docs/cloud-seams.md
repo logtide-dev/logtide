@@ -102,7 +102,7 @@ A complete reference verifier using only Node's `crypto` is in [`docs/examples/v
 
 ### Removed: in-app billing (LOGTIDE_BILLING_API_URL and LOGTIDE_BILLING_API_TOKEN)
 
-These two variables and the in-app billing proxy were removed in 1.6.1. They are ignored (startup logs a warning if either is set), and `/api/v1/auth/config` no longer carries `billingEnabled`. Hosting providers can build features like this with the extension system, see [Extensions](extensions.md).
+These two variables and the in-app billing proxy were removed in 1.6.0. They are ignored (startup logs a warning if either is set), and `/api/v1/auth/config` no longer carries `billingEnabled`. Hosting providers can build features like this with the extension system, see [Extensions](extensions.md).
 
 ### MAX_ORGANIZATIONS_PER_USER
 

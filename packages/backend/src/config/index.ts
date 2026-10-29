@@ -306,7 +306,7 @@ function loadConfig(): Config {
   }
 
   if (process.env.LOGTIDE_BILLING_API_URL || process.env.LOGTIDE_BILLING_API_TOKEN) {
-    console.warn('LOGTIDE_BILLING_API_URL and LOGTIDE_BILLING_API_TOKEN were removed in 1.6.1 and are ignored');
+    console.warn('LOGTIDE_BILLING_API_URL and LOGTIDE_BILLING_API_TOKEN were removed in 1.6.0 and are ignored');
   }
 
   try {

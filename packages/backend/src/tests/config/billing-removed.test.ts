@@ -22,7 +22,7 @@ describe('removed billing variables', () => {
 
     await expect(import('../../config/index.js')).resolves.toBeDefined();
 
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('were removed in 1.6.1 and are ignored'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('were removed in 1.6.0 and are ignored'));
   });
 
   it('stays silent when neither is set', async () => {
@@ -32,6 +32,6 @@ describe('removed billing variables', () => {
 
     await import('../../config/index.js');
 
-    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('were removed in 1.6.1'));
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('were removed in 1.6.0'));
   });
 });
