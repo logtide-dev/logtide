@@ -90,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Regular expression denial of service in Sigma rules**: a Sigma rule using the `re` modifier with a catastrophic pattern could stall the matcher, both when previewing a rule and when matching incoming logs in the worker. Patterns now run behind a 100 ms deadline in a worker thread; a pattern that exceeds it is disabled and never matches again, and patterns over 512 characters are refused. Rule previews also stop at their time limit inside a single page of logs.
+- **Database password in migration logs**: the migration step printed `DATABASE_URL` with the password in clear text at every backend start; it is no longer logged, and the masked URL printed by the backend hides any password. An unparsable `DATABASE_URL` (for example a password with an unencoded `#` or `%`) now fails at startup with a message that explains it instead of `Cannot read properties of undefined (reading 'searchParams')`.
 - **Auth provider secrets in admin responses**: creating or updating an auth provider returned the stored client secret or bind password in the response; it is now masked like the provider list.
 
 

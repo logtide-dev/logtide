@@ -23,6 +23,7 @@
 # IMPORTANT: Check .env configuration before starting!
 # - API_KEY_SECRET must be at least 32 characters
 # - DB_PASSWORD, REDIS_PASSWORD should be secure values
+#   (DB_PASSWORD goes into DATABASE_URL: avoid # % @ / ? : or percent-encode them there)
 # - Set STORAGE_ENGINE=clickhouse in .env when using the clickhouse profile
 # - Set STORAGE_ENGINE=mongodb in .env when using the mongodb profile
 

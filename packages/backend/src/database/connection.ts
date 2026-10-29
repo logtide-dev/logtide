@@ -18,7 +18,24 @@ if (process.env.NODE_ENV === 'test') {
 }
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost:5432/logtide';
-console.log('[Database Connection] Using DATABASE_URL:', DATABASE_URL.replace(/:[^:@]+@/, ':****@'));
+
+// pg fails on an unparsable URL with "Cannot read properties of undefined (reading 'searchParams')"
+// on the first query. Fail early with a useful message instead (usually a password with URL-reserved
+// characters such as # % @ / ? that was not percent-encoded). Socket URLs without a host
+// (user:pw@/db?host=/run/...) get the same dummy-host fallback pg-connection-string uses.
+let parsedDatabaseUrl: URL;
+try {
+  parsedDatabaseUrl = URL.canParse(DATABASE_URL)
+    ? new URL(DATABASE_URL)
+    : new URL(DATABASE_URL.replace('@/', '@___DUMMY___/'));
+} catch {
+  throw new Error(
+    'DATABASE_URL is not a valid URL. If the database password contains characters such as # % @ / ? : ' +
+      'percent-encode it in DATABASE_URL (e.g. # -> %23, % -> %25) or use a password without them.'
+  );
+}
+if (parsedDatabaseUrl.password) parsedDatabaseUrl.password = '****';
+console.log('[Database Connection] Using DATABASE_URL:', parsedDatabaseUrl.toString().replace('@___DUMMY___/', '@/'));
 
 // Connection Pool Configuration
 
