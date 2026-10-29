@@ -1,8 +1,31 @@
-import { sql } from 'kysely';
+import { sql, type Selectable } from 'kysely';
 import { db } from '../../database/connection.js';
 import type { LogLevel, MetadataFilter } from '@logtide/shared';
-import type { AlertType, BaselineType, BaselineMetadata } from '../../database/types.js';
+import type {
+  AlertRulesTable,
+  AlertType,
+  AlertRuleState,
+  BaselineType,
+  BaselineMetadata,
+} from '../../database/types.js';
 import { baselineCalculator } from './baseline-calculator.js';
+import {
+  compileAlertQuery,
+  filterToReservoirParams,
+  normalizeAlertQuery,
+  type AlertLogFilter,
+} from './alert-query.js';
+import { AlertRuleInputError } from './validation.js';
+import {
+  decideRateOfChange,
+  decideThreshold,
+  type LifecycleDecision,
+  type LifecycleSnapshot,
+  type RateOfChangeSignal,
+} from './lifecycle.js';
+import { openAlertIncident, resolveAlertIncident } from './incident-sync.js';
+import type { AlertEvaluationResult, AlertNotificationJobData, AlertNotificationKind } from './types.js';
+import { notificationChannelsService } from '../notification-channels/index.js';
 import { reservoir } from '../../database/reservoir.js';
 import { hooks, HookRejectionError } from '../../hooks/index.js';
 
@@ -18,6 +41,9 @@ export interface PreviewAlertRuleInput {
   threshold: number;
   timeWindow: number; // minutes
   previewRange: PreviewRange;
+  /** Logs query (threshold rules); blank means none. */
+  query?: string | null;
+  metadataFilters?: MetadataFilter[];
 }
 
 export interface PreviewIncident {
@@ -97,6 +123,14 @@ export interface AlertRule {
   emailRecipients: string[];
   webhookUrl: string | null;
   metadataFilters: MetadataFilter[];
+  // 1.6 lifecycle (migration 065)
+  query: string | null;
+  state: AlertRuleState;
+  lastTriggeredAt: Date | null;
+  lastEvaluatedAt: Date | null;
+  lastNotifiedAt: Date | null;
+  snoozedUntil: Date | null;
+  renotifyMinutes: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -119,6 +153,10 @@ export interface CreateAlertRuleInput {
   emailRecipients: string[];
   webhookUrl?: string | null;
   metadataFilters?: MetadataFilter[] | null;
+  /** Grammar query (threshold rules only); blank is stored as null. */
+  query?: string | null;
+  /** Threshold rules only, 5 to 1440. */
+  renotifyMinutes?: number | null;
 }
 
 export interface UpdateAlertRuleInput {
@@ -137,6 +175,23 @@ export interface UpdateAlertRuleInput {
   emailRecipients?: string[];
   webhookUrl?: string | null;
   metadataFilters?: MetadataFilter[] | null;
+  query?: string | null;
+  renotifyMinutes?: number | null;
+}
+
+function toDateOrNull(value: Date | string | null | undefined): Date | null {
+  return value == null ? null : new Date(value);
+}
+
+/** The lifecycle columns of a stored rule, as the state machine reads them. */
+function lifecycleSnapshot(rule: Selectable<AlertRulesTable>): LifecycleSnapshot {
+  return {
+    state: rule.state ?? 'ok',
+    lastTriggeredAt: toDateOrNull(rule.last_triggered_at),
+    lastNotifiedAt: toDateOrNull(rule.last_notified_at),
+    snoozedUntil: toDateOrNull(rule.snoozed_until),
+    renotifyMinutes: rule.renotify_minutes != null ? Number(rule.renotify_minutes) : null,
+  };
 }
 
 export class AlertsService {
@@ -167,6 +222,8 @@ export class AlertsService {
         email_recipients: input.emailRecipients,
         webhook_url: input.webhookUrl || null,
         metadata_filters: sql`${JSON.stringify(input.metadataFilters ?? [])}::jsonb`,
+        query: normalizeAlertQuery(input.query),
+        renotify_minutes: input.renotifyMinutes ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -264,6 +321,20 @@ export class AlertsService {
     if (input.emailRecipients !== undefined) updateData.email_recipients = input.emailRecipients;
     if (input.webhookUrl !== undefined) updateData.webhook_url = input.webhookUrl;
     if (input.metadataFilters !== undefined) updateData.metadata_filters = sql`${JSON.stringify(input.metadataFilters ?? [])}::jsonb`;
+    if (input.query !== undefined) updateData.query = normalizeAlertQuery(input.query);
+    if (input.renotifyMinutes !== undefined) updateData.renotify_minutes = input.renotifyMinutes;
+
+    if (input.enabled === false) {
+      // A disabled rule is no longer evaluated: it leaves the firing state in
+      // the same UPDATE (no alert.resolved is sent), and its incident is
+      // resolved as manual first (row A1).
+      const current = await this.getLifecycleState(id, organizationId);
+      if (!current) return null;
+      if (current.state === 'firing') {
+        await this.resolveFiringRule(current);
+      }
+      updateData.state = 'ok';
+    }
 
     const rule = await db
       .updateTable('alert_rules')
@@ -277,9 +348,17 @@ export class AlertsService {
   }
 
   /**
-   * Delete alert rule
+   * Delete alert rule. A firing rule's incident is resolved as manual BEFORE
+   * the delete (row A2): incidents.alert_rule_id is ON DELETE SET NULL, so
+   * afterwards the incident could no longer be found by its rule.
    */
   async deleteAlertRule(id: string, organizationId: string): Promise<boolean> {
+    const current = await this.getLifecycleState(id, organizationId);
+    if (!current) return false;
+    if (current.state === 'firing') {
+      await this.resolveFiringRule(current);
+    }
+
     const result = await db
       .deleteFrom('alert_rules')
       .where('id', '=', id)
@@ -290,12 +369,105 @@ export class AlertsService {
   }
 
   /**
-   * Check alert rules and trigger if threshold is met
+   * Set (or clear, with null) the snooze end of a rule. The lifecycle state
+   * is not touched: the next evaluation applies T3/T6/T7/T10.
+   */
+  async snoozeAlertRule(id: string, organizationId: string, until: Date | null): Promise<AlertRule | null> {
+    const rule = await db
+      .updateTable('alert_rules')
+      .set({ snoozed_until: until, updated_at: new Date() })
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .returningAll()
+      .executeTakeFirst();
+
+    return rule ? this.mapAlertRule(rule) : null;
+  }
+
+  /**
+   * A user disabled or deleted a firing rule: resolve its incident as manual
+   * and, when the episode had notified anyone, queue the same `resolved` job
+   * the evaluator sends on recovery (webhook alert.resolved, PagerDuty
+   * resolve). The rule's channels are snapshotted into the job because a
+   * delete removes the links before the job runs. Queue failures are logged
+   * and never block the disable or delete.
+   */
+  private async resolveFiringRule(
+    rule: Pick<
+      Selectable<AlertRulesTable>,
+      'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'last_triggered_at' | 'last_notified_at'
+    >
+  ): Promise<void> {
+    const now = new Date();
+    const incidentId = await resolveAlertIncident(rule, 'manual', now);
+
+    const lastTriggeredAt = toDateOrNull(rule.last_triggered_at);
+    const lastNotifiedAt = toDateOrNull(rule.last_notified_at);
+    const notified =
+      lastNotifiedAt !== null && (lastTriggeredAt === null || lastNotifiedAt.getTime() >= lastTriggeredAt.getTime());
+    if (!notified) return;
+
+    try {
+      const channels = await notificationChannelsService.getAlertRuleChannels(rule.id, rule.organization_id);
+      const result: AlertEvaluationResult = {
+        kind: 'resolved',
+        rule_id: rule.id,
+        rule_name: rule.name,
+        organization_id: rule.organization_id,
+        project_id: rule.project_id ?? null,
+        alert_type: rule.alert_type,
+        log_count: 0,
+        threshold: rule.threshold,
+        time_window: rule.time_window,
+        firing_since: (lastTriggeredAt ?? now).toISOString(),
+        resolved_at: now.toISOString(),
+        incident_id: incidentId,
+        ...(channels.length > 0 ? { channel_ids: channels.map((c) => c.id) } : {}),
+      };
+      const { createQueue } = await import('../../queue/connection.js');
+      const { enqueueAlertNotifications } = await import('../../queue/jobs/alert-evaluation.js');
+      await enqueueAlertNotifications([result], createQueue<AlertNotificationJobData>('alert-notifications'));
+    } catch (error) {
+      console.error(`[Alerts] Failed to queue the resolve of rule ${rule.id}:`, error);
+    }
+  }
+
+  private async getLifecycleState(
+    id: string,
+    organizationId: string
+  ): Promise<
+    | Pick<
+        Selectable<AlertRulesTable>,
+        'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'state' | 'last_triggered_at' | 'last_notified_at'
+      >
+    | undefined
+  > {
+    return db
+      .selectFrom('alert_rules')
+      .select(['id', 'organization_id', 'project_id', 'name', 'alert_type', 'threshold', 'time_window', 'state', 'last_triggered_at', 'last_notified_at'])
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+  }
+
+  /**
+   * Evaluate every enabled rule once and apply the lifecycle state machine
+   * (`lifecycle.ts`). Returns the notifications to enqueue: `triggered` and
+   * `renotify` (one alert_history row each) and `resolved`. Steady firing,
+   * snoozed transitions and lost compare-and-sets return nothing.
+   *
+   * `now` is the run's clock: every window, comparison and lifecycle write of
+   * the run uses it (tests pass it explicitly).
+   *
+   * A rule whose evaluation fails (stored query no longer parses, engine
+   * error) is skipped with its state and `last_evaluated_at` untouched and
+   * never blocks the other rules of the run.
    *
    * PERFORMANCE: Pre-fetches all org->projects mappings in one query
    * instead of querying per rule (N+1 fix).
    */
-  async checkAlertRules() {
+  async checkAlertRules(options: { now?: Date } = {}): Promise<AlertEvaluationResult[]> {
+    const now = options.now ?? new Date();
     const rules = await db
       .selectFrom('alert_rules')
       .selectAll()
@@ -323,7 +495,8 @@ export class AlertsService {
       }
     }
 
-    const triggeredAlerts = [];
+    const results: AlertEvaluationResult[] = [];
+    const evaluated: Array<{ id: string; organization_id: string }> = [];
 
     for (const rule of rules) {
       // Lifecycle hook (#216): rejection (or a broken hook) skips THIS rule
@@ -345,143 +518,277 @@ export class AlertsService {
         }
       }
 
-      const triggered = await this.checkRule(rule, orgProjectsMap);
-      if (triggered) {
-        triggeredAlerts.push(triggered);
+      try {
+        const result = await this.checkRule(rule, orgProjectsMap, now);
+        evaluated.push(rule);
+        if (result) results.push(result);
+      } catch (err) {
+        console.error(`[Alerts] Rule ${rule.id} skipped, evaluation failed:`, err);
       }
     }
 
-    return triggeredAlerts;
+    await this.markEvaluated(evaluated, now);
+
+    return results;
   }
 
   /**
-   * Check a single rule
+   * `last_evaluated_at = now` for the rules evaluated in this run, in
+   * batches. A failure is logged and never drops the run's notifications
+   * (their transitions are already committed).
+   */
+  private async markEvaluated(rules: Array<{ id: string; organization_id: string }>, now: Date): Promise<void> {
+    const BATCH = 1000;
+    for (let i = 0; i < rules.length; i += BATCH) {
+      const batch = rules.slice(i, i + BATCH);
+      try {
+        await db
+          .updateTable('alert_rules')
+          .set({ last_evaluated_at: now })
+          .where('organization_id', 'in', [...new Set(batch.map((r) => r.organization_id))])
+          .where('id', 'in', batch.map((r) => r.id))
+          .execute();
+      } catch (err) {
+        console.error('[Alerts] Failed to record last_evaluated_at:', err);
+      }
+    }
+  }
+
+  /**
+   * Evaluate a single rule and apply its lifecycle decision.
    *
    * PERFORMANCE: Uses pre-fetched orgProjectsMap instead of querying per rule
    */
-  private async checkRule(rule: any, orgProjectsMap: Map<string, string[]>) {
+  private async checkRule(
+    rule: Selectable<AlertRulesTable>,
+    orgProjectsMap: Map<string, string[]>,
+    now: Date
+  ): Promise<AlertEvaluationResult | null> {
     // Dispatch to rate-of-change logic if applicable
     if (rule.alert_type === 'rate_of_change') {
-      return this.checkRateOfChangeRule(rule, orgProjectsMap);
+      return this.checkRateOfChangeRule(rule, orgProjectsMap, now);
     }
 
-    // Get the last trigger time for this rule
-    const lastTrigger = await db
-      .selectFrom('alert_history')
-      .select(['triggered_at'])
-      .where('rule_id', '=', rule.id)
-      .orderBy('triggered_at', 'desc')
-      .executeTakeFirst();
-
-    // Determine the time window for counting logs
-    const timeWindow = new Date(Date.now() - rule.time_window * 60 * 1000);
-
-    // If there's a last trigger, only count logs AFTER it
-    // This prevents re-triggering on the same logs
-    const fromTime = lastTrigger
-      ? new Date(Math.max(new Date(lastTrigger.triggered_at).getTime(), timeWindow.getTime()))
-      : timeWindow;
-
-    // Determine project scope
-    let projectId: string | string[];
-    if (rule.project_id) {
-      projectId = rule.project_id;
-    } else {
-      const projectIds = orgProjectsMap.get(rule.organization_id) || [];
-      if (projectIds.length === 0) return null;
-      projectId = projectIds;
-    }
-
-    // Count NEW logs (after last trigger or within time window)
-    // Use fromTime + 1ms to simulate exclusive bound (time > fromTime)
-    const serviceFilter = rule.service ? [rule.service, 'unknown'] : undefined;
-    const exclusiveFrom = new Date(fromTime.getTime() + 1);
-    const metadataFilters = (rule.metadata_filters ?? []) as MetadataFilter[];
-
-    const countResult = await reservoir.count({
-      projectId,
-      from: exclusiveFrom,
-      to: new Date(),
+    const compiled = compileAlertQuery({
+      query: rule.query,
       level: rule.level,
-      service: serviceFilter,
-      ...(metadataFilters.length > 0 ? { metadataFilters } : {}),
+      service: rule.service,
+      metadataFilters: (rule.metadata_filters ?? []) as MetadataFilter[],
     });
-    const count = countResult.count;
-
-    if (count >= rule.threshold) {
-      // Record alert trigger
-      const historyRecord = await db
-        .insertInto('alert_history')
-        .values({
-          rule_id: rule.id,
-          triggered_at: new Date(),
-          log_count: count,
-        })
-        .returning(['id'])
-        .executeTakeFirstOrThrow();
-
-      if (hooks.hasHandlers('afterAlertTriggered')) {
-        void hooks.runAfter('afterAlertTriggered', {
-          organizationId: rule.organization_id,
-          projectId: rule.project_id ?? null,
-          ruleId: rule.id,
-          ruleName: rule.name,
-          historyId: historyRecord.id,
-          logCount: count,
-          baselineMetadata: null,
-        });
-      }
-
-      return {
-        historyId: historyRecord.id,
-        rule_id: rule.id,
-        rule_name: rule.name,
-        organization_id: rule.organization_id,
-        project_id: rule.project_id,
-        log_count: count,
-        threshold: rule.threshold,
-        time_window: rule.time_window,
-        email_recipients: rule.email_recipients,
-        webhook_url: rule.webhook_url,
-      };
+    if (!compiled.ok) {
+      // A stored query that a newer grammar rejects: skip the rule (state kept).
+      throw new Error(
+        `Stored query no longer parses at position ${compiled.error.position}: ${compiled.error.message}`
+      );
     }
 
-    return null;
+    // Sliding window [now - time_window, now]: the lifecycle state, not a
+    // "logs since the last trigger" exclusion, prevents duplicate notifications.
+    // An org-wide rule of an organization without projects counts 0 (so a
+    // firing rule resolves).
+    const projectIds = rule.project_id ? [rule.project_id] : (orgProjectsMap.get(rule.organization_id) ?? []);
+    let count = 0;
+    if (projectIds.length > 0) {
+      const countResult = await reservoir.count({
+        projectId: rule.project_id ? rule.project_id : projectIds,
+        from: new Date(now.getTime() - rule.time_window * 60_000),
+        to: now,
+        ...filterToReservoirParams(compiled.filter),
+      });
+      count = countResult.count;
+    }
+
+    const decision = decideThreshold(lifecycleSnapshot(rule), count >= rule.threshold, now);
+    return this.applyDecision(rule, decision, { now, logCount: count, baselineMetadata: null });
   }
 
   /**
-   * Check a rate-of-change alert rule against baseline
+   * Apply a lifecycle decision with a compare-and-set: the UPDATE only
+   * matches when the rule is still enabled and its lifecycle columns are the
+   * ones this evaluation read, so of two concurrent evaluators exactly one
+   * wins a transition or a notification. The alert_history row (one per
+   * notification) is written in the same transaction. Only the winner fires
+   * the hook, syncs the incident and returns a result.
    */
-  private async checkRateOfChangeRule(rule: any, orgProjectsMap: Map<string, string[]>) {
-    if (!rule.baseline_type || !rule.deviation_multiplier) return null;
+  private async applyDecision(
+    rule: Selectable<AlertRulesTable>,
+    decision: LifecycleDecision,
+    ctx: { now: Date; logCount: number; baselineMetadata: BaselineMetadata | null }
+  ): Promise<AlertEvaluationResult | null> {
+    if (decision.type === 'none') return null;
+    const { now } = ctx;
+
+    const set: { last_evaluated_at: Date; state?: AlertRuleState; last_triggered_at?: Date; last_notified_at?: Date } = {
+      last_evaluated_at: now,
+    };
+    if (decision.type === 'fire') {
+      set.state = 'firing';
+      set.last_triggered_at = now;
+      if (decision.notification) set.last_notified_at = now;
+    } else if (decision.type === 'notify') {
+      set.last_notified_at = now;
+    } else {
+      set.state = 'ok'; // last_triggered_at is kept (start of the last episode)
+    }
+
+    const historyKind: AlertNotificationKind | null =
+      decision.notification === 'triggered' || decision.notification === 'renotify' ? decision.notification : null;
+
+    const won = await db.transaction().execute(async (trx) => {
+      const updated = await trx
+        .updateTable('alert_rules')
+        .set(set)
+        .where('id', '=', rule.id)
+        .where('organization_id', '=', rule.organization_id)
+        .where('enabled', '=', true)
+        .where('state', '=', rule.state)
+        .where(sql`date_trunc('milliseconds', last_triggered_at)`, 'is not distinct from', rule.last_triggered_at)
+        .where(sql`date_trunc('milliseconds', last_notified_at)`, 'is not distinct from', rule.last_notified_at)
+        .where(sql`date_trunc('milliseconds', snoozed_until)`, 'is not distinct from', rule.snoozed_until)
+        .returning('id')
+        .executeTakeFirst();
+      if (!updated) return null;
+      if (!historyKind) return { historyId: null as string | null };
+
+      const history = await trx
+        .insertInto('alert_history')
+        .values({
+          rule_id: rule.id,
+          triggered_at: now,
+          log_count: ctx.logCount,
+          baseline_metadata: ctx.baselineMetadata,
+        })
+        .returning(['id'])
+        .executeTakeFirstOrThrow();
+      return { historyId: history.id as string | null };
+    });
+    if (!won) return null;
+
+    const historyId = won.historyId;
+    if (historyId && hooks.hasHandlers('afterAlertTriggered')) {
+      void hooks.runAfter('afterAlertTriggered', {
+        organizationId: rule.organization_id,
+        projectId: rule.project_id ?? null,
+        ruleId: rule.id,
+        ruleName: rule.name,
+        historyId,
+        logCount: ctx.logCount,
+        baselineMetadata: ctx.baselineMetadata as unknown as Record<string, unknown> | null,
+      });
+    }
+
+    // Start of the firing episode: this run for a transition, else the stored one.
+    const firingSince = (decision.type === 'fire' ? now : (toDateOrNull(rule.last_triggered_at) ?? now)).toISOString();
+
+    if (decision.type === 'resolve') {
+      const incidentId = await resolveAlertIncident(rule, 'recovered', now);
+      if (decision.notification !== 'resolved') return null;
+      return {
+        kind: 'resolved',
+        rule_id: rule.id,
+        rule_name: rule.name,
+        organization_id: rule.organization_id,
+        project_id: rule.project_id ?? null,
+        alert_type: rule.alert_type,
+        log_count: ctx.logCount,
+        threshold: rule.threshold,
+        time_window: rule.time_window,
+        firing_since: firingSince,
+        resolved_at: now.toISOString(),
+        incident_id: incidentId,
+      };
+    }
+
+    const incidentId = await openAlertIncident(rule, {
+      now,
+      logCount: ctx.logCount,
+      historyId,
+      notification: historyKind,
+      baselineMetadata: ctx.baselineMetadata,
+    });
+    if (!historyKind || !historyId) return null;
+
+    return {
+      historyId,
+      rule_id: rule.id,
+      rule_name: rule.name,
+      organization_id: rule.organization_id,
+      project_id: rule.project_id ?? null,
+      log_count: ctx.logCount,
+      threshold: rule.threshold,
+      time_window: rule.time_window,
+      email_recipients: rule.email_recipients,
+      webhook_url: rule.webhook_url,
+      ...(ctx.baselineMetadata ? { baseline_metadata: ctx.baselineMetadata } : {}),
+      kind: historyKind,
+      firing_since: firingSince,
+      incident_id: incidentId,
+    };
+  }
+
+  /**
+   * Evaluate a rate-of-change rule: compute its signal, decide with the
+   * state machine (rows R1-R8) and apply the decision. Notifications keep
+   * the cooldown semantics: a still-anomalous firing rule notifies again
+   * only after the cooldown.
+   */
+  private async checkRateOfChangeRule(
+    rule: Selectable<AlertRulesTable>,
+    orgProjectsMap: Map<string, string[]>,
+    now: Date
+  ): Promise<AlertEvaluationResult | null> {
+    const projectIds = rule.project_id ? [rule.project_id] : (orgProjectsMap.get(rule.organization_id) ?? []);
+    const { signal, currentValue, baselineMetadata } = await this.rateOfChangeSignal(rule, projectIds, now);
+    const decision = decideRateOfChange(lifecycleSnapshot(rule), signal, now);
+    return this.applyDecision(rule, decision, {
+      now,
+      logCount: currentValue,
+      baselineMetadata: signal === 'anomaly' ? baselineMetadata : null,
+    });
+  }
+
+  /**
+   * Rate-of-change signal for one rule at `now`:
+   * - in cooldown while ok: `skipped`, without baseline queries;
+   * - in cooldown while firing: baseline and current rate only, to tell
+   *   `recovered` from `pending` (sustained counters untouched);
+   * - outside the cooldown: the baseline, deviation and sustained pipeline,
+   *   `anomaly`, `pending` or `recovered`.
+   * No projects, no baseline, a baseline below `min_baseline_value` or an
+   * incomplete rule configuration all count as `recovered`.
+   */
+  private async rateOfChangeSignal(
+    rule: Selectable<AlertRulesTable>,
+    projectIds: string[],
+    now: Date
+  ): Promise<{ signal: RateOfChangeSignal; currentValue: number; baselineMetadata: BaselineMetadata | null }> {
+    const recovered = (currentValue = 0, baselineMetadata: BaselineMetadata | null = null) => ({
+      signal: 'recovered' as const,
+      currentValue,
+      baselineMetadata,
+    });
+    if (!rule.baseline_type || !rule.deviation_multiplier) return recovered();
 
     const deviationMultiplier = Number(rule.deviation_multiplier);
     const minBaseline = rule.min_baseline_value != null ? Number(rule.min_baseline_value) : 10;
     const cooldownMin = Number(rule.cooldown_minutes || 60);
     const sustainedMin = Number(rule.sustained_minutes || 5);
-
-    // Get project IDs
-    const projectIds = rule.project_id
-      ? [rule.project_id]
-      : (orgProjectsMap.get(rule.organization_id) || []);
-
-    if (projectIds.length === 0) return null;
-
     const ruleMetadataFilters = (rule.metadata_filters ?? []) as MetadataFilter[];
+    const metadataFilters = ruleMetadataFilters.length > 0 ? ruleMetadataFilters : undefined;
 
-    // Check cooldown: skip if last trigger was within cooldown period
+    // Cooldown: the last notification (alert_history row) of this rule.
     const lastTrigger = await db
       .selectFrom('alert_history')
       .select(['triggered_at'])
       .where('rule_id', '=', rule.id)
       .orderBy('triggered_at', 'desc')
       .executeTakeFirst();
+    const inCooldown = lastTrigger
+      ? now.getTime() < new Date(lastTrigger.triggered_at).getTime() + cooldownMin * 60 * 1000
+      : false;
 
-    if (lastTrigger) {
-      const cooldownEnd = new Date(lastTrigger.triggered_at).getTime() + cooldownMin * 60 * 1000;
-      if (Date.now() < cooldownEnd) {
-        return null;
-      }
+    if (inCooldown && rule.state !== 'firing') {
+      return { signal: 'skipped', currentValue: 0, baselineMetadata: null };
     }
 
     // Calculate baseline. Pass the rule's metadata filters so the baseline is
@@ -492,13 +799,13 @@ export class AlertsService {
       projectIds,
       rule.level,
       rule.service || null,
-      ruleMetadataFilters.length > 0 ? ruleMetadataFilters : undefined,
+      metadataFilters,
     );
 
     if (!baseline || baseline.value < minBaseline) {
       // Reset sustained state - baseline too low or no data
-      this.sustainedState.delete(rule.id);
-      return null;
+      if (!inCooldown) this.sustainedState.delete(rule.id);
+      return recovered();
     }
 
     // Get current hourly rate
@@ -506,88 +813,71 @@ export class AlertsService {
       projectIds,
       rule.level,
       rule.service || null,
-      ruleMetadataFilters.length > 0 ? ruleMetadataFilters : undefined,
+      metadataFilters,
     );
 
     const deviationRatio = baseline.value > 0 ? currentValue / baseline.value : 0;
-
-    // Check if deviation exceeds multiplier
-    if (deviationRatio < deviationMultiplier) {
-      // Reset sustained state - not exceeding threshold
-      this.sustainedState.delete(rule.id);
-      return null;
-    }
-
-    // Sustained check: anomaly must persist for sustained_minutes
-    // We track consecutive checks (each ~60s apart)
-    const requiredChecks = Math.max(1, Math.ceil(sustainedMin / 1)); // 1 check per minute
-    const state = this.sustainedState.get(rule.id);
-    const now = Date.now();
-
-    if (state && (now - state.lastCheck) < 3 * 60 * 1000) {
-      // Within 3 minutes of last check - increment counter
-      const newCount = state.count + 1;
-      this.sustainedState.set(rule.id, { count: newCount, lastCheck: now });
-
-      if (newCount < requiredChecks) {
-        return null; // Not yet sustained enough
-      }
-    } else {
-      // First check or gap too large - start counting
-      this.sustainedState.set(rule.id, { count: 1, lastCheck: now });
-      if (requiredChecks > 1) {
-        return null; // Need more checks
-      }
-    }
-
-    // Reset sustained state after trigger
-    this.sustainedState.delete(rule.id);
-
     const baselineMetadata: BaselineMetadata = {
       baseline_value: baseline.value,
       current_value: currentValue,
       deviation_ratio: Math.round(deviationRatio * 100) / 100,
       baseline_type: rule.baseline_type,
-      evaluation_time: new Date().toISOString(),
+      evaluation_time: now.toISOString(),
     };
 
-    // Record alert trigger
-    const historyRecord = await db
-      .insertInto('alert_history')
-      .values({
-        rule_id: rule.id,
-        triggered_at: new Date(),
-        log_count: currentValue,
-        baseline_metadata: baselineMetadata,
-      })
-      .returning(['id'])
-      .executeTakeFirstOrThrow();
-
-    if (hooks.hasHandlers('afterAlertTriggered')) {
-      void hooks.runAfter('afterAlertTriggered', {
-        organizationId: rule.organization_id,
-        projectId: rule.project_id ?? null,
-        ruleId: rule.id,
-        ruleName: rule.name,
-        historyId: historyRecord.id,
-        logCount: currentValue,
-        baselineMetadata: baselineMetadata as unknown as Record<string, unknown>,
-      });
+    // Check if deviation exceeds multiplier
+    if (deviationRatio < deviationMultiplier) {
+      // Reset sustained state - not exceeding threshold
+      if (!inCooldown) this.sustainedState.delete(rule.id);
+      return recovered(currentValue, baselineMetadata);
     }
 
-    return {
-      historyId: historyRecord.id,
-      rule_id: rule.id,
-      rule_name: rule.name,
-      organization_id: rule.organization_id,
-      project_id: rule.project_id,
-      log_count: currentValue,
-      threshold: rule.threshold,
-      time_window: rule.time_window,
-      email_recipients: rule.email_recipients,
-      webhook_url: rule.webhook_url,
-      baseline_metadata: baselineMetadata,
-    };
+    // Still deviating inside the cooldown: no new notification yet.
+    if (inCooldown) return { signal: 'pending', currentValue, baselineMetadata };
+
+    // Sustained check: anomaly must persist for sustained_minutes
+    // We track consecutive checks (each ~60s apart)
+    const requiredChecks = Math.max(1, Math.ceil(sustainedMin / 1)); // 1 check per minute
+    const state = this.sustainedState.get(rule.id);
+    const nowMs = now.getTime();
+
+    if (state && (nowMs - state.lastCheck) < 3 * 60 * 1000) {
+      // Within 3 minutes of last check - increment counter
+      const newCount = state.count + 1;
+      this.sustainedState.set(rule.id, { count: newCount, lastCheck: nowMs });
+
+      if (newCount < requiredChecks) {
+        return { signal: 'pending', currentValue, baselineMetadata }; // Not yet sustained enough
+      }
+    } else {
+      // First check or gap too large - start counting
+      this.sustainedState.set(rule.id, { count: 1, lastCheck: nowMs });
+      if (requiredChecks > 1) {
+        return { signal: 'pending', currentValue, baselineMetadata }; // Need more checks
+      }
+    }
+
+    // Reset sustained state after an anomaly
+    this.sustainedState.delete(rule.id);
+
+    return { signal: 'anomaly', currentValue, baselineMetadata };
+  }
+
+  /**
+   * Notifications (alert_history rows) per rule since `since`, for the rules
+   * of one organization. Rules without any row are absent from the map.
+   */
+  async countTriggersSince(organizationId: string, since: Date): Promise<Map<string, number>> {
+    const rows = await db
+      .selectFrom('alert_history')
+      .innerJoin('alert_rules', 'alert_rules.id', 'alert_history.rule_id')
+      .select(['alert_history.rule_id', (eb) => eb.fn.count('alert_history.id').as('count')])
+      .where('alert_rules.organization_id', '=', organizationId)
+      .where('alert_history.triggered_at', '>=', since)
+      .groupBy('alert_history.rule_id')
+      .execute();
+
+    return new Map(rows.map((row) => [row.rule_id, Number(row.count)]));
   }
 
   /**
@@ -618,6 +908,8 @@ export class AlertsService {
         'alert_rules.service',
         'alert_rules.level',
         'alert_rules.alert_type',
+        'alert_rules.query',
+        'alert_rules.metadata_filters',
       ])
       .where('alert_rules.organization_id', '=', organizationId);
 
@@ -670,6 +962,8 @@ export class AlertsService {
         service: row.service,
         level: row.level,
         alertType: (row as any).alert_type || 'threshold',
+        query: row.query ?? null,
+        metadataFilters: (row.metadata_filters ?? []) as MetadataFilter[],
       })),
       total: Number(total?.count || 0),
       limit: options?.limit ?? 100,
@@ -695,6 +989,11 @@ export class AlertsService {
    * Preview how an alert rule would have performed over historical data
    */
   async previewAlertRule(input: PreviewAlertRuleInput): Promise<PreviewAlertRuleOutput> {
+    // 0. A query or metadata filters switch to the filtered path, which
+    // compiles exactly what the saved rule would evaluate. An invalid query
+    // throws AlertRuleInputError (400 { error, position }) before any read.
+    const filter = this.previewFilter(input);
+
     // 1. Parse time range
     const rangeMs: Record<PreviewRange, number> = {
       '1d': 86400000,
@@ -720,14 +1019,9 @@ export class AlertsService {
     }
 
     // 4. Execute time-bucketed query
-    const buckets = await this.getTimeBuckets(
-      from,
-      to,
-      bucketInterval,
-      projectIds,
-      input.level,
-      input.service
-    );
+    const buckets = filter
+      ? await this.getFilteredTimeBuckets(from, to, bucketInterval, projectIds, filter)
+      : await this.getTimeBuckets(from, to, bucketInterval, projectIds, input.level, input.service);
 
     if (buckets.length === 0) {
       return this.emptyPreviewResult(from, to, [
@@ -752,18 +1046,15 @@ export class AlertsService {
         incident.endTime,
         projectIds,
         input.level,
-        input.service
+        input.service,
+        filter
       );
     }
 
     // 7. Get affected services
-    const affectedServices = await this.getAffectedServices(
-      from,
-      to,
-      projectIds,
-      input.level,
-      input.service
-    );
+    const affectedServices = filter
+      ? await this.getFilteredAffectedServices(from, to, projectIds, filter)
+      : await this.getAffectedServices(from, to, projectIds, input.level, input.service);
 
     // 8. Compute statistics
     const statistics = this.computeStatistics(buckets, incidents, input.threshold);
@@ -787,6 +1078,80 @@ export class AlertsService {
       statistics,
       suggestions,
     };
+  }
+
+  /**
+   * The compiled filter of a preview with a query or metadata filters, or
+   * null when it has neither (the pre-1.6 aggregate path then runs
+   * unchanged). Same compiler as the evaluation, so the preview matches
+   * exactly what the saved rule counts.
+   */
+  private previewFilter(input: PreviewAlertRuleInput): AlertLogFilter | null {
+    const query = normalizeAlertQuery(input.query);
+    const metadataFilters = input.metadataFilters ?? [];
+    if (query === null && metadataFilters.length === 0) return null;
+
+    const compiled = compileAlertQuery({
+      query,
+      level: input.level,
+      service: input.service ?? null,
+      metadataFilters,
+    });
+    if (!compiled.ok) {
+      throw new AlertRuleInputError(compiled.error.message, compiled.error.position);
+    }
+    return filterToReservoirParams(compiled.filter);
+  }
+
+  /**
+   * Time-bucketed counts of the logs matching a compiled filter (query,
+   * levels, service, metadata), through the reservoir histogram on every
+   * engine. Empty buckets are dropped so the statistics match the
+   * aggregate path.
+   */
+  private async getFilteredTimeBuckets(
+    from: Date,
+    to: Date,
+    bucketInterval: string,
+    projectIds: string[],
+    filter: AlertLogFilter
+  ): Promise<Array<{ bucket: Date; count: number }>> {
+    const bucketSeconds = this.getBucketMs(bucketInterval) / 1000;
+    const result = await reservoir.histogram({
+      projectId: projectIds,
+      from,
+      to,
+      ...filter,
+      bucketSeconds,
+    });
+
+    return result.buckets
+      .filter((b) => b.total > 0)
+      .map((b) => ({ bucket: b.time, count: b.total }))
+      .sort((a, b) => a.bucket.getTime() - b.bucket.getTime());
+  }
+
+  /**
+   * Services of the logs matching a compiled filter (top 50), without the
+   * `unknown` placeholder.
+   */
+  private async getFilteredAffectedServices(
+    from: Date,
+    to: Date,
+    projectIds: string[],
+    filter: AlertLogFilter
+  ): Promise<string[]> {
+    const result = await reservoir.facets({
+      projectId: projectIds,
+      from,
+      to,
+      ...filter,
+      fields: [{ builtin: 'service' }],
+      limit: 50,
+    });
+
+    const services = result.facets[0]?.values ?? [];
+    return services.map((v) => v.value).filter((s) => s !== 'unknown');
   }
 
   /**
@@ -930,16 +1295,19 @@ export class AlertsService {
     to: Date,
     projectIds: string[],
     levels: LogLevel[],
-    service?: string | null
+    service?: string | null,
+    filter?: AlertLogFilter | null
   ): Promise<PreviewIncident['sampleLogs']> {
     const serviceFilter = service ? [service, 'unknown'] : undefined;
 
+    // With a compiled filter (query / metadata filters) the samples match
+    // exactly the logs counted in the buckets.
+    const criteria = filter ?? { level: levels, service: serviceFilter };
     const result = await reservoir.query({
       projectId: projectIds,
       from,
       to,
-      level: levels,
-      service: serviceFilter,
+      ...criteria,
       limit: 5,
       sortOrder: 'desc',
     });
@@ -1156,6 +1524,13 @@ export class AlertsService {
       emailRecipients: row.email_recipients,
       webhookUrl: row.webhook_url,
       metadataFilters: row.metadata_filters ?? [],
+      query: row.query ?? null,
+      state: row.state ?? 'ok',
+      lastTriggeredAt: toDateOrNull(row.last_triggered_at),
+      lastEvaluatedAt: toDateOrNull(row.last_evaluated_at),
+      lastNotifiedAt: toDateOrNull(row.last_notified_at),
+      snoozedUntil: toDateOrNull(row.snoozed_until),
+      renotifyMinutes: row.renotify_minutes != null ? Number(row.renotify_minutes) : null,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };

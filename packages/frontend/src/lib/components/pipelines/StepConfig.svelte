@@ -14,7 +14,7 @@
 <div class="space-y-3">
   {#if step.type === 'parser'}
     <div class="space-y-1.5">
-      <Label>Parser Format</Label>
+      <Label>Parser format</Label>
       <Select
         type="single"
         value={step.parser ?? 'nginx'}
@@ -35,7 +35,7 @@
 
   {:else if step.type === 'grok'}
     <div class="space-y-1.5">
-      <Label for="grok-pattern">Grok Pattern</Label>
+      <Label for="grok-pattern">Grok pattern</Label>
       <Input
         id="grok-pattern"
         type="text"
@@ -46,7 +46,7 @@
       />
     </div>
     <div class="space-y-1.5">
-      <Label for="grok-source">Source Field <span class="text-muted-foreground text-xs">(optional, defaults to message)</span></Label>
+      <Label for="grok-source">Source field <span class="text-muted-foreground text-xs">(optional, defaults to message)</span></Label>
       <Input
         id="grok-source"
         type="text"
@@ -58,7 +58,7 @@
 
   {:else if step.type === 'geoip'}
     <div class="space-y-1.5">
-      <Label for="geoip-field">Source IP Field</Label>
+      <Label for="geoip-field">Source IP field</Label>
       <Input
         id="geoip-field"
         type="text"
@@ -68,7 +68,7 @@
       />
     </div>
     <div class="space-y-1.5">
-      <Label for="geoip-target">Target Field</Label>
+      <Label for="geoip-target">Target field</Label>
       <Input
         id="geoip-target"
         type="text"

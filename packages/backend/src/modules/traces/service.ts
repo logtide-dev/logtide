@@ -10,6 +10,10 @@ import type {
   SpanRecord as ReservoirSpanRecord,
   TraceRecord as ReservoirTraceRecord,
 } from '@logtide/reservoir';
+import type { MetadataFilter } from '@logtide/shared';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STATS_P95_OPERATION_LIMIT = 100;
 
 export interface TraceListQuery {
   projectId: string | string[];
@@ -19,8 +23,56 @@ export interface TraceListQuery {
   to?: Date;
   minDurationMs?: number;
   maxDurationMs?: number;
+  operation?: string;
+  attributeFilters?: MetadataFilter[];
+  sortBy?: 'start_time' | 'duration';
+  sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+}
+
+export interface OperationRow {
+  service: string;
+  operation: string;
+  count: number;
+  errorCount: number;
+  errorRate: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  throughputPerMin: number;
+}
+
+export interface LatencyHistogramData {
+  bounds: number[];
+  counts: number[];
+}
+
+/**
+ * Linear interpolation of a percentile inside the histogram bucket that
+ * crosses it. Buckets are upper-inclusive: counts[i] holds
+ * bounds[i - 1] < duration <= bounds[i], the last one is open ended and is
+ * pinned to its lower bound. Returns 0 for an empty histogram.
+ */
+export function percentileFromHistogram(h: LatencyHistogramData, percentile: number): number {
+  const total = h.counts.reduce((sum, c) => sum + c, 0);
+  if (total <= 0) return 0;
+  const target = total * percentile;
+  let cumulative = 0;
+  for (let i = 0; i < h.counts.length; i++) {
+    const count = h.counts[i];
+    if (count <= 0) continue;
+    if (cumulative + count >= target) {
+      const lo = i === 0 ? 0 : h.bounds[i - 1];
+      if (i >= h.bounds.length) return lo;
+      const hi = h.bounds[i];
+      const fraction = (target - cumulative) / count;
+      return Math.round((lo + fraction * (hi - lo)) * 100) / 100;
+    }
+    cumulative += count;
+  }
+  return h.bounds[h.bounds.length - 1] ?? 0;
 }
 
 export interface TraceListResult {
@@ -218,6 +270,11 @@ export class TracesService {
       to: query.to || now,
       minDurationMs: query.minDurationMs,
       maxDurationMs: query.maxDurationMs,
+      operation: query.operation || undefined,
+      attributeFilters:
+        query.attributeFilters && query.attributeFilters.length > 0 ? query.attributeFilters : undefined,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
       limit: query.limit || 50,
       offset: query.offset || 0,
     });
@@ -226,6 +283,94 @@ export class TracesService {
       traces: result.traces.map(toTraceRecord),
       total: result.total,
     };
+  }
+
+  async getOperations(params: {
+    projectId: string;
+    service?: string;
+    from?: Date;
+    to?: Date;
+    limit?: number;
+  }): Promise<OperationRow[]> {
+    const to = params.to ?? new Date();
+    const from = params.from ?? new Date(to.getTime() - DAY_MS);
+    const windowMinutes = (to.getTime() - from.getTime()) / 60000;
+
+    const stats = await reservoir.getOperationStats({
+      projectId: params.projectId,
+      service: params.service || undefined,
+      from,
+      to,
+      limit: params.limit,
+    });
+
+    return stats
+      .map((s) => ({
+        service: s.service,
+        operation: s.operation,
+        count: s.count,
+        errorCount: s.errorCount,
+        errorRate: s.count > 0 ? s.errorCount / s.count : 0,
+        avgMs: s.avgMs,
+        p50Ms: s.p50Ms,
+        p95Ms: s.p95Ms,
+        p99Ms: s.p99Ms,
+        throughputPerMin: windowMinutes > 0 ? s.count / windowMinutes : 0,
+      }))
+      .sort((a, b) => b.p95Ms - a.p95Ms);
+  }
+
+  async getLatencyHistogram(params: {
+    projectId: string;
+    service?: string;
+    operation?: string;
+    from?: Date;
+    to?: Date;
+  }): Promise<LatencyHistogramData> {
+    const to = params.to ?? new Date();
+    const from = params.from ?? new Date(to.getTime() - DAY_MS);
+    const result = await reservoir.getLatencyHistogram({
+      projectId: params.projectId,
+      service: params.service || undefined,
+      operation: params.operation || undefined,
+      from,
+      to,
+    });
+    return { bounds: result.bounds, counts: result.counts };
+  }
+
+  /**
+   * p95 over the entry spans of the window, the same population as the
+   * operations table and the histogram. Never an average of percentiles.
+   */
+  private async getP95(
+    projectId: string,
+    from: Date,
+    to: Date,
+    filter: { service?: string; operation?: string }
+  ): Promise<number> {
+    const rows = await reservoir.getOperationStats({
+      projectId,
+      service: filter.service || undefined,
+      from,
+      to,
+      limit: STATS_P95_OPERATION_LIMIT,
+    });
+    if (rows.length === 0) return 0;
+
+    const matching = filter.operation ? rows.filter((r) => r.operation === filter.operation) : rows;
+    // An operation outside the busiest rows is not "no data": use the histogram.
+    if (matching.length === 0 && !(filter.operation && rows.length >= STATS_P95_OPERATION_LIMIT)) return 0;
+    if (matching.length === 1 && rows.length < STATS_P95_OPERATION_LIMIT) return matching[0].p95Ms;
+
+    const histogram = await reservoir.getLatencyHistogram({
+      projectId,
+      service: filter.service || undefined,
+      operation: filter.operation || undefined,
+      from,
+      to,
+    });
+    return percentileFromHistogram(histogram, 0.95);
   }
 
   async getTrace(traceId: string, projectId: string): Promise<TraceRecord | null> {
@@ -409,12 +554,37 @@ export class TracesService {
     }));
   }
 
-  async getStats(projectId: string, from?: Date, to?: Date) {
-    // Stats require aggregation (count, sum, avg, max) - use Kysely for timescale
-    if (reservoir.getEngineType() === 'timescale') {
+  async getStats(
+    projectId: string,
+    from?: Date,
+    to?: Date,
+    filter: { service?: string; operation?: string } = {}
+  ) {
+    const p95Window = {
+      to: to ?? new Date(),
+      from: from ?? new Date((to ?? new Date()).getTime() - 30 * DAY_MS),
+    };
+    const p95_duration_ms = await this.getP95(projectId, p95Window.from, p95Window.to, filter);
+    // Same window as p95 so the four cards describe one population.
+    const base = await this.getBaseStats(projectId, p95Window.from, p95Window.to, filter);
+    return { ...base, p95_duration_ms };
+  }
+
+  private async getBaseStats(
+    projectId: string,
+    from?: Date,
+    to?: Date,
+    filter: { service?: string; operation?: string } = {}
+  ) {
+    // Stats require aggregation (count, sum, avg, max) - use Kysely for timescale.
+    // An operation filter is a span match, which only queryTraces can express, so
+    // it takes the generic path on every engine.
+    if (reservoir.getEngineType() === 'timescale' && !filter.operation) {
       let query = db
         .selectFrom('traces')
         .where('project_id', '=', projectId);
+
+      if (filter.service) query = query.where('service_name', '=', filter.service);
 
       if (from) query = query.where('start_time', '>=', from);
       if (to) query = query.where('start_time', '<=', to);
@@ -450,6 +620,8 @@ export class TracesService {
       projectId,
       from: from || new Date(0),
       to: to || new Date(),
+      serviceName: filter.service || undefined,
+      operation: filter.operation || undefined,
       limit: 100000,
     });
 

@@ -291,6 +291,35 @@ describe('SIEM SSE Events', () => {
             }
         });
 
+        it('rejects an unknown source with 400', async () => {
+            const response = await app.inject({
+                method: 'GET',
+                url: `/api/v1/siem/events?organizationId=${testOrganization.id}&source=bogus&token=${authToken}`,
+            });
+
+            expect(response.statusCode).toBe(400);
+            expect(JSON.parse(response.payload).error).toBe('Validation error');
+        });
+
+        it('accepts repeated and comma separated source filters', async () => {
+            for (const qs of ['source=alert,monitor', 'source=alert&source=sigma']) {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 100);
+                try {
+                    const response = await app.inject({
+                        method: 'GET',
+                        url: `/api/v1/siem/events?organizationId=${testOrganization.id}&${qs}&token=${authToken}`,
+                        signal: controller.signal as any,
+                    });
+                    clearTimeout(timeoutId);
+                    expect([200, 500]).toContain(response.statusCode);
+                } catch (error: any) {
+                    clearTimeout(timeoutId);
+                    if (error.name !== 'AbortError' && error.code !== 'ABORT_ERR') throw error;
+                }
+            }
+        });
+
         it('should handle empty token', async () => {
             const response = await app.inject({
                 method: 'GET',

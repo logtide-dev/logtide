@@ -14,6 +14,21 @@ describe('redactDeliveryForApi', () => {
     expect(redacted.metadata).not.toHaveProperty('headers');
   });
 
+  it('removes a pagerduty routing key from the stored payload', () => {
+    const row = {
+      id: 'd',
+      metadata: {
+        payload: { routing_key: 'SECRETKEY', event_action: 'trigger', dedup_key: 'k' },
+        signingSecret: null,
+      },
+    } as any;
+    const redacted = redactDeliveryForApi(row);
+    expect(redacted.metadata.payload).not.toHaveProperty('routing_key');
+    expect(redacted.metadata.payload.event_action).toBe('trigger');
+    // the stored row is untouched
+    expect(row.metadata.payload.routing_key).toBe('SECRETKEY');
+  });
+
   it('passes through undefined and null metadata safely', () => {
     expect(redactDeliveryForApi(undefined)).toBeUndefined();
     expect(redactDeliveryForApi({ id: 'd', metadata: null } as any).metadata).toBeNull();
@@ -100,6 +115,20 @@ describe('webhookDeliveryService', () => {
       const d = await create(orgId, 'mon-2:down');
       await webhookDeliveryService.markRetrying(d.id, 1, new Date(Date.now() + 5000), 'HTTP 500');
       expect((await lookup(orgId, 'mon-2:down'))?.id).toBe(d.id);
+    });
+
+    it('markRetrying does not move a dead row back to failed', async () => {
+      const d = await create(orgId, 'mon-dead:down');
+      await webhookDeliveryService.markDead(d.id, 5, 'superseded');
+      await webhookDeliveryService.markRetrying(d.id, 2, new Date(Date.now() + 5000), 'HTTP 500');
+      const row = await db
+        .selectFrom('webhook_deliveries')
+        .select(['status', 'attempt_count', 'last_error'])
+        .where('id', '=', d.id)
+        .executeTakeFirstOrThrow();
+      expect(row.status).toBe('dead');
+      expect(row.attempt_count).toBe(5);
+      expect(row.last_error).toBe('superseded');
     });
 
     it('ignores terminal deliveries so a repeated event is not suppressed', async () => {

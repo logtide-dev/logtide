@@ -1,5 +1,7 @@
+import type { Kysely } from 'kysely';
 import { db } from '../../database/connection.js';
-import type { MaintenanceStatus } from '../../database/types.js';
+import type { Database, MaintenanceStatus } from '../../database/types.js';
+import { assertMonitorsInProject } from '../monitoring/component-links.js';
 
 export interface Maintenance {
   id: string;
@@ -16,6 +18,8 @@ export interface Maintenance {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+  /** Monitors (public components) affected by the maintenance. */
+  monitorIds: string[];
 }
 
 export interface CreateMaintenanceInput {
@@ -26,6 +30,7 @@ export interface CreateMaintenanceInput {
   scheduledStart: Date;
   scheduledEnd: Date;
   autoUpdateStatus?: boolean;
+  monitorIds?: string[];
   createdBy: string;
 }
 
@@ -36,6 +41,8 @@ export interface UpdateMaintenanceInput {
   scheduledStart?: Date;
   scheduledEnd?: Date;
   autoUpdateStatus?: boolean;
+  /** Replaces the linked monitors; an empty array clears them, undefined keeps them. */
+  monitorIds?: string[];
 }
 
 export class MaintenanceService {
@@ -48,7 +55,8 @@ export class MaintenanceService {
       .orderBy('scheduled_start', 'desc')
       .execute();
 
-    return rows.map(this.mapMaintenance);
+    const links = await this.loadMonitorIds(db, rows.map((r) => r.id));
+    return rows.map((r) => this.mapMaintenance(r, links.get(r.id) ?? []));
   }
 
   async getById(id: string, organizationId: string): Promise<Maintenance | null> {
@@ -59,26 +67,44 @@ export class MaintenanceService {
       .where('organization_id', '=', organizationId)
       .executeTakeFirst();
 
-    return row ? this.mapMaintenance(row) : null;
+    if (!row) return null;
+    const links = await this.loadMonitorIds(db, [row.id]);
+    return this.mapMaintenance(row, links.get(row.id) ?? []);
   }
 
   async create(input: CreateMaintenanceInput): Promise<Maintenance> {
-    const row = await db
-      .insertInto('scheduled_maintenances')
-      .values({
-        organization_id: input.organizationId,
-        project_id: input.projectId,
-        title: input.title,
-        description: input.description || null,
-        scheduled_start: input.scheduledStart,
-        scheduled_end: input.scheduledEnd,
-        auto_update_status: input.autoUpdateStatus ?? true,
-        created_by: input.createdBy,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    return db.transaction().execute(async (trx) => {
+      const monitorIds = await assertMonitorsInProject(
+        trx,
+        input.monitorIds ?? [],
+        input.projectId,
+        input.organizationId,
+      );
 
-    return this.mapMaintenance(row);
+      const row = await trx
+        .insertInto('scheduled_maintenances')
+        .values({
+          organization_id: input.organizationId,
+          project_id: input.projectId,
+          title: input.title,
+          description: input.description || null,
+          scheduled_start: input.scheduledStart,
+          scheduled_end: input.scheduledEnd,
+          auto_update_status: input.autoUpdateStatus ?? true,
+          created_by: input.createdBy,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      if (monitorIds.length > 0) {
+        await trx
+          .insertInto('maintenance_monitors')
+          .values(monitorIds.map((monitor_id) => ({ maintenance_id: row.id, monitor_id })))
+          .execute();
+      }
+
+      return this.mapMaintenance(row, monitorIds);
+    });
   }
 
   async update(
@@ -87,26 +113,53 @@ export class MaintenanceService {
     input: UpdateMaintenanceInput,
   ): Promise<Maintenance | null> {
     const now = new Date();
-    const row = await db
-      .updateTable('scheduled_maintenances')
-      .set({
-        ...(input.title !== undefined && { title: input.title }),
-        ...(input.description !== undefined && { description: input.description || null }),
-        ...(input.status !== undefined && { status: input.status }),
-        ...(input.scheduledStart !== undefined && { scheduled_start: input.scheduledStart }),
-        ...(input.scheduledEnd !== undefined && { scheduled_end: input.scheduledEnd }),
-        ...(input.autoUpdateStatus !== undefined && { auto_update_status: input.autoUpdateStatus }),
-        // Track actual start/end times
-        ...(input.status === 'in_progress' && { actual_start: now }),
-        ...(input.status === 'completed' && { actual_end: now }),
-        updated_at: now,
-      })
-      .where('id', '=', id)
-      .where('organization_id', '=', organizationId)
-      .returningAll()
-      .executeTakeFirst();
+    return db.transaction().execute(async (trx) => {
+      let monitorIds: string[] | undefined;
+      if (input.monitorIds !== undefined) {
+        const existing = await trx
+          .selectFrom('scheduled_maintenances')
+          .select('project_id')
+          .where('id', '=', id)
+          .where('organization_id', '=', organizationId)
+          .executeTakeFirst();
+        if (!existing) return null;
+        monitorIds = await assertMonitorsInProject(trx, input.monitorIds, existing.project_id, organizationId);
+      }
 
-    return row ? this.mapMaintenance(row) : null;
+      const row = await trx
+        .updateTable('scheduled_maintenances')
+        .set({
+          ...(input.title !== undefined && { title: input.title }),
+          ...(input.description !== undefined && { description: input.description || null }),
+          ...(input.status !== undefined && { status: input.status }),
+          ...(input.scheduledStart !== undefined && { scheduled_start: input.scheduledStart }),
+          ...(input.scheduledEnd !== undefined && { scheduled_end: input.scheduledEnd }),
+          ...(input.autoUpdateStatus !== undefined && { auto_update_status: input.autoUpdateStatus }),
+          // Track actual start/end times
+          ...(input.status === 'in_progress' && { actual_start: now }),
+          ...(input.status === 'completed' && { actual_end: now }),
+          updated_at: now,
+        })
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .returningAll()
+        .executeTakeFirst();
+      if (!row) return null;
+
+      if (monitorIds !== undefined) {
+        await trx.deleteFrom('maintenance_monitors').where('maintenance_id', '=', row.id).execute();
+        if (monitorIds.length > 0) {
+          await trx
+            .insertInto('maintenance_monitors')
+            .values(monitorIds.map((monitor_id) => ({ maintenance_id: row.id, monitor_id })))
+            .execute();
+        }
+      } else {
+        monitorIds = (await this.loadMonitorIds(trx, [row.id])).get(row.id) ?? [];
+      }
+
+      return this.mapMaintenance(row, monitorIds);
+    });
   }
 
   async delete(id: string, organizationId: string): Promise<boolean> {
@@ -160,7 +213,26 @@ export class MaintenanceService {
     return new Set(rows.map((r) => r.project_id));
   }
 
-  private mapMaintenance(row: any): Maintenance {
+  private async loadMonitorIds(
+    executor: Kysely<Database>,
+    maintenanceIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (maintenanceIds.length === 0) return map;
+    const rows = await executor
+      .selectFrom('maintenance_monitors')
+      .select(['maintenance_id', 'monitor_id'])
+      .where('maintenance_id', 'in', maintenanceIds)
+      .execute();
+    for (const r of rows) {
+      const list = map.get(r.maintenance_id);
+      if (list) list.push(r.monitor_id);
+      else map.set(r.maintenance_id, [r.monitor_id]);
+    }
+    return map;
+  }
+
+  private mapMaintenance(row: any, monitorIds: string[] = []): Maintenance {
     return {
       id: row.id,
       organizationId: row.organization_id,
@@ -176,6 +248,7 @@ export class MaintenanceService {
       createdBy: row.created_by,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
+      monitorIds,
     };
   }
 }

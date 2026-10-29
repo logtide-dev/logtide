@@ -2,6 +2,54 @@ import type { FastifyPluginAsync } from 'fastify';
 import { tracesService } from './service.js';
 import { requireFullAccess, resolveQueryProjectId } from '../auth/guards.js';
 import { verifyProjectAccess } from '../auth/verify-project-access.js';
+import { parseAttrFilters } from './attr-filters.js';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+
+/**
+ * Single-project scope for the APM read endpoints: API-key boundary via
+ * resolveQueryProjectId, then session project access. Sends 400/403 itself
+ * and returns null when the request must stop.
+ */
+async function resolveProjectScope(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  queryProjectId: string | undefined
+): Promise<string | null> {
+  const resolved = await resolveQueryProjectId(request, reply, queryProjectId);
+  if (resolved === null) return null; // 403 already sent
+
+  const projectId = Array.isArray(resolved) ? resolved[0] : resolved;
+  if (!projectId) {
+    reply.code(400).send({ error: 'Project context missing - provide projectId query parameter' });
+    return null;
+  }
+
+  const user = (request as any).user;
+  if (user?.id) {
+    const hasAccess = await verifyProjectAccess(projectId, user.id);
+    if (!hasAccess) {
+      reply.code(403).send({ error: 'Access denied - you do not have access to this project' });
+      return null;
+    }
+  }
+
+  return projectId;
+}
+
+/** Parses an optional from/to pair; sends 400 and returns null when from is after to. */
+function resolveWindow(
+  reply: FastifyReply,
+  from: string | undefined,
+  to: string | undefined
+): { from?: Date; to?: Date } | null {
+  const fromDate = from ? new Date(from) : undefined;
+  const toDate = to ? new Date(to) : undefined;
+  if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+    reply.code(400).send({ error: 'from must not be after to' });
+    return null;
+  }
+  return { from: fromDate, to: toDate };
+}
 
 const tracesRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/api/v1/traces', {
@@ -18,6 +66,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
           to: { type: 'string', format: 'date-time' },
           minDurationMs: { type: 'number', minimum: 0 },
           maxDurationMs: { type: 'number', minimum: 0 },
+          operation: { type: 'string', maxLength: 500 },
+          attr: { type: 'string', maxLength: 4096 },
+          sortBy: { type: 'string', enum: ['start_time', 'duration'] },
+          sortOrder: { type: 'string', enum: ['asc', 'desc'] },
           limit: { type: 'number', minimum: 1, maximum: 100, default: 50 },
           offset: { type: 'number', minimum: 0, default: 0 },
         },
@@ -34,6 +86,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         to,
         minDurationMs,
         maxDurationMs,
+        operation,
+        attr,
+        sortBy,
+        sortOrder,
         limit,
         offset,
       } = request.query as {
@@ -44,9 +100,18 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
         minDurationMs?: number;
         maxDurationMs?: number;
+        operation?: string;
+        attr?: string;
+        sortBy?: 'start_time' | 'duration';
+        sortOrder?: 'asc' | 'desc';
         limit?: number;
         offset?: number;
       };
+
+      const attrResult = parseAttrFilters(attr);
+      if (!attrResult.ok) {
+        return reply.code(400).send({ error: attrResult.error, position: attrResult.position });
+      }
 
       // Resolve projectId enforcing API-key tenant boundary
       const resolvedProjectIdRaw = await resolveQueryProjectId(request, reply, queryProjectId);
@@ -86,6 +151,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         to: to ? new Date(to) : undefined,
         minDurationMs,
         maxDurationMs,
+        operation: operation || undefined,
+        attributeFilters: attrResult.filters,
+        sortBy,
+        sortOrder,
         limit: limit || 50,
         offset: offset || 0,
       });
@@ -203,6 +272,88 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // Static routes MUST be registered before :traceId wildcard
+  fastify.get('/api/v1/traces/operations', {
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          service: { type: 'string' },
+          from: { type: 'string', format: 'date-time' },
+          to: { type: 'string', format: 'date-time' },
+          limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
+        },
+      },
+    },
+    handler: async (request: any, reply) => {
+      if (!await requireFullAccess(request, reply)) return;
+
+      const { projectId: queryProjectId, service, from, to, limit } = request.query as {
+        projectId?: string;
+        service?: string;
+        from?: string;
+        to?: string;
+        limit?: number;
+      };
+
+      const projectId = await resolveProjectScope(request, reply, queryProjectId);
+      if (!projectId) return;
+
+      const window = resolveWindow(reply, from, to);
+      if (!window) return;
+
+      const operations = await tracesService.getOperations({
+        projectId,
+        service: service || undefined,
+        from: window.from,
+        to: window.to,
+        limit: limit || 50,
+      });
+
+      return { operations };
+    },
+  });
+
+  fastify.get('/api/v1/traces/latency-histogram', {
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          service: { type: 'string' },
+          operation: { type: 'string', maxLength: 500 },
+          from: { type: 'string', format: 'date-time' },
+          to: { type: 'string', format: 'date-time' },
+        },
+      },
+    },
+    handler: async (request: any, reply) => {
+      if (!await requireFullAccess(request, reply)) return;
+
+      const { projectId: queryProjectId, service, operation, from, to } = request.query as {
+        projectId?: string;
+        service?: string;
+        operation?: string;
+        from?: string;
+        to?: string;
+      };
+
+      const projectId = await resolveProjectScope(request, reply, queryProjectId);
+      if (!projectId) return;
+
+      const window = resolveWindow(reply, from, to);
+      if (!window) return;
+
+      return tracesService.getLatencyHistogram({
+        projectId,
+        service: service || undefined,
+        operation: operation || undefined,
+        from: window.from,
+        to: window.to,
+      });
+    },
+  });
+
   fastify.get('/api/v1/traces/services', {
     schema: {
       querystring: {
@@ -349,6 +500,8 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         type: 'object',
         properties: {
           projectId: { type: 'string' },
+          service: { type: 'string' },
+          operation: { type: 'string', maxLength: 500 },
           from: { type: 'string', format: 'date-time' },
           to: { type: 'string', format: 'date-time' },
         },
@@ -357,10 +510,12 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
     handler: async (request: any, reply) => {
       if (!await requireFullAccess(request, reply)) return;
 
-      const { projectId: queryProjectId, from, to } = request.query as {
+      const { projectId: queryProjectId, from, to, service, operation } = request.query as {
         projectId?: string;
         from?: string;
         to?: string;
+        service?: string;
+        operation?: string;
       };
 
       // Resolve projectId enforcing API-key tenant boundary
@@ -386,7 +541,8 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
       const stats = await tracesService.getStats(
         projectId,
         from ? new Date(from) : undefined,
-        to ? new Date(to) : undefined
+        to ? new Date(to) : undefined,
+        { service: service || undefined, operation: operation || undefined }
       );
 
       return stats;

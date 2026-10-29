@@ -1,175 +1,118 @@
 <script lang="ts">
-    import { onMount, untrack } from "svelte";
+    import { untrack, type Snippet } from "svelte";
+    import { goto } from "$app/navigation";
     import { page } from "$app/state";
-    import { adminAPI, type OrganizationDetails, type EntitlementMap, type EntitlementUpdate } from "$lib/api/admin";
+    import { adminAPI, type OrganizationDetails } from "$lib/api/admin";
     import { authStore } from "$lib/stores/auth";
-    import { browser } from "$app/environment";
-    import { UsersAPI } from "$lib/api/users";
-    import { get } from "svelte/store";
-    import { Switch } from "$lib/components/ui/switch";
-    import { Button, buttonVariants } from "$lib/components/ui/button";
+    import { toastStore } from "$lib/stores/toast";
+    import { formatCount } from "$lib/utils/format-number";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
+    import DataTable from "$lib/components/app/DataTable.svelte";
+    import type { DataTableColumn } from "$lib/components/app/data-table";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
+    import SettingsSection from "$lib/components/app/SettingsSection.svelte";
+    import DangerZone from "$lib/components/app/DangerZone.svelte";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
+    import CopyButton from "$lib/components/app/CopyButton.svelte";
+    import Timestamp from "$lib/components/app/Timestamp.svelte";
+    import PageSkeleton from "$lib/components/shell/PageSkeleton.svelte";
+    import { Button } from "$lib/components/ui/button";
     import { Badge } from "$lib/components/ui/badge";
-    import {
-        Card,
-        CardContent,
-        CardDescription,
-        CardHeader,
-        CardTitle,
-    } from "$lib/components/ui/card";
-    import {
-        Table,
-        TableBody,
-        TableCell,
-        TableHead,
-        TableHeader,
-        TableRow,
-    } from "$lib/components/ui/table";
     import Input from "$lib/components/ui/input/input.svelte";
     import Label from "$lib/components/ui/label/label.svelte";
-    import {
-        Building2,
-        Users,
-        FolderKanban,
-        Trash2,
-        ArrowLeft,
-        AlertTriangle,
-        Clock,
-        Save,
-        ShieldCheck,
-    } from "@lucide/svelte";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
-    import { goto } from "$app/navigation";
+    import Save from "@lucide/svelte/icons/save";
+    import Trash2 from "@lucide/svelte/icons/trash-2";
+    import OrgSummaryTiles from "$lib/components/admin/OrgSummaryTiles.svelte";
+    import OrgSideNav, { ORG_NAV_ITEMS } from "$lib/components/admin/OrgSideNav.svelte";
+    import OrgEntitlementsSection from "$lib/components/admin/OrgEntitlementsSection.svelte";
+    import { createLatestGuard } from "$lib/components/admin/latest-request";
 
-    const orgId = $derived(page.params.id);
-    const usersAPI = new UsersAPI(() => get(authStore).token);
-    let org: OrganizationDetails | null = $state(null);
+    type Member = OrganizationDetails["members"][number];
+    type Project = OrganizationDetails["projects"][number];
+
+    const orgId = $derived(page.params.id ?? "");
+    const guard = createLatestGuard();
+
+    let org = $state<OrganizationDetails | null>(null);
     let loading = $state(true);
     let error = $state("");
+
     let showDeleteDialog = $state(false);
-    let deleting = $state(false);
+
     let retentionDays = $state(90);
-    let auditRetentionDays = $state<number | ''>('');
+    let auditRetentionDays = $state<number | "">("");
     let savingRetention = $state(false);
     let retentionError = $state("");
 
-    // Entitlements (#214)
-    let entitlements = $state<EntitlementMap>({});
-    let entitlementsLoading = $state(true);
-    let entitlementsError = $state("");
-    let savingEntitlements = $state(false);
-    // Working copy of numeric caps as strings for the inputs ("" = unlimited / null).
-    let limitInputs = $state<Record<string, string>>({});
+    // Per-project logs (30 days) feed the projects table and the summary tile.
+    let projectLogs = $state<Record<string, number> | null>(null);
+    let projectLogsLoading = $state(true);
 
-    async function loadEntitlements() {
-        if ($authStore.user?.is_admin !== true) return;
+    let activeSection = $state("projects");
 
-        entitlementsLoading = true;
-        entitlementsError = "";
-        try {
-            const res = await adminAPI.getOrganizationEntitlements(orgId);
-            entitlements = res.entitlements;
-            const inputs: Record<string, string> = {};
-            for (const [cap, val] of Object.entries(entitlements)) {
-                if (val.kind === "limit" || val.kind === "quota") {
-                    inputs[cap] = val.limit === null ? "" : String(val.limit);
-                }
-            }
-            limitInputs = inputs;
-        } catch (err: any) {
-            entitlementsError = err.message || "Failed to load entitlements";
-        } finally {
-            entitlementsLoading = false;
-        }
-    }
+    const logs30d = $derived(
+        projectLogs ? Object.values(projectLogs).reduce((sum, n) => sum + n, 0) : null,
+    );
 
-    function booleanCaps(): string[] {
-        return Object.keys(entitlements)
-            .filter((c) => entitlements[c].kind === "boolean")
-            .sort();
-    }
-
-    function numericCaps(): string[] {
-        return Object.keys(entitlements)
-            .filter((c) => {
-                const k = entitlements[c].kind;
-                return k === "limit" || k === "quota";
-            })
-            .sort();
-    }
-
-    async function saveEntitlements() {
-        savingEntitlements = true;
-        entitlementsError = "";
-        try {
-            const updates: EntitlementUpdate[] = [];
-
-            for (const cap of booleanCaps()) {
-                const val = entitlements[cap];
-                if (val.kind === "boolean") {
-                    updates.push({ capability: cap, enabled: val.enabled });
-                }
-            }
-
-            for (const cap of numericCaps()) {
-                const raw = (limitInputs[cap] ?? "").trim();
-                let limitValue: number | null;
-                if (raw === "") {
-                    limitValue = null; // unlimited
-                } else {
-                    const n = Number(raw);
-                    if (!Number.isInteger(n) || n < 0) {
-                        entitlementsError = `Invalid value for ${cap}: must be a non-negative integer or empty for unlimited`;
-                        savingEntitlements = false;
-                        return;
-                    }
-                    limitValue = n;
-                }
-                updates.push({ capability: cap, limitValue });
-            }
-
-            await adminAPI.updateOrganizationEntitlements(orgId, updates);
-            await loadEntitlements(); // refresh from server
-        } catch (err: any) {
-            entitlementsError = err.message || "Failed to save entitlements";
-        } finally {
-            savingEntitlements = false;
-        }
-    }
+    const retentionDirty = $derived(
+        !!org &&
+            (retentionDays !== org.retentionDays ||
+                (auditRetentionDays === "" ? null : Number(auditRetentionDays)) !== org.auditRetentionDays),
+    );
 
     async function loadOrganization() {
-        if ($authStore.user?.is_admin !== true) return;
-
+        const ticket = guard.begin();
         loading = true;
         error = "";
         try {
-            org = await adminAPI.getOrganizationDetails(orgId);
-            retentionDays = org.retentionDays || 90;
-            auditRetentionDays = org.auditRetentionDays ?? '';
-        } catch (err: any) {
-            error = err.message || "Failed to load organization";
+            const res = await adminAPI.getOrganizationDetails(orgId);
+            if (!guard.isCurrent(ticket)) return;
+            org = res;
+            retentionDays = res.retentionDays || 90;
+            auditRetentionDays = res.auditRetentionDays ?? "";
+        } catch (err) {
+            if (!guard.isCurrent(ticket)) return;
+            error = err instanceof Error ? err.message : "Failed to load organization";
+            toastStore.error(error);
         } finally {
-            loading = false;
+            if (guard.isCurrent(ticket)) loading = false;
         }
+    }
+
+    // Best effort: a failure only leaves the log numbers as a dash.
+    async function loadProjectLogs() {
+        projectLogsLoading = true;
+        const id = orgId;
+        try {
+            const acc: Record<string, number> = {};
+            const MAX_PAGES = 5;
+            for (let p = 1; p <= MAX_PAGES; p++) {
+                const res = await adminAPI.getProjects({ organizationId: id, page: p, limit: 100 });
+                for (const proj of res.projects) acc[proj.id] = proj.logs30d ?? proj.logsCount ?? 0;
+                if (p >= (res.totalPages ?? 1)) break;
+            }
+            if (id === orgId) projectLogs = acc;
+        } catch {
+            if (id === orgId) projectLogs = null;
+        } finally {
+            if (id === orgId) projectLogsLoading = false;
+        }
+    }
+
+    function loadAll() {
+        void loadOrganization();
+        void loadProjectLogs();
     }
 
     async function saveRetention() {
         if (!org) return;
-        if (retentionDays < 1 || retentionDays > 365) {
-            retentionError = "Retention must be between 1 and 365 days";
+        if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 365) {
+            retentionError = "Log retention must be between 1 and 365 days";
             return;
         }
-        const auditVal = auditRetentionDays === '' ? null : Number(auditRetentionDays);
+        const auditVal = auditRetentionDays === "" ? null : Number(auditRetentionDays);
         if (auditVal !== null && (!Number.isInteger(auditVal) || auditVal < 1 || auditVal > 3650)) {
-            retentionError = "Audit retention must be between 1 and 3650 days, or empty for keep forever";
+            retentionError = "Audit retention must be between 1 and 3650 days, or empty to keep forever";
             return;
         }
 
@@ -181,8 +124,10 @@
                 auditRetentionDays: auditVal,
             });
             org = { ...org, retentionDays, auditRetentionDays: auditVal };
-        } catch (err: any) {
-            retentionError = err.message || "Failed to update retention";
+            toastStore.success("Retention updated");
+        } catch (err) {
+            retentionError = err instanceof Error ? err.message : "Failed to update retention";
+            toastStore.error(retentionError);
         } finally {
             savingRetention = false;
         }
@@ -190,381 +135,277 @@
 
     async function handleDelete() {
         if (!org) return;
-        deleting = true;
         try {
             await adminAPI.deleteOrganization(org.id);
-            goto("/dashboard/admin/organizations");
-        } catch (err: any) {
-            error = err.message || "Failed to delete organization";
-        } finally {
-            deleting = false;
-            showDeleteDialog = false;
+        } catch (err) {
+            toastStore.error(err instanceof Error ? err.message : "Failed to delete organization");
+            // Keeps the dialog open and the page as it is.
+            throw err;
         }
+        toastStore.success(`Organization "${org.name}" deleted`);
+        goto("/dashboard/admin/organizations");
     }
 
-    function formatDate(dateString: string) {
-        return new Date(dateString).toLocaleString('en-US');
-    }
-
-    function loadAll() {
-        loadOrganization();
-        loadEntitlements();
+    // Section highlight follows the scroll position.
+    function updateActive() {
+        let current = ORG_NAV_ITEMS[0].id;
+        for (const item of ORG_NAV_ITEMS) {
+            const el = document.getElementById(item.id);
+            if (el && el.getBoundingClientRect().top <= 120) current = item.id;
+        }
+        const { scrollHeight } = document.documentElement;
+        if (scrollHeight > window.innerHeight && window.innerHeight + window.scrollY >= scrollHeight - 2) {
+            current = ORG_NAV_ITEMS[ORG_NAV_ITEMS.length - 1].id;
+        }
+        activeSection = current;
     }
 
     $effect(() => {
-        if (browser && $authStore.user) {
-            if ($authStore.user.is_admin === undefined) {
-                untrack(() => {
-                    usersAPI
-                        .getCurrentUser()
-                        .then(({ user }) => {
-                            const currentUser = get(authStore).user;
-                            if (currentUser) {
-                                authStore.updateUser({ ...currentUser, ...user });
-                                if (user.is_admin) loadAll();
-                            }
-                        })
-                        .catch(() => goto("/dashboard"));
-                });
-            } else if ($authStore.user.is_admin === false) {
-                untrack(() => goto("/dashboard"));
-            }
-        }
+        if (!org) return;
+        updateActive();
+        window.addEventListener("scroll", updateActive, { passive: true });
+        window.addEventListener("resize", updateActive);
+        return () => {
+            window.removeEventListener("scroll", updateActive);
+            window.removeEventListener("resize", updateActive);
+        };
     });
 
-    onMount(() => {
-        if ($authStore.user?.is_admin) loadAll();
+    // Loads once the admin check passes, and again when navigating between organizations.
+    let loadedFor = "";
+    $effect(() => {
+        const id = orgId;
+        if ($authStore.user?.is_admin !== true || !id || id === loadedFor) return;
+        loadedFor = id;
+        untrack(loadAll);
     });
+
+    const asCell = (s: unknown) => s as Snippet<[never]>;
+
+    const projectColumns: DataTableColumn<Project>[] = [
+        { key: "name", header: "Project", class: "min-w-[10rem]", cell: asCell(projectNameCell) },
+        { key: "logs", header: "Logs, 30 days", class: "text-right tabular-nums", cell: asCell(projectLogsCell) },
+        { key: "created", header: "Created", class: "whitespace-nowrap", cell: asCell(projectCreatedCell) },
+    ];
+
+    const memberColumns: DataTableColumn<Member>[] = [
+        { key: "name", header: "Member", class: "min-w-[10rem]", cell: asCell(memberNameCell) },
+        { key: "email", header: "Email", class: "hidden md:table-cell", cell: asCell(memberEmailCell) },
+        { key: "role", header: "Role", cell: asCell(memberRoleCell) },
+        { key: "joined", header: "Joined", class: "whitespace-nowrap", cell: asCell(memberJoinedCell) },
+    ];
 </script>
 
 <svelte:head>
-    <title>{org?.name ?? 'Organization'} - Admin - LogTide</title>
+    <title>{org?.name ?? "Organization"} - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex items-center gap-4">
-        <a
-            href="/dashboard/admin/organizations"
-            class={buttonVariants({
-                variant: "ghost",
-                size: "sm",
-            })}
-        >
-            <ArrowLeft class="h-4 w-4 mr-2" />
-            Back to Organizations
-        </a>
+{#snippet projectNameCell(p: Project)}
+    <a
+        href="/dashboard/admin/projects/{p.id}"
+        class="block truncate font-medium hover:text-primary hover:underline underline-offset-4"
+    >
+        {p.name}
+    </a>
+{/snippet}
+
+{#snippet projectLogsCell(p: Project)}
+    {#if projectLogs && p.id in projectLogs}{formatCount(projectLogs[p.id])}{:else}<span class="text-muted-foreground">-</span>{/if}
+{/snippet}
+
+{#snippet projectCreatedCell(p: Project)}<Timestamp value={p.created_at} relative />{/snippet}
+
+{#snippet memberNameCell(m: Member)}
+    <a
+        href="/dashboard/admin/users/{m.id}"
+        class="block truncate font-medium hover:text-primary hover:underline underline-offset-4"
+    >
+        {m.name || m.email}
+    </a>
+{/snippet}
+
+{#snippet memberEmailCell(m: Member)}<span class="text-muted-foreground">{m.email}</span>{/snippet}
+
+{#snippet memberRoleCell(m: Member)}
+    <Badge variant={m.role === "owner" ? "default" : "secondary"}>{m.role}</Badge>
+{/snippet}
+
+{#snippet memberJoinedCell(m: Member)}<Timestamp value={m.created_at} relative />{/snippet}
+
+{#snippet projectMobileRow(p: Project)}
+    <div class="space-y-1">
+        <a href="/dashboard/admin/projects/{p.id}" class="block truncate font-medium hover:text-primary">{p.name}</a>
+        <p class="text-xs text-muted-foreground">
+            {#if projectLogs && p.id in projectLogs}{formatCount(projectLogs[p.id])} logs in 30 days{:else}Created <Timestamp value={p.created_at} relative />{/if}
+        </p>
     </div>
+{/snippet}
 
-    {#if loading}
-        <div class="text-center py-12">
-            <p class="text-muted-foreground">Loading organization...</p>
+{#snippet memberMobileRow(m: Member)}
+    <div class="space-y-1">
+        <div class="flex items-center justify-between gap-2">
+            <a href="/dashboard/admin/users/{m.id}" class="block truncate font-medium hover:text-primary">{m.name || m.email}</a>
+            <Badge variant={m.role === "owner" ? "default" : "secondary"}>{m.role}</Badge>
         </div>
-    {:else if error}
-        <div class="text-center py-12">
-            <p class="text-destructive">{error}</p>
-        </div>
+        <p class="truncate text-xs text-muted-foreground">{m.email}</p>
+    </div>
+{/snippet}
+
+<div class="space-y-6">
+    <PageHeader
+        title={org?.name ?? "Organization"}
+        appliesTo="instance"
+        breadcrumbs={[
+            { label: "Admin", href: "/dashboard/admin" },
+            { label: "Organizations", href: "/dashboard/admin/organizations" },
+            { label: org?.name ?? "Organization" },
+        ]}
+    >
+        {#snippet meta()}
+            {#if org}
+                <span class="font-mono text-sm text-muted-foreground">{org.slug}</span>
+            {/if}
+        {/snippet}
+        {#snippet actions()}
+            {#if org}
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                    <span class="inline-flex items-center gap-1">
+                        ID <span class="font-mono text-xs">{org.id}</span>
+                        <CopyButton value={org.id} ariaLabel="Copy organization id" />
+                    </span>
+                    <span>Created <Timestamp value={org.created_at} precision="minute" /></span>
+                </div>
+            {/if}
+        {/snippet}
+    </PageHeader>
+
+    {#if loading && !org}
+        <PageSkeleton />
+    {:else if error && !org}
+        <EmptyState variant="error" title="Could not load organization" description={error}>
+            {#snippet actions()}
+                <Button onclick={loadAll}>Retry</Button>
+            {/snippet}
+        </EmptyState>
     {:else if org}
-        <Card>
-            <CardHeader>
-                <div class="flex items-start justify-between">
-                    <div class="space-y-2">
-                        <div class="flex items-center gap-3">
-                            <Building2 class="h-8 w-8 text-muted-foreground" />
-                            <div>
-                                <CardTitle class="text-2xl"
-                                    >{org.name}</CardTitle
-                                >
-                                <CardDescription>@{org.slug}</CardDescription>
-                            </div>
-                        </div>
-                        <div class="flex gap-4 text-sm text-muted-foreground">
-                            <span>Created: {formatDate(org.created_at)}</span>
-                            <span>Updated: {formatDate(org.updated_at)}</span>
-                        </div>
-                    </div>
-                    <Button
-                        variant="destructive"
-                        size="sm"
-                        onclick={() => (showDeleteDialog = true)}
-                    >
-                        <Trash2 class="h-4 w-4 mr-2" />
-                        Delete Organization
-                    </Button>
-                </div>
-            </CardHeader>
-            <CardContent>
-                <div class="grid gap-4 md:grid-cols-3">
-                    <div class="flex items-center gap-2">
-                        <Users class="h-5 w-5 text-muted-foreground" />
-                        <span class="font-medium">{org.members.length}</span>
-                        <span class="text-muted-foreground">Members</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <FolderKanban class="h-5 w-5 text-muted-foreground" />
-                        <span class="font-medium">{org.projects.length}</span>
-                        <span class="text-muted-foreground">Projects</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <Clock class="h-5 w-5 text-muted-foreground" />
-                        <span class="font-medium">{org.retentionDays}</span>
-                        <span class="text-muted-foreground">days retention</span>
-                    </div>
-                </div>
-            </CardContent>
-        </Card>
+        <OrgSummaryTiles
+            memberCount={org.members.length}
+            projectCount={org.projects.length}
+            {logs30d}
+            logs30dLoading={projectLogsLoading}
+            retentionDays={org.retentionDays}
+        />
 
-        <Card>
-            <CardHeader>
-                <CardTitle>Log Retention Policy</CardTitle>
-                <CardDescription>
-                    Configure how long logs are retained for this organization
-                </CardDescription>
-            </CardHeader>
-            <CardContent>
-                <div class="space-y-4">
-                    <div class="flex items-end gap-4">
-                        <div class="space-y-2">
-                            <Label for="retention-days">Retention Period (days)</Label>
-                            <Input
-                                id="retention-days"
-                                type="number"
-                                min="1"
-                                max="365"
-                                bind:value={retentionDays}
-                                disabled={savingRetention}
-                                class="w-32"
-                            />
-                        </div>
-                        <div class="space-y-2">
-                            <Label for="audit-retention-days">Audit Retention (days)</Label>
-                            <Input
-                                id="audit-retention-days"
-                                type="number"
-                                min="1"
-                                max="3650"
-                                placeholder="forever"
-                                bind:value={auditRetentionDays}
-                                disabled={savingRetention}
-                                class="w-32"
-                            />
-                        </div>
-                        <Button
-                            onclick={saveRetention}
-                            disabled={savingRetention || (retentionDays === org.retentionDays && (auditRetentionDays === '' ? null : Number(auditRetentionDays)) === org.auditRetentionDays)}
+        <div class="flex flex-col gap-6 md:flex-row md:gap-8">
+            <OrgSideNav active={activeSection} />
+
+            <div class="min-w-0 flex-1 space-y-10">
+                <div id="projects" class="scroll-mt-24">
+                    <SettingsSection title="Projects" description="Projects owned by this organization.">
+                        <DataTable
+                            columns={projectColumns}
+                            rows={org.projects}
+                            rowKey={(p) => p.id}
+                            mobileRow={asCell(projectMobileRow)}
                         >
-                            <Save class="h-4 w-4 mr-2" />
-                            {savingRetention ? "Saving..." : "Save"}
-                        </Button>
-                    </div>
-                    {#if retentionError}
-                        <p class="text-sm text-destructive">{retentionError}</p>
-                    {/if}
-                    <p class="text-sm text-muted-foreground">
-                        Logs older than {retentionDays} days will be automatically deleted during the daily cleanup.
-                        Valid range: 1-365 days. Audit log retention: 1-3650 days, or empty for keep forever.
-                    </p>
+                            {#snippet empty()}No projects in this organization.{/snippet}
+                        </DataTable>
+                    </SettingsSection>
                 </div>
-            </CardContent>
-        </Card>
 
-        <Card>
-            <CardHeader>
-                <div class="flex items-center gap-2">
-                    <ShieldCheck class="h-5 w-5 text-muted-foreground" />
-                    <CardTitle>Entitlements</CardTitle>
+                <div id="members" class="scroll-mt-24">
+                    <SettingsSection title="Members" description="People with access to this organization.">
+                        <DataTable
+                            columns={memberColumns}
+                            rows={org.members}
+                            rowKey={(m) => m.id}
+                            mobileRow={asCell(memberMobileRow)}
+                        >
+                            {#snippet empty()}No members in this organization.{/snippet}
+                        </DataTable>
+                    </SettingsSection>
                 </div>
-                <CardDescription>
-                    Feature gates and usage caps for this organization. Empty cap = unlimited.
-                </CardDescription>
-            </CardHeader>
-            <CardContent>
-                {#if entitlementsLoading}
-                    <p class="text-muted-foreground text-sm">Loading entitlements...</p>
-                {:else}
-                    <div class="space-y-6">
-                        <!-- Boolean feature gates -->
-                        <div class="space-y-3">
-                            <h3 class="text-sm font-medium">Feature gates</h3>
-                            {#each booleanCaps() as cap}
-                                {@const val = entitlements[cap]}
-                                {#if val.kind === "boolean"}
-                                    <div class="flex items-center justify-between">
-                                        <Label for={`ent-${cap}`} class="font-mono text-sm">{cap}</Label>
-                                        <Switch
-                                            id={`ent-${cap}`}
-                                            checked={val.enabled}
-                                            onCheckedChange={(checked) => {
-                                                entitlements = {
-                                                    ...entitlements,
-                                                    [cap]: { kind: "boolean", enabled: checked },
-                                                };
-                                            }}
-                                            disabled={savingEntitlements}
-                                        />
-                                    </div>
-                                {/if}
-                            {/each}
-                        </div>
 
-                        <!-- Numeric limits and quotas -->
-                        <div class="space-y-3">
-                            <h3 class="text-sm font-medium">Limits & quotas</h3>
-                            {#each numericCaps() as cap}
-                                <div class="flex items-center justify-between gap-4">
-                                    <Label for={`ent-${cap}`} class="font-mono text-sm">{cap}</Label>
-                                    <Input
-                                        id={`ent-${cap}`}
-                                        type="number"
-                                        min="0"
-                                        placeholder="unlimited"
-                                        bind:value={limitInputs[cap]}
-                                        disabled={savingEntitlements}
-                                        class="w-40"
-                                    />
-                                </div>
-                            {/each}
-                        </div>
-
-                        {#if entitlementsError}
-                            <p class="text-sm text-destructive">{entitlementsError}</p>
-                        {/if}
-
-                        <div class="flex items-center gap-3">
-                            <Button onclick={saveEntitlements} disabled={savingEntitlements}>
-                                <Save class="h-4 w-4 mr-2" />
-                                {savingEntitlements ? "Saving..." : "Save entitlements"}
+                <div id="retention" class="scroll-mt-24">
+                    <SettingsSection
+                        title="Retention"
+                        description="How long this organization keeps its data. Log retention and audit retention are separate policies."
+                    >
+                        <div class="space-y-6">
+                            <div class="space-y-2">
+                                <Label for="retention-days">Log retention (days)</Label>
+                                <Input
+                                    id="retention-days"
+                                    type="number"
+                                    min="1"
+                                    max="365"
+                                    bind:value={retentionDays}
+                                    disabled={savingRetention}
+                                    class="w-32"
+                                />
+                                <p class="text-sm text-muted-foreground">
+                                    Logs, traces and metrics older than this are deleted by the daily cleanup. Between 1 and 365 days.
+                                </p>
+                            </div>
+                            <div class="space-y-2">
+                                <Label for="audit-retention-days">Audit log retention (days)</Label>
+                                <Input
+                                    id="audit-retention-days"
+                                    type="number"
+                                    min="1"
+                                    max="3650"
+                                    placeholder="Forever"
+                                    bind:value={auditRetentionDays}
+                                    disabled={savingRetention}
+                                    class="w-32"
+                                />
+                                <p class="text-sm text-muted-foreground">
+                                    Applies to the audit trail only. Between 1 and 3,650 days; leave empty to keep it forever.
+                                </p>
+                            </div>
+                            {#if retentionError}
+                                <p class="text-sm text-destructive" role="alert">{retentionError}</p>
+                            {/if}
+                            <Button onclick={saveRetention} disabled={savingRetention || !retentionDirty}>
+                                <Save class="mr-2 h-4 w-4" />
+                                {savingRetention ? "Saving..." : "Save retention"}
                             </Button>
-                            <p class="text-sm text-muted-foreground">
-                                Quota changes take effect on the next evaluator tick (~1 min).
-                            </p>
                         </div>
-                    </div>
-                {/if}
-            </CardContent>
-        </Card>
+                    </SettingsSection>
+                </div>
 
-        <Card>
-            <CardHeader>
-                <CardTitle>Members</CardTitle>
-                <CardDescription
-                    >{org.members.length} members in this organization</CardDescription
-                >
-            </CardHeader>
-            <CardContent>
-                {#if org.members.length === 0}
-                    <p class="text-center text-muted-foreground py-4">
-                        No members
-                    </p>
-                {:else}
-                    <div class="rounded-md border">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Name</TableHead>
-                                    <TableHead>Email</TableHead>
-                                    <TableHead>Role</TableHead>
-                                    <TableHead>Joined</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {#each org.members as member (member.id)}
-                                    <TableRow>
-                                        <TableCell class="font-medium"
-                                            >{member.name}</TableCell
-                                        >
-                                        <TableCell>{member.email}</TableCell>
-                                        <TableCell>
-                                            <Badge
-                                                variant={member.role === "owner"
-                                                    ? "default"
-                                                    : "secondary"}
-                                            >
-                                                {member.role}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell
-                                            class="text-sm text-muted-foreground"
-                                        >
-                                            {formatDate(member.created_at)}
-                                        </TableCell>
-                                    </TableRow>
-                                {/each}
-                            </TableBody>
-                        </Table>
-                    </div>
-                {/if}
-            </CardContent>
-        </Card>
+                <div id="entitlements" class="scroll-mt-24">
+                    <OrgEntitlementsSection {orgId} />
+                </div>
 
-        <Card>
-            <CardHeader>
-                <CardTitle>Projects</CardTitle>
-                <CardDescription
-                    >{org.projects.length} projects in this organization</CardDescription
-                >
-            </CardHeader>
-            <CardContent>
-                {#if org.projects.length === 0}
-                    <p class="text-center text-muted-foreground py-4">
-                        No projects
-                    </p>
-                {:else}
-                    <div class="rounded-md border">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Name</TableHead>
-                                    <TableHead>Created</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {#each org.projects as project (project.id)}
-                                    <TableRow>
-                                        <TableCell class="font-medium"
-                                            >{project.name}</TableCell
-                                        >
-                                        <TableCell
-                                            class="text-sm text-muted-foreground"
-                                        >
-                                            {formatDate(project.created_at)}
-                                        </TableCell>
-                                    </TableRow>
-                                {/each}
-                            </TableBody>
-                        </Table>
-                    </div>
-                {/if}
-            </CardContent>
-        </Card>
-
+                <div id="danger-zone" class="scroll-mt-24">
+                    <DangerZone>
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div class="min-w-0 space-y-1">
+                                <p class="text-sm font-medium">Delete this organization</p>
+                                <p class="text-sm text-muted-foreground">
+                                    Permanently removes its {formatCount(org.members.length)}
+                                    {org.members.length === 1 ? "member" : "members"}, {formatCount(org.projects.length)}
+                                    {org.projects.length === 1 ? "project" : "projects"} and all their logs and related data.
+                                </p>
+                            </div>
+                            <Button variant="destructive" onclick={() => (showDeleteDialog = true)}>
+                                <Trash2 class="mr-2 h-4 w-4" />
+                                Delete organization
+                            </Button>
+                        </div>
+                    </DangerZone>
+                </div>
+            </div>
+        </div>
     {/if}
 </div>
 
-<AlertDialog bind:open={showDeleteDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Delete Organization</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to delete <strong>{org?.name}</strong>? This action cannot be undone.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <div class="py-4">
-            <div class="bg-destructive/10 border border-destructive/20 rounded-md p-4">
-                <p class="text-sm text-destructive font-medium">
-                    This will permanently delete:
-                </p>
-                <ul class="text-sm text-muted-foreground mt-2 space-y-1 list-disc list-inside">
-                    <li>{org?.members.length} member associations</li>
-                    <li>{org?.projects.length} projects and all their data</li>
-                    <li>All logs and related data</li>
-                </ul>
-            </div>
-        </div>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Organization"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDeleteDialog}
+    title="Delete organization"
+    description={`This permanently deletes ${org?.members.length ?? 0} member associations, ${org?.projects.length ?? 0} projects with all their data, and all logs and related data. This cannot be undone.`}
+    confirmLabel="Delete organization"
+    requireText={org?.name ?? ""}
+    onConfirm={handleDelete}
+/>

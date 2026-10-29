@@ -214,7 +214,7 @@ describe('Email Templates (branches) - Monitor Email', () => {
     expect(result.html).toContain('Response Time');
     expect(result.html).toContain('Consecutive Failures');
     expect(result.html).not.toContain('Downtime Duration');
-    expect(result.html).toContain('https://app.logtide.dev/dashboard/monitoring');
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/uptime');
 
     expect(result.text).toContain('MONITOR DOWN: API <Health>');
     expect(result.text).toContain('API <Health> is not responding.');
@@ -403,5 +403,29 @@ describe('Email Templates (branches) - Digest edge cases', () => {
 
     expect(result.html).not.toContain('No activity during this period');
     expect(result.text).toContain('Total logs: 0');
+  });
+});
+
+describe('Email Templates (branches) - monitor incident deep link', () => {
+  const base: MonitorEmailData = {
+    monitorId: 'mon-9',
+    monitorName: 'Link Monitor',
+    status: 'down',
+    severity: 'high',
+    organizationName: 'Org',
+  };
+
+  it('links to the incident when one is given', () => {
+    const result = generateMonitorEmail({ ...base, incidentId: 'inc-123' });
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/incidents/inc-123');
+    expect(result.text).toContain('View details: https://app.logtide.dev/dashboard/incidents/inc-123');
+    expect(result.html).not.toContain('https://app.logtide.dev/dashboard/uptime"');
+  });
+
+  it('keeps the uptime link without an incident', () => {
+    const result = generateMonitorEmail({ ...base, incidentId: null });
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/uptime/mon-9"');
+    expect(result.text).toContain('https://app.logtide.dev/dashboard/uptime/mon-9');
+    expect(result.html).not.toContain('/dashboard/incidents/');
   });
 });

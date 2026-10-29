@@ -237,6 +237,18 @@ export class PiiMaskingService {
       }
     }
 
+    if (input.projectId) {
+      const project = await db
+        .selectFrom('projects')
+        .select('id')
+        .where('id', '=', input.projectId)
+        .where('organization_id', '=', organizationId)
+        .executeTakeFirst();
+      if (!project) {
+        throw new Error('Project not found in this organization');
+      }
+    }
+
     const row = await db
       .insertInto('pii_masking_rules')
       .values({
@@ -699,7 +711,7 @@ export class PiiMaskingService {
       if (err?.code !== '23505') throw err;
       // Unique-constraint collision: another worker inserted first. Re-read
       // and return the winning salt. Never fall back to the local (unpersisted)
-      // salt — that would silently diverge from what's stored in the DB.
+      // salt, that would silently diverge from what's stored in the DB.
       const retry = await db
         .selectFrom('organization_pii_salts')
         .select(['salt'])

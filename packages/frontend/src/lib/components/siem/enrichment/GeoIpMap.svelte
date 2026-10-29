@@ -198,7 +198,7 @@
 	<CardHeader class="pb-3">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<MapIcon class="w-4 h-4" />
-			IP Locations
+			IP locations
 		</CardTitle>
 	</CardHeader>
 	<CardContent>

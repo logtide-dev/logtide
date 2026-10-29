@@ -10,6 +10,11 @@ import { auditLogService } from '../audit-log/service.js';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
+import { sigmaRuleRoutes } from './rule-routes.js';
+import { ruleManagementService } from './rule-management-service.js';
+import { ruleListQuerySchema } from './rule-query.js';
+import { SigmaParser } from './parser.js';
+import { YamlTooLargeError, assertYamlWithinLimit } from './yaml.js';
 
 const sigmaService = new SigmaService();
 const organizationsService = new OrganizationsService();
@@ -93,6 +98,15 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
           });
         }
 
+        try {
+          assertYamlWithinLimit(body.yaml);
+        } catch (error) {
+          if (error instanceof YamlTooLargeError) {
+            return reply.code(400).send({ error: error.message });
+          }
+          throw error;
+        }
+
         // Cap on enabled sigma rules (#214 follow-up, WS2). Serialize the
         // count + import per org so concurrent imports can't race past the cap.
         const result = await withLimitLock(body.organizationId, 'sigma.max_active_rules', async () => {
@@ -160,11 +174,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       },
     },
     async (request: any, reply) => {
-      const schema = z.object({
-        organizationId: z.string().uuid(),
-      });
-
-      const query = schema.parse(request.query);
+      const query = ruleListQuerySchema.parse(request.query);
 
       // Verify user is member of organization
       const isMember = await checkOrganizationMembership(
@@ -178,9 +188,11 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const rules = await sigmaService.getSigmaRules(query.organizationId);
+      // Without page/pageSize every rule is returned (legacy callers).
+      // Rules carry hits7d, lastFiredAt, source, packId and exceptionCount.
+      const result = await ruleManagementService.list(query);
 
-      return reply.send({ rules });
+      return reply.send(result);
     }
   );
 
@@ -246,10 +258,9 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const rule = await sigmaService.getSigmaRuleById(
-        params.id,
-        query.organizationId
-      );
+      // Detail adds yaml, yamlReconstructed, editable, hits7d, lastFiredAt
+      // on top of the stored rule fields.
+      const rule = await ruleManagementService.getDetail(params.id, query.organizationId);
 
       if (!rule) {
         return reply.code(404).send({ error: 'Sigma rule not found' });
@@ -281,6 +292,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
             organizationId: { type: 'string', format: 'uuid' },
             enabled: { type: 'boolean' },
             channelIds: { type: 'array', items: { type: 'string', format: 'uuid' } },
+            yaml: { type: 'string' },
           },
         },
       },
@@ -294,6 +306,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         organizationId: z.string().uuid(),
         enabled: z.boolean().optional(),
         channelIds: z.array(z.string().uuid()).optional(),
+        yaml: z.string().min(1).optional(),
       });
 
       const params = paramsSchema.parse(request.params);
@@ -312,6 +325,33 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       }
 
       let rule = null;
+
+      // Edit the rule definition from YAML (custom rules only)
+      if (body.yaml !== undefined) {
+        try {
+          assertYamlWithinLimit(body.yaml);
+        } catch (error) {
+          if (error instanceof YamlTooLargeError) {
+            return reply.code(400).send({ error: error.message });
+          }
+          throw error;
+        }
+
+        const current = await ruleManagementService.getDetail(params.id, body.organizationId);
+        if (!current) {
+          return reply.code(404).send({ error: 'Sigma rule not found' });
+        }
+        if (!current.editable) {
+          return reply.code(409).send({ error: 'Only custom rules can be edited' });
+        }
+
+        const parsed = SigmaParser.parse(body.yaml);
+        if (!parsed.rule) {
+          return reply.code(400).send({ error: 'Invalid rule', errors: parsed.errors });
+        }
+
+        await sigmaService.updateRuleDefinition(params.id, body.organizationId, parsed.rule, body.yaml);
+      }
 
       // Update enabled status if provided
       if (body.enabled !== undefined) {
@@ -367,7 +407,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         await notificationChannelsService.setSigmaRuleChannels(params.id, body.channelIds, body.organizationId);
       }
 
-      if (body.enabled === undefined && body.channelIds === undefined) {
+      if (body.enabled === undefined && body.channelIds === undefined && body.yaml === undefined) {
         return reply.code(400).send({ error: 'No update fields provided' });
       }
 
@@ -379,7 +419,11 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         action: sigmaAction,
         target: { type: 'sigma_rule', id: params.id },
         organizationId: body.organizationId,
-        metadata: { enabled: body.enabled, channelIds: body.channelIds },
+        metadata: {
+          enabled: body.enabled,
+          channelIds: body.channelIds,
+          ...(body.yaml !== undefined ? { yaml: true } : {}),
+        },
       });
 
       return reply.send({ rule: updatedRule });
@@ -940,4 +984,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       return reply.send({ tactics });
     }
   );
+
+  // Rule management endpoints (exceptions, bulk, detail, preview)
+  await fastify.register(sigmaRuleRoutes);
 }

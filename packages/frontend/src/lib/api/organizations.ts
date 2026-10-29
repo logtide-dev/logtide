@@ -109,6 +109,13 @@ export class OrganizationsAPI {
     });
   }
 
+  async transferOwnership(organizationId: string, userId: string): Promise<{ success: true }> {
+    return this.request<{ success: true }>(`/organizations/${organizationId}/transfer-ownership`, {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  }
+
   async createUpgradeHandoff(id: string, intent: 'upgrade' | 'manage'): Promise<{ url: string }> {
     return this.request<{ url: string }>(`/organizations/${id}/upgrade-handoff`, {
       method: 'POST',

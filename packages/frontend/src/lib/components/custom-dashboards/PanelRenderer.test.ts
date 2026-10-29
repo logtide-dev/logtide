@@ -71,3 +71,72 @@ describe('PanelRenderer pause toggle', () => {
     expect(onRefresh).toHaveBeenCalledWith('panel-a');
   });
 });
+
+const linkedPanel = {
+  id: 'panel-link',
+  layout: { x: 0, y: 0, w: 3, h: 2 },
+  config: {
+    type: 'single_stat',
+    title: 'Error rate',
+    source: 'logs',
+    metric: 'error_rate',
+    projectId: 'proj-1',
+    compareWithPrevious: false,
+  },
+} as PanelInstance;
+
+const systemStatusPanel = {
+  id: 'panel-ss',
+  layout: { x: 0, y: 0, w: 12, h: 2 },
+  config: { type: 'system_status', title: 'System status', source: 'monitors', projectId: null },
+} as unknown as PanelInstance;
+
+describe('PanelRenderer drill-down link', () => {
+  it('renders an Open in Logs link for a logs panel', () => {
+    render(PanelRenderer, { props: props({ panel: linkedPanel }) });
+
+    const link = screen.getByRole('link', { name: 'Open in Logs' }) as HTMLAnchorElement;
+    const url = new URL(link.href, 'http://localhost');
+    expect(url.pathname).toBe('/dashboard/logs');
+    expect(url.searchParams.get('project')).toBe('proj-1');
+    expect(url.searchParams.get('q')).toBe('level:(error OR critical)');
+    expect(link.getAttribute('title')).toBe('Open in Logs');
+  });
+
+  it('uses the dashboard time range override in the link', () => {
+    render(PanelRenderer, { props: props({ panel: linkedPanel, timeRangeOverride: '7d' }) });
+
+    const link = screen.getByRole('link', { name: 'Open in Logs' }) as HTMLAnchorElement;
+    expect(new URL(link.href, 'http://localhost').searchParams.get('range')).toBe('7d');
+  });
+
+  it('no link for system_status', () => {
+    render(PanelRenderer, { props: props({ panel: systemStatusPanel }) });
+
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
+  it('no link in edit mode', () => {
+    render(PanelRenderer, { props: props({ panel: linkedPanel, editMode: true }) });
+
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+});
+
+describe('PanelRenderer icon buttons', () => {
+  it('every icon button has an aria-label', () => {
+    for (const editMode of [false, true]) {
+      const { container, unmount } = render(PanelRenderer, {
+        props: props({ panel: linkedPanel, editMode, onEdit: vi.fn(), onRemove: vi.fn() }),
+      });
+      const iconOnly = Array.from(container.querySelectorAll('button, a')).filter(
+        (el) => (el.textContent ?? '').trim() === ''
+      );
+      expect(iconOnly.length).toBeGreaterThan(0);
+      for (const el of iconOnly) {
+        expect(el.getAttribute('aria-label'), el.outerHTML).toBeTruthy();
+      }
+      unmount();
+    }
+  });
+});

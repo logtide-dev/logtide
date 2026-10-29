@@ -1,10 +1,12 @@
-import { createConnection } from 'net';
+import { createConnection, isIP } from 'net';
+import { connect as tlsConnect } from 'tls';
+import dns from 'dns';
 import type { Kysely } from 'kysely';
 import isSafeRegex from 'safe-regex2';
 import type { Database } from '../../database/types.js';
 import type { IReservoir } from '@logtide/reservoir';
-import type { CheckResult, HttpConfig, ErrorCode } from './types.js';
-import { safeFetch, resolveAndValidateHost, SsrfBlockedError } from '../../utils/ssrf-guard.js';
+import type { CheckResult, HttpConfig, ErrorCode, DnsCheckConfig } from './types.js';
+import { safeFetch, resolveAndValidateHost, isBlockedAddress, SsrfBlockedError } from '../../utils/ssrf-guard.js';
 
 /**
  * HTTP/HTTPS health check.
@@ -20,7 +22,8 @@ export async function runHttpCheck(
   config: HttpConfig = {},
   allowPrivate = false
 ): Promise<CheckResult> {
-  const { method = 'GET', expectedStatus = 200, headers = {}, bodyAssertion } = config;
+  // Unset expectedStatus means "any 2xx"; an explicit value stays exact.
+  const { method = 'GET', expectedStatus, headers = {}, bodyAssertion } = config;
   const start = Date.now();
 
   const controller = new AbortController();
@@ -40,7 +43,11 @@ export async function runHttpCheck(
     const responseTimeMs = Date.now() - start;
     const statusCode = response.status;
 
-    if (statusCode !== expectedStatus) {
+    const statusOk =
+      expectedStatus === undefined || expectedStatus === null
+        ? statusCode >= 200 && statusCode < 300
+        : statusCode === expectedStatus;
+    if (!statusOk) {
       return { status: 'down', responseTimeMs, statusCode, errorCode: 'http_error' };
     }
 
@@ -222,4 +229,278 @@ export function parseTcpTarget(target: string): { host: string; port: number } {
     host: target.slice(0, lastColon),
     port: parseInt(target.slice(lastColon + 1), 10),
   };
+}
+
+/**
+ * Parse "host", "host:port" or "[v6]:port" with a default port (SSL monitors).
+ * Strips one trailing dot from the host. Throws on a port outside 1..65535.
+ */
+export function parseHostPort(target: string, defaultPort: number): { host: string; port: number } {
+  const trimmed = target.trim();
+  if (!trimmed) throw new Error('Target must not be empty');
+
+  let host: string;
+  let portText: string | null = null;
+
+  const bracket = trimmed.match(/^\[([^\]]+)\](?::(.*))?$/);
+  if (bracket) {
+    host = bracket[1];
+    portText = bracket[2] ?? null;
+  } else if ((trimmed.match(/:/g) ?? []).length > 1) {
+    // Bare IPv6 literal without brackets: no port can be expressed
+    host = trimmed;
+  } else {
+    const idx = trimmed.lastIndexOf(':');
+    if (idx === -1) {
+      host = trimmed;
+    } else {
+      host = trimmed.slice(0, idx);
+      portText = trimmed.slice(idx + 1);
+    }
+  }
+
+  if (host.endsWith('.')) host = host.slice(0, -1);
+  if (!host) throw new Error('Target host must not be empty');
+
+  let port = defaultPort;
+  if (portText !== null) {
+    if (!/^\d{1,5}$/.test(portText)) throw new Error('Invalid port');
+    port = parseInt(portText, 10);
+    if (port < 1 || port > 65535) throw new Error('Port must be between 1 and 65535');
+  }
+
+  return { host, port };
+}
+
+/**
+ * Strict hostname check for DNS monitors: no IP literals, no port, no scheme.
+ * One trailing dot is tolerated. Underscores are allowed (_dmarc, _acme-challenge).
+ */
+export function isValidDnsHostname(name: string): boolean {
+  if (typeof name !== 'string') return false;
+  const bare = name.endsWith('.') ? name.slice(0, -1) : name;
+  if (bare.length === 0 || bare.length > 253) return false;
+  if (isIP(bare) !== 0) return false;
+  const labels = bare.split('.');
+  return labels.every((label) => /^[A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?$/.test(label));
+}
+
+function certName(field: unknown): string | null {
+  if (!field || typeof field !== 'object') return null;
+  const f = field as Record<string, unknown>;
+  const v = f.O ?? f.CN;
+  return typeof v === 'string' ? v : Array.isArray(v) && typeof v[0] === 'string' ? v[0] : null;
+}
+
+function certCommonName(field: unknown): string | null {
+  if (!field || typeof field !== 'object') return null;
+  const v = (field as Record<string, unknown>).CN;
+  return typeof v === 'string' ? v : Array.isArray(v) && typeof v[0] === 'string' ? v[0] : null;
+}
+
+/**
+ * SSL certificate check. Up only when the handshake succeeds, the chain is
+ * trusted, the hostname matches and at least warnDays remain on the certificate.
+ *
+ * Same SSRF policy as TCP: the host is validated first and the socket is pinned
+ * to the validated address; SNI and hostname verification use the original name.
+ */
+export async function runSslCheck(
+  host: string,
+  port: number,
+  timeoutSeconds: number,
+  warnDays: number,
+  allowPrivate = false
+): Promise<CheckResult> {
+  const start = Date.now();
+
+  let address: string;
+  try {
+    [address] = await resolveAndValidateHost(host, allowPrivate);
+  } catch {
+    return { status: 'down', responseTimeMs: Date.now() - start, statusCode: null, errorCode: 'blocked' };
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: CheckResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const socket = tlsConnect({
+      host: address,
+      port,
+      // IP literals have no SNI; the handshake then verifies against the address itself.
+      ...(isIP(host) === 0 ? { servername: host } : {}),
+      rejectUnauthorized: false,
+    });
+
+    const timer = setTimeout(() => {
+      socket.destroy();
+      finish({ status: 'down', responseTimeMs: Date.now() - start, statusCode: null, errorCode: 'timeout' });
+    }, timeoutSeconds * 1000);
+
+    socket.on('secureConnect', () => {
+      const responseTimeMs = Date.now() - start;
+      let result: CheckResult;
+      try {
+        const cert = socket.getPeerCertificate() as unknown as Record<string, unknown>;
+        const validTo = typeof cert?.valid_to === 'string' ? new Date(cert.valid_to) : null;
+        if (!cert || !validTo || Number.isNaN(validTo.getTime())) {
+          result = { status: 'down', responseTimeMs, statusCode: null, errorCode: 'ssl_error' };
+        } else {
+          const daysRemaining = Math.floor((validTo.getTime() - Date.now()) / 86400000);
+          const detail = {
+            expiresAt: validTo.toISOString(),
+            daysRemaining,
+            issuer: certName(cert.issuer),
+            subject: certCommonName(cert.subject),
+          };
+          const authError = socket.authorizationError ? String(socket.authorizationError) : null;
+          let errorCode: ErrorCode | null = null;
+          if (validTo.getTime() < Date.now() || authError === 'CERT_HAS_EXPIRED') errorCode = 'cert_expired';
+          else if (!socket.authorized || authError) errorCode = 'ssl_error';
+          else if (daysRemaining < warnDays) errorCode = 'cert_expiring';
+          result = {
+            status: errorCode ? 'down' : 'up',
+            responseTimeMs,
+            statusCode: null,
+            errorCode,
+            detail,
+          };
+        }
+      } catch {
+        result = { status: 'down', responseTimeMs, statusCode: null, errorCode: 'ssl_error' };
+      }
+      socket.destroy();
+      finish(result);
+    });
+
+    socket.on('error', (err: Error & { code?: string }) => {
+      socket.destroy();
+      const code = err.code ?? '';
+      const msg = err.message ?? '';
+      let errorCode: ErrorCode = 'unexpected';
+      if (code === 'ECONNREFUSED' || msg.includes('ECONNREFUSED')) errorCode = 'connection_refused';
+      else if (code === 'ENOTFOUND' || code.startsWith('EAI_') || msg.includes('ENOTFOUND')) errorCode = 'dns_error';
+      else if (code === 'ETIMEDOUT' || msg.includes('ETIMEDOUT')) errorCode = 'timeout';
+      else if (
+        code.startsWith('ERR_SSL') ||
+        code.startsWith('ERR_TLS') ||
+        code.startsWith('CERT_') ||
+        /ssl|tls|certificate|handshake/i.test(msg)
+      ) {
+        errorCode = 'ssl_error';
+      }
+      finish({ status: 'down', responseTimeMs: Date.now() - start, statusCode: null, errorCode });
+    });
+  });
+}
+
+type DnsResolverLike = Pick<dns.promises.Resolver, 'resolve'>;
+
+function stripDot(value: string): string {
+  return (value.endsWith('.') ? value.slice(0, -1) : value).toLowerCase();
+}
+
+/** Flatten any resolver answer into comparable strings (MX by exchange, TXT chunks joined). */
+function normalizeDnsRecords(recordType: DnsCheckConfig['recordType'], answer: unknown): string[] {
+  const items = Array.isArray(answer) ? answer : [];
+  switch (recordType) {
+    case 'MX':
+      return items
+        .map((r) => (r && typeof r === 'object' ? String((r as { exchange?: unknown }).exchange ?? '') : ''))
+        .filter(Boolean)
+        .map(stripDot);
+    case 'TXT':
+      return items.map((r) => (Array.isArray(r) ? r.join('') : String(r)));
+    case 'CNAME':
+      return items.map((r) => stripDot(String(r)));
+    default:
+      return items.map((r) => String(r).toLowerCase());
+  }
+}
+
+const INTERNAL_DNS_SUFFIXES = [
+  '.local',
+  '.localhost',
+  '.internal',
+  '.lan',
+  '.localdomain',
+  '.home.arpa',
+  '.intranet',
+  '.corp',
+  '.svc',
+];
+
+/**
+ * True for names that only make sense on the backend's own network: single
+ * label names (Docker and Kubernetes service names) and well-known internal
+ * suffixes. The system resolver answers for those, so a tenant could read
+ * internal addresses through a DNS monitor.
+ */
+export function isInternalDnsName(hostname: string): boolean {
+  const name = stripDot(hostname.trim());
+  if (!name.includes('.')) return true;
+  return INTERNAL_DNS_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
+
+/**
+ * DNS record check. Queries only the configured resolver and never connects
+ * to the answers. Unless allowPrivate is set (MONITOR_ALLOW_PRIVATE_TARGETS),
+ * internal names are refused and A/AAAA answers in private ranges are never
+ * stored, like the guard on HTTP, TCP and SSL monitors.
+ */
+export async function runDnsCheck(
+  hostname: string,
+  recordType: DnsCheckConfig['recordType'],
+  expectedValue: string | undefined,
+  timeoutSeconds: number,
+  resolverFactory: (timeoutMs: number) => DnsResolverLike = (timeoutMs) =>
+    new dns.promises.Resolver({ timeout: timeoutMs, tries: 1 }),
+  allowPrivate = false
+): Promise<CheckResult> {
+  const start = Date.now();
+  const name = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname;
+
+  if (!allowPrivate && isInternalDnsName(name)) {
+    return { status: 'down', responseTimeMs: Date.now() - start, statusCode: null, errorCode: 'blocked' };
+  }
+
+  try {
+    const resolver = resolverFactory(Math.max(1, Math.round(timeoutSeconds * 1000)));
+    const answer = await (resolver.resolve as (n: string, t: string) => Promise<unknown>)(name, recordType);
+    const responseTimeMs = Date.now() - start;
+    const records = normalizeDnsRecords(recordType, answer);
+    if (
+      !allowPrivate &&
+      (recordType === 'A' || recordType === 'AAAA') &&
+      records.some((r) => isBlockedAddress(r))
+    ) {
+      return { status: 'down', responseTimeMs, statusCode: null, errorCode: 'blocked' };
+    }
+    const detail = { records: records.slice(0, 20) };
+
+    if (records.length === 0) {
+      return { status: 'down', responseTimeMs, statusCode: null, errorCode: 'dns_no_records', detail };
+    }
+
+    const expected = expectedValue?.trim();
+    if (expected) {
+      const wanted = recordType === 'TXT' ? expected : stripDot(expected);
+      if (!records.includes(wanted)) {
+        return { status: 'down', responseTimeMs, statusCode: null, errorCode: 'dns_mismatch', detail };
+      }
+    }
+
+    return { status: 'up', responseTimeMs, statusCode: null, errorCode: null, detail };
+  } catch (err: unknown) {
+    const code = (err as { code?: string } | null)?.code ?? '';
+    let errorCode: ErrorCode = 'dns_error';
+    if (code === 'ETIMEOUT' || code === 'ETIMEDOUT') errorCode = 'timeout';
+    return { status: 'down', responseTimeMs: Date.now() - start, statusCode: null, errorCode };
+  }
 }

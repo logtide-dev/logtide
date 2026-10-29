@@ -11,8 +11,9 @@
 
 <DropdownMenuPrimitive.SubContent
 	bind:ref
+	collisionPadding={8}
 	class={cn(
-		"bg-popover text-popover-foreground z-50 min-w-[8rem] rounded-md border p-1 shadow-lg focus:outline-none",
+		"bg-popover text-popover-foreground z-50 min-w-[8rem] max-w-[calc(100vw-1rem)] max-h-[var(--bits-floating-available-height)] overflow-y-auto rounded-md border p-1 shadow-lg focus:outline-none",
 		className
 	)}
 	{...restProps}

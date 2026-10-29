@@ -22,15 +22,16 @@ function paramsOf(r: { parameters: unknown[] }): Record<string, unknown> {
 describe('ClickHouseQueryTranslator metadata filters', () => {
   it('no filters adds nothing', () => {
     const r = translator.translateQuery(baseParams);
-    expect(r.query).not.toContain('JSONExtractString(metadata,');
+    expect(r.query).not.toContain('JSONExtractRaw(metadata,');
+    expect(r.query).not.toContain('JSONHas(metadata,');
   });
 
-  it('equals emits JSONExtractString = predicate', () => {
+  it('equals compares the scalar text of the raw value', () => {
     const r = translator.translateQuery({
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'equals', value: 'prod' })],
     });
-    expect(r.query).toContain('JSONExtractString(metadata,');
+    expect(r.query).toContain('multiIf(JSONExtractRaw(metadata,');
     expect(Object.values(paramsOf(r))).toContain('env');
     expect(Object.values(paramsOf(r))).toContain('prod');
   });
@@ -40,8 +41,7 @@ describe('ClickHouseQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'not_equals', value: 'dev', include_missing: true })],
     });
-    expect(r.query).toContain('JSONHas(metadata,');
-    expect(r.query).toContain(' = 0');
+    expect(r.query).toContain('(NOT (JSONHas(metadata,');
     expect(r.query).toContain('!=');
   });
 
@@ -50,8 +50,8 @@ describe('ClickHouseQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'not_equals', value: 'dev', include_missing: false })],
     });
-    expect(r.query).toContain('JSONHas(metadata,');
-    expect(r.query).toContain(' = 1');
+    expect(r.query).toContain('(JSONHas(metadata, {p_mfk0:String}) AND ');
+    expect(r.query).not.toContain('NOT (JSONHas(');
     expect(r.query).toContain('!=');
   });
 
@@ -60,7 +60,7 @@ describe('ClickHouseQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'in', values: ['prod', 'staging'] })],
     });
-    expect(r.query).toContain('IN ({');
+    expect(r.query).toContain(' IN {p_mfv0:Array(String)}');
     expect(Object.values(paramsOf(r))).toContainEqual(['prod', 'staging']);
   });
 
@@ -69,7 +69,7 @@ describe('ClickHouseQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'not_in', values: ['dev'], include_missing: true })],
     });
-    expect(r.query).toContain('JSONHas(metadata,');
+    expect(r.query).toContain('(NOT (JSONHas(metadata,');
     expect(r.query).toContain('NOT IN');
   });
 
@@ -78,28 +78,27 @@ describe('ClickHouseQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'not_in', values: ['dev'], include_missing: false })],
     });
-    expect(r.query).toContain('JSONHas(metadata,');
-    expect(r.query).toContain(' = 1');
+    expect(r.query).toContain('(JSONHas(metadata, {p_mfk0:String}) AND ');
+    expect(r.query).not.toContain('NOT (JSONHas(');
     expect(r.query).toContain('NOT IN');
   });
 
-  it('exists emits JSONHas = 1', () => {
+  it('exists emits JSONHas', () => {
     const r = translator.translateQuery({
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'exists' })],
     });
-    expect(r.query).toContain('JSONHas(metadata,');
-    expect(r.query).toContain(' = 1');
+    expect(r.query).toContain('JSONHas(metadata, {p_mfk0:String})');
+    expect(r.query).not.toContain('NOT (JSONHas(');
     expect(Object.values(paramsOf(r))).toContain('env');
   });
 
-  it('not_exists emits JSONHas = 0', () => {
+  it('not_exists negates JSONHas', () => {
     const r = translator.translateQuery({
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'not_exists' })],
     });
-    expect(r.query).toContain('JSONHas(metadata,');
-    expect(r.query).toContain(' = 0');
+    expect(r.query).toContain('NOT (JSONHas(metadata, {p_mfk0:String}))');
     expect(Object.values(paramsOf(r))).toContain('env');
   });
 
@@ -108,7 +107,7 @@ describe('ClickHouseQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'msg', op: 'contains', value: 'foo' })],
     });
-    expect(r.query).toContain('positionCaseInsensitive(JSONExtractString(metadata,');
+    expect(r.query).toContain('positionCaseInsensitiveUTF8(multiIf(JSONExtractRaw(metadata,');
     expect(Object.values(paramsOf(r))).toContain('foo');
   });
 
@@ -132,7 +131,7 @@ describe('ClickHouseQueryTranslator metadata filters', () => {
       ...baseParams,
       metadataFilters: [mf({ key: 'env', op: 'equals', value: 'prod' })],
     });
-    expect(r.query).toContain('JSONExtractString(metadata,');
+    expect(r.query).toContain('JSONExtractRaw(metadata,');
     expect(Object.values(paramsOf(r))).toContain('env');
   });
 });

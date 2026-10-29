@@ -1,4 +1,10 @@
-import type { ExceptionLanguage, ErrorGroupStatus } from '../constants/exception-constants.js';
+import type {
+  ExceptionLanguage,
+  ErrorGroupStatus,
+  ErrorGroupSort,
+  ErrorGroupBulkAction,
+  ErrorGroupEventDirection,
+} from '../constants/exception-constants.js';
 
 export interface StructuredStackFrame {
   file?: string;
@@ -78,6 +84,15 @@ export interface ErrorGroup {
   resolvedBy: string | null;
   affectedServices: string[];
   sampleLogId: string | null;
+  // Triage fields (ux16 W5)
+  assignedTo?: string | null;
+  assignedToName?: string | null;
+  assignedToEmail?: string | null;
+  regressedAt?: Date | string | null;
+  ignoredUntil?: Date | string | null;
+  ignoreUntilCount?: number | null;
+  ignoredEventCount?: number;
+  resolvedByName?: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
@@ -85,6 +100,7 @@ export interface ErrorGroup {
 export interface ExceptionWithFrames {
   exception: ExceptionRecord;
   frames: StackFrameRecord[];
+  errorGroupId?: string | null;
 }
 
 export interface ErrorGroupWithRecentLogs extends ErrorGroup {
@@ -99,9 +115,17 @@ export interface ErrorGroupWithRecentLogs extends ErrorGroup {
 export interface ErrorGroupFilters {
   organizationId: string;
   projectId?: string;
+  projectIds?: string[];
   status?: ErrorGroupStatus;
   language?: ExceptionLanguage;
   search?: string;
+  from?: Date | string;
+  to?: Date | string;
+  sort?: ErrorGroupSort;
+  /** A user uuid or the literal unassigned */
+  assignedTo?: string;
+  /** Errors that affected this service */
+  service?: string;
   limit?: number;
   offset?: number;
 }
@@ -110,3 +134,71 @@ export interface ErrorGroupTrendBucket {
   timestamp: Date | string;
   count: number;
 }
+
+export interface ErrorGroupPatch {
+  status?: ErrorGroupStatus;
+  assignedTo?: string | null;
+  ignoredUntil?: string | null;
+  ignoreUntilCount?: number | null;
+}
+
+export interface ErrorGroupBulkRequest {
+  organizationId: string;
+  ids: string[];
+  action: ErrorGroupBulkAction;
+  assignedTo?: string | null;
+  ignoredUntil?: string | null;
+  ignoreUntilCount?: number | null;
+}
+
+export interface ErrorGroupBulkResult {
+  updated: string[];
+  skipped: string[];
+}
+
+export interface ErrorGroupTrendsResult {
+  trends: Record<string, number[]>;
+  from: string;
+  bucketMs: number;
+  buckets: number;
+}
+
+export interface ErrorGroupEventLog {
+  id: string;
+  time: Date | string;
+  service: string;
+  message: string;
+  level: string;
+  traceId: string | null;
+  spanId: string | null;
+  sessionId: string | null;
+  hostname: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface ErrorGroupEvent {
+  /** The exception row id */
+  cursor: string;
+  exception: ExceptionRecord;
+  frames: StackFrameRecord[];
+  log: ErrorGroupEventLog | null;
+}
+
+export interface ErrorGroupEventsResult {
+  events: ErrorGroupEvent[];
+  hasOlder: boolean;
+  hasNewer: boolean;
+}
+
+export interface ErrorGroupTraceMatch {
+  errorGroupId: string;
+  status: ErrorGroupStatus;
+  exceptionType: string;
+  exceptionMessage: string | null;
+  projectId: string | null;
+  logId: string;
+  spanId: string | null;
+  occurredAt: string;
+}
+
+export type { ErrorGroupEventDirection };

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { z } from 'zod';
 import { applyDefaultOverrides } from '../capabilities/registry.js';
+import { loadTestEnv } from './load-test-env.js';
 
 // Load environment variables
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -10,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Load .env.test first if NODE_ENV=test
 if (process.env.NODE_ENV === 'test') {
   const envTestPath = path.resolve(__dirname, '../../.env.test');
-  dotenv.config({ path: envTestPath, override: true });
+  loadTestEnv(envTestPath);
 } else {
   // Load .env from project root for development/production
   const envPath = path.resolve(__dirname, '../../../../.env');
@@ -75,36 +76,6 @@ function validateTermsConfig(env: TermsEnv): Array<[keyof TermsEnv, string]> {
     issues.push(['LOGTIDE_TERMS_VERSION', 'LOGTIDE_TERMS_VERSION must be a non-empty string of at most 64 characters']);
   }
   return issues;
-}
-
-type BillingApiEnv = { LOGTIDE_BILLING_API_URL?: string; LOGTIDE_BILLING_API_TOKEN?: string };
-
-/** Boot-time validation of the billing API env pair. Returns [field, message] or null. */
-function validateBillingApiConfig(env: BillingApiEnv): [keyof BillingApiEnv, string] | null {
-  const url = env.LOGTIDE_BILLING_API_URL;
-  const token = env.LOGTIDE_BILLING_API_TOKEN;
-  if (!url && !token) return null;
-  if (!url || !token) {
-    return [
-      url ? 'LOGTIDE_BILLING_API_TOKEN' : 'LOGTIDE_BILLING_API_URL',
-      'LOGTIDE_BILLING_API_URL and LOGTIDE_BILLING_API_TOKEN must be set together (only one is set)',
-    ];
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return ['LOGTIDE_BILLING_API_URL', 'LOGTIDE_BILLING_API_URL must be a valid absolute URL'];
-  }
-  // http is allowed for any host on purpose: this is a service to service call
-  // on a private network (for example http://logtide-billing:8090).
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return ['LOGTIDE_BILLING_API_URL', 'LOGTIDE_BILLING_API_URL must be an http or https URL'];
-  }
-  if (token.length < 32) {
-    return ['LOGTIDE_BILLING_API_TOKEN', 'LOGTIDE_BILLING_API_TOKEN must be at least 32 characters'];
-  }
-  return null;
 }
 
 const configSchema = z.object({
@@ -187,12 +158,6 @@ const configSchema = z.object({
   LOGTIDE_PRIVACY_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   LOGTIDE_TERMS_VERSION: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
 
-  // Hosting seam: in-app billing. The core proxies the Billing page to an
-  // external billing service. Active only when BOTH are set; exactly one set,
-  // a non-http(s) URL or a token under 32 characters = boot failure.
-  LOGTIDE_BILLING_API_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
-  LOGTIDE_BILLING_API_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
-
   // Hosting seam: maximum organizations a single user may own. Positive integer;
   // unset or empty = unlimited. Any other value = boot failure.
   MAX_ORGANIZATIONS_PER_USER: z.preprocess(
@@ -262,6 +227,11 @@ const configSchema = z.object({
   // A missing or throwing module is FATAL at boot, by design.
   HOOKS_MODULES: z.string().optional(),
 
+  // In-process extension modules. Comma-separated paths to .js/.mjs modules
+  // loaded at boot (server AND worker). Empty or unset means no extensions.
+  // A missing or invalid module is FATAL at boot, by design.
+  LOGTIDE_EXTENSIONS: z.string().optional(),
+
   // Initial Admin (for first deployment - creates admin user if no users exist)
   INITIAL_ADMIN_EMAIL: z.string().email().optional(),
   INITIAL_ADMIN_PASSWORD: z.string().min(8).optional(),
@@ -277,10 +247,6 @@ const configSchema = z.object({
   }
   for (const [field, termsMessage] of validateTermsConfig(env)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: termsMessage });
-  }
-  const billingIssue = validateBillingApiConfig(env);
-  if (billingIssue) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [billingIssue[0]], message: billingIssue[1] });
   }
   if (env.REQUIRE_EMAIL_VERIFICATION && !env.SMTP_HOST) {
     ctx.addIssue({
@@ -337,6 +303,10 @@ function loadConfig(): Config {
   if (!result.success) {
     console.error(formatConfigError(result.error));
     throw new Error('Invalid configuration - see error details above');
+  }
+
+  if (process.env.LOGTIDE_BILLING_API_URL || process.env.LOGTIDE_BILLING_API_TOKEN) {
+    console.warn('LOGTIDE_BILLING_API_URL and LOGTIDE_BILLING_API_TOKEN were removed in 1.6.0 and are ignored');
   }
 
   try {

@@ -30,8 +30,6 @@ const SEAM_ENV = [
   'LOGTIDE_TERMS_URL',
   'LOGTIDE_PRIVACY_URL',
   'LOGTIDE_TERMS_VERSION',
-  'LOGTIDE_BILLING_API_URL',
-  'LOGTIDE_BILLING_API_TOKEN',
 ] as const;
 
 const cfg = config as unknown as Record<string, unknown>;
@@ -69,8 +67,6 @@ describe('hosting seams with all env unset', () => {
     expect(cfg.LOGTIDE_TERMS_URL).toBeUndefined();
     expect(cfg.LOGTIDE_PRIVACY_URL).toBeUndefined();
     expect(cfg.LOGTIDE_TERMS_VERSION).toBeUndefined();
-    expect(cfg.LOGTIDE_BILLING_API_URL).toBeUndefined();
-    expect(cfg.LOGTIDE_BILLING_API_TOKEN).toBeUndefined();
   });
 
   it('registry defaults are unlimited / enabled', async () => {
@@ -159,17 +155,15 @@ describe('hosting seams with all env unset', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it('billing routes are 404 when the seam is unset', async () => {
+  it('the removed in-app billing route is 404', async () => {
     const ctx = await createTestContext();
     const session = await createTestSession(ctx.user.id);
-    for (const [method, tail] of [['GET', ''], ['GET', '/invoices'], ['POST', '/checkout'], ['POST', '/cancel']] as const) {
-      const res = await app.inject({
-        method,
-        url: `/api/v1/organizations/${ctx.organization.id}/billing${tail}`,
-        headers: { authorization: `Bearer ${session.token}` },
-      });
-      expect(res.statusCode, `${method} ${tail}`).toBe(404);
-    }
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/organizations/${ctx.organization.id}/billing/checkout`,
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    expect(res.statusCode).toBe(404);
   });
 
   it('/auth/config has no seam keys', async () => {
@@ -182,6 +176,7 @@ describe('hosting seams with all env unset', () => {
     expect(body).not.toHaveProperty('privacyUrl');
     expect(body).not.toHaveProperty('termsVersion');
     expect(body).not.toHaveProperty('billingEnabled');
+    expect(body).not.toHaveProperty('extensions');
   });
 
   it('terms acceptance is inert: no /me key, no accept-terms route', async () => {

@@ -5,20 +5,14 @@
   import { toastStore } from '$lib/stores/toast';
   import { pipelineStore } from '$lib/stores/log-pipeline';
   import type { Pipeline } from '$lib/api/log-pipeline';
+  import { projectsAPI } from '$lib/api/projects';
   import Button from '$lib/components/ui/button/button.svelte';
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Badge } from '$lib/components/ui/badge';
   import { Switch } from '$lib/components/ui/switch';
-  import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-  } from '$lib/components/ui/alert-dialog';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
+  import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import Plus from '@lucide/svelte/icons/plus';
   import Pencil from '@lucide/svelte/icons/pencil';
@@ -27,9 +21,11 @@
 
   let token: string | null = null;
   let organizationId = $state<string | null>(null);
+  let role = $state<string | null>(null);
+  let canEdit = $derived(role === 'owner' || role === 'admin');
   let deleteTarget = $state<Pipeline | null>(null);
-  let deleting = $state(false);
   let deleteDialogOpen = $state(false);
+  let projectNames = $state<Record<string, string>>({});
 
   authStore.subscribe((s) => {
     token = s.token;
@@ -37,6 +33,7 @@
 
   organizationStore.subscribe((s) => {
     organizationId = s.currentOrganization?.id ?? null;
+    role = s.currentOrganization?.role ?? null;
   });
 
   $effect(() => {
@@ -46,6 +43,14 @@
     }
     if (organizationId) {
       pipelineStore.load(organizationId);
+      projectsAPI
+        .getProjects(organizationId)
+        .then((res) => {
+          projectNames = Object.fromEntries(res.projects.map((p) => [p.id, p.name]));
+        })
+        .catch(() => {
+          projectNames = {};
+        });
     }
   });
 
@@ -56,16 +61,13 @@
 
   async function handleDelete() {
     if (!deleteTarget || !organizationId) return;
-    deleting = true;
     try {
       await pipelineStore.delete(deleteTarget.id, organizationId);
       toastStore.success('Pipeline deleted');
-      deleteDialogOpen = false;
       deleteTarget = null;
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Failed to delete pipeline');
-    } finally {
-      deleting = false;
+      toastStore.error(e instanceof Error ? e.message : 'Could not delete pipeline');
+      throw e;
     }
   }
 
@@ -74,7 +76,7 @@
     try {
       await pipelineStore.toggleEnabled(pipeline, organizationId);
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Failed to update pipeline');
+      toastStore.error(e instanceof Error ? e.message : 'Could not update pipeline');
     }
   }
 </script>
@@ -83,23 +85,39 @@
   <title>Pipelines - LogTide</title>
 </svelte:head>
 
+<PageHeader
+  title="Pipelines"
+  appliesTo="organization"
+  description="Define steps to parse and enrich incoming log messages before they are stored."
+/>
+
 <div class="space-y-6">
+  {#if !canEdit}
+    <ReadOnlyNotice what="log pipelines" />
+  {/if}
+
+  <p class="text-sm text-muted-foreground" data-testid="pipeline-precedence">
+    A project pipeline runs instead of the organization-wide pipeline for that project. They are not chained.
+  </p>
+
   <Card>
     <CardHeader>
       <div class="flex items-center justify-between">
         <div>
           <CardTitle class="flex items-center gap-2">
             <GitBranch class="w-4 h-4" />
-            Log Parsing Pipelines
+            Log parsing pipelines
           </CardTitle>
           <CardDescription>
-            Define steps to parse and enrich incoming log messages before they are stored
+            Steps run in order on every log that matches the pipeline.
           </CardDescription>
         </div>
-        <Button onclick={() => goto('/dashboard/settings/pipelines/new')} class="gap-2">
-          <Plus class="w-4 h-4" />
-          New pipeline
-        </Button>
+        {#if canEdit}
+          <Button onclick={() => goto('/dashboard/settings/pipelines/new')} class="gap-2">
+            <Plus class="w-4 h-4" />
+            New pipeline
+          </Button>
+        {/if}
       </div>
     </CardHeader>
     <CardContent>
@@ -109,32 +127,38 @@
           <span class="ml-2 text-sm text-muted-foreground">Loading pipelines...</span>
         </div>
       {:else if $pipelineStore.error}
-        <div class="text-destructive text-sm py-4">{$pipelineStore.error}</div>
+        <div class="text-destructive-text text-sm py-4">{$pipelineStore.error}</div>
       {:else if $pipelineStore.pipelines.length === 0}
         <div class="flex flex-col items-center justify-center py-16 text-center gap-4">
           <GitBranch class="w-10 h-10 text-muted-foreground/50" />
           <div>
             <p class="font-medium">No pipelines yet</p>
             <p class="text-sm text-muted-foreground mt-1">
-              Create your first pipeline to start parsing and enriching logs
+              {canEdit
+                ? 'Create your first pipeline to start parsing and enriching logs'
+                : 'An organization owner or admin can create pipelines.'}
             </p>
           </div>
-          <Button onclick={() => goto('/dashboard/settings/pipelines/new')} class="gap-2">
-            <Plus class="w-4 h-4" />
-            Create your first pipeline
-          </Button>
+          {#if canEdit}
+            <Button onclick={() => goto('/dashboard/settings/pipelines/new')} class="gap-2">
+              <Plus class="w-4 h-4" />
+              Create your first pipeline
+            </Button>
+          {/if}
         </div>
       {:else}
         <div class="space-y-3">
-          {#each $pipelineStore.pipelines as pipeline}
+          {#each $pipelineStore.pipelines as pipeline (pipeline.id)}
             <div class="flex items-center justify-between p-4 border rounded-lg gap-4">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="font-medium truncate">{pipeline.name}</span>
                   {#if pipeline.projectId}
-                    <Badge variant="secondary" class="text-xs">Project</Badge>
+                    <Badge variant="secondary" class="text-xs" data-testid="pipeline-scope">
+                      {projectNames[pipeline.projectId] ?? 'Project'}
+                    </Badge>
                   {:else}
-                    <Badge variant="outline" class="text-xs">Org-wide</Badge>
+                    <Badge variant="outline" class="text-xs" data-testid="pipeline-scope">All projects</Badge>
                   {/if}
                   <Badge variant={pipeline.enabled ? 'default' : 'secondary'} class="text-xs">
                     {pipeline.enabled ? 'Enabled' : 'Disabled'}
@@ -150,26 +174,42 @@
               <div class="flex items-center gap-3 flex-shrink-0">
                 <Switch
                   checked={pipeline.enabled}
+                  disabled={!canEdit}
+                  aria-label={`Enable ${pipeline.name}`}
                   onCheckedChange={() => handleToggle(pipeline)}
                 />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="h-8 w-8"
-                  onclick={() => goto(`/dashboard/settings/pipelines/${pipeline.id}`)}
-                  title="Edit pipeline"
-                >
-                  <Pencil class="w-4 h-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="h-8 w-8 text-destructive hover:text-destructive"
-                  onclick={() => openDeleteDialog(pipeline)}
-                  title="Delete pipeline"
-                >
-                  <Trash2 class="w-4 h-4" />
-                </Button>
+                {#if !canEdit}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onclick={() => goto(`/dashboard/settings/pipelines/${pipeline.id}`)}
+                    aria-label={`View ${pipeline.name}`}
+                  >
+                    View
+                  </Button>
+                {/if}
+                {#if canEdit}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="h-8 w-8"
+                    onclick={() => goto(`/dashboard/settings/pipelines/${pipeline.id}`)}
+                    title="Edit pipeline"
+                    aria-label={`Edit ${pipeline.name}`}
+                  >
+                    <Pencil class="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="h-8 w-8 text-destructive hover:text-destructive"
+                    onclick={() => openDeleteDialog(pipeline)}
+                    title="Delete pipeline"
+                    aria-label={`Delete ${pipeline.name}`}
+                  >
+                    <Trash2 class="w-4 h-4" />
+                  </Button>
+                {/if}
               </div>
             </div>
           {/each}
@@ -179,26 +219,10 @@
   </Card>
 </div>
 
-<AlertDialog bind:open={deleteDialogOpen}>
-  <AlertDialogContent>
-    <AlertDialogHeader>
-      <AlertDialogTitle>Delete Pipeline?</AlertDialogTitle>
-      <AlertDialogDescription>
-        Are you sure you want to delete <strong>{deleteTarget?.name}</strong>?
-        This action cannot be undone.
-      </AlertDialogDescription>
-    </AlertDialogHeader>
-    <AlertDialogFooter>
-      <AlertDialogCancel onclick={() => { deleteDialogOpen = false; deleteTarget = null; }}>
-        Cancel
-      </AlertDialogCancel>
-      <AlertDialogAction
-        onclick={handleDelete}
-        class="bg-destructive hover:bg-destructive/90"
-        disabled={deleting}
-      >
-        {deleting ? 'Deleting...' : 'Delete'}
-      </AlertDialogAction>
-    </AlertDialogFooter>
-  </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+  bind:open={deleteDialogOpen}
+  title="Delete pipeline"
+  description={`Delete ${deleteTarget?.name ?? 'this pipeline'}? Logs will no longer be parsed by it. This cannot be undone.`}
+  confirmLabel="Delete pipeline"
+  onConfirm={handleDelete}
+/>

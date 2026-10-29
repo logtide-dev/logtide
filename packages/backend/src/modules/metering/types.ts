@@ -25,7 +25,9 @@ export type MeteringEventType =
   // Clock skew for spans/metrics (span-metric-skew): same rationale as above,
   // kept under the ingestion.* prefix (see breakdown.ts / recorder.ts).
   | 'ingestion.span_timestamp_skew'
-  | 'ingestion.metric_timestamp_skew';
+  | 'ingestion.metric_timestamp_skew'
+  // Data sent with a revoked API key (project health check).
+  | 'ingestion.revoked_key';
 
 export interface MeteringEvent {
   type: MeteringEventType;

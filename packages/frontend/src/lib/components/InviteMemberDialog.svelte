@@ -11,9 +11,11 @@
   interface Props {
     onSubmit: (data: { email: string; role: OrgRole }) => Promise<{ type: 'notification_sent' | 'email_sent'; message: string }>;
     open?: boolean;
+    /** Role of the person inviting. Only owners can invite admins (same rule as promoting). */
+    inviterRole?: OrgRole | null;
   }
 
-  let { onSubmit, open = $bindable(false) }: Props = $props();
+  let { onSubmit, open = $bindable(false), inviterRole = null }: Props = $props();
   let email = $state('');
   let role = $state<OrgRole>('member');
   let submitting = $state(false);
@@ -62,7 +64,7 @@
     <DialogHeader>
       <DialogTitle class="flex items-center gap-2">
         <UserPlus class="w-5 h-5" />
-        Invite Team Member
+        Invite member
       </DialogTitle>
       <DialogDescription>
         Invite someone to join your organization. They'll receive a notification and can accept the invitation when ready.
@@ -71,7 +73,7 @@
 
     <form onsubmit={handleSubmit} class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="member-email">Email Address</Label>
+        <Label for="member-email">Email address</Label>
         <div class="relative">
           <Mail class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -96,13 +98,15 @@
           class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <option value="member">Member</option>
-          <option value="admin">Admin</option>
+          {#if inviterRole === 'owner'}
+            <option value="admin">Admin</option>
+          {/if}
         </select>
         <p class="text-xs text-muted-foreground">
           {#if role === 'admin'}
             Admins can invite members, manage roles, and remove members (except the owner).
           {:else}
-            Members can view and use all organization resources but cannot manage team settings.
+            Members can view and use all organization data. They cannot change PII masking, pipelines, notifications or members.
           {/if}
         </p>
       </div>
@@ -114,7 +118,7 @@
       {/if}
 
       {#if successMessage}
-        <div class="text-sm text-green-600 bg-green-50 dark:bg-green-900/20 dark:text-green-400 p-3 rounded-md">
+        <div class="text-sm text-success-text bg-success/10 p-3 rounded-md">
           {successMessage}
         </div>
       {/if}
@@ -138,7 +142,7 @@
             Inviting...
           {:else}
             <UserPlus class="w-4 h-4" />
-            Send Invitation
+            Send invitation
           {/if}
         </Button>
       </DialogFooter>

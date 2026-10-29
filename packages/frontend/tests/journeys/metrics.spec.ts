@@ -82,7 +82,7 @@ test.describe('Metrics Journey', () => {
     await page.waitForLoadState('load');
     const goldenTab = page.locator('button', { hasText: 'Golden Signals' });
     await goldenTab.click();
-    await expect(page.locator('text=Request Rate')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('text=Request rate')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('text=Latency')).toBeVisible();
     await expect(page.locator('text=Saturation')).toBeVisible();
   });
@@ -101,10 +101,10 @@ test.describe('Metrics Journey', () => {
     await page.waitForLoadState('load');
     const goldenTab = page.locator('button', { hasText: 'Golden Signals' });
     await goldenTab.click();
-    await expect(page.locator('text=Request Rate')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('text=Request rate')).toBeVisible({ timeout: 10000 });
     const overviewTab = page.locator('button', { hasText: 'Overview' });
     await overviewTab.click();
     await goldenTab.click();
-    await expect(page.locator('text=Request Rate')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('text=Request rate')).toBeVisible({ timeout: 10000 });
   });
 });

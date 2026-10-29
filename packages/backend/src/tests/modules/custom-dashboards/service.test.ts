@@ -403,3 +403,94 @@ describe('CustomDashboardsService.generatePanelId', () => {
     expect(id1).toMatch(/^panel-/);
   });
 });
+
+describe('CustomDashboardsService.duplicate', () => {
+  const otherUser = '00000000-0000-0000-0000-000000000999';
+
+  it('copies panels with fresh panel ids and the same configs', async () => {
+    const src = await service.create(
+      {
+        organizationId: ctx.organization.id,
+        name: 'Source',
+        panels: [makePanel('panel-a'), makePanel('panel-b')],
+      },
+      ctx.user.id
+    );
+    const copy = await service.duplicate(src.id, ctx.organization.id, ctx.user.id);
+
+    expect(copy.id).not.toBe(src.id);
+    expect(copy.panels).toHaveLength(2);
+    const srcIds = new Set(src.panels.map((p) => p.id));
+    for (const p of copy.panels) {
+      expect(srcIds.has(p.id)).toBe(false);
+      expect(p.id).toMatch(/^panel-/);
+    }
+    expect(copy.panels.map((p) => p.config)).toEqual(src.panels.map((p) => p.config));
+    expect(copy.panels.map((p) => p.layout)).toEqual(src.panels.map((p) => p.layout));
+    expect(copy.panels[0].id).not.toBe(copy.panels[1].id);
+  });
+
+  it('defaults the name to "<name> (copy)" truncated to 200 chars', async () => {
+    const src = await service.create({ organizationId: ctx.organization.id, name: 'Ops' }, ctx.user.id);
+    const copy = await service.duplicate(src.id, ctx.organization.id, ctx.user.id);
+    expect(copy.name).toBe('Ops (copy)');
+
+    const long = await service.create(
+      { organizationId: ctx.organization.id, name: 'x'.repeat(200) },
+      ctx.user.id
+    );
+    const longCopy = await service.duplicate(long.id, ctx.organization.id, ctx.user.id);
+    expect(longCopy.name.length).toBe(200);
+    expect(longCopy.name.endsWith(' (copy)')).toBe(true);
+  });
+
+  it('honours an explicit name', async () => {
+    const src = await service.create({ organizationId: ctx.organization.id, name: 'Ops' }, ctx.user.id);
+    const copy = await service.duplicate(src.id, ctx.organization.id, ctx.user.id, { name: 'Ops v2' });
+    expect(copy.name).toBe('Ops v2');
+  });
+
+  it('is never the default dashboard', async () => {
+    const def = await service.ensureDefaultExists(ctx.organization.id, ctx.user.id);
+    expect(def.isDefault).toBe(true);
+    const copy = await service.duplicate(def.id, ctx.organization.id, ctx.user.id);
+    expect(copy.isDefault).toBe(false);
+    const again = await service.ensureDefaultExists(ctx.organization.id, ctx.user.id);
+    expect(again.id).toBe(def.id);
+  });
+
+  it('keeps isPersonal and projectId of the source', async () => {
+    const src = await service.create(
+      {
+        organizationId: ctx.organization.id,
+        projectId: ctx.project.id,
+        name: 'Scoped',
+        isPersonal: true,
+        description: 'desc',
+      },
+      ctx.user.id
+    );
+    const copy = await service.duplicate(src.id, ctx.organization.id, ctx.user.id);
+    expect(copy.isPersonal).toBe(true);
+    expect(copy.projectId).toBe(ctx.project.id);
+    expect(copy.description).toBe('desc');
+  });
+
+  it("duplicate of another user's personal dashboard throws \"Dashboard not found\"", async () => {
+    const src = await service.create(
+      { organizationId: ctx.organization.id, name: 'Private', isPersonal: true },
+      ctx.user.id
+    );
+    await expect(
+      service.duplicate(src.id, ctx.organization.id, otherUser)
+    ).rejects.toThrow('Dashboard not found');
+  });
+
+  it('duplicate with a dashboard from another org throws "Dashboard not found"', async () => {
+    const other = await createTestContext();
+    const src = await service.create({ organizationId: other.organization.id, name: 'Theirs' }, other.user.id);
+    await expect(
+      service.duplicate(src.id, ctx.organization.id, ctx.user.id)
+    ).rejects.toThrow('Dashboard not found');
+  });
+});

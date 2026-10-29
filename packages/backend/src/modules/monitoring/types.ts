@@ -11,6 +11,10 @@ export type ErrorCode =
   | 'http_error'
   | 'no_heartbeat'
   | 'blocked'
+  | 'cert_expiring'
+  | 'cert_expired'
+  | 'dns_mismatch'
+  | 'dns_no_records'
   | 'unexpected';
 
 // Alias for the database JSONB shape - single source of truth in database/types.ts
@@ -21,6 +25,20 @@ export interface CheckResult {
   responseTimeMs: number | null;
   statusCode: number | null;
   errorCode: ErrorCode | null;
+  /** Last-check facts (ssl certificate, dns records), stored in monitor_status.detail. */
+  detail?: Record<string, unknown>;
+}
+
+export interface SslCheckConfig {
+  /** Down when fewer than this many days remain on the certificate. */
+  warnDays: number;
+}
+
+export type DnsRecordType = 'A' | 'AAAA' | 'CNAME' | 'MX' | 'TXT';
+
+export interface DnsCheckConfig {
+  recordType: DnsRecordType;
+  expectedValue?: string;
 }
 
 export interface Monitor {
@@ -38,6 +56,10 @@ export interface Monitor {
   enabled: boolean;
   httpConfig: HttpConfig | null;
   severity: Severity;
+  displayName: string | null;
+  groupName: string | null;
+  displayOrder: number;
+  checkConfig: SslCheckConfig | DnsCheckConfig | null;
   status?: MonitorCurrentStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -53,6 +75,8 @@ export interface MonitorCurrentStatus {
   responseTimeMs: number | null;
   lastErrorCode: string | null;
   incidentId: string | null;
+  /** Last-check facts: ssl certificate or dns records. Null when the last check had none. */
+  detail: Record<string, unknown> | null;
   updatedAt: Date;
 }
 
@@ -89,6 +113,10 @@ export interface CreateMonitorInput {
   enabled?: boolean;
   httpConfig?: HttpConfig | null;
   severity?: string;
+  displayName?: string | null;
+  groupName?: string | null;
+  displayOrder?: number;
+  checkConfig?: SslCheckConfig | DnsCheckConfig | null;
 }
 
 export interface UpdateMonitorInput {
@@ -102,13 +130,19 @@ export interface UpdateMonitorInput {
   enabled?: boolean;
   httpConfig?: HttpConfig | null;
   severity?: string;
+  displayName?: string | null;
+  groupName?: string | null;
+  displayOrder?: number;
+  checkConfig?: SslCheckConfig | DnsCheckConfig | null;
 }
 
 export interface PublicMonitorStatus {
   name: string;
-  type: MonitorType;
+  /** Only present when the project enabled show_monitor_types. */
+  type?: MonitorType;
+  groupName: string | null;
   status: MonitorStatusValue;
-  uptimeHistory: { bucket: string; uptimePct: number }[];
+  uptimeHistory: { bucket: string; uptimePct: number; totalChecks: number }[];
 }
 
 export interface PublicStatusIncident {
@@ -119,6 +153,8 @@ export interface PublicStatusIncident {
   createdAt: string;
   resolvedAt: string | null;
   updates: { id: string; status: string; message: string; createdAt: string }[];
+  /** Public names of the affected components. */
+  affectedComponents: string[];
 }
 
 export interface PublicMaintenance {
@@ -128,11 +164,19 @@ export interface PublicMaintenance {
   status: string;
   scheduledStart: string;
   scheduledEnd: string;
+  affectedComponents: string[];
 }
 
 export interface PublicStatusPage {
   projectName: string;
   projectSlug: string;
+  title: string | null;
+  description: string | null;
+  logoUrl: string | null;
+  accentColor: string | null;
+  showMonitorTypes: boolean;
+  subscriptionsEnabled: boolean;
+  historyDays: number;
   overallStatus: 'operational' | 'degraded' | 'outage';
   monitors: PublicMonitorStatus[];
   activeIncidents: PublicStatusIncident[];

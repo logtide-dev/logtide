@@ -61,10 +61,12 @@ export interface AuthConfig {
   signupEnabled: boolean;
   /** Present (true) only when the host configured the external upgrade handoff. */
   upgradeEnabled?: boolean;
-  /** Present (true) only when the host configured the in-app billing API. */
-  billingEnabled?: boolean;
+  /** Public config of enabled backend extensions, keyed by extension name. */
+  extensions?: Record<string, Record<string, unknown>>;
   /** Present (true) only when REQUIRE_EMAIL_VERIFICATION is on. */
   emailVerificationRequired?: boolean;
+  /** Present (true) only when SMTP and the local provider are available. */
+  passwordResetEnabled?: boolean;
   /** Present only when the host requires Terms and Privacy acceptance. */
   termsUrl?: string;
   privacyUrl?: string;
@@ -142,7 +144,9 @@ export class AuthAPI {
       const error: ErrorResponse = await response
         .json()
         .catch(() => ({ error: response.statusText }));
-      throw new Error(error.error || 'Failed to get user info');
+      throw Object.assign(new Error(error.error || 'Failed to get user info'), {
+        status: response.status,
+      });
     }
 
     return response.json();
@@ -313,6 +317,46 @@ export class AuthAPI {
           ? 'The terms were updated in the meantime. Reload the page and review them again.'
           : 'Could not record your acceptance. Please try again.'
       );
+    }
+  }
+
+  /**
+   * Ask for a password reset link. Resolves for every outcome the server
+   * hides on purpose (unknown, SSO-only, disabled, cooldown). Rejects only
+   * on validation errors, rate limiting and network failures.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    const response = await fetch(`${getApiBaseUrl()}/auth/password-reset/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    if (response.status === 429) {
+      throw new Error('rate_limited');
+    }
+    if (response.status === 404) {
+      throw new Error('password_reset_unavailable');
+    }
+    if (response.status === 400) {
+      throw new Error('invalid_request');
+    }
+  }
+
+  /** Set a new password with a reset token. */
+  async confirmPasswordReset(token: string, password: string): Promise<void> {
+    const response = await fetch(`${getApiBaseUrl()}/auth/password-reset/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      if (body?.error === 'invalid_or_expired_token') {
+        throw new Error('invalid_or_expired_token');
+      }
+      throw new Error(response.status === 429 ? 'rate_limited' : 'Could not reset the password');
     }
   }
 

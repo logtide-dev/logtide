@@ -17,17 +17,32 @@ import {
 import { pool } from './connection.js';
 import { STORAGE_ENGINE, getClickHouseConfig, getMongoDBConfig } from './storage-config.js';
 
+/**
+ * Optional ANALYTICS_TIMEOUT_MS override of the time limit on the log analytics
+ * reads (count, histogram, facets, key discovery) of the ClickHouse and MongoDB
+ * engines. Unset keeps the engine default (30 s); 0 disables the limit.
+ */
+export function readAnalyticsTimeoutMs(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env.ANALYTICS_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const ms = Number(raw);
+  return Number.isFinite(ms) && ms >= 0 ? Math.floor(ms) : undefined;
+}
+
 function createBaseReservoir(): Reservoir {
+  const analyticsTimeoutMs = readAnalyticsTimeoutMs();
   if (STORAGE_ENGINE === 'clickhouse') {
     return new Reservoir('clickhouse', getClickHouseConfig(), {
       tableName: 'logs',
       skipInitialize: false,
+      ...(analyticsTimeoutMs !== undefined ? { analyticsTimeoutMs } : {}),
     });
   }
   if (STORAGE_ENGINE === 'mongodb') {
     return new Reservoir('mongodb', getMongoDBConfig(), {
       tableName: 'logs',
       skipInitialize: false,
+      ...(analyticsTimeoutMs !== undefined ? { analyticsTimeoutMs } : {}),
     });
   }
   return new Reservoir(

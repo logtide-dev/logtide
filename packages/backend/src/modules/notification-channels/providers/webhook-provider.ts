@@ -7,6 +7,7 @@ import type { NotificationProvider, NotificationContext, DeliveryResult } from '
 import type { WebhookChannelConfig, ChannelConfig, WebhookEventType } from '@logtide/shared';
 import { deliverOnce, buildEnvelope } from '../../webhooks/index.js';
 import type { NotificationEventType } from '@logtide/shared';
+import { buildWebhookRequestHeaders } from '../webhook-request.js';
 
 /** Map a NotificationEventType to a WebhookEventType for the envelope.
  *
@@ -37,21 +38,7 @@ export class WebhookProvider implements NotificationProvider {
     // (#218): it runs the beforeWebhookDispatch hook, applies the SSRF guard,
     // and signs the body. This keeps the synchronous DeliveryResult contract
     // the "Test Channel" button relies on while centralizing delivery.
-    const headers: Record<string, string> = { ...(webhookConfig.headers || {}) };
-    if (webhookConfig.auth) {
-      if (webhookConfig.auth.type === 'bearer' && webhookConfig.auth.token) {
-        headers['Authorization'] = `Bearer ${webhookConfig.auth.token}`;
-      } else if (
-        webhookConfig.auth.type === 'basic' &&
-        webhookConfig.auth.username &&
-        webhookConfig.auth.password
-      ) {
-        const credentials = Buffer.from(
-          `${webhookConfig.auth.username}:${webhookConfig.auth.password}`
-        ).toString('base64');
-        headers['Authorization'] = `Basic ${credentials}`;
-      }
-    }
+    const headers = buildWebhookRequestHeaders(webhookConfig);
 
     const envelopeType = toEnvelopeType(context.eventType);
 

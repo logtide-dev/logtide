@@ -56,12 +56,6 @@
   {
     "file": "packages/backend/src/modules/admin/service.ts",
     "table": "projects",
-    "snippet": ".deleteFrom('projects')",
-    "reason": "safe-by-PK: admin-only delete by primary key; projectId comes from admin-authenticated request"
-  },
-  {
-    "file": "packages/backend/src/modules/admin/service.ts",
-    "table": "projects",
     "snippet": ".selectFrom('projects')",
     "reason": "intentional cross-org admin: total-count subquery for pagination across all projects"
   },
@@ -74,13 +68,13 @@
   {
     "file": "packages/backend/src/modules/admin/service.ts",
     "table": "projects",
-    "snippet": "const allProjects = await db.selectFrom('projects').select('id').execute();",
+    "snippet": "const allProjects = await db.selectFrom('projects').select('id').where('deleted_at', 'is', null).execute();",
     "reason": "intentional cross-org admin: fetches all project IDs to aggregate cross-platform timeline stats"
   },
   {
     "file": "packages/backend/src/modules/admin/service.ts",
     "table": "projects",
-    "snippet": "const allProjects = await db.selectFrom('projects').select('id').execute();",
+    "snippet": "const allProjects = await db.selectFrom('projects').select('id').where('deleted_at', 'is', null).execute();",
     "reason": "intentional cross-org admin: fetches all project IDs for ClickHouse cross-platform timeline aggregate"
   },
   {
@@ -175,27 +169,9 @@
   },
   {
     "file": "packages/backend/src/modules/monitoring/service.ts",
-    "table": "monitor_uptime_daily",
-    "snippet": ".selectFrom('monitor_uptime_daily')",
-    "reason": "scoped-indirect: query by monitor_id IN list; monitorIds derived from org-scoped monitor query earlier"
-  },
-  {
-    "file": "packages/backend/src/modules/monitoring/service.ts",
     "table": "monitors",
     "snippet": ".selectFrom('monitors')",
     "reason": "intentional cross-org worker: loads all enabled due monitors across all orgs to schedule checks"
-  },
-  {
-    "file": "packages/backend/src/modules/monitoring/service.ts",
-    "table": "projects",
-    "snippet": ".selectFrom('projects')",
-    "reason": "scoped-indirect: lookup by slug for public status page; visibility check follows immediately"
-  },
-  {
-    "file": "packages/backend/src/modules/monitoring/service.ts",
-    "table": "projects",
-    "snippet": ".selectFrom('projects')",
-    "reason": "scoped-indirect: lookup by verifiedProjectId (server-trusted) for public status page"
   },
   {
     "file": "packages/backend/src/modules/notifications/service.ts",

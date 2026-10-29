@@ -42,7 +42,9 @@ test.describe('Invitations Journey', () => {
     await page.waitForTimeout(2000);
 
     // Verify settings page loaded
-    await expect(page.locator('h1:has-text("Settings"), h1:has-text("Organization")').first()).toBeVisible({ timeout: 30000 });
+    // /dashboard/settings redirects to the General page
+    await expect(page).toHaveURL(/\/dashboard\/settings\/general/);
+    await expect(page.getByRole('heading', { name: 'General', level: 1 })).toBeVisible({ timeout: 30000 });
   });
 
   test('2. Owner can see members tab in settings', async ({ page }) => {

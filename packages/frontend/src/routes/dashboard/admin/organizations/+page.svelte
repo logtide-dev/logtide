@@ -1,259 +1,257 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-    import { adminAPI, type OrganizationBasic } from "$lib/api/admin";
-    import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
-    import { Button, buttonVariants } from "$lib/components/ui/button";
-    import { Input } from "$lib/components/ui/input";
-    import { Badge } from "$lib/components/ui/badge";
-    import {
-        Card,
-        CardContent,
-        CardDescription,
-        CardHeader,
-        CardTitle,
-    } from "$lib/components/ui/card";
-    import {
-        Table,
-        TableBody,
-        TableCell,
-        TableHead,
-        TableHeader,
-        TableRow,
-    } from "$lib/components/ui/table";
-    import {
-        Search,
-        Building2,
-        Users,
-        FolderKanban,
-        ChevronLeft,
-        ChevronRight,
-    } from "@lucide/svelte";
-    import { authStore } from "$lib/stores/auth";
+    import { untrack, type Snippet } from "svelte";
     import { goto } from "$app/navigation";
-    import { browser } from "$app/environment";
-    import { untrack } from "svelte";
-    import { UsersAPI } from "$lib/api/users";
-    import { get } from "svelte/store";
+    import { page as appPage } from "$app/state";
+    import { adminAPI, type OrganizationBasic } from "$lib/api/admin";
+    import { authStore } from "$lib/stores/auth";
+    import { toastStore } from "$lib/stores/toast";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
+    import DataTable from "$lib/components/app/DataTable.svelte";
+    import type { DataTableColumn, DataTableSort } from "$lib/components/app/data-table";
+    import Pagination from "$lib/components/app/Pagination.svelte";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
+    import Timestamp from "$lib/components/app/Timestamp.svelte";
+    import { Button } from "$lib/components/ui/button";
+    import { Input } from "$lib/components/ui/input";
+    import { formatCount } from "$lib/utils/format-number";
+    import { createLatestGuard } from "$lib/components/admin/latest-request";
+    import {
+        buildOrgListSearch,
+        parseOrgListParams,
+        sortToApi,
+        type OrgListParams,
+    } from "$lib/components/admin/org-list-params";
 
-    let organizations: OrganizationBasic[] = $state([]);
+    type OrgRow = OrganizationBasic;
+
+    const PAGE_SIZE = 50;
+    const SEARCH_DEBOUNCE_MS = 300;
+
+    const initial = parseOrgListParams(new URLSearchParams(appPage.url?.search ?? ""));
+
+    let organizations = $state<OrgRow[]>([]);
+    let total = $state(0);
     let loading = $state(true);
     let error = $state("");
-    let search = $state("");
-    let page = $state(1);
-    let totalPages = $state(1);
-    let total = $state(0);
-    const limit = 50;
+    let hasLoaded = $state(false);
 
-    const usersAPI = new UsersAPI(() => get(authStore).token);
+    // The input text; `applied` is what the list is actually loaded with.
+    let searchText = $state(initial.q);
+    let sort = $state<DataTableSort | undefined>(initial.sort);
+    let applied = $state<OrgListParams>(initial);
 
+    const guard = createLatestGuard();
+
+    // Debounced search: a new query goes back to the first page.
     $effect(() => {
-        if (browser && $authStore.user) {
-            if ($authStore.user.is_admin === undefined) {
-                untrack(() => {
-                    usersAPI
-                        .getCurrentUser()
-                        .then(({ user }) => {
-                            const currentUser = get(authStore).user;
-                            if (currentUser) {
-                                authStore.updateUser({ ...currentUser, ...user });
-                                if (user.is_admin) loadOrganizations();
-                            }
-                        })
-                        .catch(() => goto("/dashboard"));
-                });
-            } else if ($authStore.user.is_admin === false) {
-                untrack(() => goto("/dashboard"));
+        const next = searchText.trim();
+        const timer = setTimeout(() => {
+            if (next !== untrack(() => applied.q)) {
+                applied = { ...untrack(() => applied), q: next, page: 1 };
             }
+        }, SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
+    });
+
+    // Sortable headers drive the server-side sort.
+    $effect(() => {
+        const s = sort;
+        const cur = untrack(() => applied);
+        if (s && (s.key !== cur.sort.key || s.dir !== cur.sort.dir)) {
+            applied = { ...cur, sort: s, page: 1 };
         }
     });
 
-    async function loadOrganizations() {
-        if ($authStore.user?.is_admin !== true) return;
+    // Keep q, page, sort and order in the URL without piling up history.
+    $effect(() => {
+        const search = buildOrgListSearch(applied);
+        untrack(() => {
+            const current = appPage.url?.search ?? "";
+            if (search !== current) {
+                goto(`${appPage.url?.pathname ?? "/dashboard/admin/organizations"}${search}`, {
+                    replaceState: true,
+                    keepFocus: true,
+                    noScroll: true,
+                });
+            }
+        });
+    });
 
+    // Follow URL changes made from outside the page (sidebar link, back/forward).
+    $effect(() => {
+        const fromUrl = parseOrgListParams(new URLSearchParams(appPage.url?.search ?? ""));
+        untrack(() => {
+            if (buildOrgListSearch(fromUrl) === buildOrgListSearch(applied)) return;
+            applied = fromUrl;
+            searchText = fromUrl.q;
+            sort = fromUrl.sort;
+        });
+    });
+
+    // Load whenever the applied query changes (and once the admin check passes).
+    $effect(() => {
+        if ($authStore.user?.is_admin !== true) return;
+        const params = applied;
+        untrack(() => void load(params));
+    });
+
+    async function load(params: OrgListParams) {
+        const ticket = guard.begin();
         loading = true;
         error = "";
         try {
-            const response = await adminAPI.getOrganizations(
-                page,
-                limit,
-                search || undefined,
-            );
-            organizations = response.organizations;
-            total = response.total;
-            totalPages = response.totalPages;
-        } catch (err: any) {
-            error = err.message || "Failed to load organizations";
+            const res = await adminAPI.getOrganizations({
+                page: params.page,
+                limit: PAGE_SIZE,
+                search: params.q || undefined,
+                ...sortToApi(params.sort),
+            });
+            if (!guard.isCurrent(ticket)) return;
+            organizations = res.organizations;
+            total = res.total;
+            hasLoaded = true;
+        } catch (err) {
+            if (!guard.isCurrent(ticket)) return;
+            error = err instanceof Error ? err.message : "Failed to load organizations";
+            toastStore.error(error);
         } finally {
-            loading = false;
+            if (guard.isCurrent(ticket)) loading = false;
         }
     }
 
-    function handleSearch() {
-        page = 1;
-        loadOrganizations();
+    function retry() {
+        void load(applied);
     }
 
-    function nextPage() {
-        if (page < totalPages) {
-            page++;
-            loadOrganizations();
-        }
+    function clearSearch() {
+        searchText = "";
     }
 
-    function prevPage() {
-        if (page > 1) {
-            page--;
-            loadOrganizations();
-        }
+    function changePage(next: number) {
+        applied = { ...applied, page: next };
     }
 
-    function formatDate(dateString: string | Date) {
-        const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
-        return date.toLocaleString('en-US');
-    }
+    const showInitialSkeleton = $derived(loading && !hasLoaded);
+    const showError = $derived(!!error && organizations.length === 0);
+    const isSearching = $derived(applied.q.length > 0);
 
-    onMount(() => {
-        if ($authStore.user?.is_admin) loadOrganizations();
-    });
+    const asCell = (s: unknown) => s as Snippet<[OrgRow]>;
+
+    const columns: DataTableColumn<OrgRow>[] = [
+        { key: "name", header: "Organization", sortable: true, class: "min-w-[12rem] max-w-[22rem]", cell: asCell(nameCell) },
+        { key: "owner", header: "Owner", class: "hidden md:table-cell", cell: asCell(ownerCell) },
+        { key: "members", header: "Members", sortable: true, class: "text-right tabular-nums", cell: asCell(membersCell) },
+        { key: "projects", header: "Projects", sortable: true, class: "text-right tabular-nums", cell: asCell(projectsCell) },
+        { key: "created_at", header: "Created", sortable: true, class: "whitespace-nowrap", cell: asCell(createdCell) },
+    ];
 </script>
 
 <svelte:head>
-    <title>Organizations - Admin - LogTide</title>
+    <title>All organizations - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-3xl font-bold">Organization Management</h1>
-            <p class="text-muted-foreground">
-                Manage all organizations in the system
-            </p>
-        </div>
+{#snippet nameCell(o: OrgRow)}
+    <div class="min-w-0">
+        <a
+            href="/dashboard/admin/organizations/{o.id}"
+            class="block truncate font-medium hover:text-primary hover:underline underline-offset-4"
+        >
+            {o.name}
+        </a>
+        <p class="truncate font-mono text-xs text-muted-foreground">{o.slug}</p>
+    </div>
+{/snippet}
+
+{#snippet ownerCell(o: OrgRow)}
+    {#if o.ownerId && o.ownerEmail}
+        <a
+            href="/dashboard/admin/users/{o.ownerId}"
+            class="block max-w-[16rem] truncate text-sm hover:text-primary hover:underline underline-offset-4"
+        >
+            {o.ownerEmail}
+        </a>
+    {:else}
+        <span class="text-muted-foreground">-</span>
+    {/if}
+{/snippet}
+
+{#snippet membersCell(o: OrgRow)}{formatCount(o.memberCount)}{/snippet}
+{#snippet projectsCell(o: OrgRow)}{formatCount(o.projectCount)}{/snippet}
+{#snippet createdCell(o: OrgRow)}<Timestamp value={o.created_at} relative />{/snippet}
+
+{#snippet mobileRow(o: OrgRow)}
+    <div class="space-y-1">
+        <a href="/dashboard/admin/organizations/{o.id}" class="block truncate font-medium hover:text-primary">{o.name}</a>
+        <p class="truncate font-mono text-xs text-muted-foreground">{o.slug}</p>
+        <p class="text-xs text-muted-foreground">
+            {formatCount(o.memberCount)} {o.memberCount === 1 ? "member" : "members"},
+            {formatCount(o.projectCount)} {o.projectCount === 1 ? "project" : "projects"}
+        </p>
+        {#if o.ownerId && o.ownerEmail}
+            <a href="/dashboard/admin/users/{o.ownerId}" class="block truncate text-xs text-muted-foreground hover:text-primary">
+                Owner: {o.ownerEmail}
+            </a>
+        {/if}
+    </div>
+{/snippet}
+
+<div class="space-y-6">
+    <PageHeader
+        title="All organizations"
+        appliesTo="instance"
+        description={hasLoaded ? `${formatCount(total)} ${total === 1 ? "organization" : "organizations"} on this instance` : "Every organization on this instance"}
+    />
+
+    <div class="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
+        <Input
+            type="search"
+            placeholder="Search by name or slug"
+            aria-label="Search organizations"
+            bind:value={searchText}
+            class="sm:max-w-md"
+        />
     </div>
 
-    <Card>
-        <CardHeader>
-            <CardTitle>Organizations</CardTitle>
-            <CardDescription>Total: {total} organizations</CardDescription>
-        </CardHeader>
-        <CardContent class="space-y-4">
-            <div class="flex gap-2">
-                <div class="relative flex-1">
-                    <Search
-                        class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-                    />
-                    <Input
-                        type="text"
-                        placeholder="Search by name or slug..."
-                        bind:value={search}
-                        onkeydown={(e) => e.key === "Enter" && handleSearch()}
-                        class="pl-10"
-                    />
-                </div>
-                <Button onclick={handleSearch}>Search</Button>
-            </div>
-
-            {#if loading && organizations.length === 0}
-                <SkeletonTable rows={6} columns={6} />
-            {:else if error}
-                <div class="text-center py-8">
-                    <p class="text-destructive">{error}</p>
-                </div>
-            {:else if organizations.length === 0}
-                <div class="text-center py-8">
-                    <p class="text-muted-foreground">No organizations found</p>
-                </div>
-            {:else}
-                <TableLoadingOverlay loading={loading}>
-                <div class="rounded-md border">
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>Name</TableHead>
-                                <TableHead>Slug</TableHead>
-                                <TableHead>Members</TableHead>
-                                <TableHead>Projects</TableHead>
-                                <TableHead>Created</TableHead>
-                                <TableHead class="text-right">Actions</TableHead
-                                >
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {#each organizations as org (org.id)}
-                                <TableRow>
-                                    <TableCell class="font-medium">
-                                        <div class="flex items-center gap-2">
-                                            <Building2
-                                                class="h-4 w-4 text-muted-foreground"
-                                            />
-                                            {org.name}
-                                        </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <code class="text-sm">@{org.slug}</code>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Badge variant="outline" class="gap-1">
-                                            <Users class="h-3 w-3" />
-                                            {org.memberCount}
-                                        </Badge>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Badge variant="outline" class="gap-1">
-                                            <FolderKanban class="h-3 w-3" />
-                                            {org.projectCount}
-                                        </Badge>
-                                    </TableCell>
-                                    <TableCell
-                                        class="text-sm text-muted-foreground"
-                                    >
-                                        {formatDate(org.created_at)}
-                                    </TableCell>
-                                    <TableCell class="text-right">
-                                        <a
-                                            href="/dashboard/admin/organizations/{org.id}"
-                                            class={buttonVariants({
-                                                variant: "ghost",
-                                                size: "sm",
-                                            })}
-                                        >
-                                            View Details
-                                        </a>
-                                    </TableCell>
-                                </TableRow>
-                            {/each}
-                        </TableBody>
-                    </Table>
-                </div>
-
-                <!-- Pagination -->
-                <div class="flex items-center justify-between">
-                    <p class="text-sm text-muted-foreground">
-                        Page {page} of {totalPages}
-                    </p>
-                    <div class="flex gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onclick={prevPage}
-                            disabled={page === 1}
+    {#if showError}
+        <EmptyState variant="error" title="Could not load organizations" description={error}>
+            {#snippet actions()}
+                <Button onclick={retry}>Retry</Button>
+            {/snippet}
+        </EmptyState>
+    {:else}
+        <div class={loading && hasLoaded ? "opacity-60 transition-opacity" : "transition-opacity"} aria-busy={loading}>
+            <DataTable
+                {columns}
+                rows={organizations}
+                loading={showInitialSkeleton}
+                rowKey={(o) => o.id}
+                bind:sort
+                mobileRow={asCell(mobileRow)}
+            >
+                {#snippet empty()}
+                    {#if isSearching}
+                        <EmptyState
+                            variant="no-results"
+                            title="No organizations found"
+                            description="No organization matches your search."
                         >
-                            <ChevronLeft class="h-4 w-4 mr-1" />
-                            Previous
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onclick={nextPage}
-                            disabled={page === totalPages}
-                        >
-                            Next
-                            <ChevronRight class="h-4 w-4 ml-1" />
-                        </Button>
-                    </div>
-                </div>
-                </TableLoadingOverlay>
-            {/if}
-        </CardContent>
-    </Card>
+                            {#snippet actions()}
+                                <Button variant="outline" onclick={clearSearch}>Clear search</Button>
+                            {/snippet}
+                        </EmptyState>
+                    {:else}
+                        <EmptyState
+                            variant="no-data"
+                            title="No organizations found"
+                            description="No organizations have been created on this instance yet."
+                        />
+                    {/if}
+                {/snippet}
+            </DataTable>
+        </div>
+
+        {#if !showInitialSkeleton}
+            <Pagination page={applied.page} pageSize={PAGE_SIZE} {total} onPageChange={changePage} />
+        {/if}
+    {/if}
 </div>

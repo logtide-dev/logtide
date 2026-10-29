@@ -1,13 +1,23 @@
 import { db } from '../../database/index.js';
 import { reservoir } from '../../database/reservoir.js';
-import type { TimeBucket, StoredLogRecord } from '@logtide/reservoir';
+import type { TimeBucket, StoredLogRecord, IReservoir } from '@logtide/reservoir';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
-import type { LogLevel, MetadataFilter } from '@logtide/shared';
+import { resolveFieldKey } from '@logtide/shared';
+import type { LogLevel, LogSearchQuery, MetadataFilter } from '@logtide/shared';
 import { hooks } from '../../hooks/index.js';
 import { context } from '@logtide/shared/context';
+import { buildLogFilter, type SearchMode } from './build-log-filter.js';
+import { MAX_HISTOGRAM_BUCKETS } from '@logtide/reservoir';
+import {
+  ExplorerParamError,
+  histogramBucketCount,
+  pickBucketSeconds,
+  type FacetFieldRequest,
+  type LogHistogramResponse,
+} from './explorer-params.js';
 
 /** Supported search modes */
-export type SearchMode = 'fulltext' | 'substring';
+export type { SearchMode };
 
 export interface LogQueryParams {
   projectId: string | string[]; // Support single or multiple projects
@@ -18,8 +28,8 @@ export interface LogQueryParams {
   sessionId?: string; // Filter by browser session ID
   from?: Date;
   to?: Date;
-  q?: string; // Search query
-  searchMode?: SearchMode; // Search mode: 'fulltext' (default) or 'substring'
+  q?: string; // Search query (log query language, or one phrase in substring mode)
+  searchMode?: SearchMode; // Search mode: 'fulltext' (default, parses q) or 'substring'
   metadata_filters?: MetadataFilter[]; // Filter by metadata key/value
   limit?: number;
   offset?: number;
@@ -27,64 +37,158 @@ export interface LogQueryParams {
   skipCache?: boolean; // Bypass the query cache (e.g. for per-second live tail polling)
 }
 
+/** The reservoir filter part shared by query, count, histogram and facets. */
+export type LogFilterParams = Omit<Parameters<IReservoir['histogram']>[0], 'bucketSeconds'>;
+
+export interface PreparedLogFilter {
+  filter: LogFilterParams;
+  query: LogSearchQuery;
+  /** The params after beforeQuery hooks ran (limit, offset, cursor, skipCache live here). */
+  params: LogQueryParams;
+}
+
+/** The log payload of every log read endpoint (list, by id, context, trace, live tail). */
+export interface ApiLog {
+  id: string;
+  time: Date;
+  projectId: string;
+  service: string;
+  level: LogLevel;
+  message: string;
+  metadata?: Record<string, unknown>;
+  traceId?: string;
+  spanId?: string;
+  sessionId?: string;
+  hostname?: string;
+}
+
+export type { LogHistogramResponse };
+
+export interface LogFacetsResponse {
+  facets: { field: string; values: { value: string; count: number }[]; otherCount: number }[];
+}
+
+export interface LogFieldsResponse {
+  fields: { key: string; occurrences: number }[];
+}
+
+/** Most metadata keys GET /api/v1/logs/fields returns. */
+export const FIELDS_MAX_RESULTS = 200;
+
+/** Rows per side of GET /api/v1/logs/context: default and maximum. */
+export const CONTEXT_DEFAULT_SIZE = 10;
+export const CONTEXT_MAX_SIZE = 100;
+
+export interface LogContextResponse {
+  before: ApiLog[];
+  current: ApiLog | null;
+  after: ApiLog[];
+  /** The reference log's service / host used to filter both sides, null when not applied. */
+  applied: { service: string | null; hostname: string | null };
+}
+
+/** The reference log of a context request does not exist in the project (404). */
+export class LogNotFoundError extends Error {
+  readonly statusCode = 404;
+
+  constructor() {
+    super('Log not found');
+    this.name = 'LogNotFoundError';
+  }
+}
+
+const DEFAULT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const orUndefined = (value: string | null | undefined): string | undefined =>
+  value === null || value === undefined || value === '' ? undefined : value;
+
+/** CacheManager.queryKey sorts an array argument in place: hand it a copy. */
+const cacheProjectPart = (projectId: LogFilterParams['projectId']): string | string[] =>
+  Array.isArray(projectId) ? [...projectId] : projectId;
+
+/** The one mapper from a stored log to the API payload. */
+export function mapApiLog(log: StoredLogRecord): ApiLog {
+  const metadataHost = log.metadata?.hostname;
+  return {
+    id: log.id,
+    time: log.time,
+    projectId: log.projectId,
+    service: log.service,
+    level: log.level,
+    message: log.message,
+    metadata: log.metadata ?? undefined,
+    traceId: orUndefined(log.traceId),
+    spanId: orUndefined(log.spanId),
+    sessionId: orUndefined(log.sessionId),
+    hostname: typeof metadataHost === 'string' && metadataHost !== '' ? metadataHost : undefined,
+  };
+}
+
 export class QueryService {
+  /**
+   * Runs the beforeQuery hook (#216), compiles the (possibly mutated) params
+   * with the log query language and applies the default window (last 24h).
+   * Every log read endpoint goes through here, so a hook that forces a filter
+   * narrows search, count, histogram, facets and fields alike.
+   *
+   * Throws LogQueryError for an invalid q.
+   */
+  async prepare(params: LogQueryParams): Promise<PreparedLogFilter> {
+    const ctx = {
+      organizationId: context.currentOrNull()?.organizationId ?? null,
+      projectIds: Array.isArray(params.projectId) ? [...params.projectId] : [params.projectId],
+      params,
+    };
+    if (hooks.hasHandlers('beforeQuery')) {
+      await hooks.run('beforeQuery', ctx);
+    }
+    const effective = ctx.params;
+
+    const built = buildLogFilter({
+      q: effective.q,
+      searchMode: effective.searchMode,
+      service: effective.service,
+      level: effective.level,
+      hostname: effective.hostname,
+      traceId: effective.traceId,
+      sessionId: effective.sessionId,
+      metadata_filters: effective.metadata_filters,
+    });
+
+    // PERFORMANCE: always a time filter (defaults to the last 24h) to prevent
+    // full table scans on large datasets.
+    const to = effective.to ?? new Date();
+    const from = effective.from ?? new Date(Date.now() - DEFAULT_WINDOW_MS);
+    // A default on one side can invert the window (only `to` older than 24h, or
+    // only `from` in the future); the reservoir would throw a RangeError.
+    if (from.getTime() > to.getTime()) {
+      throw new ExplorerParamError('from must not be after to');
+    }
+
+    return {
+      filter: { projectId: effective.projectId, from, to, ...built.filter },
+      query: built.query,
+      params: effective,
+    };
+  }
+
   /**
    * Query logs with filters
    * Cached for performance - common queries are frequently repeated
-   *
-   * PERFORMANCE: Always uses a time filter (defaults to last 24h)
-   * to prevent full table scans on large datasets.
    */
   async queryLogs(params: LogQueryParams) {
-    // Lifecycle hook (#216): runs after parsing/access checks (done in the
-    // route), before the cache key is built - so mutated params drive both
-    // the cache key and the reservoir read.
-    if (hooks.hasHandlers('beforeQuery')) {
-      await hooks.run('beforeQuery', {
-        organizationId: context.currentOrNull()?.organizationId ?? null,
-        projectIds: Array.isArray(params.projectId) ? params.projectId : [params.projectId],
-        params,
-      });
-    }
+    // Hooks run inside prepare, before the cache key is built, so mutated
+    // params drive both the cache key and the reservoir read.
+    const prepared = await this.prepare(params);
+    const { filter } = prepared;
+    const { limit = 100, offset = 0, cursor, skipCache = false } = prepared.params;
 
-    const {
-      projectId,
-      service,
-      level,
-      hostname,
-      traceId,
-      sessionId,
-      from,
-      to,
-      q,
-      searchMode = 'fulltext',
-      metadata_filters,
-      limit = 100,
-      offset = 0,
-      cursor,
-      skipCache = false,
-    } = params;
-
-    // PERFORMANCE: Default to last 24h if no time filter provided
-    const effectiveFrom = from || new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    // Generate deterministic cache key
-    const cacheParams = {
-      service: service || null,
-      level: level || null,
-      hostname: hostname || null,
-      traceId: traceId || null,
-      sessionId: sessionId || null,
-      from: effectiveFrom.toISOString(),
-      to: to?.toISOString() || null,
-      q: q || null,
-      searchMode: searchMode || 'fulltext',
-      metadata_filters: metadata_filters ? JSON.stringify(metadata_filters) : null,
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
+      filter: JSON.stringify(filter),
       limit,
       offset,
       cursor: cursor || null,
-    };
-    const cacheKey = CacheManager.queryKey(projectId, cacheParams);
+    });
     const cached = skipCache ? null : await CacheManager.get<any>(cacheKey);
 
     if (cached && cached.total !== -1) {
@@ -97,48 +201,14 @@ export class QueryService {
       };
     }
 
-    // Delegate to reservoir (raw parametrized SQL, no Kysely overhead)
-    const effectiveTo = to ?? new Date();
-    const commonParams = {
-      projectId,
-      service,
-      level,
-      hostname,
-      traceId,
-      sessionId,
-      from: effectiveFrom,
-      to: effectiveTo,
-      search: q,
-      searchMode,
-      metadataFilters: metadata_filters,
-    };
-
     // Run data query and count query in parallel
     const [queryResult, countResult] = await Promise.all([
-      reservoir.query({
-        ...commonParams,
-        limit,
-        offset,
-        cursor,
-      }),
-      reservoir.countEstimate(commonParams),
+      reservoir.query({ ...filter, limit, offset, cursor }),
+      reservoir.countEstimate(filter),
     ]);
 
-    // Map reservoir StoredLogRecord to API format
-    const logs = queryResult.logs.map((log: StoredLogRecord) => ({
-      id: log.id,
-      time: log.time,
-      projectId: log.projectId,
-      service: log.service,
-      level: log.level,
-      message: log.message,
-      metadata: log.metadata,
-      traceId: log.traceId,
-      sessionId: log.sessionId,
-    }));
-
     const result = {
-      logs,
+      logs: queryResult.logs.map(mapApiLog),
       total: countResult.count,
       hasMore: queryResult.hasMore,
       limit: queryResult.limit,
@@ -154,25 +224,165 @@ export class QueryService {
   }
 
   /**
-   * Get a single log by ID
+   * Exact number of logs matching the filters (same prepare path as search).
    */
-  async getLogById(logId: string, projectId: string) {
-    const log = await reservoir.getById({ id: logId, projectId });
+  async countLogs(params: LogQueryParams): Promise<{ count: number }> {
+    const { filter } = await this.prepare(params);
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
+      kind: 'count',
+      filter: JSON.stringify(filter),
+    });
+    const cached = await CacheManager.get<{ count: number }>(cacheKey);
+    if (cached && typeof cached.count === 'number') return { count: cached.count };
 
-    if (!log) {
-      return null;
+    const result = await reservoir.count(filter);
+    const value = { count: result.count };
+    await CacheManager.set(cacheKey, value, CACHE_TTL.QUERY);
+    return value;
+  }
+
+  /**
+   * Log volume over time stacked by level, zero-filled. `bucketSeconds`
+   * defaults to an automatic size (about 60 buckets over the range the
+   * filters resolve to, after hooks and the default window).
+   *
+   * Throws LogQueryError for an invalid q, ExplorerParamError for an empty
+   * range or a range needing more than MAX_HISTOGRAM_BUCKETS buckets.
+   */
+  async getHistogram(params: LogQueryParams & { bucketSeconds?: number }): Promise<LogHistogramResponse> {
+    const { bucketSeconds: requested, ...rest } = params;
+    const { filter } = await this.prepare(rest);
+    if (filter.to.getTime() <= filter.from.getTime()) {
+      throw new ExplorerParamError('"to" must be after "from"');
     }
 
-    return {
-      id: log.id,
-      time: log.time,
-      projectId: log.projectId,
-      service: log.service,
-      level: log.level,
-      message: log.message,
-      metadata: log.metadata,
-      traceId: log.traceId,
+    const bucketSeconds = requested ?? pickBucketSeconds(filter.from, filter.to);
+    if (histogramBucketCount(filter.from, filter.to, bucketSeconds) > MAX_HISTOGRAM_BUCKETS) {
+      throw new ExplorerParamError(
+        requested !== undefined ? 'Bucket size is too small for this range' : 'Time range is too long for a histogram',
+      );
+    }
+
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
+      kind: 'histogram',
+      filter: JSON.stringify(filter),
+      bucketSeconds,
+    });
+    const cached = await CacheManager.get<LogHistogramResponse>(cacheKey);
+    if (cached && Array.isArray(cached.buckets)) {
+      return {
+        ...cached,
+        buckets: cached.buckets.map((bucket) => ({ ...bucket, time: new Date(bucket.time) })),
+        from: new Date(cached.from),
+        to: new Date(cached.to),
+      };
+    }
+
+    const result = await reservoir.histogram({ ...filter, bucketSeconds });
+    const response: LogHistogramResponse = {
+      buckets: result.buckets,
+      bucketSeconds: result.bucketSeconds,
+      total: result.buckets.reduce((sum, bucket) => sum + bucket.total, 0),
+      from: filter.from,
+      to: filter.to,
     };
+    await CacheManager.set(cacheKey, response, CACHE_TTL.QUERY);
+    return response;
+  }
+
+  /**
+   * Top values per field over the logs matching the filters, one reservoir
+   * call for every field. `field` echoes the requested grammar key, in
+   * request order.
+   *
+   * Throws LogQueryError for an invalid q.
+   */
+  async getFacets(params: LogQueryParams & { fields: FacetFieldRequest[]; limit: number }): Promise<LogFacetsResponse> {
+    const { fields, limit, ...rest } = params;
+    const { filter } = await this.prepare(rest);
+    if (fields.length === 0) return { facets: [] };
+
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
+      kind: 'facets',
+      filter: JSON.stringify(filter),
+      fields: JSON.stringify(fields),
+      limit,
+    });
+    const cached = await CacheManager.get<LogFacetsResponse>(cacheKey);
+    if (cached && Array.isArray(cached.facets)) return cached;
+
+    const result = await reservoir.facets({ ...filter, fields: fields.map((f) => f.field), limit });
+    // The reservoir labels fields 'level' | 'service' | 'hostname' | 'metadata.<key>'.
+    const keyByLabel = new Map(
+      fields.map((f) => ['builtin' in f.field ? f.field.builtin : `metadata.${f.field.metadata}`, f.key] as const),
+    );
+    const response: LogFacetsResponse = {
+      facets: result.facets.map((facet, index) => ({
+        field: keyByLabel.get(facet.field) ?? fields[index]?.key ?? facet.field,
+        values: facet.values,
+        otherCount: facet.otherCount,
+      })),
+    };
+    await CacheManager.set(cacheKey, response, CACHE_TTL.QUERY);
+    return response;
+  }
+
+  /**
+   * Metadata keys seen in the most recent `sampleSize` logs of the projects
+   * (top-level and one nested level, dot-joined). The beforeQuery hook runs
+   * through prepare, so a hook narrows the project set and the window like
+   * on search. Keys the query language reads as built-ins (level, service,
+   * host, trace, session, span and their aliases) are dropped. Sorted by
+   * occurrences desc, then key; at most FIELDS_MAX_RESULTS.
+   */
+  async discoverFields(params: {
+    projectId: string | string[];
+    from?: Date;
+    to?: Date;
+    sampleSize: number;
+  }): Promise<LogFieldsResponse> {
+    const { sampleSize, ...rest } = params;
+    const prepared = await this.prepare(rest);
+    const { filter } = prepared;
+    if (filter.matchNothing) return { fields: [] };
+
+    const scoped = prepared.params.projectId;
+    const projectIds = [...new Set(Array.isArray(scoped) ? scoped : [scoped])].filter(
+      (id): id is string => typeof id === 'string' && id !== '',
+    );
+    if (projectIds.length === 0) return { fields: [] };
+    const projectId = projectIds.length === 1 ? projectIds[0] : projectIds;
+
+    const cacheKey = CacheManager.queryKey(cacheProjectPart(projectId), {
+      kind: 'fields',
+      from: filter.from.toISOString(),
+      to: filter.to.toISOString(),
+      sampleSize,
+    });
+    const cached = await CacheManager.get<LogFieldsResponse>(cacheKey);
+    if (cached && Array.isArray(cached.fields)) return cached;
+
+    const keys = await reservoir.discoverMetadataKeys({ projectId, from: filter.from, to: filter.to, sampleSize });
+    const fields = keys
+      .filter(({ key }) => {
+        const ref = resolveFieldKey(key);
+        return !(ref && 'builtin' in ref);
+      })
+      .map(({ key, occurrences }) => ({ key, occurrences }))
+      .sort((a, b) => b.occurrences - a.occurrences || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .slice(0, FIELDS_MAX_RESULTS);
+
+    const response: LogFieldsResponse = { fields };
+    await CacheManager.set(cacheKey, response, CACHE_TTL.STATS);
+    return response;
+  }
+
+  /**
+   * Get a single log by ID
+   */
+  async getLogById(logId: string, projectId: string): Promise<ApiLog | null> {
+    const log = await reservoir.getById({ id: logId, projectId });
+    return log ? mapApiLog(log) : null;
   }
 
   /**
@@ -201,16 +411,7 @@ export class QueryService {
       limit: 1000,
     });
 
-    const result = queryResult.logs.map((log: { id: string; time: Date; projectId: string; service: string; level: string; message: string; metadata?: Record<string, unknown>; traceId?: string }) => ({
-      id: log.id,
-      time: log.time,
-      projectId: log.projectId,
-      service: log.service,
-      level: log.level,
-      message: log.message,
-      metadata: log.metadata,
-      traceId: log.traceId,
-    }));
+    const result = queryResult.logs.map(mapApiLog);
 
     // Cache for longer since trace data is immutable
     await CacheManager.set(cacheKey, result, CACHE_TTL.TRACE);
@@ -219,59 +420,72 @@ export class QueryService {
   }
 
   /**
-   * Get log context (logs before and after a specific timestamp)
+   * Logs before and after a reference log. With `logId` the reference is
+   * that log (LogNotFoundError when it is not in the project) and its time is
+   * the anchor; without it the reference is the log found at `time`.
+   * `sameService` / `sameHost` filter both sides on the REFERENCE log's
+   * service and host, never on client-sent values; `sameHost` is not applied
+   * when the reference has no host, and nothing is applied without a
+   * reference. `applied` reports the values used. A side asked for 0 rows is
+   * not queried.
    */
   async getLogContext(params: {
     projectId: string;
     time: Date;
+    logId?: string;
     before?: number;
     after?: number;
-  }) {
-    const { projectId, time, before = 10, after = 10 } = params;
+    sameService?: boolean;
+    sameHost?: boolean;
+  }): Promise<LogContextResponse> {
+    const { projectId, logId, sameService = false, sameHost = false } = params;
+    const before = params.before ?? CONTEXT_DEFAULT_SIZE;
+    const after = params.after ?? CONTEXT_DEFAULT_SIZE;
 
-    const [beforeResult, afterResult, currentResult] = await Promise.all([
-      // Logs before (exclusive, descending → then reverse)
-      reservoir.query({
-        projectId,
-        from: new Date(0),
-        to: time,
-        toExclusive: true,
-        sortOrder: 'desc',
-        limit: before,
-      }),
-      // Logs after (exclusive, ascending) - no upper bound needed
-      reservoir.query({
-        projectId,
-        from: time,
-        fromExclusive: true,
-        to: new Date('9999-12-31T23:59:59.999Z'),
-        sortOrder: 'asc',
-        limit: after,
-      }),
-      // Current log at exact time
-      reservoir.query({
-        projectId,
-        from: time,
-        to: time,
-        limit: 1,
-      }),
+    let current: ApiLog | null;
+    if (logId !== undefined) {
+      current = await this.getLogById(logId, projectId);
+      if (!current) throw new LogNotFoundError();
+    } else {
+      const found = await reservoir.query({ projectId, from: params.time, to: params.time, limit: 1 });
+      current = found.logs.length > 0 ? mapApiLog(found.logs[0]) : null;
+    }
+    const time = logId !== undefined && current ? current.time : params.time;
+
+    const applied: LogContextResponse['applied'] = {
+      service: sameService && current ? current.service : null,
+      hostname: sameHost && current?.hostname ? current.hostname : null,
+    };
+    const sideFilter = {
+      ...(applied.service !== null ? { service: applied.service } : {}),
+      ...(applied.hostname !== null ? { hostname: applied.hostname } : {}),
+    };
+
+    const none = Promise.resolve({ logs: [] as StoredLogRecord[] });
+    const [beforeResult, afterResult] = await Promise.all([
+      // Logs before (exclusive, newest first, reversed below)
+      before > 0
+        ? reservoir.query({ projectId, ...sideFilter, from: new Date(0), to: time, toExclusive: true, sortOrder: 'desc', limit: before })
+        : none,
+      // Logs after (exclusive, oldest first), no upper bound
+      after > 0
+        ? reservoir.query({
+            projectId,
+            ...sideFilter,
+            from: time,
+            fromExclusive: true,
+            to: new Date('9999-12-31T23:59:59.999Z'),
+            sortOrder: 'asc',
+            limit: after,
+          })
+        : none,
     ]);
 
-    const mapLog = (log: StoredLogRecord) => ({
-      id: log.id,
-      time: log.time,
-      projectId: log.projectId,
-      service: log.service,
-      level: log.level,
-      message: log.message,
-      metadata: log.metadata,
-      traceId: log.traceId,
-    });
-
     return {
-      before: beforeResult.logs.reverse().map(mapLog),
-      current: currentResult.logs.length > 0 ? mapLog(currentResult.logs[0]) : null,
-      after: afterResult.logs.map(mapLog),
+      before: [...beforeResult.logs].reverse().map(mapApiLog),
+      current,
+      after: afterResult.logs.map(mapApiLog),
+      applied,
     };
   }
 

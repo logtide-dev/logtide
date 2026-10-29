@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import { addFieldClause } from '@logtide/shared';
 import { requestStreamTicket } from './stream-tickets';
 
 export interface TraceRecord {
@@ -45,6 +46,11 @@ export interface TraceFilters {
   to?: string;
   minDurationMs?: number;
   maxDurationMs?: number;
+  operation?: string;
+  /** Whitespace separated field clauses (log query grammar), metadata keys only. */
+  attr?: string;
+  sortBy?: 'start_time' | 'duration';
+  sortOrder?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
 }
@@ -54,8 +60,47 @@ export interface TraceStats {
   total_spans: number;
   avg_duration_ms: number;
   max_duration_ms: number;
+  /** Approximate, from latency buckets when several operations are in scope. */
+  p95_duration_ms: number;
   error_count: number;
   error_rate: number;
+}
+
+export interface OperationRow {
+  service: string;
+  operation: string;
+  count: number;
+  errorCount: number;
+  errorRate: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  throughputPerMin: number;
+}
+
+export interface LatencyHistogram {
+  bounds: number[];
+  counts: number[];
+}
+
+export interface TraceErrorGroup {
+  errorGroupId: string;
+  status: 'open' | 'resolved' | 'ignored';
+  exceptionType: string;
+  exceptionMessage: string | null;
+  projectId: string;
+  logId: string;
+  spanId: string | null;
+  occurredAt: string;
+}
+
+export interface SpanLog {
+  time: string;
+  level: string;
+  service: string;
+  message: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ServiceDependencyNode {
@@ -130,6 +175,10 @@ export class TracesAPI {
     if (filters.to) params.append('to', filters.to);
     if (filters.minDurationMs != null) params.append('minDurationMs', filters.minDurationMs.toString());
     if (filters.maxDurationMs != null) params.append('maxDurationMs', filters.maxDurationMs.toString());
+    if (filters.operation) params.append('operation', filters.operation);
+    if (filters.attr) params.append('attr', filters.attr);
+    if (filters.sortBy) params.append('sortBy', filters.sortBy);
+    if (filters.sortOrder) params.append('sortOrder', filters.sortOrder);
     if (filters.limit) params.append('limit', filters.limit.toString());
     if (filters.offset != null) params.append('offset', filters.offset.toString());
 
@@ -203,11 +252,18 @@ export class TracesAPI {
     return data.services;
   }
 
-  async getStats(projectId: string, from?: string, to?: string): Promise<TraceStats> {
+  async getStats(
+    projectId: string,
+    from?: string,
+    to?: string,
+    filter: { service?: string; operation?: string } = {}
+  ): Promise<TraceStats> {
     const params = new URLSearchParams();
     params.append('projectId', projectId);
     if (from) params.append('from', from);
     if (to) params.append('to', to);
+    if (filter.service) params.append('service', filter.service);
+    if (filter.operation) params.append('operation', filter.operation);
 
     const url = `${getApiBaseUrl()}/traces/stats?${params.toString()}`;
 
@@ -221,6 +277,118 @@ export class TracesAPI {
     }
 
     return response.json();
+  }
+
+  async getOperations(params: {
+    projectId: string;
+    service?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+  }): Promise<OperationRow[]> {
+    const query = new URLSearchParams();
+    query.append('projectId', params.projectId);
+    if (params.service) query.append('service', params.service);
+    if (params.from) query.append('from', params.from);
+    if (params.to) query.append('to', params.to);
+    if (params.limit) query.append('limit', params.limit.toString());
+
+    const response = await fetch(`${getApiBaseUrl()}/traces/operations?${query.toString()}`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch operations: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.operations;
+  }
+
+  async getLatencyHistogram(params: {
+    projectId: string;
+    service?: string;
+    operation?: string;
+    from?: string;
+    to?: string;
+  }): Promise<LatencyHistogram> {
+    const query = new URLSearchParams();
+    query.append('projectId', params.projectId);
+    if (params.service) query.append('service', params.service);
+    if (params.operation) query.append('operation', params.operation);
+    if (params.from) query.append('from', params.from);
+    if (params.to) query.append('to', params.to);
+
+    const response = await fetch(`${getApiBaseUrl()}/traces/latency-histogram?${query.toString()}`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch latency histogram: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Error groups that have an event in this trace. Optional enhancement: any
+   * failure (including a 404) yields an empty list so the trace page never
+   * depends on it.
+   */
+  async getErrorGroupsByTrace(
+    traceId: string,
+    projectId: string,
+    organizationId: string
+  ): Promise<TraceErrorGroup[]> {
+    try {
+      const query = new URLSearchParams();
+      query.append('organizationId', organizationId);
+      query.append('projectId', projectId);
+
+      const response = await fetch(
+        `${getApiBaseUrl()}/error-groups/by-trace/${encodeURIComponent(traceId)}?${query.toString()}`,
+        { method: 'GET', headers: this.getHeaders() }
+      );
+      if (!response.ok) return [];
+
+      const data = await response.json();
+      return Array.isArray(data?.groups) ? data.groups : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Logs of one span in a time window. Own fetch on purpose: lib/api/logs.ts
+   * belongs to the logs explorer; the contract is GET /logs with `q`.
+   */
+  async getSpanLogs(params: {
+    projectId: string;
+    spanId: string;
+    from: string;
+    to: string;
+    limit?: number;
+  }): Promise<SpanLog[]> {
+    const query = new URLSearchParams();
+    query.append('projectId', params.projectId);
+    query.append('q', addFieldClause('', 'span', params.spanId, false));
+    query.append('from', params.from);
+    query.append('to', params.to);
+    if (params.limit) query.append('limit', params.limit.toString());
+
+    const response = await fetch(`${getApiBaseUrl()}/logs?${query.toString()}`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch span logs: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.logs ?? [];
   }
 
   /**

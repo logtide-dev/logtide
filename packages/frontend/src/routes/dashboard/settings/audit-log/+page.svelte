@@ -29,7 +29,11 @@
 	} from '$lib/components/ui/table';
 	import { Button } from '$lib/components/ui/button';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import PageHeader from '$lib/components/app/PageHeader.svelte';
+	import EmptyState from '$lib/components/app/EmptyState.svelte';
+	import Timestamp from '$lib/components/app/Timestamp.svelte';
 	import TimeRangePicker from '$lib/components/TimeRangePicker.svelte';
+	import { DEFAULT_RANGE, resolveRange, type TimeRangeValue } from '$lib/stores/scope-url';
 	import type { OrganizationWithRole } from '@logtide/shared';
 	import { canManageMembers } from '@logtide/shared';
 	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
@@ -42,23 +46,23 @@
 	const CATEGORIES: { value: AuditCategory; label: string; color: string }[] = [
 		{
 			value: 'log_access',
-			label: 'Log Access',
-			color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+			label: 'Log access',
+			color: 'bg-info/15 text-info-text',
 		},
 		{
 			value: 'config_change',
-			label: 'Config Change',
-			color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+			label: 'Config change',
+			color: 'bg-warning/15 text-warning-text',
 		},
 		{
 			value: 'user_management',
-			label: 'User Management',
+			label: 'User management',
 			color: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
 		},
 		{
 			value: 'data_modification',
-			label: 'Data Modification',
-			color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+			label: 'Data modification',
+			color: 'bg-destructive/15 text-destructive-text',
 		},
 	];
 
@@ -81,6 +85,16 @@
 	let outcomeFilter = $state<AuditOutcome | ''>('');
 	let fromFilter = $state('');
 	let toFilter = $state('');
+	// The picker is controlled; no range is applied until the user picks one.
+	let rangeValue = $state<TimeRangeValue>(DEFAULT_RANGE);
+
+	function handleRangeChange(next: TimeRangeValue) {
+		rangeValue = next;
+		const { from, to } = resolveRange(next);
+		fromFilter = from.toISOString();
+		toFilter = to.toISOString();
+		applyFilters();
+	}
 
 	// Pagination
 	let currentPage = $state(1);
@@ -109,7 +123,7 @@
 	let canManage = $derived(currentOrg ? canManageMembers(currentOrg.role) : false);
 
 	$effect(() => {
-		if (browser && currentOrg && currentOrg.id !== lastLoadedOrgId) {
+		if (browser && currentOrg && canManage && currentOrg.id !== lastLoadedOrgId) {
 			lastLoadedOrgId = currentOrg.id;
 			currentPage = 1;
 			void loadEntries();
@@ -136,7 +150,7 @@
 			entries = result.entries;
 			total = result.total;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load audit log';
+			error = e instanceof Error ? e.message : 'Could not load audit log';
 		} finally {
 			loading = false;
 		}
@@ -163,6 +177,7 @@
 		outcomeFilter = '';
 		fromFilter = '';
 		toFilter = '';
+		rangeValue = DEFAULT_RANGE;
 		currentPage = 1;
 		void loadEntries();
 	}
@@ -181,7 +196,7 @@
 				to: toFilter || undefined,
 			});
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to export';
+			error = e instanceof Error ? e.message : 'Could not export audit log';
 		} finally {
 			exporting = false;
 		}
@@ -216,12 +231,12 @@
 		);
 	}
 
-	function formatDate(iso: string) {
-		return new Date(iso).toLocaleString('en-US');
-	}
+	const ACTION_LABELS: Record<string, string> = {
+		'org.ownership_transferred': 'Ownership transferred',
+	};
 
 	function formatAction(action: string) {
-		return action.replace(/_/g, ' ');
+		return ACTION_LABELS[action] ?? action.replace(/_/g, ' ');
 	}
 
 	function describeEntry(entry: AuditLogEntry): string {
@@ -242,6 +257,8 @@
 				return `${actor} updated organization settings${meta?.name ? ` (name: "${meta.name}")` : ''}`;
 			case 'delete_organization':
 				return `${actor} deleted the organization`;
+			case 'org.ownership_transferred':
+				return `${actor} transferred ownership of the organization`;
 			case 'leave_organization':
 				return `${actor} left the organization`;
 			case 'create_project':
@@ -280,30 +297,35 @@
 </script>
 
 <svelte:head>
-	<title>Audit Log - LogTide</title>
+	<title>Audit log - LogTide</title>
 </svelte:head>
 
 <div class="space-y-6">
-	<div class="flex items-center justify-end gap-2">
-		<Button variant="outline" size="sm" onclick={handleExport} disabled={exporting || !canManage}>
-			<Download class="h-4 w-4 mr-1" />
-			{exporting ? 'Exporting...' : 'Export CSV'}
-		</Button>
-		<Button variant="outline" size="sm" onclick={() => loadEntries()}>
-			<RotateCcw class="h-4 w-4 mr-1" />
-			Refresh
-		</Button>
-	</div>
+	<PageHeader
+		title="Audit log"
+		appliesTo="organization"
+		description="A record of configuration changes, member changes and data access in this organization."
+	>
+		{#snippet actions()}
+			{#if canManage}
+				<Button variant="outline" size="sm" onclick={handleExport} disabled={exporting}>
+					<Download class="h-4 w-4 mr-1" />
+					{exporting ? 'Exporting...' : 'Export CSV'}
+				</Button>
+				<Button variant="outline" size="sm" onclick={() => loadEntries()}>
+					<RotateCcw class="h-4 w-4 mr-1" />
+					Refresh
+				</Button>
+			{/if}
+		{/snippet}
+	</PageHeader>
 
 	{#if !canManage}
-		<Card>
-			<CardContent class="py-12 text-center">
-				<ClipboardList class="mx-auto h-10 w-10 text-muted-foreground/40" />
-				<p class="mt-3 text-sm text-muted-foreground">
-					Only organization owners and admins can view the audit log.
-				</p>
-			</CardContent>
-		</Card>
+		<EmptyState
+			variant="error"
+			title="Only organization owners and admins can view the audit log"
+			description="Ask an owner or admin of this organization if you need access."
+		/>
 	{:else}
 		<!-- Filters -->
 		<Card>
@@ -348,7 +370,7 @@
 
 					<div class="space-y-1">
 						<label for="actor-type-filter" class="text-xs font-medium text-muted-foreground"
-							>Actor Type</label
+							>Actor type</label
 						>
 						<select
 							id="actor-type-filter"
@@ -358,7 +380,7 @@
 						>
 							<option value="">All actors</option>
 							<option value="user">User</option>
-							<option value="apiKey">API Key</option>
+							<option value="apiKey">API key</option>
 							<option value="system">System</option>
 						</select>
 					</div>
@@ -387,14 +409,10 @@
 				</div>
 
 				<div class="mt-4">
-					<TimeRangePicker
-						initialType="custom"
-						onchange={(range) => {
-							fromFilter = range.from.toISOString();
-							toFilter = range.to.toISOString();
-							applyFilters();
-						}}
-					/>
+					<TimeRangePicker value={rangeValue} onValueChange={handleRangeChange} />
+					{#if !fromFilter && !toFilter}
+						<p class="mt-1 text-xs text-muted-foreground">Showing all events. Pick a range to narrow them.</p>
+					{/if}
 				</div>
 			</CardContent>
 		</Card>
@@ -430,7 +448,7 @@
 									<TableHead>Action</TableHead>
 									<TableHead>Outcome</TableHead>
 									<TableHead>Resource</TableHead>
-									<TableHead>IP Address</TableHead>
+									<TableHead>IP address</TableHead>
 								</TableRow>
 							</TableHeader>
 							<TableBody>
@@ -450,18 +468,18 @@
 											/>
 										</TableCell>
 										<TableCell class="whitespace-nowrap text-xs text-muted-foreground">
-											{formatDate(entry.time)}
+											<Timestamp value={entry.time} precision="second" />
 										</TableCell>
 										<TableCell class="text-sm">
 											{#if entry.actor_type === 'apiKey'}
 												<span class="text-muted-foreground">{entry.actor_id ? entry.actor_id.slice(0, 8) + '\u2026' : 'api key'}</span>
-												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">api key</span>
+												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-warning/15 text-warning-text">api key</span>
 											{:else if entry.actor_type === 'system'}
 												<span class="text-muted-foreground">system</span>
 												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">system</span>
 											{:else}
-												{entry.user_email ?? '\u2014'}
-												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">user</span>
+												{entry.user_email ?? '-'}
+												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-info/15 text-info-text">user</span>
 											{/if}
 										</TableCell>
 										<TableCell>
@@ -476,9 +494,9 @@
 										</TableCell>
 										<TableCell>
 											{#if entry.outcome === 'failure'}
-												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">failure</span>
+												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-destructive/15 text-destructive-text">failure</span>
 											{:else}
-												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">success</span>
+												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-success/15 text-success-text">success</span>
 											{/if}
 										</TableCell>
 										<TableCell class="text-sm">
@@ -492,11 +510,11 @@
 													>
 												{/if}
 											{:else}
-												<span class="text-muted-foreground/50">{'\u2014'}</span>
+												<span class="text-muted-foreground/50">{'-'}</span>
 											{/if}
 										</TableCell>
 										<TableCell class="font-mono text-xs text-muted-foreground">
-											{entry.ip_address ?? '\u2014'}
+											{entry.ip_address ?? '-'}
 										</TableCell>
 									</TableRow>
 									{#if isExpanded}
@@ -507,18 +525,18 @@
 													<div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-sm">
 														<div>
 															<span class="text-xs font-medium text-muted-foreground">Time</span>
-															<p>{new Date(entry.time).toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long' })}</p>
+															<p><Timestamp value={entry.time} precision="second" showZone /></p>
 														</div>
 														<div>
 															<span class="text-xs font-medium text-muted-foreground">User</span>
-															<p>{entry.user_email ?? '\u2014'}</p>
+															<p>{entry.user_email ?? '-'}</p>
 															{#if entry.user_id}
 																<p class="font-mono text-xs text-muted-foreground">{entry.user_id}</p>
 															{/if}
 														</div>
 														{#if entry.resource_type}
 															<div>
-																<span class="text-xs font-medium text-muted-foreground">Resource Type</span>
+																<span class="text-xs font-medium text-muted-foreground">Resource type</span>
 																<p>{entry.resource_type}</p>
 															</div>
 														{/if}
@@ -529,12 +547,12 @@
 															</div>
 														{/if}
 														<div>
-															<span class="text-xs font-medium text-muted-foreground">IP Address</span>
-															<p class="font-mono">{entry.ip_address ?? '\u2014'}</p>
+															<span class="text-xs font-medium text-muted-foreground">IP address</span>
+															<p class="font-mono">{entry.ip_address ?? '-'}</p>
 														</div>
 														{#if entry.user_agent}
 															<div class="md:col-span-2">
-																<span class="text-xs font-medium text-muted-foreground">User Agent</span>
+																<span class="text-xs font-medium text-muted-foreground">User agent</span>
 																<p class="text-xs text-muted-foreground break-all">{entry.user_agent}</p>
 															</div>
 														{/if}
@@ -575,12 +593,13 @@
 					Page {currentPage} of {totalPages} ({total} total)
 				</p>
 				<div class="flex gap-2">
-					<Button variant="outline" size="sm" disabled={currentPage <= 1} onclick={prevPage}>
+					<Button variant="outline" size="sm" aria-label="Previous page" disabled={currentPage <= 1} onclick={prevPage}>
 						<ChevronLeft class="h-4 w-4" />
 					</Button>
 					<Button
 						variant="outline"
 						size="sm"
+						aria-label="Next page"
 						disabled={currentPage >= totalPages}
 						onclick={nextPage}
 					>

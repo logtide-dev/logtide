@@ -3,10 +3,18 @@ import type { ApiKeyType } from '@logtide/shared';
 import { db } from '../../database/connection.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 
+/**
+ * Length of the stored key prefix: the literal "lp_" plus 6 hex chars. Enough to
+ * tell keys apart in the UI, never enough to authenticate.
+ */
+export const API_KEY_PREFIX_LENGTH = 9;
+
 export interface ApiKey {
   id: string;
   projectId: string;
   name: string;
+  /** First 9 chars of the key, null for keys created before 1.6 */
+  keyPrefix: string | null;
   type: ApiKeyType;
   allowedOrigins: string[] | null;
   createdAt: Date;
@@ -40,6 +48,9 @@ interface CachedApiKey {
 export class ApiKeysService {
   private static readonly LAST_USED_DEBOUNCE_MS = 60_000;
   private lastUsedWrites = new Map<string, number>();
+  private static readonly REVOKED_KEY_THROTTLE_MS = 60_000;
+  private static readonly REVOKED_KEY_THROTTLE_MAX_ENTRIES = 10_000;
+  private revokedKeyRecords = new Map<string, number>();
 
   /**
    * Hash an API key using SHA-256
@@ -69,9 +80,10 @@ export class ApiKeysService {
   /**
    * Create a new API key for a project
    */
-  async createApiKey(input: CreateApiKeyInput): Promise<{ id: string; apiKey: string }> {
+  async createApiKey(input: CreateApiKeyInput): Promise<{ id: string; apiKey: string; keyPrefix: string }> {
     const apiKey = this.generateApiKey();
     const keyHash = this.hashApiKey(apiKey);
+    const keyPrefix = apiKey.slice(0, API_KEY_PREFIX_LENGTH);
 
     const result = await db
       .insertInto('api_keys')
@@ -79,6 +91,7 @@ export class ApiKeysService {
         project_id: input.projectId,
         name: input.name,
         key_hash: keyHash,
+        key_prefix: keyPrefix,
         type: input.type ?? 'write',
         allowed_origins: input.allowedOrigins ?? null,
       })
@@ -88,6 +101,7 @@ export class ApiKeysService {
     return {
       id: result.id,
       apiKey, // Return plain key only once
+      keyPrefix,
     };
   }
 
@@ -160,6 +174,67 @@ export class ApiKeysService {
   }
 
   /**
+   * Look up a REVOKED key by its hash. Used only on the 401 path of ingest auth
+   * to attribute attempts with a revoked key to its project (health check).
+   * Keys of deleted projects are ignored.
+   */
+  async findRevokedKeyOwner(
+    apiKey: string
+  ): Promise<{ organizationId: string; projectId: string; apiKeyId: string } | null> {
+    const keyHash = this.hashApiKey(apiKey);
+    const row = await db
+      .selectFrom('api_keys')
+      .innerJoin('projects', 'api_keys.project_id', 'projects.id')
+      .select(['api_keys.id', 'api_keys.project_id', 'projects.organization_id'])
+      .where('api_keys.key_hash', '=', keyHash)
+      .where('api_keys.revoked', '=', true)
+      .where('projects.deleted_at', 'is', null)
+      .executeTakeFirst();
+    if (!row) return null;
+    return { organizationId: row.organization_id, projectId: row.project_id, apiKeyId: row.id };
+  }
+
+  /**
+   * Record an `ingestion.revoked_key` counter when `apiKey` is a revoked key.
+   * Throttled in memory to one row per key per minute so a misconfigured shipper
+   * cannot flood metering_events. Never throws.
+   */
+  async recordRevokedKeyAttempt(apiKey: string): Promise<void> {
+    try {
+      const owner = await this.findRevokedKeyOwner(apiKey);
+      if (!owner) return;
+      const now = Date.now();
+      const last = this.revokedKeyRecords.get(owner.apiKeyId);
+      if (last !== undefined && now - last < ApiKeysService.REVOKED_KEY_THROTTLE_MS) return;
+      if (this.revokedKeyRecords.size >= ApiKeysService.REVOKED_KEY_THROTTLE_MAX_ENTRIES) {
+        for (const [id, ts] of this.revokedKeyRecords) {
+          if (now - ts >= ApiKeysService.REVOKED_KEY_THROTTLE_MS) this.revokedKeyRecords.delete(id);
+        }
+        if (this.revokedKeyRecords.size >= ApiKeysService.REVOKED_KEY_THROTTLE_MAX_ENTRIES) {
+          this.revokedKeyRecords.clear();
+        }
+      }
+      this.revokedKeyRecords.set(owner.apiKeyId, now);
+      // Lazy: the metering module graph pulls in the reservoir.
+      const { metering } = await import('../metering/index.js');
+      metering.record({
+        type: 'ingestion.revoked_key',
+        quantity: 1,
+        organizationId: owner.organizationId,
+        projectId: owner.projectId,
+        metadata: { apiKeyId: owner.apiKeyId },
+      });
+    } catch {
+      // Counter only: a failed lookup must never change the auth response.
+    }
+  }
+
+  /** Test seam: forget the revoked-key throttle state. */
+  resetRevokedKeyThrottle(): void {
+    this.revokedKeyRecords.clear();
+  }
+
+  /**
    * Update last_used timestamp asynchronously.
    * Debounced per key: at most one DB write per 60s per process.
    * last_used is only used for UI display, so minute-granularity is fine.
@@ -194,7 +269,7 @@ export class ApiKeysService {
   async listProjectApiKeys(projectId: string): Promise<ApiKey[]> {
     const keys = await db
       .selectFrom('api_keys')
-      .select(['id', 'project_id', 'name', 'type', 'allowed_origins', 'created_at', 'last_used', 'revoked'])
+      .select(['id', 'project_id', 'name', 'key_prefix', 'type', 'allowed_origins', 'created_at', 'last_used', 'revoked'])
       .where('project_id', '=', projectId)
       .orderBy('created_at', 'desc')
       .execute();
@@ -203,6 +278,7 @@ export class ApiKeysService {
       id: k.id,
       projectId: k.project_id,
       name: k.name,
+      keyPrefix: k.key_prefix ?? null,
       type: k.type,
       allowedOrigins: k.allowed_origins,
       createdAt: new Date(k.created_at),

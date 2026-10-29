@@ -94,7 +94,7 @@ describe('LogTablePanel (snapshot)', () => {
       props: { config: config(), data: { logs: [row] }, loading: false, error: null },
     });
     (container.querySelector('tbody tr') as HTMLElement).click();
-    expect(goto).toHaveBeenCalledWith('/dashboard/search?logId=log-1&projectId=proj-1');
+    expect(goto).toHaveBeenCalledWith('/dashboard/logs?logId=log-1&projectId=proj-1');
   });
 
   it('applies wrap classes when wrapCells is on', () => {

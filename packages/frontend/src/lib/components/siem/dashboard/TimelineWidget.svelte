@@ -5,7 +5,9 @@
 	import type { TimelineBucket } from '$lib/api/siem';
 	import Activity from '@lucide/svelte/icons/activity';
 	import { themeStore } from '$lib/stores/theme';
-	import { chartColors, getEChartsTheme, getAxisStyle, getTooltipStyle } from '$lib/utils/echarts-theme';
+	import { getAxisStyle, getTooltipStyle } from '$lib/utils/echarts-theme';
+	import { severityTone } from '$lib/utils/severity';
+	import { formatTimestamp, formatDateTime, formatDateShort } from '$lib/utils/datetime';
 
 	interface Props {
 		data: TimelineBucket[] | undefined;
@@ -18,26 +20,20 @@
 	let chart: echarts.ECharts | null = null;
 
 	function formatTimeLabel(timestamp: string | Date): string {
-		const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp;
-
 		if (timeRange === '24h') {
-			return date.toLocaleTimeString('en-US', {
-				hour: '2-digit',
-				minute: '2-digit',
-				hour12: false,
-			});
-		} else if (timeRange === '7d') {
-			return date.toLocaleDateString('en-US', {
-				weekday: 'short',
-				day: 'numeric',
-			});
-		} else {
-			return date.toLocaleDateString('en-US', {
-				month: 'short',
-				day: 'numeric',
-			});
+			return formatTimestamp(timestamp, { precision: 'minute', withDate: false });
 		}
+		return formatDateShort(timestamp);
 	}
+
+	// One series, drawn in the severity colour of the high band.
+	const lineColor = severityTone('high').chart;
+
+	const summary = $derived.by(() => {
+		if (!data || data.length === 0) return 'No detections in this period';
+		const total = data.reduce((sum, d) => sum + d.count, 0);
+		return `Detection timeline, ${total.toLocaleString('en-US')} detections in ${data.length.toLocaleString('en-US')} intervals`;
+	});
 
 	function getChartOption(): echarts.EChartsOption {
 		const axisStyle = getAxisStyle();
@@ -49,8 +45,8 @@
 				formatter: (params: unknown) => {
 					const p = params as echarts.DefaultLabelFormatterCallbackParams[];
 					if (p && p.length > 0) {
-						const date = new Date(data?.[p[0].dataIndex]?.timestamp || '');
-						return `${date.toLocaleString('en-US')}<br/><strong>${p[0].value}</strong> detections`;
+						const when = formatDateTime(data?.[p[0].dataIndex]?.timestamp || '');
+						return `${when}<br/><strong>${Number(p[0].value).toLocaleString('en-US')}</strong> detections`;
 					}
 					return '';
 				},
@@ -88,16 +84,16 @@
 					data: data?.map((d) => d.count) || [],
 					areaStyle: {
 						color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-							{ offset: 0, color: 'rgba(239, 68, 68, 0.4)' },
-							{ offset: 1, color: 'rgba(239, 68, 68, 0.05)' },
+							{ offset: 0, color: `${lineColor}66` },
+							{ offset: 1, color: `${lineColor}0d` },
 						]),
 					},
 					lineStyle: {
-						color: chartColors.series.red,
+						color: lineColor,
 						width: 2,
 					},
 					itemStyle: {
-						color: chartColors.series.red,
+						color: lineColor,
 					},
 					emphasis: {
 						focus: 'series',
@@ -148,10 +144,10 @@
 	<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 		<CardTitle class="text-sm font-semibold flex items-center gap-2">
 			<Activity class="w-4 h-4 text-primary" />
-			Detection Timeline
+			Detection timeline
 		</CardTitle>
 	</CardHeader>
 	<CardContent class="pb-3">
-		<div bind:this={chartContainer} class="h-[140px] w-full"></div>
+		<div bind:this={chartContainer} role="img" aria-label={summary} class="h-[140px] w-full"></div>
 	</CardContent>
 </Card>

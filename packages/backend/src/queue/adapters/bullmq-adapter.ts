@@ -77,6 +77,15 @@ function adaptBullJob<T>(bullJob: BullJob<T>): IJob<T> {
 /**
  * BullMQ Queue Adapter
  */
+/**
+ * BullMQ rejects ':' in queue names, but extension queues are named
+ * `ext:<name>:<job>`. Only the Redis-side name is rewritten; adapters keep
+ * the logical name.
+ */
+function toBullQueueName(name: string): string {
+  return name.replace(/:/g, '__');
+}
+
 export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T>, ICronRegistry {
   private queue: Queue<T>;
 
@@ -84,7 +93,7 @@ export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T>, ICronR
     public readonly name: string,
     connection: Redis
   ) {
-    this.queue = new Queue<T>(name, {
+    this.queue = new Queue<T>(toBullQueueName(name), {
       connection,
       defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
@@ -158,7 +167,7 @@ export class BullMQWorkerAdapter<T = unknown> implements IWorkerAdapter<T> {
     connection: Redis
   ) {
     this.worker = new Worker<T>(
-      name,
+      toBullQueueName(name),
       async (bullJob: BullJob<T>) => {
         const adaptedJob = adaptBullJob(bullJob);
         await processor(adaptedJob);

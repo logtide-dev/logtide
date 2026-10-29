@@ -53,7 +53,7 @@
 	<CardHeader class="pb-3">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<Globe class="w-4 h-4" />
-			Geographic Data
+			Geographic data
 			<Badge variant="secondary" class="ml-auto">{geoEntries.length}</Badge>
 		</CardTitle>
 	</CardHeader>

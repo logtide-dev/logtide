@@ -1,6 +1,15 @@
 export { default as StackFrameCard } from './StackFrameCard.svelte';
 export { default as StackTraceViewer } from './StackTraceViewer.svelte';
 export { default as ExceptionDetailsDialog } from './ExceptionDetailsDialog.svelte';
-export { default as ErrorGroupCard } from './ErrorGroupCard.svelte';
+export { default as ErrorsTable } from './ErrorsTable.svelte';
 export { default as LanguageBadge } from './shared/LanguageBadge.svelte';
 export { default as ErrorGroupStatusBadge } from './shared/ErrorGroupStatusBadge.svelte';
+export { default as IgnoreDialog } from './IgnoreDialog.svelte';
+export { default as AssigneePicker } from './AssigneePicker.svelte';
+export { default as ErrorSparkline } from './ErrorSparkline.svelte';
+export { default as ErrorStatusBadges } from './ErrorStatusBadges.svelte';
+export { default as BulkActionBar } from './BulkActionBar.svelte';
+export type { AssigneeMember, IgnoreOptions } from './error-status';
+export { default as ErrorGroupHeader } from './ErrorGroupHeader.svelte';
+export { default as LatestEventPanel } from './LatestEventPanel.svelte';
+export { default as ErrorTrendChart } from './ErrorTrendChart.svelte';

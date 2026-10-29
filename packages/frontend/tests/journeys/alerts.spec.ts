@@ -52,10 +52,10 @@ test.describe('Alert Journey', () => {
     await page.waitForLoadState('load');
 
     // Verify alerts page elements with longer timeout for CI
-    await expect(page.locator('h2:has-text("Alert Rules")')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('tab', { name: 'Rules' })).toBeVisible({ timeout: 30000 });
 
     // Verify empty state or create button
-    const createButton = page.locator('button:has-text("Create Alert"), button:has-text("Create Your First Alert")');
+    const createButton = page.getByRole('button', { name: 'Create alert' });
     await expect(createButton.first()).toBeVisible({ timeout: 10000 });
   });
 
@@ -64,10 +64,10 @@ test.describe('Alert Journey', () => {
     await page.waitForLoadState('load');
 
     // Wait for page to be ready with longer timeout for CI
-    await expect(page.locator('h2:has-text("Alert Rules")')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('tab', { name: 'Rules' })).toBeVisible({ timeout: 30000 });
 
     // Click create alert button - be more specific to avoid sidebar buttons if any
-    const createButton = page.locator('main button:has-text("Create Alert"), main button:has-text("Create Your First Alert")');
+    const createButton = page.locator('main').getByRole('button', { name: 'Create alert' });
     await expect(createButton.first()).toBeVisible({ timeout: 10000 });
     await page.waitForTimeout(2000); // Wait for animations
     await createButton.first().click({ force: true });
@@ -82,7 +82,8 @@ test.describe('Alert Journey', () => {
     }
 
     // Verify dialog contains expected elements - use flexible matching
-    await expect(page.locator('text=/alert.*name|name/i').first()).toBeVisible({ timeout: 5000 });
+    await expect(dialog.getByText('Create alert rule')).toBeVisible({ timeout: 5000 });
+    await expect(dialog.getByLabel('Alert name')).toBeVisible({ timeout: 5000 });
   });
 
   test('3. User can create an alert rule', async ({ page }) => {
@@ -99,10 +100,10 @@ test.describe('Alert Journey', () => {
     // 2. Navigate to alerts page
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('load');
-    await expect(page.locator('h2:has-text("Alert Rules")')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('tab', { name: 'Rules' })).toBeVisible({ timeout: 30000 });
 
-    // 3. Open Create Alert Dialog
-    const createButton = page.locator('button:has-text("Create Alert"), button:has-text("Create Your First Alert")');
+    // 3. Open the Create alert dialog
+    const createButton = page.getByRole('button', { name: 'Create alert' });
     await expect(createButton.first()).toBeVisible({ timeout: 10000 });
     await createButton.first().click();
 
@@ -112,9 +113,9 @@ test.describe('Alert Journey', () => {
 
     // 4. Fill basic fields
     const alertName = `E2E Alert ${Date.now()}`;
-    await dialog.locator('input#name').fill(alertName);
-    await dialog.locator('input#threshold').fill('3');
-    await dialog.locator('input#timeWindow').fill('5');
+    await dialog.locator('input#alert-name').fill(alertName);
+    await dialog.locator('input#alert-threshold').fill('3');
+    await dialog.locator('input#alert-window').fill('5');
 
     // 5. Handle Notification Channel selection using ChannelSelector
     const channelSelector = page.locator('[data-popover-trigger]').filter({ hasText: /Select channels/i }).first();
@@ -142,7 +143,7 @@ test.describe('Alert Journey', () => {
     }
 
     // 6. Submit the form
-    const submitBtn = dialog.locator('button:has-text("Create Alert")');
+    const submitBtn = dialog.getByRole('button', { name: 'Create alert' });
     await expect(submitBtn).toBeEnabled({ timeout: 10000 });
     await submitBtn.click();
 
@@ -170,15 +171,13 @@ test.describe('Alert Journey', () => {
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
-    // Find the disable button
-    const disableButton = page.locator('button:has-text("Disable")').first();
-    if (await disableButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await disableButton.click();
-      await page.waitForTimeout(1000);
+    // The enable switch is labelled "Disable <name>" while the rule is on
+    const toggle = page.getByRole('switch', { name: /^Disable Toggle Test Alert/ }).first();
+    await expect(toggle).toBeVisible({ timeout: 10000 });
+    await toggle.click();
 
-      // Verify the button text changed to Enable
-      await expect(page.locator('button:has-text("Enable")').first()).toBeVisible();
-    }
+    // After the patch the same row offers "Enable <name>"
+    await expect(page.getByRole('switch', { name: /^Enable Toggle Test Alert/ }).first()).toBeVisible({ timeout: 10000 });
   });
 
   test('5. User can delete an alert rule', async ({ page }) => {
@@ -199,27 +198,15 @@ test.describe('Alert Journey', () => {
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
-    // Find the alert name in the page (CardTitle is a div with role="heading")
-    const alertTitle = page.locator(`div[role="heading"]:has-text("${alertName}")`).first();
-    await expect(alertTitle).toBeVisible({ timeout: 5000 });
-
-    // Find the card that contains this alert - go up to the Card element
-    // Card structure: div.grid > Card (div) > CardHeader > div > div > CardTitle
-    // We need to find the Delete button in the same Card
-    const cardWithAlert = page.locator(`div.grid.gap-4 > div:has(div[role="heading"]:has-text("${alertName}"))`).first();
-    const deleteButton = cardWithAlert.locator('button:has-text("Delete")');
-
-    await expect(deleteButton).toBeVisible({ timeout: 5000 });
+    // The rule is a table row with a labelled delete button
+    const deleteButton = page.getByRole('button', { name: `Delete alert ${alertName}` });
+    await expect(deleteButton).toBeVisible({ timeout: 10000 });
     await deleteButton.click();
-    await page.waitForTimeout(500);
 
-    // Wait for confirmation dialog
-    const dialogTitle = page.locator('text=Delete Alert Rule');
+    // ConfirmDialog: Cancel has focus, Delete must be clicked explicitly
+    const dialogTitle = page.getByText('Delete alert rule');
     await expect(dialogTitle).toBeVisible({ timeout: 5000 });
-
-    // Confirm deletion
-    const confirmButton = page.getByRole('button', { name: 'Delete', exact: true }).last();
-    await confirmButton.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
 
     // Wait for the dialog to close (indicates action was taken)
     await expect(dialogTitle).toBeHidden({ timeout: 10000 });
@@ -270,74 +257,26 @@ test.describe('Alert Journey', () => {
     await page.waitForLoadState('load');
 
     // Verify alert history page elements with longer timeout for CI
-    await expect(page.locator('h1:has-text("Alerts")')).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('heading', { level: 1, name: 'Alerts' })).toBeVisible({ timeout: 30000 });
 
-    // Page shows tabs - click on "Alert History" tab if not already active
-    const historyTab = page.locator('button:has-text("Alert History"), [role="tab"]:has-text("History")');
-    if (await historyTab.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await historyTab.click();
-      await page.waitForTimeout(1000);
-    }
-
-    // Page should either show history cards or empty state ("No alert history")
-    const hasHistory = await page.locator('[class*="Card"]').first().isVisible().catch(() => false);
-    const hasEmptyState = await page.locator('text=/no.*alert.*history/i').isVisible().catch(() => false);
-
-    expect(hasHistory || hasEmptyState).toBe(true);
+    // The History tab shows rows or an empty table
+    await page.getByRole('tab', { name: 'History' }).click();
+    await expect(page.getByRole('tabpanel')).toBeVisible({ timeout: 10000 });
   });
 
-  test('8. User can import Sigma rule as alert', async ({ page }) => {
+  test('8. Sigma import lives in Security > Rules, not in the alert dialog', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/alerts`);
     await page.waitForLoadState('load');
+    await expect(page.getByRole('tab', { name: 'Rules' })).toBeVisible({ timeout: 30000 });
 
-    // Wait for page to be ready
-    await expect(page.locator('h2:has-text("Alert Rules")')).toBeVisible({ timeout: 30000 });
+    // No Sigma tab on the project alerts page
+    await expect(page.getByRole('tab', { name: /sigma/i })).toHaveCount(0);
 
-    // Click create alert button
-    const createButton = page.locator('button:has-text("Create Alert"), button:has-text("Create Your First Alert")');
-    await createButton.first().click();
-
-    // Switch to Sigma tab
-    const sigmaTab = page.locator('button:has-text("Import Sigma Rule"), [role="tab"]:has-text("Sigma")');
-    if (await sigmaTab.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await sigmaTab.click();
-      await page.waitForTimeout(500);
-
-      // Verify Sigma input is visible
-      await expect(page.locator('textarea#sigmaYaml, textarea[placeholder*="Sigma" i]')).toBeVisible();
-
-      // Fill in a sample Sigma rule
-      const sigmaRule = `
-title: Test Sigma Rule ${Date.now()}
-id: test-${Date.now()}
-status: test
-level: high
-description: Test rule for E2E testing
-author: E2E Test
-logsource:
-    category: application
-    product: logtide
-detection:
-    selection:
-        message|contains: 'error'
-    condition: selection
-falsepositives:
-    - Testing
-`.trim();
-
-      await page.locator('textarea#sigmaYaml, textarea[placeholder*="Sigma" i]').fill(sigmaRule);
-
-      // Add email recipient
-      const sigmaEmailInput = page.locator('input#sigmaEmails');
-      if (await sigmaEmailInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await sigmaEmailInput.fill('test@e2e-test.logtide.dev');
-      }
-
-      // Submit the form
-      await page.locator('button:has-text("Import Rule")').click();
-
-      // Wait for import to complete
-      await page.waitForTimeout(3000);
-    }
+    // The dialog points to Security > Rules instead of offering an import tab
+    await page.getByRole('button', { name: 'Create alert' }).first().click();
+    const dialog = page.locator('[role="dialog"]');
+    await expect(dialog).toBeVisible({ timeout: 10000 });
+    await expect(dialog.getByRole('tab', { name: /sigma/i })).toHaveCount(0);
+    await expect(dialog.getByRole('link', { name: /security > rules/i })).toHaveAttribute('href', '/dashboard/security/rules');
   });
 });

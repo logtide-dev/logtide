@@ -68,11 +68,66 @@ export type {
   MetricsOverviewParams,
   MetricsOverviewResult,
 } from './core/types.js';
+// 1.6 contract types
+export type {
+  TextQuery,
+  LogExclude,
+  LogFilterParams,
+  LogHistogramParams,
+  LogHistogramBucket,
+  LogHistogramResult,
+  LogFacetField,
+  LogFacetsParams,
+  LogFacet,
+  LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
+  SpanSortBy,
+  TraceSortBy,
+  ListSessionsParams,
+  SessionSummary,
+  ListSessionsResult,
+  HasSessionsParams,
+} from './core/types.js';
 
 // Core abstractions
 export { StorageEngine } from './core/storage-engine.js';
 export { QueryTranslator } from './core/query-translator.js';
 export type { NativeQuery } from './core/query-translator.js';
+export { NotImplementedError } from './core/errors.js';
+export {
+  MAX_HISTOGRAM_BUCKETS,
+  FACETS_DEFAULT_LIMIT,
+  FACETS_MAX_LIMIT,
+  FACETS_MAX_FIELDS,
+  DISCOVER_DEFAULT_SAMPLE_SIZE,
+  DISCOVER_MAX_SAMPLE_SIZE,
+  DISCOVER_MAX_KEYS,
+  OPERATION_STATS_DEFAULT_LIMIT,
+  OPERATION_STATS_MAX_LIMIT,
+  DEFAULT_OPERATION_KINDS,
+  LATENCY_HISTOGRAM_BOUNDS_MS,
+  SESSIONS_MAX_LIMIT,
+  ANALYTICS_TIMEOUT_MS,
+} from './core/constants.js';
+export {
+  histogramBucketStarts,
+  zeroFillHistogram,
+  facetFieldName,
+  buildFacet,
+  countMetadataKeys,
+  latencyBucketIndex,
+  encodeSessionCursor,
+  decodeSessionCursor,
+  compareByteOrder,
+} from './core/aggregation-helpers.js';
+export { legacySearchToTextQuery, isEmptyTextQuery } from './core/text-query.js';
+export { compileLogSearch, mergeCompiledSearch } from './core/log-search.js';
+export type { CompiledLogSearch } from './core/log-search.js';
 
 // Factory and client
 export { StorageEngineFactory } from './factory.js';

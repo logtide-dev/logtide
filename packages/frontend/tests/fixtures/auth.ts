@@ -282,21 +282,24 @@ export class TestApiClient {
     );
   }
 
-  async importSigmaRule(projectId: string, yaml: string) {
-    return this.request<{ rule: any }>(`/projects/${projectId}/sigma/rules`, {
+  async importSigmaRule(organizationId: string, yaml: string, projectId?: string) {
+    return this.request<{ rule: any }>('/sigma/import', {
       method: 'POST',
-      body: JSON.stringify({ yaml }),
+      body: JSON.stringify({ yaml, organizationId, ...(projectId ? { projectId } : {}) }),
     });
   }
 
-  async getSigmaRules(projectId: string) {
-    return this.request<{ rules: any[] }>(`/projects/${projectId}/sigma/rules`);
+  async getSigmaRules(organizationId: string) {
+    const params = new URLSearchParams({ organizationId });
+    const data = await this.request<{ rules?: any[]; items?: any[] } | any[]>(`/sigma/rules?${params}`);
+    const rules = Array.isArray(data) ? data : data.rules ?? data.items ?? [];
+    return { rules };
   }
 
-  async toggleSigmaRule(projectId: string, ruleId: string, enabled: boolean) {
-    return this.request<{ rule: any }>(`/projects/${projectId}/sigma/rules/${ruleId}`, {
+  async toggleSigmaRule(organizationId: string, ruleId: string, enabled: boolean) {
+    return this.request<{ rule: any }>(`/sigma/rules/${ruleId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify({ organizationId, enabled }),
     });
   }
 

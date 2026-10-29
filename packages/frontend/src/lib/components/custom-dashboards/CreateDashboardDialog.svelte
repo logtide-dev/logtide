@@ -83,7 +83,7 @@
 
     <Dialog.Footer>
       <Button variant="ghost" onclick={() => onOpenChange(false)}>Cancel</Button>
-      <Button disabled={name.trim().length === 0} onclick={handleCreate}>Create</Button>
+      <Button disabled={name.trim().length === 0} onclick={handleCreate}>Create dashboard</Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

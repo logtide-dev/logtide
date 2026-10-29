@@ -1,34 +1,45 @@
 import { alertsService } from '../../modules/alerts/index.js';
 import { notificationsService } from '../../modules/notifications/index.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
+import {
+  resolveChannelsForEvent,
+  resolveFallbackEmails,
+  toDeliveryTargets,
+  type ResolvedRouting,
+} from '../../modules/notification-channels/resolver.js';
+import { notifyPagerDutyTargets, hostOf } from '../../modules/notification-channels/dispatch.js';
 import { db } from '../../database/connection.js';
 import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { config } from '../../config/index.js';
-import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { generateAlertEmail, generateSigmaDetectionEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
-import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
+import type { NotificationChannel, WebhookEnvelope } from '@logtide/shared';
+import type {
+  AlertNotificationData,
+  AlertNotificationJobData,
+  AlertResolvedNotificationData,
+} from '../../modules/alerts/types.js';
 
-export interface AlertNotificationData {
-  historyId: string;
-  rule_id: string;
-  rule_name: string;
-  organization_id: string;
-  project_id: string | null;
-  log_count: number;
-  threshold: number;
-  time_window: number;
-  // Legacy fields (deprecated, use notification_channels instead)
-  email_recipients: string[];
-  webhook_url?: string;
-  // Rate-of-change metadata (present only for rate_of_change alerts)
-  baseline_metadata?: {
-    baseline_value: number;
-    current_value: number;
-    deviation_ratio: number;
-    baseline_type: string;
-    evaluation_time: string;
-  };
-}
+export type {
+  AlertNotificationData,
+  AlertNotificationJobData,
+  AlertResolvedNotificationData,
+} from '../../modules/alerts/types.js';
+
+/*
+ * Jobs on the `alert-notifications` queue:
+ * - `kind: 'triggered' | 'renotify'` (alert rules, 1.6): in-app for every
+ *   member, email and webhook destinations (rule channels, else the org
+ *   defaults for `alert`, else an email to the owners and admins when SMTP
+ *   is configured), webhook `alert.triggered`.
+ * - `kind: 'resolved'`: only webhook `alert.resolved` to the same
+ *   destinations; no email, no in-app, no history row.
+ * - no `kind` (Sigma detections, jobs left by a pre-1.6 worker): processed as
+ *   before, triggered copy, rule channels only, markAsNotified only when
+ *   historyId is set.
+ * Dispatch is on `job.data`, never on `job.name` (graphile reports the queue
+ * name as the job name).
+ */
 
 // Create email transporter (reused across notifications)
 let emailTransporter: Transporter | null = null;
@@ -61,9 +72,149 @@ function getEmailTransporter() {
   return emailTransporter;
 }
 
-export async function processAlertNotification(job: any) {
-  const data: AlertNotificationData = job.data;
+function formatNumber(value: number): string {
+  return value.toLocaleString('en-US');
+}
 
+function formatMinutes(minutes: number): string {
+  return `${formatNumber(minutes)} minute${minutes === 1 ? '' : 's'}`;
+}
+
+function alertLink(incidentId: string | null | undefined, sigmaRuleId?: string): string {
+  const frontendUrl = getFrontendUrl();
+  if (sigmaRuleId) return `${frontendUrl}/dashboard/security/rules/${sigmaRuleId}`;
+  return incidentId ? `${frontendUrl}/dashboard/incidents/${incidentId}` : `${frontendUrl}/dashboard/alerts`;
+}
+
+export async function processAlertNotification(job: { data: AlertNotificationJobData }): Promise<void> {
+  const data = job.data;
+  if (data.kind === 'resolved') {
+    await processResolvedNotification(data);
+    return;
+  }
+  await processFiringNotification(data);
+}
+
+/**
+ * Destinations of an alert job through the shared resolver: the rule's
+ * enabled channels, else the organization defaults for the event type, else
+ * (SMTP configured) an email to the owners and admins (`fallback`). Sigma
+ * jobs (event_type 'sigma') read the sigma rule channels and the 'sigma' org
+ * defaults. Jobs without `kind` (pre-1.6) keep rule channels only: no
+ * defaults, no fallback.
+ */
+export async function resolveAlertChannels(data: AlertNotificationJobData): Promise<ResolvedRouting> {
+  if (data.kind === 'resolved' && data.channel_ids && data.channel_ids.length > 0) {
+    return resolveChannelsForEvent({
+      organizationId: data.organization_id,
+      eventType: 'alert',
+      explicitChannelIds: data.channel_ids,
+    });
+  }
+  const isSigma = 'event_type' in data && data.event_type === 'sigma';
+  const ruleChannels = isSigma
+    ? await notificationChannelsService.getSigmaRuleChannels(data.rule_id, data.organization_id)
+    : await notificationChannelsService.getAlertRuleChannels(data.rule_id, data.organization_id);
+  if (data.kind === undefined) {
+    const channels = ruleChannels.filter((c) => c.enabled);
+    return { channels, source: channels.length > 0 ? 'explicit' : 'none', fallback: null };
+  }
+  return resolveChannelsForEvent({
+    organizationId: data.organization_id,
+    eventType: isSigma ? 'sigma' : 'alert',
+    explicitChannels: ruleChannels,
+  });
+}
+
+function pagerDutySummary(data: Record<string, unknown>, resolved: boolean): string {
+  const name = String(data.alert_name ?? 'Alert');
+  if (resolved) return `Alert resolved: ${name}`;
+  const prefix = data.renotify ? 'Alert still firing' : 'Alert triggered';
+  const bm = data.baseline_metadata as { deviation_ratio?: number } | null | undefined;
+  if (bm && typeof bm.deviation_ratio === 'number') {
+    return `${prefix}: ${name} (${formatNumber(bm.deviation_ratio)}x above baseline)`;
+  }
+  return `${prefix}: ${name} (${formatNumber(Number(data.log_count ?? 0))} logs, threshold ${formatNumber(Number(data.threshold ?? 0))})`;
+}
+
+/**
+ * The single fan-out of an alert envelope to non-email destinations: webhook
+ * channels (dedup by URL, first channel wins for hook attribution, event id
+ * `${eventIdPrefix}:${url}`) and PagerDuty channels (alert rule envelopes
+ * only: trigger on `alert.triggered`, resolve on `alert.resolved`, dedup key
+ * `alert:${alert_rule_id}`). Returns the errors.
+ */
+export async function dispatchAlertEnvelope(
+  envelope: WebhookEnvelope,
+  channels: NotificationChannel[],
+  ids: { ruleId: string; eventIdPrefix: string }
+): Promise<string[]> {
+  const errors: string[] = [];
+  const ruleName = String((envelope.data as { alert_name?: unknown }).alert_name ?? ids.ruleId);
+  const targets = toDeliveryTargets(channels.filter((ch) => ch.enabled));
+  const webhookTargets = new Map<string, (typeof targets.webhooks)[number]>();
+  for (const w of targets.webhooks) {
+    if (w.url) webhookTargets.set(w.url, w);
+  }
+
+  // Sigma envelopes carry no alert_rule_id (see buildTriggeredEnvelope), so
+  // they never page.
+  const alertRuleId = (envelope.data as { alert_rule_id?: unknown }).alert_rule_id;
+  if (targets.pagerDuty.length > 0 && typeof alertRuleId === 'string') {
+    const resolved = envelope.type === 'alert.resolved';
+    const data = envelope.data as Record<string, unknown>;
+    await notifyPagerDutyTargets(targets.pagerDuty, {
+      organizationId: envelope.organizationId,
+      action: resolved ? 'resolve' : 'trigger',
+      dedupKey: `alert:${alertRuleId}`,
+      eventType: envelope.type,
+      summary: pagerDutySummary(data, resolved),
+      severity: 'high',
+      link: typeof data.link === 'string' ? data.link : undefined,
+      details: {
+        alert_name: data.alert_name,
+        log_count: data.log_count,
+        threshold: data.threshold,
+        time_window: data.time_window,
+        incident_id: data.incident_id ?? null,
+      },
+      ruleId: ids.ruleId,
+    });
+  }
+
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, delivery logging, and the beforeWebhookDispatch hook
+  // (#216) all live in one place.
+  for (const [url, target] of webhookTargets) {
+    try {
+      await webhookDispatcher.enqueue({
+        url,
+        organizationId: envelope.organizationId,
+        eventType: envelope.type,
+        eventId: `${ids.eventIdPrefix}:${url}`,
+        channelId: target.channelId,
+        method: target.method,
+        headers: target.headers,
+        ruleId: ids.ruleId,
+        metadata: { ruleName },
+        payload: envelope,
+      });
+      console.log(`Webhook notification sent: ${ruleName} -> ${hostOf(url)}`);
+    } catch (error) {
+      const errMsg = `Webhook failed (${hostOf(url)}): ${error instanceof Error ? error.message : 'Unknown error'}`;
+      console.error(errMsg);
+      errors.push(errMsg);
+    }
+  }
+
+  if (webhookTargets.size === 0) {
+    console.log(`No webhook configured for: ${ruleName}`);
+  }
+
+  return errors;
+}
+
+async function processFiringNotification(data: AlertNotificationData) {
   console.log(`Processing alert notification: ${data.rule_name}`);
 
   const errors: string[] = [];
@@ -83,6 +234,7 @@ export async function processAlertNotification(job: any) {
         .selectFrom('projects')
         .select(['name'])
         .where('id', '=', data.project_id)
+        .where('organization_id', '=', data.organization_id)
         .executeTakeFirst();
       projectName = project?.name || null;
     }
@@ -97,19 +249,17 @@ export async function processAlertNotification(job: any) {
       errors.push(errMsg);
     }
 
-    // STEP 2: Load notification channels for this alert rule
-    const channels = await notificationChannelsService.getAlertRuleChannels(data.rule_id);
+    // STEP 2: Destinations (rule channels, else org defaults for alert rules)
+    const routing = await resolveAlertChannels(data);
+    const channels = routing.channels;
 
-    // STEP 3: Collect email recipients from notification channels
-    const emailRecipients = new Set<string>();
-
-    // Add email recipients from channels
-    channels
-      .filter((ch) => ch.type === 'email' && ch.enabled)
-      .forEach((ch) => {
-        const emailConfig = ch.config as EmailChannelConfig;
-        emailConfig.recipients.forEach((email: string) => emailRecipients.add(email));
-      });
+    // STEP 3: Email recipients: email channels, or (nothing resolved and SMTP
+    // configured) the owners and admins, never every member.
+    const emailRecipients = new Set<string>(
+      routing.fallback
+        ? await resolveFallbackEmails(data.organization_id)
+        : toDeliveryTargets(channels).emailRecipients
+    );
 
     // STEP 4: Send emails if there are recipients
     if (emailRecipients.size > 0) {
@@ -130,34 +280,13 @@ export async function processAlertNotification(job: any) {
       console.log(`No email recipients configured for: ${data.rule_name}`);
     }
 
-    // STEP 5: Collect webhook targets from notification channels
-    // (dedup by URL; first channel wins for hook attribution)
-    const webhookTargets = new Map<string, string>();
-
-    channels
-      .filter((ch) => ch.type === 'webhook' && ch.enabled)
-      .forEach((ch) => {
-        const webhookConfig = ch.config as WebhookChannelConfig;
-        if (!webhookTargets.has(webhookConfig.url)) {
-          webhookTargets.set(webhookConfig.url, ch.id);
-        }
-      });
-
-    // STEP 6: Send webhooks
-    for (const [url, channelId] of webhookTargets) {
-      try {
-        await sendWebhookNotification({ ...data, webhook_url: url }, channelId);
-        console.log(`Webhook notification sent: ${data.rule_name} -> ${url}`);
-      } catch (error) {
-        const errMsg = `Webhook failed (${url}): ${error instanceof Error ? error.message : 'Unknown error'}`;
-        console.error(errMsg);
-        errors.push(errMsg);
-      }
-    }
-
-    if (webhookTargets.size === 0) {
-      console.log(`No webhook configured for: ${data.rule_name}`);
-    }
+    // STEP 5: Webhook alert.triggered to every webhook destination
+    errors.push(
+      ...(await dispatchAlertEnvelope(buildTriggeredEnvelope(data), channels, {
+        ruleId: data.rule_id,
+        eventIdPrefix: data.historyId || data.rule_id,
+      }))
+    );
 
     // Mark as notified (with errors if any) - skip for Sigma rules (no history entry)
     if (data.historyId) {
@@ -181,6 +310,93 @@ export async function processAlertNotification(job: any) {
   }
 }
 
+async function processResolvedNotification(data: AlertResolvedNotificationData) {
+  console.log(`Processing alert resolution: ${data.rule_name}`);
+
+  const { channels } = await resolveAlertChannels(data);
+
+  const durationSeconds = Math.max(
+    0,
+    Math.round((Date.parse(data.resolved_at) - Date.parse(data.firing_since)) / 1000)
+  );
+  const duration = formatMinutes(Math.round(durationSeconds / 60));
+  const message =
+    data.alert_type === 'rate_of_change'
+      ? `${data.rule_name} log volume is back to its baseline after ${duration}`
+      : `${data.rule_name} is back to normal after ${duration}`;
+
+  // Wrap in the unified envelope; data matches alertResolvedDataSchema.
+  const envelope = buildEnvelope({
+    type: 'alert.resolved',
+    organizationId: data.organization_id,
+    projectId: data.project_id ?? null,
+    data: {
+      alert_rule_id: data.rule_id,
+      alert_name: data.rule_name,
+      alert_type: data.alert_type,
+      title: `Alert resolved: ${data.rule_name}`,
+      message,
+      log_count: data.log_count,
+      threshold: data.threshold,
+      time_window: data.time_window,
+      firing_since: data.firing_since,
+      resolved_at: data.resolved_at,
+      duration_seconds: durationSeconds,
+      incident_id: data.incident_id,
+      link: alertLink(data.incident_id),
+    },
+  });
+
+  const errors = await dispatchAlertEnvelope(envelope, channels, {
+    ruleId: data.rule_id,
+    eventIdPrefix: `${data.rule_id}:${data.firing_since}:resolved`,
+  });
+  if (errors.length > 0) {
+    console.error(`Alert resolution partially failed: ${data.rule_name}: ${errors.join('; ')}`);
+  }
+
+  console.log(`Alert resolution processed: ${data.rule_name}`);
+}
+
+function minutesSince(iso: string | undefined): number | null {
+  if (!iso) return null;
+  const since = Date.parse(iso);
+  if (Number.isNaN(since)) return null;
+  return Math.max(0, Math.round((Date.now() - since) / 60_000));
+}
+
+function buildTriggeredEnvelope(data: AlertNotificationData): WebhookEnvelope {
+  // Both plain threshold and anomaly (rate-of-change) alerts use type
+  // 'alert.triggered'; anomaly is distinguished by data.baseline_metadata
+  // !== null. organization_id/project_id live on the envelope.
+  // Sigma detections have no alert rule and no resolve path: no lifecycle
+  // block, so the envelope carries no alert_rule_id and never pages.
+  const lifecycle =
+    data.kind !== undefined && data.event_type !== 'sigma'
+      ? {
+          alert_rule_id: data.rule_id,
+          renotify: data.kind === 'renotify',
+          ...(data.firing_since ? { firing_since: data.firing_since } : {}),
+          incident_id: data.incident_id ?? null,
+        }
+      : {};
+
+  return buildEnvelope({
+    type: 'alert.triggered',
+    organizationId: data.organization_id,
+    projectId: data.project_id ?? null,
+    data: {
+      alert_name: data.rule_name,
+      log_count: data.log_count,
+      threshold: data.threshold,
+      time_window: data.time_window,
+      baseline_metadata: data.baseline_metadata || null,
+      link: alertLink(data.incident_id, data.event_type === 'sigma' ? data.rule_id : undefined),
+      ...lifecycle,
+    },
+  });
+}
+
 async function sendEmailNotification(data: AlertNotificationData & { organizationName?: string; projectName?: string | null }) {
   const transporter = getEmailTransporter();
 
@@ -188,7 +404,33 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
     throw new Error('Email transporter not configured');
   }
 
+  if (data.event_type === 'sigma') {
+    const level = ['critical', 'high', 'medium', 'low', 'informational'].includes(data.rule_level ?? '')
+      ? (data.rule_level as 'critical' | 'high' | 'medium' | 'low' | 'informational')
+      : 'medium';
+    const title = data.rule_name.replace(/^\[Sigma\]\s*/, '');
+    const { html, text } = generateSigmaDetectionEmail({
+      ruleTitle: title,
+      severity: level,
+      service: data.service ?? 'unknown',
+      organizationName: data.organizationName ?? 'your organization',
+      detectionId: data.rule_id,
+      incidentId: data.incident_id ?? null,
+      ruleId: data.rule_id,
+    });
+    await transporter.sendMail({
+      from: `"LogTide" <${config.SMTP_FROM || config.SMTP_USER}>`,
+      to: data.email_recipients.join(', '),
+      subject: `[Detection] ${title} (${level})`,
+      text,
+      html,
+    });
+    console.log(`Email sent to: ${data.email_recipients.join(', ')}`);
+    return;
+  }
+
   const isRateOfChange = !!data.baseline_metadata;
+  const renotify = data.kind === 'renotify';
 
   const { html, text } = generateAlertEmail({
     ruleName: data.rule_name,
@@ -201,9 +443,18 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
     baselineMetadata: data.baseline_metadata,
   });
 
-  const subject = isRateOfChange
-    ? `[Anomaly] ${data.rule_name} - ${data.baseline_metadata!.deviation_ratio}x above baseline`
-    : `[Alert] ${data.rule_name} - ${data.log_count} logs exceeded threshold`;
+  let subject: string;
+  if (isRateOfChange) {
+    const ratio = formatNumber(data.baseline_metadata!.deviation_ratio);
+    subject = renotify
+      ? `[Anomaly] Still active: ${data.rule_name} - ${ratio}x above baseline`
+      : `[Anomaly] ${data.rule_name} - ${ratio}x above baseline`;
+  } else {
+    const count = formatNumber(data.log_count);
+    subject = renotify
+      ? `[Alert] Still firing: ${data.rule_name} - ${count} logs`
+      : `[Alert] ${data.rule_name} - ${count} logs exceeded threshold`;
+  }
 
   await transporter.sendMail({
     from: `"LogTide" <${config.SMTP_FROM || config.SMTP_USER}>`,
@@ -216,43 +467,29 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
   console.log(`Email sent to: ${data.email_recipients.join(', ')}`);
 }
 
-async function sendWebhookNotification(data: AlertNotificationData, channelId?: string) {
-  if (!data.webhook_url) return;
+function inAppCopy(data: AlertNotificationData, projectName: string | null): { title: string; message: string } {
+  const renotify = data.kind === 'renotify';
+  const projectSuffix = projectName ? ` for project ${projectName}` : '';
+  const firingMinutes = renotify ? minutesSince(data.firing_since) : null;
+  const firingFor = firingMinutes !== null ? `, firing for ${formatMinutes(firingMinutes)}` : '';
 
-  const frontendUrl = getFrontendUrl();
+  if (data.baseline_metadata) {
+    const bm = data.baseline_metadata;
+    return {
+      title: renotify ? `Anomaly still active: ${data.rule_name}` : `Anomaly detected: ${data.rule_name}`,
+      message:
+        `Log volume is ${formatNumber(bm.deviation_ratio)}x above baseline ` +
+        `(${formatNumber(Math.round(bm.current_value))} vs ${formatNumber(Math.round(bm.baseline_value))} logs/hr)` +
+        `${projectSuffix}${firingFor}.`,
+    };
+  }
 
-  // Wrap in the unified envelope (WS3). Both plain threshold and anomaly
-  // (rate-of-change) alerts use type 'alert.triggered'; anomaly is
-  // distinguished by data.baseline_metadata !== null.
-  // organization_id/project_id move to the envelope; event_type/timestamp
-  // are superseded by envelope.type/occurredAt.
-  const envelope = buildEnvelope({
-    type: 'alert.triggered',
-    organizationId: data.organization_id,
-    projectId: data.project_id ?? null,
-    data: {
-      alert_name: data.rule_name,
-      log_count: data.log_count,
-      threshold: data.threshold,
-      time_window: data.time_window,
-      baseline_metadata: data.baseline_metadata || null,
-      link: `${frontendUrl}/dashboard/alerts`,
-    },
-  });
-
-  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
-  // retry/backoff, DLQ, delivery logging, and the beforeWebhookDispatch hook
-  // (#216) all live in one place now.
-  await webhookDispatcher.enqueue({
-    url: data.webhook_url,
-    organizationId: data.organization_id,
-    eventType: 'alert.triggered',
-    eventId: `${data.historyId || data.rule_id}:${data.webhook_url}`,
-    channelId,
-    ruleId: data.rule_id,
-    metadata: { ruleName: data.rule_name },
-    payload: envelope,
-  });
+  return {
+    title: renotify ? `Alert still firing: ${data.rule_name}` : `Alert triggered: ${data.rule_name}`,
+    message:
+      `${formatNumber(data.log_count)} logs exceeded threshold of ${formatNumber(data.threshold)} ` +
+      `in ${formatNumber(data.time_window)} minutes${projectSuffix}${firingFor}.`,
+  };
 }
 
 async function createInAppNotifications(data: AlertNotificationData, projectName: string | null) {
@@ -268,19 +505,11 @@ async function createInAppNotifications(data: AlertNotificationData, projectName
     return;
   }
 
-  // Create notification for each member
-  const notificationPromises = members.map((member) => {
-    const isRateOfChange = !!data.baseline_metadata;
-    const title = isRateOfChange
-      ? `Anomaly Detected: ${data.rule_name}`
-      : `Alert Triggered: ${data.rule_name}`;
-    const message = isRateOfChange
-      ? `Log volume is ${data.baseline_metadata!.deviation_ratio}x above baseline (${Math.round(data.baseline_metadata!.current_value)} vs ${Math.round(data.baseline_metadata!.baseline_value)} logs/hr)${projectName ? ` for project ${projectName}` : ''}.`
-      : projectName
-        ? `${data.log_count} logs exceeded threshold of ${data.threshold} in ${data.time_window} minutes for project ${projectName}.`
-        : `${data.log_count} logs exceeded threshold of ${data.threshold} in ${data.time_window} minutes.`;
+  const { title, message } = inAppCopy(data, projectName);
 
-    return notificationsService.createNotification({
+  // Create notification for each member
+  const notificationPromises = members.map((member) =>
+    notificationsService.createNotification({
       userId: member.user_id,
       type: 'alert',
       title,
@@ -293,9 +522,11 @@ async function createInAppNotifications(data: AlertNotificationData, projectName
         logCount: data.log_count,
         threshold: data.threshold,
         timeWindow: data.time_window,
+        kind: data.kind ?? 'triggered',
+        incidentId: data.incident_id ?? null,
       },
-    });
-  });
+    })
+  );
 
   await Promise.all(notificationPromises);
 

@@ -198,6 +198,38 @@ describe('Email Templates - Alert Email', () => {
 });
 
 describe('Email Templates - Error Email', () => {
+  const base = {
+    exceptionType: 'TypeError',
+    language: 'nodejs',
+    service: 'api',
+    isNewErrorGroup: false,
+    errorGroupId: 'error-789',
+    organizationName: 'Org',
+    projectName: 'Project',
+  };
+
+  it('renders the regression flag in html and text', () => {
+    const result = generateErrorEmail({ ...base, isRegression: true });
+    expect(result.html).toContain('regression');
+    expect(result.text).toContain('REGRESSION');
+    expect(result.html).not.toContain('escalating');
+  });
+
+  it('renders the escalating flag in html and text', () => {
+    const result = generateErrorEmail({ ...base, isEscalating: true });
+    expect(result.html).toContain('escalating');
+    expect(result.text).toContain('ESCALATING');
+    expect(result.html).not.toContain('regression');
+  });
+
+  it('renders neither flag by default', () => {
+    const result = generateErrorEmail(base);
+    expect(result.html).not.toContain('regression');
+    expect(result.html).not.toContain('escalating');
+    expect(result.text).not.toContain('REGRESSION');
+    expect(result.text).not.toContain('ESCALATING');
+  });
+
   it('should generate HTML and text versions', () => {
     const result = generateErrorEmail({
       exceptionType: 'TypeError',
@@ -350,8 +382,8 @@ describe('Email Templates - Incident Email', () => {
       organizationName: 'Org',
     });
 
-    expect(result.html).toContain('https://app.logtide.dev/dashboard/security/incidents/my-incident-id');
-    expect(result.text).toContain('https://app.logtide.dev/dashboard/security/incidents/my-incident-id');
+    expect(result.html).toContain('https://app.logtide.dev/dashboard/incidents/my-incident-id');
+    expect(result.text).toContain('https://app.logtide.dev/dashboard/incidents/my-incident-id');
   });
 
   it('should include affected services when provided', () => {
@@ -417,6 +449,23 @@ describe('Email Templates - Sigma Detection Email', () => {
 
     expect(result.html).toBeDefined();
     expect(result.text).toBeDefined();
+  });
+
+  it('links the call to action to the incident, else the rule, not the security overview', () => {
+    const base = {
+      ruleTitle: 'Mimikatz Detection',
+      severity: 'critical' as const,
+      service: 'endpoint',
+      organizationName: 'Org',
+      detectionId: 'det-1',
+    };
+    const withIncident = generateSigmaDetectionEmail({ ...base, incidentId: 'inc-9', ruleId: 'rule-3' });
+    expect(withIncident.html).toContain('/dashboard/incidents/inc-9');
+    expect(withIncident.text).toContain('/dashboard/incidents/inc-9');
+    expect(withIncident.html).not.toContain('/dashboard/security"');
+    const ruleOnly = generateSigmaDetectionEmail({ ...base, ruleId: 'rule-3' });
+    expect(ruleOnly.html).toContain('/dashboard/security/rules/rule-3');
+    expect(ruleOnly.text).toContain('/dashboard/security/rules/rule-3');
   });
 
   it('should include rule title', () => {
@@ -721,8 +770,8 @@ describe('Email Templates - Common Elements', () => {
       timeWindow: 1,
     });
 
-    expect(result.html).toContain('/dashboard/settings/channels');
-    expect(result.text).toContain('/dashboard/settings/channels');
+    expect(result.html).toContain('/dashboard/settings/notifications/destinations');
+    expect(result.text).toContain('/dashboard/settings/notifications/destinations');
   });
 
   it('should include LogTide branding', () => {
@@ -818,7 +867,7 @@ describe('Email Templates - Digest', () => {
 
     expect(result.html).toContain('https://app.logtide.dev/unsubscribe?token=tok_123');
     expect(result.html).toContain('Unsubscribe');
-    expect(result.html).not.toContain('/dashboard/settings/channels');
+    expect(result.html).not.toContain('/dashboard/settings/notifications/destinations');
   });
 
   it('carries all sections in the plaintext fallback', () => {

@@ -2,130 +2,75 @@ import { writable, derived, get } from 'svelte/store';
 import { browser } from '$app/environment';
 import { authStore } from './auth';
 import { checklistStore } from './checklist';
-import { OnboardingAPI } from '$lib/api/onboarding';
+import { OnboardingAPI, type OnboardingStep } from '$lib/api/onboarding';
 
-// Map onboarding steps to checklist items
-const STEP_TO_CHECKLIST: Record<string, string> = {
-  'create-organization': 'create-organization',
-  'create-project': 'create-project',
-  'api-key': 'create-api-key'
-};
+export type { OnboardingStep } from '$lib/api/onboarding';
 
-export type OnboardingStep =
-  | 'welcome'
-  | 'create-organization'
-  | 'create-project'
-  | 'api-key'
-  | 'first-log'
-  | 'feature-tour'
-  | 'completed';
+export const ONBOARDING_STEPS: OnboardingStep[] = ['verify-email', 'workspace', 'connect', 'done'];
 
 export interface OnboardingState {
-  currentStep: OnboardingStep;
-  completedSteps: OnboardingStep[];
-  skipped: boolean;
-  skipAfterOrgCreation: boolean;
+  step: OnboardingStep | null;
   organizationId: string | null;
   projectId: string | null;
+  /** Name of the project created in this session, used to suggest a service name. Memory only. */
+  projectName: string | null;
+  /** The API key shown once. Memory only, never persisted. */
   apiKey: string | null;
-  firstLogReceived: boolean;
-  startedAt: string | null;
-  completedAt: string | null;
+  completed: boolean;
+  skipped: boolean;
   loading: boolean;
   initialized: boolean;
 }
 
-const STEP_ORDER: OnboardingStep[] = [
-  'welcome',
-  'create-organization',
-  'create-project',
-  'api-key',
-  'first-log',
-  'feature-tour',
-  'completed'
-];
+/** Raw server shape handed to `decideEntry`. */
+export interface ServerOnboarding {
+  step: OnboardingStep | null;
+  organizationId: string | null;
+  projectId: string | null;
+  completed: boolean;
+  skipped: boolean;
+}
 
 const defaultState: OnboardingState = {
-  currentStep: 'welcome',
-  completedSteps: [],
-  skipped: false,
-  skipAfterOrgCreation: false,
+  step: null,
   organizationId: null,
   projectId: null,
+  projectName: null,
   apiKey: null,
-  firstLogReceived: false,
-  startedAt: null,
-  completedAt: null,
+  completed: false,
+  skipped: false,
   loading: false,
-  initialized: false
+  initialized: false,
 };
 
 function createOnboardingStore() {
-  const { subscribe, set, update } = writable<OnboardingState>(defaultState);
+  const { subscribe, set, update } = writable<OnboardingState>({ ...defaultState });
+  const api = new OnboardingAPI(() => get(authStore).token);
+  let lastToken: string | null = null;
 
-  let api: OnboardingAPI | null = null;
-  let currentToken: string | null = null;
-
-  async function loadFromServer() {
-    if (!api) return;
-
-    update(state => ({ ...state, loading: true }));
-
+  /** Write the current position to the server. Failures are logged and never block the UI. */
+  async function persist(extra: Record<string, unknown> = {}) {
+    const s = get({ subscribe });
+    const payload: Record<string, unknown> = { ...extra };
+    if (s.step) {
+      payload.step = s.step;
+      payload.tutorialStep = ONBOARDING_STEPS.indexOf(s.step);
+    }
+    if (s.organizationId) payload.organizationId = s.organizationId;
+    if (s.projectId) payload.projectId = s.projectId;
     try {
-      const serverState = await api.getState();
-
-      // Convert tutorial step number to step name
-      const stepIndex = serverState.tutorialStep;
-      const currentStep = stepIndex < STEP_ORDER.length ? STEP_ORDER[stepIndex] : 'completed';
-
-      // Reconstruct completed steps from step index
-      const completedSteps: OnboardingStep[] = [];
-      for (let i = 0; i < stepIndex && i < STEP_ORDER.length - 1; i++) {
-        completedSteps.push(STEP_ORDER[i]);
-      }
-
-      update(state => ({
-        ...state,
-        currentStep: serverState.tutorialCompleted ? 'completed' : currentStep,
-        completedSteps,
-        skipped: serverState.tutorialSkipped,
-        completedAt: serverState.tutorialCompleted ? new Date().toISOString() : null,
-        loading: false,
-        initialized: true
-      }));
+      await api.updateState(payload);
     } catch (error) {
-      console.error('Failed to load onboarding state from server:', error);
-      update(state => ({ ...state, loading: false, initialized: true }));
+      console.error('Failed to save onboarding state:', error);
     }
   }
 
-  async function saveToServer(stepIndex: number, completed: boolean, skipped: boolean) {
-    if (!api) return;
-
-    try {
-      await api.updateState({
-        tutorialStep: stepIndex,
-        tutorialCompleted: completed,
-        tutorialSkipped: skipped
-      });
-    } catch (error) {
-      console.error('Failed to save onboarding state to server:', error);
-    }
-  }
-
-  // Subscribe to auth changes to update API instance
   if (browser) {
-    authStore.subscribe(state => {
-      if (state.token !== currentToken) {
-        currentToken = state.token;
-        if (state.token) {
-          api = new OnboardingAPI(() => state.token);
-          // Load state from server when authenticated
-          loadFromServer();
-        } else {
-          api = null;
-          // Reset to default state when logged out
-          set(defaultState);
+    authStore.subscribe((state) => {
+      if (state.token !== lastToken) {
+        lastToken = state.token;
+        if (!state.token) {
+          set({ ...defaultState });
         }
       }
     });
@@ -134,230 +79,109 @@ function createOnboardingStore() {
   return {
     subscribe,
 
-    /**
-     * Start the onboarding tutorial
-     */
-    start: async () => {
-      update(state => ({
-        ...state,
-        currentStep: 'welcome',
-        startedAt: new Date().toISOString(),
-        skipped: false
-      }));
-      await saveToServer(0, false, false);
-    },
-
-    /**
-     * Move to the next step
-     */
-    nextStep: async () => {
-      let newStepIndex = 0;
-      let isCompleted = false;
-
-      update(state => {
-        const currentIndex = STEP_ORDER.indexOf(state.currentStep);
-        const nextIndex = currentIndex + 1;
-        newStepIndex = nextIndex;
-
-        if (nextIndex >= STEP_ORDER.length) {
-          isCompleted = true;
-          return {
-            ...state,
-            currentStep: 'completed',
-            completedSteps: [...state.completedSteps, state.currentStep],
-            completedAt: new Date().toISOString()
-          };
-        }
-
-        return {
-          ...state,
-          currentStep: STEP_ORDER[nextIndex],
-          completedSteps: [...state.completedSteps, state.currentStep]
+    /** Fetch the server state, mirror it locally and return the raw shape. */
+    load: async (): Promise<ServerOnboarding> => {
+      update((s) => ({ ...s, loading: true }));
+      try {
+        const server = await api.getState();
+        const raw: ServerOnboarding = {
+          step: server.step ?? null,
+          organizationId: server.organizationId ?? null,
+          projectId: server.projectId ?? null,
+          completed: server.tutorialCompleted,
+          skipped: server.tutorialSkipped,
         };
-      });
-
-      await saveToServer(newStepIndex, isCompleted, false);
-    },
-
-    /**
-     * Go to a specific step
-     */
-    goToStep: async (step: OnboardingStep) => {
-      const stepIndex = STEP_ORDER.indexOf(step);
-      update(state => ({
-        ...state,
-        currentStep: step
-      }));
-      await saveToServer(stepIndex, step === 'completed', false);
-    },
-
-    /**
-     * Mark current step as completed and optionally move to next
-     */
-    completeStep: async (step: OnboardingStep, moveToNext = true) => {
-      let newStepIndex = 0;
-      let isCompleted = false;
-
-      update(state => {
-        const newCompletedSteps = state.completedSteps.includes(step)
-          ? state.completedSteps
-          : [...state.completedSteps, step];
-
-        // Also update the checklist if there's a corresponding item
-        // Don't show confetti during onboarding flow
-        const checklistItemId = STEP_TO_CHECKLIST[step];
-        if (checklistItemId) {
-          checklistStore.completeItem(checklistItemId, false);
-        }
-
-        if (!moveToNext) {
-          newStepIndex = STEP_ORDER.indexOf(step);
-          return { ...state, completedSteps: newCompletedSteps };
-        }
-
-        const currentIndex = STEP_ORDER.indexOf(step);
-        const nextStep = STEP_ORDER[currentIndex + 1] || 'completed';
-        newStepIndex = currentIndex + 1;
-        isCompleted = nextStep === 'completed';
-
-        return {
-          ...state,
-          currentStep: nextStep,
-          completedSteps: newCompletedSteps,
-          completedAt: isCompleted ? new Date().toISOString() : state.completedAt
-        };
-      });
-
-      await saveToServer(newStepIndex, isCompleted, false);
-    },
-
-    /**
-     * Skip the entire tutorial
-     */
-    skip: async () => {
-      update(state => ({
-        ...state,
-        skipped: true,
-        currentStep: 'completed',
-        completedAt: new Date().toISOString()
-      }));
-      await saveToServer(STEP_ORDER.length - 1, true, true);
-    },
-
-    /**
-     * Save organization ID created during onboarding
-     */
-    setOrganizationId: (orgId: string) => {
-      update(state => ({
-        ...state,
-        organizationId: orgId
-      }));
-    },
-
-    /**
-     * Save project ID created during onboarding
-     */
-    setProjectId: (projectId: string) => {
-      update(state => ({
-        ...state,
-        projectId: projectId
-      }));
-    },
-
-    /**
-     * Save API key generated during onboarding
-     */
-    setApiKey: (apiKey: string) => {
-      update(state => ({
-        ...state,
-        apiKey: apiKey
-      }));
-    },
-
-    /**
-     * Set flag to skip tutorial after org creation
-     * (used when user clicks "skip" but still needs to create an org)
-     */
-    setSkipAfterOrgCreation: (skip: boolean) => {
-      update(state => ({
-        ...state,
-        skipAfterOrgCreation: skip
-      }));
-    },
-
-    /**
-     * Mark that the first log was received
-     */
-    markFirstLogReceived: () => {
-      update(state => ({
-        ...state,
-        firstLogReceived: true
-      }));
-    },
-
-    /**
-     * Reset the onboarding to start fresh
-     */
-    reset: async () => {
-      set({ ...defaultState, loading: true });
-
-      if (api) {
-        try {
-          await api.reset();
-          await loadFromServer();
-        } catch (error) {
-          console.error('Failed to reset onboarding:', error);
-          update(state => ({ ...state, loading: false }));
-        }
-      } else {
-        set(defaultState);
+        update((s) => ({
+          ...s,
+          ...raw,
+          loading: false,
+          initialized: true,
+        }));
+        return raw;
+      } catch (error) {
+        console.error('Failed to load onboarding state:', error);
+        update((s) => ({ ...s, loading: false, initialized: true }));
+        return { step: null, organizationId: null, projectId: null, completed: false, skipped: false };
       }
     },
 
-    /**
-     * Check if onboarding is in progress (not completed or skipped)
-     */
-    isInProgress: derived({ subscribe }, ($state) => {
-      return !$state.skipped && $state.currentStep !== 'completed';
-    }),
-
-    /**
-     * Check if a step has been completed
-     */
-    isStepCompleted: (step: OnboardingStep) => {
-      const state = get({ subscribe });
-      return state.completedSteps.includes(step);
+    /** Set the local position without writing to the server (entry decision). */
+    hydrate: (position: {
+      step: OnboardingStep;
+      organizationId: string | null;
+      projectId: string | null;
+    }) => {
+      update((s) => ({ ...s, ...position }));
     },
 
-    /**
-     * Get the step index for progress display
-     */
-    getStepIndex: (step: OnboardingStep) => {
-      return STEP_ORDER.indexOf(step);
+    goToStep: async (step: OnboardingStep) => {
+      update((s) => ({ ...s, step }));
+      await persist();
     },
 
-    /**
-     * Total number of steps (excluding 'completed')
-     */
-    totalSteps: STEP_ORDER.length - 1,
+    /** Store the org (and project) as soon as they exist so a failure later resumes in the right place. */
+    setWorkspace: async (workspace: {
+      organizationId: string;
+      projectId?: string;
+      projectName?: string;
+    }) => {
+      update((s) => ({
+        ...s,
+        organizationId: workspace.organizationId,
+        projectId: workspace.projectId ?? s.projectId,
+        projectName: workspace.projectName ?? s.projectName,
+      }));
+      void checklistStore.completeItem('create-organization', false);
+      if (workspace.projectId) {
+        void checklistStore.completeItem('create-project', false);
+      }
+      await persist();
+    },
 
-    /**
-     * Step order for iteration
-     */
-    stepOrder: STEP_ORDER.filter(s => s !== 'completed')
+    setApiKey: (apiKey: string | null) => {
+      update((s) => ({ ...s, apiKey }));
+      if (apiKey) {
+        void checklistStore.completeItem('create-api-key', false);
+      }
+    },
+
+    complete: async () => {
+      update((s) => ({ ...s, step: 'done', completed: true }));
+      await persist({ tutorialCompleted: true });
+    },
+
+    skip: async () => {
+      update((s) => ({ ...s, skipped: true, completed: true }));
+      await persist({ tutorialSkipped: true, tutorialCompleted: true });
+    },
+
+    reset: async () => {
+      set({ ...defaultState, loading: true });
+      try {
+        await api.reset();
+        const server = await api.getState();
+        set({
+          ...defaultState,
+          step: server.step ?? null,
+          organizationId: server.organizationId ?? null,
+          projectId: server.projectId ?? null,
+          completed: server.tutorialCompleted,
+          skipped: server.tutorialSkipped,
+          initialized: true,
+        });
+      } catch (error) {
+        console.error('Failed to reset onboarding:', error);
+        set({ ...defaultState, initialized: true });
+      }
+    },
+
+    isInProgress: derived({ subscribe }, (s) => !s.skipped && !s.completed),
   };
 }
 
 export const onboardingStore = createOnboardingStore();
 
-// Derived stores for convenience
-export const currentStep = derived(onboardingStore, $state => $state.currentStep);
 export const isOnboardingComplete = derived(
   onboardingStore,
-  $state => $state.currentStep === 'completed' || $state.skipped
+  (s) => s.completed || s.skipped
 );
-export const onboardingProgress = derived(onboardingStore, $state => {
-  const totalSteps = 6; // All steps except 'completed'
-  const completedCount = $state.completedSteps.length;
-  return Math.round((completedCount / totalSteps) * 100);
-});

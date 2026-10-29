@@ -60,6 +60,51 @@ function detectOidcIcon(issuerUrl: string, name?: string, slug?: string): string
 }
 
 /**
+ * Placeholder returned to admin clients instead of stored secrets.
+ */
+export const MASKED_SECRET = '\u2022'.repeat(8);
+
+/** Config keys holding secrets, per provider type. */
+const SECRET_CONFIG_KEYS: Record<string, string[]> = {
+  oidc: ['clientSecret'],
+  ldap: ['bindPassword'],
+};
+
+/**
+ * True when a submitted secret value means "keep the stored one":
+ * absent, empty, or the mask placeholder echoed back by a client.
+ */
+function isKeepSecretValue(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return trimmed === '' || /^\u2022+$/.test(trimmed);
+}
+
+/**
+ * Merge a config update over the stored config. Secret fields that are
+ * empty or masked keep their stored value; other keys sent as null are
+ * removed (so optional fields can be cleared).
+ */
+export function mergeProviderConfig(
+  type: string,
+  stored: Record<string, unknown>,
+  update: Record<string, unknown>
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...stored, ...update };
+  for (const [key, value] of Object.entries(update)) {
+    if (value === null) delete merged[key];
+  }
+  for (const key of SECRET_CONFIG_KEYS[type] ?? []) {
+    if (isKeepSecretValue(update[key])) {
+      if (stored[key] !== undefined) merged[key] = stored[key];
+      else delete merged[key];
+    }
+  }
+  return merged;
+}
+
+/**
  * Validate provider slug format
  */
 function validateSlug(slug: string): boolean {
@@ -253,13 +298,17 @@ export class ProviderService {
       }
     }
 
-    // Validate config if provided
-    if (input.config) {
+    // Merge the submitted config over the stored one (keeping masked or
+    // empty secrets) and validate the result.
+    const config = input.config
+      ? mergeProviderConfig(existing.type, existing.config, input.config)
+      : undefined;
+    if (config) {
       if (existing.type === 'oidc') {
-        const error = validateOidcConfig(input.config as unknown as OidcProviderConfig);
+        const error = validateOidcConfig(config as unknown as OidcProviderConfig);
         if (error) throw new Error(error);
       } else if (existing.type === 'ldap') {
-        const error = validateLdapConfig(input.config as unknown as LdapProviderConfig);
+        const error = validateLdapConfig(config as unknown as LdapProviderConfig);
         if (error) throw new Error(error);
       }
     }
@@ -274,11 +323,11 @@ export class ProviderService {
       updateData.icon = input.icon;
     } else if (input.config !== undefined && existing.type === 'oidc' && !existing.icon) {
       // Auto-detect icon when config changes and no icon was previously set
-      const oidcConfig = input.config as unknown as OidcProviderConfig;
+      const oidcConfig = config as unknown as OidcProviderConfig;
       const detected = detectOidcIcon(oidcConfig.issuerUrl ?? '', input.name ?? existing.name, existing.slug);
       if (detected) updateData.icon = detected;
     }
-    if (input.config !== undefined) updateData.config = input.config;
+    if (config !== undefined) updateData.config = config;
 
     // Update provider
     const row = await db

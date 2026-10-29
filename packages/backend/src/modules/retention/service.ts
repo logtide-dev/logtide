@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { reservoir } from '../../database/reservoir.js';
 import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 import { hub } from '@logtide/core';
+import { auditLogService } from '../audit-log/index.js';
 
 // ============================================================================
 // Types
@@ -187,6 +188,63 @@ export class RetentionService {
       logsToDelete: toDeleteResult.count,
       estimatedDeletionDate,
     };
+  }
+
+  /**
+   * Update the retention policy (log and/or audit retention) of an organization
+   * and record the audit entry. Shared by the admin route and extensions.
+   */
+  async setOrganizationRetentionPolicy(
+    organizationId: string,
+    input: { retentionDays?: number; auditRetentionDays?: number | null },
+    actor?: string
+  ): Promise<Record<string, unknown>> {
+    if (input.retentionDays === undefined && input.auditRetentionDays === undefined) {
+      throw new Error('At least one of retentionDays or auditRetentionDays is required');
+    }
+
+    const response: Record<string, unknown> = {
+      message: 'Retention policy updated successfully',
+    };
+
+    if (input.retentionDays !== undefined) {
+      const result = await this.updateOrganizationRetention(organizationId, input.retentionDays);
+      Object.assign(response, result);
+    }
+
+    if (input.auditRetentionDays !== undefined) {
+      const auditResult = await this.updateOrganizationAuditRetention(organizationId, input.auditRetentionDays);
+      response.auditRetentionDays = auditResult.auditRetentionDays;
+    }
+
+    await auditLogService.record({
+      action: 'org.retention_updated',
+      organizationId,
+      target: { type: 'organization', id: organizationId },
+      metadata: {
+        ...(actor ? { actor } : {}),
+        ...(input.retentionDays !== undefined ? { retentionDays: input.retentionDays } : {}),
+        ...(input.auditRetentionDays !== undefined ? { auditRetentionDays: input.auditRetentionDays } : {}),
+      },
+    });
+
+    return response;
+  }
+
+  /**
+   * Retention status plus the audit retention window of an organization.
+   */
+  async getOrganizationRetentionPolicy(organizationId: string): Promise<Record<string, unknown>> {
+    const [status, org] = await Promise.all([
+      this.getOrganizationRetentionStatus(organizationId),
+      // audit_retention_days is fetched alongside (not in getOrganizationRetentionStatus to stay backward-compat)
+      db
+        .selectFrom('organizations')
+        .select('audit_retention_days')
+        .where('id', '=', organizationId)
+        .executeTakeFirst(),
+    ]);
+    return { ...status, auditRetentionDays: org?.audit_retention_days ?? null };
   }
 
   // Time window size for batch deletes (1 day keeps each DELETE small)

@@ -1,5 +1,6 @@
 import { db } from '../../database/connection.js';
 import { SigmaConditionEvaluator } from './condition-evaluator.js';
+import type { StoredLogRecord } from '@logtide/reservoir';
 import type { ParsedSigmaRule } from './types.js';
 
 /**
@@ -57,43 +58,74 @@ export class SigmaDetectionEngine {
     const matchedRules: MatchedRule[] = [];
 
     for (const rule of rules) {
-      try {
-        const logsourceMatched = this.matchLogsource(rule.logsource, logEntry);
-        if (!logsourceMatched) {
-          continue;
-        }
-
-        const matched = SigmaConditionEvaluator.evaluateDetection(
-          rule.detection,
-          flattenedLog,
-          false
-        );
-
-        if (matched) {
-          // Extract matched fields from detection patterns
-          const matchedFields = this.extractMatchedFields(rule.detection, flattenedLog);
-
-          matchedRules.push({
-            sigmaRuleId: rule.id,
-            ruleTitle: rule.title,
-            ruleLevel: rule.level || 'medium',
-            ruleTags: rule.tags,
-            matchedAt: new Date(),
-            matchedFields,
-          });
-        }
-      } catch (error) {
-        // Log evaluation error but continue with other rules
-        console.error(
-          `[SigmaDetectionEngine] Error evaluating rule ${rule.id} (${rule.title}):`,
-          error
-        );
-      }
+      const matched = this.matchRule(rule, logEntry, flattenedLog);
+      if (matched) matchedRules.push(matched);
     }
 
     return {
       matched: matchedRules.length > 0,
       matchedRules,
+    };
+  }
+
+  /**
+   * Flatten a log entry for field matching (public wrapper, no DB).
+   */
+  static flatten(log: LogEntry): Record<string, any> {
+    return this.flattenLogEntry(log);
+  }
+
+  /**
+   * Evaluate one rule against one log. Pure, no DB. Returns null when the
+   * logsource does not match, the detection does not match, or evaluation
+   * throws (the error is logged).
+   */
+  static matchRule(
+    rule: ParsedSigmaRule,
+    log: LogEntry,
+    flattened?: Record<string, any>
+  ): MatchedRule | null {
+    try {
+      if (!this.matchLogsource(rule.logsource, log)) {
+        return null;
+      }
+
+      const flat = flattened ?? this.flattenLogEntry(log);
+      const matched = SigmaConditionEvaluator.evaluateDetection(rule.detection, flat, false);
+      if (!matched) {
+        return null;
+      }
+
+      return {
+        sigmaRuleId: rule.id,
+        ruleTitle: rule.title,
+        ruleLevel: rule.level || 'medium',
+        ruleTags: rule.tags,
+        matchedAt: new Date(),
+        matchedFields: this.extractMatchedFields(rule.detection, flat),
+      };
+    } catch (error) {
+      // Log evaluation error but let callers continue with other rules
+      console.error(
+        `[SigmaDetectionEngine] Error evaluating rule ${rule.id} (${rule.title}):`,
+        error
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Build the LogEntry shape the ingestion trigger queues from a stored log.
+   */
+  static toLogEntry(record: StoredLogRecord): LogEntry & { id: string; trace_id?: string } {
+    return {
+      id: record.id,
+      service: record.service,
+      level: record.level,
+      message: record.message,
+      metadata: record.metadata as Record<string, any> | undefined,
+      trace_id: record.traceId,
+      time: record.time,
     };
   }
 
@@ -293,37 +325,8 @@ export class SigmaDetectionEngine {
       const matchedRules: MatchedRule[] = [];
 
       for (const rule of rules) {
-        try {
-          const logsourceMatched = this.matchLogsource(rule.logsource, logEntry);
-          if (!logsourceMatched) {
-            continue;
-          }
-
-          const matched = SigmaConditionEvaluator.evaluateDetection(
-            rule.detection,
-            flattenedLog,
-            false
-          );
-
-          if (matched) {
-            // Extract matched fields from detection patterns
-            const matchedFields = this.extractMatchedFields(rule.detection, flattenedLog);
-
-            matchedRules.push({
-              sigmaRuleId: rule.id,
-              ruleTitle: rule.title,
-              ruleLevel: rule.level || 'medium',
-              ruleTags: rule.tags,
-              matchedAt: new Date(),
-              matchedFields,
-            });
-          }
-        } catch (error) {
-          console.error(
-            `[SigmaDetectionEngine] Error evaluating rule ${rule.id}:`,
-            error
-          );
-        }
+        const matched = this.matchRule(rule, logEntry, flattenedLog);
+        if (matched) matchedRules.push(matched);
       }
 
       results.set(i, {

@@ -42,6 +42,13 @@ describe('processWebhookDelivery', () => {
     expect(svc.recordAttempt).toHaveBeenCalledWith('del-1', expect.objectContaining({ attemptNumber: 1, statusCode: 200 }), 1000);
   });
 
+  it('passes the stored method and headers to deliverOnce', async () => {
+    svc.getDelivery.mockResolvedValue(delivery({ metadata: { payload: {}, method: 'PUT', headers: { Authorization: 'Bearer t' } } }));
+    deliverOnceMock.mockResolvedValue({ success: true, statusCode: 200, durationMs: 5, retryable: false });
+    await processWebhookDelivery({ id: 'j', name: 'deliver', data: { deliveryId: 'del-1' } } as IJob<WebhookDeliveryJobData>);
+    expect(deliverOnceMock).toHaveBeenCalledWith(expect.objectContaining({ method: 'PUT', headers: { Authorization: 'Bearer t' } }));
+  });
+
   it('re-enqueues with backoff on a retryable failure', async () => {
     svc.getDelivery.mockResolvedValue(delivery({ attempt_count: 0 }));
     deliverOnceMock.mockResolvedValue({ success: false, statusCode: 503, durationMs: 5, error: 'HTTP 503', retryable: true });

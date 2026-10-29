@@ -8,6 +8,10 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { db } from '../../database/index.js';
 import { auditLogService } from '../audit-log/service.js';
+import { registerIncidentRoutes } from '../incidents/routes.js';
+import { incidentsService } from '../incidents/service.js';
+import { IncidentError } from '../incidents/types.js';
+import { projectsService } from '../projects/service.js';
 
 const siemService = new SiemService(db);
 const dashboardService = new SiemDashboardService(db);
@@ -31,6 +35,11 @@ export async function siemRoutes(fastify: FastifyInstance) {
   // All routes require authentication
   fastify.addHook('onRequest', authenticate);
 
+  // Incident list, detail, update, bulk, comments and history are served by
+  // the incidents module: this base is an alias of /api/v1/incidents that
+  // keeps the legacy default order (created_at desc).
+  registerIncidentRoutes(fastify, { basePath: '/api/v1/siem/incidents', defaultSort: 'created_at' });
+
   // ==========================================================================
   // DASHBOARD STATISTICS
   // ==========================================================================
@@ -44,7 +53,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
     {
       config: {
         rateLimit: {
-          max: 60,
+          max: 120,
           timeWindow: '1 minute',
         },
       },
@@ -123,7 +132,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
     {
       config: {
         rateLimit: {
-          max: 60,
+          max: 120,
           timeWindow: '1 minute',
         },
       },
@@ -271,8 +280,20 @@ export async function siemRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Create incident
+        if (
+          body.projectId &&
+          !(await projectsService.projectBelongsToOrg(body.projectId, body.organizationId))
+        ) {
+          return reply.status(404).send({ error: 'Project not found' });
+        }
+        if (body.assigneeId) {
+          await incidentsService.assertAssignableUser(body.organizationId, body.assigneeId);
+        }
+
+        // Create incident. A hand-made incident is 'manual'; only one built
+        // from detection events is a sigma incident.
         const incident = await siemService.createIncident({
+          source: body.detectionEventIds && body.detectionEventIds.length > 0 ? 'sigma' : 'manual',
           organizationId: body.organizationId,
           projectId: body.projectId,
           title: body.title,
@@ -303,315 +324,12 @@ export async function siemRoutes(fastify: FastifyInstance) {
             details: error.errors,
           });
         }
+        if (error instanceof IncidentError) {
+          return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+        }
         console.error('Error creating incident:', error);
         return reply.status(500).send({
           error: 'Failed to create incident',
-          details: error.message,
-        });
-      }
-    }
-  );
-
-  /**
-   * GET /api/v1/siem/incidents
-   * List incidents with filters
-   */
-  fastify.get(
-    '/api/v1/siem/incidents',
-    {
-      config: {
-        rateLimit: {
-          max: 60,
-          timeWindow: '1 minute',
-        },
-      },
-      schema: {
-        querystring: {
-          type: 'object',
-          required: ['organizationId'],
-          properties: {
-            organizationId: { type: 'string', format: 'uuid' },
-            projectId: { type: 'string', format: 'uuid' },
-            status: {
-              type: 'array',
-              items: {
-                type: 'string',
-                enum: [...INCIDENT_STATUSES],
-              },
-            },
-            severity: {
-              type: 'array',
-              items: {
-                type: 'string',
-                enum: [...SEVERITIES],
-              },
-            },
-            assigneeId: { type: 'string', format: 'uuid' },
-            service: { type: 'string' },
-            technique: { type: 'string' },
-            limit: { type: 'integer', minimum: 1, maximum: 100 },
-            offset: { type: 'integer', minimum: 0 },
-          },
-        },
-      },
-    },
-    async (request: any, reply) => {
-      try {
-        const schema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
-          status: z.array(z.enum(INCIDENT_STATUSES)).optional(),
-          severity: z.array(z.enum(SEVERITIES)).optional(),
-          assigneeId: z.string().uuid().optional(),
-          service: z.string().optional(),
-          technique: z.string().optional(),
-          limit: z.number().int().min(1).max(100).optional(),
-          offset: z.number().int().min(0).optional(),
-        });
-
-        const query = schema.parse(request.query);
-
-        // Verify user is member of organization
-        const isMember = await checkOrganizationMembership(
-          request.user.id,
-          query.organizationId
-        );
-
-        if (!isMember) {
-          return reply.status(403).send({
-            error: 'You are not a member of this organization',
-          });
-        }
-
-        const result = await siemService.listIncidents({
-          organizationId: query.organizationId,
-          projectId: query.projectId,
-          status: query.status,
-          severity: query.severity,
-          assigneeId: query.assigneeId,
-          service: query.service,
-          technique: query.technique,
-          limit: query.limit,
-          offset: query.offset,
-        });
-
-        return reply.send({ incidents: result.incidents, total: result.total });
-      } catch (error: any) {
-        if (error instanceof z.ZodError) {
-          return reply.status(400).send({
-            error: 'Validation error',
-            details: error.errors,
-          });
-        }
-        console.error('Error listing incidents:', error);
-        return reply.status(500).send({
-          error: 'Failed to list incidents',
-          details: error.message,
-        });
-      }
-    }
-  );
-
-  /**
-   * GET /api/v1/siem/incidents/:id
-   * Get incident by ID (with related detections, comments, history)
-   */
-  fastify.get(
-    '/api/v1/siem/incidents/:id',
-    {
-      config: {
-        rateLimit: {
-          max: 60,
-          timeWindow: '1 minute',
-        },
-      },
-      schema: {
-        params: {
-          type: 'object',
-          required: ['id'],
-          properties: {
-            id: { type: 'string', format: 'uuid' },
-          },
-        },
-        querystring: {
-          type: 'object',
-          required: ['organizationId'],
-          properties: {
-            organizationId: { type: 'string', format: 'uuid' },
-          },
-        },
-      },
-    },
-    async (request: any, reply) => {
-      try {
-        const paramsSchema = z.object({
-          id: z.string().uuid(),
-        });
-
-        const querySchema = z.object({
-          organizationId: z.string().uuid(),
-        });
-
-        const params = paramsSchema.parse(request.params);
-        const query = querySchema.parse(request.query);
-
-        // Verify user is member of organization
-        const isMember = await checkOrganizationMembership(
-          request.user.id,
-          query.organizationId
-        );
-
-        if (!isMember) {
-          return reply.status(403).send({
-            error: 'You are not a member of this organization',
-          });
-        }
-
-        const incident = await siemService.getIncident(
-          params.id,
-          query.organizationId
-        );
-
-        if (!incident) {
-          return reply.status(404).send({
-            error: 'Incident not found',
-          });
-        }
-
-        // Get related data
-        const [detections, comments, history] = await Promise.all([
-          siemService.getIncidentDetections(params.id, query.organizationId),
-          siemService.getIncidentComments(params.id),
-          siemService.getIncidentHistory(params.id),
-        ]);
-
-        return reply.send({
-          incident,
-          detections,
-          comments,
-          history,
-        });
-      } catch (error: any) {
-        if (error instanceof z.ZodError) {
-          return reply.status(400).send({
-            error: 'Validation error',
-            details: error.errors,
-          });
-        }
-        console.error('Error getting incident:', error);
-        return reply.status(500).send({
-          error: 'Failed to get incident',
-          details: error.message,
-        });
-      }
-    }
-  );
-
-  /**
-   * PATCH /api/v1/siem/incidents/:id
-   * Update incident (status, assignee, etc.)
-   */
-  fastify.patch(
-    '/api/v1/siem/incidents/:id',
-    {
-      config: {
-        rateLimit: {
-          max: 30,
-          timeWindow: '1 minute',
-        },
-      },
-      schema: {
-        params: {
-          type: 'object',
-          required: ['id'],
-          properties: {
-            id: { type: 'string', format: 'uuid' },
-          },
-        },
-        body: {
-          type: 'object',
-          required: ['organizationId'],
-          properties: {
-            organizationId: { type: 'string', format: 'uuid' },
-            title: { type: 'string', minLength: 1, maxLength: 500 },
-            description: { type: 'string' },
-            severity: {
-              type: 'string',
-              enum: [...SEVERITIES],
-            },
-            status: {
-              type: 'string',
-              enum: [...INCIDENT_STATUSES],
-            },
-            assigneeId: { type: 'string', format: 'uuid' },
-          },
-        },
-      },
-    },
-    async (request: any, reply) => {
-      try {
-        const paramsSchema = z.object({
-          id: z.string().uuid(),
-        });
-
-        const bodySchema = z.object({
-          organizationId: z.string().uuid(),
-          title: z.string().min(1).max(500).optional(),
-          description: z.string().optional(),
-          severity: z
-            .enum(['critical', 'high', 'medium', 'low', 'informational'])
-            .optional(),
-          status: z
-            .enum(['open', 'investigating', 'resolved', 'false_positive'])
-            .optional(),
-          assigneeId: z.string().uuid().optional().nullable(),
-        });
-
-        const params = paramsSchema.parse(request.params);
-        const body = bodySchema.parse(request.body);
-
-        // Verify user is member of organization
-        const isMember = await checkOrganizationMembership(
-          request.user.id,
-          body.organizationId
-        );
-
-        if (!isMember) {
-          return reply.status(403).send({
-            error: 'You are not a member of this organization',
-          });
-        }
-
-        const incident = await siemService.updateIncident(
-          params.id,
-          body.organizationId,
-          {
-            title: body.title,
-            description: body.description,
-            severity: body.severity,
-            status: body.status,
-            assigneeId: body.assigneeId,
-          }
-        );
-
-        await auditLogService.record({
-          action: body.status ? 'incident.status_changed' : 'incident.updated',
-          target: { type: 'incident', id: params.id },
-          organizationId: body.organizationId,
-          metadata: { status: body.status, severity: body.severity, assigneeId: body.assigneeId },
-        });
-
-        return reply.send(incident);
-      } catch (error: any) {
-        if (error instanceof z.ZodError) {
-          return reply.status(400).send({
-            error: 'Validation error',
-            details: error.errors,
-          });
-        }
-        console.error('Error updating incident:', error);
-        return reply.status(500).send({
-          error: 'Failed to update incident',
           details: error.message,
         });
       }
@@ -692,102 +410,6 @@ export async function siemRoutes(fastify: FastifyInstance) {
         console.error('Error deleting incident:', error);
         return reply.status(500).send({
           error: 'Failed to delete incident',
-          details: error.message,
-        });
-      }
-    }
-  );
-
-  // ==========================================================================
-  // COMMENTS
-  // ==========================================================================
-
-  /**
-   * POST /api/v1/siem/incidents/:id/comments
-   * Add a comment to an incident
-   */
-  fastify.post(
-    '/api/v1/siem/incidents/:id/comments',
-    {
-      config: {
-        rateLimit: {
-          max: 30,
-          timeWindow: '1 minute',
-        },
-      },
-      schema: {
-        params: {
-          type: 'object',
-          required: ['id'],
-          properties: {
-            id: { type: 'string', format: 'uuid' },
-          },
-        },
-        body: {
-          type: 'object',
-          required: ['organizationId', 'comment'],
-          properties: {
-            organizationId: { type: 'string', format: 'uuid' },
-            comment: { type: 'string', minLength: 1 },
-          },
-        },
-      },
-    },
-    async (request: any, reply) => {
-      try {
-        const paramsSchema = z.object({
-          id: z.string().uuid(),
-        });
-
-        const bodySchema = z.object({
-          organizationId: z.string().uuid(),
-          comment: z.string().min(1).max(10000),
-        });
-
-        const params = paramsSchema.parse(request.params);
-        const body = bodySchema.parse(request.body);
-
-        // Verify user is member of organization
-        const isMember = await checkOrganizationMembership(
-          request.user.id,
-          body.organizationId
-        );
-
-        if (!isMember) {
-          return reply.status(403).send({
-            error: 'You are not a member of this organization',
-          });
-        }
-
-        // Verify incident exists and belongs to organization
-        const incident = await siemService.getIncident(
-          params.id,
-          body.organizationId
-        );
-
-        if (!incident) {
-          return reply.status(404).send({
-            error: 'Incident not found or access denied',
-          });
-        }
-
-        const comment = await siemService.addComment({
-          incidentId: params.id,
-          userId: request.user.id,
-          comment: body.comment,
-        });
-
-        return reply.status(201).send(comment);
-      } catch (error: any) {
-        if (error instanceof z.ZodError) {
-          return reply.status(400).send({
-            error: 'Validation error',
-            details: error.errors,
-          });
-        }
-        console.error('Error adding comment:', error);
-        return reply.status(500).send({
-          error: 'Failed to add comment',
           details: error.message,
         });
       }

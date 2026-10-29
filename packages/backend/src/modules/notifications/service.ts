@@ -3,7 +3,7 @@ import { db } from '../../database/connection.js';
 export interface Notification {
   id: string;
   userId: string;
-  type: 'alert' | 'system' | 'organization_invite' | 'project_update' | 'monitoring';
+  type: 'alert' | 'system' | 'organization_invite' | 'project_update' | 'monitoring' | 'project_health';
   title: string;
   message: string;
   read: boolean;

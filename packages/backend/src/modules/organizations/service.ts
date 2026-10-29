@@ -1,6 +1,11 @@
 import { db } from '../../database/connection.js';
 import { notificationsService } from '../notifications/service.js';
+import { auditLogService } from '../audit-log/service.js';
+import { config } from '../../config/index.js';
+import { withLimitLock } from '../../capabilities/limit-lock.js';
 import { validateSlug } from '../../utils/slug.js';
+import { CacheManager } from '../../utils/cache.js';
+import { capabilities } from '../../capabilities/facade.js';
 import type { Organization, OrganizationMember, OrganizationMemberWithUser, OrganizationWithRole, OrgRole } from '@logtide/shared';
 
 export interface CreateOrganizationInput {
@@ -13,6 +18,14 @@ export interface UpdateOrganizationInput {
   name?: string;
   slug?: string;
   description?: string;
+}
+
+/** Thrown when a transfer would exceed MAX_ORGANIZATIONS_PER_USER for the receiver. */
+export class OrganizationLimitError extends Error {
+  constructor(public readonly max: number) {
+    super('organization_limit_reached');
+    this.name = 'OrganizationLimitError';
+  }
 }
 
 export class OrganizationsService {
@@ -353,8 +366,38 @@ export class OrganizationsService {
       throw new Error('Only the organization owner can delete it');
     }
 
-    // Delete organization (cascade will handle members and projects)
-    await db.deleteFrom('organizations').where('id', '=', organizationId).execute();
+    await this.removeOrganization(organizationId);
+  }
+
+  /**
+   * Delete an organization row (cascade removes members, projects, keys...)
+   * and drop the caches that would otherwise keep its API keys and
+   * entitlements alive until their TTL. No access check: callers authorize.
+   * Returns false when the organization does not exist.
+   */
+  async removeOrganization(organizationId: string): Promise<boolean> {
+    const keys = await db
+      .selectFrom('api_keys')
+      .innerJoin('projects', 'projects.id', 'api_keys.project_id')
+      .select(['api_keys.key_hash', 'api_keys.project_id'])
+      .where('projects.organization_id', '=', organizationId)
+      .execute();
+    const projectIds = await db
+      .selectFrom('projects')
+      .select('id')
+      .where('organization_id', '=', organizationId)
+      .execute();
+
+    const result = await db.deleteFrom('organizations').where('id', '=', organizationId).executeTakeFirst();
+    if (Number(result.numDeletedRows || 0) === 0) return false;
+
+    await Promise.all([
+      ...keys.map((k) => CacheManager.invalidateApiKey(k.key_hash)),
+      ...projectIds.map((p) => CacheManager.invalidateProjectCache(p.id)),
+      CacheManager.invalidateOrgCache(organizationId),
+    ]);
+    capabilities.invalidate(organizationId);
+    return true;
   }
 
   /**
@@ -644,5 +687,117 @@ export class OrganizationsService {
       .deleteFrom('organization_members')
       .where('id', '=', member.id)
       .execute();
+  }
+
+  /**
+   * Transfer ownership to another member. The previous owner becomes an admin.
+   * The organization row is locked so concurrent transfers serialize and
+   * exactly one owner remains. When MAX_ORGANIZATIONS_PER_USER is set the
+   * receiver must have a free ownership slot (same per-user lock as creation).
+   * The audit row is written inside the transaction; the notification is best effort.
+   */
+  async transferOwnership(
+    organizationId: string,
+    currentOwnerId: string,
+    newOwnerUserId: string
+  ): Promise<{ previousOwnerId: string; newOwnerId: string }> {
+    const run = async () =>
+      db.transaction().execute(async (trx) => {
+        const org = await trx
+          .selectFrom('organizations')
+          .select(['id', 'name', 'owner_id'])
+          .where('id', '=', organizationId)
+          .forUpdate()
+          .executeTakeFirst();
+
+        if (!org) {
+          throw new Error('Organization not found');
+        }
+
+        if (org.owner_id !== currentOwnerId) {
+          throw new Error('Only the organization owner can transfer ownership');
+        }
+
+        if (newOwnerUserId === currentOwnerId) {
+          throw new Error('You already own this organization');
+        }
+
+        const target = await trx
+          .selectFrom('organization_members')
+          .innerJoin('users', 'users.id', 'organization_members.user_id')
+          .select(['organization_members.id'])
+          .where('organization_members.organization_id', '=', organizationId)
+          .where('organization_members.user_id', '=', newOwnerUserId)
+          .where('users.disabled', '=', false)
+          .forUpdate('organization_members')
+          .executeTakeFirst();
+
+        if (!target) {
+          throw new Error('The new owner must be a member of this organization');
+        }
+
+        const maxOwned = config.MAX_ORGANIZATIONS_PER_USER;
+        if (maxOwned !== undefined) {
+          const owned = await this.countOwnedOrganizations(newOwnerUserId);
+          if (owned >= maxOwned) {
+            throw new OrganizationLimitError(maxOwned);
+          }
+        }
+
+        await trx
+          .updateTable('organizations')
+          .set({ owner_id: newOwnerUserId })
+          .where('id', '=', organizationId)
+          .execute();
+
+        const promoted = await trx
+          .updateTable('organization_members')
+          .set({ role: 'owner' })
+          .where('organization_id', '=', organizationId)
+          .where('user_id', '=', newOwnerUserId)
+          .executeTakeFirst();
+        if (Number(promoted.numUpdatedRows) !== 1) {
+          throw new Error('The new owner must be a member of this organization');
+        }
+
+        await trx
+          .updateTable('organization_members')
+          .set({ role: 'admin' })
+          .where('organization_id', '=', organizationId)
+          .where('user_id', '=', currentOwnerId)
+          .execute();
+
+        await auditLogService.record(
+          {
+            action: 'org.ownership_transferred',
+            target: { type: 'organization', id: organizationId },
+            organizationId,
+            metadata: { previousOwnerId: currentOwnerId, newOwnerId: newOwnerUserId },
+          },
+          { trx }
+        );
+
+        return org.name;
+      });
+
+    const orgName =
+      config.MAX_ORGANIZATIONS_PER_USER !== undefined
+        ? await withLimitLock(`user:${newOwnerUserId}`, 'organizations.create', run)
+        : await run();
+
+    try {
+      const title = `You are now the owner of ${orgName}`;
+      await notificationsService.createNotification({
+        userId: newOwnerUserId,
+        type: 'system',
+        title: title.length > 255 ? `${title.slice(0, 254)}…` : title,
+        message: `Ownership of ${orgName} was transferred to you`,
+        organizationId,
+      });
+    } catch (err) {
+      console.error('[Organizations] ownership transfer notification failed:', err);
+    }
+
+    return { previousOwnerId: currentOwnerId, newOwnerId: newOwnerUserId };
   }
 }

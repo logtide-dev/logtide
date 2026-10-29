@@ -1,0 +1,1 @@
+# Ratchet allowlist for the icon-button-aria guard. Shrink-only: delete lines for files you fixed, never add one.

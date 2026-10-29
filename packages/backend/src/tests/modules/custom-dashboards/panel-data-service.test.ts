@@ -867,6 +867,82 @@ describe('alert_status panel', () => {
 // ─── metric_chart ────────────────────────────────────────────────────────────
 
 describe('metric_chart panel', () => {
+  it('metric_chart with rate reads last values and returns per-second deltas', async () => {
+    const t0 = new Date('2026-01-01T00:00:00.000Z');
+    const t1 = new Date('2026-01-01T01:00:00.000Z');
+    const t2 = new Date('2026-01-01T02:00:00.000Z');
+    const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValue({
+      metricName: 'http_requests',
+      metricType: 'sum',
+      timeseries: [
+        { bucket: t0, value: 0 },
+        { bucket: t1, value: 3600 },
+        { bucket: t2, value: 10800 },
+      ],
+      executionTimeMs: 1,
+    } as Awaited<ReturnType<typeof reservoir.aggregateMetrics>>);
+
+    const r = (await fetchPanelData(
+      {
+        type: 'metric_chart',
+        title: 'Rate',
+        source: 'metrics',
+        projectId,
+        metricName: 'http_requests',
+        aggregation: 'rate',
+        interval: '1h',
+        timeRange: '24h',
+        serviceName: null,
+      },
+      ctx(),
+    )) as { series: Array<{ time: string; value: number }>; aggregation: string };
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0].aggregation).toBe('last');
+    expect(r.aggregation).toBe('rate');
+    expect(r.series.map((x) => x.value)).toEqual([1, 2]);
+    spy.mockRestore();
+  });
+
+  it('metric_chart passes groupBy to aggregateMetrics', async () => {
+    const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValue({
+      metricName: 'http_requests',
+      metricType: 'sum',
+      timeseries: [
+        { bucket: new Date(), value: 1, labels: { host: 'a' } },
+        { bucket: new Date(), value: 2, labels: { host: 'b' } },
+      ],
+      executionTimeMs: 1,
+    } as Awaited<ReturnType<typeof reservoir.aggregateMetrics>>);
+
+    const base = {
+      type: 'metric_chart' as const,
+      title: 'Grouped',
+      source: 'metrics' as const,
+      projectId,
+      metricName: 'http_requests',
+      aggregation: 'sum' as const,
+      interval: '1h' as const,
+      timeRange: '24h' as const,
+      serviceName: null,
+    };
+
+    const r = (await fetchPanelData({ ...base, groupBy: ['host'] }, ctx())) as {
+      series: Array<{ labels?: Record<string, string> }>;
+    };
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0].groupBy).toEqual(['host']);
+    expect(r.series.map((x) => x.labels)).toEqual([{ host: 'a' }, { host: 'b' }]);
+
+    // Absent or empty groupBy is not forwarded.
+    await fetchPanelData(base, ctx());
+    await fetchPanelData({ ...base, groupBy: [] }, ctx());
+    expect(spy.mock.calls[1][0].groupBy).toBeUndefined();
+    expect(spy.mock.calls[2][0].groupBy).toBeUndefined();
+
+    spy.mockRestore();
+  });
+
   it('happy path: returns series from mocked aggregation', async () => {
     const now = new Date();
     const bucket = new Date(now.getTime() - 10 * 60 * 1000);
@@ -984,6 +1060,40 @@ describe('metric_stat panel', () => {
     expect(r.metricName).toBe('cpu_usage');
     expect(r.value).toBe(0.7); // latest non-null bucket
     expect(r.unit).toBe('%');
+  });
+
+  it('rate over a 1h window uses sub-day buckets and returns a non-null value', async () => {
+    const now = Date.now();
+    const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValueOnce({
+      metricName: 'http_requests',
+      metricType: 'sum',
+      timeseries: [
+        { bucket: new Date(now - 180_000), value: 0 },
+        { bucket: new Date(now - 120_000), value: 120 },
+        { bucket: new Date(now - 60_000), value: 360 },
+      ],
+      executionTimeMs: 1,
+    } as Awaited<ReturnType<typeof reservoir.aggregateMetrics>>);
+
+    const r = (await fetchPanelData(
+      {
+        type: 'metric_stat',
+        title: 'Rate',
+        source: 'metrics',
+        projectId,
+        metricName: 'http_requests',
+        aggregation: 'rate',
+        timeRange: '1h',
+        serviceName: null,
+        unit: null,
+      },
+      ctx(),
+    )) as { value: number | null };
+
+    expect(spy.mock.calls[0][0].aggregation).toBe('last');
+    expect(spy.mock.calls[0][0].interval).toBe('1m');
+    spy.mockRestore();
+    expect(r.value).toBe(4);
   });
 
   it('sums across all buckets for sum aggregation (no undercount)', async () => {

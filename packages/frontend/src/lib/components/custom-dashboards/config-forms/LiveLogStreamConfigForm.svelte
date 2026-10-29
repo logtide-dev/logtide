@@ -2,6 +2,12 @@
   import type { LiveLogStreamConfig, LogLevelKey } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+  } from '../pickers/options-state.svelte';
 
   interface Props {
     config: LiveLogStreamConfig;
@@ -9,6 +15,16 @@
   }
 
   let { config, onChange }: Props = $props();
+
+  const services = createServiceOptions('logs', () => config.projectId);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('logs', projectId, config.service))) {
+      onChange({ ...config, projectId, service: null });
+    }
+  }
 
   const levels: LogLevelKey[] = ['debug', 'info', 'warn', 'error', 'critical'];
 
@@ -44,16 +60,23 @@
   </div>
 
   <div class="space-y-1.5">
+    <Label for="lls-project">Project</Label>
+    <ProjectSelect
+      id="lls-project"
+      value={config.projectId}
+      onChange={handleProjectChange}
+    />
+  </div>
+
+  <div class="space-y-1.5">
     <Label for="lls-service">Service filter (optional)</Label>
-    <Input
+    <SuggestInput
       id="lls-service"
-      type="text"
       placeholder="Leave empty for all services"
       value={config.service ?? ''}
-      oninput={(e) => {
-        const val = (e.currentTarget as HTMLInputElement).value;
-        update('service', val.length > 0 ? val : null);
-      }}
+      options={services.list}
+      loading={services.loading}
+      onChange={(v) => update('service', v.length > 0 ? v : null)}
     />
   </div>
 

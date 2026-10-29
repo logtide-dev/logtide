@@ -1,466 +1,325 @@
 <script lang="ts">
-    import {
-        Card,
-        CardContent,
-        CardHeader,
-        CardTitle,
-    } from "$lib/components/ui/card";
-    import { onMount } from "svelte";
-    import { adminAPI, type ProjectDetails } from "$lib/api/admin";
-    import { authStore } from "$lib/stores/auth";
-    import { page } from "$app/state";
-    import * as Table from "$lib/components/ui/table";
-    import { Button, buttonVariants } from "$lib/components/ui/button";
-    import {
-        RefreshCw,
-        ArrowLeft,
-        Database,
-        Key,
-        Bell,
-        Shield,
-        Trash2,
-        Building2,
-    } from "@lucide/svelte";
-    import { Badge } from "$lib/components/ui/badge";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
+    import { untrack, type Snippet } from "svelte";
     import { goto } from "$app/navigation";
+    import { page } from "$app/state";
+    import { adminAPI, type ProjectDetails } from "$lib/api/admin";
+    import { toastStore } from "$lib/stores/toast";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
+    import DangerZone from "$lib/components/app/DangerZone.svelte";
+    import SettingsSection from "$lib/components/app/SettingsSection.svelte";
+    import CopyButton from "$lib/components/app/CopyButton.svelte";
+    import Timestamp from "$lib/components/app/Timestamp.svelte";
+    import SeverityBadge from "$lib/components/app/SeverityBadge.svelte";
+    import DataTable from "$lib/components/app/DataTable.svelte";
+    import type { DataTableColumn } from "$lib/components/app/data-table";
+    import StatsCard from "$lib/components/dashboard/StatsCard.svelte";
+    import { Button, buttonVariants } from "$lib/components/ui/button";
+    import { Badge } from "$lib/components/ui/badge";
+    import { Skeleton } from "$lib/components/ui/skeleton";
+    import { RefreshCw, Database, Clock, Key, Bell } from "@lucide/svelte";
+    import { formatCount } from "$lib/utils/format-number";
+    import { formatRelative } from "$lib/utils/datetime";
+    import { PROJECT_TRASH_DIALOG_TEXT, PROJECT_TRASH_RETENTION_DAYS, PROJECT_TRASH_TOAST } from "$lib/utils/project-trash";
+
+    type ApiKey = ProjectDetails["apiKeys"][number];
+    type AlertRule = ProjectDetails["alertRules"][number];
+    type SigmaRule = ProjectDetails["sigmaRules"][number];
 
     const projectId = $derived(page.params.id);
 
     let project = $state<ProjectDetails | null>(null);
     let loading = $state(true);
+    let refreshing = $state(false);
     let error = $state<string | null>(null);
+    let notFound = $state(false);
     let showDeleteDialog = $state(false);
     let deleting = $state(false);
+    let requestId = 0;
 
+    /** First load shows skeletons; a refresh keeps the page and swaps data in place. */
     async function loadProject() {
-        if (!$authStore.user?.is_admin || !projectId) return;
-
-        loading = true;
+        if (!projectId) return;
+        const id = ++requestId;
+        if (project) refreshing = true;
+        else loading = true;
         error = null;
+        notFound = false;
         try {
-            project = await adminAPI.getProjectDetails(projectId);
+            const result = await adminAPI.getProjectDetails(projectId);
+            if (id !== requestId) return;
+            project = result;
         } catch (e: any) {
-            console.error("Error loading project:", e);
-            error = e.message || "Failed to load project details";
+            if (id !== requestId) return;
+            const message: string = e?.message || "Failed to load project details";
+            if (!project && /not found|404/i.test(message)) {
+                notFound = true;
+            } else {
+                error = message;
+                if (project) toastStore.error(message);
+            }
         } finally {
-            loading = false;
+            if (id === requestId) {
+                loading = false;
+                refreshing = false;
+            }
         }
     }
 
+    $effect(() => {
+        void projectId;
+        untrack(() => {
+            project = null;
+            loadProject();
+        });
+    });
+
     async function handleDelete() {
+        if (!projectId) return;
         deleting = true;
         try {
             await adminAPI.deleteProject(projectId);
-            goto("/dashboard/admin/projects");
+            toastStore.success(PROJECT_TRASH_TOAST);
+            await goto("/dashboard/admin/projects");
         } catch (e: any) {
-            error = `Failed to delete project: ${e.message}`;
+            toastStore.error(e?.message || "Failed to delete project");
+            throw e;
         } finally {
             deleting = false;
-            showDeleteDialog = false;
         }
     }
 
-    function formatDate(date: string) {
-        return new Date(date).toLocaleString('en-US', {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit"
-        });
-    }
+    const windowDays = $derived(project?.logsWindowDays ?? 30);
+    const activeKeys = $derived(project ? project.apiKeys.filter((k) => !k.revoked).length : 0);
+    const enabledRules = $derived(project ? project.alertRules.filter((r) => r.enabled).length : 0);
+    const orgHref = $derived(project ? `/dashboard/admin/organizations/${project.organization_id}` : "");
 
-    function formatNumber(num: number) {
-        return new Intl.NumberFormat(undefined).format(num);
-    }
+    const asCell = <T,>(s: unknown) => s as Snippet<[T]>;
 
-    onMount(() => {
-        if ($authStore.user?.is_admin) {
-            loadProject();
-        }
-    });
+    const keyColumns: DataTableColumn<ApiKey>[] = [
+        { key: "name", header: "Key name", class: "font-medium", cell: asCell<ApiKey>(keyNameCell) },
+        { key: "type", header: "Type", cell: asCell<ApiKey>(keyTypeCell) },
+        { key: "origins", header: "Allowed origins", class: "min-w-[12rem]", cell: asCell<ApiKey>(keyOriginsCell) },
+        { key: "created", header: "Created", class: "whitespace-nowrap", cell: asCell<ApiKey>(keyCreatedCell) },
+        { key: "last_used", header: "Last used", class: "whitespace-nowrap", cell: asCell<ApiKey>(keyUsedCell) },
+        { key: "status", header: "Status", cell: asCell<ApiKey>(keyStatusCell) },
+    ];
+
+    const ruleColumns: DataTableColumn<AlertRule>[] = [
+        { key: "name", header: "Rule", class: "font-medium", cell: asCell<AlertRule>(ruleNameCell) },
+        { key: "status", header: "Status", cell: asCell<AlertRule>(ruleStatusCell) },
+        { key: "created", header: "Created", class: "whitespace-nowrap", cell: asCell<AlertRule>(ruleCreatedCell) },
+    ];
+
+    const sigmaColumns: DataTableColumn<SigmaRule>[] = [
+        { key: "title", header: "Rule", class: "font-medium", cell: asCell<SigmaRule>(sigmaTitleCell) },
+        { key: "level", header: "Severity", cell: asCell<SigmaRule>(sigmaLevelCell) },
+        { key: "status", header: "Status", cell: asCell<SigmaRule>(sigmaStatusCell) },
+        { key: "created", header: "Created", class: "whitespace-nowrap", cell: asCell<SigmaRule>(sigmaCreatedCell) },
+    ];
 </script>
 
 <svelte:head>
-    <title>{project?.name ?? 'Project'} - Admin - LogTide</title>
+    <title>{project?.name ?? "Project"} - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    {#if loading}
-        <div class="flex justify-center p-12">
-            <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
-    {:else if error}
-        <div class="bg-destructive/15 text-destructive p-4 rounded-md">
-            {error}
-        </div>
-    {:else if project}
-        <!-- Header -->
-        <div class="flex items-start justify-between">
-            <div class="space-y-1">
-                <a
-                    href="/dashboard/admin/projects"
-                    class={buttonVariants({
-                        variant: "ghost",
-                        size: "sm",
-                    }) + " mb-2"}
-                >
-                    <ArrowLeft class="mr-2 h-4 w-4" />
-                    Back to Projects
-                </a>
-                <h1 class="text-3xl font-bold tracking-tight">
-                    {project.name}
-                </h1>
-                <div class="flex items-center gap-2">
-                    <Building2 class="h-4 w-4 text-muted-foreground" />
-                    <span class="text-muted-foreground">
+{#snippet keyNameCell(k: ApiKey)}{k.name}{/snippet}
+{#snippet keyTypeCell(k: ApiKey)}
+    {#if k.type === "full"}
+        <Badge variant="default">Full access</Badge>
+    {:else}
+        <Badge variant="secondary">Write only</Badge>
+    {/if}
+{/snippet}
+{#snippet keyOriginsCell(k: ApiKey)}
+    {#if k.allowed_origins?.length}
+        <ul class="space-y-0.5 text-xs">
+            {#each k.allowed_origins as origin (origin)}
+                <li class="break-all font-mono">{origin}</li>
+            {/each}
+        </ul>
+    {:else}
+        <span class="text-muted-foreground">Any origin</span>
+    {/if}
+{/snippet}
+{#snippet keyCreatedCell(k: ApiKey)}
+    <span class="text-muted-foreground"><Timestamp value={k.created_at} precision="minute" /></span>
+{/snippet}
+{#snippet keyUsedCell(k: ApiKey)}
+    {#if k.last_used}
+        <Timestamp value={k.last_used} relative />
+    {:else}
+        <span class="text-muted-foreground">Never</span>
+    {/if}
+{/snippet}
+{#snippet keyStatusCell(k: ApiKey)}
+    <SeverityBadge kind="state" value={k.revoked ? "failed" : "active"} />
+{/snippet}
+
+{#snippet ruleNameCell(r: AlertRule)}{r.name}{/snippet}
+{#snippet ruleStatusCell(r: AlertRule)}
+    <SeverityBadge kind="state" value={r.enabled ? "active" : "disabled"} />
+{/snippet}
+{#snippet ruleCreatedCell(r: AlertRule)}
+    <span class="text-muted-foreground"><Timestamp value={r.created_at} precision="minute" /></span>
+{/snippet}
+
+{#snippet sigmaTitleCell(r: SigmaRule)}{r.title}{/snippet}
+{#snippet sigmaLevelCell(r: SigmaRule)}
+    {#if r.level}
+        <SeverityBadge kind="severity" value={r.level} />
+    {:else}
+        <span class="text-muted-foreground">-</span>
+    {/if}
+{/snippet}
+{#snippet sigmaStatusCell(r: SigmaRule)}
+    {r.status ?? "-"}
+{/snippet}
+{#snippet sigmaCreatedCell(r: SigmaRule)}
+    <span class="text-muted-foreground"><Timestamp value={r.created_at} precision="minute" /></span>
+{/snippet}
+
+<div class="space-y-6">
+    <PageHeader
+        title={project?.name ?? "Project"}
+        appliesTo="instance"
+        description={project?.description ?? undefined}
+        breadcrumbs={[
+            { label: "Admin", href: "/dashboard/admin" },
+            { label: "Projects", href: "/dashboard/admin/projects" },
+            { label: project?.name ?? "Project" },
+        ]}
+    >
+        {#snippet meta()}
+            {#if project}
+                <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                    <a href={orgHref} class="underline-offset-4 hover:text-foreground hover:underline">
                         {project.organization_name}
+                    </a>
+                    <span class="inline-flex items-center gap-1">
+                        <span class="font-mono text-xs">{project.id}</span>
+                        <CopyButton value={project.id} label="Copy project ID" />
                     </span>
                 </div>
-                {#if project.description}
-                    <p class="text-muted-foreground mt-2">
-                        {project.description}
-                    </p>
-                {/if}
+            {/if}
+        {/snippet}
+        {#snippet actions()}
+            {#if project}
+                <Button variant="outline" size="sm" onclick={loadProject} disabled={refreshing}>
+                    <RefreshCw class="mr-2 h-4 w-4 {refreshing ? 'animate-spin' : ''}" />
+                    Refresh
+                </Button>
+            {/if}
+        {/snippet}
+    </PageHeader>
+
+    {#if loading && !project}
+        <div class="space-y-4" aria-busy="true">
+            <Skeleton height="6rem" width="100%" />
+            <Skeleton height="12rem" width="100%" />
+        </div>
+    {:else if notFound}
+        <EmptyState variant="no-results" title="Project not found" description="It may never have existed, or it was purged after its trash period.">
+            {#snippet actions()}
+                <a href="/dashboard/admin/projects" class={buttonVariants({ variant: "outline", size: "sm" })}>
+                    Back to projects
+                </a>
+            {/snippet}
+        </EmptyState>
+    {:else if error && !project}
+        <EmptyState variant="error" title="Could not load this project" description={error}>
+            {#snippet actions()}
+                <Button variant="outline" size="sm" onclick={loadProject}>Retry</Button>
+                <a href="/dashboard/admin/projects" class={buttonVariants({ variant: "outline", size: "sm" })}>
+                    Back to projects
+                </a>
+            {/snippet}
+        </EmptyState>
+    {:else if project}
+        {#if project.deletedAt}
+            <div role="status" class="rounded-lg border border-warning/30 bg-warning/15 p-4 text-sm text-warning-text">
+                This project was deleted <Timestamp value={project.deletedAt} relative />. It no longer accepts data and
+                is purged for good after {PROJECT_TRASH_RETENTION_DAYS} days. It can be restored from the organization's projects page.
             </div>
-            <Button
-                variant="outline"
-                size="sm"
-                onclick={loadProject}
-                disabled={loading}
-            >
-                <RefreshCw
-                    class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}"
-                />
-                Refresh
-            </Button>
+        {/if}
+
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatsCard
+                title="Logs ({windowDays}d)"
+                value={formatCount(project.logs30d ?? project.logsCount)}
+                icon={Database}
+                description="Received in the last {windowDays} days"
+            />
+            <StatsCard
+                title="Last log"
+                value={project.lastLogTime ? formatRelative(project.lastLogTime) : "None yet"}
+                icon={Clock}
+                description={project.lastLogTime ? "Newest log in this project" : "No logs received"}
+            />
+            <StatsCard
+                title="Active API keys"
+                value={formatCount(activeKeys)}
+                icon={Key}
+                description="{formatCount(project.apiKeys.length - activeKeys)} revoked"
+            />
+            <StatsCard
+                title="Alert rules"
+                value="{formatCount(enabledRules)} / {formatCount(project.alertRules.length)}"
+                icon={Bell}
+                description="Enabled / total"
+            />
         </div>
 
-        <!-- Stats Cards -->
-        <div class="grid gap-4 md:grid-cols-4">
-            <Card>
-                <CardHeader
-                    class="flex flex-row items-center justify-between space-y-0 pb-2"
-                >
-                    <CardTitle class="text-sm font-medium">Total Logs</CardTitle
-                    >
-                    <Database class="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    <div class="text-2xl font-bold">
-                        {formatNumber(project.logsCount)}
-                    </div>
-                    {#if project.lastLogTime}
-                        <p class="text-xs text-muted-foreground mt-1">
-                            Last: {formatDate(project.lastLogTime)}
-                        </p>
-                    {:else}
-                        <p class="text-xs text-muted-foreground mt-1">
-                            No logs yet
-                        </p>
-                    {/if}
-                </CardContent>
-            </Card>
+        <SettingsSection title="API keys" description="Keys that can send data to this project">
+            <DataTable columns={keyColumns} rows={project.apiKeys} rowKey={(k) => k.id}>
+                {#snippet empty()}
+                    <EmptyState variant="no-data" title="No API keys" description="No key has been created for this project." />
+                {/snippet}
+            </DataTable>
+        </SettingsSection>
 
-            <Card>
-                <CardHeader
-                    class="flex flex-row items-center justify-between space-y-0 pb-2"
-                >
-                    <CardTitle class="text-sm font-medium">API Keys</CardTitle>
-                    <Key class="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    <div class="text-2xl font-bold">
-                        {project.apiKeys.length}
-                    </div>
-                    <p class="text-xs text-muted-foreground mt-1">
-                        {project.apiKeys.filter((k) => !k.revoked).length} active
-                    </p>
-                </CardContent>
-            </Card>
+        <SettingsSection title="Alert rules" description="Threshold and rate rules defined on this project">
+            <DataTable columns={ruleColumns} rows={project.alertRules} rowKey={(r) => r.id}>
+                {#snippet empty()}
+                    <EmptyState variant="no-data" title="No alert rules" />
+                {/snippet}
+            </DataTable>
+        </SettingsSection>
 
-            <Card>
-                <CardHeader
-                    class="flex flex-row items-center justify-between space-y-0 pb-2"
-                >
-                    <CardTitle class="text-sm font-medium"
-                        >Alert Rules</CardTitle
-                    >
-                    <Bell class="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    <div class="text-2xl font-bold">
-                        {project.alertRules.length}
-                    </div>
-                    <p class="text-xs text-muted-foreground mt-1">
-                        {project.alertRules.filter((r) => r.enabled).length} enabled
-                    </p>
-                </CardContent>
-            </Card>
+        <SettingsSection
+            title="Sigma rules"
+            description="Only rules attached to this project. Organization-wide rules are not listed here."
+        >
+            <DataTable columns={sigmaColumns} rows={project.sigmaRules} rowKey={(r) => r.id}>
+                {#snippet empty()}
+                    <EmptyState variant="no-data" title="No project-level Sigma rules" />
+                {/snippet}
+            </DataTable>
+        </SettingsSection>
 
-            <Card>
-                <CardHeader
-                    class="flex flex-row items-center justify-between space-y-0 pb-2"
-                >
-                    <CardTitle class="text-sm font-medium"
-                        >Sigma Rules</CardTitle
-                    >
-                    <Shield class="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    <div class="text-2xl font-bold">
-                        {project.sigmaRules.length}
-                    </div>
-                    <p class="text-xs text-muted-foreground mt-1">
-                        Security detection rules
-                    </p>
-                </CardContent>
-            </Card>
-        </div>
-
-        <!-- API Keys Section -->
-        <Card>
-            <CardHeader>
-                <CardTitle>API Keys</CardTitle>
-            </CardHeader>
-            <CardContent>
-                {#if project.apiKeys.length === 0}
-                    <div class="text-center p-8 text-muted-foreground">
-                        No API keys created for this project
-                    </div>
-                {:else}
-                    <Table.Root>
-                        <Table.Header>
-                            <Table.Row>
-                                <Table.Head>Key Name</Table.Head>
-                                <Table.Head>Type</Table.Head>
-                                <Table.Head>Origins</Table.Head>
-                                <Table.Head>Created</Table.Head>
-                                <Table.Head>Last Used</Table.Head>
-                                <Table.Head>Status</Table.Head>
-                            </Table.Row>
-                        </Table.Header>
-                        <Table.Body>
-                            {#each project.apiKeys as apiKey}
-                                <Table.Row>
-                                    <Table.Cell class="font-medium">
-                                        {apiKey.name}
-                                    </Table.Cell>
-                                    <Table.Cell>
-                                        {#if apiKey.type === 'full'}
-                                            <Badge variant="default">Full Access</Badge>
-                                        {:else}
-                                            <Badge variant="secondary">Write-Only</Badge>
-                                        {/if}
-                                    </Table.Cell>
-                                    <Table.Cell class="text-sm text-muted-foreground">
-                                        {#if apiKey.allowed_origins?.length}
-                                            <span title={apiKey.allowed_origins.join(', ')}>
-                                                {apiKey.allowed_origins.length} restricted
-                                            </span>
-                                        {:else}
-                                            Any
-                                        {/if}
-                                    </Table.Cell>
-                                    <Table.Cell
-                                        class="text-sm text-muted-foreground"
-                                    >
-                                        {formatDate(apiKey.created_at)}
-                                    </Table.Cell>
-                                    <Table.Cell
-                                        class="text-sm text-muted-foreground"
-                                    >
-                                        {apiKey.last_used
-                                            ? formatDate(apiKey.last_used)
-                                            : "Never"}
-                                    </Table.Cell>
-                                    <Table.Cell>
-                                        {#if apiKey.revoked}
-                                            <Badge variant="destructive"
-                                                >Revoked</Badge
-                                            >
-                                        {:else}
-                                            <Badge variant="default"
-                                                >Active</Badge
-                                            >
-                                        {/if}
-                                    </Table.Cell>
-                                </Table.Row>
-                            {/each}
-                        </Table.Body>
-                    </Table.Root>
-                {/if}
-            </CardContent>
-        </Card>
-
-        <!-- Alert Rules Section -->
-        <Card>
-            <CardHeader>
-                <CardTitle>Alert Rules</CardTitle>
-            </CardHeader>
-            <CardContent>
-                {#if project.alertRules.length === 0}
-                    <div class="text-center p-8 text-muted-foreground">
-                        No alert rules configured for this project
-                    </div>
-                {:else}
-                    <Table.Root>
-                        <Table.Header>
-                            <Table.Row>
-                                <Table.Head>Rule Name</Table.Head>
-                                <Table.Head>Status</Table.Head>
-                                <Table.Head>Created</Table.Head>
-                            </Table.Row>
-                        </Table.Header>
-                        <Table.Body>
-                            {#each project.alertRules as rule}
-                                <Table.Row>
-                                    <Table.Cell class="font-medium">
-                                        {rule.name}
-                                    </Table.Cell>
-                                    <Table.Cell>
-                                        {#if rule.enabled}
-                                            <Badge variant="default"
-                                                >Enabled</Badge
-                                            >
-                                        {:else}
-                                            <Badge variant="secondary"
-                                                >Disabled</Badge
-                                            >
-                                        {/if}
-                                    </Table.Cell>
-                                    <Table.Cell
-                                        class="text-sm text-muted-foreground"
-                                    >
-                                        {formatDate(rule.created_at)}
-                                    </Table.Cell>
-                                </Table.Row>
-                            {/each}
-                        </Table.Body>
-                    </Table.Root>
-                {/if}
-            </CardContent>
-        </Card>
-
-        <!-- Sigma Rules Section -->
-        <Card>
-            <CardHeader>
-                <CardTitle>Sigma Rules</CardTitle>
-            </CardHeader>
-            <CardContent>
-                {#if project.sigmaRules.length === 0}
-                    <div class="text-center p-8 text-muted-foreground">
-                        No Sigma rules imported for this project
-                    </div>
-                {:else}
-                    <Table.Root>
-                        <Table.Header>
-                            <Table.Row>
-                                <Table.Head>Rule Title</Table.Head>
-                                <Table.Head>Level</Table.Head>
-                                <Table.Head>Status</Table.Head>
-                                <Table.Head>Created</Table.Head>
-                            </Table.Row>
-                        </Table.Header>
-                        <Table.Body>
-                            {#each project.sigmaRules as rule}
-                                <Table.Row>
-                                    <Table.Cell class="font-medium">
-                                        {rule.title}
-                                    </Table.Cell>
-                                    <Table.Cell>
-                                        {#if rule.level}
-                                            <Badge
-                                                variant={rule.level ===
-                                                    "critical" ||
-                                                rule.level === "high"
-                                                    ? "destructive"
-                                                    : "secondary"}
-                                            >
-                                                {rule.level}
-                                            </Badge>
-                                        {:else}
-                                            <span class="text-muted-foreground"
-                                                >-</span
-                                            >
-                                        {/if}
-                                    </Table.Cell>
-                                    <Table.Cell>
-                                        {#if rule.status}
-                                            <Badge variant="outline"
-                                                >{rule.status}</Badge
-                                            >
-                                        {:else}
-                                            <span class="text-muted-foreground"
-                                                >-</span
-                                            >
-                                        {/if}
-                                    </Table.Cell>
-                                    <Table.Cell
-                                        class="text-sm text-muted-foreground"
-                                    >
-                                        {formatDate(rule.created_at)}
-                                    </Table.Cell>
-                                </Table.Row>
-                            {/each}
-                        </Table.Body>
-                    </Table.Root>
-                {/if}
-            </CardContent>
-        </Card>
-
-        <!-- Danger Zone -->
-        <Card class="border-destructive">
-            <CardHeader>
-                <CardTitle class="text-destructive">Danger Zone</CardTitle>
-            </CardHeader>
-            <CardContent>
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h4 class="font-semibold">Delete Project</h4>
-                        <p class="text-sm text-muted-foreground mt-1">
-                            This will permanently delete the project, all logs,
-                            API keys, alert rules, and sigma rules. This action
-                            cannot be undone.
+        {#if !project.deletedAt}
+            <DangerZone>
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="space-y-1">
+                        <h3 class="font-semibold">Delete project</h3>
+                        <p class="text-sm text-muted-foreground">
+                            Moves the project to the trash. Ingestion stops now and the data is purged after the
+                            trash period.
                         </p>
                     </div>
-                    <Button
-                        variant="destructive"
-                        onclick={() => (showDeleteDialog = true)}
-                        class="ml-4"
-                    >
-                        <Trash2 class="mr-2 h-4 w-4" />
-                        Delete Project
-                    </Button>
+                    <Button variant="destructive" onclick={() => (showDeleteDialog = true)}>Delete project</Button>
                 </div>
-            </CardContent>
-        </Card>
+            </DangerZone>
+        {/if}
     {/if}
 </div>
 
-<AlertDialog bind:open={showDeleteDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Delete Project</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to delete <strong>{project?.name}</strong>?
-                This will permanently delete all logs, API keys, alert rules, and sigma rules. This action cannot be undone.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Project"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDeleteDialog}
+    title="Delete project"
+    description={PROJECT_TRASH_DIALOG_TEXT(project?.name ?? "This project")}
+    confirmLabel="Delete project"
+    busy={deleting}
+    onConfirm={handleDelete}
+/>

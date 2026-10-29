@@ -55,9 +55,9 @@
       });
 
       if (isNewUser) {
-        toastStore.success('Welcome to LogTide! Your account has been created.');
+        toastStore.success('Account created');
       } else {
-        toastStore.success('Welcome back!');
+        toastStore.success('Welcome back');
       }
 
       // Redirect based on organization status
@@ -87,7 +87,7 @@
           {#if loading}
             Signing in...
           {:else if error}
-            Authentication Failed
+            Authentication failed
           {:else}
             Welcome!
           {/if}
@@ -111,7 +111,7 @@
           <AlertDescription>{error}</AlertDescription>
         </Alert>
         <Button href="/login" class="w-full">
-          Back to Login
+          Back to login
         </Button>
       {/if}
     </CardContent>

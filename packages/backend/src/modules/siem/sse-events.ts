@@ -1,6 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import {
+  INCIDENT_SOURCES,
+  type IncidentListItem,
+  type IncidentSource,
+  type IncidentStreamEvent,
+} from '@logtide/shared';
 import { SiemService } from './service.js';
+import { incidentsService } from '../incidents/service.js';
+import { listParam } from '../incidents/query-params.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { UsersService } from '../users/service.js';
 import { db } from '../../database/index.js';
@@ -11,6 +19,89 @@ import { streamTicketService } from '../streaming/stream-ticket-service.js';
 const siemService = new SiemService(db);
 const organizationsService = new OrganizationsService();
 const usersService = new UsersService();
+
+/**
+ * Incident changes are polled with this overlap behind the cursor, so a
+ * change committed late (its transaction started before the cursor moved,
+ * so its updated_at is older than rows already seen) is still delivered.
+ */
+export const INCIDENT_STREAM_OVERLAP_MS = 5000;
+
+const INCIDENT_PAGE_SIZE = 100;
+/** Ids announced as incident_created on one connection (oldest dropped beyond this). */
+const MAX_ANNOUNCED_IDS = 1000;
+
+/**
+ * Per-connection state of the incident change feed (every source).
+ * - Rows come oldest change first from `listUpdatedSince(since)`, with
+ *   `since = cursor - INCIDENT_STREAM_OVERLAP_MS`.
+ * - A row is emitted when its updatedAt is newer than the last one emitted
+ *   for that id (or than the connection time minus the overlap).
+ * - `incident_created` when the incident was created after the connection
+ *   (minus the overlap) and was never announced before, else
+ *   `incident_updated`.
+ * - A full page means more changes than one page inside the window: the
+ *   next poll continues after the page instead of re-reading the overlap,
+ *   so the feed never stalls (a late commit inside such a burst can be
+ *   missed).
+ */
+export class IncidentChangeFeed {
+  private cursor: number;
+  private nextSince: number;
+  private readonly emitted = new Map<string, number>();
+  private readonly announced = new Set<string>();
+
+  constructor(private readonly connectedAt: number) {
+    this.cursor = connectedAt;
+    this.nextSince = connectedAt - INCIDENT_STREAM_OVERLAP_MS;
+  }
+
+  /** Lower bound (exclusive) of the next `listUpdatedSince` call. */
+  get since(): Date {
+    return new Date(this.nextSince);
+  }
+
+  /** Consumes one page fetched with `since`; returns the events to send, in order. */
+  consume(rows: IncidentListItem[], pageSize: number): IncidentStreamEvent[] {
+    const since = this.nextSince;
+    const floor = this.connectedAt - INCIDENT_STREAM_OVERLAP_MS;
+    const out: IncidentStreamEvent[] = [];
+    let pageMax = since;
+
+    for (const row of rows) {
+      const u = new Date(row.updatedAt).getTime();
+      pageMax = Math.max(pageMax, u);
+      if (u < since || u <= (this.emitted.get(row.id) ?? floor)) continue;
+
+      const isNew =
+        !this.emitted.has(row.id) &&
+        !this.announced.has(row.id) &&
+        new Date(row.createdAt).getTime() > floor;
+      if (isNew) {
+        this.announced.add(row.id);
+        if (this.announced.size > MAX_ANNOUNCED_IDS) {
+          const oldest = this.announced.values().next().value;
+          if (oldest !== undefined) this.announced.delete(oldest);
+        }
+      }
+      out.push({ type: isNew ? 'incident_created' : 'incident_updated', data: row });
+      this.emitted.set(row.id, u);
+    }
+
+    this.cursor = Math.max(this.cursor, pageMax);
+    const keepFrom = this.cursor - INCIDENT_STREAM_OVERLAP_MS;
+    for (const [id, u] of this.emitted) {
+      if (u < keepFrom) this.emitted.delete(id);
+    }
+
+    if (rows.length >= pageSize) {
+      this.nextSince = pageMax > since ? pageMax : since + 1;
+    } else {
+      this.nextSince = keepFrom;
+    }
+    return out;
+  }
+}
 
 /**
  * Check if user is member of organization
@@ -29,15 +120,16 @@ async function checkOrganizationMembership(
 export async function registerSiemSseRoutes(fastify: FastifyInstance) {
   /**
    * GET /api/v1/siem/events
-   * Server-Sent Events stream for real-time SIEM updates
-   * Streams: new detections, new incidents, incident updates
+   * Server-Sent Events stream for real-time updates
+   * Streams: new detections, new incidents and incident updates of every
+   * source (optionally filtered by `source`)
    */
   fastify.get(
     '/api/v1/siem/events',
     {
       config: {
         rateLimit: {
-          max: 10,
+          max: 30,
           timeWindow: '1 minute',
         },
       },
@@ -49,6 +141,9 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
             organizationId: { type: 'string', format: 'uuid' },
             projectId: { type: 'string', format: 'uuid' },
             incidentId: { type: 'string', format: 'uuid' },
+            // Incident sources (repeated or comma separated); detections are
+            // streamed only when sigma is included or no source is given.
+            source: { type: 'array', items: { type: 'string' } },
             // Either a single-use stream ticket (preferred) or a legacy session
             // token must be provided; EventSource cannot send an auth header.
             ticket: { type: 'string' },
@@ -63,6 +158,7 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
           organizationId: z.string().uuid(),
           projectId: z.string().uuid().optional(),
           incidentId: z.string().uuid().optional(),
+          source: listParam(z.enum(INCIDENT_SOURCES)),
           ticket: z.string().min(1).optional(),
           token: z.string().min(1).optional(),
         });
@@ -81,6 +177,10 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
               error: 'Auth-free mode enabled but default user not configured',
             });
           }
+        } else if (request.user) {
+          // The auth plugin already authenticated the request (it consumes the
+          // single-use ticket or validates the token): a second consume would fail.
+          user = request.user;
         } else if (query.ticket) {
           // Preferred: single-use stream ticket (keeps the session token out of the URL)
           const userId = await streamTicketService.consumeTicket(query.ticket);
@@ -126,9 +226,21 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
         reply.raw.setHeader('Cache-Control', 'no-cache');
         reply.raw.setHeader('Connection', 'keep-alive');
 
-        // Track last timestamps to detect new items
+        const sources: IncidentSource[] | undefined =
+          query.source && query.source.length > 0 ? query.source : undefined;
+        const streamDetections = !sources || sources.includes('sigma');
+
+        // Detection cursor: the query is `time >= cursor`, so the ids already
+        // sent at the cursor time are remembered instead of being re-sent.
         let lastDetectionTime = new Date();
+        let sentAtDetectionCursor = new Set<string>();
+        const incidentFeed = new IncidentChangeFeed(Date.now());
+        // Watched incident (incidentId): emit when its updatedAt moves.
         let lastIncidentUpdate = new Date();
+
+        const send = (event: IncidentStreamEvent) => {
+          reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        };
 
         // Send initial connection message
         const connectedMsg = JSON.stringify({ type: 'connected', timestamp: new Date() });
@@ -137,75 +249,53 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
         // Poll for new events every 2 seconds
         const intervalId = setInterval(async () => {
           try {
-            // Check for new detection events
-            const newDetections = await siemService.getDetectionEvents({
-              organizationId: query.organizationId,
-              projectId: query.projectId,
-              startTime: lastDetectionTime,
-              limit: 50,
-            });
+            if (streamDetections) {
+              const newDetections = await siemService.getDetectionEvents({
+                organizationId: query.organizationId,
+                projectId: query.projectId,
+                startTime: lastDetectionTime,
+                limit: 50,
+              });
 
-            if (newDetections.length > 0) {
-              // Update last detection time
-              const latestDetection = newDetections[0];
-              const latestTime = new Date(latestDetection.time);
-              if (latestTime > lastDetectionTime) {
-                lastDetectionTime = latestTime;
-              }
-
-              // Send detection events
+              let latest = lastDetectionTime.getTime();
               for (const detection of newDetections) {
-                const msg = JSON.stringify({ type: 'detection_created', data: detection });
-                reply.raw.write(`data: ${msg}\n\n`);
+                latest = Math.max(latest, new Date(detection.time).getTime());
+              }
+              for (const detection of newDetections) {
+                if (sentAtDetectionCursor.has(detection.id)) continue;
+                send({ type: 'detection_created', data: detection });
+              }
+              if (latest > lastDetectionTime.getTime()) {
+                lastDetectionTime = new Date(latest);
+                sentAtDetectionCursor = new Set();
+              }
+              for (const detection of newDetections) {
+                if (new Date(detection.time).getTime() === lastDetectionTime.getTime()) {
+                  sentAtDetectionCursor.add(detection.id);
+                }
               }
             }
 
-            // Check for new/updated incidents (if not watching a specific incident)
             if (!query.incidentId) {
-              const { incidents } = await siemService.listIncidents({
+              // New and updated incidents of every requested source
+              const rows = await incidentsService.listUpdatedSince({
                 organizationId: query.organizationId,
                 projectId: query.projectId,
-                limit: 20,
+                sources,
+                since: incidentFeed.since,
+                limit: INCIDENT_PAGE_SIZE,
               });
-
-              // Check for new or updated incidents
-              for (const incident of incidents) {
-                const incidentTime = new Date(incident.updatedAt || incident.createdAt);
-                if (incidentTime > lastIncidentUpdate) {
-                  const isNew = new Date(incident.createdAt) > lastIncidentUpdate;
-                  const msg = JSON.stringify({
-                    type: isNew ? 'incident_created' : 'incident_updated',
-                    data: incident,
-                  });
-                  reply.raw.write(`data: ${msg}\n\n`);
-                }
-              }
-
-              if (incidents.length > 0) {
-                const latestTime = Math.max(
-                  ...incidents.map((i) =>
-                    new Date(i.updatedAt || i.createdAt).getTime()
-                  )
-                );
-                if (latestTime > lastIncidentUpdate.getTime()) {
-                  lastIncidentUpdate = new Date(latestTime);
-                }
+              for (const event of incidentFeed.consume(rows, INCIDENT_PAGE_SIZE)) {
+                send(event);
               }
             } else {
               // Watch specific incident for updates
-              const incident = await siemService.getIncident(
-                query.incidentId,
-                query.organizationId
-              );
+              const incident = await incidentsService.getItem(query.incidentId, query.organizationId);
 
               if (incident) {
                 const incidentTime = new Date(incident.updatedAt || incident.createdAt);
                 if (incidentTime > lastIncidentUpdate) {
-                  const msg = JSON.stringify({
-                    type: 'incident_updated',
-                    data: incident,
-                  });
-                  reply.raw.write(`data: ${msg}\n\n`);
+                  send({ type: 'incident_updated', data: incident });
                   lastIncidentUpdate = incidentTime;
                 }
               }

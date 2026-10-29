@@ -64,8 +64,8 @@ describe('usage formatting', () => {
   });
 
   it('bar color by threshold', () => {
-    expect(capBarColor(79)).toBe('bg-green-500');
-    expect(capBarColor(80)).toBe('bg-amber-500');
+    expect(capBarColor(79)).toBe('bg-success');
+    expect(capBarColor(80)).toBe('bg-warning');
     expect(capBarColor(100)).toBe('bg-destructive');
   });
 });

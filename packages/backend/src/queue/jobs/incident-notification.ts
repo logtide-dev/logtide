@@ -4,11 +4,17 @@ import { config, isSmtpConfigured } from '../../config/index.js';
 import { db } from '../../database/connection.js';
 import { notificationsService } from '../../modules/notifications/service.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
+import {
+  resolveChannelsForEvent,
+  resolveFallbackEmails,
+  toDeliveryTargets,
+  type DeliveryTargets,
+} from '../../modules/notification-channels/resolver.js';
+import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
 import { createQueue } from '../connection.js';
 import { generateIncidentEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { Severity } from '../../database/types.js';
-import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface IncidentNotificationJob {
   incidentId: string;
@@ -50,10 +56,19 @@ function createTransporter() {
 }
 
 
+/** Host of a URL for logs (never the path, Slack and Discord tokens live there). */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'invalid url';
+  }
+}
+
 /**
  * Send webhook notification for incident
  */
-async function sendIncidentWebhook(url: string, job: IncidentNotificationJob, orgName: string): Promise<void> {
+async function sendIncidentWebhook(target: DeliveryTargets['webhooks'][number], job: IncidentNotificationJob, orgName: string): Promise<void> {
   const frontendUrl = getFrontendUrl();
 
   // Wrap in the unified envelope (WS3). organization{id,name} object stays in
@@ -73,17 +88,20 @@ async function sendIncidentWebhook(url: string, job: IncidentNotificationJob, or
       },
       incident_id: job.incidentId,
       affected_services: job.affectedServices,
-      link: `${frontendUrl}/dashboard/security/incidents/${job.incidentId}`,
+      link: `${frontendUrl}/dashboard/incidents/${job.incidentId}`,
     },
   });
 
   // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
   // retry/backoff, DLQ, and delivery logging.
   await webhookDispatcher.enqueue({
-    url,
+    url: target.url,
+    channelId: target.channelId,
+    method: target.method,
+    headers: target.headers,
     organizationId: job.organizationId,
     eventType: 'incident.created',
-    eventId: `${job.incidentId}:${url}`,
+    eventId: `${job.incidentId}:${target.url}`,
     payload: envelope,
   });
 }
@@ -107,31 +125,17 @@ export async function processIncidentNotification(job: IJob<IncidentNotification
     return;
   }
 
-  // STEP 1: Get notification channels for this incident (or org defaults)
-  let incidentChannels = await notificationChannelsService.getIncidentChannels(data.incidentId);
+  // STEP 1: Resolve destinations with the shared rule: channels attached to the
+  // incident, else organization defaults, else the owners and admins email
+  // fallback (only when nothing resolved and SMTP is configured).
+  const routing = await resolveChannelsForEvent({
+    organizationId: data.organizationId,
+    eventType: 'incident',
+    explicitChannels: await notificationChannelsService.getIncidentChannels(data.incidentId),
+  });
+  const targets = toDeliveryTargets(routing.channels);
 
-  // If no specific channels, use organization defaults for incidents
-  if (incidentChannels.length === 0) {
-    incidentChannels = await notificationChannelsService.getOrganizationDefaults(data.organizationId, 'incident');
-  }
-
-  // STEP 2: Collect email recipients and webhook URLs from channels
-  const channelEmailRecipients = new Set<string>();
-  const channelWebhookUrls = new Set<string>();
-
-  incidentChannels
-    .filter((ch) => ch.enabled)
-    .forEach((ch) => {
-      if (ch.type === 'email') {
-        const emailConfig = ch.config as EmailChannelConfig;
-        emailConfig.recipients.forEach((email) => channelEmailRecipients.add(email));
-      } else if (ch.type === 'webhook') {
-        const webhookConfig = ch.config as WebhookChannelConfig;
-        channelWebhookUrls.add(webhookConfig.url);
-      }
-    });
-
-  // STEP 3: Get organization members for in-app notifications (legacy behavior)
+  // STEP 2: In-app notifications for organization members
   const shouldNotifyAll = data.severity === 'critical' || data.severity === 'high';
 
   let membersQuery = db
@@ -148,37 +152,34 @@ export async function processIncidentNotification(job: IJob<IncidentNotification
   const members = await membersQuery.execute();
 
   if (members.length === 0) {
-    console.log(`[IncidentNotification] No members to notify for org ${data.organizationId}`);
-    return;
+    console.log(`[IncidentNotification] No members to notify in-app for org ${data.organizationId}`);
+  } else {
+    console.log(`[IncidentNotification] Notifying ${members.length} members`);
+
+    const notificationPromises = members.map((member) =>
+      notificationsService.createNotification({
+        userId: member.id,
+        title: data.title,
+        message: `Security Incident [${severityLabels[data.severity]}]`,
+        type: 'alert',
+        organizationId: data.organizationId,
+        metadata: {
+          incidentId: data.incidentId,
+          severity: data.severity,
+          link: `/dashboard/incidents/${data.incidentId}`,
+        },
+      }).catch((err) => console.error(`[IncidentNotification] Failed to create notification for ${member.id}:`, err))
+    );
+
+    await Promise.all(notificationPromises);
+    console.log(`[IncidentNotification] In-app notifications sent`);
   }
 
-  console.log(`[IncidentNotification] Notifying ${members.length} members`);
-
-  // STEP 4: Send in-app notifications to all relevant members
-  const notificationPromises = members.map((member) =>
-    notificationsService.createNotification({
-      userId: member.id,
-      title: data.title,
-      message: `Security Incident [${severityLabels[data.severity]}]`,
-      type: 'alert',
-      organizationId: data.organizationId,
-      metadata: {
-        incidentId: data.incidentId,
-        severity: data.severity,
-        link: `/dashboard/security/incidents/${data.incidentId}`,
-      },
-    }).catch((err) => console.error(`[IncidentNotification] Failed to create notification for ${member.id}:`, err))
-  );
-
-  await Promise.all(notificationPromises);
-  console.log(`[IncidentNotification] In-app notifications sent`);
-
-  // STEP 5: Send email notifications
-  // Combine channel emails with member emails (if no channels configured, use members)
-  const emailRecipients =
-    channelEmailRecipients.size > 0
-      ? Array.from(channelEmailRecipients)
-      : members.map((m) => m.email);
+  // STEP 3: Email. Email destinations when they resolved; owners and admins
+  // only when nothing resolved at all.
+  const emailRecipients = routing.fallback
+    ? await resolveFallbackEmails(data.organizationId)
+    : targets.emailRecipients;
 
   if (isSmtpConfigured() && emailRecipients.length > 0) {
     const transporter = createTransporter();
@@ -207,15 +208,33 @@ export async function processIncidentNotification(job: IJob<IncidentNotification
     console.log(`[IncidentNotification] SMTP not configured, skipping email notifications`);
   }
 
-  // STEP 6: Send webhook notifications (NEW - using channels)
-  if (channelWebhookUrls.size > 0) {
-    const webhookPromises = Array.from(channelWebhookUrls).map((url) =>
-      sendIncidentWebhook(url, data, org.name)
-        .then(() => console.log(`[IncidentNotification] Webhook sent to ${url}`))
-        .catch((err) => console.error(`[IncidentNotification] Webhook failed for ${url}:`, err))
+  // STEP 4: Webhook destinations (Slack, Teams and Discord URLs are formatted by the dispatcher)
+  if (targets.webhooks.length > 0) {
+    const webhookPromises = targets.webhooks.map((target) =>
+      sendIncidentWebhook(target, data, org.name)
+        .then(() => console.log(`[IncidentNotification] Webhook sent to ${hostOf(target.url)}`))
+        .catch((err) => console.error(`[IncidentNotification] Webhook failed for ${hostOf(target.url)}:`, err))
     );
 
     await Promise.all(webhookPromises);
-    console.log(`[IncidentNotification] Webhooks sent to ${channelWebhookUrls.size} URLs`);
+    console.log(`[IncidentNotification] Webhooks sent to ${targets.webhooks.length} URLs`);
+  }
+
+  // STEP 5: PagerDuty destinations
+  if (targets.pagerDuty.length > 0) {
+    await notifyPagerDutyTargets(targets.pagerDuty, {
+      organizationId: data.organizationId,
+      action: 'trigger',
+      dedupKey: `incident:${data.incidentId}`,
+      eventType: 'incident.created',
+      summary: data.title,
+      severity: data.severity,
+      link: `${getFrontendUrl()}/dashboard/incidents/${data.incidentId}`,
+      details: {
+        description: data.description,
+        affected_services: data.affectedServices,
+        organization: org.name,
+      },
+    });
   }
 }

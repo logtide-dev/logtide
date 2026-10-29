@@ -33,6 +33,9 @@ describe('OnboardingService', () => {
                 tutorialCompleted: false,
                 tutorialStep: 0,
                 tutorialSkipped: false,
+                step: null,
+                organizationId: null,
+                projectId: null,
             });
         });
 
@@ -215,6 +218,9 @@ describe('OnboardingService', () => {
                 tutorialCompleted: false,
                 tutorialStep: 0,
                 tutorialSkipped: false,
+                step: null,
+                organizationId: null,
+                projectId: null,
             });
         });
 
@@ -260,6 +266,9 @@ describe('OnboardingService', () => {
                 tutorialCompleted: false,
                 tutorialStep: 0,
                 tutorialSkipped: false,
+                step: null,
+                organizationId: null,
+                projectId: null,
             });
         });
     });

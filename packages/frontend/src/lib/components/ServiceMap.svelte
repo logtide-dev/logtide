@@ -5,6 +5,8 @@
   import { themeStore } from "$lib/stores/theme";
   import { getEChartsTheme, getTooltipStyle } from "$lib/utils/echarts-theme";
   import { escapeHtml } from "$lib/utils/html";
+  import { levelTone, stateTone } from "$lib/utils/severity";
+  import { stableNodePositions } from "$lib/components/traces/service-map-layout";
 
   interface Props {
     dependencies: ServiceDependencies | EnrichedServiceDependencies;
@@ -18,17 +20,13 @@
   let chartContainer: HTMLDivElement;
   let chart: echarts.ECharts | null = null;
 
-  // Color palette for services (fallback for non-enriched nodes)
+  // Fallback palette for non-enriched nodes: the severity module's chart tones.
   const colors = [
-    "#5470c6",
-    "#91cc75",
-    "#fac858",
-    "#ee6666",
-    "#73c0de",
-    "#3ba272",
-    "#fc8452",
-    "#9a60b4",
-    "#ea7ccc",
+    levelTone("info").chart,
+    stateTone("ok").chart,
+    levelTone("warn").chart,
+    levelTone("critical").chart,
+    levelTone("debug").chart,
   ];
 
   function getServiceColor(serviceName: string): string {
@@ -38,11 +36,12 @@
     return colors[Math.abs(hash) % colors.length];
   }
 
+  // Health colours come from the tones: failed at 10 percent errors, amber at 1.
   function getNodeColor(node: { name: string; errorRate?: number }): string {
     if ('errorRate' in node && node.errorRate !== undefined) {
-      if (node.errorRate >= 0.1) return '#ef4444';
-      if (node.errorRate >= 0.01) return '#f59e0b';
-      return '#10b981';
+      if (node.errorRate >= 0.1) return stateTone("failed").chart;
+      if (node.errorRate >= 0.01) return levelTone("warn").chart;
+      return stateTone("ok").chart;
     }
     return getServiceColor(node.name);
   }
@@ -85,17 +84,26 @@
       1
     );
 
+    const positions = stableNodePositions(
+      dependencies.nodes.map((n) => n.name),
+      chartContainer?.clientWidth || 800,
+      chartContainer?.clientHeight || 500
+    );
+
     // Build nodes with sizes based on call count
     const nodes = dependencies.nodes.map((node) => {
       const hasErrors = isEnrichedNode(node) && node.errorRate >= 0.1;
+      const position = positions.get(node.name);
       return {
         name: node.name,
         id: node.id,
+        x: position?.x,
+        y: position?.y,
         symbolSize: 30 + (node.callCount / maxCallCount) * 40,
         value: node.callCount,
         itemStyle: {
           color: getNodeColor(node),
-          borderColor: hasErrors ? '#991b1b' : undefined,
+          borderColor: hasErrors ? stateTone("failed").chart : undefined,
           borderWidth: hasErrors ? 2 : 0,
         },
         label: {
@@ -171,6 +179,7 @@
           links: edges,
           categories: [],
           force: {
+            layoutAnimation: false,
             repulsion: 300,
             edgeLength: [100, 200],
             gravity: 0.1,
@@ -210,6 +219,16 @@
         }
       });
     }
+  }
+
+  /** PNG data URL of the current graph, or null before the chart exists. */
+  export function exportPng(): string | null {
+    if (!chart) return null;
+    return chart.getDataURL({
+      type: "png",
+      pixelRatio: 2,
+      backgroundColor: getEChartsTheme().tooltipBackground,
+    });
   }
 
   let themeUnsubscribe: (() => void) | null = null;

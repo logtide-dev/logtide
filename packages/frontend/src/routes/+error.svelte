@@ -35,7 +35,7 @@
     }
 
     function goToSearch() {
-        goto("/dashboard/search");
+        goto("/dashboard/logs");
     }
 </script>
 
@@ -92,9 +92,9 @@
                 <div in:fly={{ y: 20, duration: 400, delay: 300 }}>
                     <CardTitle class="text-2xl mb-2">
                         {#if is404}
-                            Page Not Found
+                            Page not found
                         {:else}
-                            Something Went Wrong
+                            Something went wrong
                         {/if}
                     </CardTitle>
                     <CardDescription class="text-base">
@@ -116,7 +116,7 @@
                 >
                     <Button variant="default" onclick={goBack} class="gap-2">
                         <ArrowLeft class="w-4 h-4" />
-                        Go Back
+                        Go back
                     </Button>
 
                     <Button variant="outline" onclick={goHome} class="gap-2">
@@ -152,7 +152,7 @@
                         <p
                             class="text-xs text-muted-foreground font-mono break-all"
                         >
-                            <span class="font-semibold">Debug Info:</span>
+                            <span class="font-semibold">Debug info:</span>
                             {message}
                         </p>
                     </div>

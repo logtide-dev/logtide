@@ -10,6 +10,17 @@ export type {
   ErrorGroupWithRecentLogs,
   ErrorGroupFilters,
   ErrorGroupTrendBucket,
+  ErrorGroupPatch,
+  ErrorGroupBulkRequest,
+  ErrorGroupBulkResult,
+  ErrorGroupTrendsResult,
+  ErrorGroupEventLog,
+  ErrorGroupEvent,
+  ErrorGroupEventsResult,
+  ErrorGroupTraceMatch,
+  ErrorGroupSort,
+  ErrorGroupBulkAction,
+  ErrorGroupEventDirection,
 } from '@logtide/shared';
 
 export { isStructuredException } from '@logtide/shared';

@@ -2,8 +2,10 @@
 	import { goto } from '$app/navigation';
 	import type { DetectionEvent } from '$lib/api/siem';
 	import SeverityBadge from '../shared/SeverityBadge.svelte';
+	import Timestamp from '$lib/components/app/Timestamp.svelte';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import Button from '$lib/components/ui/button/button.svelte';
+	import { isMobile } from '$lib/stores/media-query';
 	import Activity from '@lucide/svelte/icons/activity';
 	import ArrowRight from '@lucide/svelte/icons/arrow-right';
 	import Clock from '@lucide/svelte/icons/clock';
@@ -16,20 +18,6 @@
 
 	let { events, loading = false, onEventClick }: Props = $props();
 
-	function formatTimeAgo(dateStr: string | Date): string {
-		const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-		const now = new Date();
-		const diffMs = now.getTime() - date.getTime();
-		const diffMins = Math.floor(diffMs / 60000);
-		const diffHours = Math.floor(diffMs / 3600000);
-		const diffDays = Math.floor(diffMs / 86400000);
-
-		if (diffMins < 1) return 'just now';
-		if (diffMins < 60) return `${diffMins}m ago`;
-		if (diffHours < 24) return `${diffHours}h ago`;
-		return `${diffDays}d ago`;
-	}
-
 	function truncate(str: string, len: number): string {
 		if (str.length <= len) return str;
 		return str.slice(0, len) + '...';
@@ -40,30 +28,54 @@
 	<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-3">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<Activity class="w-4 h-4 text-primary" />
-			Recent Security Events
+			Recent security events
 		</CardTitle>
-		<Button variant="ghost" size="sm" onclick={() => goto('/dashboard/security/incidents')}>
-			View All
+		<Button variant="ghost" size="sm" onclick={() => goto('/dashboard/incidents?source=sigma')}>
+			View all
 			<ArrowRight class="w-3.5 h-3.5 ml-1" />
 		</Button>
 	</CardHeader>
 	<CardContent class="p-0">
 		{#if loading}
 			<div class="flex items-center justify-center py-8 text-muted-foreground">
-				<span class="text-sm">Loading events...</span>
+				<span class="text-sm">Loading events</span>
 			</div>
 		{:else if events.length === 0}
 			<div class="flex flex-col items-center justify-center py-8 text-muted-foreground">
 				<Activity class="w-8 h-8 mb-2 opacity-50" />
 				<span class="text-sm">No recent events</span>
 			</div>
+		{:else if $isMobile}
+			<ul data-testid="recent-events-list">
+				{#each events.slice(0, 8) as event}
+					<li class="border-b last:border-0">
+						<button
+							type="button"
+							class="block w-full px-4 py-3 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+							onclick={() => onEventClick?.(event)}
+						>
+							<span class="flex items-start justify-between gap-2">
+								<span class="min-w-0 text-sm font-medium leading-snug">{event.ruleTitle}</span>
+								<SeverityBadge severity={event.severity} size="sm" />
+							</span>
+							<span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+								<span><Timestamp value={event.time} precision="second" /></span>
+								{#if event.service}
+									<span aria-hidden="true">·</span>
+									<span class="font-mono">{event.service}</span>
+								{/if}
+							</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
 		{:else}
 			<div class="overflow-x-auto">
 				<table class="w-full text-sm">
 					<thead>
 						<tr class="border-b bg-muted/30">
 							<th class="text-left py-2 px-4 font-medium text-muted-foreground w-20">Severity</th>
-							<th class="text-left py-2 px-4 font-medium text-muted-foreground w-24">Time</th>
+							<th class="text-left py-2 px-4 font-medium text-muted-foreground w-40">Time</th>
 							<th class="text-left py-2 px-4 font-medium text-muted-foreground">Rule</th>
 							<th class="text-left py-2 px-4 font-medium text-muted-foreground w-32">Service</th>
 						</tr>
@@ -80,7 +92,7 @@
 								<td class="py-2 px-4">
 									<div class="flex items-center gap-1 text-muted-foreground">
 										<Clock class="w-3 h-3" />
-										<span class="text-xs">{formatTimeAgo(event.time)}</span>
+										<span class="text-xs"><Timestamp value={event.time} precision="second" /></span>
 									</div>
 								</td>
 								<td class="py-2 px-4">

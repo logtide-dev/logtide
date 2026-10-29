@@ -61,8 +61,46 @@ import type {
   MetricOverviewItem,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
+  SessionSummary,
 } from '../../core/types.js';
+import { FACETS_DEFAULT_LIMIT, LATENCY_HISTOGRAM_BOUNDS_MS, OPERATION_STATS_DEFAULT_LIMIT } from '../../core/constants.js';
+import {
+  assertTimeRange,
+  normalizeDiscoverParams,
+  normalizeFacetsParams,
+  normalizeHistogramParams,
+  normalizeListSessionsParams,
+  normalizeOperationStatsParams,
+} from '../../core/normalize.js';
+import { decodeSessionCursor, encodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
+import { assembleFacets, histogramRowsToResult, type FacetRow, type HistogramRow } from './log-analytics.js';
+import {
+  buildSpanConditions,
+  entryProbeSql,
+  latencyCounts,
+  latencyHistogramSql,
+  operationStatRows,
+  operationStatsSql,
+  spanOrderSql,
+  traceOrderSql,
+  traceSpanMatchSql,
+  type EntryMode,
+  type OperationStatRow,
+} from './apm-queries.js';
 
 const { Pool } = pg;
 
@@ -134,7 +172,7 @@ export class TimescaleEngine extends StorageEngine {
     if (options.pool) {
       this.pool = options.pool;
     }
-    this.translator = new TimescaleQueryTranslator(this.schema, this.tableName);
+    this.translator = new TimescaleQueryTranslator(this.schema, this.tableName, options.projectIdType);
   }
 
   async connect(): Promise<void> {
@@ -202,9 +240,12 @@ export class TimescaleEngine extends StorageEngine {
         metadata JSONB DEFAULT '{}',
         trace_id TEXT,
         span_id TEXT,
+        session_id TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    // Tables created before session_id existed (same as backend migration 029).
+    await pool.query(`ALTER TABLE ${s}.${t} ADD COLUMN IF NOT EXISTS session_id TEXT`);
 
     // hypertable (ignore error if already exists)
     try {
@@ -219,6 +260,7 @@ export class TimescaleEngine extends StorageEngine {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_level_time ON ${s}.${t} (level, time DESC)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_trace_id ON ${s}.${t} (trace_id) WHERE trace_id IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_span_id ON ${s}.${t} (span_id) WHERE span_id IS NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_session_id ON ${s}.${t} (session_id) WHERE session_id IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_fulltext ON ${s}.${t} USING GIN (to_tsvector('english', message))`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${t}_composite ON ${s}.${t} (project_id, time DESC, id DESC)`);
 
@@ -236,6 +278,127 @@ export class TimescaleEngine extends StorageEngine {
     } catch {
       // compression not available
     }
+
+    await this.initializeSpanTables(pool, s);
+    await this.initializeMetricTables(pool, s);
+  }
+
+  /**
+   * Standalone metric and exemplar tables, shaped like backend migrations
+   * 026 and 027 but without the organization/project foreign keys and
+   * without the rollup aggregates (migration 028) or policies. Like the span
+   * tables, this only serves standalone installs and tests; the backend runs
+   * with `skipInitialize` and its own migrations.
+   */
+  private async initializeMetricTables(pool: pg.Pool, s: string): Promise<void> {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.metrics (
+        time TIMESTAMPTZ NOT NULL,
+        id UUID NOT NULL DEFAULT gen_random_uuid(),
+        organization_id UUID NOT NULL,
+        project_id UUID NOT NULL,
+        metric_name TEXT NOT NULL,
+        metric_type TEXT NOT NULL,
+        value DOUBLE PRECISION NOT NULL DEFAULT 0,
+        is_monotonic BOOLEAN,
+        service_name TEXT NOT NULL DEFAULT 'unknown',
+        attributes JSONB,
+        resource_attributes JSONB,
+        histogram_data JSONB,
+        has_exemplars BOOLEAN NOT NULL DEFAULT FALSE,
+        PRIMARY KEY (time, id)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.metric_exemplars (
+        time TIMESTAMPTZ NOT NULL,
+        id UUID NOT NULL DEFAULT gen_random_uuid(),
+        metric_id UUID NOT NULL,
+        organization_id UUID NOT NULL,
+        project_id UUID NOT NULL,
+        exemplar_value DOUBLE PRECISION NOT NULL,
+        exemplar_time TIMESTAMPTZ,
+        trace_id TEXT,
+        span_id TEXT,
+        attributes JSONB,
+        PRIMARY KEY (time, id)
+      )
+    `);
+    for (const table of ['metrics', 'metric_exemplars']) {
+      try {
+        await pool.query(`SELECT create_hypertable('${s}.${table}', 'time', if_not_exists => TRUE)`);
+      } catch {
+        // not a TimescaleDB instance or already a hypertable
+      }
+    }
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_metrics_project_name_time ON ${s}.metrics (project_id, metric_name, time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_metrics_attributes ON ${s}.metrics USING GIN (attributes jsonb_path_ops)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_exemplars_metric_id ON ${s}.metric_exemplars (metric_id, time DESC)`);
+  }
+
+  /**
+   * Standalone span and trace tables, shaped like backend migration 003 but
+   * without the organization/project foreign keys (no tenant tables here)
+   * and without retention or compression policies. The backend runs with
+   * `skipInitialize` and its own migrations, so this only serves
+   * standalone installs and tests.
+   */
+  private async initializeSpanTables(pool: pg.Pool, s: string): Promise<void> {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.traces (
+        trace_id TEXT NOT NULL,
+        organization_id TEXT,
+        project_id TEXT NOT NULL,
+        service_name TEXT NOT NULL,
+        root_service_name TEXT,
+        root_operation_name TEXT,
+        start_time TIMESTAMPTZ NOT NULL,
+        end_time TIMESTAMPTZ NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        span_count INTEGER NOT NULL DEFAULT 0,
+        error BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (trace_id, project_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_traces_project_time ON ${s}.traces (project_id, start_time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_traces_service ON ${s}.traces (service_name, start_time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_traces_duration ON ${s}.traces (duration_ms DESC)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${s}.spans (
+        time TIMESTAMPTZ NOT NULL,
+        span_id TEXT NOT NULL,
+        trace_id TEXT NOT NULL,
+        parent_span_id TEXT,
+        organization_id TEXT,
+        project_id TEXT NOT NULL,
+        service_name TEXT NOT NULL,
+        operation_name TEXT NOT NULL,
+        start_time TIMESTAMPTZ NOT NULL,
+        end_time TIMESTAMPTZ NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        kind TEXT,
+        status_code TEXT,
+        status_message TEXT,
+        attributes JSONB,
+        events JSONB,
+        links JSONB,
+        resource_attributes JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (time, span_id)
+      )
+    `);
+    try {
+      await pool.query(`SELECT create_hypertable('${s}.spans', 'time', if_not_exists => TRUE)`);
+    } catch {
+      // not a TimescaleDB instance or already a hypertable
+    }
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_trace_id ON ${s}.spans (trace_id, time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_parent ON ${s}.spans (parent_span_id, time DESC) WHERE parent_span_id IS NOT NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_project_time ON ${s}.spans (project_id, time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_service ON ${s}.spans (service_name, time DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_spans_operation ON ${s}.spans (operation_name, time DESC)`);
   }
 
   async migrate(_version: string): Promise<void> {
@@ -398,6 +561,58 @@ export class TimescaleEngine extends StorageEngine {
       count: estimate,
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
+    // The client validates too; repeat it so direct engine callers get the
+    // same RangeError before any query (bucket size, bucket count, range).
+    const normalized = normalizeHistogramParams(params);
+    const native = this.translator.translateHistogram(normalized);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    return histogramRowsToResult(normalized, result.rows as HistogramRow[]);
+  }
+
+  async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
+    // Same reason as histogram: RangeError (fields, keys, range) before any query.
+    const normalized = normalizeFacetsParams(params);
+    const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
+    const native = this.translator.translateFacets(normalized, limit);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    return assembleFacets(normalized.fields, result.rows as FacetRow[], limit);
+  }
+
+  async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {
+    const normalized = normalizeDiscoverParams(params);
+    const native = this.translator.translateDiscoverKeys(normalized);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    return result.rows.map((row) => ({ key: row.key as string, occurrences: Number(row.occurrences) }));
+  }
+
+  async listSessions(params: ListSessionsParams): Promise<ListSessionsResult> {
+    // RangeError for a bad limit, range or cursor before any query; the
+    // limit is clamped to SESSIONS_MAX_LIMIT.
+    const normalized = normalizeListSessionsParams(params);
+    const cursor = normalized.cursor !== undefined ? decodeSessionCursor(normalized.cursor) : null;
+    const native = this.translator.translateListSessions(normalized, normalized.limit, cursor);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    const sessions: SessionSummary[] = result.rows.slice(0, normalized.limit).map((row) => ({
+      sessionId: row.session_id as string,
+      service: row.service as string,
+      firstEvent: row.first_event as Date,
+      lastEvent: row.last_event as Date,
+      eventCount: Number(row.event_count),
+      errorCount: Number(row.error_count),
+    }));
+    if (result.rows.length <= normalized.limit) return { sessions };
+    const last = sessions[sessions.length - 1];
+    return { sessions, nextCursor: encodeSessionCursor(last.lastEvent, last.sessionId) };
+  }
+
+  async hasSessions(params: HasSessionsParams): Promise<boolean> {
+    assertTimeRange(params.from, params.to);
+    const native = this.translator.translateHasSessions(params);
+    const result = await this.runQuery(native.query as string, native.parameters);
+    return result.rows.length > 0;
   }
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {
@@ -690,50 +905,13 @@ export class TimescaleEngine extends StorageEngine {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    // Time range
-    conditions.push(`time ${params.fromExclusive ? '>' : '>='} $${idx++}`);
-    values.push(params.from);
-    conditions.push(`time ${params.toExclusive ? '<' : '<='} $${idx++}`);
-    values.push(params.to);
-
-    // Filters
-    if (params.projectId) {
-      const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-      conditions.push(`project_id = ANY($${idx++})`);
-      values.push(pids);
-    }
-    if (params.traceId) {
-      const tids = Array.isArray(params.traceId) ? params.traceId : [params.traceId];
-      conditions.push(`trace_id = ANY($${idx++})`);
-      values.push(tids);
-    }
-    if (params.serviceName) {
-      const svc = Array.isArray(params.serviceName) ? params.serviceName : [params.serviceName];
-      conditions.push(`service_name = ANY($${idx++})`);
-      values.push(svc);
-    }
-    if (params.kind) {
-      const k = Array.isArray(params.kind) ? params.kind : [params.kind];
-      conditions.push(`kind = ANY($${idx++})`);
-      values.push(k);
-    }
-    if (params.statusCode) {
-      const sc = Array.isArray(params.statusCode) ? params.statusCode : [params.statusCode];
-      conditions.push(`status_code = ANY($${idx++})`);
-      values.push(sc);
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    // Allowlist to prevent SQL injection via user-controlled sort parameters
-    const ALLOWED_SORT_COLUMNS = new Set(['start_time', 'end_time', 'duration_ms', 'service_name', 'operation_name']);
-    const ALLOWED_SORT_ORDERS = new Set(['asc', 'desc']);
-    const sortBy = ALLOWED_SORT_COLUMNS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
-    const sortOrder = ALLOWED_SORT_ORDERS.has((params.sortOrder ?? '').toLowerCase()) ? params.sortOrder!.toUpperCase() : 'ASC';
+    // The client maps the 1.6 `operation` alias onto operationName; a
+    // direct caller passing both gets both conditions (S12).
+    const { conditions, values, nextIdx } = buildSpanConditions(params, 1);
+    let idx = nextIdx;
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    // Sort keys come from an allowlist, never from the caller's string.
+    const orderBy = spanOrderSql(params);
 
     const countResult = await this.runQuery(
       `SELECT COUNT(*)::int AS count FROM ${s}.spans ${where}`,
@@ -743,7 +921,7 @@ export class TimescaleEngine extends StorageEngine {
 
     const result = await this.runQuery(
       `SELECT * FROM ${s}.spans ${where}
-       ORDER BY ${sortBy} ${sortOrder}
+       ${orderBy}
        LIMIT $${idx++} OFFSET $${idx++}`,
       [...values, limit, offset],
     );
@@ -804,6 +982,12 @@ export class TimescaleEngine extends StorageEngine {
       conditions.push(`duration_ms <= $${idx++}`);
       values.push(params.maxDurationMs);
     }
+    const spanMatch = traceSpanMatchSql(params, idx, s);
+    if (spanMatch.condition) {
+      conditions.push(spanMatch.condition);
+      values.push(...spanMatch.values);
+      idx = spanMatch.nextIdx;
+    }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -815,7 +999,7 @@ export class TimescaleEngine extends StorageEngine {
 
     const result = await this.runQuery(
       `SELECT * FROM ${s}.traces ${where}
-       ORDER BY start_time DESC
+       ${traceOrderSql(params)}
        LIMIT $${idx++} OFFSET $${idx++}`,
       [...values, limit, offset],
     );
@@ -955,6 +1139,50 @@ export class TimescaleEngine extends StorageEngine {
       avgLatencyMs: Number(r.avg_latency_ms ?? 0),
       p95LatencyMs: r.p95_latency_ms != null ? Number(r.p95_latency_ms) : null,
     }));
+  }
+
+  /**
+   * Per-operation stats over entry spans (S10, F3 contract). A non-empty
+   * result of the default kinds proves entry spans exist; an empty one
+   * means none are in scope, so the root spans answer instead. Explicit
+   * kinds never fall back.
+   */
+  async getOperationStats(params: OperationStatsParams): Promise<OperationStat[]> {
+    const normalized = normalizeOperationStatsParams(params);
+    const p = { ...normalized, limit: normalized.limit ?? OPERATION_STATS_DEFAULT_LIMIT };
+    const run = async (mode: EntryMode) => {
+      const native = operationStatsSql(this.schema, p, mode);
+      const result = await this.runQuery(native.query as string, native.parameters);
+      return operationStatRows(result.rows as OperationStatRow[]);
+    };
+    const rows = await run('kinds');
+    if (rows.length > 0 || normalized.kinds !== undefined) return rows;
+    return run('root');
+  }
+
+  /**
+   * Latency distribution of the entry spans of getOperationStats (S11, F3
+   * contract): the population is decided on the project and service scope,
+   * then filtered by operation. Counts prove entry spans exist; with an
+   * operation and no counts, a probe tells "entry spans, none for this
+   * operation" (zeros) from "no entry span at all" (root spans).
+   */
+  async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {
+    assertTimeRange(params.from, params.to);
+    const run = async (mode: EntryMode) => {
+      const native = latencyHistogramSql(this.schema, params, mode);
+      const result = await this.runQuery(native.query as string, native.parameters);
+      return latencyCounts(result.rows as { idx: number | string; n: number | string }[]);
+    };
+    const bounds = [...LATENCY_HISTOGRAM_BOUNDS_MS];
+    const counts = await run('kinds');
+    if (counts.some((n) => n > 0)) return { bounds, counts };
+    if (params.operation !== undefined) {
+      const probe = entryProbeSql(this.schema, params);
+      const found = await this.runQuery(probe.query as string, probe.parameters);
+      if (found.rows.length > 0) return { bounds, counts };
+    }
+    return { bounds, counts: await run('root') };
   }
 
   async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {

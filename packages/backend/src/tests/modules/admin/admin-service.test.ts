@@ -479,6 +479,9 @@ describe('AdminService', () => {
         });
 
         it('should remove admin role from user', async () => {
+            // Another active admin must remain (last-admin guard)
+            const other = await createTestUser({ email: 'other-admin@test.com' });
+            await db.updateTable('users').set({ is_admin: true }).where('id', '=', other.id).execute();
             const user = await createTestUser();
             await db.updateTable('users').set({ is_admin: true }).where('id', '=', user.id).execute();
 
@@ -768,6 +771,25 @@ describe('AdminService', () => {
             expect(result.criticalDetections24h).toBeGreaterThanOrEqual(0);
             expect(result.failedNotifications24h).toBeGreaterThanOrEqual(0);
             expect(result.openErrorGroups).toBeGreaterThanOrEqual(0);
+        });
+    });
+
+    describe('getActiveIssues incident sources', () => {
+        it('counts open and investigating incidents of every source, not resolved ones', async () => {
+            const { organization } = await createTestContext();
+            await db.deleteFrom('incidents').execute();
+            const base = { organization_id: organization.id, severity: 'high' as const, title: 'Incident' };
+            await db.insertInto('incidents').values([
+                { ...base, source: 'sigma', status: 'open' },
+                { ...base, source: 'alert', status: 'open' },
+                { ...base, source: 'monitor', status: 'investigating' },
+                { ...base, source: 'manual', status: 'open' },
+                { ...base, source: 'alert', status: 'resolved' },
+            ]).execute();
+
+            const result = await adminService.getActiveIssues();
+
+            expect(result.openIncidents).toBe(4);
         });
     });
 

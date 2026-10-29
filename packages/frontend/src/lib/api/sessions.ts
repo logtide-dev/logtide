@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import { errorTextOf } from '$lib/api/metrics';
 
 export interface SessionSummary {
   sessionId: string;
@@ -9,11 +10,17 @@ export interface SessionSummary {
   durationMs: number;
   eventCount: number;
   errorCount: number;
+  browser?: string;
+  os?: string;
+  device?: 'desktop' | 'mobile' | 'tablet';
+  entryUrl?: string;
+  user?: string;
 }
 
+/** Cursor pagination: no total, pass `nextCursor` back as `cursor` for the next page. */
 export interface SessionsResponse {
   sessions: SessionSummary[];
-  total: number;
+  nextCursor?: string;
 }
 
 export interface SessionEvent {
@@ -26,6 +33,13 @@ export interface SessionEvent {
   traceId?: string;
   spanId?: string;
   sessionId?: string;
+  errorGroupId?: string;
+}
+
+export interface SessionEventsResponse {
+  events: SessionEvent[];
+  window: { from: string; to: string } | null;
+  truncated: boolean;
 }
 
 interface ListSessionsParams {
@@ -35,7 +49,7 @@ interface ListSessionsParams {
   hasErrors?: boolean;
   service?: string;
   limit?: number;
-  offset?: number;
+  cursor?: string;
 }
 
 interface GetSessionEventsParams {
@@ -64,31 +78,31 @@ class SessionsAPI {
     if (params.hasErrors !== undefined) qs.append('hasErrors', String(params.hasErrors));
     if (params.service) qs.append('service', params.service);
     if (params.limit) qs.append('limit', String(params.limit));
-    if (params.offset) qs.append('offset', String(params.offset));
+    if (params.cursor) qs.append('cursor', params.cursor);
 
     const response = await fetch(`${getApiBaseUrl()}/sessions?${qs}`, {
       headers: this.getHeaders(),
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch sessions: ${response.statusText}`);
+      throw new Error(await errorTextOf(response, 'Failed to fetch sessions'));
     }
 
     return response.json();
   }
 
-  async getSessionEvents(params: GetSessionEventsParams): Promise<{ events: SessionEvent[] }> {
+  async getSessionEvents(params: GetSessionEventsParams): Promise<SessionEventsResponse> {
     const qs = new URLSearchParams();
     qs.append('projectId', params.projectId);
     if (params.limit) qs.append('limit', String(params.limit));
 
     const response = await fetch(
-      `${getApiBaseUrl()}/sessions/${params.sessionId}/events?${qs}`,
+      `${getApiBaseUrl()}/sessions/${encodeURIComponent(params.sessionId)}/events?${qs}`,
       { headers: this.getHeaders() },
     );
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch session events: ${response.statusText}`);
+      throw new Error(await errorTextOf(response, 'Failed to fetch session events'));
     }
 
     return response.json();

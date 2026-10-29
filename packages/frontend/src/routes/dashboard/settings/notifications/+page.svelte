@@ -1,0 +1,1 @@
+<!-- Redirects in +page.ts -->

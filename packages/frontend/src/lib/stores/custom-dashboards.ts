@@ -16,6 +16,7 @@ import type {
   PanelTimeRange,
 } from '@logtide/shared';
 import { customDashboardsAPI } from '$lib/api/custom-dashboards';
+import type { CreateFromTemplatePayload } from '$lib/api/custom-dashboards';
 
 export interface PanelDataEntry {
   data: unknown;
@@ -78,6 +79,10 @@ function createDashboardStore() {
   // dashboard that has since been switched away from.
   let panelFetchSeq = 0;
 
+  // Monotonic guard for "which dashboard is being activated": a slower earlier
+  // switch / initialize must not overwrite the one the user asked for last.
+  let activationSeq = 0;
+
   function getState(): DashboardStoreState {
     return get({ subscribe });
   }
@@ -120,9 +125,11 @@ function createDashboardStore() {
     },
 
     async loadDefault(organizationId: string): Promise<void> {
+      const seq = ++activationSeq;
       update((s) => ({ ...s, loadingActive: true, activeError: null }));
       try {
         const dashboard = await customDashboardsAPI.getDefault(organizationId);
+        if (seq !== activationSeq) return;
         update((s) => ({
           ...s,
           activeDashboard: dashboard,
@@ -133,12 +140,97 @@ function createDashboardStore() {
         }));
         await this.fetchAllPanelData();
       } catch (e) {
+        if (seq !== activationSeq) return;
         update((s) => ({
           ...s,
           loadingActive: false,
           activeError: e instanceof Error ? e.message : 'Failed to load dashboard',
         }));
       }
+    },
+
+    /**
+     * Page entry point. Loads the switcher list, activates the requested
+     * dashboard when it is visible to the user (else the org default) and
+     * applies the requested time range BEFORE the first panel fetch, so there
+     * is exactly one batch request. A missing, forbidden or failing `dashboardId`
+     * falls back to the default silently: `fellBack` tells the page to clean
+     * the URL, nothing is shown as an error.
+     */
+    async initialize(
+      organizationId: string,
+      opts: { dashboardId?: string | null; range?: PanelTimeRange | null } = {}
+    ): Promise<{ fellBack: boolean }> {
+      const seq = ++activationSeq;
+      const requestedId = opts.dashboardId ?? null;
+      const range = opts.range ?? null;
+
+      update((s) => ({
+        ...s,
+        loadingList: true,
+        loadingActive: true,
+        listError: null,
+        activeError: null,
+        editMode: false,
+        pendingPanels: null,
+        originalPanels: null,
+      }));
+
+      let list: CustomDashboard[] = [];
+      try {
+        list = await customDashboardsAPI.list(organizationId);
+      } catch (e) {
+        if (seq !== activationSeq) return { fellBack: false };
+        update((s) => ({
+          ...s,
+          listError: e instanceof Error ? e.message : 'Failed to load dashboards',
+        }));
+      }
+      if (seq !== activationSeq) return { fellBack: false };
+      update((s) => ({ ...s, dashboards: list, loadingList: false }));
+
+      let target: CustomDashboard | null = null;
+      let fellBack = false;
+      if (requestedId) {
+        target = list.find((d) => d.id === requestedId) ?? null;
+        if (!target) {
+          try {
+            target = await customDashboardsAPI.getById(requestedId, organizationId);
+          } catch {
+            target = null;
+          }
+          if (seq !== activationSeq) return { fellBack: false };
+          if (!target) fellBack = true;
+        }
+      }
+
+      if (!target) {
+        try {
+          target = await customDashboardsAPI.getDefault(organizationId);
+        } catch (e) {
+          if (seq !== activationSeq) return { fellBack: false };
+          update((s) => ({
+            ...s,
+            loadingActive: false,
+            activeError: e instanceof Error ? e.message : 'Failed to load dashboard',
+          }));
+          return { fellBack };
+        }
+        if (seq !== activationSeq) return { fellBack: false };
+      }
+
+      const active = target;
+      update((s) => ({
+        ...s,
+        activeDashboard: active,
+        dashboards: mergeDashboardIntoList(s.dashboards, active),
+        panelData: {},
+        pausedPanels: new Set<string>(),
+        timeRangeOverride: range,
+        loadingActive: false,
+      }));
+      await this.fetchAllPanelData();
+      return { fellBack };
     },
 
     async switchTo(id: string): Promise<void> {
@@ -150,10 +242,13 @@ function createDashboardStore() {
         return;
       }
 
+      const seq = ++activationSeq;
+
       if (fromList) {
         update((s) => ({
           ...s,
           activeDashboard: fromList,
+          loadingActive: false,
           panelData: {},
           pausedPanels: new Set<string>(),
           timeRangeOverride: null,
@@ -170,6 +265,7 @@ function createDashboardStore() {
       update((s) => ({ ...s, loadingActive: true, activeError: null }));
       try {
         const dashboard = await customDashboardsAPI.getById(id, orgId);
+        if (seq !== activationSeq) return;
         update((s) => ({
           ...s,
           activeDashboard: dashboard,
@@ -494,7 +590,8 @@ function createDashboardStore() {
       }
     },
 
-    async deleteDashboard(id: string, organizationId: string): Promise<void> {
+    /** Resolves true only when the server confirmed the delete. */
+    async deleteDashboard(id: string, organizationId: string): Promise<boolean> {
       try {
         await customDashboardsAPI.delete(id, organizationId);
         update((s) => ({
@@ -503,32 +600,75 @@ function createDashboardStore() {
           // If we deleted the active dashboard, clear it - caller should reload default
           activeDashboard: s.activeDashboard?.id === id ? null : s.activeDashboard,
         }));
+        return true;
       } catch (e) {
         update((s) => ({
           ...s,
           listError: e instanceof Error ? e.message : 'Failed to delete dashboard',
         }));
+        return false;
+      }
+    },
+
+    async duplicateDashboard(
+      id: string,
+      organizationId: string,
+      name?: string
+    ): Promise<CustomDashboard | null> {
+      try {
+        const copy = await customDashboardsAPI.duplicate(id, organizationId, name);
+        update((s) => ({ ...s, dashboards: mergeDashboardIntoList(s.dashboards, copy) }));
+        return copy;
+      } catch (e) {
+        update((s) => ({
+          ...s,
+          listError: e instanceof Error ? e.message : 'Failed to duplicate dashboard',
+        }));
+        return null;
+      }
+    },
+
+    async createFromTemplate(input: CreateFromTemplatePayload): Promise<CustomDashboard | null> {
+      try {
+        const dashboard = await customDashboardsAPI.createFromTemplate(input);
+        update((s) => ({
+          ...s,
+          dashboards: mergeDashboardIntoList(s.dashboards, dashboard),
+        }));
+        return dashboard;
+      } catch (e) {
+        update((s) => ({
+          ...s,
+          listError: e instanceof Error ? e.message : 'Failed to create dashboard from template',
+        }));
+        return null;
       }
     },
 
     async renameDashboard(
       id: string,
       organizationId: string,
-      name: string
-    ): Promise<void> {
+      name: string,
+      description?: string | null
+    ): Promise<boolean> {
       try {
-        const updated = await customDashboardsAPI.update(id, organizationId, { name });
+        const updated = await customDashboardsAPI.update(id, organizationId, {
+          name,
+          ...(description !== undefined ? { description } : {}),
+        });
         update((s) => ({
           ...s,
           dashboards: mergeDashboardIntoList(s.dashboards, updated),
           activeDashboard:
             s.activeDashboard?.id === id ? updated : s.activeDashboard,
         }));
+        return true;
       } catch (e) {
         update((s) => ({
           ...s,
           listError: e instanceof Error ? e.message : 'Failed to rename dashboard',
         }));
+        return false;
       }
     },
 
@@ -595,6 +735,7 @@ export const dashboardList = derived(customDashboardsStore, (s) => s.dashboards)
 export const activeDashboard = derived(customDashboardsStore, (s) => s.activeDashboard);
 export const dashboardLoading = derived(customDashboardsStore, (s) => s.loadingActive);
 export const dashboardError = derived(customDashboardsStore, (s) => s.activeError);
+export const dashboardListError = derived(customDashboardsStore, (s) => s.listError);
 export const editMode = derived(customDashboardsStore, (s) => s.editMode);
 export const pendingPanels = derived(customDashboardsStore, (s) => s.pendingPanels);
 export const dashboardSaving = derived(customDashboardsStore, (s) => s.saving);

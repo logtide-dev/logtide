@@ -17,6 +17,9 @@
   import ProviderSelector from '$lib/components/auth/ProviderSelector.svelte';
   import LdapLoginForm from '$lib/components/auth/LdapLoginForm.svelte';
   import { smallLogoPath } from '$lib/utils/theme';
+  import Eye from '@lucide/svelte/icons/eye';
+  import EyeOff from '@lucide/svelte/icons/eye-off';
+  import Check from '@lucide/svelte/icons/check';
   import { isSafeInternalPath, safeRedirect } from '$lib/utils/redirect';
 
   // Get redirect URL from query params (e.g., for invitation flow)
@@ -30,13 +33,14 @@
   let name = $state('');
   let email = $state('');
   let password = $state('');
-  let confirmPassword = $state('');
+  let showPassword = $state(false);
+  let hasExternalProvider = $state(false);
   let error = $state('');
   let loading = $state(false);
   let nameError = $state('');
   let emailError = $state('');
   let passwordError = $state('');
-  let confirmPasswordError = $state('');
+  const passwordMet = $derived(password.length >= 8);
   let token = $state<string | null>(null);
   let hasLocalProvider = $state(true);
   let organizationsAPI = $derived(new OrganizationsAPI(() => token));
@@ -68,6 +72,12 @@
     } catch (e) {
       console.error('Failed to get auth config:', e);
     }
+    try {
+      const { providers } = await authAPI.getProviders();
+      hasExternalProvider = providers.some((p) => p.type !== 'local');
+    } catch {
+      // The provider selector reports its own load failure.
+    }
     checkingAuthConfig = false;
   });
 
@@ -83,7 +93,6 @@
     nameError = '';
     emailError = '';
     passwordError = '';
-    confirmPasswordError = '';
     let isValid = true;
 
     if (!name.trim()) {
@@ -104,14 +113,6 @@
       isValid = false;
     } else if (password.length < 8) {
       passwordError = 'Password must be at least 8 characters';
-      isValid = false;
-    }
-
-    if (!confirmPassword) {
-      confirmPasswordError = 'Please confirm your password';
-      isValid = false;
-    } else if (password !== confirmPassword) {
-      confirmPasswordError = 'Passwords do not match';
       isValid = false;
     }
 
@@ -161,9 +162,9 @@
     });
 
     if (isLocalRegistration || response.isNewUser) {
-      toastStore.success('Welcome to LogTide! Your account has been created.');
+      toastStore.success('Account created');
     } else {
-      toastStore.success('Welcome back!');
+      toastStore.success('Welcome back');
     }
 
     // If there's a redirect URL (e.g., invitation), go there; otherwise go to onboarding
@@ -216,7 +217,7 @@
 </script>
 
 <svelte:head>
-  <title>Sign Up - LogTide</title>
+  <title>Sign up - LogTide</title>
 </svelte:head>
 
 <div class="min-h-screen flex flex-col bg-background">
@@ -233,7 +234,7 @@
         <CardHeader class="flex flex-row justify-center items-center gap-4">
             <img src={$smallLogoPath} alt="LogTide Logo" class="h-16 w-auto" />
             <div>
-                <CardTitle class="text-2xl">Registration Disabled</CardTitle>
+                <CardTitle class="text-2xl">Registration disabled</CardTitle>
                 <CardDescription>New accounts cannot be created</CardDescription>
             </div>
         </CardHeader>
@@ -315,33 +316,40 @@
 
               <div class="space-y-2">
                 <Label for="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  bind:value={password}
-                  disabled={loading}
-                  required
-                  class={passwordError ? 'border-destructive' : ''}
-                />
+                <div class="relative">
+                  <Input
+                    id="password"
+                    type={(showPassword ? 'text' : 'password') as 'text'}
+                    autocomplete="new-password"
+                    bind:value={password}
+                    disabled={loading}
+                    required
+                    class="pr-10 {passwordError ? 'border-destructive' : ''}"
+                  />
+                  <button
+                    type="button"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
+                    onclick={() => (showPassword = !showPassword)}
+                  >
+                    {#if showPassword}
+                      <EyeOff class="size-4" aria-hidden="true" />
+                    {:else}
+                      <Eye class="size-4" aria-hidden="true" />
+                    {/if}
+                  </button>
+                </div>
+                <p
+                  class="flex items-center gap-1 text-xs {passwordMet ? 'text-success-text' : 'text-muted-foreground'}"
+                  data-testid="password-rule"
+                  data-met={passwordMet}
+                >
+                  {#if passwordMet}<Check class="size-3" aria-hidden="true" />{/if}
+                  At least 8 characters
+                </p>
                 {#if passwordError}
-                  <p class="text-sm text-destructive">{passwordError}</p>
-                {/if}
-              </div>
-
-              <div class="space-y-2">
-                <Label for="confirmPassword">Confirm Password</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  placeholder="••••••••"
-                  bind:value={confirmPassword}
-                  disabled={loading}
-                  required
-                  class={confirmPasswordError ? 'border-destructive' : ''}
-                />
-                {#if confirmPasswordError}
-                  <p class="text-sm text-destructive">{confirmPasswordError}</p>
+                  <p class="text-sm text-destructive-text">{passwordError}</p>
                 {/if}
               </div>
 
@@ -369,7 +377,7 @@
                   <Spinner size="sm" />
                   Creating account...
                 {:else}
-                  Create account with Email
+                  {hasExternalProvider ? 'Create account with email' : 'Create account'}
                 {/if}
               </Button>
             </div>

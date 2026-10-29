@@ -4,6 +4,8 @@ import { maintenanceService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { db } from '../../database/connection.js';
 import { projectsService } from '../projects/service.js';
+import { InvalidMonitorIdsError, MAX_LINKED_MONITORS } from '../monitoring/component-links.js';
+import { enqueueStatusSubscriberNotification } from '../../queue/jobs/monitor-status-subscribers.js';
 
 async function checkOrgAdmin(userId: string, organizationId: string): Promise<boolean> {
   const member = await db
@@ -33,6 +35,7 @@ const createSchema = z.object({
   scheduledStart: z.string().datetime(),
   scheduledEnd: z.string().datetime(),
   autoUpdateStatus: z.boolean().optional(),
+  monitorIds: z.array(z.string().uuid()).max(MAX_LINKED_MONITORS).optional(),
 }).refine((d) => new Date(d.scheduledEnd) > new Date(d.scheduledStart), {
   message: 'End time must be after start time',
 });
@@ -44,6 +47,7 @@ const updateSchema = z.object({
   scheduledStart: z.string().datetime().optional(),
   scheduledEnd: z.string().datetime().optional(),
   autoUpdateStatus: z.boolean().optional(),
+  monitorIds: z.array(z.string().uuid()).max(MAX_LINKED_MONITORS).optional(),
 });
 
 export async function maintenanceRoutes(fastify: FastifyInstance) {
@@ -92,17 +96,33 @@ export async function maintenanceRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: 'projectId does not belong to the organization' });
     }
 
-    const maintenance = await maintenanceService.create({
-      organizationId: parse.data.organizationId,
-      projectId: parse.data.projectId,
-      title: parse.data.title,
-      description: parse.data.description,
-      scheduledStart: new Date(parse.data.scheduledStart),
-      scheduledEnd: new Date(parse.data.scheduledEnd),
-      autoUpdateStatus: parse.data.autoUpdateStatus,
-      createdBy: request.user.id,
-    });
-    return reply.status(201).send({ maintenance });
+    try {
+      const maintenance = await maintenanceService.create({
+        organizationId: parse.data.organizationId,
+        projectId: parse.data.projectId,
+        title: parse.data.title,
+        description: parse.data.description,
+        scheduledStart: new Date(parse.data.scheduledStart),
+        scheduledEnd: new Date(parse.data.scheduledEnd),
+        autoUpdateStatus: parse.data.autoUpdateStatus,
+        monitorIds: parse.data.monitorIds,
+        createdBy: request.user.id,
+      });
+      // Best effort: a failing queue must not fail the request.
+      await enqueueStatusSubscriberNotification({
+        kind: 'maintenance_scheduled',
+        organizationId: maintenance.organizationId,
+        projectId: maintenance.projectId,
+        title: maintenance.title,
+        message: maintenance.description ?? undefined,
+        scheduledStart: maintenance.scheduledStart.toISOString(),
+        scheduledEnd: maintenance.scheduledEnd.toISOString(),
+      });
+      return reply.status(201).send({ maintenance });
+    } catch (err) {
+      if (err instanceof InvalidMonitorIdsError) return reply.status(400).send({ error: err.message });
+      throw err;
+    }
   });
 
   // Update maintenance (admin/owner only)
@@ -124,9 +144,16 @@ export async function maintenanceRoutes(fastify: FastifyInstance) {
     if (parse.data.scheduledEnd !== undefined) input.scheduledEnd = new Date(parse.data.scheduledEnd);
     if (parse.data.autoUpdateStatus !== undefined) input.autoUpdateStatus = parse.data.autoUpdateStatus;
 
-    const maintenance = await maintenanceService.update(request.params.id, organizationId, input as any);
-    if (!maintenance) return reply.status(404).send({ error: 'Not found' });
-    return reply.send({ maintenance });
+    if (parse.data.monitorIds !== undefined) input.monitorIds = parse.data.monitorIds;
+
+    try {
+      const maintenance = await maintenanceService.update(request.params.id, organizationId, input as any);
+      if (!maintenance) return reply.status(404).send({ error: 'Not found' });
+      return reply.send({ maintenance });
+    } catch (err) {
+      if (err instanceof InvalidMonitorIdsError) return reply.status(400).send({ error: err.message });
+      throw err;
+    }
   });
 
   // Delete maintenance (admin/owner only)

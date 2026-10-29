@@ -107,6 +107,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum enabled Sigma rules per organization',
   },
+  'sigma.exceptions.max_per_rule': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum exceptions per detection rule',
+  },
   'dashboards.max_custom': {
     kind: 'limit',
     defaultLimit: null,
@@ -121,6 +126,16 @@ export const CAPABILITIES = {
     kind: 'limit',
     defaultLimit: null,
     description: 'Maximum digest email recipients per organization',
+  },
+  'status_page.subscribers.max': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum status page email subscribers per organization (confirmed plus pending)',
+  },
+  'saved_searches.max_per_org': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum saved log searches per organization',
   },
   'quota.grace_percent': {
     kind: 'limit',

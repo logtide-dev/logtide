@@ -4,10 +4,12 @@
  * Handles CRUD operations for exceptions, stack frames, and error groups.
  */
 
-import type { Kysely } from 'kysely';
+import type { Expression, ExpressionBuilder, Kysely, Selectable, SqlBool } from 'kysely';
+import type { StoredLogRecord } from '@logtide/reservoir';
 import { sql } from 'kysely';
 import type { Database } from '../../database/types.js';
 import { reservoir } from '../../database/reservoir.js';
+import { ErrorGroupTriageService } from './triage-service.js';
 import type {
   CreateExceptionParams,
   ErrorGroup,
@@ -16,7 +18,197 @@ import type {
   ErrorGroupTrendBucket,
   ExceptionWithFrames,
   ExceptionLanguage,
+  ExceptionRecord,
+  StackFrameRecord,
 } from './types.js';
+
+type ExceptionRow = Selectable<Database['exceptions']>;
+type StackFrameRow = Selectable<Database['stack_frames']>;
+
+export function mapExceptionRow(exception: ExceptionRow): ExceptionRecord {
+  return {
+    id: exception.id,
+    organizationId: exception.organization_id,
+    projectId: exception.project_id,
+    logId: exception.log_id,
+    exceptionType: exception.exception_type,
+    exceptionMessage: exception.exception_message,
+    language: exception.language as ExceptionLanguage,
+    fingerprint: exception.fingerprint,
+    rawStackTrace: exception.raw_stack_trace,
+    frameCount: exception.frame_count,
+    createdAt: exception.created_at,
+  };
+}
+
+export function mapFrameRow(f: StackFrameRow): StackFrameRecord {
+  return {
+    id: f.id,
+    exceptionId: f.exception_id,
+    frameIndex: f.frame_index,
+    filePath: f.file_path,
+    functionName: f.function_name,
+    lineNumber: f.line_number,
+    columnNumber: f.column_number,
+    isAppCode: f.is_app_code,
+    codeContext: f.code_context as Record<string, unknown> | null,
+    metadata: f.metadata as Record<string, unknown> | null,
+    originalFile: f.original_file,
+    originalLine: f.original_line,
+    originalColumn: f.original_column,
+    originalFunction: f.original_function,
+    createdAt: f.created_at,
+  };
+}
+
+/**
+ * Fetch logs by id through the reservoir. getByIds is project scoped, so the
+ * ids are grouped by project and fetched once per project. Rows without a
+ * project are skipped (nothing to fetch). Returns a map keyed by log id.
+ */
+export async function fetchLogsByProject(
+  rows: Array<{ log_id: string; project_id: string | null }>
+): Promise<Map<string, StoredLogRecord>> {
+  const idsByProject = new Map<string, string[]>();
+  for (const e of rows) {
+    const pid = e.project_id ?? '';
+    if (!pid) continue;
+    const list = idsByProject.get(pid);
+    if (list) list.push(e.log_id);
+    else idsByProject.set(pid, [e.log_id]);
+  }
+
+  const stored = (
+    await Promise.all(
+      Array.from(idsByProject.entries()).map(([pid, ids]) =>
+        reservoir.getByIds({ ids, projectId: pid })
+      )
+    )
+  ).flat() as StoredLogRecord[];
+
+  return new Map(stored.map((l) => [l.id, l]));
+}
+
+type ErrorGroupEb = ExpressionBuilder<Database, 'error_groups'>;
+
+/**
+ * Shared select for every error group read: the group columns, the project
+ * name and the names of the assignee and the resolver.
+ */
+function errorGroupBaseQuery(db: Kysely<Database>) {
+  return db
+    .selectFrom('error_groups')
+    .leftJoin('projects', 'projects.id', 'error_groups.project_id')
+    .leftJoin('users as assignee', 'assignee.id', 'error_groups.assigned_to')
+    .leftJoin('users as resolver', 'resolver.id', 'error_groups.resolved_by')
+    .select([
+      'error_groups.id',
+      'error_groups.organization_id',
+      'error_groups.project_id',
+      'projects.name as project_name',
+      'error_groups.fingerprint',
+      'error_groups.exception_type',
+      'error_groups.exception_message',
+      'error_groups.language',
+      'error_groups.occurrence_count',
+      'error_groups.first_seen',
+      'error_groups.last_seen',
+      'error_groups.status',
+      'error_groups.resolved_at',
+      'error_groups.resolved_by',
+      'error_groups.affected_services',
+      'error_groups.sample_log_id',
+      'error_groups.assigned_to',
+      'error_groups.regressed_at',
+      'error_groups.ignored_until',
+      'error_groups.ignore_until_count',
+      'error_groups.ignored_event_count',
+      'error_groups.created_at',
+      'error_groups.updated_at',
+      'assignee.name as assignee_name',
+      'assignee.email as assignee_email',
+      'resolver.name as resolver_name',
+    ]);
+}
+
+type ErrorGroupRow = Awaited<ReturnType<ReturnType<typeof errorGroupBaseQuery>['execute']>>[number];
+
+function mapErrorGroupRow(r: ErrorGroupRow): ErrorGroup {
+  return {
+    id: r.id,
+    organizationId: r.organization_id,
+    projectId: r.project_id,
+    projectName: r.project_name,
+    fingerprint: r.fingerprint,
+    exceptionType: r.exception_type,
+    exceptionMessage: r.exception_message,
+    language: r.language as ExceptionLanguage,
+    occurrenceCount: r.occurrence_count,
+    firstSeen: r.first_seen,
+    lastSeen: r.last_seen,
+    status: r.status as ErrorGroupStatus,
+    resolvedAt: r.resolved_at,
+    resolvedBy: r.resolved_by,
+    affectedServices: r.affected_services || [],
+    sampleLogId: r.sample_log_id,
+    assignedTo: r.assigned_to,
+    assignedToName: r.assignee_name,
+    assignedToEmail: r.assignee_email,
+    regressedAt: r.regressed_at,
+    ignoredUntil: r.ignored_until,
+    ignoreUntilCount: r.ignore_until_count,
+    ignoredEventCount: r.ignored_event_count,
+    resolvedByName: r.resolver_name,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+/**
+ * The where conditions shared by the data query and the count query, so the
+ * two cannot drift.
+ */
+function buildErrorGroupConditions(eb: ErrorGroupEb, filters: ErrorGroupFilters): Expression<SqlBool>[] {
+  const conds: Expression<SqlBool>[] = [
+    eb('error_groups.organization_id', '=', filters.organizationId),
+  ];
+
+  if (filters.projectIds && filters.projectIds.length > 0) {
+    conds.push(eb('error_groups.project_id', 'in', filters.projectIds));
+  } else if (filters.projectId) {
+    conds.push(eb('error_groups.project_id', '=', filters.projectId));
+  }
+  if (filters.status) {
+    conds.push(eb('error_groups.status', '=', filters.status));
+  }
+  if (filters.language) {
+    conds.push(eb('error_groups.language', '=', filters.language));
+  }
+  if (filters.search) {
+    conds.push(
+      eb.or([
+        eb('error_groups.exception_type', 'ilike', `%${filters.search}%`),
+        eb('error_groups.exception_message', 'ilike', `%${filters.search}%`),
+      ])
+    );
+  }
+  if (filters.from) {
+    conds.push(eb('error_groups.last_seen', '>=', new Date(filters.from)));
+  }
+  if (filters.to) {
+    conds.push(eb('error_groups.last_seen', '<=', new Date(filters.to)));
+  }
+  if (filters.assignedTo === 'unassigned') {
+    conds.push(eb('error_groups.assigned_to', 'is', null));
+  } else if (filters.assignedTo) {
+    conds.push(eb('error_groups.assigned_to', '=', filters.assignedTo));
+  }
+  if (filters.service) {
+    conds.push(sql<SqlBool>`${filters.service} = ANY(error_groups.affected_services)`);
+  }
+
+  return conds;
+}
 
 export class ExceptionService {
   constructor(private db: Kysely<Database>) {}
@@ -94,37 +286,22 @@ export class ExceptionService {
       .orderBy('frame_index', 'asc')
       .execute();
 
+    const errorGroup = await this.db
+      .selectFrom('error_groups')
+      .select('id')
+      .where('organization_id', '=', organizationId)
+      .where('fingerprint', '=', exception.fingerprint)
+      .where((eb) =>
+        exception.project_id === null
+          ? eb('project_id', 'is', null)
+          : eb('project_id', '=', exception.project_id)
+      )
+      .executeTakeFirst();
+
     return {
-      exception: {
-        id: exception.id,
-        organizationId: exception.organization_id,
-        projectId: exception.project_id,
-        logId: exception.log_id,
-        exceptionType: exception.exception_type,
-        exceptionMessage: exception.exception_message,
-        language: exception.language as ExceptionLanguage,
-        fingerprint: exception.fingerprint,
-        rawStackTrace: exception.raw_stack_trace,
-        frameCount: exception.frame_count,
-        createdAt: exception.created_at,
-      },
-      frames: frames.map((f) => ({
-        id: f.id,
-        exceptionId: f.exception_id,
-        frameIndex: f.frame_index,
-        filePath: f.file_path,
-        functionName: f.function_name,
-        lineNumber: f.line_number,
-        columnNumber: f.column_number,
-        isAppCode: f.is_app_code,
-        codeContext: f.code_context as Record<string, unknown> | null,
-        metadata: f.metadata as Record<string, unknown> | null,
-        originalFile: f.original_file,
-        originalLine: f.original_line,
-        originalColumn: f.original_column,
-        originalFunction: f.original_function,
-        createdAt: f.created_at,
-      })),
+      exception: mapExceptionRow(exception),
+      frames: frames.map(mapFrameRow),
+      errorGroupId: errorGroup?.id ?? null,
     };
   }
 
@@ -149,36 +326,8 @@ export class ExceptionService {
       .execute();
 
     return {
-      exception: {
-        id: exception.id,
-        organizationId: exception.organization_id,
-        projectId: exception.project_id,
-        logId: exception.log_id,
-        exceptionType: exception.exception_type,
-        exceptionMessage: exception.exception_message,
-        language: exception.language as ExceptionLanguage,
-        fingerprint: exception.fingerprint,
-        rawStackTrace: exception.raw_stack_trace,
-        frameCount: exception.frame_count,
-        createdAt: exception.created_at,
-      },
-      frames: frames.map((f) => ({
-        id: f.id,
-        exceptionId: f.exception_id,
-        frameIndex: f.frame_index,
-        filePath: f.file_path,
-        functionName: f.function_name,
-        lineNumber: f.line_number,
-        columnNumber: f.column_number,
-        isAppCode: f.is_app_code,
-        codeContext: f.code_context as Record<string, unknown> | null,
-        metadata: f.metadata as Record<string, unknown> | null,
-        originalFile: f.original_file,
-        originalLine: f.original_line,
-        originalColumn: f.original_column,
-        originalFunction: f.original_function,
-        createdAt: f.created_at,
-      })),
+      exception: mapExceptionRow(exception),
+      frames: frames.map(mapFrameRow),
     };
   }
 
@@ -199,77 +348,27 @@ export class ExceptionService {
    * Get error groups with filters
    */
   async getErrorGroups(filters: ErrorGroupFilters): Promise<{ groups: ErrorGroup[]; total: number }> {
-    let query = this.db
-      .selectFrom('error_groups')
-      .leftJoin('projects', 'projects.id', 'error_groups.project_id')
-      .select([
-        'error_groups.id',
-        'error_groups.organization_id',
-        'error_groups.project_id',
-        'projects.name as project_name',
-        'error_groups.fingerprint',
-        'error_groups.exception_type',
-        'error_groups.exception_message',
-        'error_groups.language',
-        'error_groups.occurrence_count',
-        'error_groups.first_seen',
-        'error_groups.last_seen',
-        'error_groups.status',
-        'error_groups.resolved_at',
-        'error_groups.resolved_by',
-        'error_groups.affected_services',
-        'error_groups.sample_log_id',
-        'error_groups.created_at',
-        'error_groups.updated_at',
-      ])
-      .where('error_groups.organization_id', '=', filters.organizationId)
-      .orderBy('error_groups.last_seen', 'desc');
+    const sort = filters.sort ?? 'last_seen';
 
-    if (filters.projectId) {
-      query = query.where('error_groups.project_id', '=', filters.projectId);
+    let query = errorGroupBaseQuery(this.db).where((eb) =>
+      eb.and(buildErrorGroupConditions(eb as unknown as ErrorGroupEb, filters))
+    );
+
+    if (sort === 'events') {
+      query = query.orderBy('error_groups.occurrence_count', 'desc').orderBy('error_groups.last_seen', 'desc');
+    } else if (sort === 'first_seen') {
+      query = query.orderBy('error_groups.first_seen', 'desc').orderBy('error_groups.last_seen', 'desc');
+    } else {
+      query = query.orderBy('error_groups.last_seen', 'desc');
     }
-
-    if (filters.status) {
-      query = query.where('error_groups.status', '=', filters.status);
-    }
-
-    if (filters.language) {
-      query = query.where('error_groups.language', '=', filters.language);
-    }
-
-    if (filters.search) {
-      query = query.where((eb) =>
-        eb.or([
-          eb('error_groups.exception_type', 'ilike', `%${filters.search}%`),
-          eb('error_groups.exception_message', 'ilike', `%${filters.search}%`),
-        ])
-      );
-    }
-
-    let countQuery = this.db
+    // Final tie-breaker so pages never repeat or skip rows sharing a timestamp
+    query = query.orderBy('error_groups.id', 'asc');
+    const countResult = await this.db
+    // tenant-scope-ok: organization_id is applied by buildErrorGroupConditions, shared with the data query
       .selectFrom('error_groups')
       .select(sql<number>`count(*)::int`.as('count'))
-      .where('organization_id', '=', filters.organizationId);
-
-    if (filters.projectId) {
-      countQuery = countQuery.where('project_id', '=', filters.projectId);
-    }
-    if (filters.status) {
-      countQuery = countQuery.where('status', '=', filters.status);
-    }
-    if (filters.language) {
-      countQuery = countQuery.where('language', '=', filters.language);
-    }
-    if (filters.search) {
-      countQuery = countQuery.where((eb) =>
-        eb.or([
-          eb('exception_type', 'ilike', `%${filters.search}%`),
-          eb('exception_message', 'ilike', `%${filters.search}%`),
-        ])
-      );
-    }
-
-    const countResult = await countQuery.executeTakeFirst();
+      .where((eb) => eb.and(buildErrorGroupConditions(eb as unknown as ErrorGroupEb, filters)))
+      .executeTakeFirst();
     const total = countResult?.count || 0;
 
     if (filters.limit) {
@@ -280,87 +379,23 @@ export class ExceptionService {
     }
 
     const results = await query.execute();
-
-    const groups: ErrorGroup[] = results.map((r) => ({
-      id: r.id,
-      organizationId: r.organization_id,
-      projectId: r.project_id,
-      projectName: r.project_name,
-      fingerprint: r.fingerprint,
-      exceptionType: r.exception_type,
-      exceptionMessage: r.exception_message,
-      language: r.language as ExceptionLanguage,
-      occurrenceCount: r.occurrence_count,
-      firstSeen: r.first_seen,
-      lastSeen: r.last_seen,
-      status: r.status as ErrorGroupStatus,
-      resolvedAt: r.resolved_at,
-      resolvedBy: r.resolved_by,
-      affectedServices: r.affected_services || [],
-      sampleLogId: r.sample_log_id,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    }));
-
-    return { groups, total };
+    return { groups: results.map(mapErrorGroupRow), total };
   }
 
   /**
    * Get error group by ID
    */
   async getErrorGroupById(groupId: string): Promise<ErrorGroup | null> {
-    const result = await this.db
-      .selectFrom('error_groups')
-      .leftJoin('projects', 'projects.id', 'error_groups.project_id')
-      .select([
-        'error_groups.id',
-        'error_groups.organization_id',
-        'error_groups.project_id',
-        'projects.name as project_name',
-        'error_groups.fingerprint',
-        'error_groups.exception_type',
-        'error_groups.exception_message',
-        'error_groups.language',
-        'error_groups.occurrence_count',
-        'error_groups.first_seen',
-        'error_groups.last_seen',
-        'error_groups.status',
-        'error_groups.resolved_at',
-        'error_groups.resolved_by',
-        'error_groups.affected_services',
-        'error_groups.sample_log_id',
-        'error_groups.created_at',
-        'error_groups.updated_at',
-      ])
+    const result = await errorGroupBaseQuery(this.db)
       .where('error_groups.id', '=', groupId)
       .executeTakeFirst();
 
-    if (!result) return null;
-
-    return {
-      id: result.id,
-      organizationId: result.organization_id,
-      projectId: result.project_id,
-      projectName: result.project_name,
-      fingerprint: result.fingerprint,
-      exceptionType: result.exception_type,
-      exceptionMessage: result.exception_message,
-      language: result.language as ExceptionLanguage,
-      occurrenceCount: result.occurrence_count,
-      firstSeen: result.first_seen,
-      lastSeen: result.last_seen,
-      status: result.status as ErrorGroupStatus,
-      resolvedAt: result.resolved_at,
-      resolvedBy: result.resolved_by,
-      affectedServices: result.affected_services || [],
-      sampleLogId: result.sample_log_id,
-      createdAt: result.created_at,
-      updatedAt: result.updated_at,
-    };
+    return result ? mapErrorGroupRow(result) : null;
   }
 
   /**
-   * Update error group status
+   * Update error group status. Kept for existing callers; the triage service
+   * owns the rules (resolver, regression and ignore fields).
    */
   async updateErrorGroupStatus(
     groupId: string,
@@ -368,22 +403,12 @@ export class ExceptionService {
     status: ErrorGroupStatus,
     resolvedBy?: string
   ): Promise<ErrorGroup | null> {
-    const result = await this.db
-      .updateTable('error_groups')
-      .set({
-        status,
-        resolved_at: status === 'resolved' ? new Date() : null,
-        resolved_by: resolvedBy || null,
-      })
-      .where('id', '=', groupId)
-      .where('organization_id', '=', organizationId)
-      .returningAll()
-      .executeTakeFirst();
-
-    if (!result) return null;
-
-    // Fetch again with project name
-    return this.getErrorGroupById(groupId);
+    return new ErrorGroupTriageService(this.db).updateErrorGroup(
+      groupId,
+      organizationId,
+      { status },
+      resolvedBy ?? null
+    );
   }
 
   /**
@@ -587,29 +612,7 @@ export class ExceptionService {
     projectId?: string;
     limit?: number;
   }): Promise<ErrorGroup[]> {
-    let query = this.db
-      .selectFrom('error_groups')
-      .leftJoin('projects', 'projects.id', 'error_groups.project_id')
-      .select([
-        'error_groups.id',
-        'error_groups.organization_id',
-        'error_groups.project_id',
-        'projects.name as project_name',
-        'error_groups.fingerprint',
-        'error_groups.exception_type',
-        'error_groups.exception_message',
-        'error_groups.language',
-        'error_groups.occurrence_count',
-        'error_groups.first_seen',
-        'error_groups.last_seen',
-        'error_groups.status',
-        'error_groups.resolved_at',
-        'error_groups.resolved_by',
-        'error_groups.affected_services',
-        'error_groups.sample_log_id',
-        'error_groups.created_at',
-        'error_groups.updated_at',
-      ])
+    let query = errorGroupBaseQuery(this.db)
       .where('error_groups.organization_id', '=', params.organizationId)
       .where('error_groups.status', '=', 'open')
       .orderBy('error_groups.occurrence_count', 'desc')
@@ -620,27 +623,7 @@ export class ExceptionService {
     }
 
     const results = await query.execute();
-
-    return results.map((r) => ({
-      id: r.id,
-      organizationId: r.organization_id,
-      projectId: r.project_id,
-      projectName: r.project_name,
-      fingerprint: r.fingerprint,
-      exceptionType: r.exception_type,
-      exceptionMessage: r.exception_message,
-      language: r.language as ExceptionLanguage,
-      occurrenceCount: r.occurrence_count,
-      firstSeen: r.first_seen,
-      lastSeen: r.last_seen,
-      status: r.status as ErrorGroupStatus,
-      resolvedAt: r.resolved_at,
-      resolvedBy: r.resolved_by,
-      affectedServices: r.affected_services || [],
-      sampleLogId: r.sample_log_id,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    }));
+    return results.map(mapErrorGroupRow);
   }
 
   /**
@@ -681,33 +664,14 @@ export class ExceptionService {
       return { logs: [], total: params.occurrenceCount };
     }
 
-    // Step 2: Fetch logs via reservoir. getByIds is project-scoped, so we
-    // group the requested ids by project and issue one call per project to
-    // handle error groups that span projects (project_id is nullable per
-    // exception row).
-    const idsByProject = new Map<string, string[]>();
-    for (const e of exceptions) {
-      const pid = e.project_id ?? '';
-      if (!pid) continue; // skip rows with no project — nothing to fetch
-      const list = idsByProject.get(pid);
-      if (list) list.push(e.log_id);
-      else idsByProject.set(pid, [e.log_id]);
-    }
+    // Step 2: Fetch logs via reservoir, one call per project (getByIds is
+    // project scoped and project_id is nullable per exception row).
+    const logMap = await fetchLogsByProject(exceptions);
 
-    const storedLogs = (
-      await Promise.all(
-        Array.from(idsByProject.entries()).map(([pid, ids]) =>
-          reservoir.getByIds({ ids, projectId: pid })
-        )
-      )
-    ).flat();
-
-    // Build lookup map and return in the same order
-    const logMap = new Map(storedLogs.map((l: { id: string; time: Date; service: string; message: string; traceId?: string; metadata?: any }) => [l.id, l]));
     const logs = logIds
-      .map(id => logMap.get(id))
-      .filter((l): l is { id: string; time: Date; service: string; message: string; traceId?: string; metadata?: any } => Boolean(l))
-      .map(l => ({
+      .map((id) => logMap.get(id))
+      .filter((l): l is StoredLogRecord => Boolean(l))
+      .map((l) => ({
         id: l.id,
         time: l.time,
         service: l.service,

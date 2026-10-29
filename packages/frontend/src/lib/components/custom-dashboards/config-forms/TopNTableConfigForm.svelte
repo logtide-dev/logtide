@@ -2,6 +2,13 @@
   import type { TopNTableConfig, LogLevelKey } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+    createMetadataKeyOptions,
+  } from '../pickers/options-state.svelte';
   import {
     Select,
     SelectContent,
@@ -17,6 +24,17 @@
   }
 
   let { config, onChange }: Props = $props();
+
+  const services = createServiceOptions('logs', () => config.projectId);
+  const metadataKeys = createMetadataKeyOptions(() => config.projectId);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('logs', projectId, config.service))) {
+      onChange({ ...config, projectId, service: null });
+    }
+  }
 
   const dimensionOptions: Array<{ value: TopNTableConfig['dimension']; label: string }> = [
     { value: 'service', label: 'By service' },
@@ -56,6 +74,15 @@
   </div>
 
   <div class="space-y-1.5">
+    <Label for="topn-project">Project</Label>
+    <ProjectSelect
+      id="topn-project"
+      value={config.projectId}
+      onChange={handleProjectChange}
+    />
+  </div>
+
+  <div class="space-y-1.5">
     <Label>Group by</Label>
     <Select
       type="single"
@@ -76,16 +103,13 @@
   {#if config.dimension === 'metadata'}
     <div class="space-y-1.5">
       <Label for="topn-metadata-field">Metadata field</Label>
-      <Input
+      <SuggestInput
         id="topn-metadata-field"
-        type="text"
         placeholder="geo_place"
-        maxlength={64}
         value={config.metadataField ?? ''}
-        oninput={(e) => {
-          const val = (e.currentTarget as HTMLInputElement).value;
-          update('metadataField', val.length > 0 ? val : null);
-        }}
+        options={metadataKeys.list}
+        loading={metadataKeys.loading}
+        onChange={(v) => update('metadataField', v.length > 0 ? v.slice(0, 64) : null)}
       />
       <p class="text-xs text-muted-foreground">
         Flat metadata key, e.g. geo_place or upstream_geo_city
@@ -114,15 +138,13 @@
 
     <div class="space-y-1.5">
       <Label for="topn-service">Service (optional)</Label>
-      <Input
+      <SuggestInput
         id="topn-service"
-        type="text"
         placeholder="Leave empty for all services"
         value={config.service ?? ''}
-        oninput={(e) => {
-          const val = (e.currentTarget as HTMLInputElement).value;
-          update('service', val.length > 0 ? val : null);
-        }}
+        options={services.list}
+        loading={services.loading}
+        onChange={(v) => update('service', v.length > 0 ? v : null)}
       />
     </div>
   {/if}

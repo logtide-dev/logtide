@@ -41,7 +41,7 @@ test.describe('Metadata Filtering Journey', () => {
       localStorage.setItem('currentOrganizationId', orgId);
     }, organizationId);
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search?projectId=${projectId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs?projectId=${projectId}`);
     await page.waitForLoadState('load');
     await page.waitForSelector('text=prod boom', { timeout: 30000 });
   });
@@ -53,41 +53,38 @@ test.describe('Metadata Filtering Journey', () => {
   });
 
   test('2. Metadata filter by environment=production shows only prod log', async ({ page }) => {
-    // Metadata controls now live inside the "Metadata" pill popover.
-    await page.getByTestId('filter-pill-metadata').click();
-    await page.getByTestId('metadata-filter-add').click();
-
-    await page.getByTestId('metadata-filter-key').fill('environment');
-    await page.getByTestId('metadata-filter-op').selectOption('equals');
-    await page.getByTestId('metadata-filter-value').fill('production');
-
-    await page.getByTestId('metadata-filter-apply').click();
+    // Metadata keys are plain field clauses in the log query
+    const query = page.getByRole('combobox', { name: 'Log query' });
+    await query.fill('environment:production');
+    await query.press('Enter');
 
     await expect(page.getByText('prod boom')).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('dev boom')).not.toBeVisible();
     await expect(page.getByText('no env boom')).not.toBeVisible();
+    await expect(page).toHaveURL(/q=environment%3Aproduction/);
   });
 
   test('3. Clearing metadata filters restores all logs', async ({ page }) => {
-    await page.getByTestId('filter-pill-metadata').click();
-    await page.getByTestId('metadata-filter-add').click();
-    await page.getByTestId('metadata-filter-key').fill('environment');
-    await page.getByTestId('metadata-filter-op').selectOption('equals');
-    await page.getByTestId('metadata-filter-value').fill('production');
-    await page.getByTestId('metadata-filter-apply').click();
-
+    const query = page.getByRole('combobox', { name: 'Log query' });
+    await query.fill('environment:production');
+    await query.press('Enter');
     await expect(page.getByText('dev boom')).not.toBeVisible({ timeout: 10000 });
 
-    // Apply does not close the popover, so the Clear button is still reachable.
-    // Guard: if the popover has been dismissed (e.g. by an outside click), re-open it.
-    const clearBtn = page.getByTestId('metadata-filter-clear-all');
-    if (!(await clearBtn.isVisible().catch(() => false))) {
-      await page.getByTestId('filter-pill-metadata').click();
-    }
-    await clearBtn.click();
+    await query.fill('');
+    await query.press('Enter');
 
     await expect(page.getByText('prod boom')).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('dev boom')).toBeVisible();
     await expect(page.getByText('no env boom')).toBeVisible();
+  });
+
+  test('4. A negated metadata clause also keeps logs without the key', async ({ page }) => {
+    const query = page.getByRole('combobox', { name: 'Log query' });
+    await query.fill('-environment:production');
+    await query.press('Enter');
+
+    await expect(page.getByText('dev boom')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('no env boom')).toBeVisible();
+    await expect(page.getByText('prod boom')).not.toBeVisible();
   });
 });
