@@ -83,14 +83,14 @@ test.describe('Legacy route redirects', () => {
 
 		test('an old project sessions link lands on Sessions scoped to the project', async ({ page }) => {
 			await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/sessions?range=7d`);
-			await expect(page).toHaveURL(new RegExp(`/dashboard/sessions\?.*project=${projectId}`));
+			await expect(page).toHaveURL(new RegExp(`/dashboard/sessions\\?.*project=${projectId}`));
 			await expect(page).toHaveURL(/range=7d/);
 			await expect(page.getByRole('heading', { name: 'Sessions', level: 1 })).toBeVisible({ timeout: 20000 });
 		});
 
 		test('an old project performance link lands on Web vitals scoped to the project', async ({ page }) => {
 			await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/performance?range=7d`);
-			await expect(page).toHaveURL(new RegExp(`/dashboard/web-vitals\?.*project=${projectId}`));
+			await expect(page).toHaveURL(new RegExp(`/dashboard/web-vitals\\?.*project=${projectId}`));
 			await expect(page).toHaveURL(/range=7d/);
 			await expect(page.getByRole('heading', { name: 'Web vitals', level: 1 })).toBeVisible({ timeout: 20000 });
 		});
