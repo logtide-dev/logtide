@@ -10,7 +10,8 @@
   import DataTable from '$lib/components/app/DataTable.svelte';
   import type { DataTableColumn, DataTableSort } from '$lib/components/app/data-table';
   import Sparkline from '$lib/components/app/Sparkline.svelte';
-  import ProjectHealthPill, { describeHealth } from './ProjectHealthPill.svelte';
+  import ProjectHealthPill from './ProjectHealthPill.svelte';
+import { describeHealth } from './health-pill';
   import { buttonVariants } from '$lib/components/ui/button';
   import { writeScopeToUrl } from '$lib/stores/scope-url';
   import { formatRelative } from '$lib/utils/datetime';

@@ -4,7 +4,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import { toastStore } from '$lib/stores/toast';
   import { copyToClipboard } from '$lib/utils/clipboard';
-  import { APP_VERSION } from '$lib/components/Footer.svelte';
+  import { APP_VERSION } from '$lib/app-version';
   import { buildErrorDetails } from './error-details';
 
   interface Props {

@@ -13,7 +13,7 @@ vi.mock('$lib/stores/toast', () => ({
 }));
 
 import DashboardErrorState from './DashboardErrorState.svelte';
-import { APP_VERSION } from '$lib/components/Footer.svelte';
+import { APP_VERSION } from '$lib/app-version';
 import { page } from '$app/state';
 
 const writeText = vi.fn();

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
-import ProjectHealthPill, { describeHealth } from './ProjectHealthPill.svelte';
+import ProjectHealthPill from './ProjectHealthPill.svelte';
+import { describeHealth } from './health-pill';
 
 const issue = (severity: 'critical' | 'warning', muted = false) => ({
   checkKey: 'silent' as const,

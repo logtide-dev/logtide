@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
-import Footer, { APP_VERSION } from './Footer.svelte';
+import Footer from './Footer.svelte';
+import { APP_VERSION } from '$lib/app-version';
 
 describe('Footer', () => {
   it('renders the version from APP_VERSION', () => {

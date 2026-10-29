@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
-import ProjectSummaryTiles, { formatLatency, formatPct } from './ProjectSummaryTiles.svelte';
+import ProjectSummaryTiles from './ProjectSummaryTiles.svelte';
+import { formatLatency, formatPct } from './summary-format';
 
 const summary = {
   logs24h: 12345,

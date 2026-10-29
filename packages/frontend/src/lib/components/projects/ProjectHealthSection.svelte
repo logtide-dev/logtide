@@ -1,6 +1,6 @@
 <script lang="ts" module>
   import type { ProjectHealthCheckKey, ProjectHealthIssue } from '@logtide/shared';
-  import { scopedHref } from './ProjectSummaryTiles.svelte';
+  import { scopedHref } from './summary-format';
 
   export interface IssueLink {
     label: string;

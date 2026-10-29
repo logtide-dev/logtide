@@ -1,9 +1,6 @@
-<script lang="ts" module>
-  /** The one place to bump the displayed app version. */
-  export const APP_VERSION = "v1.6.0";
-</script>
 
 <script lang="ts">
+  import { APP_VERSION } from "$lib/app-version";
   import Github from "@lucide/svelte/icons/github";
 
   const version = APP_VERSION;
