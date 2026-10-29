@@ -306,7 +306,7 @@ jobs:
   # ====================
   e2e-test:
     name: E2E Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # playwright 1.57 has no chromium build for ubuntu 26.04
     needs: [backend-test, typecheck]
 
     steps:
