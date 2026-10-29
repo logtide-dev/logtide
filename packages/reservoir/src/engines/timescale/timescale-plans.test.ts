@@ -186,6 +186,17 @@ class PlanHarness {
     const explainClient = new pg.Client(clientConfig);
     explainClient.on('error', () => undefined);
     await explainClient.connect();
+    // The seed is older than the engine's 7 day compression policy, so its
+    // background job could compress chunks mid-run and change every plan.
+    // Drop the policies and undo anything it already compressed.
+    const jobs = await explainClient.query(
+      `SELECT hypertable_name FROM timescaledb_information.jobs WHERE proc_name = 'policy_compression' AND hypertable_schema = $1`,
+      [SCHEMA],
+    );
+    for (const { hypertable_name: table } of jobs.rows as { hypertable_name: string }[]) {
+      await explainClient.query(`SELECT remove_compression_policy('${SCHEMA}.${table}', if_exists => TRUE)`);
+      await explainClient.query(`SELECT decompress_chunk(c, if_compressed => TRUE) FROM show_chunks('${SCHEMA}.${table}') c`);
+    }
     // VACUUM also merges the GIN pending lists the bulk seed filled: until
     // then the planner prices the text indexes by their unsorted pending
     // pages, a state autovacuum ends within seconds on a real server.
