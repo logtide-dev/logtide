@@ -683,10 +683,26 @@ export class OrganizationsService {
       throw new Error('Cannot leave as owner. Transfer ownership or delete the organization.');
     }
 
-    await db
+    // The role check is repeated in the DELETE: a transfer that promotes this
+    // member while we wait on the row lock makes the WHERE fail on recheck,
+    // instead of deleting the new owner and leaving the org ownerless.
+    const deleted = await db
       .deleteFrom('organization_members')
       .where('id', '=', member.id)
-      .execute();
+      .where('role', '!=', 'owner')
+      .executeTakeFirst();
+
+    if (Number(deleted.numDeletedRows) !== 1) {
+      const still = await db
+        .selectFrom('organization_members')
+        .select('role')
+        .where('id', '=', member.id)
+        .executeTakeFirst();
+      if (still?.role === 'owner') {
+        throw new Error('Cannot leave as owner. Transfer ownership or delete the organization.');
+      }
+      throw new Error('You are not a member of this organization');
+    }
   }
 
   /**

@@ -134,6 +134,27 @@ describe('transferOwnership hardening (AU5/SR-2, SR-7, SR-8)', () => {
     }
   });
 
+  it('SR-7: a leave blocked behind a promotion to owner refuses instead of deleting the owner', async () => {
+    const { owner, org, target } = await setup();
+    let leave: Promise<unknown> | undefined;
+    // Same interleaving as a transfer that commits while the leave waits on the
+    // member row lock: the leave already read role 'member' before the promotion.
+    await db.transaction().execute(async (trx) => {
+      await trx.selectFrom('organization_members').select('id').where('organization_id', '=', org.id).where('user_id', '=', target.id).forUpdate().execute();
+      leave = service.leaveOrganization(org.id, target.id).then(
+        () => 'left',
+        (err: Error) => err.message,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await trx.updateTable('organizations').set({ owner_id: target.id }).where('id', '=', org.id).execute();
+      await trx.updateTable('organization_members').set({ role: 'owner' }).where('organization_id', '=', org.id).where('user_id', '=', target.id).execute();
+      await trx.updateTable('organization_members').set({ role: 'admin' }).where('organization_id', '=', org.id).where('user_id', '=', owner.id).execute();
+    });
+    expect(await leave).toMatch(/Cannot leave as owner/);
+    const ownerRows = await db.selectFrom('organization_members').select('user_id').where('organization_id', '=', org.id).where('role', '=', 'owner').execute();
+    expect(ownerRows.map((r) => r.user_id)).toEqual([target.id]);
+  });
+
   it('SR-8: a notification insert failure does not lose the audit row or the success', async () => {
     const { owner, org, target } = await setup(250);
     const session = await createTestSession(owner.id);
