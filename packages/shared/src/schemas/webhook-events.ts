@@ -2,9 +2,12 @@ import { z } from 'zod';
 
 export const webhookEventTypeSchema = z.enum([
   'alert.triggered',
+  'alert.resolved',
   'incident.created',
   'error.detected',
   'monitor.status_changed',
+  'project.health.opened',
+  'project.health.resolved',
   'channel.test',
   // Generic notification deliveries through notification channels.
   // Type-specific events (alert.triggered, etc.) use their own types via the queue jobs.
@@ -30,8 +33,37 @@ export const alertTriggeredDataSchema = z
       })
       .nullable(),
     link: z.string(),
+    // 1.6 alert lifecycle fields. Optional so pre-1.6 payloads, Sigma
+    // detections and replays of old deliveries stay valid.
+    alert_rule_id: z.string().uuid().optional(),
+    renotify: z.boolean().optional(),
+    firing_since: z.string().datetime().optional(),
+    incident_id: z.string().uuid().nullable().optional(),
   })
   .passthrough();
+
+/**
+ * A firing alert rule returned to OK. Sent only when the firing notification
+ * was sent; snoozing does not suppress it. time_window is in minutes.
+ */
+export const alertResolvedDataSchema = z
+  .object({
+    alert_rule_id: z.string().uuid(),
+    alert_name: z.string(),
+    alert_type: z.enum(['threshold', 'rate_of_change']),
+    title: z.string(),
+    message: z.string(),
+    log_count: z.number(),
+    threshold: z.number(),
+    time_window: z.number(),
+    firing_since: z.string().datetime(),
+    resolved_at: z.string().datetime(),
+    duration_seconds: z.number().int().min(0),
+    incident_id: z.string().uuid().nullable(),
+    link: z.string(),
+  })
+  .passthrough();
+export type AlertResolvedData = z.infer<typeof alertResolvedDataSchema>;
 
 export const errorDetectedDataSchema = z
   .object({
@@ -80,6 +112,23 @@ export const incidentCreatedDataSchema = z
   })
   .passthrough();
 
+/** Project health issue opened or resolved. resolved_at is null while open. */
+export const projectHealthDataSchema = z
+  .object({
+    project_id: z.string().uuid(),
+    project_name: z.string(),
+    check_key: z.string(),
+    severity: z.enum(['critical', 'warning']),
+    title: z.string(),
+    message: z.string(),
+    opened_at: z.string().datetime(),
+    resolved_at: z.string().datetime().nullable(),
+    details: z.record(z.unknown()),
+    link: z.string(),
+  })
+  .passthrough();
+export type ProjectHealthData = z.infer<typeof projectHealthDataSchema>;
+
 export const channelNotificationDataSchema = z
   .object({
     title: z.string(),
@@ -104,9 +153,12 @@ export type WebhookEnvelope = z.infer<typeof webhookEnvelopeSchema>;
 
 export const WEBHOOK_EVENT_DATA_SCHEMAS = {
   'alert.triggered': alertTriggeredDataSchema,
+  'alert.resolved': alertResolvedDataSchema,
   'incident.created': incidentCreatedDataSchema,
   'error.detected': errorDetectedDataSchema,
   'monitor.status_changed': monitorStatusChangedDataSchema,
+  'project.health.opened': projectHealthDataSchema,
+  'project.health.resolved': projectHealthDataSchema,
   'channel.test': channelNotificationDataSchema,
   'channel.notification': channelNotificationDataSchema,
 } as const;

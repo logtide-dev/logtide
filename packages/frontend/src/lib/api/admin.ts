@@ -156,6 +156,8 @@ export interface UserBasic {
     disabled: boolean;
     created_at: string;
     last_login: string | null;
+    /** Number of organizations the user belongs to (list endpoint only). */
+    orgCount?: number;
 }
 
 export interface UserDetails extends UserBasic {
@@ -187,6 +189,9 @@ export interface OrganizationBasic {
     updated_at: string;
     memberCount: number;
     projectCount: number;
+    /** Earliest owner membership, null when the organization has no owner. */
+    ownerId?: string | null;
+    ownerEmail?: string | null;
 }
 
 export interface OrganizationDetails {
@@ -240,9 +245,16 @@ export interface ProjectBasic {
     description: string | null;
     organization_id: string;
     organization_name: string;
+    organizationId?: string;
     created_at: string;
     updated_at: string;
+    /** Set when the project is soft-deleted (only returned with deleted=include|only). */
+    deletedAt?: string | null;
+    alertRulesEnabled?: number;
+    alertRulesTotal?: number;
+    /** Logs in the last 30 days (same value as logs30d, historical name). */
     logsCount: number;
+    logs30d?: number;
     apiKeysCount: number;
     alertRulesCount: number;
 }
@@ -255,7 +267,12 @@ export interface ProjectDetails {
     organization_name: string;
     created_at: string;
     updated_at: string;
+    /** Soft-delete time; the project is in the trash when set. */
+    deletedAt?: string | null;
+    /** Logs in the last `logsWindowDays` days (same value as logs30d). */
     logsCount: number;
+    logs30d?: number;
+    logsWindowDays?: number;
     apiKeys: Array<{
         id: string;
         name: string;
@@ -287,6 +304,59 @@ export interface ProjectsListResponse {
     page: number;
     limit: number;
     totalPages: number;
+}
+
+export interface ProjectsSummary {
+    totalProjects: number;
+    activeApiKeys: number;
+    alertRulesTotal: number;
+    alertRulesEnabled: number;
+    logs30d: number;
+    logsWindowDays: number;
+}
+
+export type SortOrder = 'asc' | 'desc';
+
+export interface ListOptions<S extends string = string> {
+    page?: number;
+    limit?: number;
+    search?: string;
+    sort?: S;
+    order?: SortOrder;
+}
+
+export type UserSort = 'email' | 'name' | 'created_at' | 'last_login';
+export type OrganizationSort = 'name' | 'created_at' | 'members' | 'projects';
+export type ProjectSort = 'name' | 'created_at' | 'organization';
+
+export interface UsersListOptions extends ListOptions<UserSort> {
+    role?: 'admin' | 'user';
+    status?: 'active' | 'disabled';
+}
+export type OrganizationsListOptions = ListOptions<OrganizationSort>;
+export interface ProjectsListOptions extends ListOptions<ProjectSort> {
+    organizationId?: string;
+    deleted?: 'exclude' | 'include' | 'only';
+}
+
+/** Builds the query string; accepts the legacy positional (page, limit, search) form too. */
+function listQuery(
+    first: number | object | undefined,
+    limit?: number,
+    search?: string,
+): string {
+    const opts: Record<string, unknown> =
+        typeof first === 'object' && first !== null ? (first as Record<string, unknown>) : { page: first, limit, search };
+    const params = new URLSearchParams({
+        page: String(opts.page ?? 1),
+        limit: String(opts.limit ?? 50),
+    });
+    for (const [key, value] of Object.entries(opts)) {
+        if (key === 'page' || key === 'limit') continue;
+        if (value === undefined || value === null || value === '') continue;
+        params.append(key, String(value));
+    }
+    return params.toString();
 }
 
 // Platform Timeline
@@ -415,15 +485,65 @@ export interface AuthSettings {
     'auth.default_user_id': string | null;
 }
 
-class AdminAPI {
-    private async fetch<T>(endpoint: string): Promise<T> {
-        if (!browser) return {} as T;
+/** Default and explicit-override view of an org's entitlements. */
+export interface EntitlementOverride {
+    enabled: boolean | null;
+    limitValue: number | null;
+}
 
+export interface EntitlementsResponse {
+    entitlements: EntitlementMap;
+    defaults?: EntitlementMap;
+    overrides?: Record<string, EntitlementOverride>;
+}
+
+/**
+ * Read the error text from a failed response. The backend sends `{ error }`
+ * (sometimes `{ message }`); the body may also be empty or not JSON at all.
+ */
+export async function readApiError(response: Response, fallback: string): Promise<string> {
+    let text = '';
+    try {
+        text = await response.text();
+    } catch {
+        return fallback;
+    }
+    if (!text) return fallback;
+    try {
+        const body = JSON.parse(text) as { error?: unknown; message?: unknown };
+        const msg = body?.error ?? body?.message;
+        if (typeof msg === 'string' && msg.trim()) return msg;
+        return fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+/** Parse a success body, tolerating 204 / empty / non-JSON responses. */
+async function readJson<T>(response: Response): Promise<T> {
+    const text = await response.text().catch(() => '');
+    if (!text) return {} as T;
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        return {} as T;
+    }
+}
+
+export class AdminAPI {
+    private token(): string {
         const token = get(authStore).token;
         if (!token) {
             goto('/login');
             throw new Error('No token found');
         }
+        return token;
+    }
+
+    private async fetch<T>(endpoint: string): Promise<T> {
+        if (!browser) return {} as T;
+
+        const token = this.token();
 
         const response = await fetch(`${getApiBaseUrl()}/admin${endpoint}`, {
             headers: {
@@ -442,11 +562,34 @@ class AdminAPI {
         }
 
         if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.message || 'API request failed');
+            throw new Error(await readApiError(response, 'API request failed'));
         }
 
-        return response.json();
+        return readJson<T>(response);
+    }
+
+    /** Mutation helper: surfaces the backend error text on failure. */
+    private async send<T>(method: string, endpoint: string, body: unknown, fallback: string): Promise<T> {
+        const token = this.token();
+        const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+        if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+        const response = await fetch(`${getApiBaseUrl()}/admin${endpoint}`, {
+            method,
+            headers,
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+
+        if (response.status === 401) {
+            goto('/login');
+            throw new Error('Unauthorized');
+        }
+
+        if (!response.ok) {
+            throw new Error(await readApiError(response, fallback));
+        }
+
+        return readJson<T>(response);
     }
 
     async getSystemStats(): Promise<SystemStats> {
@@ -507,15 +650,12 @@ class AdminAPI {
     }
 
     // User Management
-    async getUsers(page: number = 1, limit: number = 50, search?: string): Promise<UsersListResponse> {
-        const params = new URLSearchParams({
-            page: page.toString(),
-            limit: limit.toString(),
-        });
-        if (search) {
-            params.append('search', search);
-        }
-        return this.fetch<UsersListResponse>(`/users?${params.toString()}`);
+    async getUsers(
+        pageOrOptions: number | UsersListOptions = {},
+        limit?: number,
+        search?: string,
+    ): Promise<UsersListResponse> {
+        return this.fetch<UsersListResponse>(`/users?${listQuery(pageOrOptions, limit, search)}`);
     }
 
     async getUserDetails(userId: string): Promise<UserDetails> {
@@ -528,218 +668,77 @@ class AdminAPI {
         password: string;
         is_admin?: boolean;
     }): Promise<{ message: string; user: UserBasic }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/users`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(input),
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || 'Failed to create user');
-        }
-
-        return response.json();
+        return this.send('POST', '/users', input, 'Failed to create user');
     }
 
     async updateUserStatus(userId: string, disabled: boolean): Promise<{ message: string; user: UserBasic }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/users/${userId}/status`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ disabled }),
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to update user status');
-        }
-
-        return response.json();
+        return this.send('PATCH', `/users/${userId}/status`, { disabled }, 'Failed to update user status');
     }
 
     async updateUserRole(userId: string, isAdmin: boolean): Promise<{ message: string; user: UserBasic }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/users/${userId}/role`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ is_admin: isAdmin }),
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || 'Failed to update user role');
-        }
-
-        return response.json();
+        return this.send('PATCH', `/users/${userId}/role`, { is_admin: isAdmin }, 'Failed to update user role');
     }
 
     async resetUserPassword(userId: string, newPassword: string): Promise<{ message: string; user: UserBasic }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/users/${userId}/reset-password`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ newPassword }),
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to reset password');
-        }
-
-        return response.json();
+        return this.send('POST', `/users/${userId}/reset-password`, { newPassword }, 'Failed to reset password');
     }
 
     // Organization Management
-    async getOrganizations(page: number = 1, limit: number = 50, search?: string): Promise<OrganizationsListResponse> {
-        const params = new URLSearchParams({
-            page: page.toString(),
-            limit: limit.toString(),
-        });
-        if (search) {
-            params.append('search', search);
-        }
-        return this.fetch<OrganizationsListResponse>(`/organizations?${params.toString()}`);
+    async getOrganizations(
+        pageOrOptions: number | OrganizationsListOptions = {},
+        limit?: number,
+        search?: string,
+    ): Promise<OrganizationsListResponse> {
+        return this.fetch<OrganizationsListResponse>(`/organizations?${listQuery(pageOrOptions, limit, search)}`);
     }
 
     async getOrganizationDetails(orgId: string): Promise<OrganizationDetails> {
         return this.fetch<OrganizationDetails>(`/organizations/${orgId}`);
     }
 
-    async getOrganizationEntitlements(orgId: string): Promise<{ entitlements: EntitlementMap }> {
-        return this.fetch<{ entitlements: EntitlementMap }>(`/organizations/${orgId}/entitlements`);
+    async getOrganizationEntitlements(orgId: string): Promise<EntitlementsResponse> {
+        return this.fetch<EntitlementsResponse>(`/organizations/${orgId}/entitlements`);
     }
 
     async deleteOrganization(orgId: string): Promise<{ message: string }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/organizations/${orgId}`, {
-            method: 'DELETE',
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to delete organization');
-        }
-
-        return response.json();
+        return this.send('DELETE', `/organizations/${orgId}`, undefined, 'Failed to delete organization');
     }
 
     async updateOrganizationRetention(
         orgId: string,
         opts: { retentionDays?: number; auditRetentionDays?: number | null }
     ): Promise<{ message: string; success: boolean; retentionDays: number }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/organizations/${orgId}/retention`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(opts),
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || 'Failed to update retention policy');
-        }
-
-        return response.json();
+        return this.send('PUT', `/organizations/${orgId}/retention`, opts, 'Failed to update retention policy');
     }
 
     async updateOrganizationEntitlements(
         orgId: string,
         entitlements: EntitlementUpdate[]
     ): Promise<{ message: string; updated: number }> {
-        const auth = get(authStore);
-        const token = auth.token;
+        return this.send('PUT', `/organizations/${orgId}/entitlements`, { entitlements }, 'Failed to update entitlements');
+    }
 
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/organizations/${orgId}/entitlements`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ entitlements }),
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || 'Failed to update entitlements');
-        }
-
-        return response.json();
+    /** Remove an explicit override so the org inherits the default again. */
+    async resetOrganizationEntitlement(orgId: string, capability: string): Promise<{ removed: boolean }> {
+        return this.send(
+            'DELETE',
+            `/organizations/${orgId}/entitlements/${encodeURIComponent(capability)}`,
+            undefined,
+            'Failed to reset entitlement'
+        );
     }
 
     // Project Management
-    async getProjects(page: number = 1, limit: number = 50, search?: string): Promise<ProjectsListResponse> {
-        const params = new URLSearchParams({
-            page: page.toString(),
-            limit: limit.toString(),
-        });
-        if (search) {
-            params.append('search', search);
-        }
-        return this.fetch<ProjectsListResponse>(`/projects?${params.toString()}`);
+    async getProjects(
+        pageOrOptions: number | ProjectsListOptions = {},
+        limit?: number,
+        search?: string,
+    ): Promise<ProjectsListResponse> {
+        return this.fetch<ProjectsListResponse>(`/projects?${listQuery(pageOrOptions, limit, search)}`);
+    }
+
+    async getProjectsSummary(): Promise<ProjectsSummary> {
+        return this.fetch<ProjectsSummary>('/projects/summary');
     }
 
     async getProjectDetails(projectId: string): Promise<ProjectDetails> {
@@ -747,26 +746,7 @@ class AdminAPI {
     }
 
     async deleteProject(projectId: string): Promise<{ message: string }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/projects/${projectId}`, {
-            method: 'DELETE',
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to delete project');
-        }
-
-        return response.json();
+        return this.send('DELETE', `/projects/${projectId}`, undefined, 'Failed to delete project');
     }
 
     // System Settings
@@ -780,29 +760,7 @@ class AdminAPI {
     }
 
     async updateSettings(settings: Record<string, unknown>): Promise<{ success: boolean; settings: Record<string, unknown> }> {
-        const auth = get(authStore);
-        const token = auth.token;
-
-        if (!token) {
-            goto('/login');
-            throw new Error('No token found');
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/admin/settings`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(settings),
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || 'Failed to update settings');
-        }
-
-        return response.json();
+        return this.send('PATCH', '/settings', settings, 'Failed to update settings');
     }
 }
 

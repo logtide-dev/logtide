@@ -1,47 +1,31 @@
 <script lang="ts">
   import { browser } from "$app/environment";
   import { goto } from "$app/navigation";
-  import {
-    organizationStore,
-    currentOrganization,
-  } from "$lib/stores/organization";
+  import { page } from "$app/state";
+  import { currentOrganization } from "$lib/stores/organization";
+  import { orgProjectsStore } from "$lib/stores/org-projects";
   import { toastStore } from "$lib/stores/toast";
   import { projectsAPI } from "$lib/api/projects";
-  import { organizationsAPI } from "$lib/api/organizations";
-  import type { Project, OrganizationWithRole } from "@logtide/shared";
+  import type { Project } from "@logtide/shared";
   import Button from "$lib/components/ui/button/button.svelte";
-  import { buttonVariants } from "$lib/components/ui/button";
   import Input from "$lib/components/ui/input/input.svelte";
-  import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-  } from "$lib/components/ui/card";
-  import { Alert, AlertDescription } from "$lib/components/ui/alert";
-  import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger,
-  } from "$lib/components/ui/alert-dialog";
+  import { buttonVariants } from "$lib/components/ui/button";
+  import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "$lib/components/ui/card";
   import Spinner from "$lib/components/Spinner.svelte";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import CreateOrganizationDialog from "$lib/components/CreateOrganizationDialog.svelte";
+  import PageHeader from "$lib/components/app/PageHeader.svelte";
+  import EmptyState from "$lib/components/app/EmptyState.svelte";
   import CreateProjectDialog from "$lib/components/CreateProjectDialog.svelte";
-  import FolderOpen from "@lucide/svelte/icons/folder-open";
+  import ProjectsTable, { type HealthFilter } from "$lib/components/projects/ProjectsTable.svelte";
+  import QuotaNearLimitBanner from "$lib/components/projects/QuotaNearLimitBanner.svelte";
+  import { projectHealthStore } from "$lib/stores/project-health";
+  import type { ProjectStats } from "$lib/api/projects";
+  import { formatDateShort } from "$lib/utils/datetime";
   import Plus from "@lucide/svelte/icons/plus";
-  import SearchIcon from "@lucide/svelte/icons/search";
-  import Trash2 from "@lucide/svelte/icons/trash-2";
-  import FileText from "@lucide/svelte/icons/file-text";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
   import { layoutStore } from "$lib/stores/layout";
+
+  // Deleted projects are purged this many days after deletion.
+  const HARD_DELETE_GRACE_DAYS = 30;
 
   let allProjects = $state<Project[]>([]);
   let maxWidthClass = $state("max-w-7xl");
@@ -65,50 +49,48 @@
   let error = $state("");
   let lastLoadedOrgId = $state<string | null>(null);
 
-  // Create project dialog
   let showCreateProjectDialog = $state(false);
-
-  // Create organization dialog
-  let showCreateOrgDialog = $state(false);
-  let deletingProjectId = $state<string | null>(null);
   let restoringProjectId = $state<string | null>(null);
 
-  // Search/filter
   let searchQuery = $state("");
+  let healthFilter = $state<HealthFilter>("all");
 
-  // Split into active and deleted
+  // Per-project numbers come from one batched call and never block the list:
+  // null means "not loaded / failed" and the cells render a dash.
+  let stats = $state<Record<string, ProjectStats> | null>(null);
+
   let activeProjects = $derived(allProjects.filter((p) => !p.deletedAt));
   let deletedProjects = $derived(allProjects.filter((p) => !!p.deletedAt));
 
-  let filteredActive = $derived(() => {
-    if (!searchQuery.trim()) return activeProjects;
-    const q = searchQuery.toLowerCase();
-    return activeProjects.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        (p.description && p.description.toLowerCase().includes(q)),
+  function matches(p: Project, q: string): boolean {
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (!!p.description && p.description.toLowerCase().includes(q))
     );
-  });
-
-  let filteredDeleted = $derived(() => {
-    if (!searchQuery.trim()) return deletedProjects;
-    const q = searchQuery.toLowerCase();
-    return deletedProjects.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        (p.description && p.description.toLowerCase().includes(q)),
-    );
-  });
-
-  function formatDate(dateStr: string | Date): string {
-    const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
   }
 
-  // Reload projects when organization changes
+  let filteredActive = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return q ? activeProjects.filter((p) => matches(p, q)) : activeProjects;
+  });
+
+  let filteredDeleted = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return q ? deletedProjects.filter((p) => matches(p, q)) : deletedProjects;
+  });
+
+  // The create=1 hint (set after creating an organization) opens the dialog once.
+  let createHintHandled = false;
+  $effect(() => {
+    if (!browser || createHintHandled) return;
+    if (page.url.searchParams.get("create") === "1") {
+      createHintHandled = true;
+      showCreateProjectDialog = true;
+      goto("/dashboard/projects", { replaceState: true });
+    }
+  });
+
+  // Reload projects (and the last-event data) when the organization changes
   $effect(() => {
     if (!browser || !$currentOrganization) {
       allProjects = [];
@@ -128,6 +110,19 @@
     loading = true;
     error = "";
 
+    // Last event, health and stats never block the table; cells degrade without them.
+    void orgProjectsStore.load(orgId);
+    void projectHealthStore.load(orgId);
+    stats = null;
+    projectsAPI
+      .getStats(orgId)
+      .then((res) => {
+        if ($currentOrganization?.id === orgId) stats = res.projects ?? {};
+      })
+      .catch(() => {
+        if ($currentOrganization?.id === orgId) stats = null;
+      });
+
     try {
       const response = await projectsAPI.getProjects(orgId, { includeDeleted: true });
       allProjects = response.projects;
@@ -140,50 +135,36 @@
     }
   }
 
-  async function handleCreateProject(data: {
-    name: string;
-    description?: string;
-  }) {
+  let storesFresh = $derived($orgProjectsStore.orgId === $currentOrganization?.id);
+  let lastEventAt = $derived(storesFresh ? $orgProjectsStore.lastEventAt : {});
+  let receiving = $derived(storesFresh ? $orgProjectsStore.receiving : new Set<string>());
+  let healthByProject = $derived(
+    $projectHealthStore.orgId === $currentOrganization?.id ? $projectHealthStore.byProject : {},
+  );
+
+  function purgeDate(project: Project): string {
+    const d = new Date(project.deletedAt as Date | string);
+    d.setDate(d.getDate() + HARD_DELETE_GRACE_DAYS);
+    return formatDateShort(d);
+  }
+
+  async function handleCreateProject(data: { name: string; description?: string }) {
     if (!$currentOrganization) {
-      throw new Error("Please select an organization first");
+      throw new Error("Select an organization first");
     }
 
-    const orgId = $currentOrganization.id;
-
     try {
-      await projectsAPI.createProject({
-        organizationId: orgId,
+      const { project } = await projectsAPI.createProject({
+        organizationId: $currentOrganization.id,
         name: data.name,
         description: data.description,
       });
 
-      toastStore.success(`Project "${data.name}" created successfully!`);
-      await loadProjects(orgId);
+      toastStore.success(`Project "${data.name}" created`);
+      goto(`/dashboard/projects/${project.id}/settings#connect`);
     } catch (e) {
-      const errorMsg =
-        e instanceof Error ? e.message : "Failed to create project";
+      const errorMsg = e instanceof Error ? e.message : "Failed to create project";
       throw new Error(errorMsg);
-    }
-  }
-
-  async function deleteProject(id: string) {
-    if (!$currentOrganization) return;
-
-    const orgId = $currentOrganization.id;
-    deletingProjectId = id;
-    error = "";
-
-    try {
-      await projectsAPI.deleteProject(orgId, id);
-      toastStore.success("Project moved to trash. It will be permanently deleted after 30 days.");
-      await loadProjects(orgId);
-    } catch (e) {
-      const errorMsg =
-        e instanceof Error ? e.message : "Failed to delete project";
-      error = errorMsg;
-      toastStore.error(errorMsg);
-    } finally {
-      deletingProjectId = null;
     }
   }
 
@@ -196,11 +177,10 @@
 
     try {
       await projectsAPI.restoreProject(orgId, id);
-      toastStore.success("Project restored successfully.");
+      toastStore.success("Project restored");
       await loadProjects(orgId);
     } catch (e) {
-      const errorMsg =
-        e instanceof Error ? e.message : "Failed to restore project";
+      const errorMsg = e instanceof Error ? e.message : "Failed to restore project";
       error = errorMsg;
       toastStore.error(errorMsg);
     } finally {
@@ -208,24 +188,9 @@
     }
   }
 
-  async function handleCreateOrganization(data: {
-    name: string;
-    description?: string;
-  }) {
-    try {
-      const response = await organizationsAPI.createOrganization(data);
-      const newOrgWithRole: OrganizationWithRole = {
-        ...response.organization,
-        role: "owner",
-      };
-      organizationStore.addOrganization(newOrgWithRole);
-      organizationStore.setCurrentOrganization(newOrgWithRole);
-      toastStore.success(`Organization "${data.name}" created successfully!`);
-    } catch (e) {
-      const errorMsg =
-        e instanceof Error ? e.message : "Failed to create organization";
-      toastStore.error(errorMsg);
-      throw e;
+  function retry() {
+    if ($currentOrganization) {
+      loadProjects($currentOrganization.id);
     }
   }
 </script>
@@ -235,215 +200,131 @@
 </svelte:head>
 
 <div class="container mx-auto {containerPadding} {maxWidthClass}">
-  <div class="space-y-6">
-    <div class="flex items-start justify-between">
-      <div>
-        <h1 class="text-3xl font-bold tracking-tight">Projects</h1>
-        {#if browser}
-          <p class="text-muted-foreground mt-2">
-            {$currentOrganization?.name} • {activeProjects.length}
-            {activeProjects.length === 1 ? "project" : "projects"}
-            {#if deletedProjects.length > 0}
-              • {deletedProjects.length} deleted
-            {/if}
-          </p>
-        {:else}
-          <p class="text-muted-foreground mt-2">Loading...</p>
-        {/if}
-      </div>
-      <Button onclick={() => (showCreateProjectDialog = true)} size="lg">
-        <Plus class="w-5 h-5 mr-2" />
-        New Project
+  <PageHeader
+    title="Projects"
+    description={browser && $currentOrganization
+      ? `${$currentOrganization.name} - ${activeProjects.length} ${activeProjects.length === 1 ? "project" : "projects"}${deletedProjects.length > 0 ? `, ${deletedProjects.length} deleted` : ""}`
+      : undefined}
+  >
+    {#snippet actions()}
+      <Button onclick={() => (showCreateProjectDialog = true)}>
+        <Plus class="w-4 h-4 mr-2" />
+        New project
       </Button>
-    </div>
+    {/snippet}
+  </PageHeader>
 
-    {#if error}
-      <Alert variant="destructive">
-        <AlertDescription>{error}</AlertDescription>
-      </Alert>
+  <div class="space-y-6">
+    {#if $currentOrganization}
+      <QuotaNearLimitBanner organizationId={$currentOrganization.id} role={$currentOrganization.role} />
     {/if}
 
     {#if !loading && allProjects.length > 0}
-      <div class="w-full">
+      <div class="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
         <Input
           type="search"
-          placeholder="Search projects by name or description..."
+          placeholder="Search projects by name or description"
+          aria-label="Search projects"
           bind:value={searchQuery}
+          class="sm:max-w-md"
         />
+        <select
+          aria-label="Filter by health"
+          class="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          bind:value={healthFilter}
+        >
+          <option value="all">All</option>
+          <option value="problems">With problems</option>
+          <option value="inactive">Inactive</option>
+          <option value="no_data">No data</option>
+        </select>
       </div>
     {/if}
 
     {#if loading}
-      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {#each Array(6) as _}
-          <Skeleton class="h-36 rounded-lg" />
-        {/each}
+      <div data-testid="projects-skeleton">
+        <ProjectsTable
+          projects={[]}
+          loading={true}
+          stats={null}
+          health={{}}
+          lastEventAt={{}}
+          receiving={new Set()}
+        />
       </div>
+    {:else if error && allProjects.length === 0}
+      <EmptyState variant="error" title="Could not load projects" description={error}>
+        {#snippet actions()}
+          <Button onclick={retry}>Retry</Button>
+        {/snippet}
+      </EmptyState>
     {:else if activeProjects.length === 0 && deletedProjects.length === 0}
-      <Card class="border-2 border-dashed">
-        <CardContent class="py-16 text-center">
-          <div
-            class="w-16 h-16 mx-auto mb-6 rounded-full bg-primary/10 flex items-center justify-center"
-          >
-            <FolderOpen class="w-8 h-8 text-primary" />
-          </div>
-          <h3 class="text-xl font-semibold mb-2">No projects yet</h3>
-          <p class="text-muted-foreground mb-6 max-w-md mx-auto">
-            Get started by creating your first project to organize and monitor
-            your application logs
-          </p>
-          <Button onclick={() => (showCreateProjectDialog = true)} size="lg">
-            <Plus class="w-5 h-5 mr-2" />
-            Create Your First Project
+      <EmptyState
+        variant="setup"
+        title="Create your first project"
+        description="A project holds the logs, traces and metrics of one application. Create one, then connect your app to start sending data."
+      >
+        {#snippet actions()}
+          <Button onclick={() => (showCreateProjectDialog = true)}>
+            <Plus class="w-4 h-4 mr-2" />
+            Create project
           </Button>
-        </CardContent>
-      </Card>
-    {:else if filteredActive().length === 0 && filteredDeleted().length === 0}
-      <Card>
-        <CardContent class="py-16 text-center">
-          <div
-            class="w-16 h-16 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center"
-          >
-            <SearchIcon class="w-8 h-8 text-muted-foreground" />
-          </div>
-          <h3 class="text-xl font-semibold mb-2">No projects found</h3>
-          <p class="text-muted-foreground mb-4">
-            No projects match your search criteria
-          </p>
-          <Button variant="outline" onclick={() => (searchQuery = "")}
-            >Clear search</Button
-          >
-        </CardContent>
-      </Card>
+        {/snippet}
+      </EmptyState>
+    {:else if filteredActive.length === 0 && filteredDeleted.length === 0}
+      <EmptyState
+        variant="no-results"
+        title="No projects found"
+        description="No projects match your search."
+      >
+        {#snippet actions()}
+          <Button variant="outline" onclick={() => (searchQuery = "")}>Clear search</Button>
+        {/snippet}
+      </EmptyState>
     {:else}
-      <!-- Active projects -->
-      {#if filteredActive().length > 0}
-        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {#each filteredActive() as project}
-            <Card class="hover:border-primary/50 transition-colors">
-              <CardHeader>
-                <div class="flex items-start justify-between">
-                  <div class="flex-1">
-                    <CardTitle class="text-lg">{project.name}</CardTitle>
-                    {#if project.description}
-                      <CardDescription class="mt-1.5"
-                        >{project.description}</CardDescription
-                      >
-                    {/if}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div class="space-y-4">
-                  <div class="text-xs text-muted-foreground">
-                    Created {formatDate(project.createdAt)}
-                  </div>
-                  <div class="flex gap-2">
-                    <a
-                      href="/dashboard/projects/{project.id}/overview"
-                      class={buttonVariants({
-                        variant: "outline",
-                        size: "sm",
-                      }) + " flex-1"}
-                      onclick={(e) => e.stopPropagation()}
-                    >
-                      View Project
-                    </a>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onclick={() => goto(`/dashboard/search?project=${project.id}`)}
-                      class="gap-1"
-                    >
-                      <FileText class="w-4 h-4" />
-                      Logs
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger>
-                        {#snippet child({ props })}
-                          <Button
-                            {...props}
-                            variant="destructive"
-                            size="sm"
-                            disabled={deletingProjectId === project.id}
-                            class="gap-2"
-                          >
-                            {#if deletingProjectId === project.id}
-                              <Spinner size="sm" />
-                            {:else}
-                              <Trash2 class="w-4 h-4" />
-                            {/if}
-                          </Button>
-                        {/snippet}
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete Project?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            "{project.name}" will be moved to trash. Historical
-                            logs, traces and metrics remain accessible for 30 days,
-                            after which they are permanently deleted.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onclick={() => deleteProject(project.id)}
-                          >
-                            Move to Trash
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          {/each}
-        </div>
+      {#if filteredActive.length > 0}
+        <ProjectsTable
+          projects={filteredActive}
+          {stats}
+          health={healthByProject}
+          {lastEventAt}
+          {receiving}
+          {healthFilter}
+        >
+          {#snippet empty()}
+            No projects match this health filter.
+          {/snippet}
+        </ProjectsTable>
       {/if}
 
-      <!-- Deleted projects -->
-      {#if filteredDeleted().length > 0}
+      {#if filteredDeleted.length > 0}
         <div class="space-y-3">
-          <h2 class="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-            Deleted
-          </h2>
+          <h2 class="text-sm font-semibold text-muted-foreground">Deleted projects</h2>
           <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {#each filteredDeleted() as project}
-              <Card class="opacity-70 border-dashed">
+            {#each filteredDeleted as project (project.id)}
+              <Card class="opacity-70 border-dashed flex h-full flex-col" data-testid="deleted-project-card">
                 <CardHeader>
-                  <div class="flex items-start justify-between gap-2">
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-2">
-                        <CardTitle class="text-lg truncate">{project.name}</CardTitle>
-                        <span class="shrink-0 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                          Deleted
-                        </span>
-                      </div>
-                      {#if project.description}
-                        <CardDescription class="mt-1.5"
-                          >{project.description}</CardDescription
-                        >
-                      {/if}
-                    </div>
+                  <div class="flex items-center gap-2">
+                    <CardTitle class="text-lg truncate">{project.name}</CardTitle>
+                    <span class="shrink-0 inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                      Deleted
+                    </span>
                   </div>
+                  {#if project.description}
+                    <CardDescription class="mt-1.5 line-clamp-2" title={project.description}>{project.description}</CardDescription>
+                  {/if}
                 </CardHeader>
-                <CardContent>
+                <CardContent class="mt-auto">
                   <div class="space-y-4">
-                    <div class="text-xs text-muted-foreground">
-                      Deleted {formatDate(project.deletedAt!)}
-                    </div>
+                    <p class="text-xs text-muted-foreground" data-testid="purge-date">
+                      Permanently deleted on {purgeDate(project)}
+                    </p>
                     <div class="flex gap-2">
                       <a
-                        href="/dashboard/projects/{project.id}/overview"
-                        class={buttonVariants({
-                          variant: "outline",
-                          size: "sm",
-                        }) + " flex-1"}
-                        onclick={(e) => e.stopPropagation()}
+                        href="/dashboard/projects/{project.id}"
+                        class="{buttonVariants({ variant: 'outline', size: 'sm' })} flex-1"
                       >
-                        View Logs
+                        View project
                       </a>
                       <Button
                         variant="outline"
@@ -456,8 +337,8 @@
                           <Spinner size="sm" />
                         {:else}
                           <RotateCcw class="w-4 h-4" />
-                          Restore
                         {/if}
+                        Restore
                       </Button>
                     </div>
                   </div>
@@ -470,11 +351,6 @@
     {/if}
   </div>
 </div>
-
-<CreateOrganizationDialog
-  bind:open={showCreateOrgDialog}
-  onSubmit={handleCreateOrganization}
-/>
 
 <CreateProjectDialog
   bind:open={showCreateProjectDialog}

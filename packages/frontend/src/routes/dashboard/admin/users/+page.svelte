@@ -1,55 +1,136 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-    import { adminAPI, type UserBasic } from "$lib/api/admin";
-    import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
-    import { Button, buttonVariants } from "$lib/components/ui/button";
+    import { untrack } from "svelte";
+    import { goto } from "$app/navigation";
+    import { page } from "$app/state";
+    import { adminAPI, type UserBasic, type UserSort } from "$lib/api/admin";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
+    import Pagination from "$lib/components/app/Pagination.svelte";
+    import CopyButton from "$lib/components/app/CopyButton.svelte";
+    import type { DataTableSort } from "$lib/components/app/data-table";
+    import AdminUsersTable from "$lib/components/admin/AdminUsersTable.svelte";
+    import {
+        buildListSearch,
+        generatePassword,
+        parseEnum,
+        parsePage,
+        parseSort,
+    } from "$lib/components/admin/admin-list-url";
+    import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
     import { Switch } from "$lib/components/ui/switch";
-    import { Badge } from "$lib/components/ui/badge";
     import * as Dialog from "$lib/components/ui/dialog";
-    import {
-        Card,
-        CardContent,
-        CardDescription,
-        CardHeader,
-        CardTitle,
-    } from "$lib/components/ui/card";
-    import {
-        Table,
-        TableBody,
-        TableCell,
-        TableHead,
-        TableHeader,
-        TableRow,
-    } from "$lib/components/ui/table";
-    import {
-        Search,
-        UserCheck,
-        UserX,
-        UserPlus,
-        ChevronLeft,
-        ChevronRight,
-    } from "@lucide/svelte";
+    import { Search, UserPlus } from "@lucide/svelte";
     import { toastStore } from "$lib/stores/toast";
-    import { authStore } from "$lib/stores/auth";
-    import { goto } from "$app/navigation";
-    import { browser } from "$app/environment";
-    import { untrack } from "svelte";
-    import { UsersAPI } from "$lib/api/users";
-    import { get } from "svelte/store";
+
+    const LIMIT = 50;
+    const DEFAULT_SORT: DataTableSort = { key: "created_at", dir: "desc" };
+    const SORT_KEYS = ["email", "last_login", "created_at"] as const;
+    const ROLES = ["", "admin", "user"] as const;
+    const STATUSES = ["", "active", "disabled"] as const;
+    const SELECT_CLASS =
+        "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:h-11";
+
+    // The URL is the source of truth for search, filters, sort and page.
+    const params = $derived(page.url.searchParams);
+    const q = $derived(params.get("q") ?? "");
+    const pageNum = $derived(parsePage(params.get("page")));
+    const role = $derived(parseEnum(params.get("role"), ROLES, ""));
+    const status = $derived(parseEnum(params.get("status"), STATUSES, ""));
+    const sort = $derived(parseSort(params, SORT_KEYS, DEFAULT_SORT));
 
     let users: UserBasic[] = $state([]);
-    let loading = $state(true);
-    let error = $state("");
-    let search = $state("");
-    let page = $state(1);
-    let totalPages = $state(1);
     let total = $state(0);
-    const limit = 50;
+    let loaded = $state(false);
+    let loading = $state(false);
+    let error = $state("");
+    let searchInput = $state(untrack(() => q));
+    let searchTimer: ReturnType<typeof setTimeout> | undefined;
+    let requestId = 0;
+
+    function navigate(next: {
+        q?: string;
+        page?: number;
+        role?: string;
+        status?: string;
+        sort?: DataTableSort;
+    }) {
+        const search = buildListSearch({
+            q: next.q ?? q,
+            page: next.page ?? pageNum,
+            sort: next.sort ?? sort,
+            defaultSort: DEFAULT_SORT,
+            filters: { role: next.role ?? role, status: next.status ?? status },
+        });
+        goto(page.url.pathname + search, {
+            replaceState: true,
+            keepFocus: true,
+            noScroll: true,
+        });
+    }
+
+    function onSearchInput() {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            const next = searchInput.trim();
+            if (next !== q) navigate({ q: next, page: 1 });
+        }, 300);
+    }
+
+    $effect(() => () => clearTimeout(searchTimer));
+
+    // Back/forward changes the URL query without touching the input.
+    $effect(() => {
+        const current = q;
+        untrack(() => {
+            if (current !== searchInput.trim()) searchInput = current;
+        });
+    });
+
+    async function loadUsers() {
+        const id = ++requestId;
+        loading = true;
+        error = "";
+        try {
+            const response = await adminAPI.getUsers({
+                page: pageNum,
+                limit: LIMIT,
+                search: q || undefined,
+                sort: sort.key as UserSort,
+                order: sort.dir,
+                role: role || undefined,
+                status: status || undefined,
+            });
+            if (id !== requestId) return;
+            users = response.users;
+            total = response.total;
+            loaded = true;
+        } catch (err: any) {
+            if (id !== requestId) return;
+            error = err?.message || "Failed to load users";
+            toastStore.error(error);
+        } finally {
+            if (id === requestId) loading = false;
+        }
+    }
+
+    // Reload whenever the URL-derived query changes.
+    $effect(() => {
+        void [q, pageNum, role, status, sort.key, sort.dir];
+        untrack(() => loadUsers());
+    });
+
+    const hasFilters = $derived(!!q || !!role || !!status);
+
+    function clearFilters() {
+        searchInput = "";
+        navigate({ q: "", role: "", status: "", page: 1 });
+    }
 
     let showCreateDialog = $state(false);
     let creating = $state(false);
+    let showPassword = $state(false);
     let createForm = $state({
         email: "",
         name: "",
@@ -68,6 +149,14 @@
             is_admin: false,
         };
         createError = "";
+        showPassword = false;
+    }
+
+    function fillGeneratedPassword() {
+        const password = generatePassword(16);
+        createForm.password = password;
+        createForm.confirmPassword = password;
+        showPassword = true;
     }
 
     async function createUser(event?: Event) {
@@ -102,258 +191,130 @@
                 password: createForm.password,
                 is_admin: createForm.is_admin,
             });
-            toastStore.success(`User ${email} created successfully`);
+            toastStore.success(`User ${email} created`);
             showCreateDialog = false;
             resetCreateForm();
-            page = 1;
-            await loadUsers();
+            if (pageNum !== 1) navigate({ page: 1 });
+            else await loadUsers();
         } catch (err: any) {
             createError = err?.message || "Failed to create user";
         } finally {
             creating = false;
         }
     }
-
-    const usersAPI = new UsersAPI(() => get(authStore).token);
-
-    $effect(() => {
-        if (browser && $authStore.user) {
-            if ($authStore.user.is_admin === undefined) {
-                untrack(() => {
-                    usersAPI
-                        .getCurrentUser()
-                        .then(({ user }) => {
-                            const currentUser = get(authStore).user;
-                            if (currentUser) {
-                                authStore.updateUser({ ...currentUser, ...user });
-                                if (user.is_admin) loadUsers();
-                            }
-                        })
-                        .catch(() => goto("/dashboard"));
-                });
-            } else if ($authStore.user.is_admin === false) {
-                untrack(() => goto("/dashboard"));
-            }
-        }
-    });
-
-    async function loadUsers() {
-        if ($authStore.user?.is_admin !== true) return;
-
-        loading = true;
-        error = "";
-        try {
-            const response = await adminAPI.getUsers(
-                page,
-                limit,
-                search || undefined,
-            );
-            users = response.users;
-            total = response.total;
-            totalPages = response.totalPages;
-        } catch (err: any) {
-            error = err.message || "Failed to load users";
-        } finally {
-            loading = false;
-        }
-    }
-
-    function handleSearch() {
-        page = 1;
-        loadUsers();
-    }
-
-    function nextPage() {
-        if (page < totalPages) {
-            page++;
-            loadUsers();
-        }
-    }
-
-    function prevPage() {
-        if (page > 1) {
-            page--;
-            loadUsers();
-        }
-    }
-
-    function formatDate(dateString: string | null) {
-        if (!dateString) return "Never";
-        return new Date(dateString).toLocaleString('en-US');
-    }
-
-    onMount(() => {
-        if ($authStore.user?.is_admin) loadUsers();
-    });
 </script>
 
 <svelte:head>
-    <title>Users - Admin - LogTide</title>
+    <title>All users - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex items-center justify-between">
-        <div>
-            <h1 class="text-3xl font-bold">User Management</h1>
-            <p class="text-muted-foreground">Manage all users in the system</p>
+<div class="space-y-6">
+    <PageHeader
+        title="All users"
+        appliesTo="instance"
+        description="Every account on this instance"
+    >
+        {#snippet actions()}
+            <Button
+                onclick={() => {
+                    resetCreateForm();
+                    showCreateDialog = true;
+                }}
+            >
+                <UserPlus class="h-4 w-4 mr-2" />
+                Create user
+            </Button>
+        {/snippet}
+    </PageHeader>
+
+    <div class="flex flex-wrap items-end gap-3">
+        <div class="relative min-w-[14rem] flex-1">
+            <Search
+                class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+            />
+            <Input
+                type="search"
+                aria-label="Search users by email or name"
+                placeholder="Search by email or name"
+                bind:value={searchInput}
+                oninput={onSearchInput}
+                class="pl-10 max-md:h-11"
+            />
         </div>
-        <Button
-            onclick={() => {
-                resetCreateForm();
-                showCreateDialog = true;
-            }}
-        >
-            <UserPlus class="h-4 w-4 mr-2" />
-            Create User
-        </Button>
+        <label class="grid gap-1 text-xs font-medium text-muted-foreground">
+            Role
+            <select
+                class={SELECT_CLASS}
+                value={role}
+                onchange={(e) => navigate({ role: e.currentTarget.value, page: 1 })}
+            >
+                <option value="">All roles</option>
+                <option value="admin">Admins</option>
+                <option value="user">Users</option>
+            </select>
+        </label>
+        <label class="grid gap-1 text-xs font-medium text-muted-foreground">
+            Status
+            <select
+                class={SELECT_CLASS}
+                value={status}
+                onchange={(e) => navigate({ status: e.currentTarget.value, page: 1 })}
+            >
+                <option value="">All statuses</option>
+                <option value="active">Active</option>
+                <option value="disabled">Disabled</option>
+            </select>
+        </label>
     </div>
 
-    <Card>
-        <CardHeader>
-            <CardTitle>Users</CardTitle>
-            <CardDescription>Total: {total} users</CardDescription>
-        </CardHeader>
-        <CardContent class="space-y-4">
-            <div class="flex gap-2">
-                <div class="relative flex-1">
-                    <Search
-                        class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-                    />
-                    <Input
-                        type="text"
-                        placeholder="Search by email or name..."
-                        bind:value={search}
-                        onkeydown={(e) => e.key === "Enter" && handleSearch()}
-                        class="pl-10"
-                    />
-                </div>
-                <Button onclick={handleSearch}>Search</Button>
+    {#if error && !loaded}
+        <EmptyState variant="error" title="Could not load users" description={error}>
+            {#snippet actions()}
+                <Button variant="outline" size="sm" onclick={loadUsers}>Retry</Button>
+            {/snippet}
+        </EmptyState>
+    {:else}
+        <div class="space-y-4" aria-busy={loading}>
+            <div class={loading && loaded ? "opacity-70 transition-opacity" : "transition-opacity"}>
+                <AdminUsersTable
+                    {users}
+                    loading={!loaded}
+                    bind:sort={() => sort, (s) => navigate({ sort: s, page: 1 })}
+                >
+                    {#snippet empty()}
+                        {#if hasFilters}
+                            <EmptyState variant="no-results" title="No users match" description="Try a different search or clear the filters.">
+                                {#snippet actions()}
+                                    <Button variant="outline" size="sm" onclick={clearFilters}>Clear filters</Button>
+                                {/snippet}
+                            </EmptyState>
+                        {:else}
+                            <EmptyState variant="no-data" title="No users yet" description="Create the first account with the button above." />
+                        {/if}
+                    {/snippet}
+                </AdminUsersTable>
             </div>
-
-            {#if loading && users.length === 0}
-                <SkeletonTable rows={8} columns={7} />
-            {:else if error}
-                <div class="text-center py-8">
-                    <p class="text-destructive">{error}</p>
-                </div>
-            {:else if users.length === 0}
-                <div class="text-center py-8">
-                    <p class="text-muted-foreground">No users found</p>
-                </div>
-            {:else}
-                <TableLoadingOverlay loading={loading}>
-                <div class="rounded-md border">
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>Email</TableHead>
-                                <TableHead>Name</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead>Role</TableHead>
-                                <TableHead>Last Login</TableHead>
-                                <TableHead>Created</TableHead>
-                                <TableHead class="text-right">Actions</TableHead
-                                >
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {#each users as user (user.id)}
-                                <TableRow>
-                                    <TableCell class="font-medium"
-                                        >{user.email}</TableCell
-                                    >
-                                    <TableCell>{user.name}</TableCell>
-                                    <TableCell>
-                                        {#if user.disabled}
-                                            <Badge
-                                                variant="destructive"
-                                                class="gap-1"
-                                            >
-                                                <UserX class="h-3 w-3" />
-                                                Disabled
-                                            </Badge>
-                                        {:else}
-                                            <Badge
-                                                variant="default"
-                                                class="gap-1"
-                                            >
-                                                <UserCheck class="h-3 w-3" />
-                                                Active
-                                            </Badge>
-                                        {/if}
-                                    </TableCell>
-                                    <TableCell>
-                                        {#if user.is_admin}
-                                            <Badge variant="secondary"
-                                                >Admin</Badge
-                                            >
-                                        {:else}
-                                            <Badge variant="outline">User</Badge
-                                            >
-                                        {/if}
-                                    </TableCell>
-                                    <TableCell
-                                        class="text-sm text-muted-foreground"
-                                    >
-                                        {formatDate(user.last_login)}
-                                    </TableCell>
-                                    <TableCell
-                                        class="text-sm text-muted-foreground"
-                                    >
-                                        {formatDate(user.created_at)}
-                                    </TableCell>
-                                    <TableCell class="text-right">
-                                        <a
-                                            href="/dashboard/admin/users/{user.id}"
-                                            class={buttonVariants({
-                                                variant: "ghost",
-                                                size: "sm",
-                                            })}
-                                        >
-                                            View Details
-                                        </a>
-                                    </TableCell>
-                                </TableRow>
-                            {/each}
-                        </TableBody>
-                    </Table>
-                </div>
-
-                <div class="flex items-center justify-between">
-                    <p class="text-sm text-muted-foreground">
-                        Page {page} of {totalPages}
-                    </p>
-                    <div class="flex gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onclick={prevPage}
-                            disabled={page === 1}
-                        >
-                            <ChevronLeft class="h-4 w-4 mr-1" />
-                            Previous
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onclick={nextPage}
-                            disabled={page === totalPages}
-                        >
-                            Next
-                            <ChevronRight class="h-4 w-4 ml-1" />
-                        </Button>
-                    </div>
-                </div>
-                </TableLoadingOverlay>
+            {#if error}
+                <p class="text-sm text-destructive-text" role="alert">
+                    {error}
+                    <button type="button" class="underline underline-offset-4" onclick={loadUsers}>Retry</button>
+                </p>
             {/if}
-        </CardContent>
-    </Card>
+            <Pagination
+                page={pageNum}
+                pageSize={LIMIT}
+                {total}
+                onPageChange={(p) => navigate({ page: p })}
+            />
+        </div>
+    {/if}
 </div>
 
 <Dialog.Root bind:open={showCreateDialog}>
     <Dialog.Content class="max-w-lg">
         <Dialog.Header>
-            <Dialog.Title>Create User</Dialog.Title>
+            <Dialog.Title>Create user</Dialog.Title>
             <Dialog.Description>
                 Provision a new user account. Share the credentials with the
                 user to let them sign in.
@@ -384,10 +345,20 @@
                     />
                 </div>
                 <div class="space-y-2">
-                    <Label for="create-user-password">Password</Label>
+                    <div class="flex items-center justify-between gap-2">
+                        <Label for="create-user-password">Password</Label>
+                        <div class="flex items-center gap-1">
+                            {#if createForm.password}
+                                <CopyButton value={createForm.password} label="Copy password" />
+                            {/if}
+                            <Button type="button" variant="outline" size="sm" disabled={creating} onclick={fillGeneratedPassword}>
+                                Generate password
+                            </Button>
+                        </div>
+                    </div>
                     <Input
                         id="create-user-password"
-                        type="password"
+                        type={showPassword ? "text" : "password"}
                         placeholder="Minimum 8 characters"
                         bind:value={createForm.password}
                         disabled={creating}
@@ -398,7 +369,7 @@
                     <Label for="create-user-confirm">Confirm password</Label>
                     <Input
                         id="create-user-confirm"
-                        type="password"
+                        type={showPassword ? "text" : "password"}
                         placeholder="Re-enter password"
                         bind:value={createForm.confirmPassword}
                         disabled={creating}
@@ -435,7 +406,7 @@
                     Cancel
                 </Button>
                 <Button type="submit" disabled={creating}>
-                    {creating ? "Creating..." : "Create User"}
+                    {creating ? "Creating..." : "Create user"}
                 </Button>
             </Dialog.Footer>
         </form>

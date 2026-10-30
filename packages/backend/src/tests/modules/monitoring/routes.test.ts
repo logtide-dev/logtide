@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from '../../../modules/monitoring/routes.js';
+import { notificationChannelsService } from '../../../modules/notification-channels/index.js';
 import { createTestContext, createTestSession } from '../../helpers/index.js';
 
 vi.mock('../../../queue/jobs/monitor-notification.js', () => ({
@@ -12,13 +13,22 @@ vi.mock('../../../modules/maintenances/service.js', () => ({
     getProjectsUnderMaintenance: vi.fn().mockResolvedValue(new Set()),
   },
 }));
-vi.mock('../../../modules/monitoring/checker.js', () => ({
-  runHttpCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 50, statusCode: 200, errorCode: null }),
-  runTcpCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 10, statusCode: null, errorCode: null }),
-  runHeartbeatCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: null, statusCode: null, errorCode: null }),
-  runLogHeartbeatCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: null, statusCode: null, errorCode: null }),
-  parseTcpTarget: vi.fn().mockReturnValue({ host: 'localhost', port: 5432 }),
-}));
+vi.mock('../../../modules/monitoring/checker.js', async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return {
+    runHttpCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 50, statusCode: 200, errorCode: null }),
+    runTcpCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 10, statusCode: null, errorCode: null }),
+    runHeartbeatCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: null, statusCode: null, errorCode: null }),
+    runLogHeartbeatCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: null, statusCode: null, errorCode: null }),
+    runSslCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 30, statusCode: null, errorCode: null }),
+    runDnsCheck: vi.fn().mockResolvedValue({ status: 'up', responseTimeMs: 5, statusCode: null, errorCode: null }),
+    parseTcpTarget: vi.fn().mockReturnValue({ host: 'localhost', port: 5432 }),
+    // pure helpers stay real so target validation is exercised
+    parseHostPort: actual.parseHostPort,
+    isValidDnsHostname: actual.isValidDnsHostname,
+    isInternalDnsName: actual.isInternalDnsName,
+  };
+});
 vi.mock('../../../database/reservoir.js', () => ({ reservoir: {} }));
 // Avoid real DNS in create/update target validation; throw only for sentinel hosts.
 vi.mock('../../../utils/ssrf-guard.js', async (importOriginal) => {
@@ -710,6 +720,33 @@ describe('invalid UUID :id param', () => {
   });
 });
 
+describe('GET /api/v1/monitors/:id/channels masking', () => {
+  it('does not leak channel secrets', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/monitors',
+      headers: authHeaders(authToken),
+      payload: { organizationId: ctx.organization.id, projectId: ctx.project.id, name: 'Masked', type: 'heartbeat' },
+    });
+    const { monitor } = JSON.parse(createRes.payload);
+    const channel = await notificationChannelsService.createChannel(ctx.organization.id, {
+      name: 'hook',
+      type: 'webhook',
+      config: { url: 'https://example.com/hook/SECRETPATH', auth: { type: 'bearer', token: 'SECRETTOKEN' } },
+    } as any);
+    await notificationChannelsService.setMonitorChannels(monitor.id, [channel.id], ctx.organization.id);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${monitor.id}/channels?organizationId=${ctx.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).not.toContain('SECRETTOKEN');
+    expect(JSON.parse(res.payload).channels).toHaveLength(1);
+  });
+});
+
 describe('parsePositiveInt edge cases', () => {
   it('GET /:id/results clamps negative limit to default', async () => {
     const createRes = await app.inject({
@@ -768,5 +805,278 @@ describe('GET /api/v1/monitors/:id/results with limit', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(Array.isArray(JSON.parse(res.payload).results)).toBe(true);
+  });
+});
+
+// ===========================================================================
+// W12: ssl / dns monitors, display fields, http config limits
+// ===========================================================================
+describe('monitor form fields (W12)', () => {
+  async function create(payload: Record<string, unknown>) {
+    return app.inject({
+      method: 'POST',
+      url: '/api/v1/monitors',
+      headers: authHeaders(authToken),
+      payload: { organizationId: ctx.organization.id, projectId: ctx.project.id, name: 'W12 monitor', ...payload },
+    });
+  }
+
+  it('creates an ssl monitor and stores default warnDays 14', async () => {
+    const res = await create({ type: 'ssl', target: 'example.com' });
+    expect(res.statusCode).toBe(201);
+    const { monitor } = JSON.parse(res.payload);
+    expect(monitor.type).toBe('ssl');
+    expect(monitor.checkConfig).toEqual({ warnDays: 14 });
+  });
+
+  it('rejects ssl warnDays 0 and 366', async () => {
+    expect((await create({ type: 'ssl', target: 'example.com', checkConfig: { warnDays: 0 } })).statusCode).toBe(400);
+    expect((await create({ type: 'ssl', target: 'example.com', checkConfig: { warnDays: 366 } })).statusCode).toBe(400);
+    expect((await create({ type: 'ssl', target: 'example.com', checkConfig: { warnDays: 30 } })).statusCode).toBe(201);
+  });
+
+  it('rejects an ssl target that resolves to a blocked range', async () => {
+    const res = await create({ type: 'ssl', target: 'blocked.internal:443' });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error).toMatch(/blocked/i);
+  });
+
+  it('accepts ssl host:port and rejects a scheme in the target', async () => {
+    const ok = await create({ type: 'ssl', target: 'example.com:8443' });
+    expect(ok.statusCode).toBe(201);
+    expect(JSON.parse(ok.payload).monitor.target).toBe('example.com:8443');
+    expect((await create({ type: 'ssl', target: 'https://example.com' })).statusCode).toBe(400);
+    expect((await create({ type: 'ssl', target: 'example.com:70000' })).statusCode).toBe(400);
+    expect((await create({ type: 'ssl' })).statusCode).toBe(400);
+  });
+
+  it('creates a dns monitor with MX and expected value', async () => {
+    const res = await create({
+      type: 'dns',
+      target: 'example.com',
+      checkConfig: { recordType: 'MX', expectedValue: 'mx.example.com' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).monitor.checkConfig).toEqual({
+      recordType: 'MX',
+      expectedValue: 'mx.example.com',
+    });
+  });
+
+  it('rejects dns recordType SRV', async () => {
+    const res = await create({ type: 'dns', target: 'example.com', checkConfig: { recordType: 'SRV' } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects a dns target that is an IP address', async () => {
+    expect((await create({ type: 'dns', target: '10.0.0.1', checkConfig: { recordType: 'A' } })).statusCode).toBe(400);
+    expect((await create({ type: 'dns', target: 'example.com:53', checkConfig: { recordType: 'A' } })).statusCode).toBe(400);
+  });
+
+  it('rejects dns monitors for internal hostnames', async () => {
+    for (const target of ['postgres', 'logtide-billing', 'kubernetes.default.svc', 'db.internal']) {
+      const res = await create({ type: 'dns', target, checkConfig: { recordType: 'A' } });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toMatch(/internal/i);
+    }
+  });
+
+  it('update validates checkConfig against the existing monitor type', async () => {
+    const { monitor } = JSON.parse((await create({ type: 'ssl', target: 'example.com' })).payload);
+    const url = `/api/v1/monitors/${monitor.id}?organizationId=${ctx.organization.id}`;
+
+    const bad = await app.inject({
+      method: 'PUT',
+      url,
+      headers: authHeaders(authToken),
+      payload: { checkConfig: { recordType: 'A' } },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    const ok = await app.inject({
+      method: 'PUT',
+      url,
+      headers: authHeaders(authToken),
+      payload: { checkConfig: { warnDays: 30 } },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.payload).monitor.checkConfig).toEqual({ warnDays: 30 });
+
+    const badTarget = await app.inject({
+      method: 'PUT',
+      url,
+      headers: authHeaders(authToken),
+      payload: { target: 'https://example.com' },
+    });
+    expect(badTarget.statusCode).toBe(400);
+  });
+
+  it('stores and returns displayName and groupName, rejects displayName over 255', async () => {
+    const res = await create({
+      type: 'heartbeat',
+      displayName: 'API (Europe)',
+      groupName: 'Core services',
+      displayOrder: 3,
+    });
+    expect(res.statusCode).toBe(201);
+    const { monitor } = JSON.parse(res.payload);
+    expect(monitor.displayName).toBe('API (Europe)');
+    expect(monitor.groupName).toBe('Core services');
+    expect(monitor.displayOrder).toBe(3);
+
+    const fetched = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${monitor.id}?organizationId=${ctx.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(JSON.parse(fetched.payload).monitor.displayName).toBe('API (Europe)');
+
+    expect((await create({ type: 'heartbeat', displayName: 'x'.repeat(256) })).statusCode).toBe(400);
+    expect((await create({ type: 'heartbeat', groupName: 'g'.repeat(101) })).statusCode).toBe(400);
+  });
+
+  it('defaults display fields for a monitor that sets none', async () => {
+    const { monitor } = JSON.parse((await create({ type: 'heartbeat' })).payload);
+    expect(monitor.displayName).toBeNull();
+    expect(monitor.groupName).toBeNull();
+    expect(monitor.displayOrder).toBe(0);
+    expect(monitor.checkConfig).toBeNull();
+  });
+
+  it('rejects http method FETCH and upper-cases get', async () => {
+    const bad = await create({ type: 'http', target: 'https://example.com', httpConfig: { method: 'FETCH' } });
+    expect(bad.statusCode).toBe(400);
+
+    const ok = await create({ type: 'http', target: 'https://example.com', httpConfig: { method: 'get' } });
+    expect(ok.statusCode).toBe(201);
+    expect(JSON.parse(ok.payload).monitor.httpConfig.method).toBe('GET');
+  });
+
+  it('rejects more than 20 headers and a header name with a space', async () => {
+    const many = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`X-H-${i}`, 'v']));
+    expect((await create({ type: 'http', target: 'https://example.com', httpConfig: { headers: many } })).statusCode).toBe(400);
+
+    const spaced = await create({
+      type: 'http',
+      target: 'https://example.com',
+      httpConfig: { headers: { 'Bad Name': 'v' } },
+    });
+    expect(spaced.statusCode).toBe(400);
+
+    const long = await create({
+      type: 'http',
+      target: 'https://example.com',
+      httpConfig: { headers: { 'X-Long': 'v'.repeat(1025) } },
+    });
+    expect(long.statusCode).toBe(400);
+
+    const fine = await create({
+      type: 'http',
+      target: 'https://example.com',
+      httpConfig: { headers: { 'X-Token': 'abc' } },
+    });
+    expect(fine.statusCode).toBe(201);
+  });
+
+  it('monitor of another organization stays invisible (404)', async () => {
+    const { monitor } = JSON.parse((await create({ type: 'ssl', target: 'example.com' })).payload);
+    const other = await createTestContext();
+    const otherSession = await createTestSession(other.user.id);
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${monitor.id}?organizationId=${other.organization.id}`,
+      headers: authHeaders(otherSession.token),
+    });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+// ===========================================================================
+// W12: uptime summary, response times, outages
+// ===========================================================================
+describe('monitor stats routes (W12)', () => {
+  async function createMonitorViaApi() {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/monitors',
+      headers: authHeaders(authToken),
+      payload: { organizationId: ctx.organization.id, projectId: ctx.project.id, name: 'Stats', type: 'heartbeat' },
+    });
+    return JSON.parse(res.payload).monitor.id as string;
+  }
+
+  it('GET uptime-summary returns the four windows', async () => {
+    const id = await createMonitorViaApi();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/uptime-summary?organizationId=${ctx.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(Object.keys(JSON.parse(res.payload).windows).sort()).toEqual(['24h', '30d', '7d', '90d']);
+  });
+
+  it('GET response-times returns bucketSeconds and points', async () => {
+    const id = await createMonitorViaApi();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/response-times?organizationId=${ctx.organization.id}&range=7d`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload)).toEqual({ bucketSeconds: 3600, points: [] });
+  });
+
+  it('response-times rejects an unknown range with 400', async () => {
+    const id = await createMonitorViaApi();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/response-times?organizationId=${ctx.organization.id}&range=1y`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('GET outages returns an empty list for a fresh monitor and clamps the limit', async () => {
+    const id = await createMonitorViaApi();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/outages?organizationId=${ctx.organization.id}&limit=9999`,
+      headers: authHeaders(authToken),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload)).toEqual({ outages: [] });
+  });
+
+  it('all three return 404 for a monitor of another organization', async () => {
+    const id = await createMonitorViaApi();
+    const other = await createTestContext();
+    const otherSession = await createTestSession(other.user.id);
+    for (const path of ['uptime-summary', 'response-times', 'outages']) {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/monitors/${id}/${path}?organizationId=${other.organization.id}`,
+        headers: authHeaders(otherSession.token),
+      });
+      expect(res.statusCode).toBe(404);
+    }
+  });
+
+  it('returns 403 for a non-member and 400 for a bad id', async () => {
+    const id = await createMonitorViaApi();
+    const other = await createTestContext();
+    const forbidden = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/${id}/outages?organizationId=${other.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const bad = await app.inject({
+      method: 'GET',
+      url: `/api/v1/monitors/not-a-uuid/uptime-summary?organizationId=${ctx.organization.id}`,
+      headers: authHeaders(authToken),
+    });
+    expect(bad.statusCode).toBe(400);
   });
 });

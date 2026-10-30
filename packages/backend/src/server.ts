@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyServerOptions } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -24,6 +24,7 @@ import dashboardRoutes from './modules/dashboard/routes.js';
 import { sigmaRoutes } from './modules/sigma/routes.js';
 import { siemRoutes } from './modules/siem/routes.js';
 import { registerSiemSseRoutes } from './modules/siem/sse-events.js';
+import { incidentsRoutes } from './modules/incidents/routes.js';
 import { adminRoutes } from './modules/admin/index.js';
 import { publicAuthRoutes, authenticatedAuthRoutes, adminAuthRoutes } from './modules/auth/external-routes.js';
 import { otlpRoutes, otlpTraceRoutes, otlpMetricRoutes } from './modules/otlp/index.js';
@@ -37,21 +38,25 @@ import { correlationRoutes, patternRoutes } from './modules/correlation/index.js
 import { piiMaskingRoutes } from './modules/pii-masking/index.js';
 import { pipelineRoutes } from './modules/log-pipeline/index.js';
 import { customDashboardsRoutes } from './modules/custom-dashboards/index.js';
+import { savedSearchesRoutes } from './modules/saved-searches/index.js';
 import { usageRoutes, meteringRecorder, meteringService } from './modules/metering/index.js';
 import { capabilitiesRoutes, adminEntitlementsRoutes } from './modules/capabilities/index.js';
 import { QuotaEvaluator } from './capabilities/index.js';
 import { loadExternalHooks } from './hooks/index.js';
+import { loadExtensionModules, initExtensions, type ExtensionRuntime } from './extensions/index.js';
 import { storageSnapshotJob } from './modules/metering/storage-snapshot.js';
-import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from './modules/monitoring/index.js';
+import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes, statusPageRoutes } from './modules/monitoring/index.js';
 import { statusIncidentRoutes } from './modules/status-incidents/routes.js';
 import { maintenanceRoutes } from './modules/maintenances/routes.js';
 import { sessionsRoutes } from './modules/sessions/routes.js';
+import { webVitalsRoutes } from './modules/web-vitals/routes.js';
 import { sourcemapsRoutes } from './modules/sourcemaps/index.js';
 import { auditLogRoutes, auditLogService } from './modules/audit-log/index.js';
 import { bootstrapService } from './modules/bootstrap/index.js';
 import { assertTermsCompatibleWithAuthMode } from './modules/users/terms.js';
 import { runDataAvailabilityBackfill } from './modules/projects/data-availability-backfill.js';
 import { notificationChannelsRoutes } from './modules/notification-channels/index.js';
+import { notificationRoutingRoutes } from './modules/notification-channels/routing-preview.routes.js';
 import { digestsRoutes } from './modules/digests/routes.js';
 import { digestsPublicRoutes } from './modules/digests/public-routes.js';
 import { webhookDeliveriesRoutes } from './modules/webhooks/routes.js';
@@ -87,7 +92,14 @@ export function rateLimitKeyGenerator(request: { headers: Record<string, any>; i
   return `key:${createHash('sha256').update(String(credential)).digest('hex').slice(0, 32)}`;
 }
 
-export async function build(opts = {}) {
+export type BuildOptions = FastifyServerOptions & {
+  /** Registered extensions (from initExtensions); their routes are mounted last. */
+  extensions?: ExtensionRuntime;
+};
+
+export async function build(opts: BuildOptions = {}) {
+  const { extensions, ...fastifyOpts } = opts;
+
   // Terms seam + auth-free mode can never work together (the default user
   // could never accept): refuse to build the app. No query when inactive.
   await assertTermsCompatibleWithAuthMode();
@@ -96,7 +108,7 @@ export async function build(opts = {}) {
     logger: true,
     bodyLimit: 10 * 1024 * 1024,
     trustProxy: config.TRUST_PROXY,
-    ...opts,
+    ...fastifyOpts,
   });
 
   // Global error handler: ensure client errors return proper 4xx, not 500
@@ -190,7 +202,7 @@ export async function build(opts = {}) {
 
   await fastify.register(usersRoutes, { prefix: '/api/v1/auth' });
   await fastify.register(publicAuthRoutes, { prefix: '/api/v1/auth' });
-  await fastify.register(publicSettingsRoutes, { prefix: '/api/v1/auth' });
+  await fastify.register(publicSettingsRoutes, { prefix: '/api/v1/auth', extensions });
   await fastify.register(authenticatedAuthRoutes, { prefix: '/api/v1/auth' });
   await fastify.register(adminAuthRoutes, { prefix: '/api/v1/admin/auth' });
   await fastify.register(organizationsRoutes, { prefix: '/api/v1/organizations' });
@@ -198,6 +210,7 @@ export async function build(opts = {}) {
   await fastify.register(projectsRoutes, { prefix: '/api/v1/projects' });
   await fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   await fastify.register(notificationChannelsRoutes, { prefix: '/api/v1/notification-channels' });
+  await fastify.register(notificationRoutingRoutes, { prefix: '/api/v1/notification-routing' });
   await fastify.register(digestsRoutes, { prefix: '/api/v1/digests' });
   // Public one-click unsubscribe: the URL token is the credential, no auth (#154)
   await fastify.register(digestsPublicRoutes, { prefix: '/api/v1/digests' });
@@ -208,6 +221,7 @@ export async function build(opts = {}) {
   await fastify.register(sigmaRoutes);
   await fastify.register(siemRoutes);
   await fastify.register(registerSiemSseRoutes);
+  await fastify.register(incidentsRoutes);
   await fastify.register(exceptionsRoutes);
   await fastify.register(apiKeysRoutes, { prefix: '/api/v1/projects' });
   await fastify.register(receiversRoutes, { prefix: '/api/v1/projects' });
@@ -237,14 +251,30 @@ export async function build(opts = {}) {
   await fastify.register(tracesRoutes);
   await fastify.register(metricsRoutes, { prefix: '/api/v1/metrics' });
   await fastify.register(sessionsRoutes, { prefix: '/api/v1/sessions' });
+  await fastify.register(webVitalsRoutes, { prefix: '/api/v1/web-vitals' });
   await fastify.register(sourcemapsRoutes);
   await fastify.register(websocketPlugin);
   await fastify.register(websocketRoutes);
   await fastify.register(monitoringRoutes, { prefix: '/api/v1/monitors' });
   await fastify.register(heartbeatRoutes, { prefix: '/api/v1/monitors' });
   await fastify.register(publicStatusRoutes, { prefix: '/api/v1/status' });
+  await fastify.register(statusPageRoutes, { prefix: '/api/v1/status-page' });
   await fastify.register(statusIncidentRoutes, { prefix: '/api/v1/status-incidents' });
   await fastify.register(maintenanceRoutes, { prefix: '/api/v1/maintenances' });
+  await fastify.register(savedSearchesRoutes, { prefix: '/api/v1/saved-searches' });
+
+  // Extension routes. The global auth plugin skips /api/v1/ext/, so each
+  // route picks its own auth. The extra scope keeps whatever the plugin adds
+  // (content-type parsers, hooks, decorators) away from core routes, even if
+  // the extension wrapped its plugin with fastify-plugin.
+  for (const { name, plugin } of extensions?.routes ?? []) {
+    await fastify.register(
+      async (scope) => {
+        await scope.register(plugin);
+      },
+      { prefix: `/api/v1/ext/${name}` }
+    );
+  }
 
   return fastify;
 }
@@ -253,6 +283,7 @@ async function start() {
   validateStorageConfig();
 
   await loadExternalHooks();
+  const extensions = await initExtensions(await loadExtensionModules(), 'server');
   await bootstrapService.runInitialBootstrap();
   await initializeInternalLogging();
   auditLogService.start();
@@ -271,7 +302,7 @@ async function start() {
     await bootstrapService.ensureDefaultSetup();
   }
 
-  const app = await build();
+  const app = await build({ extensions });
 
   const shutdown = async () => {
     console.log('[Server] Shutting down gracefully...');

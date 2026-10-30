@@ -4,7 +4,9 @@ import path from 'path';
 import { context } from '@logtide/shared/context';
 import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
 import { loadExternalHooks } from './hooks/index.js';
-import { processAlertNotification, type AlertNotificationData } from './queue/jobs/alert-notification.js';
+import { loadExtensionModules, startExtensionJobs, initExtensions } from './extensions/index.js';
+import { processAlertNotification, type AlertNotificationJobData } from './queue/jobs/alert-notification.js';
+import { enqueueAlertNotifications } from './queue/jobs/alert-evaluation.js';
 import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
 import { processIncidentAutoGrouping } from './queue/jobs/incident-autogrouping.js';
 import { processInvitationEmail, type InvitationEmailData } from './queue/jobs/invitation-email.js';
@@ -12,6 +14,7 @@ import { processIncidentNotification, type IncidentNotificationJob } from './que
 import { processExceptionParsing, type ExceptionParsingJobData } from './queue/jobs/exception-parsing.js';
 import { processErrorNotification, type ErrorNotificationJobData } from './queue/jobs/error-notification.js';
 import { processMonitorNotification, type MonitorNotificationJob } from './queue/jobs/monitor-notification.js';
+import { processStatusSubscriberNotification, type StatusSubscriberJob } from './queue/jobs/monitor-status-subscribers.js';
 import { processLogPipeline, type LogPipelineJobData } from './queue/jobs/log-pipeline.js';
 import { processDigestGeneration } from './queue/jobs/digest-generation.js';
 import type { DigestJobPayload } from './modules/digests/scheduler.js';
@@ -31,6 +34,7 @@ import { initializeWorkerLogging, shutdownInternalLogging, isInternalLoggingEnab
 import { hub } from '@logtide/core';
 import { reservoir, reservoirReady } from './database/reservoir.js';
 import { db } from './database/connection.js';
+import { runProjectHealthPass } from './modules/project-health/index.js';
 
 // Initialize internal logging via @logtide/core hub
 await initializeWorkerLogging();
@@ -39,12 +43,13 @@ await initializeWorkerLogging();
 await reservoirReady;
 
 await loadExternalHooks();
+const extensions = await initExtensions(await loadExtensionModules(), 'worker');
 
 // Initialize enrichment services (downloads GeoLite2 if missing)
 await enrichmentService.initialize();
 
 // Create worker for alert notifications
-const alertWorker = createWorker<AlertNotificationData>('alert-notifications', async (job) => {
+const alertWorker = createWorker<AlertNotificationJobData>('alert-notifications', async (job) => {
   await processAlertNotification(job);
 });
 
@@ -83,6 +88,11 @@ const monitorNotificationWorker = createWorker<MonitorNotificationJob>('monitor-
   await processMonitorNotification(job);
 });
 
+// Create worker for status page subscriber emails
+const statusSubscriberWorker = createWorker<StatusSubscriberJob>('status-subscriber-notifications', async (job) => {
+  await processStatusSubscriberNotification(job);
+});
+
 // Create worker for log pipeline processing
 const pipelineWorker = createWorker<LogPipelineJobData>('log-pipeline', async (job) => {
   await processLogPipeline(job);
@@ -109,6 +119,9 @@ const webhookDeliveryWorker = createWorker<WebhookDeliveryJobData>('webhook-deli
 const receiverEventsWorker = createWorker<ReceiverEventJobData>('receiver-events', async (job) => {
   await processReceiverEvent(job);
 });
+
+// Extension jobs and crons, registered before the runner starts.
+const extensionWorkers = await startExtensionJobs(extensions);
 
 // Start workers (required for graphile-worker backend, no-op for BullMQ)
 console.log(`[Worker] Using queue backend: ${getQueueBackend()}`);
@@ -294,6 +307,28 @@ monitorNotificationWorker.on('failed', (job, err) => {
   }
 });
 
+statusSubscriberWorker.on('completed', (job) => {
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('info', `Status subscriber notification job completed`, {
+      jobId: job.id,
+      projectId: job.data?.projectId,
+      kind: job.data?.kind,
+    });
+  }
+});
+
+statusSubscriberWorker.on('failed', (job, err) => {
+  console.error(`Status subscriber notification job ${job?.id} failed:`, err);
+
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('error', `Status subscriber notification job failed: ${err.message}`, {
+      error: { name: err.name, message: err.message, stack: err.stack },
+      jobId: job?.id,
+      projectId: job?.data?.projectId,
+    });
+  }
+});
+
 pipelineWorker.on('completed', (job) => {
   if (isInternalLoggingEnabled()) {
     hub.captureLog('info', `Log pipeline job completed`, {
@@ -388,33 +423,30 @@ async function checkAlerts() {
       const checkDuration = Date.now() - checkStartTime;
 
       if (triggeredAlerts.length > 0) {
+        const byKind = { triggered: 0, renotify: 0, resolved: 0 };
+        for (const alert of triggeredAlerts) byKind[alert.kind]++;
 
         if (isInternalLoggingEnabled()) {
-          hub.captureLog('warn', `${triggeredAlerts.length} alert(s) triggered`, {
+          hub.captureLog('warn', `${triggeredAlerts.length} alert notification(s): ${byKind.triggered} triggered, ${byKind.renotify} renotify, ${byKind.resolved} resolved`, {
             alertCount: triggeredAlerts.length,
+            triggeredCount: byKind.triggered,
+            renotifyCount: byKind.renotify,
+            resolvedCount: byKind.resolved,
             alertRuleIds: triggeredAlerts.map((a) => a.rule_id),
             checkDuration_ms: checkDuration,
           });
         }
 
-        // Add notification jobs to queue
+        // Add notification jobs to queue (one key per notification, see alert-evaluation.ts)
         const { createQueue } = await import('./queue/connection.js');
-        const notificationQueue = createQueue('alert-notifications');
+        const notificationQueue = createQueue<AlertNotificationJobData>('alert-notifications');
+        const queued = await enqueueAlertNotifications(triggeredAlerts, notificationQueue);
 
-        for (const alert of triggeredAlerts) {
-          // Dedup by the alert_history id so an overlapping evaluation that
-          // re-enqueues the same trigger does not send duplicate notifications.
-          await notificationQueue.add('send-notification', alert, {
-            jobKey: `alert-notif-${alert.historyId}`,
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog(queued === triggeredAlerts.length ? 'info' : 'error', `${queued} of ${triggeredAlerts.length} alert notification(s) queued`, {
+            queuedCount: queued,
+            alertCount: triggeredAlerts.length,
           });
-
-          if (isInternalLoggingEnabled()) {
-            hub.captureLog('info', `Alert notification queued`, {
-              alertRuleId: alert.rule_id,
-              ruleName: alert.rule_name,
-              logCount: alert.log_count,
-            });
-          }
         }
       } else {
         if (isInternalLoggingEnabled()) {
@@ -906,6 +938,42 @@ async function runMaintenanceTransitions() {
 setInterval(runMaintenanceTransitions, 60000);
 runMaintenanceTransitions();
 
+// ============================================================================
+// Project health checks (every 5 minutes, first run 60s after start)
+// ============================================================================
+
+let isRunningProjectHealth = false;
+
+async function runProjectHealth() {
+  await context.runAsSystem('cron:project-health', async () => {
+    if (isRunningProjectHealth) {
+      console.warn('[Worker] Project health pass already in progress, skipping...');
+      return;
+    }
+    isRunningProjectHealth = true;
+    try {
+      const result = await runProjectHealthPass();
+      if (result.opened > 0 || result.resolved > 0) {
+        console.log(
+          `[Worker] Project health: ${result.evaluated} evaluated, ${result.opened} opened, ${result.resolved} resolved`
+        );
+      }
+    } catch (error) {
+      console.error('[Worker] Project health pass failed:', error);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', `Project health pass failed: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
+      }
+    } finally {
+      isRunningProjectHealth = false;
+    }
+  });
+}
+
+setInterval(runProjectHealth, 5 * 60 * 1000);
+setTimeout(runProjectHealth, 60 * 1000);
+
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {
   console.log(`Received ${signal}, shutting down gracefully...`);
@@ -913,6 +981,7 @@ async function gracefulShutdown(signal: string) {
   try {
     // Stop accepting new jobs
     await alertWorker.close();
+    await Promise.all(extensionWorkers.map((w) => w.close()));
     await sigmaWorker.close();
     await autoGroupWorker.close();
     await invitationWorker.close();
@@ -920,6 +989,7 @@ async function gracefulShutdown(signal: string) {
     await exceptionWorker.close();
     await errorNotificationWorker.close();
     await monitorNotificationWorker.close();
+    await statusSubscriberWorker.close();
     await pipelineWorker.close();
     await digestWorker.close();
     await digestDispatchWorker.close();

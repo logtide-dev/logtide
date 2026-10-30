@@ -178,153 +178,132 @@ test.describe('Traces Journey', () => {
   });
 
   test('1. Trace list shows the seeded trace with root service, span count and status', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces?project=${projectId}`);
     await page.waitForLoadState('load');
 
-    await expect(page.locator('h1')).toContainText(/distributed traces/i);
+    await expect(page.getByRole('heading', { name: 'Traces', level: 1 })).toBeVisible();
 
     // Trace A row: root service, operation, span count and status
-    const checkoutRow = page.locator('table tbody tr', { hasText: 'POST /checkout' });
+    // Columns: Start | Root service | Operation | Duration | Spans | Status
+    const checkoutRow = page.getByRole('row', { name: /checkout-service POST \/checkout 200ms 3 OK/ });
     await expect(checkoutRow).toBeVisible({ timeout: 15000 });
-    await expect(checkoutRow).toContainText('checkout-service');
-    // Columns: Time | Service | Operation | Duration | Spans | Status | Actions
-    await expect(checkoutRow.locator('td').nth(4)).toHaveText('3');
-    await expect(checkoutRow).toContainText('OK');
+    await expect(checkoutRow.getByRole('cell').nth(4)).toHaveText('3');
 
     // Trace B row is also listed
-    const inventoryRow = page.locator('table tbody tr', { hasText: 'GET /stock' });
+    const inventoryRow = page.getByRole('row', { name: /inventory-service GET \/stock 50ms 1 OK/ });
     await expect(inventoryRow).toBeVisible();
-    await expect(inventoryRow).toContainText('inventory-service');
   });
 
   test('2. Service and status filters narrow the list, clearing restores it', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces?project=${projectId}`);
     await page.waitForLoadState('load');
 
-    const checkoutRow = page.locator('table tbody tr', { hasText: 'POST /checkout' });
-    const inventoryRow = page.locator('table tbody tr', { hasText: 'GET /stock' });
-    await expect(checkoutRow).toBeVisible({ timeout: 15000 });
-    await expect(inventoryRow).toBeVisible();
+    const checkoutLink = page.getByRole('link', { name: 'POST /checkout' });
+    const inventoryLink = page.getByRole('link', { name: 'GET /stock' });
+    await expect(checkoutLink).toBeVisible({ timeout: 15000 });
+    await expect(inventoryLink).toBeVisible();
 
     // Filter by root service of trace A
-    await page.locator('button:has-text("All services")').first().click();
-    const serviceCheckbox = page.locator('label:has-text("checkout-service") input[type="checkbox"]');
-    await serviceCheckbox.waitFor({ state: 'visible' });
-    await serviceCheckbox.check();
-    // Close popover
-    await page.locator('body').click({ position: { x: 0, y: 0 } });
-    await page.waitForTimeout(1500);
-
-    await expect(checkoutRow).toBeVisible();
-    await expect(inventoryRow).toHaveCount(0);
+    await page.getByRole('combobox', { name: 'Service' }).selectOption('checkout-service');
+    await expect(checkoutLink).toBeVisible();
+    await expect(inventoryLink).toHaveCount(0, { timeout: 15000 });
 
     // Error-only filter on non-error traces empties the list
-    await page.locator('button:has-text("All statuses")').first().click();
-    const errorsRadio = page.locator('label:has-text("Errors only") input[type="radio"]');
-    await errorsRadio.waitFor({ state: 'visible' });
-    await errorsRadio.check();
-    await page.locator('body').click({ position: { x: 0, y: 0 } });
+    await page.getByRole('combobox', { name: 'Status' }).selectOption({ label: 'Errors only' });
+    await expect(checkoutLink).toHaveCount(0, { timeout: 15000 });
+    await expect(inventoryLink).toHaveCount(0);
 
-    await expect(page.getByText('No traces match the current filters.')).toBeVisible({ timeout: 15000 });
-
-    // Clearing the filters restores both traces
-    await page.locator('button:has-text("Clear filters")').click();
-    await expect(checkoutRow).toBeVisible({ timeout: 15000 });
-    await expect(inventoryRow).toBeVisible();
+    // Resetting both filters restores both traces
+    await page.getByRole('combobox', { name: 'Status' }).selectOption({ label: 'All statuses' });
+    await page.getByRole('combobox', { name: 'Service' }).selectOption({ label: 'All services' });
+    await expect(checkoutLink).toBeVisible({ timeout: 15000 });
+    await expect(inventoryLink).toBeVisible();
   });
 
   test('3. Trace detail renders the waterfall and expand/collapse toggles child rows', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces/${checkoutTraceId}?projectId=${projectId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces/${checkoutTraceId}?project=${projectId}`);
     await page.waitForLoadState('load');
 
-    await expect(page.locator('h1')).toContainText(/trace details/i);
-    await expect(page.getByText('Trace Timeline')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('heading', { name: /^Trace / , level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Trace timeline' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('3 spans across 2 services')).toBeVisible();
 
     // All spans expanded by default
-    const chargeRow = page.locator('div[role="button"]', { hasText: 'charge-card' });
-    const dbRow = page.locator('div[role="button"]', { hasText: 'db-query' });
-    await expect(page.locator('div[role="button"]', { hasText: 'POST /checkout' })).toBeVisible();
+    const chargeRow = page.getByRole('button', { name: /payment-service: charge-card/ });
+    const dbRow = page.getByRole('button', { name: /payment-service: db-query/ });
+    await expect(page.getByRole('button', { name: /checkout-service: POST \/checkout/ })).toBeVisible();
     await expect(chargeRow).toBeVisible();
     await expect(dbRow).toBeVisible();
 
     // Collapse the charge-card subtree: its child db-query disappears
-    await chargeRow.locator('button').click();
+    await chargeRow.getByRole('button', { name: 'Collapse children' }).click();
     await expect(dbRow).toHaveCount(0);
     await expect(chargeRow).toBeVisible();
 
     // Expand again: child row comes back
-    await chargeRow.locator('button').click();
+    await chargeRow.getByRole('button', { name: 'Expand children' }).click();
     await expect(dbRow).toBeVisible();
   });
 
   test('4. Clicking a span opens the detail panel with kind, status, duration and attributes', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces/${checkoutTraceId}?projectId=${projectId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces/${checkoutTraceId}?project=${projectId}`);
     await page.waitForLoadState('load');
 
-    const chargeRow = page.locator('div[role="button"]', { hasText: 'charge-card' });
+    const chargeRow = page.getByRole('button', { name: /payment-service: charge-card/ });
     await expect(chargeRow).toBeVisible({ timeout: 15000 });
     await chargeRow.click();
 
-    await expect(page.getByText('Span Details')).toBeVisible();
-    await expect(page.getByText('payment-service - charge-card')).toBeVisible();
+    const panel = page.getByRole('complementary', { name: 'Span details' });
+    await expect(panel.getByRole('heading', { name: 'charge-card' })).toBeVisible();
+    await expect(panel).toContainText('payment-service');
+    // Status and a formatted duration sit in the panel header
+    await expect(panel).toContainText(/OK\s+\d+(\.\d+)?(ms|s|m)/);
 
-    // Span id, kind, status and duration
-    await expect(page.getByText(chargeSpanId).first()).toBeVisible();
-    await expect(page.getByText('Client', { exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Status', exact: true })).toBeVisible();
-    // Duration field shows a formatted duration (exact ms can be off by one
-    // due to ns timestamp precision, so match the format instead)
-    const durationHeading = page.getByRole('heading', { name: 'Duration', exact: true });
-    await expect(durationHeading).toBeVisible();
-    await expect(durationHeading.locator('xpath=following-sibling::p')).toHaveText(/^\d+(\.\d+)?(ms|s|m)$/);
+    // Overview: span id and kind
+    await expect(panel.getByText(chargeSpanId)).toBeVisible();
+    await expect(panel.getByText('CLIENT', { exact: true })).toBeVisible();
 
-    // Attributes section shows the seeded span attributes
-    await expect(page.getByText('Attributes', { exact: true })).toBeVisible();
-    const attributesPre = page.locator('pre', { hasText: 'http.method' });
-    await expect(attributesPre).toBeVisible();
-    await expect(attributesPre).toContainText('payment.provider');
+    // Attributes tab shows the seeded span attributes
+    await panel.getByRole('tab', { name: 'Attributes' }).click();
+    await expect(panel.getByText('http.method')).toBeVisible();
+    await expect(panel.getByText('payment.provider')).toBeVisible();
   });
 
-  test('5. "View Logs for this Trace" lands on search filtered by the trace id', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces/${checkoutTraceId}?projectId=${projectId}`);
+  test('5. "View trace logs" lands on logs filtered by the trace id', async ({ page }) => {
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/traces/${checkoutTraceId}?project=${projectId}`);
     await page.waitForLoadState('load');
 
-    const chargeRow = page.locator('div[role="button"]', { hasText: 'charge-card' });
+    const chargeRow = page.getByRole('button', { name: /payment-service: charge-card/ });
     await expect(chargeRow).toBeVisible({ timeout: 15000 });
     await chargeRow.click();
-    await expect(page.getByText('Span Details')).toBeVisible();
 
-    await page.locator('button:has-text("View Logs for this Trace")').click();
-    await page.waitForURL(/\/dashboard\/search\?.*traceId=/);
-    await page.waitForTimeout(2500);
+    await page.getByRole('link', { name: 'View trace logs' }).click();
+    await page.waitForURL(/\/dashboard\/logs\?.*q=trace%3A/);
 
-    // The seeded correlated logs are shown
-    const logsTable = page.locator('table.caption-bottom');
-    await expect(logsTable).toBeVisible({ timeout: 15000 });
-    const pageContent = await page.content();
-    expect(pageContent).toContain(checkoutTraceId.substring(0, 8));
-    expect(pageContent.toLowerCase()).toContain('traced log');
+    // The query bar holds the trace clause and the seeded correlated logs are shown
+    await expect(page.getByRole('combobox', { name: 'Log query' })).toHaveValue(`trace:${checkoutTraceId}`);
+    const results = page.getByRole('region', { name: 'Results' });
+    await expect(results.getByText(checkoutTraceId.substring(0, 8)).first()).toBeVisible({ timeout: 20000 });
+    await expect(results.getByText(/traced log/i).first()).toBeVisible();
   });
 
   test('6. A log\'s trace id link navigates back to the trace detail', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search?traceId=${checkoutTraceId}&project=${projectId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs?q=trace%3A${checkoutTraceId}&project=${projectId}`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(2500);
 
-    // Expand the first log's details
-    const detailsButton = page.locator('button:has-text("Details")').first();
-    await expect(detailsButton).toBeVisible({ timeout: 15000 });
-    await detailsButton.click();
+    // Open the first log's details panel
+    const results = page.getByRole('region', { name: 'Results' });
+    await expect(results.getByRole('row').nth(1)).toBeVisible({ timeout: 20000 });
+    await results.getByRole('row').nth(1).click();
 
     // Follow the trace link (the trace id renders as a link to the trace timeline)
-    const viewTraceLink = page.locator(`a[href*="/dashboard/traces/${checkoutTraceId}"]`).first();
-    await expect(viewTraceLink).toBeVisible();
+    const details = page.getByRole('complementary', { name: 'Log details' });
+    const viewTraceLink = details.locator(`a[href*="/dashboard/traces/${checkoutTraceId}"]`).first();
+    await expect(viewTraceLink).toBeVisible({ timeout: 15000 });
     await viewTraceLink.click();
 
     await page.waitForURL(new RegExp(`/dashboard/traces/${checkoutTraceId}`));
-    await expect(page.locator('h1')).toContainText(/trace details/i);
-    await expect(page.getByText(checkoutTraceId).first()).toBeVisible();
-    await expect(page.getByText('Trace Timeline')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('heading', { name: /^Trace /, level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Trace timeline' })).toBeVisible({ timeout: 15000 });
   });
 });

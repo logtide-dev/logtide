@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TopNTableConfig } from '@logtide/shared';
   import { Badge } from '$lib/components/ui/badge';
-  import { formatTimestamp } from '$lib/utils/format-time';
+  import { formatTimestamp as formatCellTime } from '$lib/utils/datetime';
   import { displayPreferences } from '$lib/stores/display-preferences';
 
   interface TopNRow {
@@ -25,6 +25,11 @@
 
   let { config, data }: Props = $props();
   const typed = $derived(data as TopNTableData | null);
+
+  function cellTime(value: string): string {
+    void $displayPreferences;
+    return formatCellTime(value, { precision: 'minute' });
+  }
   // Only the topValues-backed dimensions can carry a last seen time; the header
   // and the cells appear together or not at all.
   const hasLastSeen = $derived(typed?.rows.some((r) => r.lastSeen) ?? false);
@@ -58,7 +63,7 @@
           </div>
           {#if hasLastSeen}
             <span class="w-28 flex-shrink-0 text-right text-xs text-muted-foreground">
-              {row.lastSeen ? formatTimestamp(row.lastSeen, 'dateTime', $displayPreferences) : '-'}
+              {row.lastSeen ? cellTime(row.lastSeen) : '-'}
             </span>
           {/if}
           <Badge variant="secondary" class="w-14 flex-shrink-0 justify-center">{row.percentage}%</Badge>

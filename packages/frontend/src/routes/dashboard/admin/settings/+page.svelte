@@ -1,529 +1,397 @@
 <script lang="ts">
-    import {
-        Card,
-        CardContent,
-        CardDescription,
-        CardHeader,
-        CardTitle,
-    } from "$lib/components/ui/card";
+    import { onMount } from "svelte";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
+    import SettingsSection from "$lib/components/app/SettingsSection.svelte";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
     import { Button } from "$lib/components/ui/button";
     import { Label } from "$lib/components/ui/label";
     import { Switch } from "$lib/components/ui/switch";
+    import { Skeleton } from "$lib/components/ui/skeleton";
     import * as Select from "$lib/components/ui/select";
-    import { onMount } from "svelte";
     import { adminAPI, type UserBasic } from "$lib/api/admin";
-    import { authStore } from "$lib/stores/auth";
-    import { goto } from "$app/navigation";
+    import { toastStore } from "$lib/stores/toast";
+    import { RefreshCw, TriangleAlert } from "@lucide/svelte";
     import {
-        Settings,
-        Shield,
-        UserPlus,
-        AlertTriangle,
-        RefreshCw,
-        Save,
-        Info,
-        User,
-        Search,
-        ArrowUpCircle,
-    } from "@lucide/svelte";
-    import { browser } from "$app/environment";
-    import { untrack } from "svelte";
-    import { UsersAPI } from "$lib/api/users";
-    import { get } from "svelte/store";
+        defaultUserOptions,
+        settingsFromResponse,
+        validateSettings,
+        type InstanceSettingsForm,
+    } from "$lib/utils/admin-settings";
+    import {
+        isSectionDirty,
+        sectionPayload,
+        isEnablingAuthFree,
+        resetSection,
+        type SettingsSectionKey,
+    } from "$lib/components/admin/settings-sections";
+    import Timestamp from "$lib/components/app/Timestamp.svelte";
+
+    // The admin layout already blocks this page until the user is confirmed as admin.
 
     let loading = $state(true);
-    let saving = $state(false);
-    let error = $state<string | null>(null);
-    let success = $state<string | null>(null);
+    let loaded = $state(false);
+    let loadError = $state<string | null>(null);
+    let savingSection = $state<SettingsSectionKey | null>(null);
+    let sectionErrors = $state<Partial<Record<SettingsSectionKey, string>>>({});
+    let lastSavedAt = $state<Partial<Record<SettingsSectionKey, string>>>({});
 
-    // Settings state
-    let signupEnabled = $state(true);
-    let authMode = $state<"standard" | "none">("standard");
-    let defaultUserId = $state<string | null>(null);
+    const EMPTY: InstanceSettingsForm = {
+        signupEnabled: true,
+        authMode: "standard",
+        defaultUserId: null,
+        updatesChannel: "stable",
+    };
+    let saved = $state<InstanceSettingsForm>({ ...EMPTY });
+    let form = $state<InstanceSettingsForm>({ ...EMPTY });
 
-    // Search settings state
-    let searchDefaultMode = $state<"fulltext" | "substring">("fulltext");
-    let searchSubstringIndexed = $state(true);
-
-    // Updates settings state
-    let updatesChannel = $state<"stable" | "beta">("stable");
-
-    // Users list for auth-free mode selector
     let usersList = $state<UserBasic[]>([]);
-    let loadingUsers = $state(false);
 
-    const usersAPI = new UsersAPI(() => get(authStore).token);
+    let confirmAuthFree = $state(false);
+    let confirmRefresh = $state(false);
 
-    $effect(() => {
-        if (browser && $authStore.user) {
-            if ($authStore.user.is_admin === undefined) {
-                untrack(() => {
-                    usersAPI
-                        .getCurrentUser()
-                        .then(({ user }) => {
-                            const currentUser = get(authStore).user;
-                            if (currentUser) {
-                                authStore.updateUser({
-                                    ...currentUser,
-                                    ...user,
-                                });
-                                if (user.is_admin) {
-                                    loadSettings();
-                                }
-                            }
-                        })
-                        .catch((err) => {
-                            console.error("Failed to refresh profile:", err);
-                            goto("/dashboard");
-                        });
-                });
-            } else if ($authStore.user.is_admin === false) {
-                untrack(() => {
-                    goto("/dashboard");
-                });
-            }
-        }
+    const SECTIONS: SettingsSectionKey[] = ["signups", "auth", "updates"];
+    const dirty = $derived({
+        signups: isSectionDirty("signups", saved, form),
+        auth: isSectionDirty("auth", saved, form),
+        updates: isSectionDirty("updates", saved, form),
     });
+    const anyDirty = $derived(SECTIONS.some((s) => dirty[s]));
+
+    // Search settings: shown for reference only, the server does not store them.
+    const searchDefaultMode = "fulltext";
 
     async function loadSettings() {
-        if ($authStore.user?.is_admin !== true) return;
-
         loading = true;
-        error = null;
+        loadError = null;
         try {
             const [settings, usersResponse] = await Promise.all([
                 adminAPI.getSettings(),
-                adminAPI.getUsers(1, 100), // Load up to 100 users for selection
+                adminAPI.getUsers(1, 100),
             ]);
-            signupEnabled = settings["auth.signup_enabled"] as boolean ?? true;
-            authMode = (settings["auth.mode"] as "standard" | "none") ?? "standard";
-            defaultUserId = (settings["auth.default_user_id"] as string) ?? null;
-            // Search settings
-            searchDefaultMode = (settings["search.default_mode"] as "fulltext" | "substring") ?? "fulltext";
-            searchSubstringIndexed = (settings["search.substring_indexed"] as boolean) ?? true;
-            // Updates settings
-            updatesChannel = (settings["updates.channel"] as "stable" | "beta") ?? "stable";
-            // Only show active admin users for default user selection
-            usersList = usersResponse.users.filter(u => !u.disabled && u.is_admin);
-        } catch (e: any) {
+            const next = settingsFromResponse(settings);
+            saved = { ...next };
+            form = { ...next };
+            sectionErrors = {};
+            loaded = true;
+
+            // The saved default user may be outside the first page or not an
+            // active admin: fetch it by id so the select shows the saved value.
+            let savedUser: UserBasic | null = null;
+            if (next.defaultUserId) {
+                savedUser = usersResponse.users.find((u) => u.id === next.defaultUserId) ?? null;
+                if (!savedUser) {
+                    savedUser = await adminAPI.getUserDetails(next.defaultUserId).catch(() => null);
+                }
+            }
+            usersList = defaultUserOptions(usersResponse.users, savedUser);
+        } catch (e) {
             console.error("Error loading settings:", e);
-            error = e.message || "Failed to load settings";
+            loadError = e instanceof Error && e.message ? e.message : "Failed to load settings";
         } finally {
             loading = false;
         }
     }
 
-    async function saveSettings() {
-        saving = true;
-        error = null;
-        success = null;
+    function onRefresh() {
+        if (anyDirty) confirmRefresh = true;
+        else loadSettings();
+    }
+
+    function requestSave(section: SettingsSectionKey) {
+        const invalid = validateSettings(form);
+        if (section === "auth" && invalid) {
+            sectionErrors = { ...sectionErrors, auth: invalid };
+            return;
+        }
+        if (section === "auth" && isEnablingAuthFree(saved, form)) {
+            confirmAuthFree = true;
+            return;
+        }
+        saveSection(section).catch(() => {});
+    }
+
+    async function saveSection(section: SettingsSectionKey) {
+        sectionErrors = { ...sectionErrors, [section]: undefined };
+        savingSection = section;
         try {
-            await adminAPI.updateSettings({
-                "auth.signup_enabled": signupEnabled,
-                "auth.mode": authMode,
-                "auth.default_user_id": defaultUserId,
-                "search.default_mode": searchDefaultMode,
-                "search.substring_indexed": searchSubstringIndexed,
-                "updates.channel": updatesChannel,
-            });
-            success = "Settings saved successfully";
-            setTimeout(() => {
-                success = null;
-            }, 3000);
-        } catch (e: any) {
+            const res = await adminAPI.updateSettings(sectionPayload(section, form));
+            // Show what the server actually stored, but only for this section so
+            // edits in other sections are kept.
+            const stored = res?.settings ? settingsFromResponse(res.settings) : form;
+            saved = resetSection(section, stored, saved);
+            form = resetSection(section, stored, form);
+            lastSavedAt = { ...lastSavedAt, [section]: new Date().toISOString() };
+            toastStore.success("Settings saved");
+        } catch (e) {
             console.error("Error saving settings:", e);
-            error = e.message || "Failed to save settings";
+            sectionErrors = {
+                ...sectionErrors,
+                [section]: e instanceof Error && e.message ? e.message : "Failed to save settings",
+            };
+            throw e;
         } finally {
-            saving = false;
+            savingSection = null;
         }
     }
 
-    onMount(() => {
-        if ($authStore.user?.is_admin) {
-            loadSettings();
-        }
-    });
+    function discard(section: SettingsSectionKey) {
+        form = resetSection(section, saved, form);
+        sectionErrors = { ...sectionErrors, [section]: undefined };
+    }
+
+    onMount(loadSettings);
 
     const authModeOptionsList = [
-        { value: "standard", label: "Standard Authentication" },
-        { value: "none", label: "Auth-Free Mode" },
+        { value: "standard", label: "Standard authentication" },
+        { value: "none", label: "Auth-free mode" },
     ];
 
     function getAuthModeLabel(mode: string): string {
-        return authModeOptionsList.find(o => o.value === mode)?.label ?? "Select mode...";
+        return authModeOptionsList.find((o) => o.value === mode)?.label ?? "Select mode";
     }
 
     function getDefaultUserLabel(userId: string | null): string {
-        if (!userId) return "Select default user...";
-        const user = usersList.find(u => u.id === userId);
-        return user ? `${user.name} (${user.email})` : "Select default user...";
-    }
-
-    function getSelectedUser(): UserBasic | null {
-        if (!defaultUserId) return null;
-        return usersList.find(u => u.id === defaultUserId) ?? null;
+        if (!userId) return "Select default user";
+        const user = usersList.find((u) => u.id === userId);
+        return user ? `${user.name} (${user.email})` : "Select default user";
     }
 </script>
 
 <svelte:head>
-    <title>Admin Settings - LogTide</title>
+    <title>Instance settings - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-8">
-    <div class="flex justify-between items-center">
-        <div>
-            <h1 class="text-3xl font-bold tracking-tight flex items-center gap-2">
-                <Settings class="h-8 w-8" />
-                System Settings
-            </h1>
-            <p class="text-muted-foreground mt-1">
-                Configure global authentication and security settings
-            </p>
+{#snippet sectionFooter(section: SettingsSectionKey)}
+    <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+        <div class="text-sm" aria-live="polite">
+            {#if sectionErrors[section]}
+                <span role="alert" class="text-destructive-text">{sectionErrors[section]}</span>
+            {:else if dirty[section]}
+                <span class="text-warning-text">Unsaved changes</span>
+            {:else if lastSavedAt[section]}
+                <span class="text-muted-foreground">Saved <Timestamp value={lastSavedAt[section]} /></span>
+            {/if}
         </div>
-        <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2">
             <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                onclick={loadSettings}
-                disabled={loading}
+                disabled={!dirty[section] || savingSection !== null}
+                onclick={() => discard(section)}
             >
-                <RefreshCw
-                    class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}"
-                />
-                Refresh
+                Discard
             </Button>
             <Button
                 size="sm"
-                onclick={saveSettings}
-                disabled={saving || loading}
+                disabled={!dirty[section] || savingSection !== null}
+                onclick={() => requestSave(section)}
             >
-                <Save class="mr-2 h-4 w-4" />
-                {saving ? "Saving..." : "Save Changes"}
+                {savingSection === section ? "Saving..." : "Save"}
             </Button>
         </div>
     </div>
+{/snippet}
 
-    {#if error}
-        <div
-            class="bg-destructive/15 text-destructive p-4 rounded-md flex items-center gap-2"
-        >
-            <AlertTriangle class="h-5 w-5" />
-            <span>{error}</span>
+<div class="space-y-8">
+    <PageHeader
+        title="Instance settings"
+        appliesTo="instance"
+        description="Sign-ups, authentication and update notifications for this instance"
+    >
+        {#snippet actions()}
+            <Button variant="outline" size="sm" onclick={onRefresh} disabled={loading}>
+                <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
+                Refresh
+            </Button>
+        {/snippet}
+    </PageHeader>
+
+    {#if loading && !loaded && !loadError}
+        <div class="space-y-4" aria-busy="true">
+            <Skeleton class="h-32 w-full" />
+            <Skeleton class="h-48 w-full" />
+            <Skeleton class="h-32 w-full" />
         </div>
-    {/if}
-
-    {#if success}
-        <div
-            class="bg-green-500/15 text-green-600 dark:text-green-400 p-4 rounded-md flex items-center gap-2"
-        >
-            <Info class="h-5 w-5" />
-            <span>{success}</span>
-        </div>
-    {/if}
-
-    {#if $authStore.user?.is_admin}
-        {#if loading}
-            <div class="flex flex-col items-center justify-center p-12 text-center">
-                <div class="bg-muted/50 p-6 rounded-full mb-4">
-                    <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
+    {:else if loadError}
+        <EmptyState variant="error" title="Could not load settings" description={loadError}>
+            {#snippet actions()}
+                <Button variant="outline" size="sm" onclick={loadSettings}>Retry</Button>
+            {/snippet}
+        </EmptyState>
+    {:else}
+        <!-- Sign-ups -->
+        <SettingsSection title="Sign-ups" description="Control whether new users can create accounts on this instance">
+            <div class="flex items-center justify-between gap-4">
+                <div class="space-y-0.5">
+                    <Label for="signups-switch">Allow sign-ups</Label>
+                    <p class="text-sm text-muted-foreground">Anyone who can reach the instance can register</p>
                 </div>
-                <h2 class="text-xl font-semibold">Loading Settings...</h2>
+                <Switch
+                    id="signups-switch"
+                    checked={form.signupEnabled}
+                    onCheckedChange={(checked) => (form.signupEnabled = checked)}
+                />
             </div>
-        {:else}
-            <div class="grid gap-6 md:grid-cols-2">
-                <!-- User Registration Settings -->
-                <Card>
-                    <CardHeader>
-                        <CardTitle class="flex items-center gap-2">
-                            <UserPlus class="h-5 w-5" />
-                            User Registration
-                        </CardTitle>
-                        <CardDescription>
-                            Control whether new users can register on the platform
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent class="space-y-4">
-                        <div class="flex items-center justify-between">
-                            <div class="space-y-0.5">
-                                <Label>Enable Sign-ups</Label>
-                                <p class="text-sm text-muted-foreground">
-                                    Allow new users to create accounts
-                                </p>
-                            </div>
-                            <Switch
-                                checked={signupEnabled}
-                                onCheckedChange={(checked) => (signupEnabled = checked)}
-                            />
-                        </div>
-                        {#if !signupEnabled}
-                            <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
-                                <p class="text-sm text-yellow-600 dark:text-yellow-400">
-                                    New user registration is disabled. Users can only be added via invitations or admin creation.
-                                </p>
-                            </div>
-                        {/if}
-                    </CardContent>
-                </Card>
+            {#if !form.signupEnabled}
+                <p class="mt-4 rounded-md border border-warning/20 bg-warning/10 p-3 text-sm text-warning-text">
+                    Sign-ups are disabled. Users can only be added by invitation or by an admin.
+                </p>
+            {/if}
+            {@render sectionFooter("signups")}
+        </SettingsSection>
 
-                <!-- Authentication Mode Settings -->
-                <Card>
-                    <CardHeader>
-                        <CardTitle class="flex items-center gap-2">
-                            <Shield class="h-5 w-5" />
-                            Authentication Mode
-                        </CardTitle>
-                        <CardDescription>
-                            Configure how users authenticate to the platform
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent class="space-y-4">
-                        <div class="space-y-2">
-                            <Label>Authentication Mode</Label>
+        <!-- Authentication -->
+        <SettingsSection title="Authentication" description="How users sign in to this instance">
+            <div class="mb-4 flex items-start gap-3 rounded-md border border-destructive/20 bg-destructive/5 p-3">
+                <TriangleAlert class="mt-0.5 size-4 shrink-0 text-destructive-text" aria-hidden="true" />
+                <p class="text-sm text-muted-foreground">
+                    Authentication changes affect all users immediately. Auth-free mode skips sign-in entirely: use it
+                    only on trusted, single-user instances, never on one reachable from the internet.
+                </p>
+            </div>
+
+            <div class="space-y-4">
+                <div class="space-y-2">
+                    <Label>Authentication mode</Label>
+                    <Select.Root
+                        type="single"
+                        value={form.authMode}
+                        onValueChange={(v) => {
+                            if (v === "standard" || v === "none") form.authMode = v;
+                        }}
+                    >
+                        <Select.Trigger class="w-full" aria-label="Authentication mode">
+                            {getAuthModeLabel(form.authMode)}
+                        </Select.Trigger>
+                        <Select.Content>
+                            {#each authModeOptionsList as option (option.value)}
+                                <Select.Item value={option.value}>{option.label}</Select.Item>
+                            {/each}
+                        </Select.Content>
+                    </Select.Root>
+                </div>
+
+                {#if form.authMode === "none"}
+                    <div class="space-y-3 rounded-md border border-warning/20 bg-warning/10 p-3">
+                        <p class="text-sm font-medium text-warning-text">Auth-free mode</p>
+                        <p class="text-sm text-muted-foreground">
+                            Every request is processed as the default user below. Login and registration pages
+                            redirect to the dashboard. The default user needs access to the organizations and
+                            projects you want to expose.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <Label>Default user</Label>
+                        {#if usersList.length === 0}
+                            <p class="rounded-md border border-warning/20 bg-warning/10 p-3 text-sm text-warning-text">
+                                No eligible users. Create an active admin user before enabling auth-free mode.
+                            </p>
+                        {:else}
                             <Select.Root
                                 type="single"
-                                value={authMode}
+                                value={form.defaultUserId || undefined}
                                 onValueChange={(v) => {
-                                    if (v && (v === 'standard' || v === 'none')) {
-                                        authMode = v;
-                                    }
+                                    if (v) form.defaultUserId = v;
                                 }}
                             >
-                                <Select.Trigger class="w-full">
-                                    {getAuthModeLabel(authMode)}
+                                <Select.Trigger class="w-full" aria-label="Default user">
+                                    {getDefaultUserLabel(form.defaultUserId)}
                                 </Select.Trigger>
                                 <Select.Content>
-                                    {#each authModeOptionsList as option}
-                                        <Select.Item value={option.value}>
-                                            {option.label}
+                                    {#each usersList as user (user.id)}
+                                        <Select.Item value={user.id}>
+                                            <div class="flex items-center gap-2">
+                                                <span class="font-medium">{user.name}</span>
+                                                <span class="text-muted-foreground">({user.email})</span>
+                                                {#if user.is_admin}
+                                                    <span class="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">Admin</span>
+                                                {/if}
+                                                {#if user.disabled}
+                                                    <span class="text-xs text-muted-foreground">(disabled)</span>
+                                                {/if}
+                                            </div>
                                         </Select.Item>
                                     {/each}
                                 </Select.Content>
                             </Select.Root>
-                        </div>
-                        {#if authMode === "none"}
-                            <div class="bg-orange-500/10 border border-orange-500/20 rounded-md p-3 space-y-2">
-                                <p class="text-sm font-medium text-orange-600 dark:text-orange-400">
-                                    Auth-Free Mode Active
-                                </p>
-                                <p class="text-sm text-muted-foreground">
-                                    All users will be automatically logged in as the default user.
-                                    This mode is intended for single-user deployments only.
-                                </p>
-                            </div>
-                        {:else}
-                            <div class="bg-blue-500/10 border border-blue-500/20 rounded-md p-3">
-                                <p class="text-sm text-blue-600 dark:text-blue-400">
-                                    Standard authentication requires users to login with email/password, OIDC, or LDAP.
-                                </p>
-                            </div>
-                        {/if}
-                    </CardContent>
-                </Card>
-
-                <!-- Default User Settings (only shown when auth-free mode) -->
-                {#if authMode === "none"}
-                    <Card class="md:col-span-2">
-                        <CardHeader>
-                            <CardTitle class="flex items-center gap-2">
-                                <User class="h-5 w-5" />
-                                Default User Configuration
-                            </CardTitle>
-                            <CardDescription>
-                                Select the default user for auth-free mode. All requests will be processed as this user.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent class="space-y-4">
-                            <div class="space-y-2">
-                                <Label>Default User</Label>
-                                {#if usersList.length === 0}
-                                    <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
-                                        <p class="text-sm text-yellow-600 dark:text-yellow-400">
-                                            No users available. Create a user first before enabling auth-free mode.
-                                        </p>
-                                    </div>
-                                {:else}
-                                    <Select.Root
-                                        type="single"
-                                        value={defaultUserId || undefined}
-                                        onValueChange={(v) => {
-                                            if (v) {
-                                                defaultUserId = v;
-                                            }
-                                        }}
-                                    >
-                                        <Select.Trigger class="w-full">
-                                            {getDefaultUserLabel(defaultUserId)}
-                                        </Select.Trigger>
-                                        <Select.Content>
-                                            {#each usersList as user}
-                                                <Select.Item value={user.id}>
-                                                    <div class="flex items-center gap-2">
-                                                        <span class="font-medium">{user.name}</span>
-                                                        <span class="text-muted-foreground">({user.email})</span>
-                                                        {#if user.is_admin}
-                                                            <span class="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">Admin</span>
-                                                        {/if}
-                                                    </div>
-                                                </Select.Item>
-                                            {/each}
-                                        </Select.Content>
-                                    </Select.Root>
-                                    <p class="text-xs text-muted-foreground">
-                                        All requests will be processed as this user when auth-free mode is enabled
-                                    </p>
-                                {/if}
-                            </div>
-                            {#if !defaultUserId && usersList.length > 0}
-                                <div class="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
-                                    <p class="text-sm text-yellow-600 dark:text-yellow-400">
-                                        Please select a default user before saving. Auth-free mode requires a default user to be configured.
-                                    </p>
-                                </div>
+                            {#if !form.defaultUserId}
+                                <p class="text-sm text-warning-text">Select a default user before saving.</p>
                             {/if}
-                            <div class="bg-muted/50 rounded-md p-4 space-y-2">
-                                <p class="text-sm font-medium">What happens in Auth-Free Mode:</p>
-                                <ul class="text-sm text-muted-foreground list-disc list-inside space-y-1">
-                                    <li>All requests bypass authentication and use the selected default user</li>
-                                    <li>Login and registration pages redirect to the dashboard</li>
-                                    <li>Perfect for single-user deployments</li>
-                                    <li>The default user must have access to the desired organizations and projects</li>
-                                </ul>
-                            </div>
-                        </CardContent>
-                    </Card>
-                {/if}
-
-                <!-- Search Settings -->
-                <Card class="md:col-span-2">
-                    <CardHeader>
-                        <CardTitle class="flex items-center gap-2">
-                            <Search class="h-5 w-5" />
-                            Search Settings
-                        </CardTitle>
-                        <CardDescription>
-                            Configure log search behavior and performance
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent class="space-y-4">
-                        <div class="grid gap-4 md:grid-cols-2">
-                            <div class="space-y-2">
-                                <Label>Default Search Mode</Label>
-                                <Select.Root
-                                    type="single"
-                                    value={searchDefaultMode}
-                                    onValueChange={(v) => {
-                                        if (v && (v === 'fulltext' || v === 'substring')) {
-                                            searchDefaultMode = v;
-                                        }
-                                    }}
-                                >
-                                    <Select.Trigger class="w-full">
-                                        {searchDefaultMode === "fulltext" ? "Full-text (Word-based)" : "Substring (Anywhere)"}
-                                    </Select.Trigger>
-                                    <Select.Content>
-                                        <Select.Item value="fulltext">Full-text (Word-based)</Select.Item>
-                                        <Select.Item value="substring">Substring (Anywhere)</Select.Item>
-                                    </Select.Content>
-                                </Select.Root>
-                                <p class="text-xs text-muted-foreground">
-                                    Default mode for new search sessions
-                                </p>
-                            </div>
-                            <div class="space-y-2">
-                                <div class="flex items-center justify-between">
-                                    <div class="space-y-0.5">
-                                        <Label>Substring Index Enabled</Label>
-                                        <p class="text-sm text-muted-foreground">
-                                            pg_trgm trigram index is active
-                                        </p>
-                                    </div>
-                                    <Switch
-                                        checked={searchSubstringIndexed}
-                                        onCheckedChange={(checked) => (searchSubstringIndexed = checked)}
-                                        disabled
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                        <div class="bg-blue-500/10 border border-blue-500/20 rounded-md p-3">
-                            <p class="text-sm text-blue-600 dark:text-blue-400">
-                                <strong>Full-text:</strong> Word-based search with stemming (e.g., "fail" finds "failed", "failing").<br/>
-                                <strong>Substring:</strong> Finds text anywhere in the message (e.g., "bluez" finds "spa.bluez5.native").
-                            </p>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <!-- Update Channel Settings -->
-                <Card class="md:col-span-2">
-                    <CardHeader>
-                        <CardTitle class="flex items-center gap-2">
-                            <ArrowUpCircle class="h-5 w-5" />
-                            Update Notifications
-                        </CardTitle>
-                        <CardDescription>
-                            Choose which release channel to track for update notifications
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent class="space-y-4">
-                        <div class="grid gap-4 md:grid-cols-2">
-                            <div class="space-y-2">
-                                <Label>Release Channel</Label>
-                                <Select.Root
-                                    type="single"
-                                    value={updatesChannel}
-                                    onValueChange={(v) => {
-                                        if (v && (v === 'stable' || v === 'beta')) {
-                                            updatesChannel = v;
-                                        }
-                                    }}
-                                >
-                                    <Select.Trigger class="w-full">
-                                        {updatesChannel === "stable" ? "Stable" : "Beta (Pre-releases)"}
-                                    </Select.Trigger>
-                                    <Select.Content>
-                                        <Select.Item value="stable">Stable</Select.Item>
-                                        <Select.Item value="beta">Beta (Pre-releases)</Select.Item>
-                                    </Select.Content>
-                                </Select.Root>
-                                <p class="text-xs text-muted-foreground">
-                                    Controls which releases trigger "update available" notifications
-                                </p>
-                            </div>
-                        </div>
-                        <div class="bg-blue-500/10 border border-blue-500/20 rounded-md p-3">
-                            <p class="text-sm text-blue-600 dark:text-blue-400">
-                                <strong>Stable:</strong> Only notify for production-ready releases.<br/>
-                                <strong>Beta:</strong> Also notify for pre-release versions (may contain experimental features).
-                            </p>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <!-- Warning Banner -->
-            <div class="bg-destructive/5 border border-destructive/20 rounded-lg p-4">
-                <div class="flex items-start gap-3">
-                    <AlertTriangle class="h-5 w-5 text-destructive mt-0.5" />
-                    <div>
-                        <h3 class="font-medium text-destructive">Important Security Notice</h3>
-                        <p class="text-sm text-muted-foreground mt-1">
-                            Changing authentication settings affects all users immediately. Auth-Free mode should only be used in trusted, single-user environments.
-                            Never enable Auth-Free mode on a publicly accessible instance.
-                        </p>
+                        {/if}
                     </div>
+                {:else}
+                    <p class="rounded-md border border-info/20 bg-info/10 p-3 text-sm text-info-text">
+                        Users sign in with email and password, or with any enabled OIDC or LDAP provider.
+                    </p>
+                {/if}
+            </div>
+            {@render sectionFooter("auth")}
+        </SettingsSection>
+
+        <!-- Search (read only) -->
+        <SettingsSection title="Search" description="Log search behavior">
+            <div class="grid gap-4 md:grid-cols-2">
+                <div class="space-y-2">
+                    <Label>Default search mode</Label>
+                    <Select.Root type="single" disabled value={searchDefaultMode}>
+                        <Select.Trigger class="w-full" aria-label="Default search mode">Full-text (word-based)</Select.Trigger>
+                        <Select.Content>
+                            <Select.Item value="fulltext">Full-text (word-based)</Select.Item>
+                            <Select.Item value="substring">Substring (anywhere)</Select.Item>
+                        </Select.Content>
+                    </Select.Root>
+                    <p class="text-xs text-muted-foreground">Not configurable on this instance yet.</p>
                 </div>
             </div>
-        {/if}
-    {:else}
-        <div class="flex flex-col items-center justify-center p-12 text-center">
-            <div class="bg-muted/50 p-6 rounded-full mb-4">
-                <RefreshCw class="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-            <h2 class="text-xl font-semibold">Verifying Access...</h2>
-            <p class="text-muted-foreground mt-2">
-                Updating your profile permissions.
+            <p class="mt-4 text-sm text-muted-foreground">
+                Full-text matches whole words with stemming ("fail" finds "failed"). Substring finds text anywhere in
+                the message ("bluez" finds "spa.bluez5.native").
             </p>
-        </div>
+        </SettingsSection>
+
+        <!-- Updates -->
+        <SettingsSection title="Update notifications" description="Which release channel triggers update notices">
+            <div class="max-w-md space-y-2">
+                <Label>Release channel</Label>
+                <Select.Root
+                    type="single"
+                    value={form.updatesChannel}
+                    onValueChange={(v) => {
+                        if (v === "stable" || v === "beta") form.updatesChannel = v;
+                    }}
+                >
+                    <Select.Trigger class="w-full" aria-label="Release channel">
+                        {form.updatesChannel === "stable" ? "Stable" : "Beta (pre-releases)"}
+                    </Select.Trigger>
+                    <Select.Content>
+                        <Select.Item value="stable">Stable</Select.Item>
+                        <Select.Item value="beta">Beta (pre-releases)</Select.Item>
+                    </Select.Content>
+                </Select.Root>
+                <p class="text-xs text-muted-foreground">
+                    Stable notifies for production-ready releases only. Beta also notifies for pre-releases, which may
+                    contain experimental features.
+                </p>
+            </div>
+            {@render sectionFooter("updates")}
+        </SettingsSection>
     {/if}
 </div>
+
+<ConfirmDialog
+    bind:open={confirmAuthFree}
+    title="Enable auth-free mode?"
+    description="Everyone who can reach this instance will be signed in automatically as the default user, with no password. Only do this on a trusted, single-user instance that is not exposed to the internet."
+    confirmLabel="Enable auth-free mode"
+    onConfirm={() => saveSection("auth")}
+/>
+
+<ConfirmDialog
+    bind:open={confirmRefresh}
+    title="Discard unsaved changes?"
+    description="Refreshing reloads the settings from the server and drops the edits you have not saved."
+    confirmLabel="Discard and refresh"
+    onConfirm={loadSettings}
+/>

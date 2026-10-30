@@ -53,16 +53,16 @@ interface TestMaskingBody {
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function getUserOrganizationId(userId: string, requestedOrgId?: string): Promise<string | null> {
+  // No silent fallback to "the user's first organization": that picked the newest org
+  // the user belongs to, not the one on screen.
+  if (!requestedOrgId) {
+    throw Object.assign(new Error('organizationId is required'), { statusCode: 400 });
+  }
   const organizations = await organizationsService.getUserOrganizations(userId);
   if (organizations.length === 0) return null;
-
-  if (requestedOrgId) {
-    if (!uuidRegex.test(requestedOrgId)) return null;
-    const org = organizations.find((o) => o.id === requestedOrgId);
-    return org ? org.id : null;
-  }
-
-  return organizations[0].id;
+  if (!uuidRegex.test(requestedOrgId)) return null;
+  const org = organizations.find((o) => o.id === requestedOrgId);
+  return org ? org.id : null;
 }
 
 export default async function piiMaskingRoutes(fastify: FastifyInstance) {
@@ -149,6 +149,12 @@ export default async function piiMaskingRoutes(fastify: FastifyInstance) {
       if (!organizationId) {
         return reply.status(403).send({ success: false, error: 'No organization access' });
       }
+      if (!(await organizationsService.isOwnerOrAdmin(organizationId, request.user.id))) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only organization owners and admins can change PII masking rules',
+        });
+      }
 
       try {
         const rule = await piiMaskingService.createRule(organizationId, {
@@ -174,6 +180,9 @@ export default async function piiMaskingRoutes(fastify: FastifyInstance) {
         return reply.status(201).send({ success: true, data: rule });
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Failed to create rule';
+        if (msg === 'Project not found in this organization') {
+          return reply.status(400).send({ success: false, error: msg });
+        }
         if (msg.includes('unique') || msg.includes('duplicate')) {
           return reply.status(409).send({ success: false, error: 'A rule with this name already exists' });
         }
@@ -225,6 +234,12 @@ export default async function piiMaskingRoutes(fastify: FastifyInstance) {
 
       if (!organizationId) {
         return reply.status(403).send({ success: false, error: 'No organization access' });
+      }
+      if (!(await organizationsService.isOwnerOrAdmin(organizationId, request.user.id))) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only organization owners and admins can change PII masking rules',
+        });
       }
 
       try {
@@ -280,6 +295,12 @@ export default async function piiMaskingRoutes(fastify: FastifyInstance) {
 
       if (!organizationId) {
         return reply.status(403).send({ success: false, error: 'No organization access' });
+      }
+      if (!(await organizationsService.isOwnerOrAdmin(organizationId, request.user.id))) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only organization owners and admins can change PII masking rules',
+        });
       }
 
       try {

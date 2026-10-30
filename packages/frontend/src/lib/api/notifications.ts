@@ -3,7 +3,7 @@ import { getApiBaseUrl } from '$lib/config';
 export interface Notification {
   id: string;
   userId: string;
-  type: 'alert' | 'system' | 'organization_invite' | 'project_update';
+  type: 'alert' | 'system' | 'organization_invite' | 'project_update' | 'monitoring' | 'project_health';
   title: string;
   message: string;
   read: boolean;

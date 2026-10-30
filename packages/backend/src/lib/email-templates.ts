@@ -149,7 +149,7 @@ function baseTemplate(content: string, options: BaseEmailOptions = {}): string {
               <p style="margin: 0; font-size: 11px; color: ${colors.textLight};">
                 ${unsubscribeUrl
                   ? `<a href="${unsubscribeUrl}" style="color: ${colors.textMuted}; text-decoration: underline;">Unsubscribe from these reports</a>`
-                  : `<a href="${frontendUrl}/dashboard/settings/channels" style="color: ${colors.textMuted}; text-decoration: underline;">Manage notification settings</a>`}
+                  : `<a href="${frontendUrl}/dashboard/settings/notifications/destinations" style="color: ${colors.textMuted}; text-decoration: underline;">Manage notification settings</a>`}
               </p>
             </td>
           </tr>
@@ -386,7 +386,7 @@ View details: ${dashboardUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
     return { html, text };
@@ -435,7 +435,7 @@ View details: ${dashboardUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };
@@ -451,6 +451,10 @@ export interface ErrorEmailData {
   language: string;
   service: string;
   isNewErrorGroup: boolean;
+  /** A previously resolved error group recurred. */
+  isRegression?: boolean;
+  /** An ignored error group reopened because its ignore limit was reached. */
+  isEscalating?: boolean;
   errorGroupId: string;
   organizationName: string;
   projectName: string;
@@ -494,6 +498,8 @@ export function generateErrorEmail(data: ErrorEmailData): { html: string; text: 
         { label: 'Project', value: data.projectName },
       ])}
       ${data.isNewErrorGroup ? alertBox('This is a <strong>new error</strong> that hasn\'t been seen before.', 'warning') : ''}
+      ${data.isRegression ? alertBox('This error was resolved and is now a <strong>regression</strong>: it has occurred again.', 'warning') : ''}
+      ${data.isEscalating ? alertBox('This error was ignored and is now <strong>escalating</strong>: its ignore limit was reached.', 'warning') : ''}
       ${cta('View Error Details', errorUrl)}
     `),
     { preheader: `${data.isNewErrorGroup ? 'New ' : ''}${data.exceptionType} in ${data.service}` }
@@ -513,13 +519,13 @@ Language: ${languageLabel}
 Organization: ${data.organizationName}
 Project: ${data.projectName}
 
-Occurred: ${formatEmailDate()}
+${data.isRegression ? 'REGRESSION: this error was resolved and has occurred again.\n\n' : ''}${data.isEscalating ? 'ESCALATING: this error was ignored and its ignore limit was reached.\n\n' : ''}Occurred: ${formatEmailDate()}
 
 View details: ${errorUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };
@@ -556,7 +562,7 @@ const severityLabels: Record<string, string> = {
 
 export function generateIncidentEmail(data: IncidentEmailData): { html: string; text: string } {
   const frontendUrl = getFrontendUrl();
-  const incidentUrl = `${frontendUrl}/dashboard/security/incidents/${data.incidentId}`;
+  const incidentUrl = `${frontendUrl}/dashboard/incidents/${data.incidentId}`;
   const severityColor = severityColors[data.severity] || colors.informational;
   const severityLabel = severityLabels[data.severity] || data.severity;
 
@@ -599,7 +605,7 @@ View details: ${incidentUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };
@@ -617,11 +623,20 @@ export interface SigmaDetectionEmailData {
   matchedFields?: Record<string, unknown>;
   organizationName: string;
   detectionId: string;
+  /** Incident the detection opened or joined; the call to action links here when set. */
+  incidentId?: string | null;
+  /** Sigma rule id; the call to action falls back to the rule page without an incident. */
+  ruleId?: string | null;
 }
 
 export function generateSigmaDetectionEmail(data: SigmaDetectionEmailData): { html: string; text: string } {
   const frontendUrl = getFrontendUrl();
-  const detectionUrl = `${frontendUrl}/dashboard/security`;
+  const detectionUrl = data.incidentId
+    ? `${frontendUrl}/dashboard/incidents/${data.incidentId}`
+    : data.ruleId
+      ? `${frontendUrl}/dashboard/security/rules/${data.ruleId}`
+      : `${frontendUrl}/dashboard/security`;
+  const ctaLabel = data.incidentId ? 'View incident' : data.ruleId ? 'View rule' : 'View in Security Dashboard';
   const severityColor = severityColors[data.severity] || colors.informational;
   const severityLabel = severityLabels[data.severity] || data.severity;
 
@@ -645,7 +660,7 @@ export function generateSigmaDetectionEmail(data: SigmaDetectionEmailData): { ht
         codeBlock(JSON.stringify(data.matchedFields, null, 2))
         : ''
       }
-      ${cta('View in Security Dashboard', detectionUrl)}
+      ${cta(ctaLabel, detectionUrl)}
     `),
     { preheader: `[${severityLabel}] Sigma detection: ${data.ruleTitle}` }
   );
@@ -669,7 +684,7 @@ View details: ${detectionUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };
@@ -782,6 +797,48 @@ Sent by LogTide
 }
 
 // ============================================================================
+// PASSWORD RESET
+// ============================================================================
+
+export interface PasswordResetEmailData {
+  name: string;
+  token: string;
+}
+
+export function generatePasswordResetEmail(data: PasswordResetEmailData): { html: string; text: string } {
+  const frontendUrl = getFrontendUrl();
+  const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(data.token)}`;
+
+  const html = baseTemplate(
+    card(`
+      ${header('Reset your password', { text: 'Account', color: colors.info })}
+      ${divider()}
+      ${subtitle(`Hi ${data.name}, we received a request to reset the password of your LogTide account.`)}
+      ${alertBox('This link expires in 1 hour and can be used once.', 'info')}
+      ${cta('Reset password', resetUrl)}
+    `),
+    { preheader: 'Reset your LogTide password' }
+  );
+
+  const text = `
+RESET YOUR PASSWORD
+${'='.repeat(50)}
+
+Hi ${data.name}, we received a request to reset the password of your LogTide account.
+
+Reset password: ${resetUrl}
+
+This link expires in 1 hour and can be used once. If you did not ask for a
+password reset, you can ignore this email and your password stays the same.
+
+--
+Sent by LogTide
+`.trim();
+
+  return { html, text };
+}
+
+// ============================================================================
 // MONITOR NOTIFICATION EMAIL
 // ============================================================================
 
@@ -796,11 +853,15 @@ export interface MonitorEmailData {
   responseTimeMs?: number | null;
   consecutiveFailures?: number;
   downtimeDuration?: string | null;
+  /** Shared incident opened for this outage; the email deep links to it when set. */
+  incidentId?: string | null;
 }
 
 export function generateMonitorEmail(data: MonitorEmailData): { html: string; text: string } {
   const frontendUrl = getFrontendUrl();
-  const monitorUrl = `${frontendUrl}/dashboard/monitoring`;
+  const monitorUrl = data.incidentId
+    ? `${frontendUrl}/dashboard/incidents/${data.incidentId}`
+    : `${frontendUrl}/dashboard/uptime/${data.monitorId}`;
   const isDown = data.status === 'down';
   const severityLabel = severityLabels[data.severity] || data.severity;
 
@@ -876,7 +937,73 @@ View details: ${monitorUrl}
 
 --
 Sent by LogTide
-Manage notifications: ${frontendUrl}/dashboard/settings/channels
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
+`.trim();
+
+  return { html, text };
+}
+
+// ============================================================================
+// PROJECT HEALTH EMAIL
+// ============================================================================
+
+export interface ProjectHealthEmailData {
+  projectName: string;
+  organizationName: string;
+  kind: 'opened' | 'resolved';
+  severity: 'critical' | 'warning';
+  title: string;
+  message: string;
+  openedAt: string;
+  resolvedAt: string | null;
+  link: string;
+}
+
+export function generateProjectHealthEmail(data: ProjectHealthEmailData): { html: string; text: string } {
+  const frontendUrl = getFrontendUrl();
+  const isOpen = data.kind === 'opened';
+  const badge = isOpen
+    ? { text: data.severity === 'critical' ? 'Critical' : 'Warning', color: data.severity === 'critical' ? colors.error : colors.warning }
+    : { text: 'Resolved', color: colors.success };
+  const heading = isOpen ? `${data.title}: ${data.projectName}` : `Resolved: ${data.title} (${data.projectName})`;
+
+  const infoRows: Array<{ label: string; value: string }> = [
+    { label: 'Project', value: data.projectName },
+    { label: 'Organization', value: data.organizationName },
+    { label: 'Opened', value: data.openedAt },
+  ];
+  if (data.resolvedAt) infoRows.push({ label: 'Resolved', value: data.resolvedAt });
+
+  const html = baseTemplate(
+    card(`
+      ${header(heading, badge)}
+      ${divider()}
+      ${timestamp()}
+      ${alertBox(escapeHtml(data.message), isOpen ? (data.severity === 'critical' ? 'error' : 'warning') : 'success')}
+      ${infoBox(infoRows)}
+      ${cta('View project health', data.link)}
+    `),
+    { preheader: `[${badge.text}] ${data.projectName}: ${data.title}` }
+  );
+
+  const text = `
+PROJECT HEALTH ${isOpen ? badge.text.toUpperCase() : 'RESOLVED'}: ${data.title}
+${'='.repeat(50)}
+
+${data.message}
+
+DETAILS
+-------
+Project: ${data.projectName}
+Organization: ${data.organizationName}
+Opened: ${data.openedAt}
+${data.resolvedAt ? `Resolved: ${data.resolvedAt}` : ''}
+
+View details: ${data.link}
+
+--
+Sent by LogTide
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
 `.trim();
 
   return { html, text };

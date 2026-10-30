@@ -2,8 +2,31 @@ import { SigmaDetectionEngine, type LogEntry } from '../../modules/sigma/detecti
 import { db } from '../../database/connection.js';
 import { createQueue } from '../connection.js';
 import { SiemService } from '../../modules/siem/service.js';
+import { sql } from 'kysely';
+import { sigmaExceptionsService } from '../../modules/sigma/exceptions-service.js';
+import { partitionMatches } from '../../modules/sigma/exceptions.js';
+import { notificationChannelsService } from '../../modules/notification-channels/service.js';
+import { resolveChannelsForEvent } from '../../modules/notification-channels/resolver.js';
 
 const siemService = new SiemService(db);
+
+/** At most one notification per Sigma rule per window (per worker process). */
+export const SIGMA_NOTIFICATION_COOLDOWN_MS = 5 * 60_000;
+const lastNotifiedAt = new Map<string, number>();
+
+function notifyKey(organizationId: string, ruleId: string): string {
+  return `${organizationId}:${ruleId}`;
+}
+
+function markNotified(organizationId: string, ruleId: string): void {
+  const now = Date.now();
+  if (lastNotifiedAt.size > 5000) {
+    for (const [key, at] of lastNotifiedAt) {
+      if (now - at >= SIGMA_NOTIFICATION_COOLDOWN_MS) lastNotifiedAt.delete(key);
+    }
+  }
+  lastNotifiedAt.set(notifyKey(organizationId, ruleId), now);
+}
 
 export interface SigmaDetectionData {
   logs: LogEntry[];
@@ -42,7 +65,7 @@ export async function processSigmaDetection(job: any) {
     );
 
     // Collect all matches
-    const allMatches: SigmaDetectionMatch[] = [];
+    let allMatches: SigmaDetectionMatch[] = [];
 
     results.forEach((result, logIndex) => {
       if (result.matched) {
@@ -68,6 +91,39 @@ export async function processSigmaDetection(job: any) {
         });
       }
     });
+
+    // Apply per-rule exceptions BEFORE any detection event, incident input or
+    // notification exists. Fails toward alerting: if the exceptions cannot be
+    // loaded, every match is kept.
+    if (allMatches.length > 0) {
+      const now = new Date();
+      let suppressedHits = new Map<string, number>();
+      try {
+        const ruleIds = [...new Set(allMatches.map((m) => m.sigmaRuleId))];
+        const active = await sigmaExceptionsService.loadActiveForRules(
+          data.organizationId,
+          ruleIds,
+          now
+        );
+        if (active.size > 0) {
+          const { kept, suppressed } = partitionMatches(allMatches, data.logs, active, now);
+          allMatches = kept;
+          suppressedHits = suppressed;
+        }
+      } catch (error) {
+        console.error('[SigmaDetection] Error applying rule exceptions, keeping all matches:', error);
+      }
+
+      if (suppressedHits.size > 0) {
+        const total = [...suppressedHits.values()].reduce((a, b) => a + b, 0);
+        console.log(`[SigmaDetection] ${total} matches suppressed by rule exceptions`);
+        try {
+          await sigmaExceptionsService.recordHits(data.organizationId, suppressedHits, now);
+        } catch (error) {
+          console.error('[SigmaDetection] Error recording exception hits:', error);
+        }
+      }
+    }
 
     if (allMatches.length === 0) {
       // No detections — log only when DEBUG_SIGMA is enabled to avoid noisy worker output
@@ -124,6 +180,19 @@ export async function processSigmaDetection(job: any) {
       // Continue with notifications even if detection event creation fails
     }
 
+    // Remember when each rule last produced a kept match (metadata table only)
+    try {
+      const firedRuleIds = [...new Set(allMatches.map((m) => m.sigmaRuleId))];
+      await db
+        .updateTable('sigma_rules')
+        .set({ last_fired_at: sql<Date>`now()` })
+        .where('organization_id', '=', data.organizationId)
+        .where('id', 'in', firedRuleIds)
+        .execute();
+    } catch (error) {
+      console.error('[SigmaDetection] Error updating last_fired_at:', error);
+    }
+
     // Group matches by Sigma rule
     const matchesByRule = new Map<string, SigmaDetectionMatch[]>();
 
@@ -156,22 +225,49 @@ export async function processSigmaDetection(job: any) {
           `[SigmaDetection] Sigma rule matched: ${firstMatch.ruleTitle} (${matches.length} matches, level: ${firstMatch.ruleLevel})`
         );
 
-        // Check if notifications are configured
-        const hasEmail = sigmaRule.email_recipients && sigmaRule.email_recipients.length > 0;
-        const hasWebhook = !!sigmaRule.webhook_url;
+        // Destinations: the rule's own channels, else the organization
+        // defaults for sigma, else the owners and admins fallback (when SMTP
+        // is configured). Legacy email and webhook settings still count.
+        const ruleChannels = await notificationChannelsService.getSigmaRuleChannels(
+          sigmaRule.id,
+          data.organizationId
+        );
+        const routing = await resolveChannelsForEvent({
+          organizationId: data.organizationId,
+          eventType: 'sigma',
+          explicitChannels: ruleChannels,
+        });
+        const hasLegacy =
+          (sigmaRule.email_recipients && sigmaRule.email_recipients.length > 0) ||
+          !!sigmaRule.webhook_url;
 
-        if (!hasEmail && !hasWebhook) {
+        if (routing.source === 'none' && routing.fallback === null && !hasLegacy) {
           console.log(
             `[SigmaDetection] Sigma rule "${firstMatch.ruleTitle}" matched but has no notification settings (detection-only mode)`
           );
           continue;
         }
 
-        // Queue notification job directly (no alert rule needed)
+        // Per-rule cooldown: a busy service can match the same rule in most
+        // ingest requests, which would mail the owners once per request.
+        // Detection events are still recorded for every match.
+        const lastNotified = lastNotifiedAt.get(notifyKey(data.organizationId, sigmaRule.id));
+        if (lastNotified !== undefined && Date.now() - lastNotified < SIGMA_NOTIFICATION_COOLDOWN_MS) {
+          console.log(
+            `[SigmaDetection] Notification for "${firstMatch.ruleTitle}" throttled (cooldown)`
+          );
+          continue;
+        }
+
+        // Queue notification job directly (no alert rule needed). `kind` makes
+        // the worker use the 1.6 path (channels, org defaults, fallback);
+        // `event_type` tells it which org defaults apply.
         const notificationQueue = createQueue('alert-notifications');
 
         await notificationQueue.add('send-notification', {
           historyId: null, // No alert history for Sigma rules
+          kind: 'triggered',
+          event_type: 'sigma',
           rule_id: sigmaRule.id,
           rule_name: `[Sigma] ${firstMatch.ruleTitle}`,
           organization_id: data.organizationId,
@@ -181,7 +277,10 @@ export async function processSigmaDetection(job: any) {
           time_window: 1, // Immediate detection
           email_recipients: sigmaRule.email_recipients || [],
           webhook_url: sigmaRule.webhook_url,
+          rule_level: firstMatch.ruleLevel || sigmaRule.level,
+          service: (data.logs[firstMatch.logIndex] as { service?: string } | undefined)?.service || 'unknown',
         });
+        markNotified(data.organizationId, sigmaRule.id);
 
         console.log(
           `[SigmaDetection] Queued notification for: ${firstMatch.ruleTitle}`

@@ -2,11 +2,22 @@ import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
 import { metering, recordMetricIngestion } from '../metering/index.js';
 import { createSkewTracker } from '../ingestion/skew.js';
+import {
+  pickAutoInterval,
+  intervalSeconds,
+  toRateSeries,
+  expandAttributeFilters,
+  capSeries,
+} from './aggregate-options.js';
 import type {
+  MetricTimeBucket,
   MetricRecord,
   AggregationInterval,
   MetricAggregationFn,
 } from '@logtide/reservoir';
+
+/** Cap on attribute keys used to split a counter into series for `rate`. */
+const MAX_RATE_SERIES_KEYS = 10;
 
 export class MetricsService {
   async ingestMetrics(
@@ -119,6 +130,90 @@ export class MetricsService {
       attributes: params.attributes,
       serviceName: params.serviceName,
     });
+  }
+
+  /**
+   * Explorer aggregate: resolves `auto` intervals, maps `rate` onto `last`,
+   * fans out one reservoir call per attribute combination (multi-value filters
+   * are one series per value), and caps the number of series.
+   */
+  async aggregateWithOptions(params: {
+    projectId: string | string[];
+    metricName: string;
+    from: Date;
+    to: Date;
+    interval: AggregationInterval | 'auto';
+    aggregation: MetricAggregationFn | 'rate';
+    groupBy?: string[];
+    attributes?: Record<string, string[]>;
+    serviceName?: string;
+  }) {
+    const interval = params.interval === 'auto' ? pickAutoInterval(params.from, params.to) : params.interval;
+    const bucketSeconds = intervalSeconds(interval);
+    const isRate = params.aggregation === 'rate';
+    const aggregation: MetricAggregationFn = isRate ? 'last' : (params.aggregation as MetricAggregationFn);
+
+    const attributes = params.attributes ?? {};
+    const combos = expandAttributeFilters(attributes);
+    const multiKeys = Object.keys(attributes).filter((k) => attributes[k].length > 1);
+
+    // Rate needs `last` per FULL series. The engines take `last` over every row
+    // of a bucket that shares the groupBy labels, so group by every attribute
+    // key of the metric (the requested groupBy first) and sum the per-series
+    // rates back into the requested groups afterwards.
+    let engineGroupBy = params.groupBy;
+    if (isRate) {
+      const labelKeys = await reservoir.getMetricLabelKeys({
+        projectId: params.projectId,
+        metricName: params.metricName,
+        from: params.from,
+        to: params.to,
+      });
+      const merged = [...(params.groupBy ?? [])];
+      for (const k of labelKeys?.keys ?? []) {
+        if (!merged.includes(k)) merged.push(k);
+      }
+      engineGroupBy = merged.length > 0 ? merged.slice(0, MAX_RATE_SERIES_KEYS) : undefined;
+    }
+
+    const results = await Promise.all(
+      combos.map(async (combo) => {
+        const result = await reservoir.aggregateMetrics({
+          projectId: params.projectId,
+          metricName: params.metricName,
+          from: params.from,
+          to: params.to,
+          interval,
+          aggregation,
+          groupBy: engineGroupBy,
+          attributes: Object.keys(combo).length > 0 ? combo : undefined,
+          serviceName: params.serviceName,
+        });
+        const extra: Record<string, string> = {};
+        for (const k of multiKeys) extra[k] = combo[k];
+        return { result, extra };
+      }),
+    );
+
+    let timeseries: MetricTimeBucket[] = [];
+    for (const { result, extra } of results) {
+      for (const point of result.timeseries ?? []) {
+        timeseries.push(multiKeys.length > 0 ? { ...point, labels: { ...(point.labels ?? {}), ...extra } } : point);
+      }
+    }
+
+    if (isRate) timeseries = toRateSeries(timeseries, bucketSeconds, { groupBy: [...(params.groupBy ?? []), ...multiKeys] });
+    const capped = capSeries(timeseries);
+
+    const first = results[0]?.result;
+    return {
+      ...(first ?? { metricName: params.metricName, metricType: 'gauge' as const }),
+      timeseries: capped.points,
+      interval,
+      bucketSeconds,
+      seriesTotal: capped.seriesTotal,
+      seriesShown: capped.seriesShown,
+    };
   }
 
   async getOverview(params: {

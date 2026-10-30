@@ -159,10 +159,19 @@ export class GraphileWorkerManager {
   }
 
   /**
-   * Store parsed cron items to be passed to run() at startup.
+   * Store parsed cron items to be passed to run() at startup. Additive:
+   * items are merged by identifier, so a re-registered identifier replaces
+   * only itself and crons registered by other callers are kept.
    */
   setCronItems(items: ParsedCronItem[]): void {
-    this.cronItems = items;
+    const byId = new Map(this.cronItems.map((item) => [item.identifier, item]));
+    for (const item of items) byId.set(item.identifier, item);
+    this.cronItems = [...byId.values()];
+  }
+
+  /** Cron items that will be passed to run() at startup. */
+  getCronItems(): readonly ParsedCronItem[] {
+    return this.cronItems;
   }
 
   /**

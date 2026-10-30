@@ -12,6 +12,10 @@ export * from './detection-pack.js';
 
 // Re-export notification channel types
 export * from './notification-channel.js';
+export * from './notification-routing.js';
+
+// Re-export project health types
+export * from './project-health.js';
 
 // Re-export webhook delivery types
 export * from './webhook-delivery.js';
@@ -19,12 +23,10 @@ export * from './webhook-delivery.js';
 // Re-export digest section catalog
 export * from './digest.js';
 
-// Re-export billing contract types
-export * from './billing.js';
-
 // Re-export custom dashboard types
 export * from './dashboard.js';
 export * from './dashboard-migrations.js';
+export * from './time-range.js';
 
 // Re-export schema types
 export type { LogInput, IngestRequest, AlertRuleInput } from '../schemas/index.js';
@@ -151,3 +153,9 @@ export interface AlertRule {
   created_at: Date;
   updated_at: Date;
 }
+
+// Re-export incident types (1.6 F4)
+export * from './incident.js';
+
+// Re-export sigma rule management types (1.6 W10)
+export * from './sigma-rules.js';

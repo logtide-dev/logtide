@@ -49,9 +49,9 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
     "alert_name": "Error rate spike",
     "log_count": 142,
     "threshold": 50,
-    "time_window": 300,
+    "time_window": 5,
     "baseline_metadata": null,
-    "link": "https://app.logtide.dev/alerts/history/abc123"
+    "link": "https://app.logtide.dev/dashboard/alerts"
   }
 }
 ```
@@ -72,10 +72,13 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 
 | Type | Description |
 | --- | --- |
-| `alert.triggered` | An alert rule or anomaly detection fired. Anomaly detections carry a non-null `data.baseline_metadata` object. |
+| `alert.triggered` | An alert rule started firing, or re-notified while still firing (`data.renotify: true`). Anomaly (rate-of-change) detections carry a non-null `data.baseline_metadata` object. |
+| `alert.resolved` | A firing alert rule returned to OK. Sent only when the firing notification was sent; snoozing does not suppress it. |
 | `incident.created` | A new security incident was created (typically from a Sigma rule detection). |
 | `error.detected` | An exception group crossed its notification threshold. |
 | `monitor.status_changed` | An uptime monitor changed status (e.g. up → down). |
+| `project.health.opened` | A project health check found a problem (project stopped sending data, records rejected by PII masking, out-of-range timestamps, data sent with a revoked API key). Sent once when the issue opens. |
+| `project.health.resolved` | A project health issue cleared. Same `data` shape as `project.health.opened`, with `resolved_at` set. |
 | `channel.test` | A test delivery sent when verifying a notification channel. |
 
 ### Per-type `data` fields
@@ -87,9 +90,31 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `alert_name` | yes | `string` | Name of the alert rule. |
 | `log_count` | yes | `number` | Number of matching log events in the evaluation window. |
 | `threshold` | yes | `number` | Configured threshold value. |
-| `time_window` | yes | `number` | Evaluation window in seconds. |
+| `time_window` | yes | `number` | Evaluation window in minutes. |
 | `baseline_metadata` | yes | `object \| null` | Non-null for anomaly/rate-of-change detections. Contains `baseline_value`, `current_value`, `deviation_ratio`, `baseline_type`, and `evaluation_time`. |
-| `link` | yes | `string` | URL to the alert history entry in the LogTide dashboard. |
+| `link` | yes | `string` | Incident page when an incident exists, otherwise the alerts page. |
+| `alert_rule_id` | no | `string (UUID)` | Alert rule id. Present on alert rule notifications since 1.6; absent on Sigma detections and older payloads. |
+| `renotify` | no | `boolean` | `true` when this is a repeat notification for a rule that is still firing (`renotify_minutes`), `false` on the first notification of an episode. |
+| `firing_since` | no | `string (ISO 8601)` | When the current firing episode started. Stays the same across re-notifications of one episode. |
+| `incident_id` | no | `string (UUID) \| null` | Incident opened or updated for this alert episode, or `null` when none could be opened. |
+
+**`alert.resolved`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `alert_rule_id` | yes | `string (UUID)` | Alert rule id. |
+| `alert_name` | yes | `string` | Name of the alert rule. |
+| `alert_type` | yes | `string` | `threshold` or `rate_of_change`. |
+| `title` | yes | `string` | Short notification title. |
+| `message` | yes | `string` | Human-readable summary. |
+| `log_count` | yes | `number` | Matching log events in the window at the evaluation that resolved the rule (current hourly rate for rate-of-change rules). |
+| `threshold` | yes | `number` | Configured threshold value. |
+| `time_window` | yes | `number` | Evaluation window in minutes. |
+| `firing_since` | yes | `string (ISO 8601)` | When the firing episode started. Same value as `firing_since` on the matching `alert.triggered` events. |
+| `resolved_at` | yes | `string (ISO 8601)` | When the rule was evaluated back to OK. |
+| `duration_seconds` | yes | `number` | Whole seconds between `firing_since` and `resolved_at`. |
+| `incident_id` | yes | `string (UUID) \| null` | Incident resolved together with the alert, or `null`. |
+| `link` | yes | `string` | Incident page when an incident exists, otherwise the alerts page. |
 
 **`incident.created`**
 
@@ -137,6 +162,22 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `downtime_duration` | no | `string \| null` | Human-readable duration of the current downtime. |
 | `link` | yes | `string` | URL to the monitor detail page. |
 
+**`project.health.opened` / `project.health.resolved`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `project_id` | yes | `string (UUID)` | Project the issue belongs to. |
+| `project_name` | yes | `string` | Project name. |
+| `check_key` | yes | `string` | `silent`, `pii_rejected`, `timestamp_skew_logs`, `timestamp_skew_spans`, `timestamp_skew_metrics` or `revoked_key`. |
+| `severity` | yes | `string` | `critical` or `warning`. |
+| `title` | yes | `string` | Short notification title. |
+| `message` | yes | `string` | Human-readable summary. |
+| `opened_at` | yes | `string (ISO 8601)` | When the issue opened. |
+| `resolved_at` | yes | `string (ISO 8601) | null` | When the issue cleared; `null` on `project.health.opened`. |
+| `details` | yes | `object` | Check-specific numbers (counts, thresholds, time offsets). |
+| `link` | yes | `string` | URL to the project page. |
+
+
 **`channel.test`**
 
 | Field | Required | Type | Notes |
@@ -173,6 +214,19 @@ const envelope = parseWebhookEvent(body);
 `parseWebhookEvent` throws a Zod `ZodError` if either the envelope shape or the per-type `data` fields are invalid.
 
 ---
+
+## Slack and Teams destinations
+
+Like Discord, Slack and Microsoft Teams reject the event envelope, so LogTide rewrites the body for these URLs at delivery time (every event source, retries and replays included; the delivery log keeps the envelope):
+
+- **Slack**: classic incoming webhooks (`hooks.slack.com/services/T.../B.../...`, also `hooks.slack-gov.com`) receive Block Kit: a header, an optional description, a fields section, a context line and an "Open in LogTide" button. All dynamic text is escaped so a log message cannot ping a channel. Workflow triggers (`/triggers/...`) take free-form JSON and receive the envelope unchanged.
+- **Microsoft Teams**: Office 365 connector URLs (`*.webhook.office.com`, `outlook.office.com/webhook/`) and Power Automate Workflows URLs receive an Adaptive Card kept under Teams' size limit. Workflows URLs (`*.logic.azure.com/workflows/...`, `*.api.powerplatform.com/powerautomate/...`) are indistinguishable from generic Azure Logic Apps and Power Automate HTTP triggers, so a Logic App that expects the event envelope will receive the card instead. Point such flows at an intermediate endpoint or a different host if you need the envelope.
+
+The signature covers the bytes actually sent, as for Discord.
+
+## PagerDuty channels
+
+A notification channel of type PagerDuty holds an Events API v2 routing key and posts to `https://events.pagerduty.com/v2/enqueue` through the same dispatcher (persisted, retried with backoff on 429 and 5xx, dead-lettered after the last attempt). A new incident that routes to the channel sends a `trigger` event with the dedup key `incident:<incident id>`, the incident title as summary, the severity mapped to PagerDuty's critical, error, warning or info, and a link back to the incident. The channel Test button triggers and immediately resolves, so it never leaves an open incident behind.
 
 ## Discord destinations
 

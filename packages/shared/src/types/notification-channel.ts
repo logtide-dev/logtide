@@ -1,3 +1,5 @@
+import type { ChannelDisplayType } from '../utils/webhook-flavor.js';
+
 // ============================================================================
 // Notification Channel Types
 // ============================================================================
@@ -5,12 +7,33 @@
 /**
  * Notification channel type
  */
-export type NotificationChannelType = 'email' | 'webhook';
+export type NotificationChannelType = 'email' | 'webhook' | 'pagerduty';
 
 /**
  * Event types that can be associated with notification channels
  */
-export type NotificationEventType = 'alert' | 'sigma' | 'incident' | 'error' | 'monitoring';
+export type NotificationEventType = 'alert' | 'sigma' | 'incident' | 'error' | 'monitoring' | 'project_health';
+
+/**
+ * Event types in display order (routing page, previews)
+ */
+export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
+  'alert',
+  'sigma',
+  'incident',
+  'monitoring',
+  'error',
+  'project_health',
+];
+
+export const NOTIFICATION_EVENT_LABELS: Record<NotificationEventType, string> = {
+  alert: 'Alerts',
+  sigma: 'Security detections',
+  incident: 'Security incidents',
+  monitoring: 'Uptime',
+  error: 'Errors',
+  project_health: 'Project health',
+};
 
 /**
  * Email channel configuration
@@ -35,9 +58,16 @@ export interface WebhookChannelConfig {
 }
 
 /**
+ * PagerDuty channel configuration (Events API v2 integration key)
+ */
+export interface PagerDutyChannelConfig {
+  routingKey: string;
+}
+
+/**
  * Union of all channel configs
  */
-export type ChannelConfig = EmailChannelConfig | WebhookChannelConfig;
+export type ChannelConfig = EmailChannelConfig | WebhookChannelConfig | PagerDutyChannelConfig;
 
 /**
  * Notification channel entity
@@ -49,6 +79,8 @@ export interface NotificationChannel {
   type: NotificationChannelType;
   enabled: boolean;
   config: ChannelConfig;
+  /** Server-computed destination flavor (slack, teams, discord...) from the raw URL; set on API responses. */
+  displayType?: ChannelDisplayType;
   description: string | null;
   createdBy: string | null;
   createdAt: Date;

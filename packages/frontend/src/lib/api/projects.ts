@@ -30,6 +30,23 @@ export interface ProjectSkewHealthMap {
   metrics: ProjectSkewHealth | null;
 }
 
+export interface ProjectStats {
+  logs24h: number;
+  errors24h: number;
+  /** 24 hourly buckets, oldest to newest. */
+  hourly: number[];
+  openIncidents: number;
+}
+
+export interface ProjectSummary {
+  logs24h: number | null;
+  openErrorGroups: number | null;
+  tracesP95Ms: number | null;
+  uptime30dPct: number | null;
+  monitorCount: number | null;
+  openIncidents: number | null;
+}
+
 export class ProjectsAPI {
   constructor(private getToken: () => string | null) {}
 
@@ -64,6 +81,28 @@ export class ProjectsAPI {
 
     if (!response.ok) {
       throw new Error('Failed to fetch projects');
+    }
+
+    return response.json();
+  }
+
+  async getStats(organizationId: string): Promise<{ projects: Record<string, ProjectStats> }> {
+    const response = await this.request(
+      `/projects/stats?${new URLSearchParams({ organizationId })}`,
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch project stats');
+    }
+
+    return response.json();
+  }
+
+  async getProjectSummary(id: string): Promise<ProjectSummary> {
+    const response = await this.request(`/projects/${id}/summary`);
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch project summary');
     }
 
     return response.json();

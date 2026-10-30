@@ -1,372 +1,359 @@
 <script lang="ts">
+    import { untrack } from "svelte";
+    import { goto } from "$app/navigation";
+    import { page } from "$app/state";
     import {
-        Card,
-        CardContent,
-        CardHeader,
-        CardTitle,
-    } from "$lib/components/ui/card";
-    import { onMount } from "svelte";
-    import { adminAPI, type ProjectBasic } from "$lib/api/admin";
-    import { authStore } from "$lib/stores/auth";
-    import * as Table from "$lib/components/ui/table";
-    import { Button, buttonVariants } from "$lib/components/ui/button";
+        adminAPI,
+        type ProjectBasic,
+        type ProjectSort,
+        type ProjectsSummary,
+    } from "$lib/api/admin";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
+    import Pagination from "$lib/components/app/Pagination.svelte";
+    import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
+    import type { DataTableSort } from "$lib/components/app/data-table";
+    import StatsCard from "$lib/components/dashboard/StatsCard.svelte";
+    import AdminProjectsTable from "$lib/components/admin/AdminProjectsTable.svelte";
+    import AdminOrgPicker, { type PickedOrg } from "$lib/components/admin/AdminOrgPicker.svelte";
+    import {
+        buildListSearch,
+        parseEnum,
+        parsePage,
+        parseSort,
+    } from "$lib/components/admin/admin-list-url";
+    import { Button } from "$lib/components/ui/button";
     import { Input } from "$lib/components/ui/input";
-    import { SkeletonTable, TableLoadingOverlay } from "$lib/components/ui/skeleton";
-    import {
-        RefreshCw,
-        Search,
-        FolderKanban,
-        Database,
-        Key,
-        Bell,
-        Trash2,
-    } from "@lucide/svelte";
-    import { browser } from "$app/environment";
-    import {
-        AlertDialog,
-        AlertDialogAction,
-        AlertDialogCancel,
-        AlertDialogContent,
-        AlertDialogDescription,
-        AlertDialogFooter,
-        AlertDialogHeader,
-        AlertDialogTitle,
-    } from "$lib/components/ui/alert-dialog";
+    import { FolderKanban, Database, Key, Bell, Search, RefreshCw } from "@lucide/svelte";
+    import { toastStore } from "$lib/stores/toast";
+    import { formatCount } from "$lib/utils/format-number";
+    import { PROJECT_TRASH_DIALOG_TEXT, PROJECT_TRASH_TOAST } from "$lib/utils/project-trash";
 
-    let projects = $state<ProjectBasic[]>([]);
-    let loading = $state(true);
-    let error = $state<string | null>(null);
-    let searchQuery = $state("");
-    let currentPage = $state(1);
-    let totalPages = $state(1);
+    const LIMIT = 50;
+    const DEFAULT_SORT: DataTableSort = { key: "created_at", dir: "desc" };
+    const SORT_KEYS = ["name", "organization", "created_at"] as const;
+    const DELETED = ["exclude", "include", "only"] as const;
+    const SELECT_CLASS =
+        "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:h-11";
+
+    // The URL is the source of truth for search, filters, sort and page.
+    const params = $derived(page.url.searchParams);
+    const q = $derived(params.get("q") ?? "");
+    const pageNum = $derived(parsePage(params.get("page")));
+    const organizationId = $derived(params.get("organizationId") ?? "");
+    const deleted = $derived(parseEnum(params.get("deleted"), DELETED, "exclude"));
+    const sort = $derived(parseSort(params, SORT_KEYS, DEFAULT_SORT));
+
+    let projects: ProjectBasic[] = $state([]);
     let total = $state(0);
+    let loaded = $state(false);
+    let loading = $state(false);
+    let error = $state("");
+    let searchInput = $state(untrack(() => q));
+    let searchTimer: ReturnType<typeof setTimeout> | undefined;
+    let requestId = 0;
+
+    let summary = $state<ProjectsSummary | null>(null);
+    let summaryLoading = $state(true);
+    let summaryFailed = $state(false);
+    let pickedOrg = $state<PickedOrg | null>(null);
+
+    let deleteTarget = $state<ProjectBasic | null>(null);
     let showDeleteDialog = $state(false);
-    let deleteTargetId = $state<string | null>(null);
-    let deleteTargetName = $state("");
     let deleting = $state(false);
 
-    async function loadProjects() {
-        if (!$authStore.user?.is_admin) return;
+    function navigate(next: {
+        q?: string;
+        page?: number;
+        organizationId?: string;
+        deleted?: string;
+        sort?: DataTableSort;
+    }) {
+        const search = buildListSearch({
+            q: next.q ?? q,
+            page: next.page ?? pageNum,
+            sort: next.sort ?? sort,
+            defaultSort: DEFAULT_SORT,
+            filters: {
+                organizationId: next.organizationId ?? organizationId,
+                deleted: next.deleted ?? deleted,
+            },
+            filterDefaults: { deleted: "exclude" },
+        });
+        goto(page.url.pathname + search, {
+            replaceState: true,
+            keepFocus: true,
+            noScroll: true,
+        });
+    }
 
+    function onSearchInput() {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            const next = searchInput.trim();
+            if (next !== q) navigate({ q: next, page: 1 });
+        }, 300);
+    }
+
+    $effect(() => () => clearTimeout(searchTimer));
+
+    // Back/forward changes the URL query without touching the input.
+    $effect(() => {
+        const current = q;
+        untrack(() => {
+            if (current !== searchInput.trim()) searchInput = current;
+        });
+    });
+
+    async function loadProjects() {
+        const id = ++requestId;
         loading = true;
-        error = null;
+        error = "";
         try {
-            const response = await adminAPI.getProjects(
-                currentPage,
-                50,
-                searchQuery || undefined,
-            );
+            const response = await adminAPI.getProjects({
+                page: pageNum,
+                limit: LIMIT,
+                search: q || undefined,
+                sort: sort.key as ProjectSort,
+                order: sort.dir,
+                organizationId: organizationId || undefined,
+                deleted,
+            });
+            if (id !== requestId) return;
+            // Deleting the last row of a page leaves it empty: step back.
+            if (response.projects.length === 0 && pageNum > 1 && response.total > 0) {
+                navigate({ page: Math.min(pageNum - 1, response.totalPages || 1) });
+                return;
+            }
             projects = response.projects;
             total = response.total;
-            totalPages = response.totalPages;
-        } catch (e: any) {
-            console.error("Error loading projects:", e);
-            error = e.message || "Failed to load projects";
+            loaded = true;
+        } catch (err: any) {
+            if (id !== requestId) return;
+            error = err?.message || "Failed to load projects";
+            toastStore.error(error);
         } finally {
-            loading = false;
+            if (id === requestId) loading = false;
         }
     }
 
-    function confirmDelete(projectId: string, projectName: string) {
-        deleteTargetId = projectId;
-        deleteTargetName = projectName;
+    async function loadSummary() {
+        try {
+            summary = await adminAPI.getProjectsSummary();
+            summaryFailed = false;
+        } catch {
+            summaryFailed = true;
+        } finally {
+            summaryLoading = false;
+        }
+    }
+
+    // Resolve the name of a deep-linked organization filter (?organizationId=).
+    async function resolvePickedOrg(id: string) {
+        try {
+            const org = await adminAPI.getOrganizationDetails(id);
+            if (organizationId === id) pickedOrg = { id: org.id, name: org.name, slug: org.slug };
+        } catch {
+            if (organizationId === id) pickedOrg = { id, name: "Selected organization", slug: "" };
+        }
+    }
+
+    $effect(() => {
+        const id = organizationId;
+        untrack(() => {
+            if (!id) pickedOrg = null;
+            else if (pickedOrg?.id !== id) void resolvePickedOrg(id);
+        });
+    });
+
+    $effect(() => {
+        untrack(() => {
+            void loadSummary();
+        });
+    });
+
+    // Reload whenever the URL-derived query changes.
+    $effect(() => {
+        void [q, pageNum, organizationId, deleted, sort.key, sort.dir];
+        untrack(() => loadProjects());
+    });
+
+    const hasFilters = $derived(!!q || !!organizationId || deleted !== "exclude");
+
+    function clearFilters() {
+        searchInput = "";
+        navigate({ q: "", organizationId: "", deleted: "exclude", page: 1 });
+    }
+
+    function askDelete(project: ProjectBasic) {
+        deleteTarget = project;
         showDeleteDialog = true;
     }
 
     async function handleDelete() {
-        if (!deleteTargetId) return;
+        const target = deleteTarget;
+        if (!target) return;
         deleting = true;
         try {
-            await adminAPI.deleteProject(deleteTargetId);
-            showDeleteDialog = false;
-            deleteTargetId = null;
-            await loadProjects();
+            await adminAPI.deleteProject(target.id);
+            toastStore.success(PROJECT_TRASH_TOAST);
+            await Promise.allSettled([loadProjects(), loadSummary()]);
         } catch (e: any) {
-            error = `Failed to delete project: ${e.message}`;
+            toastStore.error(e?.message || "Failed to delete project");
+            throw e;
         } finally {
             deleting = false;
         }
     }
 
-    function handleSearch() {
-        currentPage = 1;
-        loadProjects();
+    function refresh() {
+        void Promise.allSettled([loadProjects(), loadSummary()]);
     }
 
-    function changePage(page: number) {
-        currentPage = page;
-        loadProjects();
+    function tile(value: number | undefined): string {
+        return summary && value !== undefined ? formatCount(value) : "-";
     }
 
-    function formatDate(dateStr: string | Date) {
-        const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-        return date.toLocaleDateString('en-US', {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-        });
-    }
-
-    function formatNumber(num: number) {
-        return new Intl.NumberFormat(undefined).format(num);
-    }
-
-    onMount(() => {
-        if (browser && $authStore.user?.is_admin) {
-            loadProjects();
-        }
-    });
+    const windowDays = $derived(summary?.logsWindowDays ?? 30);
 </script>
 
 <svelte:head>
-    <title>Projects - Admin - LogTide</title>
+    <title>All projects - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div class="flex justify-between items-center">
-        <div>
-            <h1 class="text-3xl font-bold tracking-tight">
-                Projects Management
-            </h1>
-            <p class="text-muted-foreground mt-1">
-                Manage all projects across organizations
-            </p>
-        </div>
-        <Button
-            variant="outline"
-            size="sm"
-            onclick={loadProjects}
-            disabled={loading}
-        >
-            <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
-            Refresh
-        </Button>
+<div class="space-y-6">
+    <PageHeader
+        title="All projects"
+        appliesTo="instance"
+        description="Every project across all organizations"
+    >
+        {#snippet actions()}
+            <Button variant="outline" size="sm" onclick={refresh} disabled={loading}>
+                <RefreshCw class="mr-2 h-4 w-4 {loading ? 'animate-spin' : ''}" />
+                Refresh
+            </Button>
+        {/snippet}
+    </PageHeader>
+
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-busy={summaryLoading}>
+        <StatsCard
+            title="Projects"
+            value={tile(summary?.totalProjects)}
+            icon={FolderKanban}
+            description={summaryFailed ? "Could not load totals" : "Instance total, excluding deleted"}
+        />
+        <StatsCard
+            title="Logs ({windowDays}d)"
+            value={tile(summary?.logs30d)}
+            icon={Database}
+            description="Instance total, last {windowDays} days"
+        />
+        <StatsCard
+            title="Active API keys"
+            value={tile(summary?.activeApiKeys)}
+            icon={Key}
+            description="Instance total, not revoked"
+        />
+        <StatsCard
+            title="Alert rules"
+            value={summary ? `${formatCount(summary.alertRulesEnabled)} / ${formatCount(summary.alertRulesTotal)}` : "-"}
+            icon={Bell}
+            description="Enabled / total, instance wide"
+        />
     </div>
 
-    {#if error}
-        <div class="bg-destructive/15 text-destructive p-4 rounded-md">
-            {error}
+    <div class="flex flex-wrap items-end gap-3">
+        <div class="relative min-w-[14rem] flex-1">
+            <Search
+                class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+            />
+            <Input
+                type="search"
+                aria-label="Search projects by name or description"
+                placeholder="Search by name or description"
+                bind:value={searchInput}
+                oninput={onSearchInput}
+                class="pl-10 max-md:h-11"
+            />
+        </div>
+        <div class="grid gap-1">
+            <label for="projects-org-filter" class="text-xs font-medium text-muted-foreground">Organization</label>
+            <AdminOrgPicker
+                id="projects-org-filter"
+                class="w-56 max-md:h-11"
+                placeholder="All organizations"
+                selected={pickedOrg}
+                onSelect={(org) => {
+                    pickedOrg = org;
+                    navigate({ organizationId: org.id, page: 1 });
+                }}
+                onClear={() => navigate({ organizationId: "", page: 1 })}
+            />
+        </div>
+        <label class="grid gap-1 text-xs font-medium text-muted-foreground">
+            Deleted projects
+            <select
+                class={SELECT_CLASS}
+                value={deleted}
+                onchange={(e) => navigate({ deleted: e.currentTarget.value, page: 1 })}
+            >
+                <option value="exclude">Hide deleted</option>
+                <option value="include">Include deleted</option>
+                <option value="only">Only deleted</option>
+            </select>
+        </label>
+    </div>
+
+    {#if error && !loaded}
+        <EmptyState variant="error" title="Could not load projects" description={error}>
+            {#snippet actions()}
+                <Button variant="outline" size="sm" onclick={loadProjects}>Retry</Button>
+            {/snippet}
+        </EmptyState>
+    {:else}
+        <div class="space-y-4" aria-busy={loading}>
+            <div class={loading && loaded ? "opacity-70 transition-opacity" : "transition-opacity"}>
+                <AdminProjectsTable
+                    {projects}
+                    loading={!loaded}
+                    onDelete={askDelete}
+                    bind:sort={() => sort, (s) => navigate({ sort: s, page: 1 })}
+                >
+                    {#snippet empty()}
+                        {#if hasFilters}
+                            <EmptyState variant="no-results" title="No projects match" description="Try a different search or clear the filters.">
+                                {#snippet actions()}
+                                    <Button variant="outline" size="sm" onclick={clearFilters}>Clear filters</Button>
+                                {/snippet}
+                            </EmptyState>
+                        {:else}
+                            <EmptyState variant="no-data" title="No projects yet" description="Projects appear here once an organization creates one." />
+                        {/if}
+                    {/snippet}
+                </AdminProjectsTable>
+            </div>
+            {#if error}
+                <p class="text-sm text-destructive-text" role="alert">
+                    {error}
+                    <button type="button" class="underline underline-offset-4" onclick={loadProjects}>Retry</button>
+                </p>
+            {/if}
+            <Pagination
+                page={pageNum}
+                pageSize={LIMIT}
+                {total}
+                onPageChange={(p) => navigate({ page: p })}
+            />
         </div>
     {/if}
-
-    <!-- Stats Cards -->
-    <div class="grid gap-4 md:grid-cols-3">
-        <Card>
-            <CardHeader
-                class="flex flex-row items-center justify-between space-y-0 pb-2"
-            >
-                <CardTitle class="text-sm font-medium">Total Projects</CardTitle
-                >
-                <FolderKanban class="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-                <div class="text-2xl font-bold">{formatNumber(total)}</div>
-                <p class="text-xs text-muted-foreground mt-1">
-                    Across all organizations
-                </p>
-            </CardContent>
-        </Card>
-
-        <Card>
-            <CardHeader
-                class="flex flex-row items-center justify-between space-y-0 pb-2"
-            >
-                <CardTitle class="text-sm font-medium">Total Logs</CardTitle>
-                <Database class="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-                <div class="text-2xl font-bold">
-                    {formatNumber(
-                        projects.reduce((sum, p) => sum + p.logsCount, 0),
-                    )}
-                </div>
-                <p class="text-xs text-muted-foreground mt-1">
-                    Combined from all projects
-                </p>
-            </CardContent>
-        </Card>
-
-        <Card>
-            <CardHeader
-                class="flex flex-row items-center justify-between space-y-0 pb-2"
-            >
-                <CardTitle class="text-sm font-medium"
-                    >Active API Keys</CardTitle
-                >
-                <Key class="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-                <div class="text-2xl font-bold">
-                    {formatNumber(
-                        projects.reduce((sum, p) => sum + p.apiKeysCount, 0),
-                    )}
-                </div>
-                <p class="text-xs text-muted-foreground mt-1">
-                    Non-revoked keys
-                </p>
-            </CardContent>
-        </Card>
-    </div>
-
-    <!-- Search and Table -->
-    <Card>
-        <CardHeader>
-            <div class="flex items-center gap-4">
-                <div class="relative flex-1">
-                    <Search
-                        class="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground"
-                    />
-                    <Input
-                        type="search"
-                        placeholder="Search by project or organization name..."
-                        class="pl-8"
-                        bind:value={searchQuery}
-                        onkeydown={(e) => e.key === "Enter" && handleSearch()}
-                    />
-                </div>
-                <Button onclick={handleSearch} size="sm" disabled={loading}>
-                    Search
-                </Button>
-            </div>
-        </CardHeader>
-        <CardContent>
-            {#if loading && projects.length === 0}
-                <SkeletonTable rows={8} columns={7} />
-            {:else if projects.length === 0}
-                <div
-                    class="flex flex-col items-center justify-center p-12 text-center"
-                >
-                    <FolderKanban
-                        class="h-12 w-12 text-muted-foreground mb-4"
-                    />
-                    <h3 class="text-lg font-semibold">No projects found</h3>
-                    <p class="text-muted-foreground mt-2">
-                        {searchQuery
-                            ? "Try adjusting your search"
-                            : "No projects have been created yet"}
-                    </p>
-                </div>
-            {:else}
-                <TableLoadingOverlay loading={loading}>
-                <Table.Root>
-                    <Table.Header>
-                        <Table.Row>
-                            <Table.Head>Project Name</Table.Head>
-                            <Table.Head>Organization</Table.Head>
-                            <Table.Head class="text-right">Logs</Table.Head>
-                            <Table.Head class="text-right">API Keys</Table.Head>
-                            <Table.Head class="text-right">Alerts</Table.Head>
-                            <Table.Head>Created</Table.Head>
-                            <Table.Head class="text-right">Actions</Table.Head>
-                        </Table.Row>
-                    </Table.Header>
-                    <Table.Body>
-                        {#each projects as project}
-                            <Table.Row>
-                                <Table.Cell class="font-medium">
-                                    {project.name}
-                                    {#if project.description}
-                                        <p
-                                            class="text-xs text-muted-foreground mt-1"
-                                        >
-                                            {project.description}
-                                        </p>
-                                    {/if}
-                                </Table.Cell>
-                                <Table.Cell class="text-muted-foreground">
-                                    {project.organization_name}
-                                </Table.Cell>
-                                <Table.Cell class="text-right">
-                                    {formatNumber(project.logsCount)}
-                                </Table.Cell>
-                                <Table.Cell class="text-right">
-                                    {project.apiKeysCount}
-                                </Table.Cell>
-                                <Table.Cell class="text-right">
-                                    {project.alertRulesCount}
-                                </Table.Cell>
-                                <Table.Cell
-                                    class="text-sm text-muted-foreground"
-                                >
-                                    {formatDate(project.created_at)}
-                                </Table.Cell>
-                                <Table.Cell class="text-right">
-                                    <div class="flex justify-end gap-2">
-                                        <a
-                                            href="/dashboard/admin/projects/{project.id}"
-                                            class={buttonVariants({
-                                                variant: "outline",
-                                                size: "sm",
-                                            })}
-                                        >
-                                            View Details
-                                        </a>
-                                        <Button
-                                            variant="destructive"
-                                            size="sm"
-                                            onclick={() =>
-                                                confirmDelete(
-                                                    project.id,
-                                                    project.name,
-                                                )}
-                                        >
-                                            <Trash2 class="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </Table.Cell>
-                            </Table.Row>
-                        {/each}
-                    </Table.Body>
-                </Table.Root>
-
-                <!-- Pagination -->
-                {#if totalPages > 1}
-                    <div class="flex items-center justify-between mt-4">
-                        <div class="text-sm text-muted-foreground">
-                            Page {currentPage} of {totalPages} • Total: {formatNumber(
-                                total,
-                            )} projects
-                        </div>
-                        <div class="flex gap-2">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={currentPage <= 1}
-                                onclick={() => changePage(currentPage - 1)}
-                            >
-                                Previous
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={currentPage >= totalPages}
-                                onclick={() => changePage(currentPage + 1)}
-                            >
-                                Next
-                            </Button>
-                        </div>
-                    </div>
-                {/if}
-                </TableLoadingOverlay>
-            {/if}
-        </CardContent>
-    </Card>
 </div>
 
-<AlertDialog bind:open={showDeleteDialog}>
-    <AlertDialogContent>
-        <AlertDialogHeader>
-            <AlertDialogTitle>Delete Project</AlertDialogTitle>
-            <AlertDialogDescription>
-                Are you sure you want to delete <strong>{deleteTargetName}</strong>?
-                This will permanently delete all logs, API keys, alert rules, and sigma rules. This action cannot be undone.
-            </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onclick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete Project"}
-            </AlertDialogAction>
-        </AlertDialogFooter>
-    </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+    bind:open={showDeleteDialog}
+    title="Delete project"
+    description={PROJECT_TRASH_DIALOG_TEXT(deleteTarget?.name ?? "This project")}
+    confirmLabel="Delete project"
+    busy={deleting}
+    onConfirm={handleDelete}
+/>

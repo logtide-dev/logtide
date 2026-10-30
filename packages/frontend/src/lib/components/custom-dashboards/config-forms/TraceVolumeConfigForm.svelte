@@ -2,6 +2,12 @@
   import type { TraceVolumeConfig } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+  } from '../pickers/options-state.svelte';
   import {
     Select,
     SelectContent,
@@ -18,6 +24,16 @@
 
   let { config, onChange }: Props = $props();
 
+  const services = createServiceOptions('traces', () => config.projectId);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('traces', projectId, config.serviceName))) {
+      onChange({ ...config, projectId, serviceName: null });
+    }
+  }
+
 
   function update<K extends keyof TraceVolumeConfig>(key: K, value: TraceVolumeConfig[K]) {
     onChange({ ...config, [key]: value });
@@ -32,6 +48,15 @@
       type="text"
       value={config.title}
       oninput={(e) => update('title', (e.currentTarget as HTMLInputElement).value)}
+    />
+  </div>
+
+  <div class="space-y-1.5">
+    <Label for="tv-project">Project</Label>
+    <ProjectSelect
+      id="tv-project"
+      value={config.projectId}
+      onChange={handleProjectChange}
     />
   </div>
 
@@ -55,15 +80,13 @@
 
   <div class="space-y-1.5">
     <Label for="tv-service">Service filter (optional)</Label>
-    <Input
+    <SuggestInput
       id="tv-service"
-      type="text"
       placeholder="Leave empty for all services"
       value={config.serviceName ?? ''}
-      oninput={(e) => {
-        const val = (e.currentTarget as HTMLInputElement).value;
-        update('serviceName', val.length > 0 ? val : null);
-      }}
+      options={services.list}
+      loading={services.loading}
+      onChange={(v) => update('serviceName', v.length > 0 ? v : null)}
     />
   </div>
 

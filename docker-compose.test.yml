@@ -74,8 +74,9 @@ services:
     build:
       context: .
       dockerfile: packages/backend/Dockerfile
+    image: logtide-backend-test:local
     container_name: logtide-backend-test
-    environment:
+    environment: &backend-test-env
       NODE_ENV: test
       PORT: 8080
       DATABASE_URL: postgresql://logtide_test:test_password@postgres-test:5432/logtide_test
@@ -108,6 +109,24 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    networks:
+      - logtide-test-network
+
+  # Worker for the E2E journeys that need background jobs (the alert cron runs
+  # every minute and fires alerts, incidents and notification emails). Same
+  # image as backend-test; starts after it is healthy so migrations ran once.
+  worker-test:
+    image: logtide-backend-test:local
+    container_name: logtide-worker-test
+    command: [ "worker" ]
+    environment: *backend-test-env
+    depends_on:
+      backend-test:
+        condition: service_healthy
+      mailhog-test:
+        condition: service_started
+    healthcheck:
+      disable: true
     networks:
       - logtide-test-network
 

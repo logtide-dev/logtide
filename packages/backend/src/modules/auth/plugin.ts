@@ -91,7 +91,10 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       request.url.startsWith('/api/v1/maintenances') ||
       // Inbound webhook receivers (#155): the URL token is the credential,
       // verified by the route itself.
-      request.url.startsWith('/api/v1/receivers')
+      request.url.startsWith('/api/v1/receivers') ||
+      // Extension routes pick their own auth (api.auth.* preHandlers) or
+      // verify the request themselves (e.g. payment-provider webhooks).
+      request.url.startsWith('/api/v1/ext/')
     ) {
       return;
     }
@@ -150,6 +153,9 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       const result = await apiKeysService.verifyApiKey(apiKey);
 
       if (!result) {
+        // Attribute attempts with a revoked key to its project (health check).
+        // The response stays identical: never disclose that the key was revoked.
+        await apiKeysService.recordRevokedKeyAttempt(apiKey);
         reply.code(401).send({
           error: 'Unauthorized',
           message: 'Invalid API key',

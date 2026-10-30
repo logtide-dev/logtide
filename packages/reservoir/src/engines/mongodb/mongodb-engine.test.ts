@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { StorageConfig } from '../../core/types.js';
-import { MongoDBEngine } from './mongodb-engine.js';
+import { MongoDBEngine, addMetricLabelFilters, metricLabelExpr } from './mongodb-engine.js';
 import { MongoDBQueryTranslator } from './query-translator.js';
+import { resolvedValueExpr, scalarTextExpr } from './json-path.js';
 
 // ============================================================================
 // Query Translator Unit Tests (no DB needed)
@@ -65,7 +66,10 @@ describe('MongoDBQueryTranslator', () => {
       expect(filter.level).toEqual({ $in: ['error', 'critical'] });
     });
 
-    it('adds fulltext search with $text', () => {
+    // Legacy `search` is converted to text terms; whole-word regexes replace $text.
+    const wordRe = (token: string) => `(?:^|[^\\p{L}\\p{N}_])${token}(?:$|[^\\p{L}\\p{N}_])`;
+
+    it('fulltext search ANDs a whole-word regex per word, never $text', () => {
       const native = translator.translateQuery({
         projectId: 'p1',
         from: new Date('2024-01-01'),
@@ -73,7 +77,11 @@ describe('MongoDBQueryTranslator', () => {
         search: 'connection error',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.$text).toEqual({ $search: 'connection error' });
+      expect(filter.$text).toBeUndefined();
+      expect(filter.$and).toEqual([
+        { message: { $regex: wordRe('connection'), $options: 'i' } },
+        { message: { $regex: wordRe('error'), $options: 'i' } },
+      ]);
     });
 
     it('uses regex for substring search mode', () => {
@@ -85,11 +93,11 @@ describe('MongoDBQueryTranslator', () => {
         searchMode: 'substring',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.message).toEqual({ $regex: 'test', $options: 'i' });
+      expect(filter.$and).toEqual([{ message: { $regex: 'test', $options: 'i' } }]);
       expect(filter.$text).toBeUndefined();
     });
 
-    it('uses regex for search with special characters', () => {
+    it('splits fulltext search with special characters into words', () => {
       const native = translator.translateQuery({
         projectId: 'p1',
         from: new Date('2024-01-01'),
@@ -97,7 +105,10 @@ describe('MongoDBQueryTranslator', () => {
         search: 'error: connection_failed',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.message).toBeDefined();
+      expect(filter.$and).toEqual([
+        { message: { $regex: wordRe('error'), $options: 'i' } },
+        { message: { $regex: wordRe('connection_failed'), $options: 'i' } },
+      ]);
       expect(filter.$text).toBeUndefined();
     });
 
@@ -110,8 +121,7 @@ describe('MongoDBQueryTranslator', () => {
         searchMode: 'substring',
       });
       const filter = native.query as Record<string, unknown>;
-      const msg = filter.message as { $regex: string };
-      expect(msg.$regex).toBe('test\\.\\*injection');
+      expect(filter.$and).toEqual([{ message: { $regex: 'test\\.\\*injection', $options: 'i' } }]);
     });
 
     it('adds traceId filter', () => {
@@ -136,10 +146,14 @@ describe('MongoDBQueryTranslator', () => {
         cursor,
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.$or).toEqual([
-        { time: { $lt: cursorTime } },
-        { time: cursorTime, id: { $lt: 'uuid-123' } },
-      ]);
+      // The cursor clause lives in the shared $and list, never at the top level.
+      expect(filter.$or).toBeUndefined();
+      expect(filter.$and).toEqual([{
+        $or: [
+          { time: { $lt: cursorTime } },
+          { time: cursorTime, id: { $lt: 'uuid-123' } },
+        ],
+      }]);
     });
 
     it('handles cursor pagination (asc)', () => {
@@ -154,10 +168,12 @@ describe('MongoDBQueryTranslator', () => {
         sortOrder: 'asc',
       });
       const filter = native.query as Record<string, unknown>;
-      expect(filter.$or).toEqual([
-        { time: { $gt: cursorTime } },
-        { time: cursorTime, id: { $gt: 'uuid-123' } },
-      ]);
+      expect(filter.$and).toEqual([{
+        $or: [
+          { time: { $gt: cursorTime } },
+          { time: cursorTime, id: { $gt: 'uuid-123' } },
+        ],
+      }]);
     });
 
     it('ignores invalid cursor', () => {
@@ -169,6 +185,7 @@ describe('MongoDBQueryTranslator', () => {
       });
       const filter = native.query as Record<string, unknown>;
       expect(filter.$or).toBeUndefined();
+      expect(filter.$and).toBeUndefined();
     });
 
     it('sets sort direction based on sortOrder', () => {
@@ -240,14 +257,17 @@ describe('MongoDBQueryTranslator', () => {
       expect(native.metadata?.limit).toBe(1000);
     });
 
-    it('handles metadata fields with dot notation', () => {
-      const native = translator.translateDistinct({
-        field: 'metadata.hostname',
-        projectId: 'p1',
-        from: new Date('2024-01-01'),
-        to: new Date('2024-01-02'),
-      });
-      expect(native.metadata?.mongoField).toBe('metadata.hostname');
+    it('resolves metadata fields like metadata filters, never by dot notation', () => {
+      const scope = { projectId: 'p1', from: new Date('2024-01-01'), to: new Date('2024-01-02') };
+      const hostname = translator.translateDistinct({ ...scope, field: 'metadata.hostname' });
+      expect(hostname.metadata?.mongoField).toBeUndefined();
+      expect(hostname.metadata?.valueExpr).toEqual(scalarTextExpr(resolvedValueExpr('metadata', 'hostname')));
+      // The browser SDK's flat `performance.metric` key: literal key first, then the nested path.
+      const top = translator.translateTopValues({ ...scope, field: 'metadata.performance.metric' });
+      expect(top.metadata?.valueExpr).toEqual(scalarTextExpr(resolvedValueExpr('metadata', 'performance.metric')));
+      expect(JSON.stringify(top.metadata?.valueExpr)).not.toContain('$metadata.performance');
+      // Built-in columns keep their path.
+      expect(translator.translateTopValues({ ...scope, field: 'service' }).metadata).toMatchObject({ mongoField: 'service', valueExpr: '$service' });
     });
 
     it('throws for invalid field name', () => {
@@ -422,5 +442,25 @@ describe('MongoDBEngine', () => {
       const result = await engine.ingestMetrics([]);
       expect(result).toEqual({ ingested: 0, failed: 0, durationMs: 0 });
     });
+  });
+});
+
+describe('metric labels', () => {
+  it('a label is the literal attribute key, read with $getField (dots allowed)', () => {
+    expect(metricLabelExpr('http.request.method')).toEqual({
+      $getField: { field: { $literal: 'http.request.method' }, input: '$attributes' },
+    });
+  });
+
+  it('plain keys filter natively, dotted and $ keys through $expr on the literal key', () => {
+    const filter: Record<string, unknown> = { project_id: 'p1', $and: [{ x: 1 }] };
+    addMetricLabelFilters(filter, { host: 'web-1', 'http.request.method': 'GET', $where: 'x' });
+    expect(filter['attributes.host']).toBe('web-1');
+    expect(filter['attributes.http.request.method']).toBeUndefined();
+    expect(filter.$and).toEqual([
+      { x: 1 },
+      { $expr: { $eq: [metricLabelExpr('http.request.method'), { $literal: 'GET' }] } },
+      { $expr: { $eq: [metricLabelExpr('$where'), { $literal: 'x' }] } },
+    ]);
   });
 });

@@ -49,7 +49,7 @@ const defaultItems: Omit<ChecklistItem, 'completed'>[] = [
     id: 'try-live-tail',
     label: 'Try live tail',
     description: 'Watch logs in real-time',
-    link: '/dashboard/search?live=true'
+    link: '/dashboard/logs?live=true'
   },
   {
     id: 'import-sigma-rule',

@@ -108,13 +108,13 @@
   function goToTraces(serviceName: string) {
     const from = timeRange.from.toISOString();
     const to = timeRange.to.toISOString();
-    goto(`/dashboard/traces?service=${encodeURIComponent(serviceName)}&from=${from}&to=${to}&projectId=${projectId}`);
+    goto(`/dashboard/traces?service=${encodeURIComponent(serviceName)}&from=${from}&to=${to}&project=${projectId}`);
   }
 
   function goToLogs(serviceName: string) {
     const from = timeRange.from.toISOString();
     const to = timeRange.to.toISOString();
-    goto(`/dashboard/search?service=${encodeURIComponent(serviceName)}&from=${from}&to=${to}&project=${projectId}`);
+    goto(`/dashboard/logs?service=${encodeURIComponent(serviceName)}&from=${from}&to=${to}&project=${projectId}`);
   }
 
 </script>
@@ -129,7 +129,7 @@
   {#each displayServices as service}
     <div class="mb-8">
       <div class="flex items-center justify-between mb-4">
-        <h3 class="text-lg font-semibold">{service.serviceName || 'All Services'}</h3>
+        <h3 class="text-lg font-semibold">{service.serviceName || 'All services'}</h3>
         {#if service.serviceName}
           <div class="flex gap-2">
             <Button variant="ghost" size="sm" class="h-7 text-xs" onclick={() => goToTraces(service.serviceName)}>

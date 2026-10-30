@@ -1,5 +1,7 @@
+import type { Kysely } from 'kysely';
 import { db } from '../../database/connection.js';
-import type { StatusIncidentStatus, StatusIncidentSeverity } from '../../database/types.js';
+import type { Database, StatusIncidentStatus, StatusIncidentSeverity } from '../../database/types.js';
+import { assertMonitorsInProject, assertMonitorSourceIncident } from '../monitoring/component-links.js';
 
 export interface StatusIncident {
   id: string;
@@ -12,6 +14,10 @@ export interface StatusIncident {
   createdAt: Date;
   updatedAt: Date;
   resolvedAt: Date | null;
+  /** Monitors (public components) this status update affects. */
+  monitorIds: string[];
+  /** Shared incident this update was published from, when any. */
+  sourceIncidentId: string | null;
 }
 
 export interface StatusIncidentUpdate {
@@ -30,6 +36,8 @@ export interface CreateStatusIncidentInput {
   status?: StatusIncidentStatus;
   severity?: StatusIncidentSeverity;
   message?: string;
+  monitorIds?: string[];
+  sourceIncidentId?: string;
   createdBy: string;
 }
 
@@ -37,19 +45,28 @@ export interface UpdateStatusIncidentInput {
   title?: string;
   status?: StatusIncidentStatus;
   severity?: StatusIncidentSeverity;
+  /** Replaces the linked monitors; an empty array clears them, undefined keeps them. */
+  monitorIds?: string[];
 }
 
 export class StatusIncidentService {
-  async list(projectId: string, organizationId: string): Promise<StatusIncident[]> {
-    const rows = await db
+  async list(
+    projectId: string,
+    organizationId: string,
+    filter: { sourceIncidentId?: string } = {},
+  ): Promise<StatusIncident[]> {
+    let query = db
       .selectFrom('status_incidents')
       .selectAll()
       .where('project_id', '=', projectId)
-      .where('organization_id', '=', organizationId)
-      .orderBy('created_at', 'desc')
-      .execute();
+      .where('organization_id', '=', organizationId);
+    if (filter.sourceIncidentId) {
+      query = query.where('source_incident_id', '=', filter.sourceIncidentId);
+    }
+    const rows = await query.orderBy('created_at', 'desc').execute();
 
-    return rows.map(this.mapIncident);
+    const links = await this.loadMonitorIds(db, rows.map((r) => r.id));
+    return rows.map((r) => this.mapIncident(r, links.get(r.id) ?? []));
   }
 
   async getById(id: string, organizationId: string): Promise<StatusIncident | null> {
@@ -60,11 +77,23 @@ export class StatusIncidentService {
       .where('organization_id', '=', organizationId)
       .executeTakeFirst();
 
-    return row ? this.mapIncident(row) : null;
+    if (!row) return null;
+    const links = await this.loadMonitorIds(db, [row.id]);
+    return this.mapIncident(row, links.get(row.id) ?? []);
   }
 
   async create(input: CreateStatusIncidentInput): Promise<StatusIncident> {
     return db.transaction().execute(async (trx) => {
+      const monitorIds = await assertMonitorsInProject(
+        trx,
+        input.monitorIds ?? [],
+        input.projectId,
+        input.organizationId,
+      );
+      if (input.sourceIncidentId) {
+        await assertMonitorSourceIncident(trx, input.sourceIncidentId, input.organizationId);
+      }
+
       const row = await trx
         .insertInto('status_incidents')
         .values({
@@ -74,6 +103,7 @@ export class StatusIncidentService {
           status: input.status ?? 'investigating',
           severity: input.severity ?? 'minor',
           created_by: input.createdBy,
+          source_incident_id: input.sourceIncidentId ?? null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -91,7 +121,14 @@ export class StatusIncidentService {
           .execute();
       }
 
-      return this.mapIncident(row);
+      if (monitorIds.length > 0) {
+        await trx
+          .insertInto('status_incident_monitors')
+          .values(monitorIds.map((monitor_id) => ({ incident_id: row.id, monitor_id })))
+          .execute();
+      }
+
+      return this.mapIncident(row, monitorIds);
     });
   }
 
@@ -109,21 +146,48 @@ export class StatusIncidentService {
         ? { resolved_at: null }
         : {};
 
-    const row = await db
-      .updateTable('status_incidents')
-      .set({
-        ...(input.title !== undefined && { title: input.title }),
-        ...(input.status !== undefined && { status: input.status }),
-        ...(input.severity !== undefined && { severity: input.severity }),
-        ...resolvedAtUpdate,
-        updated_at: now,
-      })
-      .where('id', '=', id)
-      .where('organization_id', '=', organizationId)
-      .returningAll()
-      .executeTakeFirst();
+    return db.transaction().execute(async (trx) => {
+      let monitorIds: string[] | undefined;
+      if (input.monitorIds !== undefined) {
+        const existing = await trx
+          .selectFrom('status_incidents')
+          .select('project_id')
+          .where('id', '=', id)
+          .where('organization_id', '=', organizationId)
+          .executeTakeFirst();
+        if (!existing) return null;
+        monitorIds = await assertMonitorsInProject(trx, input.monitorIds, existing.project_id, organizationId);
+      }
 
-    return row ? this.mapIncident(row) : null;
+      const row = await trx
+        .updateTable('status_incidents')
+        .set({
+          ...(input.title !== undefined && { title: input.title }),
+          ...(input.status !== undefined && { status: input.status }),
+          ...(input.severity !== undefined && { severity: input.severity }),
+          ...resolvedAtUpdate,
+          updated_at: now,
+        })
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .returningAll()
+        .executeTakeFirst();
+      if (!row) return null;
+
+      if (monitorIds !== undefined) {
+        await trx.deleteFrom('status_incident_monitors').where('incident_id', '=', row.id).execute();
+        if (monitorIds.length > 0) {
+          await trx
+            .insertInto('status_incident_monitors')
+            .values(monitorIds.map((monitor_id) => ({ incident_id: row.id, monitor_id })))
+            .execute();
+        }
+      } else {
+        monitorIds = (await this.loadMonitorIds(trx, [row.id])).get(row.id) ?? [];
+      }
+
+      return this.mapIncident(row, monitorIds);
+    });
   }
 
   async delete(id: string, organizationId: string): Promise<boolean> {
@@ -190,7 +254,26 @@ export class StatusIncidentService {
     });
   }
 
-  private mapIncident(row: any): StatusIncident {
+  private async loadMonitorIds(
+    executor: Kysely<Database>,
+    incidentIds: string[],
+  ): Promise<Map<string, string[]>> {
+    const map = new Map<string, string[]>();
+    if (incidentIds.length === 0) return map;
+    const rows = await executor
+      .selectFrom('status_incident_monitors')
+      .select(['incident_id', 'monitor_id'])
+      .where('incident_id', 'in', incidentIds)
+      .execute();
+    for (const r of rows) {
+      const list = map.get(r.incident_id);
+      if (list) list.push(r.monitor_id);
+      else map.set(r.incident_id, [r.monitor_id]);
+    }
+    return map;
+  }
+
+  private mapIncident(row: any, monitorIds: string[] = []): StatusIncident {
     return {
       id: row.id,
       organizationId: row.organization_id,
@@ -202,6 +285,8 @@ export class StatusIncidentService {
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
       resolvedAt: row.resolved_at ? new Date(row.resolved_at) : null,
+      monitorIds,
+      sourceIncidentId: row.source_incident_id ?? null,
     };
   }
 

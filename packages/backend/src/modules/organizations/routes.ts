@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { OrganizationsService } from './service.js';
+import { OrganizationsService, OrganizationLimitError } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import type { OrgRole } from '@logtide/shared';
 import { auditLogService } from '../audit-log/index.js';
@@ -9,8 +9,6 @@ import { withLimitLock } from '../../capabilities/limit-lock.js';
 import { startOfUtcMonth } from '../../capabilities/month.js';
 import { isUpgradeHandoffActive, signUpgradeToken, buildUpgradeUrl } from './upgrade-handoff.js';
 import { termsAcceptanceService } from '../users/terms.js';
-import { isBillingApiActive } from '../billing/seam.js';
-import { billingRoutes } from '../billing/routes.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -40,6 +38,10 @@ const memberIdSchema = z.object({
 
 const updateMemberRoleSchema = z.object({
   role: z.enum(['admin', 'member']),
+});
+
+const transferOwnershipBodySchema = z.object({
+  userId: z.string().uuid('Invalid user ID format'),
 });
 
 const upgradeHandoffBodySchema = z.object({
@@ -76,9 +78,6 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
       throw error;
     }
   });
-
-  // In-app billing proxy, registered only when the billing seam is configured.
-  if (isBillingApiActive()) await fastify.register(billingRoutes);
 
   // Get all organizations for current user
   fastify.get('/', async (request: any, reply) => {
@@ -304,6 +303,46 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
           return reply.status(400).send({
             error: error.message,
           });
+        }
+      }
+
+      throw error;
+    }
+  });
+
+  // Transfer ownership (owner only). The previous owner becomes an admin.
+  fastify.post('/:id/transfer-ownership', async (request: any, reply) => {
+    try {
+      const { id } = organizationIdSchema.parse(request.params);
+      const { userId } = transferOwnershipBodySchema.parse(request.body);
+
+      await organizationsService.transferOwnership(id, request.user.id, userId);
+
+      return reply.send({ success: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          error: 'Validation error',
+          details: error.errors,
+        });
+      }
+
+      if (error instanceof OrganizationLimitError) {
+        return reply.status(403).send({
+          error: 'organization_limit_reached',
+          message: `That user can own at most ${error.max.toLocaleString('en-US')} organization${error.max === 1 ? '' : 's'}`,
+        });
+      }
+
+      if (error instanceof Error) {
+        if (error.message.includes('Only the organization owner')) {
+          return reply.status(403).send({ error: error.message });
+        }
+        if (error.message.includes('not found')) {
+          return reply.status(404).send({ error: error.message });
+        }
+        if (error.message.includes('already own') || error.message.includes('must be a member')) {
+          return reply.status(400).send({ error: error.message });
         }
       }
 

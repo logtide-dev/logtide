@@ -2,6 +2,15 @@
   import type { MetricChartConfig, MetricAggregation, MetricInterval } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import Button from '$lib/components/ui/button/button.svelte';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+    createMetricNameOptions,
+    createLabelKeyOptions,
+  } from '../pickers/options-state.svelte';
   import {
     Select,
     SelectContent,
@@ -18,8 +27,45 @@
 
   let { config, onChange }: Props = $props();
 
-  const aggregations: MetricAggregation[] = ['avg', 'sum', 'min', 'max', 'count', 'last', 'p50', 'p95', 'p99'];
+  const services = createServiceOptions('metrics', () => config.projectId);
+  const metricNames = createMetricNameOptions(() => config.projectId);
+  const labelKeys = createLabelKeyOptions(() => config.projectId, () => config.metricName);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('metrics', projectId, config.serviceName))) {
+      onChange({ ...config, projectId, serviceName: null });
+    }
+  }
+
+  const aggregations: MetricAggregation[] = ['avg', 'sum', 'min', 'max', 'count', 'last', 'rate', 'p50', 'p95', 'p99'];
   const intervals: MetricInterval[] = ['1m', '5m', '15m', '1h', '6h', '1d'];
+
+  const MAX_GROUP_KEYS = 2;
+  const GROUP_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/;
+
+  let newGroupKey = $state('');
+  const groupKeys = $derived(config.groupBy ?? []);
+  // Suggestions need a project and a metric; without them it is plain typing.
+  const groupSuggestions = $derived(config.projectId && config.metricName.trim() ? labelKeys.list : []);
+  const canAddGroupKey = $derived(
+    GROUP_KEY_RE.test(newGroupKey.trim()) &&
+      !groupKeys.includes(newGroupKey.trim()) &&
+      groupKeys.length < MAX_GROUP_KEYS
+  );
+
+  /** groupBy is omitted from the config when empty. */
+  function setGroupBy(keys: string[]) {
+    const { groupBy: _previous, ...rest } = config;
+    onChange(keys.length > 0 ? { ...rest, groupBy: keys } : rest);
+  }
+
+  function addGroupKey() {
+    if (!canAddGroupKey) return;
+    setGroupBy([...groupKeys, newGroupKey.trim()]);
+    newGroupKey = '';
+  }
 
   function update<K extends keyof MetricChartConfig>(key: K, value: MetricChartConfig[K]) {
     onChange({ ...config, [key]: value });
@@ -38,15 +84,66 @@
   </div>
 
   <div class="space-y-1.5">
+    <Label for="mc-project">Project</Label>
+    <ProjectSelect
+      id="mc-project"
+      value={config.projectId}
+      onChange={handleProjectChange}
+    />
+  </div>
+
+  <div class="space-y-1.5">
     <Label for="mc-metric">Metric name</Label>
-    <Input
+    <SuggestInput
       id="mc-metric"
-      type="text"
       placeholder="e.g. http.server.request.duration"
       value={config.metricName}
-      oninput={(e) => update('metricName', (e.currentTarget as HTMLInputElement).value)}
-      class="font-mono text-sm"
+      options={metricNames.list}
+      loading={metricNames.loading}
+      onChange={(v) => update('metricName', v)}
     />
+  </div>
+
+  <div class="space-y-1.5">
+    <Label for="mc-group-by">Group by (optional, up to 2 labels)</Label>
+    {#if groupKeys.length > 0}
+      <ul class="flex flex-wrap gap-2">
+        {#each groupKeys as key (key)}
+          <li class="flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-mono">
+            <span>{key}</span>
+            <button
+              type="button"
+              class="text-muted-foreground hover:text-foreground"
+              aria-label={`Remove group by ${key}`}
+              onclick={() => setGroupBy(groupKeys.filter((k) => k !== key))}
+            >
+              &times;
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    {#if groupKeys.length < MAX_GROUP_KEYS}
+      <div class="flex gap-2">
+        <div class="flex-1">
+          <SuggestInput
+            id="mc-group-by"
+            placeholder="e.g. host"
+            value={newGroupKey}
+            options={groupSuggestions}
+            loading={labelKeys.loading}
+            onChange={(v) => (newGroupKey = v)}
+          />
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          aria-label="Add group by label"
+          disabled={!canAddGroupKey}
+          onclick={addGroupKey}>Add label</Button
+        >
+      </div>
+    {/if}
   </div>
 
   <div class="grid grid-cols-2 gap-3">
@@ -106,15 +203,13 @@
 
   <div class="space-y-1.5">
     <Label for="mc-service">Service filter (optional)</Label>
-    <Input
+    <SuggestInput
       id="mc-service"
-      type="text"
       placeholder="Leave empty for all services"
       value={config.serviceName ?? ''}
-      oninput={(e) => {
-        const v = (e.currentTarget as HTMLInputElement).value;
-        update('serviceName', v.length > 0 ? v : null);
-      }}
+      options={services.list}
+      loading={services.loading}
+      onChange={(v) => update('serviceName', v.length > 0 ? v : null)}
     />
   </div>
 </div>

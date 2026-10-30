@@ -1,111 +1,110 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { authStore } from '$lib/stores/auth';
-  import { organizationStore, currentOrganization } from '$lib/stores/organization';
+  import { organizationStore } from '$lib/stores/organization';
+  import { onboardingStore, type ServerOnboarding } from '$lib/stores/onboarding';
+  import type { OnboardingStep } from '$lib/api/onboarding';
   import { OrganizationsAPI } from '$lib/api/organizations';
-  import { onboardingStore, type OnboardingStep, isOnboardingComplete } from '$lib/stores/onboarding';
+  import { authAPI } from '$lib/api/auth';
   import {
     OnboardingWizard,
-    WelcomeStep,
-    OrganizationStep,
-    ProjectStep,
-    ApiKeyStep,
-    FirstLogStep,
-    FeatureTourStep
+    VerifyEmailStep,
+    WorkspaceStep,
+    ConnectStep,
+    DoneStep,
+    decideEntry,
   } from '$lib/components/onboarding';
+  import type { EntryInput } from '$lib/components/onboarding/entry';
   import Footer from '$lib/components/Footer.svelte';
-  import EmailVerificationBanner from '$lib/components/EmailVerificationBanner.svelte';
   import TermsAcceptanceModal from '$lib/components/TermsAcceptanceModal.svelte';
 
-  let currentStep = $state<OnboardingStep>('welcome');
-  let userName = $state('');
-  let isAuthenticated = $state(false);
-  let hasOrganizations = $state(false);
-  let checkingOrgs = $state(true);
-  let token = $state<string | null>(null);
+  let ready = $state(false);
+  let showVerify = $state(false);
+  let entry: Omit<EntryInput, 'server'> | null = null;
+  let serverState: ServerOnboarding | null = null;
 
-  let organizationsAPI = $derived(new OrganizationsAPI(() => token));
+  const step = $derived<OnboardingStep | null>($onboardingStore.step);
 
-  const unsubAuthStore = authStore.subscribe((state) => {
-    isAuthenticated = !!state.user;
-    token = state.token;
-    userName = state.user?.name || state.user?.email?.split('@')[0] || 'there';
-  });
-
-  const unsubOnboardingStore = onboardingStore.subscribe((state) => {
-    currentStep = state.currentStep;
-  });
-
-  onDestroy(() => {
-    unsubAuthStore();
-    unsubOnboardingStore();
-  });
-
-  // Only redirect to dashboard if onboarding is complete AND user has organizations
-  $effect(() => {
-    if (!checkingOrgs && $isOnboardingComplete && hasOrganizations) {
-      goto('/dashboard');
+  function apply(input: EntryInput) {
+    const decision = decideEntry(input);
+    if (decision.kind === 'redirect') {
+      goto(decision.to);
+      return;
     }
-  });
+    onboardingStore.hydrate({
+      step: decision.step,
+      organizationId: decision.organizationId,
+      projectId: decision.projectId,
+    });
+    ready = true;
+  }
+
+  function handleVerified() {
+    if (!entry || !serverState) return;
+    entry = { ...entry, emailVerified: true };
+    apply({ ...entry, server: serverState });
+  }
 
   onMount(async () => {
-    // Redirect to login if not authenticated
-    if (!$authStore.user) {
+    const auth = $authStore;
+    if (!auth.user || !auth.token) {
       goto('/login');
       return;
     }
 
-    // Check if user has organizations
-    try {
-      const response = await organizationsAPI.getOrganizations();
-      hasOrganizations = response.organizations.length > 0;
+    const organizationsAPI = new OrganizationsAPI(() => auth.token);
+    const [config, me, orgs, server] = await Promise.all([
+      authAPI.getAuthConfig().catch(() => ({ emailVerificationRequired: false })),
+      authAPI.getMe(auth.token).catch(() => null),
+      organizationsAPI.getOrganizations().then(
+        (r) => r.organizations,
+        () => []
+      ),
+      onboardingStore.load(),
+    ]);
 
-      // If onboarding was "complete" but user has no orgs, reset onboarding
-      if ($isOnboardingComplete && !hasOrganizations) {
-        onboardingStore.reset();
+    if (orgs.length > 0) {
+      await organizationStore.fetchOrganizations(async () => orgs);
+      if (server.organizationId && orgs.some((o) => o.id === server.organizationId)) {
+        organizationStore.setCurrentOrganization(server.organizationId);
       }
-
-      // If user already has orgs, they can skip to dashboard
-      if (hasOrganizations && $currentOrganization) {
-        goto('/dashboard');
-        return;
-      }
-    } catch (e) {
-      console.error('Failed to check organizations:', e);
-    } finally {
-      checkingOrgs = false;
     }
+
+    const required = config.emailVerificationRequired === true;
+    showVerify = required;
+    serverState = server;
+    entry = {
+      emailVerificationRequired: required,
+      emailVerified: me?.user?.emailVerified,
+      organizationCount: orgs.length,
+    };
+    apply({ ...entry, server });
   });
 </script>
 
 <svelte:head>
-  <title>Getting Started - LogTide</title>
+  <title>Getting started - LogTide</title>
 </svelte:head>
 
-{#if isAuthenticated && !checkingOrgs}
-  <EmailVerificationBanner />
+{#if ready && step}
   <TermsAcceptanceModal />
-  <OnboardingWizard>
-    {#if currentStep === 'welcome'}
-      <WelcomeStep {userName} />
-    {:else if currentStep === 'create-organization'}
-      <OrganizationStep />
-    {:else if currentStep === 'create-project'}
-      <ProjectStep />
-    {:else if currentStep === 'api-key'}
-      <ApiKeyStep />
-    {:else if currentStep === 'first-log'}
-      <FirstLogStep />
-    {:else if currentStep === 'feature-tour'}
-      <FeatureTourStep />
+  <OnboardingWizard {step} {showVerify}>
+    {#if step === 'verify-email'}
+      <VerifyEmailStep onVerified={handleVerified} />
+    {:else if step === 'workspace'}
+      <WorkspaceStep />
+    {:else if step === 'connect'}
+      <ConnectStep />
+    {:else if step === 'done'}
+      <DoneStep />
     {/if}
   </OnboardingWizard>
   <Footer />
-{:else if isAuthenticated && checkingOrgs}
-  <div class="min-h-screen flex items-center justify-center">
-    <div class="text-center space-y-2">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+{:else}
+  <div class="flex min-h-screen items-center justify-center">
+    <div class="space-y-2 text-center">
+      <div class="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
       <p class="text-sm text-muted-foreground">Loading...</p>
     </div>
   </div>

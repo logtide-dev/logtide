@@ -6,7 +6,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const envPath = path.join(__dirname, '../../../../.env');
 console.log('Loading .env from:', envPath);
 dotenv.config({ path: envPath });
-console.log('DATABASE_URL after dotenv.config:', process.env.DATABASE_URL);
 
 const command = process.argv[2];
 

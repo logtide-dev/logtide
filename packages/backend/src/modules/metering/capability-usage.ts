@@ -10,6 +10,8 @@ import { alertsService } from '../alerts/service.js';
 import { apiKeysService } from '../api-keys/service.js';
 import { customDashboardsService } from '../custom-dashboards/service.js';
 import { projectsService } from '../projects/service.js';
+import { savedSearchesService } from '../saved-searches/service.js';
+import { statusSubscribersService } from '../monitoring/subscribers.js';
 import { notificationChannelsService } from '../notification-channels/service.js';
 import { SigmaService } from '../sigma/service.js';
 import { readQuotaUsage } from '../../capabilities/quota-usage.js';
@@ -40,6 +42,8 @@ const LIMIT_COUNTERS: Partial<
   'projects.max': (o) => projectsService.countActiveForOrg(o),
   'sigma.max_active_rules': (o) => sigmaService.countActiveRules(o),
   'dashboards.max_custom': (o) => customDashboardsService.countForOrg(o),
+  'saved_searches.max_per_org': (o) => savedSearchesService.countForOrg(o),
+  'status_page.subscribers.max': (o) => statusSubscribersService.countConfirmedForOrg(o),
 };
 
 // Same reader as the QuotaEvaluator: point-in-time gauges read the latest

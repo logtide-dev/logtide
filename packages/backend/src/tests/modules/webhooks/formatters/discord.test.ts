@@ -27,7 +27,7 @@ const monitorDown = envelope('monitor.status_changed', {
   target: 'https://api.example.com/health',
   error_code: 'ECONNREFUSED',
   consecutive_failures: 3,
-  link: 'https://app.logtide.dev/dashboard/monitoring',
+  link: 'https://app.logtide.dev/dashboard/uptime',
 });
 
 describe('formatOutbound', () => {
@@ -42,7 +42,7 @@ describe('formatOutbound', () => {
     expect(embed.title).toBe('Monitor down: api-prod');
     expect(embed.description).toBe('api-prod is not responding (ECONNREFUSED)');
     expect(embed.color).toBe(0xdc2626);
-    expect(embed.url).toBe('https://app.logtide.dev/dashboard/monitoring');
+    expect(embed.url).toBe('https://app.logtide.dev/dashboard/uptime');
     expect(embed.timestamp).toBe('2026-08-10T09:19:12.000Z');
     expect(embed.footer.text).toBe('LogTide - Acme');
     const names = embed.fields.map((f: any) => f.name);
@@ -67,14 +67,14 @@ describe('formatOutbound', () => {
       alert_name: 'High error rate',
       log_count: 120,
       threshold: 50,
-      time_window: 300,
+      time_window: 5,
       baseline_metadata: null,
       link: 'https://app.logtide.dev/dashboard/alerts',
     });
     const embed = (formatOutbound(DISCORD_URL, alert) as any).embeds[0];
     expect(embed.title).toBe('Alert triggered: High error rate');
     expect(embed.description).toContain('120');
-    expect(embed.description).toContain('300s');
+    expect(embed.description).toContain('5 min');
     expect(embed.description).toContain('50');
   });
 
@@ -208,7 +208,7 @@ describe('discordFormatter edge cases', () => {
         alert_name: 'Spike',
         log_count: 900,
         threshold: 100,
-        time_window: 60,
+        time_window: 1,
         baseline_metadata: { baseline_value: 100, current_value: 900, deviation_ratio: 9 },
       })
     );
@@ -218,14 +218,14 @@ describe('discordFormatter edge cases', () => {
       ['Deviation', '9'],
       ['Log count', '900'],
       ['Threshold', '100'],
-      ['Time window', '60s'],
+      ['Time window', '1 min'],
     ]);
   });
 
   it('falls back to defaults for an alert with no data', () => {
     const embed = embedOf(envelope('alert.triggered', {}));
     expect(embed.title).toBe('Alert triggered: unnamed rule');
-    expect(embed.description).toBe('0 logs in 0s (threshold: 0)');
+    expect(embed.description).toBe('0 logs in 0 min (threshold: 0)');
     expect(embed.color).toBe(0xea580c);
     expect(embed.fields).toEqual([]);
   });

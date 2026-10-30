@@ -53,19 +53,19 @@
 <Dialog bind:open>
   <DialogContent class="sm:max-w-[500px]">
     <DialogHeader>
-      <DialogTitle>Create Project</DialogTitle>
+      <DialogTitle>Create project</DialogTitle>
       <DialogDescription>
-        Create a new project to organize your logs.
+        Create a project to organize your logs, traces and metrics.
       </DialogDescription>
     </DialogHeader>
 
     <form onsubmit={handleSubmit} class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="project-name">Project Name</Label>
+        <Label for="project-name">Project name</Label>
         <Input
           id="project-name"
           type="text"
-          placeholder="My Project"
+          placeholder="My project"
           bind:value={name}
           disabled={submitting}
           required
@@ -109,7 +109,7 @@
             Creating...
           {:else}
             <Plus class="w-4 h-4" />
-            Create Project
+            Create project
           {/if}
         </Button>
       </DialogFooter>

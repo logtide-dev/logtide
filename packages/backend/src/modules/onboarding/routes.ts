@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { onboardingService } from './service.js';
+import { onboardingService, OnboardingScopeError, ONBOARDING_STEPS } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 
 const updateOnboardingSchema = z.object({
@@ -10,6 +10,9 @@ const updateOnboardingSchema = z.object({
   tutorialCompleted: z.boolean().optional(),
   tutorialStep: z.number().int().min(0).optional(),
   tutorialSkipped: z.boolean().optional(),
+  step: z.enum(ONBOARDING_STEPS).nullable().optional(),
+  organizationId: z.string().uuid().nullable().optional(),
+  projectId: z.string().uuid().nullable().optional(),
 });
 
 const completeItemSchema = z.object({
@@ -38,6 +41,9 @@ export async function onboardingRoutes(fastify: FastifyInstance) {
           error: 'Validation error',
           details: error.errors,
         });
+      }
+      if (error instanceof OnboardingScopeError) {
+        return reply.status(404).send({ error: 'Organization or project not found' });
       }
 
       throw error;

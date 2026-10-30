@@ -2,15 +2,15 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { authStore } from '$lib/stores/auth';
   import { currentOrganization, organizationStore } from '$lib/stores/organization';
   import { OrganizationsAPI } from '$lib/api/organizations';
   import { authAPI } from '$lib/api/auth';
-  import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
-  import Spinner from '$lib/components/Spinner.svelte';
+  import EmptyState from '$lib/components/app/EmptyState.svelte';
+  import PageSkeleton from '$lib/components/shell/PageSkeleton.svelte';
   import Building2 from '@lucide/svelte/icons/building-2';
-  import AlertCircle from '@lucide/svelte/icons/alert-circle';
 
   let token = $state<string | null>(null);
   let organizationsAPI = $derived(new OrganizationsAPI(() => token));
@@ -31,8 +31,12 @@
 
   let { children }: Props = $props();
 
+  // The instance admin area works without an organization.
+  const isAdminPath = $derived(page.url.pathname.startsWith('/dashboard/admin'));
+
   let loading = $state(true);
   let checkingOrg = $state(true);
+  let loadError = $state<string | null>(null);
 
   onMount(async () => {
     // Check auth-free mode first
@@ -66,10 +70,14 @@
         try {
           const { user } = await authAPI.getMe($authStore.token);
           authStore.updateUser(user);
-        } catch {
-          authStore.clearAuth();
-          goto('/login');
-          return;
+        } catch (e) {
+          // Only a rejected token ends the session. A network failure (including
+          // a fetch aborted by a reload or navigation) must not log the user out.
+          if ((e as { status?: number }).status === 401) {
+            authStore.clearAuth();
+            goto('/login');
+            return;
+          }
         }
       }
     } catch (e) {
@@ -83,24 +91,7 @@
 
     // Now check organizations
     if (!$currentOrganization) {
-      try {
-        const orgs = await organizationStore.fetchOrganizations(async () => {
-          const response = await organizationsAPI.getOrganizations();
-          return response.organizations;
-        });
-
-        if (orgs.length === 0) {
-          goto('/onboarding');
-          return;
-        }
-
-        checkingOrg = false;
-        loading = false;
-      } catch (error) {
-        console.error('Failed to fetch organizations:', error);
-        checkingOrg = false;
-        loading = false;
-      }
+      await loadOrganizations();
     } else {
       checkingOrg = false;
       loading = false;
@@ -119,39 +110,69 @@
     }
   });
 
+  async function loadOrganizations() {
+    loadError = null;
+    try {
+      const orgs = await organizationStore.fetchOrganizations(async () => {
+        const response = await organizationsAPI.getOrganizations();
+        return response.organizations;
+      });
+
+      if (orgs.length === 0 && !isAdminPath) {
+        goto('/onboarding');
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to fetch organizations:', error);
+      loadError = error instanceof Error ? error.message : 'Could not load your organizations';
+    }
+    checkingOrg = false;
+    loading = false;
+  }
+
+  async function retry() {
+    loading = true;
+    checkingOrg = true;
+    await loadOrganizations();
+  }
+
   function createOrganization() {
     goto('/onboarding');
   }
 </script>
 
 {#if loading || checkingOrg}
-  <div class="flex items-center justify-center min-h-[60vh]">
-    <div class="text-center space-y-4">
-      <Spinner size="lg" />
-      <p class="text-sm text-muted-foreground">Loading organization...</p>
+  <PageSkeleton />
+{:else if loadError && !$currentOrganization && !isAdminPath}
+  <div class="p-6 sm:p-8">
+    <div class="mx-auto max-w-md">
+      <EmptyState
+        variant="error"
+        title="Could not load your organizations"
+        description="Check your connection and try again."
+      >
+        {#snippet actions()}
+          <Button onclick={retry}>Retry</Button>
+        {/snippet}
+      </EmptyState>
     </div>
   </div>
-{:else if !$currentOrganization}
-  <div class="flex items-center justify-center min-h-[60vh] p-4">
-    <Card class="max-w-md">
-      <CardHeader>
-        <div class="flex items-center gap-3 mb-2">
-          <div class="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
-            <AlertCircle class="w-6 h-6 text-muted-foreground" />
-          </div>
-          <div>
-            <CardTitle>No Organization Selected</CardTitle>
-            <CardDescription>Please select or create an organization to continue</CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <Button onclick={createOrganization} class="w-full gap-2">
-          <Building2 class="w-4 h-4" />
-          Create Organization
-        </Button>
-      </CardContent>
-    </Card>
+{:else if !$currentOrganization && !isAdminPath}
+  <div class="p-6 sm:p-8">
+    <div class="mx-auto max-w-md">
+      <EmptyState
+        variant="setup"
+        title="Create your first organization"
+        description="An organization holds your projects, logs and team members."
+      >
+        {#snippet actions()}
+          <Button onclick={createOrganization} class="gap-2">
+            <Building2 class="w-4 h-4" />
+            Create organization
+          </Button>
+        {/snippet}
+      </EmptyState>
+    </div>
   </div>
 {:else}
   {@render children?.()}

@@ -13,6 +13,11 @@
 	import * as Select from "$lib/components/ui/select";
 	import Spinner from "$lib/components/Spinner.svelte";
 	import { ChannelSelector } from "$lib/components/notification-channels";
+	import WillNotify from "$lib/components/notification-channels/WillNotify.svelte";
+	import { severityTone } from "$lib/utils/severity";
+	import { packDestinationCopy } from "$lib/components/siem/shared/pack-copy";
+	import { packCategoryBadge } from "$lib/components/siem/shared/pack-category";
+	import { referenceLabel } from "$lib/components/siem/shared/reference-label";
 	import Rocket from "@lucide/svelte/icons/rocket";
 	import Shield from "@lucide/svelte/icons/shield";
 	import Database from "@lucide/svelte/icons/database";
@@ -48,13 +53,6 @@
 		shield: Shield,
 		database: Database,
 		"credit-card": CreditCard,
-	};
-
-	const categoryColors: Record<string, string> = {
-		reliability: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-		security: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-		database: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-		business: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
 	};
 
 	const levelOptions: { value: SigmaLevel; label: string }[] = [
@@ -109,13 +107,13 @@
 				channelIds: selectedChannelIds.length > 0 ? selectedChannelIds : undefined,
 			});
 
-			toastStore.success(`${pack.name} enabled successfully`);
+			toastStore.success(`${pack.name} enabled`);
 			resetForm();
 			open = false;
 			onSuccess?.();
 		} catch (error) {
 			toastStore.error(
-				error instanceof Error ? error.message : "Failed to enable pack"
+				error instanceof Error ? error.message : "Could not enable the pack"
 			);
 		} finally {
 			submitting = false;
@@ -136,7 +134,7 @@
 			onSuccess?.();
 		} catch (error) {
 			toastStore.error(
-				error instanceof Error ? error.message : "Failed to disable pack"
+				error instanceof Error ? error.message : "Could not disable the pack"
 			);
 		} finally {
 			disabling = false;
@@ -158,27 +156,10 @@
 			onSuccess?.();
 		} catch (error) {
 			toastStore.error(
-				error instanceof Error ? error.message : "Failed to update settings"
+				error instanceof Error ? error.message : "Could not update the settings"
 			);
 		} finally {
 			submitting = false;
-		}
-	}
-
-	function getLevelColor(level: SigmaLevel): string {
-		switch (level) {
-			case "informational":
-				return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200";
-			case "low":
-				return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
-			case "medium":
-				return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
-			case "high":
-				return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200";
-			case "critical":
-				return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200";
-			default:
-				return "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200";
 		}
 	}
 
@@ -251,7 +232,7 @@
 			<div class="space-y-6 py-4">
 				<!-- Pack Info -->
 				<div class="flex items-center gap-2 flex-wrap">
-					<Badge class={categoryColors[pack.category]}>
+					<Badge variant="outline" class={packCategoryBadge(pack.category)}>
 						{pack.category}
 					</Badge>
 					<span class="text-sm text-muted-foreground">
@@ -274,7 +255,7 @@
 
 				<!-- Rules List with Level Customization -->
 				<div class="space-y-4">
-					<h4 class="font-medium text-sm">Detection Rules (Sigma)</h4>
+					<h4 class="font-medium text-sm">Detection rules</h4>
 					<div class="space-y-3">
 						{#each pack.rules as rule}
 							<div class="border rounded-lg p-4 space-y-3">
@@ -285,7 +266,7 @@
 											{rule.description}
 										</p>
 									</div>
-									<Badge class={getLevelColor(customThresholds[rule.id]?.level ?? rule.level)}>
+									<Badge variant="outline" class={severityTone(customThresholds[rule.id]?.level ?? rule.level).badge}>
 										{customThresholds[rule.id]?.level ?? rule.level}
 									</Badge>
 								</div>
@@ -303,7 +284,7 @@
 											{#if mitre}
 												<Badge
 													variant="outline"
-													class="text-xs {mitre.type === 'technique' ? 'border-purple-500 text-purple-700 dark:text-purple-300' : 'border-blue-500 text-blue-700 dark:text-blue-300'}"
+													class="text-xs {mitre.type === 'technique' ? severityTone('critical').badge : severityTone('informational').badge}"
 												>
 													<Tag class="w-3 h-3 mr-1" />
 													{mitre.name}
@@ -317,7 +298,7 @@
 								<div class="flex items-center gap-4">
 									<div class="flex items-center gap-2">
 										<Label for="level-{rule.id}" class="text-xs whitespace-nowrap">
-											Severity Level
+											Severity level
 										</Label>
 										<Select.Root
 											type="single"
@@ -351,7 +332,7 @@
 											class="text-xs text-muted-foreground hover:text-primary flex items-center gap-1"
 										>
 											<ExternalLink class="w-3 h-3" />
-											MITRE Reference
+											{referenceLabel(rule.references[0])}
 										</a>
 									{/if}
 								</div>
@@ -363,34 +344,33 @@
 				<!-- Notification Settings (only for enabling) -->
 				{#if !pack.enabled}
 					<div class="space-y-4 border-t pt-4">
-						<h4 class="font-medium text-sm">Notification Settings</h4>
+						<h4 class="font-medium text-sm">Notification settings</h4>
 
 						<div class="space-y-2">
-							<Label>Notification Channels (optional)</Label>
+							<Label>Notification channels (optional)</Label>
 							<ChannelSelector
 								selectedIds={selectedChannelIds}
 								onSelectionChange={(ids) => (selectedChannelIds = ids)}
 								disabled={submitting}
-								placeholder="Select channels..."
+								placeholder="Select channels"
 							/>
+							<WillNotify eventType="sigma" channelIds={selectedChannelIds} />
 							<p class="text-xs text-muted-foreground">
-								Select channels to receive notifications when detections trigger.
-								You can add these later from the Sigma Rules page.
+								Choose the channels that receive a notification when a detection triggers.
+								You can add these later from the Detection rules page.
 							</p>
 						</div>
 					</div>
 				{/if}
 
-				<!-- SIEM Integration Info -->
+				<!-- Where matches appear -->
 				<div class="bg-muted/50 rounded-lg p-4 space-y-2">
 					<h4 class="font-medium text-sm flex items-center gap-2">
 						<Shield class="w-4 h-4" />
-						SIEM Integration
+						Where matches appear
 					</h4>
-					<p class="text-xs text-muted-foreground">
-						When enabled, this pack creates Sigma rules that integrate with the SIEM dashboard.
-						Detections will appear in the Security Dashboard, create incidents, and can be
-						correlated with MITRE ATT&CK framework.
+					<p class="text-xs text-muted-foreground" data-testid="pack-destination">
+						{packDestinationCopy(pack.category).summary}
 					</p>
 				</div>
 			</div>
@@ -408,7 +388,7 @@
 						{:else}
 							<XCircle class="w-4 h-4" />
 						{/if}
-						Disable Pack
+						Disable pack
 					</Button>
 					<div class="flex-1"></div>
 					<Button
@@ -422,7 +402,7 @@
 						{#if submitting}
 							<Spinner size="sm" className="mr-2" />
 						{/if}
-						Save Changes
+						Save changes
 					</Button>
 				{:else}
 					<Button
@@ -438,7 +418,7 @@
 						{:else}
 							<CheckCircle class="w-4 h-4" />
 						{/if}
-						Enable Pack
+						Enable pack
 					</Button>
 				{/if}
 			</Dialog.Footer>

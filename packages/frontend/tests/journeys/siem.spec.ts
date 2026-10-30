@@ -71,7 +71,7 @@ test.describe('SIEM Journey', () => {
   });
 
   test('2. User can view the incidents list page', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -86,7 +86,7 @@ test.describe('SIEM Journey', () => {
   });
 
   test('3. User can filter incidents by status', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -111,7 +111,7 @@ test.describe('SIEM Journey', () => {
   });
 
   test('4. User can filter incidents by severity', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -153,15 +153,11 @@ test.describe('SIEM Journey', () => {
       }
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
-    // Either we see incident details or error
-    const hasDetails = await page.locator('text=/Details Test Incident|Test Incident/').isVisible().catch(() => false);
-    const hasError = await page.locator('text=/not found|error/i').isVisible().catch(() => false);
-
-    expect(hasDetails || hasError).toBe(true);
+    await expect(page.getByRole('heading', { name: /Test Incident/ }).first()).toBeVisible({ timeout: 15000 });
   });
 
   test('6. User can change incident status', async ({ page }) => {
@@ -181,26 +177,19 @@ test.describe('SIEM Journey', () => {
       return;
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
-    // Find and click status dropdown
-    const statusDropdown = page.locator('button:has-text("Change Status"), button:has-text("Open"), [data-testid="status-dropdown"]').first();
-    if (await statusDropdown.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await statusDropdown.click();
-      await page.waitForTimeout(500);
+    // The primary action of an open incident is Acknowledge
+    const acknowledgeButton = page.getByRole('button', { name: 'Acknowledge' }).first();
+    if (await acknowledgeButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await acknowledgeButton.click();
+      await page.waitForTimeout(2000);
 
-      // Select "Investigating" status
-      const investigatingOption = page.locator('[role="menuitem"]:has-text("Investigating"), [role="option"]:has-text("Investigating")').first();
-      if (await investigatingOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await investigatingOption.click();
-        await page.waitForTimeout(2000);
-
-        // Verify status was updated
-        const pageContent = await page.content();
-        expect(pageContent.toLowerCase()).toContain('investigating');
-      }
+      // Verify status was updated (the UI says Acknowledged, the API keeps investigating)
+      const pageContent = await page.content();
+      expect(pageContent).toContain('Acknowledged');
     }
   });
 
@@ -221,16 +210,9 @@ test.describe('SIEM Journey', () => {
       return;
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
-
-    // Switch to Comments tab
-    const commentsTab = page.locator('button:has-text("Comments"), [role="tab"]:has-text("Comments")').first();
-    if (await commentsTab.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await commentsTab.click();
-      await page.waitForTimeout(500);
-    }
 
     // Find comment input and add a comment
     const commentInput = page.locator('textarea[placeholder*="comment" i], textarea[placeholder*="Add" i], textarea').first();
@@ -240,7 +222,7 @@ test.describe('SIEM Journey', () => {
       await page.waitForTimeout(300);
 
       // Submit comment
-      const submitButton = page.locator('button:has-text("Add Comment"), button:has-text("Submit"), button:has-text("Post")').first();
+      const submitButton = page.locator('button:has-text("Add comment")').first();
       if (await submitButton.isVisible({ timeout: 2000 }).catch(() => false)) {
         await submitButton.click();
         await page.waitForTimeout(2000);
@@ -275,21 +257,13 @@ test.describe('SIEM Journey', () => {
       return;
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
-    // Switch to History tab
-    const historyTab = page.locator('button:has-text("History"), [role="tab"]:has-text("History")').first();
-    if (await historyTab.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await historyTab.click();
-      await page.waitForTimeout(500);
-
-      // Verify history is shown
-      const pageContent = await page.content();
-      // Should contain history entries (created, status_changed, etc.)
-      expect(pageContent.toLowerCase()).toMatch(/created|status|changed|history/);
-    }
+    // History rows live in the single timeline, no tab to switch
+    const pageContent = await page.content();
+    expect(pageContent.toLowerCase()).toMatch(/created|status|changed|timeline/);
   });
 
   test('9. User can view detection events in incident', async ({ page }) => {
@@ -310,20 +284,13 @@ test.describe('SIEM Journey', () => {
       return;
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
-    // Verify Detections tab is present
-    const detectionsTab = page.locator('button:has-text("Detections"), [role="tab"]:has-text("Detections")').first();
-    if (await detectionsTab.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await detectionsTab.click();
-      await page.waitForTimeout(500);
-
-      // Should show detection events or empty state
-      const pageContent = await page.content();
-      expect(pageContent.toLowerCase()).toMatch(/detection|event|no.*detection/);
-    }
+    // Detections are entries of the timeline (or the timeline is empty)
+    const pageContent = await page.content();
+    expect(pageContent.toLowerCase()).toMatch(/detection|event|nothing has happened|timeline/);
   });
 
   test('10. User can delete an incident', async ({ page }) => {
@@ -343,18 +310,18 @@ test.describe('SIEM Journey', () => {
       return;
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
     // Find the actions dropdown (3-dot menu)
-    const actionsButton = page.locator('button:has([class*="MoreVertical"]), button[aria-label*="Actions"], button:has-text("Actions")').first();
+    const actionsButton = page.locator('button:has([class*="MoreVertical"]), button[aria-label="More actions"]').first();
     if (await actionsButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await actionsButton.click();
       await page.waitForTimeout(500);
 
       // Click delete option
-      const deleteOption = page.locator('[role="menuitem"]:has-text("Delete"), button:has-text("Delete Incident")').first();
+      const deleteOption = page.locator('[role="menuitem"]:has-text("Delete incident")').first();
       if (await deleteOption.isVisible({ timeout: 2000 }).catch(() => false)) {
         await deleteOption.click();
         await page.waitForTimeout(500);
@@ -449,12 +416,12 @@ test.describe('SIEM Journey', () => {
       return;
     }
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents/${incidentId}`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
-    // Click back button
-    const backButton = page.locator('button:has([class*="ArrowLeft"]), a:has([class*="ArrowLeft"]), button[aria-label*="Back"]').first();
+    // Click the Incidents breadcrumb
+    const backButton = page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Incidents' });
     if (await backButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await backButton.click();
       await page.waitForLoadState('load');

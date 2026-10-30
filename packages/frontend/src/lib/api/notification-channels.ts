@@ -6,9 +6,34 @@ import type {
   ChannelConfig,
   EmailChannelConfig,
   WebhookChannelConfig,
+  PagerDutyChannelConfig,
+  ChannelDisplayType,
 } from '@logtide/shared';
 
-export type { NotificationChannelType, NotificationEventType, ChannelConfig, EmailChannelConfig, WebhookChannelConfig };
+export type {
+  NotificationChannelType,
+  NotificationEventType,
+  ChannelConfig,
+  EmailChannelConfig,
+  WebhookChannelConfig,
+  PagerDutyChannelConfig,
+  ChannelDisplayType,
+};
+
+export interface RoutingOverride {
+  eventType: NotificationEventType;
+  kind: 'alert_rule' | 'sigma_rule' | 'monitor' | 'error_group';
+  id: string;
+  name: string;
+  channels: { id: string; name: string; type: ChannelDisplayType }[];
+}
+
+export interface TestUnsavedInput {
+  organizationId: string;
+  channelId?: string;
+  type: NotificationChannelType;
+  config: ChannelConfig;
+}
 
 export interface NotificationChannel {
   id: string;
@@ -17,6 +42,8 @@ export interface NotificationChannel {
   type: NotificationChannelType;
   enabled: boolean;
   config: ChannelConfig;
+  /** Server-computed flavor; prefer it over deriving from the (host-only for members) URL. */
+  displayType?: ChannelDisplayType;
   description: string | null;
   createdBy: string | null;
   createdAt: string;
@@ -73,8 +100,8 @@ export const notificationChannelsAPI = {
     const response = await fetchWithAuth(`${getApiUrl()}/api/v1/notification-channels?${params}`);
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to fetch channels' }));
-      throw new Error(error.error || 'Failed to fetch channels');
+      const error = await response.json().catch(() => ({ error: 'Failed to fetch destinations' }));
+      throw new Error(error.error || 'Failed to fetch destinations');
     }
 
     const data = await response.json();
@@ -89,8 +116,8 @@ export const notificationChannelsAPI = {
     const response = await fetchWithAuth(`${getApiUrl()}/api/v1/notification-channels/${id}?${params}`);
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to fetch channel' }));
-      throw new Error(error.error || 'Failed to fetch channel');
+      const error = await response.json().catch(() => ({ error: 'Failed to fetch destination' }));
+      throw new Error(error.error || 'Failed to fetch destination');
     }
 
     const data = await response.json();
@@ -108,8 +135,8 @@ export const notificationChannelsAPI = {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to create channel' }));
-      throw new Error(error.error || 'Failed to create channel');
+      const error = await response.json().catch(() => ({ error: 'Failed to create destination' }));
+      throw new Error(error.error || 'Failed to create destination');
     }
 
     const data = await response.json();
@@ -131,8 +158,8 @@ export const notificationChannelsAPI = {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to update channel' }));
-      throw new Error(error.error || 'Failed to update channel');
+      const error = await response.json().catch(() => ({ error: 'Failed to update destination' }));
+      throw new Error(error.error || 'Failed to update destination');
     }
 
     const data = await response.json();
@@ -149,8 +176,8 @@ export const notificationChannelsAPI = {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to delete channel' }));
-      throw new Error(error.error || 'Failed to delete channel');
+      const error = await response.json().catch(() => ({ error: 'Failed to delete destination' }));
+      throw new Error(error.error || 'Failed to delete destination');
     }
   },
 
@@ -164,12 +191,49 @@ export const notificationChannelsAPI = {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to test channel' }));
-      throw new Error(error.error || 'Failed to test channel');
+      const error = await response.json().catch(() => ({ error: 'Failed to test destination' }));
+      throw new Error(error.error || 'Failed to test destination');
     }
 
     const data = await response.json();
     return data.result;
+  },
+
+  /**
+   * Test a destination configuration before it is saved. In edit mode pass
+   * channelId so blank secrets fall back to the stored ones.
+   */
+  async testUnsaved(input: TestUnsavedInput): Promise<TestChannelResult> {
+    const response = await fetchWithAuth(`${getApiUrl()}/api/v1/notification-channels/test`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to test destination' }));
+      throw new Error(error.error || 'Failed to test destination');
+    }
+
+    const data = await response.json();
+    return data.result;
+  },
+
+  /**
+   * Rules, monitors and error groups that override the default routing
+   */
+  async getOverrides(organizationId: string): Promise<RoutingOverride[]> {
+    const params = new URLSearchParams({ organizationId });
+    const response = await fetchWithAuth(
+      `${getApiUrl()}/api/v1/notification-channels/overrides?${params}`
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to fetch overrides' }));
+      throw new Error(error.error || 'Failed to fetch overrides');
+    }
+
+    const data = await response.json();
+    return data.overrides;
   },
 
   /**
@@ -241,8 +305,8 @@ export const notificationChannelsAPI = {
     );
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to fetch channels' }));
-      throw new Error(error.error || 'Failed to fetch channels');
+      const error = await response.json().catch(() => ({ error: 'Failed to fetch destinations' }));
+      throw new Error(error.error || 'Failed to fetch destinations');
     }
 
     const data = await response.json();
@@ -258,8 +322,8 @@ export const notificationChannelsAPI = {
     );
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Failed to fetch channels' }));
-      throw new Error(error.error || 'Failed to fetch channels');
+      const error = await response.json().catch(() => ({ error: 'Failed to fetch destinations' }));
+      throw new Error(error.error || 'Failed to fetch destinations');
     }
 
     const data = await response.json();

@@ -1,538 +1,371 @@
 <script lang="ts">
-    import { onMount, untrack } from 'svelte';
-    import { get } from 'svelte/store';
-    import { browser } from '$app/environment';
-    import { goto } from '$app/navigation';
-    import { authStore } from '$lib/stores/auth';
-    import { UsersAPI } from '$lib/api/users';
-    import { adminAPI, type OrganizationBasic } from '$lib/api/admin';
-    import { getUsage, getUsageBreakdown, getStorageUsage, type UsageRecord, type UsageBreakdown, type StorageUsageResponse } from '$lib/api/usage';
+    import { untrack, type Snippet } from "svelte";
+    import { goto } from "$app/navigation";
+    import { page } from "$app/state";
+    import { adminAPI } from "$lib/api/admin";
     import {
-        Card,
-        CardContent,
-        CardHeader,
-        CardTitle,
-        CardDescription,
-    } from '$lib/components/ui/card';
-    import {
-        Table,
-        TableBody,
-        TableCell,
-        TableHead,
-        TableHeader,
-        TableRow,
-    } from '$lib/components/ui/table';
-    import { Button } from '$lib/components/ui/button';
-    import Spinner from '$lib/components/Spinner.svelte';
-    import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
-    import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
-    import Building2 from '@lucide/svelte/icons/building-2';
+        getUsage,
+        getUsageBreakdown,
+        getStorageUsage,
+        type UsageRecord,
+        type UsageBreakdown,
+        type StorageUsageResponse,
+    } from "$lib/api/usage";
+    import { authStore } from "$lib/stores/auth";
+    import { toastStore } from "$lib/stores/toast";
+    import { formatDateShort } from "$lib/utils/datetime";
+    import { formatBytes, formatCount } from "$lib/utils/format-number";
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
+    import EmptyState from "$lib/components/app/EmptyState.svelte";
+    import StatsCard from "$lib/components/dashboard/StatsCard.svelte";
+    import { Button } from "$lib/components/ui/button";
+    import { Skeleton } from "$lib/components/ui/skeleton";
+    import { Card } from "$lib/components/ui/card";
+    import BarChart3 from "@lucide/svelte/icons/bar-chart-3";
+    import HardDrive from "@lucide/svelte/icons/hard-drive";
+    import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
+    import { levelLabel } from "$lib/utils/severity";
+    import AdminOrgPicker, { type PickedOrg } from "$lib/components/admin/AdminOrgPicker.svelte";
+    import UsageTable, { type UsageTableRow } from "$lib/components/admin/UsageTable.svelte";
+    import { createLatestGuard } from "$lib/components/admin/latest-request";
+    import { isBytesMetric, metricLabel } from "$lib/components/admin/admin-labels";
+    import { mergeDaily, sumQuantity } from "$lib/components/admin/usage-data";
 
-    // TODO(#214): per-org entitlements editor goes here once feature #214 backend is shipped
+    const asSnippet = (s: unknown) => s as Snippet;
 
     const RANGES = [
-        { label: 'Last 7 days', days: 7 },
-        { label: 'Last 30 days', days: 30 },
-        { label: 'Last 90 days', days: 90 },
+        { label: "Last 7 days", days: 7 },
+        { label: "Last 30 days", days: 30 },
+        { label: "Last 90 days", days: 90 },
     ] as const;
 
-    type RangeDays = (typeof RANGES)[number]['days'];
+    type RangeDays = (typeof RANGES)[number]["days"];
 
-    let orgs = $state<OrganizationBasic[]>([]);
-    let orgsLoading = $state(true);
-    let orgsError = $state('');
-    let selectedOrgId = $state<string>('');
+    const urlOrg = page.url?.searchParams?.get("org") ?? "";
+    const urlDays = Number(page.url?.searchParams?.get("days"));
+    const initialDays = (RANGES.find((r) => r.days === urlDays)?.days ?? 30) as RangeDays;
 
-    let selectedDays = $state<RangeDays>(30);
+    // No organization is picked for the admin: the page waits for an explicit choice
+    // (or an org id in the URL) instead of silently showing the first one.
+    let selectedOrg = $state<PickedOrg | null>(null);
+    let selectedDays = $state<RangeDays>(initialDays);
 
     let loading = $state(false);
-    let error = $state('');
+    let error = $state("");
 
     let byDayEvents = $state<UsageRecord[]>([]);
     let byDayBytes = $state<UsageRecord[]>([]);
     let breakdown = $state<UsageBreakdown | null>(null);
     let storage = $state<StorageUsageResponse | null>(null);
+    let storageFailed = $state(false);
+    let hasData = $state(false);
 
-    const usersAPI = new UsersAPI(() => get(authStore).token);
+    const guard = createLatestGuard();
 
-    onMount(() => {
-        if ($authStore.user?.is_admin) loadOrgs();
-    });
+    const rangeLabel = $derived(RANGES.find((r) => r.days === selectedDays)?.label ?? "");
+    const totalEvents = $derived(sumQuantity(byDayEvents));
+    const totalBytes = $derived(sumQuantity(byDayBytes));
+    const dailyRows = $derived(mergeDaily(byDayEvents, byDayBytes));
 
-    $effect(() => {
-        if (browser && $authStore.user) {
-            if ($authStore.user.is_admin === undefined) {
-                untrack(() => {
-                    usersAPI
-                        .getCurrentUser()
-                        .then(({ user }) => {
-                            const currentUser = get(authStore).user;
-                            if (currentUser) {
-                                authStore.updateUser({ ...currentUser, ...user });
-                                if (user.is_admin) loadOrgs();
-                            }
-                        })
-                        .catch(() => goto('/dashboard'));
-                });
-            } else if ($authStore.user.is_admin === false) {
-                untrack(() => goto('/dashboard'));
-            }
-        }
-    });
-
-    async function loadOrgs() {
-        if ($authStore.user?.is_admin !== true) return;
-
-        orgsLoading = true;
-        orgsError = '';
-        try {
-            const res = await adminAPI.getOrganizations(1, 200);
-            orgs = res.organizations;
-            if (orgs.length > 0) {
-                selectedOrgId = orgs[0].id;
-            }
-        } catch (e) {
-            orgsError = e instanceof Error ? e.message : 'Failed to load organizations';
-        } finally {
-            orgsLoading = false;
-        }
+    function clearData() {
+        byDayEvents = [];
+        byDayBytes = [];
+        breakdown = null;
+        storage = null;
+        storageFailed = false;
+        hasData = false;
     }
 
-    $effect(() => {
-        if (selectedOrgId) {
-            // Depend on selectedDays so re-runs when range changes too
-            storage = null;
-            void load(selectedOrgId, selectedDays);
-        }
-    });
-
-    async function load(orgId: string, days: number) {
-        if (!orgId) return;
+    async function load(org: PickedOrg, days: number) {
+        const ticket = guard.begin();
         loading = true;
-        error = '';
-        storage = null;
+        error = "";
         try {
             const to = new Date().toISOString();
             const from = new Date(Date.now() - days * 86_400_000).toISOString();
+            const orgId = org.id;
 
             const [dayEvt, dayByt, bd, stor] = await Promise.all([
-                getUsage({ organizationId: orgId, from, to, groupBy: 'day', type: 'logs.ingested.events' }),
-                getUsage({ organizationId: orgId, from, to, groupBy: 'day', type: 'logs.ingested.bytes' }),
+                getUsage({ organizationId: orgId, from, to, groupBy: "day", type: "logs.ingested.events" }),
+                getUsage({ organizationId: orgId, from, to, groupBy: "day", type: "logs.ingested.bytes" }),
                 getUsageBreakdown({ organizationId: orgId, from, to }),
-                getStorageUsage({ organizationId: orgId, from, to }).catch(() => null),
+                getStorageUsage({ organizationId: orgId, from, to }).then(
+                    (r) => ({ ok: true as const, value: r }),
+                    () => ({ ok: false as const, value: null }),
+                ),
             ]);
+            // A newer request (another org or range) owns the page now.
+            if (!guard.isCurrent(ticket)) return;
 
             byDayEvents = dayEvt.usage;
             byDayBytes = dayByt.usage;
             breakdown = bd.breakdown;
-            storage = stor;
+            storage = stor.value;
+            storageFailed = !stor.ok;
+            hasData = true;
         } catch (e) {
-            error = e instanceof Error ? e.message : 'Failed to load usage data';
+            if (!guard.isCurrent(ticket)) return;
+            clearData();
+            error = e instanceof Error ? e.message : "Failed to load usage data";
+            toastStore.error(error);
         } finally {
-            loading = false;
+            if (guard.isCurrent(ticket)) loading = false;
         }
     }
 
-    let totalEvents = $derived(byDayEvents.reduce((s, r) => s + r.quantity, 0));
-    let totalBytes = $derived(byDayBytes.reduce((s, r) => s + r.quantity, 0));
-
-    interface DayRow { date: string; events: number; bytes: number; }
-
-    let dailyRows = $derived.by<DayRow[]>(() => {
-        const map = new Map<string, DayRow>();
-        for (const r of byDayEvents) {
-            const d = r.bucket ?? '';
-            if (!map.has(d)) map.set(d, { date: d, events: 0, bytes: 0 });
-            map.get(d)!.events += r.quantity;
+    function syncUrl(org: PickedOrg | null, days: number) {
+        const params = new URLSearchParams();
+        if (org) params.set("org", org.id);
+        if (days !== 30) params.set("days", String(days));
+        const qs = params.toString();
+        const next = `${page.url?.pathname ?? "/dashboard/admin/usage"}${qs ? `?${qs}` : ""}`;
+        if (qs !== (page.url?.search ?? "").replace(/^\?/, "")) {
+            goto(next, { replaceState: true, keepFocus: true, noScroll: true });
         }
-        for (const r of byDayBytes) {
-            const d = r.bucket ?? '';
-            if (!map.has(d)) map.set(d, { date: d, events: 0, bytes: 0 });
-            map.get(d)!.bytes += r.quantity;
-        }
-        return [...map.values()].sort((a, b) => b.date.localeCompare(a.date));
+    }
+
+    function onPick(org: PickedOrg) {
+        if (org.id === selectedOrg?.id) return;
+        // Show nothing from the previous organization while the new one loads.
+        clearData();
+        selectedOrg = org;
+    }
+
+    function setDays(days: RangeDays) {
+        selectedDays = days;
+    }
+
+    // Resolve the organization named in the URL (shared link / reload).
+    $effect(() => {
+        if ($authStore.user?.is_admin !== true || !urlOrg) return;
+        untrack(async () => {
+            try {
+                const o = await adminAPI.getOrganizationDetails(urlOrg);
+                if (!selectedOrg) selectedOrg = { id: o.id, name: o.name, slug: o.slug };
+            } catch (e) {
+                toastStore.error(e instanceof Error ? e.message : "Organization not found");
+            }
+        });
     });
 
-    function formatBytes(n: number): string {
-        if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(2)} GB`;
-        if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(2)} MB`;
-        if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
-        return `${n} B`;
+    $effect(() => {
+        const org = selectedOrg;
+        const days = selectedDays;
+        if ($authStore.user?.is_admin !== true) return;
+        untrack(() => syncUrl(org, days));
+        if (org) untrack(() => void load(org, days));
+        else guard.cancel();
+    });
+
+    function refresh() {
+        if (selectedOrg) void load(selectedOrg, selectedDays);
     }
 
-    function formatCount(n: number): string {
-        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-        if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-        return n.toLocaleString('en-US');
-    }
+    const initialLoading = $derived(loading && !hasData);
 
-    function formatDate(iso: string): string {
-        if (!iso) return '';
-        return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    }
-
-    function formatTypeQty(type: string, qty: number): string {
-        return type.endsWith('.bytes') ? formatBytes(qty) : formatCount(qty);
-    }
-
-    let selectedOrgName = $derived(orgs.find((o) => o.id === selectedOrgId)?.name ?? '');
+    const typeRows = $derived<UsageTableRow[]>(
+        (breakdown?.byType ?? []).map((r) => ({
+            key: r.type,
+            cells: [
+                { text: metricLabel(r.type), sub: r.type },
+                isBytesMetric(r.type) ? formatBytes(r.quantity) : formatCount(r.quantity),
+            ],
+        })),
+    );
+    const dailyTableRows = $derived<UsageTableRow[]>(
+        dailyRows.map((r) => ({
+            key: r.date,
+            cells: [formatDateShort(r.date), formatCount(r.events), formatBytes(r.bytes)],
+        })),
+    );
+    const projectRows = $derived<UsageTableRow[]>(
+        (breakdown?.byProject ?? []).map((r) => ({
+            key: r.projectId,
+            cells: [r.projectName, formatCount(r.events), formatBytes(r.bytes)],
+        })),
+    );
+    const serviceRows = $derived<UsageTableRow[]>(
+        (breakdown?.byService ?? []).map((r) => ({ key: r.value, cells: [r.value, formatCount(r.count)] })),
+    );
+    const levelRows = $derived<UsageTableRow[]>(
+        (breakdown?.byLevel ?? []).map((r) => ({ key: r.value, cells: [levelLabel(r.value), formatCount(r.count)] })),
+    );
+    const snapshotRows = $derived<UsageTableRow[]>(
+        [...(storage?.series ?? [])]
+            .sort((a, b) => b.bucket.localeCompare(a.bucket))
+            .map((r) => ({ key: r.bucket, cells: [formatDateShort(r.bucket), formatBytes(r.quantity)] })),
+    );
 </script>
 
 <svelte:head>
-    <title>Usage - Admin - LogTide</title>
+    <title>Instance usage - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto p-6 space-y-6">
-    <div>
-        <h1 class="text-2xl font-bold tracking-tight">Usage</h1>
-        <p class="text-sm text-muted-foreground mt-0.5">
-            Metering data per organization
-        </p>
+{#snippet section(title: string, description: string, body: Snippet)}
+    <section class="space-y-2">
+        <div>
+            <h2 class="text-base font-semibold">{title}</h2>
+            <p class="text-sm text-muted-foreground">{description}</p>
+        </div>
+        <Card class="overflow-x-auto p-0">
+            {@render body()}
+        </Card>
+    </section>
+{/snippet}
+
+<div class="space-y-6">
+    <PageHeader
+        title="Instance usage"
+        appliesTo="instance"
+        description="Metering data for one organization at a time"
+    />
+
+    <div class="flex flex-wrap items-end gap-3">
+        <div class="space-y-1">
+            <label for="usage-org-picker" class="text-xs font-medium text-muted-foreground">Organization</label>
+            <AdminOrgPicker selected={selectedOrg} onSelect={onPick} />
+        </div>
+
+        <div class="space-y-1">
+            <span class="text-xs font-medium text-muted-foreground" id="usage-range-label">Range</span>
+            <div class="flex items-center gap-1 rounded-md border bg-muted/50 p-1" role="group" aria-labelledby="usage-range-label">
+                {#each RANGES as range (range.days)}
+                    <button
+                        type="button"
+                        aria-pressed={selectedDays === range.days}
+                        onclick={() => setDays(range.days)}
+                        class="rounded px-3 py-1 text-sm font-medium transition-colors {selectedDays === range.days
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'}"
+                    >
+                        {range.label}
+                    </button>
+                {/each}
+            </div>
+        </div>
+
+        <Button variant="outline" size="sm" onclick={refresh} disabled={loading || !selectedOrg}>
+            <RotateCcw class="mr-1.5 h-4 w-4 {loading ? 'animate-spin' : ''}" />
+            Refresh
+        </Button>
     </div>
 
-    {#if orgsLoading}
-        <div class="flex justify-center py-12">
-            <Spinner />
-        </div>
-    {:else if orgsError}
-        <p class="text-sm text-destructive">{orgsError}</p>
-    {:else if orgs.length === 0}
-        <Card>
-            <CardContent class="py-12 text-center">
-                <Building2 class="mx-auto h-10 w-10 text-muted-foreground/40" />
-                <p class="mt-3 text-sm text-muted-foreground">No organizations found.</p>
-            </CardContent>
-        </Card>
+    {#if !selectedOrg}
+        <EmptyState
+            variant="setup"
+            title="Select an organization"
+            description="Pick an organization above to see how much it ingested and how much it stores."
+        />
+    {:else if error}
+        <EmptyState variant="error" title="Could not load usage" description={error}>
+            {#snippet actions()}
+                <Button onclick={refresh}>Retry</Button>
+            {/snippet}
+        </EmptyState>
     {:else}
-        <!-- Controls -->
-        <div class="flex flex-wrap items-center gap-3">
-            <!-- Org selector -->
-            <div class="space-y-1">
-                <label for="org-select" class="text-xs font-medium text-muted-foreground">Organization</label>
-                <select
-                    id="org-select"
-                    bind:value={selectedOrgId}
-                    class="flex h-9 w-64 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                    {#each orgs as org (org.id)}
-                        <option value={org.id}>{org.name}</option>
-                    {/each}
-                </select>
+        <div class="space-y-6 {loading && hasData ? 'opacity-60 transition-opacity' : ''}" aria-busy={loading}>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {#if initialLoading}
+                    <Skeleton class="h-28 w-full" />
+                    <Skeleton class="h-28 w-full" />
+                {:else}
+                    <StatsCard
+                        title="Events ingested"
+                        value={formatCount(totalEvents)}
+                        icon={BarChart3}
+                        description="{selectedOrg.name}, {rangeLabel.toLowerCase()}"
+                    />
+                    <StatsCard
+                        title="Bytes ingested"
+                        value={formatBytes(totalBytes)}
+                        icon={BarChart3}
+                        description="{selectedOrg.name}, {rangeLabel.toLowerCase()}"
+                    />
+                {/if}
             </div>
 
-            <!-- Range selector -->
-            <div class="space-y-1">
-                <span class="text-xs font-medium text-muted-foreground">Range</span>
-                <div class="flex items-center gap-1 rounded-md border p-1 bg-muted/50">
-                    {#each RANGES as range}
-                        <button
-                            type="button"
-                            onclick={() => { selectedDays = range.days; }}
-                            class="px-3 py-1 rounded text-sm font-medium transition-colors {selectedDays === range.days
-                                ? 'bg-background shadow-sm text-foreground'
-                                : 'text-muted-foreground hover:text-foreground'}"
-                        >
-                            {range.label}
-                        </button>
-                    {/each}
+            {#snippet typeBody()}
+                <UsageTable
+                    headers={[{ label: "Signal" }, { label: "Quantity", align: "right" }]}
+                    rows={typeRows}
+                    loading={initialLoading}
+                />
+            {/snippet}
+            {@render section("By signal", `Volume per metered signal, ${rangeLabel.toLowerCase()}`, asSnippet(typeBody))}
+
+            {#snippet dailyBody()}
+                <UsageTable
+                    headers={[{ label: "Date" }, { label: "Events", align: "right" }, { label: "Bytes", align: "right" }]}
+                    rows={dailyTableRows}
+                    loading={initialLoading}
+                    empty="No usage data for this period."
+                />
+            {/snippet}
+            {@render section("Daily breakdown", `Ingestion per day for ${selectedOrg.name}`, asSnippet(dailyBody))}
+
+            {#snippet projectBody()}
+                <UsageTable
+                    headers={[{ label: "Project" }, { label: "Events", align: "right" }, { label: "Bytes", align: "right" }]}
+                    rows={projectRows}
+                    loading={initialLoading}
+                    empty="No project data for this period."
+                />
+            {/snippet}
+            {@render section("By project", `Ingestion totals per project, ${rangeLabel.toLowerCase()}`, asSnippet(projectBody))}
+
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {#snippet serviceBody()}
+                    <UsageTable
+                        headers={[{ label: "Service" }, { label: "Events", align: "right" }]}
+                        rows={serviceRows}
+                        loading={initialLoading}
+                    />
+                {/snippet}
+                {@render section("By service", "Which services produced the logs", asSnippet(serviceBody))}
+
+                {#snippet levelBody()}
+                    <UsageTable
+                        headers={[{ label: "Level" }, { label: "Events", align: "right" }]}
+                        rows={levelRows}
+                        loading={initialLoading}
+                    />
+                {/snippet}
+                {@render section("By level", "Log level distribution", asSnippet(levelBody))}
+            </div>
+
+            <!-- The storage numbers are a point-in-time estimate, so they sit apart from the range-based sections. -->
+            <section
+                class="space-y-4 rounded-lg border border-dashed border-border bg-muted/30 p-4 sm:p-6"
+                aria-labelledby="usage-storage-heading"
+                data-testid="usage-storage"
+            >
+                <div class="flex items-start gap-3">
+                    <HardDrive class="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                    <div>
+                        <h2 id="usage-storage-heading" class="text-base font-semibold">Current storage</h2>
+                        <p class="text-sm text-muted-foreground">
+                            Current snapshot, not tied to the range above. An estimate of the logical bytes held within retention, refreshed daily.
+                        </p>
+                    </div>
                 </div>
-            </div>
-
-            <div class="self-end">
-                <Button variant="outline" size="sm" onclick={() => load(selectedOrgId, selectedDays)} disabled={loading}>
-                    <RotateCcw class="h-4 w-4 mr-1.5 {loading ? 'animate-spin' : ''}" />
-                    Refresh
-                </Button>
-            </div>
-        </div>
-
-        {#if error}
-            <p class="text-sm text-destructive">{error}</p>
-        {/if}
-
-        <!-- Summary cards -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card>
-                <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle class="text-sm font-medium">Events ingested</CardTitle>
-                    <BarChart3 class="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    {#if loading}
-                        <Spinner size="sm" />
-                    {:else}
-                        <div class="text-2xl font-bold">{formatCount(totalEvents)}</div>
-                        <p class="text-xs text-muted-foreground mt-1">
-                            {selectedOrgName}
-                            &middot; {RANGES.find((r) => r.days === selectedDays)?.label ?? ''}
-                        </p>
-                    {/if}
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle class="text-sm font-medium">Bytes ingested</CardTitle>
-                    <BarChart3 class="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    {#if loading}
-                        <Spinner size="sm" />
-                    {:else}
-                        <div class="text-2xl font-bold">{formatBytes(totalBytes)}</div>
-                        <p class="text-xs text-muted-foreground mt-1">
-                            {selectedOrgName}
-                            &middot; {RANGES.find((r) => r.days === selectedDays)?.label ?? ''}
-                        </p>
-                    {/if}
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle class="text-sm font-medium">Current storage (estimated)</CardTitle>
-                    <BarChart3 class="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                    {#if loading}
-                        <Spinner size="sm" />
-                    {:else}
-                        <div class="text-2xl font-bold">{storage ? formatBytes(storage.current) : '-'}</div>
-                        <p class="text-xs text-muted-foreground mt-1">
-                            Logical bytes within retention · daily snapshot
-                        </p>
-                    {/if}
-                </CardContent>
-            </Card>
-        </div>
-
-        <!-- Storage trend -->
-        <Card>
-            <CardHeader class="pb-3">
-                <CardTitle class="text-base">Storage trend (estimated)</CardTitle>
-                <CardDescription>Daily storage snapshot within retention window</CardDescription>
-            </CardHeader>
-            <CardContent class="p-0">
-                {#if loading}
-                    <div class="flex justify-center py-10"><Spinner /></div>
-                {:else if !storage || storage.series.length === 0}
-                    <div class="py-12 text-center">
-                        <BarChart3 class="mx-auto h-10 w-10 text-muted-foreground/40" />
-                        <p class="mt-3 text-sm text-muted-foreground">No storage data for this period.</p>
-                    </div>
+                {#if initialLoading}
+                    <Skeleton class="h-10 w-40" />
+                {:else if storageFailed}
+                    <p class="text-sm text-muted-foreground">Storage data could not be loaded.</p>
                 {:else}
-                    <div class="overflow-x-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Date</TableHead>
-                                    <TableHead class="text-right">Storage</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {#each [...storage.series].sort((a, b) => b.bucket.localeCompare(a.bucket)) as row (row.bucket)}
-                                    <TableRow>
-                                        <TableCell class="text-sm">{formatDate(row.bucket)}</TableCell>
-                                        <TableCell class="text-right font-mono text-sm">{formatBytes(row.quantity)}</TableCell>
-                                    </TableRow>
-                                {/each}
-                            </TableBody>
-                        </Table>
+                    <p class="text-3xl font-semibold tabular-nums">{formatBytes(storage?.current ?? null)}</p>
+                    <div class="space-y-2">
+                        <h3 class="text-sm font-medium">Daily snapshots in the selected range</h3>
+                        <Card class="overflow-x-auto p-0">
+                            <UsageTable
+                                headers={[{ label: "Date" }, { label: "Storage", align: "right" }]}
+                                rows={snapshotRows}
+                                empty="No storage snapshots for this period."
+                            />
+                        </Card>
                     </div>
                 {/if}
-            </CardContent>
-        </Card>
-
-        <!-- By event type (metering signal) -->
-        <Card>
-            <CardHeader class="pb-3">
-                <CardTitle class="text-base">By event type</CardTitle>
-                <CardDescription>Volume per ingested signal type</CardDescription>
-            </CardHeader>
-            <CardContent class="p-0">
-                {#if loading}
-                    <div class="flex justify-center py-10"><Spinner /></div>
-                {:else if !breakdown || breakdown.byType.length === 0}
-                    <div class="py-12 text-center">
-                        <BarChart3 class="mx-auto h-10 w-10 text-muted-foreground/40" />
-                        <p class="mt-3 text-sm text-muted-foreground">No data for this period.</p>
-                    </div>
-                {:else}
-                    <div class="overflow-x-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Type</TableHead>
-                                    <TableHead class="text-right">Quantity</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {#each breakdown.byType as row (row.type)}
-                                    <TableRow>
-                                        <TableCell class="font-mono text-sm">{row.type}</TableCell>
-                                        <TableCell class="text-right font-mono text-sm">{formatTypeQty(row.type, row.quantity)}</TableCell>
-                                    </TableRow>
-                                {/each}
-                            </TableBody>
-                        </Table>
-                    </div>
-                {/if}
-            </CardContent>
-        </Card>
-
-        <!-- Daily breakdown -->
-        <Card>
-            <CardHeader class="pb-3">
-                <CardTitle class="text-base">Daily breakdown</CardTitle>
-                <CardDescription>Ingestion per day for {selectedOrgName}</CardDescription>
-            </CardHeader>
-            <CardContent class="p-0">
-                {#if loading}
-                    <div class="flex justify-center py-10">
-                        <Spinner />
-                    </div>
-                {:else if dailyRows.length === 0}
-                    <div class="py-12 text-center">
-                        <BarChart3 class="mx-auto h-10 w-10 text-muted-foreground/40" />
-                        <p class="mt-3 text-sm text-muted-foreground">No usage data for this period.</p>
-                    </div>
-                {:else}
-                    <div class="overflow-x-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Date</TableHead>
-                                    <TableHead class="text-right">Events</TableHead>
-                                    <TableHead class="text-right">Bytes</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {#each dailyRows as row (row.date)}
-                                    <TableRow>
-                                        <TableCell class="text-sm">{formatDate(row.date)}</TableCell>
-                                        <TableCell class="text-right font-mono text-sm">{formatCount(row.events)}</TableCell>
-                                        <TableCell class="text-right font-mono text-sm">{formatBytes(row.bytes)}</TableCell>
-                                    </TableRow>
-                                {/each}
-                            </TableBody>
-                        </Table>
-                    </div>
-                {/if}
-            </CardContent>
-        </Card>
-
-        <!-- By project (with name) -->
-        <Card>
-            <CardHeader class="pb-3">
-                <CardTitle class="text-base">Breakdown by project</CardTitle>
-                <CardDescription>Ingestion totals per project for {selectedOrgName}</CardDescription>
-            </CardHeader>
-            <CardContent class="p-0">
-                {#if loading}
-                    <div class="flex justify-center py-10">
-                        <Spinner />
-                    </div>
-                {:else if !breakdown || breakdown.byProject.length === 0}
-                    <div class="py-12 text-center">
-                        <BarChart3 class="mx-auto h-10 w-10 text-muted-foreground/40" />
-                        <p class="mt-3 text-sm text-muted-foreground">No project data for this period.</p>
-                    </div>
-                {:else}
-                    <div class="overflow-x-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Project</TableHead>
-                                    <TableHead class="text-right">Events</TableHead>
-                                    <TableHead class="text-right">Bytes</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {#each breakdown.byProject as row (row.projectId)}
-                                    <TableRow>
-                                        <TableCell class="text-sm">{row.projectName}</TableCell>
-                                        <TableCell class="text-right font-mono text-sm">{formatCount(row.events)}</TableCell>
-                                        <TableCell class="text-right font-mono text-sm">{formatBytes(row.bytes)}</TableCell>
-                                    </TableRow>
-                                {/each}
-                            </TableBody>
-                        </Table>
-                    </div>
-                {/if}
-            </CardContent>
-        </Card>
-
-        <!-- By service / by level -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card>
-                <CardHeader class="pb-3">
-                    <CardTitle class="text-base">By service</CardTitle>
-                    <CardDescription>Which services produced the logs</CardDescription>
-                </CardHeader>
-                <CardContent class="p-0">
-                    {#if loading}
-                        <div class="flex justify-center py-10"><Spinner /></div>
-                    {:else if !breakdown || breakdown.byService.length === 0}
-                        <div class="py-12 text-center">
-                            <p class="text-sm text-muted-foreground">No data for this period.</p>
-                        </div>
-                    {:else}
-                        <div class="overflow-x-auto">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Service</TableHead>
-                                        <TableHead class="text-right">Events</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {#each breakdown.byService as row (row.value)}
-                                        <TableRow>
-                                            <TableCell class="text-sm">{row.value}</TableCell>
-                                            <TableCell class="text-right font-mono text-sm">{formatCount(row.count)}</TableCell>
-                                        </TableRow>
-                                    {/each}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    {/if}
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader class="pb-3">
-                    <CardTitle class="text-base">By level</CardTitle>
-                    <CardDescription>Log level distribution</CardDescription>
-                </CardHeader>
-                <CardContent class="p-0">
-                    {#if loading}
-                        <div class="flex justify-center py-10"><Spinner /></div>
-                    {:else if !breakdown || breakdown.byLevel.length === 0}
-                        <div class="py-12 text-center">
-                            <p class="text-sm text-muted-foreground">No data for this period.</p>
-                        </div>
-                    {:else}
-                        <div class="overflow-x-auto">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Level</TableHead>
-                                        <TableHead class="text-right">Events</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {#each breakdown.byLevel as row (row.value)}
-                                        <TableRow>
-                                            <TableCell class="text-sm capitalize">{row.value}</TableCell>
-                                            <TableCell class="text-right font-mono text-sm">{formatCount(row.count)}</TableCell>
-                                        </TableRow>
-                                    {/each}
-                                </TableBody>
-                            </Table>
-                        </div>
-                    {/if}
-                </CardContent>
-            </Card>
+            </section>
         </div>
     {/if}
 </div>

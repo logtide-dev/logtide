@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PreviewSuggestion } from "$lib/api/alerts";
+	import { levelTone } from "$lib/utils/severity";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
 	import Info from "@lucide/svelte/icons/info";
@@ -30,20 +31,20 @@
 	function getSuggestionStyle(severity: PreviewSuggestion["severity"]) {
 		switch (severity) {
 			case "warning":
-				return "bg-orange-50 border-orange-200 text-orange-800 dark:bg-orange-950 dark:border-orange-800 dark:text-orange-200";
+				return levelTone("warn").badge;
 			case "info":
 			default:
-				return "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950 dark:border-blue-800 dark:text-blue-200";
+				return levelTone("info").badge;
 		}
 	}
 
 	function getIconStyle(severity: PreviewSuggestion["severity"]) {
 		switch (severity) {
 			case "warning":
-				return "text-orange-500 dark:text-orange-400";
+				return levelTone("warn").text;
 			case "info":
 			default:
-				return "text-blue-500 dark:text-blue-400";
+				return levelTone("info").text;
 		}
 	}
 </script>

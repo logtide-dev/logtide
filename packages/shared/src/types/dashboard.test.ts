@@ -4,6 +4,7 @@ import {
   PANEL_TIME_RANGE_MS,
   PANEL_TIME_RANGE_LABELS,
   panelTimeRangeToMs,
+  CURRENT_SCHEMA_VERSION,
 } from './dashboard.js';
 
 describe('panel time range catalog', () => {
@@ -34,5 +35,11 @@ describe('panel time range catalog', () => {
     expect(panelTimeRangeToMs('48h')).toBe(48 * 60 * 60 * 1000);
     expect(panelTimeRangeToMs('3d')).toBe(3 * 24 * 60 * 60 * 1000);
     expect(panelTimeRangeToMs('bogus')).toBe(24 * 60 * 60 * 1000);
+  });
+});
+
+describe('dashboard schema version', () => {
+  it('CURRENT_SCHEMA_VERSION is still 1 (additive optional fields only)', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(1);
   });
 });

@@ -146,7 +146,7 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
         }
 
         if (error instanceof Error) {
-          if (error.message.includes('Only owners and admins')) {
+          if (error.message.includes('Only owners and admins') || error.message.includes('Only the organization owner')) {
             return reply.status(403).send({
               error: error.message,
             });

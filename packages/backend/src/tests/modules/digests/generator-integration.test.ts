@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DigestGeneratorService } from '../../../modules/digests/generator.js';
+import { sql } from 'kysely';
 import { db } from '../../../database/connection.js';
 import { reservoir } from '../../../database/reservoir.js';
 import { DIGEST_SECTION_KEYS } from '@logtide/shared';
@@ -279,6 +280,9 @@ describe('DigestGeneratorService Integration', () => {
       });
     }
     await db.insertInto('monitor_results').values(results).execute();
+    // Other suites refresh the cagg past today, which hides new rows from the
+    // real-time view, so materialize today's bucket explicitly
+    await sql`CALL refresh_continuous_aggregate('monitor_uptime_daily', NULL, date_trunc('day', NOW() + INTERVAL '1 day'))`.execute(db);
 
     await generator.generateAndSendDigest({
       organizationId: org.id,
@@ -497,5 +501,100 @@ describe('DigestGeneratorService Integration', () => {
     for (const title of ['Traces', 'Metrics', 'Monitor Performance', 'Usage']) {
       expect(html, `html should omit the ${title} section`).not.toContain(title);
     }
+  });
+
+  it('counts only sigma and manual incidents in the security sections', async () => {
+    const user = await db
+      .insertInto('users')
+      .values({ email: 'sources@example.com', password_hash: 'test_hash', name: 'Sources User' })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    const org = await db
+      .insertInto('organizations')
+      .values({ name: 'Sources Org', slug: 'sources-org', owner_id: user.id })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const project = await db
+      .insertInto('projects')
+      .values({ organization_id: org.id, name: 'Sources Project', slug: 'sources-project', user_id: user.id })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    const config = await db
+      .insertInto('digest_configs')
+      .values({ organization_id: org.id, frequency: 'daily', delivery_hour: 8 })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto('digest_recipients')
+      .values({
+        organization_id: org.id,
+        digest_config_id: config.id,
+        email: 'sources-digest@example.com',
+        unsubscribe_token: 'sources_token',
+      })
+      .execute();
+
+    // Aged explicitly: the digest window ends at the node clock, not Postgres NOW().
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+    const rule = await db
+      .insertInto('sigma_rules')
+      .values({
+        organization_id: org.id,
+        title: 'Sources Rule',
+        level: 'high',
+        status: 'stable',
+        logsource: JSON.stringify({ product: 'test' }),
+        detection: JSON.stringify({ condition: 'selection' }),
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await db
+      .insertInto('detection_events')
+      .values({
+        time: oneHourAgo,
+        organization_id: org.id,
+        project_id: project.id,
+        sigma_rule_id: rule.id,
+        log_id: crypto.randomUUID(),
+        severity: 'high',
+        rule_title: 'Sources Rule',
+        service: 'auth-service',
+        log_level: 'warn',
+        log_message: 'failed login',
+      } as any)
+      .execute();
+
+    // One open incident per source; only sigma and manual are security incidents.
+    for (const source of ['sigma', 'manual', 'alert', 'monitor']) {
+      await db
+        .insertInto('incidents')
+        .values({
+          organization_id: org.id,
+          project_id: project.id,
+          title: `${source} incident`,
+          severity: 'high',
+          status: 'open',
+          source,
+          created_at: oneHourAgo,
+        } as any)
+        .execute();
+    }
+
+    const sections = Object.fromEntries(
+      DIGEST_SECTION_KEYS.map((key) => [key, true])
+    ) as DigestSections;
+
+    await generator.generateAndSendDigest({
+      organizationId: org.id,
+      digestConfigId: config.id,
+      frequency: 'daily',
+      sections,
+    });
+
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
+    const text = mockSendMail.mock.calls[0][0].text as string;
+    expect(text).toContain('Open incidents: 2');
+    expect(text).toContain('Incidents opened: 2');
   });
 });

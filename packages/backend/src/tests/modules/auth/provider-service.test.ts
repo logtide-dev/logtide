@@ -437,6 +437,89 @@ describe('ProviderService', () => {
         })
       ).rejects.toThrow('Invalid Issuer URL format');
     });
+
+    it('keeps the stored OIDC secret when the masked value is sent back', async () => {
+      const result = await providerService.updateProvider(testProviderId, {
+        config: {
+          issuerUrl: 'https://auth.example.com',
+          clientId: 'test',
+          clientSecret: '••••••••',
+        },
+      });
+      expect(result.config.clientSecret).toBe('test');
+    });
+
+    it('keeps the stored OIDC secret when the secret is empty or omitted', async () => {
+      let result = await providerService.updateProvider(testProviderId, {
+        config: { issuerUrl: 'https://auth.example.com', clientId: 'changed', clientSecret: '' },
+      });
+      expect(result.config.clientSecret).toBe('test');
+      expect(result.config.clientId).toBe('changed');
+
+      result = await providerService.updateProvider(testProviderId, {
+        config: { issuerUrl: 'https://auth.example.com', clientId: 'changed2' },
+      });
+      expect(result.config.clientSecret).toBe('test');
+    });
+
+    it('merges partial config with the stored config', async () => {
+      await providerService.updateProvider(testProviderId, {
+        config: { issuerUrl: 'https://auth.example.com', clientId: 'test', allowAutoRegister: false },
+      });
+      const result = await providerService.updateProvider(testProviderId, {
+        config: { clientId: 'other' },
+      });
+      expect(result.config).toMatchObject({
+        issuerUrl: 'https://auth.example.com',
+        clientId: 'other',
+        clientSecret: 'test',
+        allowAutoRegister: false,
+      });
+    });
+
+    it('keeps the stored LDAP bind password when the masked value is sent back', async () => {
+      const ldap = await providerService.createProvider({
+        type: 'ldap',
+        name: 'LDAP Keep',
+        slug: 'ldap-keep',
+        config: {
+          url: 'ldap://ldap.example.com',
+          bindDn: 'cn=admin',
+          bindPassword: 'secret-pw',
+          searchBase: 'dc=example',
+          searchFilter: '(uid={{username}})',
+        },
+      });
+      const result = await providerService.updateProvider(ldap.id, {
+        config: {
+          url: 'ldap://ldap.example.com',
+          bindDn: 'cn=admin2',
+          bindPassword: '••••••••',
+          searchBase: 'dc=example',
+          searchFilter: '(uid={{username}})',
+        },
+      });
+      expect(result.config.bindPassword).toBe('secret-pw');
+      expect(result.config.bindDn).toBe('cn=admin2');
+    });
+
+    it('replaces the stored secret when a new one is sent', async () => {
+      const result = await providerService.updateProvider(testProviderId, {
+        config: { issuerUrl: 'https://auth.example.com', clientId: 'test', clientSecret: 'rotated' },
+      });
+      expect(result.config.clientSecret).toBe('rotated');
+    });
+
+    it('removes optional config keys sent as null', async () => {
+      await providerService.updateProvider(testProviderId, {
+        config: { redirectUri: 'https://app.example.com/cb' },
+      });
+      const result = await providerService.updateProvider(testProviderId, {
+        config: { redirectUri: null },
+      });
+      expect(result.config).not.toHaveProperty('redirectUri');
+      expect(result.config.clientSecret).toBe('test');
+    });
   });
 
   describe('deleteProvider', () => {

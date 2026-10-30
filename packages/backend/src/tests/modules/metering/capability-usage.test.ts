@@ -32,7 +32,9 @@ describe('getCapabilityUsage', () => {
         'metrics.max_datapoints_monthly',
         'notifications.max_channels',
         'projects.max',
+        'saved_searches.max_per_org',
         'sigma.max_active_rules',
+        'status_page.subscribers.max',
         'storage.max_bytes',
         'telemetry.max_bytes_monthly',
         'tracing.max_spans_monthly',
@@ -82,5 +84,64 @@ describe('getCapabilityUsage', () => {
     const alerts = rows.find((r) => r.capability === 'alerts.max_rules');
 
     expect(alerts?.limit).toBe(5);
+  });
+
+  it('counts saved searches of the organization only', async () => {
+    const ctx = await createTestContext();
+    const other = await createTestContext();
+    const state = JSON.stringify({ version: 1 });
+    await db
+      .insertInto('saved_searches')
+      .values([
+        { organization_id: orgId, created_by: ctx.user.id, name: 'a', visibility: 'organization', state },
+        { organization_id: orgId, created_by: ctx.user.id, name: 'b', visibility: 'private', state },
+        { organization_id: other.organization.id, created_by: other.user.id, name: 'c', visibility: 'organization', state },
+      ])
+      .execute();
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'saved_searches.max_per_org', enabled: true, limit_value: 10 })
+      .execute();
+
+    const rows = await getCapabilityUsage(orgId);
+    expect(rows.find((r) => r.capability === 'saved_searches.max_per_org')).toMatchObject({
+      kind: 'limit',
+      current: 2,
+      limit: 10,
+    });
+  });
+
+  it('counts confirmed status page subscribers of the organization only (pending never count against the quota)', async () => {
+    const ctx = await createTestContext();
+    const other = await createTestContext();
+    const sub = (organizationId: string, projectId: string, email: string, confirmed: boolean, expired = false) => ({
+      organization_id: organizationId,
+      project_id: projectId,
+      email,
+      email_normalized: email,
+      confirmed_at: confirmed ? new Date() : null,
+      confirm_token_hash: confirmed ? null : 'a'.repeat(64),
+      confirm_expires_at: confirmed ? null : new Date(Date.now() + (expired ? -3600_000 : 3600_000)),
+    });
+    await db
+      .insertInto('status_page_subscribers')
+      .values([
+        sub(orgId, ctx.project.id, 'a@example.com', true),
+        sub(orgId, ctx.project.id, 'b@example.com', false),
+        sub(orgId, ctx.project.id, 'c@example.com', false, true),
+        sub(other.organization.id, other.project.id, 'd@example.com', true),
+      ])
+      .execute();
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'status_page.subscribers.max', enabled: true, limit_value: 100 })
+      .execute();
+
+    const rows = await getCapabilityUsage(orgId);
+    expect(rows.find((r) => r.capability === 'status_page.subscribers.max')).toMatchObject({
+      kind: 'limit',
+      current: 1,
+      limit: 100,
+    });
   });
 });

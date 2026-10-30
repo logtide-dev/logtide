@@ -78,6 +78,24 @@ describe('admin service token', () => {
     expect(row!.actor_type).toBe('system');
   });
 
+  it('DELETE entitlement override accepts the token', async () => {
+    cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
+    const id = await newOrg();
+    await app.inject({
+      method: 'PUT',
+      url: `/api/v1/admin/organizations/${id}/entitlements`,
+      headers: auth(TOKEN),
+      payload: { entitlements: [{ capability: 'ingestion.max_bytes_monthly', limitValue: 1048576 }] },
+    });
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/admin/organizations/${id}/entitlements/ingestion.max_bytes_monthly`,
+      headers: auth(TOKEN),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload)).toMatchObject({ removed: true });
+  });
+
   it('PUT retention returns 200 and writes a service audit row', async () => {
     cfg.LOGTIDE_ADMIN_SERVICE_TOKEN = TOKEN;
     const id = await newOrg();

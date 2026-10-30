@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, beforeAll, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { settingsRoutes, publicSettingsRoutes } from '../../../modules/settings/routes.js';
@@ -6,6 +6,12 @@ import { settingsService, SETTING_KEYS } from '../../../modules/settings/service
 import { createTestUser } from '../../helpers/factories.js';
 import { CacheManager } from '../../../utils/cache.js';
 import crypto from 'crypto';
+
+const { getPasswordResetConfig } = vi.hoisted(() => ({
+  getPasswordResetConfig: vi.fn(async (): Promise<{ passwordResetEnabled?: true }> => ({})),
+}));
+
+vi.mock('../../../modules/users/password-reset.js', () => ({ getPasswordResetConfig }));
 
 // Helper to create a session for a user
 async function createTestSession(userId: string) {
@@ -291,6 +297,36 @@ describe('Settings Routes', () => {
 
       expect(response.statusCode).toBe(400);
     });
+
+    it('should persist updates.channel (was silently dropped)', async () => {
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/v1/admin/settings',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json',
+        },
+        payload: { 'updates.channel': 'beta' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json().settings[SETTING_KEYS.UPDATES_CHANNEL]).toBe('beta');
+      expect(await settingsService.get(SETTING_KEYS.UPDATES_CHANNEL)).toBe('beta');
+    });
+
+    it('should reject an invalid updates.channel', async () => {
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/api/v1/admin/settings',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json',
+        },
+        payload: { 'updates.channel': 'nightly' },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
   });
 
   describe('DELETE /api/v1/admin/settings/:key', () => {
@@ -385,6 +421,42 @@ describe('Public Settings Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = response.json();
       expect(body.requiresLogin).toBe(false);
+    });
+  });
+
+  describe('passwordResetEnabled flag', () => {
+    beforeEach(() => {
+      getPasswordResetConfig.mockReset();
+      getPasswordResetConfig.mockResolvedValue({});
+    });
+
+    it('config includes passwordResetEnabled true when reset is available', async () => {
+      getPasswordResetConfig.mockResolvedValue({ passwordResetEnabled: true });
+      const response = await app.inject({ method: 'GET', url: '/api/v1/auth/config' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().passwordResetEnabled).toBe(true);
+    });
+
+    it('config omits the key when unavailable', async () => {
+      const response = await app.inject({ method: 'GET', url: '/api/v1/auth/config' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).not.toHaveProperty('passwordResetEnabled');
+    });
+
+    it('the error fallback reply also carries the flag', async () => {
+      getPasswordResetConfig.mockResolvedValue({ passwordResetEnabled: true });
+      const spy = vi.spyOn(settingsService, 'getAuthMode').mockRejectedValue(new Error('db down'));
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const response = await app.inject({ method: 'GET', url: '/api/v1/auth/config' });
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        expect(body.requiresLogin).toBe(true);
+        expect(body.passwordResetEnabled).toBe(true);
+      } finally {
+        spy.mockRestore();
+        errSpy.mockRestore();
+      }
     });
   });
 });

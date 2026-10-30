@@ -95,9 +95,9 @@ export function panelTimeRangeToMs(range: string): number {
 // ─── Layout (12-column grid) ────────────────────────────────────────────────
 
 export interface PanelLayout {
-  x: number; // 0–11
+  x: number; // 0-11
   y: number; // 0-based row index
-  w: number; // 1–12 column span
+  w: number; // 1-12 column span
   h: number; // row units (1 unit ≈ 80px)
 }
 
@@ -161,7 +161,7 @@ export interface AlertStatusConfig {
   projectId: string | null;
   ruleIds: string[]; // empty = show all rules in scope
   showHistory: boolean;
-  limit: number; // 5–20
+  limit: number; // 5-20
 }
 
 // ─── Metrics panels (OTLP) ───────────────────────────────────────────────────
@@ -173,6 +173,7 @@ export type MetricAggregation =
   | 'max'
   | 'count'
   | 'last'
+  | 'rate'
   | 'p50'
   | 'p95'
   | 'p99';
@@ -189,6 +190,8 @@ export interface MetricChartConfig {
   interval: MetricInterval;
   timeRange: PanelTimeRange;
   serviceName: string | null;
+  /** optional, max 2 metric attribute keys; one series per label combination */
+  groupBy?: string[];
 }
 
 export interface MetricStatConfig {
@@ -246,7 +249,7 @@ export interface MonitorStatusConfig {
   source: 'monitors';
   projectId: string | null;
   monitorIds: string[]; // empty = show all monitors in scope
-  limit: number; // 3–20
+  limit: number; // 3-20
 }
 
 // ─── System status banner ────────────────────────────────────────────────────

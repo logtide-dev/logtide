@@ -28,40 +28,38 @@ async function renderAs(role: 'owner' | 'admin' | 'member') {
   await tick();
 }
 
-const billingLinks = () => screen.queryAllByRole('link', { name: 'Billing' });
-
-describe('settings nav billing entry', () => {
+describe('settings shell groups', () => {
   beforeEach(() => {
     localStorage.clear();
     organizationStore.clear();
     getAuthConfig.mockReset();
   });
 
-  it('is hidden when the instance has no in-app billing', async () => {
+  it('renders the five group labels for an owner', async () => {
     getAuthConfig.mockResolvedValue({ authMode: 'standard', signupEnabled: true });
     await renderAs('owner');
-    expect(billingLinks()).toHaveLength(0);
-    expect(screen.getAllByRole('link', { name: 'Usage' }).length).toBeGreaterThan(0);
+    for (const label of ['Account', 'Organization', 'Data', 'Notifications', 'Projects']) {
+      expect(screen.getByText(label, { selector: 'p' })).toBeTruthy();
+    }
+    expect(screen.getAllByRole('link', { name: 'Audit log' }).length).toBeGreaterThan(0);
   });
 
-  it('shows for owners and admins when billing is enabled', async () => {
-    getAuthConfig.mockResolvedValue({ authMode: 'standard', signupEnabled: true, billingEnabled: true });
-    await renderAs('admin');
-    const links = billingLinks();
-    // desktop sidebar + mobile pills
-    expect(links).toHaveLength(2);
-    for (const link of links) expect(link.getAttribute('href')).toBe('/dashboard/settings/billing');
-  });
-
-  it('never shows for members', async () => {
-    getAuthConfig.mockResolvedValue({ authMode: 'standard', signupEnabled: true, billingEnabled: true });
+  it('hides Audit log from members', async () => {
+    getAuthConfig.mockResolvedValue({ authMode: 'standard', signupEnabled: true });
     await renderAs('member');
-    expect(billingLinks()).toHaveLength(0);
+    expect(screen.queryAllByRole('link', { name: 'Audit log' })).toHaveLength(0);
   });
 
-  it('stays hidden when the auth config cannot be loaded', async () => {
+  it('keeps rendering the rest when the auth config fails', async () => {
     getAuthConfig.mockRejectedValue(new Error('offline'));
     await renderAs('owner');
-    expect(billingLinks()).toHaveLength(0);
+    expect(screen.queryAllByRole('link', { name: 'Billing' })).toHaveLength(0);
+    expect(screen.getAllByRole('link', { name: 'Members' }).length).toBeGreaterThan(0);
+  });
+
+  it('does not render its own page header', async () => {
+    getAuthConfig.mockResolvedValue({});
+    await renderAs('owner');
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
   });
 });

@@ -331,6 +331,30 @@ describe('Alerts Routes', () => {
             expect(body.alertRule.name).toBe('Updated Name');
         });
 
+        it('keeps the scope read-only after create (projectId is ignored)', async () => {
+            
+            const other = await createTestProject({ organizationId: testOrganization.id, userId: testUser.id });
+            const rule = await createTestAlertRule({
+                organizationId: testOrganization.id,
+                projectId: testProject.id,
+                name: 'Scoped',
+            });
+
+            const response = await app.inject({
+                method: 'PUT',
+                url: `/api/v1/alerts/${rule.id}?organizationId=${testOrganization.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { name: 'Renamed', projectId: other.id },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.payload);
+            expect(body.alertRule.name).toBe('Renamed');
+            expect(body.alertRule.projectId).toBe(testProject.id);
+            const row = await db.selectFrom('alert_rules').select('project_id').where('id', '=', rule.id).executeTakeFirstOrThrow();
+            expect(row.project_id).toBe(testProject.id);
+        });
+
         it('should return 404 for non-existent rule', async () => {
             const response = await app.inject({
                 method: 'PUT',

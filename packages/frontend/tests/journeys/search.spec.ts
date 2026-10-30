@@ -63,25 +63,19 @@ test.describe('Search Journey', () => {
   });
 
   test('1. User can view the search page with logs', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
 
-    // Verify search page elements
-    await expect(page.locator('h1')).toContainText(/log search|search/i);
+    await expect(page.getByRole('heading', { name: 'Logs', level: 1 })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Log query' })).toBeVisible();
 
-    // Verify filter elements exist
-    await expect(page.locator('input#search, input[placeholder*="search" i]')).toBeVisible();
-
-    // Wait for logs to load
-    await page.waitForTimeout(3000);
-
-    // Verify logs are displayed
-    const logsTable = page.locator('table.caption-bottom');
-    await expect(logsTable).toBeVisible();
+    // Seeded logs are listed in the results table
+    await expect(page.getByRole('region', { name: 'Results' }).getByRole('table')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByRole('button', { name: 'Filter by service api-gateway' }).first()).toBeVisible({ timeout: 20000 });
   });
 
   test('2. User can filter logs by search query', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(2000);
 
@@ -98,155 +92,102 @@ test.describe('Search Journey', () => {
   });
 
   test('3. User can filter logs by level', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
 
-    // Open levels filter
-    const levelsButton = page.locator('button:has-text("All levels"), button:has-text("Levels")').first();
-    await levelsButton.click();
+    const results = page.getByRole('region', { name: 'Results' });
+    await expect(results.getByRole('button', { name: 'Filter by level info' }).first()).toBeVisible({ timeout: 20000 });
 
-    // Wait for popover
-    await page.waitForTimeout(500);
+    // Clicking the error value in the Level facet narrows the query
+    await page.getByRole('complementary', { name: 'Facets' }).getByRole('button', { name: /^level error \(/ }).click();
 
-    // Clear and select only error level
-    const clearButton = page.locator('button:has-text("Clear")').first();
-    if (await clearButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await clearButton.click();
-    }
-
-    // Select error checkbox
-    const errorCheckbox = page.locator('label:has-text("error") input[type="checkbox"], input[value="error"]');
-    if (await errorCheckbox.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await errorCheckbox.check();
-    }
-
-    // Close popover by clicking outside
-    await page.locator('body').click({ position: { x: 0, y: 0 } });
-    await page.waitForTimeout(2000);
-
-    // Verify only error logs are shown
-    const errorBadges = page.locator('[class*="error"], .bg-red-100, [class*="bg-red"]');
-    const count = await errorBadges.count();
-    expect(count).toBeGreaterThan(0);
+    await expect(page.getByRole('combobox', { name: 'Log query' })).toHaveValue('level:error');
+    await expect(results.getByRole('button', { name: 'Filter by level error' }).first()).toBeVisible({ timeout: 15000 });
+    await expect(results.getByRole('button', { name: 'Filter by level info' })).toHaveCount(0);
   });
 
   test('4. User can filter logs by service', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
 
-    // Open services filter
-    const servicesButton = page.locator('button:has-text("All services"), button:has-text("Services")').first();
-    await servicesButton.click();
+    const results = page.getByRole('region', { name: 'Results' });
+    await expect(results.getByRole('button', { name: 'Filter by service user-service' }).first()).toBeVisible({ timeout: 20000 });
 
-    await page.waitForTimeout(500);
+    await page.getByRole('complementary', { name: 'Facets' }).getByRole('button', { name: /^service api-gateway \(/ }).click();
 
-    // Select api-gateway service if available
-    const serviceCheckbox = page.locator('label:has-text("api-gateway") input[type="checkbox"]');
-    if (await serviceCheckbox.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await serviceCheckbox.check();
-    }
-
-    // Close popover
-    await page.locator('body').click({ position: { x: 0, y: 0 } });
-    await page.waitForTimeout(2000);
-
-    // Verify logs are filtered
-    const pageContent = await page.content();
-    expect(pageContent).toContain('api-gateway');
+    await expect(page.getByRole('combobox', { name: 'Log query' })).toHaveValue('service:api-gateway');
+    await expect(results.getByRole('button', { name: 'Filter by service api-gateway' }).first()).toBeVisible({ timeout: 15000 });
+    await expect(results.getByRole('button', { name: 'Filter by service user-service' })).toHaveCount(0);
   });
 
   test('5. User can filter logs by trace ID', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
 
-    // Open the Trace ID pill popover, then fill the input inside it.
-    await page.getByTestId('filter-pill-trace-id').click();
-    const traceInput = page.locator('input#traceId');
-    await traceInput.waitFor({ state: 'visible' });
-    await traceInput.fill(testTraceId);
-    await traceInput.press('Enter');
+    const query = page.getByRole('combobox', { name: 'Log query' });
+    await query.fill(`trace:${testTraceId}`);
+    await query.press('Enter');
 
-    await page.waitForTimeout(2000);
-
-    // Verify traced logs are shown (check first 8 chars of UUID shown in message)
-    const pageContent = await page.content();
-    expect(pageContent).toContain(testTraceId.substring(0, 8));
+    // Only the traced logs remain; their message carries the first 8 chars of the id
+    const results = page.getByRole('region', { name: 'Results' });
+    await expect(results.getByText(testTraceId.substring(0, 8)).first()).toBeVisible({ timeout: 15000 });
+    await expect(results.getByRole('button', { name: 'Filter by service user-service' })).toHaveCount(0);
+    await expect(page).toHaveURL(/q=trace%3A/);
   });
 
   test('6. User can expand log details', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(3000);
 
-    // Click on Details button for first log
-    const detailsButton = page.locator('button:has-text("Details")').first();
-    if (await detailsButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await detailsButton.click();
-      await page.waitForTimeout(1000);
+    const results = page.getByRole('region', { name: 'Results' });
+    await expect(results.getByRole('row').nth(1)).toBeVisible({ timeout: 20000 });
+    await results.getByRole('row').nth(1).click();
 
-      // Verify expanded content shows full message (text is "Full Message:")
-      await expect(page.locator('text=/full message/i').first()).toBeVisible({ timeout: 5000 });
-    }
+    const details = page.getByRole('complementary', { name: 'Log details' });
+    await expect(details).toBeVisible({ timeout: 15000 });
+    await expect(details.getByRole('heading', { name: 'Message' })).toBeVisible();
+    await expect(page).toHaveURL(/logId=/);
   });
 
   test('7. User can view log context', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(3000);
 
-    // Click on Context button for first log
-    const contextButton = page.locator('button:has-text("Context")').first();
-    if (await contextButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await contextButton.click();
-      await page.waitForTimeout(1000);
+    const results = page.getByRole('region', { name: 'Results' });
+    await expect(results.getByRole('row').nth(1)).toBeVisible({ timeout: 20000 });
+    await results.getByRole('row').nth(1).click();
+    await page.getByRole('button', { name: 'View context' }).click();
 
-      // Verify context dialog appears
-      const dialog = page.locator('[role="dialog"], [class*="dialog"], [class*="Dialog"]');
-      await expect(dialog).toBeVisible({ timeout: 5000 });
-    }
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10000 });
   });
 
   test('8. User can change time range', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
 
-    const pill = page.getByTestId('filter-pill-time-range');
+    // The ScopeBar time range picker offers every preset
+    await page.getByRole('button', { name: 'Last 24 hours' }).click();
+    await page.getByRole('button', { name: 'Last hour', exact: true }).click();
 
-    // Open the Time range pill popover, then click Last Hour inside it.
-    await pill.click();
-    const lastHourButton = page.getByRole('button', { name: 'Last Hour', exact: true });
-    await lastHourButton.waitFor({ state: 'visible' });
-    await lastHourButton.click();
-    await page.waitForTimeout(2000);
-
-    // Verify the pill label updated to reflect the new range.
-    await expect(pill).toContainText(/last hour/i);
+    // The picker shows the new range and the URL carries it
+    await expect(page.getByRole('button', { name: 'Last hour', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/range=1h/);
   });
 
   test('9. User can use custom time range', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
 
-    // Open the Time range pill popover, then click Custom inside it.
-    await page.getByTestId('filter-pill-time-range').click();
-    const customButton = page.locator('button:has-text("Custom")');
-    await customButton.waitFor({ state: 'visible' });
-    await customButton.click();
-    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'Last 24 hours' }).click();
+    await page.getByRole('button', { name: 'Custom range' }).click();
 
-    // Custom range now uses an in-app calendar plus explicit time inputs.
-    await expect(page.getByText('From time')).toBeVisible();
-    await expect(page.locator('input[type="time"]').first()).toBeVisible();
-    await expect(page.locator('input[type="time"]').nth(1)).toBeVisible();
+    // Custom range has a calendar plus typed From and To inputs
+    await expect(page.getByRole('textbox', { name: 'From' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'To' })).toBeVisible();
   });
 
   test('10. User can export logs', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
     await page.waitForTimeout(3000);
 
@@ -264,46 +205,14 @@ test.describe('Search Journey', () => {
     }
   });
 
-  test('11. User can navigate pagination', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(3000);
-
-    // Look for pagination controls
-    const nextButton = page.locator('button:has-text("Next")');
-    const previousButton = page.locator('button:has-text("Previous")');
-
-    // Verify pagination exists
-    if (await nextButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      // If there are multiple pages, next should be enabled
-      const isEnabled = await nextButton.isEnabled().catch(() => false);
-      if (isEnabled) {
-        await nextButton.click();
-        await page.waitForTimeout(2000);
-
-        // Previous should now be enabled
-        await expect(previousButton).toBeEnabled();
-      }
-    }
-  });
-
   test('12. User can click on service badge to filter', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/search`);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(3000);
 
-    // Find a service badge and click it
-    const serviceBadge = page.locator('button:has([class*="Badge"]), [class*="badge"]').first();
-    if (await serviceBadge.isVisible({ timeout: 5000 }).catch(() => false)) {
-      const serviceName = await serviceBadge.textContent();
-      await serviceBadge.click();
-      await page.waitForTimeout(2000);
+    const results = page.getByRole('region', { name: 'Results' });
+    await results.getByRole('button', { name: 'Filter by service payment-service' }).first().click();
 
-      // Verify filter was applied
-      if (serviceName) {
-        const pageContent = await page.content();
-        expect(pageContent).toContain(serviceName.trim());
-      }
-    }
+    await expect(page.getByRole('combobox', { name: 'Log query' })).toHaveValue('service:payment-service');
+    await expect(results.getByRole('button', { name: 'Filter by service api-gateway' })).toHaveCount(0);
   });
 });

@@ -1,7 +1,9 @@
+
 <script lang="ts">
+  import { APP_VERSION } from "$lib/app-version";
   import Github from "@lucide/svelte/icons/github";
 
-  const version = "v1.5.0";
+  const version = APP_VERSION;
   const currentYear = new Date().getFullYear();
   const githubUrl = "https://github.com/logtide-dev/logtide";
 </script>
@@ -31,9 +33,9 @@
         target="_blank"
         rel="noopener noreferrer"
         class="flex items-center gap-1.5 hover:text-foreground transition-colors"
-        title="View on GitHub"
+        aria-label="View on GitHub"
       >
-        <Github class="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        <Github class="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
         GitHub
       </a>
     </div>

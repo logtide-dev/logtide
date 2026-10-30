@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import type { TopThreat } from '$lib/api/siem';
+	import { severityTone } from '$lib/utils/severity';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
 
 	interface Props {
@@ -11,28 +12,13 @@
 	let { threats, onThreatClick }: Props = $props();
 
 	const maxCount = $derived(threats ? Math.max(...threats.map((t) => t.count), 1) : 1);
-
-	function getSeverityColor(severity: string): string {
-		switch (severity) {
-			case 'critical':
-				return 'bg-purple-500';
-			case 'high':
-				return 'bg-red-500';
-			case 'medium':
-				return 'bg-orange-500';
-			case 'low':
-				return 'bg-blue-500';
-			default:
-				return 'bg-gray-500';
-		}
-	}
 </script>
 
 <Card class="h-full">
 	<CardHeader class="pb-2">
 		<CardTitle class="text-sm font-semibold flex items-center gap-2">
-			<AlertTriangle class="w-4 h-4 text-destructive" />
-			Top Threats
+			<AlertTriangle class="w-4 h-4 text-destructive-text" />
+			Top threats
 		</CardTitle>
 	</CardHeader>
 	<CardContent class="pt-0">
@@ -52,11 +38,12 @@
 							<span class="text-xs truncate flex-1 mr-2 group-hover:text-primary transition-colors" title={threat.ruleTitle}>
 								{threat.ruleTitle}
 							</span>
-							<span class="text-xs font-semibold text-muted-foreground">{threat.count}</span>
+							<span class="text-xs font-semibold text-muted-foreground">{threat.count.toLocaleString('en-US')}</span>
 						</div>
 						<div class="h-1.5 bg-muted rounded-full overflow-hidden">
 							<div
-								class="h-full rounded-full transition-all {getSeverityColor(threat.severity)}"
+								data-testid="threat-bar"
+								class="h-full rounded-full transition-all {severityTone(threat.severity).dot}"
 								style="width: {(threat.count / maxCount) * 100}%"
 							></div>
 						</div>

@@ -7,15 +7,15 @@
   import Spinner from './Spinner.svelte';
   import * as Alert from '$lib/components/ui/alert';
   import Plus from '@lucide/svelte/icons/plus';
-  import Copy from '@lucide/svelte/icons/copy';
-  import Check from '@lucide/svelte/icons/check';
+  import CopyButton from '$lib/components/app/CopyButton.svelte';
   import { checklistStore } from '$lib/stores/checklist';
-  import { copyToClipboard } from '$lib/utils/clipboard';
   import { getApiUrl } from '$lib/config';
+  import { buildDsn, resolveEndpoints } from '$lib/components/connect/endpoints';
+  import { buildSnippets } from '$lib/components/connect/snippets';
   import type { ApiKeyType } from '$lib/api/api-keys';
 
   interface Props {
-    onSubmit: (data: { name: string; type: ApiKeyType; allowedOrigins: string[] | null }) => Promise<{ apiKey: string; type: ApiKeyType; message: string }>;
+    onSubmit: (data: { name: string; type: ApiKeyType; allowedOrigins: string[] | null }) => Promise<{ apiKey: string; keyPrefix: string; type: ApiKeyType; message: string }>;
     open?: boolean;
   }
 
@@ -26,21 +26,19 @@
   let submitting = $state(false);
   let error = $state('');
   let generatedApiKey = $state<string | null>(null);
+  let generatedKeyPrefix = $state('');
   let generatedKeyType = $state<ApiKeyType>('write');
-  let copied = $state(false);
-  let copiedDsn = $state(false);
-  let apiUrlValue = $state('http://localhost:8080');
 
-  $effect(() => {
-    apiUrlValue = getApiUrl() || window.location.origin;
-  });
-
-  let dsn = $derived.by(() => {
-    if (!generatedApiKey) return '';
-    const scheme = apiUrlValue.startsWith('http://') ? 'http' : 'https';
-    const host = apiUrlValue.replace(/^https?:\/\//, '');
-    return `${scheme}://${generatedApiKey}@${host}`;
-  });
+  // One source for the DSN and the example request: the same endpoint
+  // resolution the Connect snippets use (handles http, ports, base paths,
+  // IPv6 and relative API URLs behind a reverse proxy).
+  let endpoints = $derived(resolveEndpoints(getApiUrl(), window.location.origin));
+  let dsn = $derived(generatedApiKey ? buildDsn(endpoints, generatedApiKey) : '');
+  let curlExample = $derived(
+    generatedApiKey
+      ? (buildSnippets('curl', { endpoints, apiKey: generatedApiKey, service: 'my-app' })[0]?.code ?? '')
+      : '',
+  );
 
   function parseOrigins(raw: string): string[] | null {
     const list = raw
@@ -63,70 +61,37 @@
       });
 
       generatedApiKey = result.apiKey;
+      generatedKeyPrefix = result.keyPrefix || result.apiKey.slice(0, 9);
       generatedKeyType = result.type;
 
       // Mark checklist item as complete
       checklistStore.completeItem('create-api-key');
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Failed to create API key';
+      // A capability limit (apikeys.max) arrives here with its own message and
+      // stays on screen so the user can act on it.
+      error = e instanceof Error ? e.message : 'Could not create the API key. Try again.';
     } finally {
       submitting = false;
     }
   }
 
-  async function handleCopy() {
-    if (!generatedApiKey) return;
-
-    const success = await copyToClipboard(generatedApiKey);
-
-    if (success) {
-      copied = true;
-      setTimeout(() => {
-        copied = false;
-      }, 2000);
-    } else {
-      error = 'Could not copy to clipboard. Please select the key and copy manually (Ctrl+C / Cmd+C).';
-    }
-  }
-
-  async function handleCopyDsn() {
-    if (!dsn) return;
-
-    const success = await copyToClipboard(dsn);
-
-    if (success) {
-      copiedDsn = true;
-      setTimeout(() => {
-        copiedDsn = false;
-      }, 2000);
-    } else {
-      error = 'Could not copy to clipboard. Please select the DSN and copy manually (Ctrl+C / Cmd+C).';
-    }
-  }
-
-  function handleClose() {
+  function reset() {
     name = '';
     keyType = 'write';
     originsRaw = '';
     generatedApiKey = null;
+    generatedKeyPrefix = '';
     generatedKeyType = 'write';
     error = '';
-    copied = false;
-    copiedDsn = false;
+  }
+
+  function handleClose() {
+    reset();
     open = false;
   }
 
   $effect(() => {
-    if (!open) {
-      name = '';
-      keyType = 'write';
-      originsRaw = '';
-      generatedApiKey = null;
-      generatedKeyType = 'write';
-      error = '';
-      copied = false;
-      copiedDsn = false;
-    }
+    if (!open) reset();
   });
 </script>
 
@@ -134,19 +99,19 @@
   <DialogContent class="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
     {#if !generatedApiKey}
       <DialogHeader>
-        <DialogTitle>Create API Key</DialogTitle>
+        <DialogTitle>Create API key</DialogTitle>
         <DialogDescription>
-          Create a new API key for this project. You'll be able to use it to send logs programmatically.
+          Create a new API key for this project. Use it to send logs, traces and metrics programmatically.
         </DialogDescription>
       </DialogHeader>
 
       <form onsubmit={handleSubmit} class="space-y-4 py-4">
         <div class="space-y-2">
-          <Label for="api-key-name">API Key Name</Label>
+          <Label for="api-key-name">API key name</Label>
           <Input
             id="api-key-name"
             type="text"
-            placeholder="Production API Key"
+            placeholder="Production API key"
             bind:value={name}
             disabled={submitting}
             required
@@ -158,7 +123,7 @@
         </div>
 
         <div class="space-y-2">
-          <Label>Key Type</Label>
+          <Label>Key type</Label>
           <div class="grid grid-cols-2 gap-3">
             <button
               type="button"
@@ -167,9 +132,9 @@
                 : 'border-input hover:border-primary/50'}"
               onclick={() => (keyType = 'write')}
             >
-              <div class="font-medium text-sm">Write-Only</div>
+              <div class="font-medium text-sm">Write-only</div>
               <div class="text-xs text-muted-foreground mt-1">
-                Can only ingest logs. Safe for client-side use.
+                Can only send data. Safe for client-side use.
               </div>
             </button>
             <button
@@ -179,9 +144,9 @@
                 : 'border-input hover:border-primary/50'}"
               onclick={() => (keyType = 'full')}
             >
-              <div class="font-medium text-sm">Full Access</div>
+              <div class="font-medium text-sm">Full access</div>
               <div class="text-xs text-muted-foreground mt-1">
-                Can ingest logs and query data. Server-side only.
+                Can send and query data. Server-side only.
               </div>
             </button>
           </div>
@@ -189,7 +154,7 @@
 
         <div class="space-y-2">
           <Label for="allowed-origins">
-            Allowed Origins / IPs
+            Allowed origins and IPs
             <span class="text-muted-foreground font-normal">(optional)</span>
           </Label>
           <Textarea
@@ -206,7 +171,7 @@
         </div>
 
         {#if error}
-          <div class="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+          <div class="text-sm text-destructive bg-destructive/10 p-3 rounded-md" role="alert">
             {error}
           </div>
         {/if}
@@ -230,22 +195,22 @@
               Creating...
             {:else}
               <Plus class="w-4 h-4" />
-              Create API Key
+              Create API key
             {/if}
           </Button>
         </DialogFooter>
       </form>
     {:else}
       <DialogHeader>
-        <DialogTitle>API Key Created</DialogTitle>
+        <DialogTitle>API key created</DialogTitle>
         <DialogDescription>
-          Your API key has been created successfully.
+          Your API key was created.
         </DialogDescription>
       </DialogHeader>
 
       <div class="space-y-4 py-4">
         <Alert.Root variant="destructive">
-          <Alert.Title>Important: Save this key now</Alert.Title>
+          <Alert.Title>Save this key now</Alert.Title>
           <Alert.Description>
             This is the only time you'll see this key. Copy it and store it securely.
             If you lose it, you'll need to create a new one.
@@ -253,28 +218,14 @@
         </Alert.Root>
 
         <div class="space-y-2">
-          <Label>Your API Key</Label>
+          <Label>Your API key</Label>
           <div class="flex gap-2 items-start">
             <div class="flex-1 min-w-0">
-              <div class="relative">
-                <div class="font-mono text-sm bg-muted border border-input rounded-md px-3 py-2 break-all select-all cursor-text overflow-x-auto">
-                  {generatedApiKey}
-                </div>
+              <div class="font-mono text-sm bg-muted border border-input rounded-md px-3 py-2 break-all select-all cursor-text overflow-x-auto">
+                {generatedApiKey}
               </div>
             </div>
-            <Button
-              variant="outline"
-              onclick={handleCopy}
-              class="gap-2 shrink-0"
-            >
-              {#if copied}
-                <Check class="w-4 h-4" />
-                Copied
-              {:else}
-                <Copy class="w-4 h-4" />
-                Copy
-              {/if}
-            </Button>
+            <CopyButton value={generatedApiKey} ariaLabel="Copy API key" />
           </div>
         </div>
 
@@ -286,33 +237,27 @@
                 {dsn}
               </div>
             </div>
-            <Button
-              variant="outline"
-              onclick={handleCopyDsn}
-              class="gap-2 shrink-0"
-            >
-              {#if copiedDsn}
-                <Check class="w-4 h-4" />
-                Copied
-              {:else}
-                <Copy class="w-4 h-4" />
-                Copy
-              {/if}
-            </Button>
+            <CopyButton value={dsn} ariaLabel="Copy DSN" />
           </div>
         </div>
 
-        <div class="text-sm text-muted-foreground">
-          Key type: <span class="font-medium">
-            {generatedKeyType === 'write' ? 'Write-Only' : 'Full Access'}
-          </span>
+        <div class="space-y-1 text-sm text-muted-foreground">
+          <div>
+            Key prefix: <code class="font-mono text-foreground">{generatedKeyPrefix}</code>
+          </div>
+          <div>
+            Key type: <span class="font-medium text-foreground">
+              {generatedKeyType === 'write' ? 'Write-only' : 'Full access'}
+            </span>
+          </div>
         </div>
 
         <div class="bg-muted p-3 rounded-md space-y-1">
-          <p class="text-xs font-medium">Usage Example:</p>
-          <pre class="text-xs text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all"><code>curl -X POST {apiUrlValue}/api/v1/ingest \
-  -H "X-API-Key: {generatedApiKey}" \
-  -d '{`{"logs": [...]}`}'</code></pre>
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-medium">Usage example</p>
+            <CopyButton value={curlExample} ariaLabel="Copy cURL example" />
+          </div>
+          <pre class="text-xs text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all"><code>{curlExample}</code></pre>
         </div>
       </div>
 

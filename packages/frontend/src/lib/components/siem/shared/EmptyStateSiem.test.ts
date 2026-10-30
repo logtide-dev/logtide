@@ -24,6 +24,13 @@ describe('EmptyStateSiem', () => {
     expect(getByText('No history')).toBeTruthy();
   });
 
+  it('renders through the shared empty state with sentence case copy', () => {
+    const { getByRole, getByText } = render(EmptyStateSiem, { props: { type: 'detections' } });
+    expect(getByRole('status')).toBeTruthy();
+    expect(getByText('No detection events')).toBeTruthy();
+    expect(getByText(/detection rules/)).toBeTruthy();
+  });
+
   it('overrides title and description via props', () => {
     const { getByText } = render(EmptyStateSiem, {
       props: { type: 'incidents', title: 'Custom Title', description: 'Custom desc' },

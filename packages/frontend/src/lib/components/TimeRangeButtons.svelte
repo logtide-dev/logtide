@@ -12,15 +12,17 @@
     value,
     onChange,
     class: className = '',
+    ariaLabel = 'Time range',
   }: {
     options: Option[];
     value: string;
     onChange: (value: string) => void;
     class?: string;
+    ariaLabel?: string;
   } = $props();
 </script>
 
-<div class="inline-flex items-center rounded-md border bg-muted p-0.5 {className}">
+<div role="group" aria-label={ariaLabel} class="inline-flex items-center rounded-md border bg-muted p-0.5 {className}">
   {#each options as opt (opt.value)}
     <button
       type="button"

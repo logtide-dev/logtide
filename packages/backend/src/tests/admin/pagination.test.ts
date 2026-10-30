@@ -67,26 +67,24 @@ describe('Admin pagination bounds', () => {
         expect(body.users.length).toBeLessThanOrEqual(200);
     });
 
-    it('defaults page to 1 when given NaN', async () => {
+    it('rejects a non-numeric page with 400', async () => {
         const response = await app.inject({
             method: 'GET',
             url: '/api/v1/admin/users?page=notanumber',
             headers: { Authorization: `Bearer ${adminToken}` },
         });
-        expect(response.statusCode).toBe(200);
-        const body = response.json();
-        expect(body.page).toBe(1);
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error).toMatch(/page/);
     });
 
-    it('defaults limit to 50 when given NaN', async () => {
+    it('rejects a non-numeric limit with 400', async () => {
         const response = await app.inject({
             method: 'GET',
             url: '/api/v1/admin/users?limit=notanumber',
             headers: { Authorization: `Bearer ${adminToken}` },
         });
-        expect(response.statusCode).toBe(200);
-        const body = response.json();
-        expect(body.limit).toBe(50);
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error).toMatch(/limit/);
     });
 
     it('clamps limit to 200 for /organizations endpoint', async () => {

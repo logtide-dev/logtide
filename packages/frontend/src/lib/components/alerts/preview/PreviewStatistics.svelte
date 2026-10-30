@@ -26,7 +26,7 @@
 	<div class="grid grid-cols-4 gap-2">
 		<div class="text-center p-2 rounded bg-muted/50">
 			<div class="text-lg font-semibold">{thresholdAnalysis.p50Value}</div>
-			<div class="text-xs text-muted-foreground">P50 (Median)</div>
+			<div class="text-xs text-muted-foreground">P50 (median)</div>
 		</div>
 		<div class="text-center p-2 rounded bg-muted/50">
 			<div class="text-lg font-semibold">{thresholdAnalysis.p95Value}</div>
@@ -38,7 +38,7 @@
 		</div>
 		<div class="text-center p-2 rounded bg-muted/50">
 			<div class="text-lg font-semibold">{thresholdAnalysis.percentAboveThreshold}%</div>
-			<div class="text-xs text-muted-foreground">Above Threshold</div>
+			<div class="text-xs text-muted-foreground">Above threshold</div>
 		</div>
 	</div>
 
@@ -46,7 +46,7 @@
 	{#if totalIncidents > 0}
 		<div>
 			<h4 class="text-xs font-medium text-muted-foreground mb-2">
-				By Day of Week
+				By day of week
 			</h4>
 			<div class="flex gap-1 items-end h-16">
 				{#each byDayOfWeek as day}
@@ -95,7 +95,7 @@
 		{#if incidentStats.averageDuration > 0}
 			<div class="pt-2 border-t">
 				<h4 class="text-xs font-medium text-muted-foreground mb-2">
-					Incident Duration
+					Incident duration
 				</h4>
 				<div class="grid grid-cols-3 gap-2 text-center">
 					<div>

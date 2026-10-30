@@ -1,3 +1,8 @@
+@import '@fontsource-variable/inter/index.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -25,8 +30,8 @@
     --muted: 220 14% 88%;
     --muted-foreground: 220 9% 40%;
 
-    /* Accent for active states - white to stand out */
-    --accent: 0 0% 100%;
+    /* Accent for hover and highlight states - visibly different from card and popover */
+    --accent: 220 14% 93%;
     --accent-foreground: 224 71% 4%;
 
     --destructive: 0 84% 60%;
@@ -37,43 +42,86 @@
     --input: 220 13% 82%;
     --ring: 262 83% 58%;
     --radius: 0.5rem;
+
+    /* Readable purple for text and links, active navigation item */
+    --primary-text: 262 83% 46%;
+    --nav-active: 262 70% 95%;
+    --nav-active-foreground: 262 83% 40%;
+    --destructive-text: 0 72% 40%;
+
+    /* Semantic status tokens: solid, foreground on solid, readable text */
+    --success: 142 71% 29%;
+    --success-foreground: 0 0% 100%;
+    --success-text: 142 72% 26%;
+    --warning: 38 92% 44%;
+    --warning-foreground: 224 71% 4%; /* dark text: white on amber cannot reach 4.5:1 */
+    --warning-text: 32 95% 28%;
+    --info: 217 91% 52%;
+    --info-foreground: 0 0% 100%;
+    --info-text: 217 85% 40%;
+    --critical: 271 81% 52%;
+    --critical-foreground: 0 0% 100%;
+    --critical-text: 271 75% 42%;
   }
 
   .dark {
-    /* Clean Zinc Dark Theme */
-    --background: 240 10% 3.9%;
+    /* Clean Zinc Dark Theme with lifted surfaces */
+    --background: 240 10% 4%;
     --foreground: 0 0% 98%;
 
-    --card: 240 10% 3.9%;
+    --card: 240 8% 7%;
     --card-foreground: 0 0% 98%;
 
-    --popover: 240 10% 3.9%;
+    --popover: 240 8% 8%;
     --popover-foreground: 0 0% 98%;
 
     --primary: 262 83% 58%;
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 240 3.7% 15.9%;
+    --secondary: 240 6% 14%;
     --secondary-foreground: 0 0% 98%;
 
-    --muted: 240 3.7% 15.9%;
+    --muted: 240 6% 13%;
     --muted-foreground: 240 5% 64.9%;
 
-    --accent: 240 5% 20%;
+    --accent: 240 6% 17%;
     --accent-foreground: 0 0% 98%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
+    --border: 240 6% 16%;
+    --input: 240 6% 20%;
     --ring: 262 83% 58%;
+
+    --primary-text: 265 95% 78%;
+    --nav-active: 262 40% 17%;
+    --nav-active-foreground: 265 95% 80%;
+    --destructive-text: 0 90% 72%;
+
+    --success: 142 65% 45%;
+    --success-foreground: 240 10% 4%;
+    --success-text: 142 70% 60%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 240 10% 4%;
+    --warning-text: 40 95% 62%;
+    --info: 217 91% 62%;
+    --info-foreground: 240 10% 4%;
+    --info-text: 213 95% 72%;
+    --critical: 271 91% 68%;
+    --critical-foreground: 240 10% 4%;
+    --critical-text: 270 95% 78%;
   }
 }
 
 @layer base {
   * {
     @apply border-border;
+  }
+
+  /* Reserve the scrollbar space so short and long pages keep the same layout width. */
+  html {
+    scrollbar-gutter: stable;
   }
 
   body {

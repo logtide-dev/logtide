@@ -13,6 +13,7 @@ export const AUDIT_ACTIONS = {
   'org.deleted': 'data_modification',
   'org.entitlements_updated': 'config_change',
   'org.retention_updated': 'config_change',
+  'org.ownership_transferred': 'user_management',
   // projects
   'project.created': 'config_change',
   'project.updated': 'config_change',
@@ -29,6 +30,8 @@ export const AUDIT_ACTIONS = {
   // users and membership
   'user.registered': 'user_management',
   'user.email_verified': 'user_management',
+  'user.password_reset_requested': 'user_management',
+  'user.password_reset_completed': 'user_management',
   'user.terms_accepted': 'user_management',
   'user.created': 'user_management',
   'user.invited': 'user_management',
@@ -63,10 +66,18 @@ export const AUDIT_ACTIONS = {
   'dashboard.updated': 'config_change',
   'dashboard.deleted': 'config_change',
   'dashboard.imported': 'config_change',
+  // saved log searches (target.type saved_search)
+  'search.created': 'config_change',
+  'search.updated': 'config_change',
+  'search.deleted': 'config_change',
   // notification channels
   'channel.created': 'config_change',
   'channel.updated': 'config_change',
   'channel.deleted': 'config_change',
+  // public status page admin writes
+  'statuspage.config_updated': 'config_change',
+  'statuspage.components_updated': 'config_change',
+  'statuspage.subscriber_removed': 'data_modification',
   // email digest reports (#154)
   'digest.config_updated': 'config_change',
   'digest.config_deleted': 'config_change',

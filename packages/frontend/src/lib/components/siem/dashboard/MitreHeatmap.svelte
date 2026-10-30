@@ -6,6 +6,7 @@
 	import { getTacticName, getTechniqueName } from '@logtide/shared';
 	import { themeStore } from '$lib/stores/theme';
 	import { getEChartsTheme, getTooltipStyle } from '$lib/utils/echarts-theme';
+	import { severityTone } from '$lib/utils/severity';
 
 	interface Props {
 		cells: MitreHeatmapCell[] | undefined;
@@ -62,6 +63,12 @@
 		}
 		return technique;
 	}
+
+	const summary = $derived.by(() => {
+		if (!cells || cells.length === 0) return 'No MITRE data available';
+		const total = cells.reduce((sum, c) => sum + c.count, 0);
+		return `MITRE ATT&CK heatmap, ${total.toLocaleString('en-US')} detections across ${cells.length.toLocaleString('en-US')} technique and tactic pairs`;
+	});
 
 	// Initialize the chart once the container element is available. The container
 	// is always rendered (the empty state is an overlay), so this runs even when
@@ -120,10 +127,13 @@
 			});
 		});
 
-		// Theme-aware gradient colors
-		const gradientColors = theme.isDark
-			? ['#0f172a', '#1d4ed8', '#dc2626', '#991b1b']
-			: ['#e0f2fe', '#3b82f6', '#ef4444', '#b91c1c'];
+		// Intensity runs from a theme-aware base through the severity colours
+		const gradientColors = [
+			theme.isDark ? '#0f172a' : '#e0f2fe',
+			severityTone('informational').chart,
+			severityTone('high').chart,
+			severityTone('critical').chart,
+		];
 
 		const option: echarts.EChartsOption = {
 			tooltip: {
@@ -228,12 +238,12 @@
 	<CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
 		<CardTitle class="text-base font-semibold flex items-center gap-2">
 			<Grid3x3 class="w-4 h-4 text-primary" />
-			MITRE ATT&CK Heatmap
+			MITRE ATT&CK heatmap
 		</CardTitle>
 	</CardHeader>
 	<CardContent>
 		<div class="relative h-[280px] w-full">
-			<div bind:this={chartContainer} class="h-full w-full"></div>
+			<div bind:this={chartContainer} role="img" aria-label={summary} class="h-full w-full"></div>
 			{#if !cells || cells.length === 0}
 				<div
 					class="absolute inset-0 flex flex-col items-center justify-center text-center text-muted-foreground"

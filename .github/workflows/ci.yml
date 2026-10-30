@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: '24'
   PNPM_VERSION: '10'
 
 # Restrict permissions for all jobs (principle of least privilege)
@@ -134,6 +134,19 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_DB: logtide_test
+          POSTGRES_USER: logtide_test
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       clickhouse:
         image: clickhouse/clickhouse-server:24.1
         env:
@@ -193,6 +206,10 @@ jobs:
         working-directory: packages/reservoir
         env:
           REDIS_URL: redis://localhost:6380
+          RESERVOIR_TIMESCALE_URL: postgresql://logtide_test:test_password@localhost:5433/logtide_test
+          RESERVOIR_CLICKHOUSE_URL: http://default:@localhost:18123/logtide_conformance
+          RESERVOIR_MONGODB_URL: mongodb://localhost:27017/logtide_conformance
+          RESERVOIR_CONFORMANCE_REQUIRED: '1'
         run: npx vitest run --coverage --coverage.reporter=text --coverage.reporter=lcov --coverage.reporter=json --reporter=verbose
 
       - name: Upload reservoir coverage to Codecov
@@ -289,7 +306,7 @@ jobs:
   # ====================
   e2e-test:
     name: E2E Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # playwright 1.57 has no chromium build for ubuntu 26.04
     needs: [backend-test, typecheck]
 
     steps:
@@ -323,6 +340,9 @@ jobs:
           echo "Backend is ready"
           timeout 120 bash -c 'until curl -s http://localhost:3002 > /dev/null; do sleep 2; done'
           echo "Frontend is ready"
+          # The worker runs the alert cron and notification jobs the alert-to-incident journey needs
+          docker compose -f docker-compose.test.yml ps worker-test --format '{{.State}}' | grep -q running
+          echo "Worker is running"
 
       - name: Run E2E tests
         working-directory: packages/frontend

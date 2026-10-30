@@ -45,6 +45,19 @@ import type {
   DeleteMetricsByTimeRangeParams,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  LogHistogramParams,
+  LogHistogramResult,
+  LogFacetsParams,
+  LogFacetsResult,
+  DiscoverMetadataKeysParams,
+  MetadataKeyOccurrence,
+  OperationStatsParams,
+  OperationStat,
+  LatencyHistogramParams,
+  LatencyHistogramResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  HasSessionsParams,
 } from './types.js';
 
 /**
@@ -73,6 +86,16 @@ export interface IReservoir {
   distinct(params: DistinctParams): Promise<DistinctResult>;
   topValues(params: TopValuesParams): Promise<TopValuesResult>;
   deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult>;
+  /** Zero-filled, epoch-aligned log volume per level. */
+  histogram(params: LogHistogramParams): Promise<LogHistogramResult>;
+  /** Top values per field over the matching logs. */
+  facets(params: LogFacetsParams): Promise<LogFacetsResult>;
+  /** Metadata keys of the most recent logs (top level and one nested level). */
+  discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]>;
+  /** Sessions grouped from logs, cursor paginated. */
+  listSessions(params: ListSessionsParams): Promise<ListSessionsResult>;
+  /** Whether any log in range carries a session id. */
+  hasSessions(params: HasSessionsParams): Promise<boolean>;
 
   // Spans & traces
   ingestSpans(spans: SpanRecord[]): Promise<IngestSpansResult>;
@@ -93,6 +116,10 @@ export interface IReservoir {
   /** Time-bucketed span volume + latency percentiles from raw spans (all engines). */
   getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]>;
   deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult>;
+  /** Per-operation count, errors and latency percentiles over entry spans. */
+  getOperationStats(params: OperationStatsParams): Promise<OperationStat[]>;
+  /** Latency distribution of entry spans over LATENCY_HISTOGRAM_BOUNDS_MS. */
+  getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult>;
 
   // Metrics
   ingestMetrics(metrics: MetricRecord[]): Promise<IngestMetricsResult>;

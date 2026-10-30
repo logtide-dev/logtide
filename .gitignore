@@ -20,6 +20,8 @@ build/
 
 # Logs
 logs/
+!packages/frontend/src/routes/dashboard/logs/
+!packages/frontend/src/routes/dashboard/logs/**
 *.log
 npm-debug.log*
 pnpm-debug.log*

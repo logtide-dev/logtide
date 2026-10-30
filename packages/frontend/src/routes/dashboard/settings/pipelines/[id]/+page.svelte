@@ -6,6 +6,8 @@
   import { toastStore } from '$lib/stores/toast';
   import { pipelineStore } from '$lib/stores/log-pipeline';
   import type { PipelineStep } from '$lib/api/log-pipeline';
+  import PageHeader from '$lib/components/app/PageHeader.svelte';
+  import ReadOnlyNotice from '$lib/components/settings/ReadOnlyNotice.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -16,10 +18,12 @@
   import StepBuilder from '$lib/components/pipelines/StepBuilder.svelte';
   import PipelinePreview from '$lib/components/pipelines/PipelinePreview.svelte';
   import ArrowLeft from '@lucide/svelte/icons/arrow-left';
-  import GitBranch from '@lucide/svelte/icons/git-branch';
 
   let token: string | null = null;
   let organizationId = $state<string | null>(null);
+  let role = $state<string | null>(null);
+  let canEdit = $derived(role === 'owner' || role === 'admin');
+  let pipelineProjectId = $state<string | null>(null);
   let initialOrgId: string | null = null;
 
   let pipelineId = $derived(page.params.id);
@@ -38,6 +42,7 @@
 
   organizationStore.subscribe((s) => {
     organizationId = s.currentOrganization?.id ?? null;
+    role = s.currentOrganization?.role ?? null;
   });
 
   $effect(() => {
@@ -67,8 +72,9 @@
       description = pipeline.description ?? '';
       enabled = pipeline.enabled;
       steps = pipeline.steps;
+      pipelineProjectId = pipeline.projectId;
     } catch (e) {
-      loadError = e instanceof Error ? e.message : 'Failed to load pipeline';
+      loadError = e instanceof Error ? e.message : 'Could not load pipeline';
     } finally {
       loadingPipeline = false;
     }
@@ -77,7 +83,7 @@
   async function handleSave() {
     if (!organizationId) return;
     if (!name.trim()) {
-      toastStore.error('Pipeline name is required');
+      toastStore.error('Enter a pipeline name');
       return;
     }
     saving = true;
@@ -91,7 +97,7 @@
       toastStore.success('Pipeline saved');
       goto('/dashboard/settings/pipelines');
     } catch (e) {
-      toastStore.error(e instanceof Error ? e.message : 'Failed to save pipeline');
+      toastStore.error(e instanceof Error ? e.message : 'Could not save pipeline');
     } finally {
       saving = false;
     }
@@ -99,23 +105,34 @@
 </script>
 
 <svelte:head>
-  <title>Edit Pipeline - LogTide</title>
+  <title>Edit pipeline - LogTide</title>
 </svelte:head>
 
 <div class="space-y-6">
-  <!-- Header -->
-  <div class="flex items-center gap-3">
-    <Button variant="ghost" size="icon" onclick={() => goto('/dashboard/settings/pipelines')}>
-      <ArrowLeft class="w-4 h-4" />
-    </Button>
-    <div>
-      <h2 class="text-xl font-semibold flex items-center gap-2">
-        <GitBranch class="w-5 h-5" />
-        Edit Pipeline
-      </h2>
-      <p class="text-sm text-muted-foreground">Update pipeline configuration</p>
-    </div>
-  </div>
+  <PageHeader
+    title="Edit pipeline"
+    appliesTo="organization"
+    description="Update pipeline configuration."
+    breadcrumbs={[
+      { label: 'Pipelines', href: '/dashboard/settings/pipelines' },
+      { label: name || 'Edit pipeline' },
+    ]}
+  >
+    {#snippet actions()}
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Back to pipelines"
+        onclick={() => goto('/dashboard/settings/pipelines')}
+      >
+        <ArrowLeft class="w-4 h-4" />
+      </Button>
+    {/snippet}
+  </PageHeader>
+
+  {#if !canEdit}
+    <ReadOnlyNotice what="log pipelines" />
+  {/if}
 
   {#if loadingPipeline}
     <div class="flex items-center justify-center py-16">
@@ -128,7 +145,7 @@
     <!-- Basic Info -->
     <Card>
       <CardHeader>
-        <CardTitle>Basic Info</CardTitle>
+        <CardTitle>Basic info</CardTitle>
       </CardHeader>
       <CardContent class="space-y-4">
         <div class="space-y-2">
@@ -161,7 +178,7 @@
     <!-- Steps -->
     <Card>
       <CardHeader>
-        <CardTitle>Pipeline Steps</CardTitle>
+        <CardTitle>Pipeline steps</CardTitle>
         <CardDescription>
           Steps are executed in order. Each step can parse or enrich log data.
         </CardDescription>
@@ -173,7 +190,7 @@
 
     <!-- Preview -->
     {#if organizationId}
-      <PipelinePreview {organizationId} {steps} />
+      <PipelinePreview {organizationId} {steps} projectId={pipelineProjectId} />
     {/if}
 
     <!-- Actions -->
@@ -185,7 +202,7 @@
       >
         Cancel
       </Button>
-      <Button onclick={handleSave} disabled={saving || !name.trim()}>
+      <Button onclick={handleSave} disabled={saving || !name.trim() || !canEdit}>
         {saving ? 'Saving...' : 'Save changes'}
       </Button>
     </div>

@@ -43,6 +43,6 @@ export function capPercent(c: { current: number; limit: number | null }): number
 /** Bar color: green < 80%, amber 80-99%, red >= 100% (over limit). */
 export function capBarColor(pct: number): string {
   if (pct >= 100) return 'bg-destructive';
-  if (pct >= 80) return 'bg-amber-500';
-  return 'bg-green-500';
+  if (pct >= 80) return 'bg-warning';
+  return 'bg-success';
 }

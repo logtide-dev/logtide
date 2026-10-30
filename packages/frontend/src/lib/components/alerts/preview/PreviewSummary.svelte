@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PreviewRange } from "$lib/api/alerts";
+	import { levelTone, stateTone } from "$lib/utils/severity";
 	import { Badge } from "$lib/components/ui/badge";
 	import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
 	import CheckCircle from "@lucide/svelte/icons/check-circle";
@@ -41,26 +42,26 @@
 		switch (severity) {
 			case "high":
 				return {
-					label: "Very Noisy",
-					color: "bg-red-100 text-red-800 border-red-200",
+					label: "Very noisy",
+					color: levelTone("error").badge,
 					icon: AlertTriangle,
 				};
 			case "medium":
 				return {
 					label: "Moderate",
-					color: "bg-yellow-100 text-yellow-800 border-yellow-200",
+					color: levelTone("warn").badge,
 					icon: Clock,
 				};
 			case "low":
 				return {
 					label: "Reasonable",
-					color: "bg-green-100 text-green-800 border-green-200",
+					color: stateTone("ok").badge,
 					icon: CheckCircle,
 				};
 			default:
 				return {
-					label: "No Triggers",
-					color: "bg-gray-100 text-gray-800 border-gray-200",
+					label: "No triggers",
+					color: stateTone("pending").badge,
 					icon: CheckCircle,
 				};
 		}

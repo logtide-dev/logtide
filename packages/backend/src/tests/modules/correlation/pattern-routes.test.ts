@@ -135,7 +135,7 @@ describe('Pattern Routes', () => {
             expect(response.statusCode).toBe(403);
         });
 
-        it('should use first organization when organizationId not specified', async () => {
+        it('should return 400 when organizationId is not specified', async () => {
             const response = await app.inject({
                 method: 'GET',
                 url: '/v1/patterns',
@@ -144,7 +144,7 @@ describe('Pattern Routes', () => {
                 },
             });
 
-            expect(response.statusCode).toBe(200);
+            expect(response.statusCode).toBe(400);
         });
     });
 
@@ -383,9 +383,8 @@ describe('Pattern Routes', () => {
             expect(response.statusCode).toBe(400);
         });
 
-        it('should use first organization when organizationId is not specified', async () => {
-            // No organizationId query param: should fall back to user's first org
-            // Pattern does not exist → 404
+        it('should return 400 when organizationId is not specified', async () => {
+            // No organizationId query param: no fallback to the user's newest org
             const response = await app.inject({
                 method: 'PUT',
                 url: '/v1/patterns/00000000-0000-0000-0000-000000000000',
@@ -397,7 +396,7 @@ describe('Pattern Routes', () => {
                 },
             });
 
-            expect(response.statusCode).toBe(404);
+            expect(response.statusCode).toBe(400);
         });
 
         it('should return 403 when user has no access to the specified organization', async () => {
@@ -514,9 +513,8 @@ describe('Pattern Routes', () => {
             expect(response.statusCode).toBe(404);
         });
 
-        it('should use first organization when organizationId is not specified', async () => {
-            // No organizationId query param: should fall back to user's first org
-            // Pattern does not exist → 404
+        it('should return 400 when organizationId is not specified', async () => {
+            // No organizationId query param: no fallback to the user's newest org
             const response = await app.inject({
                 method: 'DELETE',
                 url: '/v1/patterns/00000000-0000-0000-0000-000000000000',
@@ -525,7 +523,7 @@ describe('Pattern Routes', () => {
                 },
             });
 
-            expect(response.statusCode).toBe(404);
+            expect(response.statusCode).toBe(400);
         });
 
         it('should return 403 when user has no access to the specified organization', async () => {

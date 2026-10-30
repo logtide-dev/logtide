@@ -2,6 +2,12 @@
   import type { TraceLatencyConfig } from '@logtide/shared';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import SuggestInput from '../pickers/SuggestInput.svelte';
+  import {
+    createServiceOptions,
+    keepServiceForProject,
+  } from '../pickers/options-state.svelte';
   import {
     Select,
     SelectContent,
@@ -17,6 +23,16 @@
   }
 
   let { config, onChange }: Props = $props();
+
+  const services = createServiceOptions('traces', () => config.projectId);
+
+  // Keep the selected service when the new project offers it, drop it otherwise.
+  async function handleProjectChange(projectId: string | null) {
+    onChange({ ...config, projectId });
+    if (!(await keepServiceForProject('traces', projectId, config.serviceName))) {
+      onChange({ ...config, projectId, serviceName: null });
+    }
+  }
 
   const percentiles: Array<'p50' | 'p95' | 'p99'> = ['p50', 'p95', 'p99'];
 
@@ -48,16 +64,23 @@
   </div>
 
   <div class="space-y-1.5">
+    <Label for="tl-project">Project</Label>
+    <ProjectSelect
+      id="tl-project"
+      value={config.projectId}
+      onChange={handleProjectChange}
+    />
+  </div>
+
+  <div class="space-y-1.5">
     <Label for="tl-service">Service filter (optional)</Label>
-    <Input
+    <SuggestInput
       id="tl-service"
-      type="text"
       placeholder="Leave empty for all services"
       value={config.serviceName ?? ''}
-      oninput={(e) => {
-        const v = (e.currentTarget as HTMLInputElement).value;
-        update('serviceName', v.length > 0 ? v : null);
-      }}
+      options={services.list}
+      loading={services.loading}
+      onChange={(v) => update('serviceName', v.length > 0 ? v : null)}
     />
   </div>
 

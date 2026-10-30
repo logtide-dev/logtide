@@ -115,6 +115,15 @@ export interface EmailVerificationTokensTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface PasswordResetTokensTable {
+  id: Generated<string>;
+  user_id: string;
+  token_hash: string;
+  expires_at: Timestamp;
+  used_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
 export interface OrganizationCreationLogTable {
   id: Generated<string>;
   user_id: string;
@@ -198,6 +207,8 @@ export interface ApiKeysTable {
   created_at: Generated<Timestamp>;
   last_used: Timestamp | null;
   revoked: Generated<boolean>;
+  // First 9 chars of the key (migration 071). NULL for keys created before 1.6.
+  key_prefix: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 export type AlertType = 'threshold' | 'rate_of_change';
@@ -298,6 +309,9 @@ export interface SigmaRulesTable {
   last_synced_at: Timestamp | null;
   // Detection routing category
   category: Generated<PackCategory>;
+  // W10: original rule text and last time the rule produced a kept match
+  raw_yaml: string | null;
+  last_fired_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -441,6 +455,10 @@ export interface UserOnboardingTable {
   tutorial_completed: Generated<boolean>;
   tutorial_step: Generated<number>;
   tutorial_skipped: Generated<boolean>;
+  // Resume position (migration 071)
+  onboarding_step: ColumnType<string | null, string | null | undefined, string | null>;
+  organization_id: ColumnType<string | null, string | null | undefined, string | null>;
+  project_id: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -492,6 +510,13 @@ export interface IncidentsTable {
   geo_data: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null, Record<string, unknown> | null>;
   source: Generated<string>;
   monitor_id: string | null;
+  // --- 1.6 F4: incidents generalization (migration 062) ---
+  alert_rule_id: string | null;
+  acknowledged_at: Timestamp | null;
+  acknowledged_by: string | null;
+  resolved_by: string | null;
+  last_event_at: Generated<Timestamp>;
+  // --- end F4 ---
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
@@ -501,7 +526,7 @@ export interface IncidentsTable {
 // SERVICE HEALTH MONITORING TABLES
 // ============================================================================
 
-export type MonitorType = 'http' | 'tcp' | 'heartbeat' | 'log_heartbeat';
+export type MonitorType = 'http' | 'tcp' | 'heartbeat' | 'log_heartbeat' | 'ssl' | 'dns';
 export type MonitorStatusValue = 'up' | 'down' | 'unknown';
 
 export interface MonitorHttpConfig {
@@ -526,6 +551,12 @@ export interface MonitorsTable {
   http_config: MonitorHttpConfig | null;
   severity: Generated<string>;
   grace_period_seconds: number | null;
+  // --- W12 uptime and status page ---
+  display_name: string | null;
+  group_name: string | null;
+  display_order: Generated<number>;
+  check_config: unknown | null;
+  // --- end W12 ---
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -540,6 +571,8 @@ export interface MonitorStatusTable {
   response_time_ms: number | null;
   last_error_code: string | null;
   incident_id: string | null;
+  // W12: last check detail (ssl certificate facts, dns records)
+  detail: unknown | null;
   updated_at: Generated<Timestamp>;
 }
 
@@ -584,6 +617,8 @@ export interface StatusIncidentsTable {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
+  // W12: the shared incident this status update was published from
+  source_incident_id: string | null;
 }
 
 export interface StatusIncidentUpdatesTable {
@@ -593,6 +628,45 @@ export interface StatusIncidentUpdatesTable {
   message: string;
   created_by: string | null;
   created_at: Generated<Timestamp>;
+}
+
+// --- W12 status page tables ---
+
+export interface StatusPageConfigTable {
+  project_id: string;
+  organization_id: string;
+  title: string | null;
+  description: string | null;
+  logo_url: string | null;
+  accent_color: string | null;
+  show_monitor_types: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface StatusPageSubscribersTable {
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string;
+  email: string;
+  email_normalized: string;
+  confirm_token_hash: string | null;
+  confirm_expires_at: Timestamp | null;
+  confirmed_at: Timestamp | null;
+  last_confirmation_sent_at: Timestamp | null;
+  confirmation_send_count: Generated<number>;
+  confirmation_window_started_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+}
+
+export interface StatusIncidentMonitorsTable {
+  incident_id: string;
+  monitor_id: string;
+}
+
+export interface MaintenanceMonitorsTable {
+  maintenance_id: string;
+  monitor_id: string;
 }
 
 // ============================================================================
@@ -717,6 +791,13 @@ export interface ErrorGroupsTable {
   sample_log_id: string | null;
   merge_key: string | null;
   last_notified_at: Timestamp | null;
+  // ux16 W5 triage fields
+  assigned_to: string | null;
+  regressed_at: Timestamp | null;
+  ignored_until: Timestamp | null;
+  ignore_until_count: number | null;
+  ignored_event_count: Generated<number>;
+  // end ux16 W5 triage fields
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -892,6 +973,38 @@ export interface MonitorChannelsTable {
   monitor_id: string;
   channel_id: string;
   created_at: Generated<Timestamp>;
+}
+
+export interface ProjectHealthIssuesTable {
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string;
+  check_key: string;
+  severity: 'critical' | 'warning';
+  opened_at: Timestamp;
+  last_seen_at: Timestamp;
+  resolved_at: Timestamp | null;
+  details: ColumnType<Record<string, unknown>, string | Record<string, unknown> | undefined, string | Record<string, unknown>>;
+  notified_open_at: Timestamp | null;
+  notified_resolve_at: Timestamp | null;
+  baseline: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+}
+
+export interface ProjectHealthStateTable {
+  project_id: string;
+  organization_id: string;
+  first_evaluated_at: Timestamp;
+  last_receiving_at: Timestamp | null;
+}
+
+export interface ProjectNotificationSettingsTable {
+  project_id: string;
+  organization_id: string;
+  health_channel_ids: ColumnType<string[], string[] | string | undefined, string[] | string>;
+  silent_minutes: Generated<number>;
+  mutes: ColumnType<Record<string, unknown>, string | Record<string, unknown> | undefined, string | Record<string, unknown>>;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface IncidentChannelsTable {
@@ -1188,12 +1301,25 @@ export interface DigestRecipientsTable {
   updated_at: Generated<Timestamp>;
 }
 
+// Saved log searches (migration 063)
+export interface SavedSearchesTable {
+  id: Generated<string>;
+  organization_id: string;
+  created_by: string | null;
+  name: string;
+  visibility: Generated<'private' | 'organization'>;
+  state: ColumnType<import('@logtide/shared').SavedSearchState, string, string>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
   sessions: SessionsTable;
   stream_tickets: StreamTicketsTable;
   email_verification_tokens: EmailVerificationTokensTable;
+  password_reset_tokens: PasswordResetTokensTable;
   organization_creation_log: OrganizationCreationLogTable;
   organizations: OrganizationsTable;
   organization_members: OrganizationMembersTable;
@@ -1246,6 +1372,9 @@ export interface Database {
   error_group_channels: ErrorGroupChannelsTable;
   organization_default_channels: OrganizationDefaultChannelsTable;
   monitor_channels: MonitorChannelsTable;
+  project_health_issues: ProjectHealthIssuesTable;
+  project_notification_settings: ProjectNotificationSettingsTable;
+  project_health_state: ProjectHealthStateTable;
   // PII masking
   pii_masking_rules: PiiMaskingRulesTable;
   organization_pii_salts: OrganizationPiiSaltsTable;
@@ -1269,6 +1398,10 @@ export interface Database {
   status_incidents: StatusIncidentsTable;
   status_incident_updates: StatusIncidentUpdatesTable;
   scheduled_maintenances: ScheduledMaintenancesTable;
+  status_page_config: StatusPageConfigTable;
+  status_page_subscribers: StatusPageSubscribersTable;
+  status_incident_monitors: StatusIncidentMonitorsTable;
+  maintenance_monitors: MaintenanceMonitorsTable;
   // Digest email reports
   digest_configs: DigestConfigsTable;
   digest_recipients: DigestRecipientsTable;
@@ -1282,4 +1415,42 @@ export interface Database {
   // Inbound webhook receivers (#155)
   receivers: ReceiversTable;
   receiver_events: ReceiverEventsTable;
+  // W10: sigma exceptions
+  sigma_rule_exceptions: SigmaRuleExceptionsTable;
+  // Saved log searches
+  saved_searches: SavedSearchesTable;
+}
+
+// ============================================================================
+// W10: sigma exceptions
+// ============================================================================
+export interface SigmaRuleExceptionsTable {
+  id: Generated<string>;
+  organization_id: string;
+  sigma_rule_id: string;
+  conditions: ColumnType<
+    Array<{ field: string; operator: 'equals' | 'contains' | 'in'; values: string[] }>,
+    string,
+    string
+  >;
+  reason: string | null;
+  expires_at: Timestamp | null;
+  // BIGINT comes back from pg as a string
+  hit_count: Generated<string>;
+  last_hit_at: Timestamp | null;
+  created_by: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+// W8 (1.6) alert rule lifecycle, migration 065. Declaration merging extends AlertRulesTable above.
+export type AlertRuleState = 'ok' | 'firing';
+
+export interface AlertRulesTable {
+  query: string | null;
+  state: Generated<AlertRuleState>;
+  last_triggered_at: Timestamp | null;
+  last_evaluated_at: Timestamp | null;
+  last_notified_at: Timestamp | null;
+  snoozed_until: Timestamp | null;
+  renotify_minutes: number | null;
 }

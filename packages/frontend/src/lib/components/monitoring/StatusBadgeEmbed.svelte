@@ -20,9 +20,9 @@
 
   const styleOptions: Array<{ value: BadgeStyle; label: string; description: string }> = [
     { value: 'flat', label: 'Flat', description: 'Classic GitHub-style two-tone badge with subtle gradient' },
-    { value: 'flat-square', label: 'Flat Square', description: 'Same as flat without rounded corners or gradient' },
+    { value: 'flat-square', label: 'Flat square', description: 'Same as flat without rounded corners or gradient' },
     { value: 'plastic', label: 'Plastic', description: 'Slightly rounded with stronger 3D gradient' },
-    { value: 'for-the-badge', label: 'For The Badge', description: 'Big block-style uppercase badge' },
+    { value: 'for-the-badge', label: 'For the badge', description: 'Big block-style uppercase badge' },
     { value: 'minimal', label: 'Minimal', description: 'Pill-shaped dark badge with a colored status dot' },
   ];
 

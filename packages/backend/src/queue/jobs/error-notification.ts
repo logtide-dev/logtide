@@ -16,7 +16,14 @@ import { createQueue } from '../connection.js';
 import { generateErrorEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { ExceptionLanguage } from '../../modules/exceptions/types.js';
-import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
+import {
+  resolveChannelsForEvent,
+  resolveFallbackEmails,
+  toDeliveryTargets,
+  type DeliveryTargets,
+  type ResolvedRouting,
+} from '../../modules/notification-channels/resolver.js';
+import { notifyPagerDutyTargets } from '../../modules/notification-channels/dispatch.js';
 
 export interface ErrorNotificationJobData {
   exceptionId: string;
@@ -30,6 +37,8 @@ export interface ErrorNotificationJobData {
   isNewErrorGroup: boolean;
   /** True when a previously resolved error group recurred (a regression). */
   isRegression?: boolean;
+  /** True when an ignored error group reopened because its ignore limit was reached. */
+  isEscalating?: boolean;
 }
 
 // Create the queue
@@ -54,11 +63,43 @@ function createTransporter() {
 }
 
 
+/** Notification kind for an occurrence; escalation wins over regression. */
+function notificationKind(data: ErrorNotificationJobData): 'Escalating' | 'Regression' | 'New Error' | 'Error' {
+  if (data.isEscalating) return 'Escalating';
+  if (data.isRegression) return 'Regression';
+  if (data.isNewErrorGroup) return 'New Error';
+  return 'Error';
+}
+
+/**
+ * Resolve the destinations for an error group with the shared rule: channels
+ * attached to the group, else the organization defaults for errors, else the
+ * owners and admins email fallback (only when SMTP is configured).
+ */
+export async function resolveErrorChannels(
+  errorGroupId: string,
+  organizationId: string
+): Promise<ResolvedRouting> {
+  return resolveChannelsForEvent({
+    organizationId,
+    eventType: 'error',
+    explicitChannels: await notificationChannelsService.getErrorGroupChannels(errorGroupId),
+  });
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'webhook';
+  }
+}
+
 /**
  * Send webhook notification for error
  */
 async function sendErrorWebhook(
-  url: string,
+  target: DeliveryTargets['webhooks'][number],
   data: ErrorNotificationJobData,
   orgName: string,
   projectName: string,
@@ -74,9 +115,9 @@ async function sendErrorWebhook(
     organizationId: data.organizationId,
     projectId: data.projectId ?? null,
     data: {
-      title: `${data.isRegression ? 'Regression' : data.isNewErrorGroup ? 'New Error' : 'Error'}: ${data.exceptionType}`,
+      title: `${notificationKind(data)}: ${data.exceptionType}`,
       message: data.exceptionMessage || `An error occurred in ${data.service}`,
-      severity: data.isRegression || data.isNewErrorGroup ? 'high' : 'medium',
+      severity: data.isEscalating || data.isRegression || data.isNewErrorGroup ? 'high' : 'medium',
       organization: {
         id: data.organizationId,
         name: orgName,
@@ -91,6 +132,7 @@ async function sendErrorWebhook(
       service: data.service,
       is_new: data.isNewErrorGroup,
       is_regression: data.isRegression ?? false,
+      is_escalating: data.isEscalating ?? false,
       link: `${frontendUrl}/dashboard/errors/${errorGroupId}`,
     },
   });
@@ -98,10 +140,13 @@ async function sendErrorWebhook(
   // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
   // retry/backoff, DLQ, and delivery logging.
   await webhookDispatcher.enqueue({
-    url,
+    url: target.url,
+    channelId: target.channelId,
+    method: target.method,
+    headers: target.headers,
     organizationId: data.organizationId,
     eventType: 'error.detected',
-    eventId: `${errorGroupId}:${url}`,
+    eventId: `${errorGroupId}:${target.url}`,
     payload: envelope,
   });
 }
@@ -121,21 +166,27 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
   // first one inside the window matches and updates a row.
   const cooldownMinutes = config.ERROR_NOTIFICATION_COOLDOWN_MINUTES ?? 15;
   const cooldownCutoff = new Date(Date.now() - cooldownMinutes * 60_000);
+  // A regression or an escalation is a state change the team must hear about,
+  // so it is never swallowed by the cooldown of an earlier notification.
+  const bypassCooldown = !!(data.isRegression || data.isEscalating);
 
-  const claimed = await db
+  let claimQuery = db
     .updateTable('error_groups')
     .set({ last_notified_at: new Date() })
     .where('fingerprint', '=', data.fingerprint)
     .where('organization_id', '=', data.organizationId)
-    .where('status', '!=', 'ignored')
-    .where((eb) =>
+    .where('status', '!=', 'ignored');
+
+  if (!bypassCooldown) {
+    claimQuery = claimQuery.where((eb) =>
       eb.or([
         eb('last_notified_at', 'is', null),
         eb('last_notified_at', '<=', cooldownCutoff),
       ])
-    )
-    .returning('id')
-    .executeTakeFirst();
+    );
+  }
+
+  const claimed = await claimQuery.returning('id').executeTakeFirst();
 
   if (!claimed) {
     // Slot not claimed: group is missing, ignored, or already notified within
@@ -183,30 +234,11 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
     return;
   }
 
-  // STEP 1: Get notification channels for this error group (or org defaults)
-  let errorChannels = await notificationChannelsService.getErrorGroupChannels(errorGroup.id);
+  // STEP 1: Resolve destinations (group channels, else org defaults, else owners/admins email)
+  const routing = await resolveErrorChannels(errorGroup.id, data.organizationId);
+  const targets = toDeliveryTargets(routing.channels);
 
-  // If no specific channels, use organization defaults for errors
-  if (errorChannels.length === 0) {
-    errorChannels = await notificationChannelsService.getOrganizationDefaults(data.organizationId, 'error');
-  }
-
-  // STEP 2: Collect email recipients and webhook URLs from channels
-  const channelEmailRecipients = new Set<string>();
-  const channelWebhookUrls = new Set<string>();
-
-  errorChannels
-    .filter((ch) => ch.enabled)
-    .forEach((ch) => {
-      if (ch.type === 'email') {
-        const emailConfig = ch.config as EmailChannelConfig;
-        emailConfig.recipients.forEach((email) => channelEmailRecipients.add(email));
-      } else if (ch.type === 'webhook') {
-        const webhookConfig = ch.config as WebhookChannelConfig;
-        channelWebhookUrls.add(webhookConfig.url);
-      }
-    });
-
+  // STEP 2: In-app notifications go to owners and admins
   // STEP 3: Get organization members (owners and admins) for in-app notifications
   const members = await db
     .selectFrom('organization_members')
@@ -223,11 +255,7 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
 
   console.log(`[ErrorNotification] Notifying ${members.length} members`);
 
-  const notificationTitle = data.isRegression
-    ? `Regression: ${data.exceptionType}`
-    : data.isNewErrorGroup
-    ? `New Error: ${data.exceptionType}`
-    : `Error: ${data.exceptionType}`;
+  const notificationTitle = `${notificationKind(data)}: ${data.exceptionType}`;
 
   const notificationMessage = data.exceptionMessage
     ? `${data.exceptionMessage.substring(0, 100)}${data.exceptionMessage.length > 100 ? '...' : ''}`
@@ -249,6 +277,7 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
         language: data.language,
         service: data.service,
         isNewErrorGroup: data.isNewErrorGroup,
+        isEscalating: data.isEscalating ?? false,
         link: `/dashboard/errors/${errorGroup.id}`,
       },
     }).catch((err) => console.error(`[ErrorNotification] Failed to create notification for ${member.id}:`, err))
@@ -257,12 +286,11 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
   await Promise.all(notificationPromises);
   console.log(`[ErrorNotification] In-app notifications sent`);
 
-  // STEP 5: Send email notifications
-  // Use channel emails if configured, otherwise use member emails
-  const emailRecipients =
-    channelEmailRecipients.size > 0
-      ? Array.from(channelEmailRecipients)
-      : members.map((m) => m.email);
+  // STEP 5: Send email notifications. Email destinations when they resolved;
+  // owners and admins only when nothing resolved at all.
+  const emailRecipients = routing.fallback
+    ? await resolveFallbackEmails(data.organizationId)
+    : targets.emailRecipients;
 
   if (isSmtpConfigured() && emailRecipients.length > 0) {
     const transporter = createTransporter();
@@ -272,16 +300,14 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
       language: data.language,
       service: data.service,
       isNewErrorGroup: data.isNewErrorGroup,
+      isRegression: data.isRegression,
+      isEscalating: data.isEscalating,
       errorGroupId: errorGroup.id,
       organizationName: org.name,
       projectName: project.name,
       fingerprint: data.fingerprint,
     });
-    const subject = data.isRegression
-      ? `[Regression] ${data.exceptionType} in ${data.service}`
-      : data.isNewErrorGroup
-      ? `[New Error] ${data.exceptionType} in ${data.service}`
-      : `[Error] ${data.exceptionType} in ${data.service}`;
+    const subject = `[${notificationKind(data)}] ${data.exceptionType} in ${data.service}`;
 
     const emailPromises = emailRecipients.map((email) =>
       transporter.sendMail({
@@ -299,15 +325,38 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
     console.log(`[ErrorNotification] SMTP not configured, skipping email notifications`);
   }
 
-  // STEP 6: Send webhook notifications (NEW - using channels)
-  if (channelWebhookUrls.size > 0) {
-    const webhookPromises = Array.from(channelWebhookUrls).map((url) =>
-      sendErrorWebhook(url, data, org.name, project.name, errorGroup.id)
-        .then(() => console.log(`[ErrorNotification] Webhook sent to ${url}`))
-        .catch((err) => console.error(`[ErrorNotification] Webhook failed for ${url}:`, err))
+  // STEP 6: Webhook destinations (Slack, Teams and Discord URLs are formatted by the dispatcher)
+  if (targets.webhooks.length > 0) {
+    const webhookPromises = targets.webhooks.map((target) =>
+      sendErrorWebhook(target, data, org.name, project.name, errorGroup.id)
+        .then(() => console.log(`[ErrorNotification] Webhook sent to ${hostOf(target.url)}`))
+        .catch((err) => console.error(`[ErrorNotification] Webhook failed for ${hostOf(target.url)}:`, err))
     );
 
     await Promise.all(webhookPromises);
-    console.log(`[ErrorNotification] Webhooks sent to ${channelWebhookUrls.size} URLs`);
+    console.log(`[ErrorNotification] Webhooks sent to ${targets.webhooks.length} URLs`);
+  }
+
+  // STEP 7: PagerDuty destinations
+  // Only a new group, a regression or an escalation pages; a plain repeat
+  // occurrence (after the cooldown) must not reopen a resolved incident.
+  if (targets.pagerDuty.length > 0 && (data.isNewErrorGroup || data.isRegression || data.isEscalating)) {
+    await notifyPagerDutyTargets(targets.pagerDuty, {
+      organizationId: data.organizationId,
+      action: 'trigger',
+      dedupKey: `error:${errorGroup.id}`,
+      eventType: 'error.detected',
+      summary: `${notificationKind(data)}: ${data.exceptionType} in ${data.service}`,
+      severity: data.isEscalating || data.isRegression || data.isNewErrorGroup ? 'high' : 'medium',
+      link: `${getFrontendUrl()}/dashboard/errors/${errorGroup.id}`,
+      details: {
+        message: data.exceptionMessage,
+        exception_type: data.exceptionType,
+        service: data.service,
+        language: data.language,
+        organization: org.name,
+        project: project.name,
+      },
+    });
   }
 }

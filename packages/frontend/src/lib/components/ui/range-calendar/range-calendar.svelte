@@ -9,14 +9,26 @@
     value = $bindable(),
     placeholder = $bindable(),
     class: className,
+    numberOfMonths,
     ...restProps
   }: RangeCalendarPrimitive.RootProps = $props();
+
+  // two months side by side only fit on wider screens; phones get one
+  let narrow = $state(false);
+  $effect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    narrow = mq.matches;
+    const on = (e: MediaQueryListEvent) => (narrow = e.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  });
+  const monthCount = $derived(numberOfMonths ?? (narrow ? 1 : 2));
 </script>
 
 <RangeCalendarPrimitive.Root
   bind:value
   bind:placeholder
-  numberOfMonths={2}
+  numberOfMonths={monthCount}
   weekdayFormat="short"
   class={cn("p-3", className)}
   {...restProps}
@@ -43,7 +55,7 @@
             <RangeCalendarPrimitive.GridRow class="flex">
               {#each weekdays as weekday (weekday)}
                 <RangeCalendarPrimitive.HeadCell
-                  class="w-9 rounded-md text-[0.8rem] font-normal text-muted-foreground"
+                  class="w-8 sm:w-9 rounded-md text-[0.8rem] font-normal text-muted-foreground"
                 >
                   {weekday.slice(0, 2)}
                 </RangeCalendarPrimitive.HeadCell>
@@ -57,12 +69,12 @@
                   <RangeCalendarPrimitive.Cell
                     {date}
                     month={month.value}
-                    class="relative size-9 p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([data-selected])]:bg-accent [&:has([data-selected][data-range-end])]:rounded-r-md [&:has([data-selected][data-range-start])]:rounded-l-md [&:has([data-selected][data-outside-month])]:bg-accent/50 first:[&:has([data-selected])]:rounded-l-md last:[&:has([data-selected])]:rounded-r-md"
+                    class="relative size-8 sm:size-9 p-0 text-center text-sm focus-within:relative focus-within:z-20 [&:has([data-selected])]:bg-accent [&:has([data-selected][data-range-end])]:rounded-r-md [&:has([data-selected][data-range-start])]:rounded-l-md [&:has([data-selected][data-outside-month])]:bg-accent/50 first:[&:has([data-selected])]:rounded-l-md last:[&:has([data-selected])]:rounded-r-md"
                   >
                     <RangeCalendarPrimitive.Day
                       class={cn(
                         buttonVariants({ variant: "ghost" }),
-                        "size-9 p-0 font-normal",
+                        "size-8 sm:size-9 p-0 font-normal",
                         "data-[selected]:bg-primary data-[selected]:text-primary-foreground data-[selected]:opacity-100 data-[selected]:hover:bg-primary data-[selected]:hover:text-primary-foreground",
                         "data-[today]:bg-accent data-[today]:text-accent-foreground",
                         "data-[outside-month]:text-muted-foreground data-[outside-month]:opacity-50 data-[outside-month]:pointer-events-none",

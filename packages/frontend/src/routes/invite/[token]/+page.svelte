@@ -137,7 +137,7 @@
 </script>
 
 <svelte:head>
-  <title>Accept Invitation - LogTide</title>
+  <title>Accept invitation - LogTide</title>
 </svelte:head>
 
 <div class="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted/30 p-4">
@@ -155,24 +155,24 @@
           <div class="mx-auto mb-4 w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center">
             <XCircle class="w-6 h-6 text-destructive" />
           </div>
-          <CardTitle>Invitation Not Found</CardTitle>
+          <CardTitle>Invitation not found</CardTitle>
           <CardDescription>{error}</CardDescription>
         </CardHeader>
         <CardFooter class="flex justify-center mt-4">
           <Button onclick={() => goto('/login')} variant="outline">
-            Go to Login
+            Go to login
           </Button>
         </CardFooter>
       </Card>
     {:else if success}
-      <Card class="border-green-500/50">
+      <Card class="border-success/50">
         <CardHeader class="text-center">
-          <div class="mx-auto mb-4 w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center">
-            <CheckCircle class="w-6 h-6 text-green-500" />
+          <div class="mx-auto mb-4 w-12 h-12 rounded-full bg-success/10 flex items-center justify-center">
+            <CheckCircle class="w-6 h-6 text-success-text" />
           </div>
-          <CardTitle>Welcome to {invitation?.organizationName}!</CardTitle>
+          <CardTitle>Welcome to {invitation?.organizationName}</CardTitle>
           <CardDescription>
-            You've successfully joined the organization. Redirecting you to the dashboard...
+            You joined the organization. Redirecting you to the dashboard.
           </CardDescription>
         </CardHeader>
         <CardContent class="flex justify-center">
@@ -185,7 +185,7 @@
           <div class="mx-auto mb-4 w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
             <Building2 class="w-8 h-8 text-primary" />
           </div>
-          <CardTitle class="text-2xl">You're Invited!</CardTitle>
+          <CardTitle class="text-2xl">You're invited</CardTitle>
           <CardDescription>
             <span class="font-medium text-foreground">{invitation.inviterName}</span> has invited you to join
           </CardDescription>
@@ -217,10 +217,10 @@
           </div>
 
           {#if emailMismatch}
-            <div class="flex items-start gap-3 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-              <AlertCircle class="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+            <div class="flex items-start gap-3 p-4 bg-warning/10 border border-warning/30 rounded-lg">
+              <AlertCircle class="w-5 h-5 text-warning-text flex-shrink-0 mt-0.5" />
               <div class="text-sm mt-4">
-                <p class="font-medium text-yellow-600 dark:text-yellow-400">Email Mismatch</p>
+                <p class="font-medium text-warning-text">Email mismatch</p>
                 <p class="text-muted-foreground mt-1">
                   This invitation was sent to <strong>{invitation.email}</strong>, but you're logged in as <strong>{user?.email}</strong>.
                 </p>
@@ -246,7 +246,7 @@
           {#if !isLoggedIn}
             <Button onclick={acceptInvitation} class="w-full gap-2" size="lg">
               <LogIn class="w-4 h-4" />
-              Log In to Accept
+              Log in to accept
             </Button>
             <p class="text-sm text-center text-muted-foreground">
               Don't have an account?{' '}
@@ -263,7 +263,7 @@
               variant="outline"
               class="w-full"
             >
-              Log Out and Switch Account
+              Log out and switch account
             </Button>
           {:else}
             <Button
@@ -277,13 +277,13 @@
                 Joining...
               {:else}
                 <Users class="w-4 h-4" />
-                Accept Invitation
+                Accept invitation
               {/if}
             </Button>
           {/if}
 
           <Button onclick={() => goto('/')} variant="ghost" class="w-full">
-            Maybe Later
+            Maybe later
           </Button>
         </CardFooter>
       </Card>

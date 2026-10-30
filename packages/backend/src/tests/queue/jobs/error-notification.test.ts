@@ -44,7 +44,7 @@ vi.mock('../../../config/index.js', () => ({
 }));
 
 // Mock nodemailer
-const mockSendMail = vi.fn().mockResolvedValue({ messageId: 'test-id' });
+const { mockSendMail } = vi.hoisted(() => ({ mockSendMail: vi.fn().mockResolvedValue({ messageId: 'test-id' }) }));
 vi.mock('nodemailer', () => ({
   default: {
     createTransport: vi.fn(() => ({
@@ -698,6 +698,7 @@ describe('Error webhook envelope', () => {
 
     mockGetErrorGroupChannels.mockResolvedValueOnce([{
       id: '00000000-0000-0000-0000-000000000030',
+      organizationId: org.id,
       type: 'webhook',
       enabled: true,
       config: { url: 'https://hooks.example.com/error' },
@@ -888,5 +889,61 @@ describe('Error Notification Language Labels', () => {
     expect(languageLabels.go).toBe('Go');
     expect(languageLabels.php).toBe('PHP');
     expect(languageLabels.unknown).toBe('Unknown');
+  });
+});
+
+describe('Error webhook request settings', () => {
+  beforeEach(() => {
+    errorEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    mockGetErrorGroupChannels.mockReset().mockResolvedValue([]);
+  });
+
+  it('passes channel id, method and headers to the dispatcher', async () => {
+    const owner = await createTestUser({ name: 'Owner Auth' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Error Auth Org' });
+    const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+    mockGetErrorGroupChannels.mockResolvedValueOnce([{
+      id: '00000000-0000-0000-0000-0000000000aa',
+      organizationId: org.id,
+      name: 'Authed hook',
+      type: 'webhook',
+      enabled: true,
+      config: { url: 'https://hooks.example.com/auth', method: 'PUT', headers: { 'X-Team': 'ops' }, auth: { type: 'bearer', token: 'tok-123' } },
+    }]);
+
+    const errorGroup = await db.insertInto('error_groups').values({
+      organization_id: org.id,
+      project_id: project.id,
+      fingerprint: `fp-auth-${Date.now()}`,
+      exception_type: 'AuthError',
+      exception_message: 'auth test',
+      language: 'nodejs',
+      status: 'open',
+      occurrence_count: 1,
+      first_seen: new Date(),
+      last_seen: new Date(),
+      affected_services: ['svc'],
+      sample_log_id: null,
+    }).returningAll().executeTakeFirstOrThrow();
+
+    await processErrorNotification({
+      data: {
+        exceptionId: 'exc-auth-1',
+        organizationId: org.id,
+        projectId: project.id,
+        fingerprint: errorGroup.fingerprint,
+        exceptionType: 'AuthError',
+        exceptionMessage: 'auth test',
+        language: 'nodejs' as const,
+        service: 'api',
+        isNewErrorGroup: true,
+      } as ErrorNotificationJobData,
+    } as Job<ErrorNotificationJobData>);
+
+    expect(errorEnqueueMock).toHaveBeenCalledTimes(1);
+    const call = errorEnqueueMock.mock.calls[0][0];
+    expect(call.channelId).toBe('00000000-0000-0000-0000-0000000000aa');
+    expect(call.method).toBe('PUT');
+    expect(call.headers).toEqual({ 'X-Team': 'ops', Authorization: 'Bearer tok-123' });
   });
 });

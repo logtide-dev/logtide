@@ -1,56 +1,27 @@
 <script lang="ts">
+    import PageHeader from "$lib/components/app/PageHeader.svelte";
   import { onMount } from 'svelte';
   import { authStore } from '$lib/stores/auth';
   import { toastStore } from '$lib/stores/toast';
-  import { AdminAuthAPI, type AuthProviderConfig, type CreateProviderInput } from '$lib/api/admin-auth';
+  import { AdminAuthAPI, type AuthProviderConfig, type CreateProviderInput, type TestConnectionResult } from '$lib/api/admin-auth';
+  import { getApiBaseUrl } from '$lib/config';
+  import AuthProviderCard from '$lib/components/admin/AuthProviderCard.svelte';
+  import { providerRedirectUri, disableImpact } from '$lib/components/admin/auth-provider';
+  import EmptyState from '$lib/components/app/EmptyState.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
-  import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
-  import { Alert, AlertDescription } from '$lib/components/ui/alert';
+  import { Skeleton } from '$lib/components/ui/skeleton';
   import Spinner from '$lib/components/Spinner.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
-  import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-  } from '$lib/components/ui/alert-dialog';
-  import { Plus, Settings, Trash2, Pencil, Building2, Server, Mail, Check, X } from '@lucide/svelte';
-  import { goto } from '$app/navigation';
-  import { browser } from '$app/environment';
-  import { untrack } from 'svelte';
-  import { UsersAPI } from '$lib/api/users';
-  import { get } from 'svelte/store';
+  import ConfirmDialog from "$lib/components/app/ConfirmDialog.svelte";
+  import { Plus } from '@lucide/svelte';
+  import { Switch } from '$lib/components/ui/switch';
+  import { buildProviderConfig } from '$lib/utils/auth-provider-form';
 
   let adminAuthAPI = $derived(new AdminAuthAPI(() => $authStore.token));
 
-  const usersAPI = new UsersAPI(() => get(authStore).token);
-
-  $effect(() => {
-    if (browser && $authStore.user) {
-      if ($authStore.user.is_admin === undefined) {
-        untrack(() => {
-          usersAPI
-            .getCurrentUser()
-            .then(({ user }) => {
-              const currentUser = get(authStore).user;
-              if (currentUser) {
-                authStore.updateUser({ ...currentUser, ...user });
-                if (user.is_admin) loadProviders();
-              }
-            })
-            .catch(() => goto('/dashboard'));
-        });
-      } else if ($authStore.user.is_admin === false) {
-        untrack(() => goto('/dashboard'));
-      }
-    }
-  });
+  // The admin layout already blocks this page until the user is confirmed as admin.
 
   let providers = $state<AuthProviderConfig[]>([]);
   let loading = $state(true);
@@ -89,13 +60,33 @@
   let ldapSearchBase = $state('');
   let ldapSearchFilter = $state('(uid={{username}})');
 
-  onMount(async () => {
-    if ($authStore.user?.is_admin) await loadProviders();
-  });
+  // Shared by both types: create users on first sign-in
+  let allowAutoRegister = $state(true);
+
+  function formFields() {
+    return {
+      oidc: {
+        issuerUrl: oidcIssuerUrl,
+        clientId: oidcClientId,
+        clientSecret: oidcClientSecret,
+        redirectUri: oidcRedirectUri,
+        allowAutoRegister,
+      },
+      ldap: {
+        url: ldapUrl,
+        bindDn: ldapBindDn,
+        bindPassword: ldapBindPassword,
+        searchBase: ldapSearchBase,
+        searchFilter: ldapSearchFilter,
+        allowAutoRegister,
+      },
+    };
+  }
+
+  onMount(loadProviders);
 
   async function loadProviders() {
     try {
-      loading = true;
       error = null;
       const response = await adminAuthAPI.getProviders();
       providers = response.providers;
@@ -103,19 +94,6 @@
       error = e instanceof Error ? e.message : 'Failed to load providers';
     } finally {
       loading = false;
-    }
-  }
-
-  function getProviderIcon(type: string) {
-    switch (type) {
-      case 'local':
-        return Mail;
-      case 'oidc':
-        return Building2;
-      case 'ldap':
-        return Server;
-      default:
-        return Settings;
     }
   }
 
@@ -136,6 +114,7 @@
     ldapBindPassword = '';
     ldapSearchBase = '';
     ldapSearchFilter = '(uid={{username}})';
+    allowAutoRegister = true;
   }
 
   function generateSlug(name: string): string {
@@ -149,33 +128,14 @@
     try {
       dialogLoading = true;
 
-      // Build config based on type
-      let config: Record<string, unknown> = {};
-      if (createForm.type === 'oidc') {
-        config = {
-          issuerUrl: oidcIssuerUrl,
-          clientId: oidcClientId,
-          clientSecret: oidcClientSecret,
-          redirectUri: oidcRedirectUri || undefined,
-          allowAutoRegister: true,
-        };
-      } else if (createForm.type === 'ldap') {
-        config = {
-          url: ldapUrl,
-          bindDn: ldapBindDn,
-          bindPassword: ldapBindPassword,
-          searchBase: ldapSearchBase,
-          searchFilter: ldapSearchFilter,
-          allowAutoRegister: true,
-        };
-      }
+      const config = buildProviderConfig(createForm.type as 'oidc' | 'ldap', formFields(), 'create');
 
       await adminAuthAPI.createProvider({
         ...createForm,
         config,
       });
 
-      toastStore.success('Provider created successfully');
+      toastStore.success('Provider created');
       showCreateDialog = false;
       resetCreateForm();
       await loadProviders();
@@ -186,16 +146,54 @@
     }
   }
 
-  async function handleToggleEnabled(provider: AuthProviderConfig) {
+  let togglingId = $state<string | null>(null);
+  let testingId = $state<string | null>(null);
+  let testResults = $state<Record<string, TestConnectionResult>>({});
+  let disableTarget = $state<AuthProviderConfig | null>(null);
+  let showDisableDialog = $state(false);
+
+  const impact = $derived(disableTarget ? disableImpact(providers, disableTarget) : null);
+
+  function requestToggle(provider: AuthProviderConfig, enabled: boolean) {
+    if (!enabled && disableImpact(providers, provider)) {
+      disableTarget = provider;
+      showDisableDialog = true;
+      return;
+    }
+    setEnabled(provider, enabled).catch(() => {});
+  }
+
+  async function setEnabled(provider: AuthProviderConfig, enabled: boolean) {
+    togglingId = provider.id;
     try {
-      await adminAuthAPI.updateProvider(provider.id, {
-        enabled: !provider.enabled,
-      });
-      toastStore.success(provider.enabled ? 'Provider disabled' : 'Provider enabled');
+      await adminAuthAPI.updateProvider(provider.id, { enabled });
+      toastStore.success(enabled ? 'Provider enabled' : 'Provider disabled');
       await loadProviders();
     } catch (e) {
       toastStore.error(e instanceof Error ? e.message : 'Failed to update provider');
+      throw e;
+    } finally {
+      togglingId = null;
     }
+  }
+
+  async function handleTest(provider: AuthProviderConfig) {
+    testingId = provider.id;
+    try {
+      testResults = { ...testResults, [provider.id]: await adminAuthAPI.testConnection(provider.id) };
+    } catch (e) {
+      testResults = {
+        ...testResults,
+        [provider.id]: { success: false, message: e instanceof Error ? e.message : 'Test failed' },
+      };
+    } finally {
+      testingId = null;
+    }
+  }
+
+  function redirectFor(provider: AuthProviderConfig): string | null {
+    const origin = typeof window === 'undefined' ? '' : window.location.origin;
+    return providerRedirectUri(provider, getApiBaseUrl(), origin);
   }
 
   function confirmDeleteProvider(provider: AuthProviderConfig) {
@@ -214,6 +212,7 @@
       await loadProviders();
     } catch (e) {
       toastStore.error(e instanceof Error ? e.message : 'Failed to delete provider');
+      throw e;
     } finally {
       deletingProvider = false;
     }
@@ -229,18 +228,21 @@
       config: provider.config,
     };
 
+    allowAutoRegister = (provider.config as { allowAutoRegister?: boolean }).allowAutoRegister !== false;
+
     // Populate type-specific fields
     if (provider.type === 'oidc') {
       const config = provider.config as { issuerUrl?: string; clientId?: string; clientSecret?: string; redirectUri?: string };
       oidcIssuerUrl = config.issuerUrl || '';
       oidcClientId = config.clientId || '';
-      oidcClientSecret = config.clientSecret || '';
+      // Never load the masked secret into the field: blank means "keep current"
+      oidcClientSecret = '';
       oidcRedirectUri = config.redirectUri || '';
     } else if (provider.type === 'ldap') {
       const config = provider.config as { url?: string; bindDn?: string; bindPassword?: string; searchBase?: string; searchFilter?: string };
       ldapUrl = config.url || '';
       ldapBindDn = config.bindDn || '';
-      ldapBindPassword = config.bindPassword || '';
+      ldapBindPassword = '';
       ldapSearchBase = config.searchBase || '';
       ldapSearchFilter = config.searchFilter || '(uid={{username}})';
     }
@@ -254,26 +256,9 @@
     try {
       dialogLoading = true;
 
-      // Build config based on type
-      let config: Record<string, unknown> = {};
-      if (createForm.type === 'oidc') {
-        config = {
-          issuerUrl: oidcIssuerUrl,
-          clientId: oidcClientId,
-          clientSecret: oidcClientSecret,
-          redirectUri: oidcRedirectUri || undefined,
-          allowAutoRegister: true,
-        };
-      } else if (createForm.type === 'ldap') {
-        config = {
-          url: ldapUrl,
-          bindDn: ldapBindDn,
-          bindPassword: ldapBindPassword,
-          searchBase: ldapSearchBase,
-          searchFilter: ldapSearchFilter,
-          allowAutoRegister: true,
-        };
-      }
+      // Secrets are only sent when a new value was typed; the backend keeps
+      // the stored one otherwise. allowAutoRegister keeps its current value.
+      const config = buildProviderConfig(createForm.type as 'oidc' | 'ldap', formFields(), 'edit');
 
       await adminAuthAPI.updateProvider(editingProvider.id, {
         name: createForm.name,
@@ -281,7 +266,7 @@
         config,
       });
 
-      toastStore.success('Provider updated successfully');
+      toastStore.success('Provider updated');
       showEditDialog = false;
       editingProvider = null;
       resetCreateForm();
@@ -295,103 +280,63 @@
 </script>
 
 <svelte:head>
-  <title>Authentication Providers - Admin - LogTide</title>
+  <title>Auth providers - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto py-6 space-y-6">
-  <div class="flex justify-between items-center">
-    <div>
-      <h1 class="text-2xl font-bold">Authentication Providers</h1>
-      <p class="text-muted-foreground">Configure SSO providers for your organization</p>
-    </div>
-    <Button onclick={() => { resetCreateForm(); showCreateDialog = true; }}>
-      <Plus class="h-4 w-4 mr-2" />
-      Add Provider
-    </Button>
-  </div>
+<div class="space-y-6">
+  <PageHeader
+    title="Auth providers"
+    appliesTo="instance"
+    description="Sign-in providers apply to the whole instance, not to a single organization."
+  >
+    {#snippet actions()}
+      <Button onclick={() => { resetCreateForm(); showCreateDialog = true; }}>
+        <Plus class="h-4 w-4 mr-2" />
+        Add provider
+      </Button>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
-    <div class="flex justify-center py-12">
-      <Spinner size="lg" />
+    <div class="space-y-4" aria-busy="true">
+      <Skeleton class="h-28 w-full" />
+      <Skeleton class="h-40 w-full" />
     </div>
   {:else if error}
-    <Alert variant="destructive">
-      <AlertDescription>{error}</AlertDescription>
-    </Alert>
+    <EmptyState variant="error" title="Could not load providers" description={error}>
+      {#snippet actions()}
+        <Button variant="outline" size="sm" onclick={() => { loading = true; loadProviders(); }}>Retry</Button>
+      {/snippet}
+    </EmptyState>
   {:else}
     <div class="grid gap-4">
-      {#each providers as provider}
-        {@const ProviderIcon = getProviderIcon(provider.type)}
-        <Card>
-          <CardContent class="p-4">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-4">
-                <div class="p-2 rounded-lg bg-muted">
-                  <ProviderIcon class="h-5 w-5" />
-                </div>
-                <div>
-                  <div class="font-medium flex items-center gap-2">
-                    {provider.name}
-                    {#if provider.type === 'local'}
-                      <span class="text-xs bg-muted px-2 py-0.5 rounded">Built-in</span>
-                    {/if}
-                    {#if !provider.enabled}
-                      <span class="text-xs bg-destructive/10 text-destructive px-2 py-0.5 rounded">Disabled</span>
-                    {/if}
-                  </div>
-                  <p class="text-sm text-muted-foreground">
-                    {provider.type.toUpperCase()} &middot; {provider.slug}
-                  </p>
-                </div>
-              </div>
-
-              <div class="flex items-center gap-2">
-                {#if provider.type !== 'local'}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onclick={() => openEditDialog(provider)}
-                    title="Edit"
-                  >
-                    <Pencil class="h-4 w-4" />
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onclick={() => handleToggleEnabled(provider)}
-                    title={provider.enabled ? 'Disable' : 'Enable'}
-                  >
-                    {#if provider.enabled}
-                      <Check class="h-4 w-4 text-green-500" />
-                    {:else}
-                      <X class="h-4 w-4 text-muted-foreground" />
-                    {/if}
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onclick={() => confirmDeleteProvider(provider)}
-                    title="Delete"
-                  >
-                    <Trash2 class="h-4 w-4 text-destructive" />
-                  </Button>
-                {/if}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {#each providers as provider (provider.id)}
+        <AuthProviderCard
+          {provider}
+          redirectUri={redirectFor(provider)}
+          busy={togglingId === provider.id}
+          testing={testingId === provider.id}
+          testResult={testResults[provider.id] ?? null}
+          onToggle={(enabled) => requestToggle(provider, enabled)}
+          onTest={() => handleTest(provider)}
+          onEdit={() => openEditDialog(provider)}
+          onDelete={() => confirmDeleteProvider(provider)}
+        />
       {/each}
     </div>
+    {#if providers.every((p) => p.type === 'local')}
+      <p class="text-sm text-muted-foreground">
+        No SSO provider yet. Add an OIDC or LDAP provider so users can sign in with your identity system.
+      </p>
+    {/if}
   {/if}
 </div>
 
-<!-- Create Provider Dialog -->
+<!-- Create provider dialog -->
 <Dialog.Root bind:open={showCreateDialog}>
   <Dialog.Content class="max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Add Authentication Provider</Dialog.Title>
+      <Dialog.Title>Add authentication provider</Dialog.Title>
       <Dialog.Description>
         Configure a new SSO provider for user authentication
       </Dialog.Description>
@@ -399,7 +344,7 @@
 
     <div class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="type">Provider Type</Label>
+        <Label for="type">Provider type</Label>
         <select
           id="type"
           bind:value={createForm.type}
@@ -411,7 +356,7 @@
       </div>
 
       <div class="space-y-2">
-        <Label for="name">Display Name</Label>
+        <Label for="name">Display name</Label>
         <Input
           id="name"
           placeholder="e.g., Authentik SSO"
@@ -432,7 +377,7 @@
 
       {#if createForm.type === 'oidc'}
         <div class="space-y-4 pt-4 border-t">
-          <h4 class="font-medium">OIDC Configuration</h4>
+          <h4 class="font-medium">OIDC configuration</h4>
 
           <div class="space-y-2">
             <Label for="issuerUrl">Issuer URL</Label>
@@ -453,7 +398,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="clientSecret">Client Secret</Label>
+            <Label for="clientSecret">Client secret</Label>
             <Input
               id="clientSecret"
               type="password"
@@ -474,7 +419,7 @@
         </div>
       {:else if createForm.type === 'ldap'}
         <div class="space-y-4 pt-4 border-t">
-          <h4 class="font-medium">LDAP Configuration</h4>
+          <h4 class="font-medium">LDAP configuration</h4>
 
           <div class="space-y-2">
             <Label for="ldapUrl">LDAP URL</Label>
@@ -486,7 +431,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapBindDn">Bind DN (Service Account)</Label>
+            <Label for="ldapBindDn">Bind DN (service account)</Label>
             <Input
               id="ldapBindDn"
               placeholder="CN=Service,OU=Users,DC=example,DC=com"
@@ -495,7 +440,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapBindPassword">Bind Password</Label>
+            <Label for="ldapBindPassword">Bind password</Label>
             <Input
               id="ldapBindPassword"
               type="password"
@@ -505,7 +450,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapSearchBase">Search Base DN</Label>
+            <Label for="ldapSearchBase">Search base DN</Label>
             <Input
               id="ldapSearchBase"
               placeholder="OU=Users,DC=example,DC=com"
@@ -514,7 +459,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="ldapSearchFilter">Search Filter</Label>
+            <Label for="ldapSearchFilter">Search filter</Label>
             <Input
               id="ldapSearchFilter"
               placeholder={'(uid={{username}})'}
@@ -524,6 +469,18 @@
           </div>
         </div>
       {/if}
+
+      <div class="flex items-center justify-between gap-4 pt-4 border-t">
+        <div class="space-y-0.5">
+          <Label for="allowAutoRegister">Create accounts on first sign-in</Label>
+          <p class="text-xs text-muted-foreground">When off, only users who already have an account can sign in with this provider.</p>
+        </div>
+        <Switch
+          id="allowAutoRegister"
+          checked={allowAutoRegister}
+          onCheckedChange={(checked) => (allowAutoRegister = checked)}
+        />
+      </div>
     </div>
 
     <Dialog.Footer>
@@ -534,17 +491,17 @@
         {#if dialogLoading}
           <Spinner size="sm" class="mr-2" />
         {/if}
-        Create Provider
+        Create provider
       </Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
 
-<!-- Edit Provider Dialog -->
+<!-- Edit provider dialog -->
 <Dialog.Root bind:open={showEditDialog}>
   <Dialog.Content class="max-w-lg">
     <Dialog.Header>
-      <Dialog.Title>Edit Provider: {editingProvider?.name}</Dialog.Title>
+      <Dialog.Title>Edit provider: {editingProvider?.name}</Dialog.Title>
       <Dialog.Description>
         Update the configuration for this authentication provider
       </Dialog.Description>
@@ -552,7 +509,7 @@
 
     <div class="space-y-4 py-4">
       <div class="space-y-2">
-        <Label for="edit-name">Display Name</Label>
+        <Label for="edit-name">Display name</Label>
         <Input
           id="edit-name"
           placeholder="e.g., Authentik SSO"
@@ -568,7 +525,7 @@
 
       {#if editingProvider?.type === 'oidc'}
         <div class="space-y-4 pt-4 border-t">
-          <h4 class="font-medium">OIDC Configuration</h4>
+          <h4 class="font-medium">OIDC configuration</h4>
 
           <div class="space-y-2">
             <Label for="edit-issuerUrl">Issuer URL</Label>
@@ -589,13 +546,15 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-clientSecret">Client Secret</Label>
+            <Label for="edit-clientSecret">Client secret</Label>
             <Input
               id="edit-clientSecret"
               type="password"
-              placeholder="your-client-secret"
+              placeholder="Leave blank to keep current"
+              autocomplete="new-password"
               bind:value={oidcClientSecret}
             />
+            <p class="text-xs text-muted-foreground">Leave blank to keep the current secret.</p>
           </div>
 
           <div class="space-y-2">
@@ -610,7 +569,7 @@
         </div>
       {:else if editingProvider?.type === 'ldap'}
         <div class="space-y-4 pt-4 border-t">
-          <h4 class="font-medium">LDAP Configuration</h4>
+          <h4 class="font-medium">LDAP configuration</h4>
 
           <div class="space-y-2">
             <Label for="edit-ldapUrl">LDAP URL</Label>
@@ -622,7 +581,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapBindDn">Bind DN (Service Account)</Label>
+            <Label for="edit-ldapBindDn">Bind DN (service account)</Label>
             <Input
               id="edit-ldapBindDn"
               placeholder="CN=Service,OU=Users,DC=example,DC=com"
@@ -631,17 +590,19 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapBindPassword">Bind Password</Label>
+            <Label for="edit-ldapBindPassword">Bind password</Label>
             <Input
               id="edit-ldapBindPassword"
               type="password"
-              placeholder="service-account-password"
+              placeholder="Leave blank to keep current"
+              autocomplete="new-password"
               bind:value={ldapBindPassword}
             />
+            <p class="text-xs text-muted-foreground">Leave blank to keep the current password.</p>
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapSearchBase">Search Base DN</Label>
+            <Label for="edit-ldapSearchBase">Search base DN</Label>
             <Input
               id="edit-ldapSearchBase"
               placeholder="OU=Users,DC=example,DC=com"
@@ -650,7 +611,7 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-ldapSearchFilter">Search Filter</Label>
+            <Label for="edit-ldapSearchFilter">Search filter</Label>
             <Input
               id="edit-ldapSearchFilter"
               placeholder={'(uid={{username}})'}
@@ -659,6 +620,19 @@
             <p class="text-xs text-muted-foreground">Use {'{{username}}'} as placeholder for user input</p>
           </div>
         </div>
+      {/if}
+      {#if editingProvider?.type === 'oidc' || editingProvider?.type === 'ldap'}
+      <div class="flex items-center justify-between gap-4 pt-4 border-t">
+        <div class="space-y-0.5">
+          <Label for="edit-allowAutoRegister">Create accounts on first sign-in</Label>
+          <p class="text-xs text-muted-foreground">When off, only users who already have an account can sign in with this provider.</p>
+        </div>
+        <Switch
+          id="edit-allowAutoRegister"
+          checked={allowAutoRegister}
+          onCheckedChange={(checked) => (allowAutoRegister = checked)}
+        />
+      </div>
       {/if}
     </div>
 
@@ -670,27 +644,31 @@
         {#if dialogLoading}
           <Spinner size="sm" class="mr-2" />
         {/if}
-        Save Changes
+        Save changes
       </Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
 
 <!-- Delete Provider Dialog -->
-<AlertDialog bind:open={showDeleteProviderDialog}>
-  <AlertDialogContent>
-    <AlertDialogHeader>
-      <AlertDialogTitle>Delete Provider</AlertDialogTitle>
-      <AlertDialogDescription>
-        Are you sure you want to delete the <strong>{deleteTarget?.name}</strong> provider?
-        Users who authenticate via this provider will no longer be able to log in. This action cannot be undone.
-      </AlertDialogDescription>
-    </AlertDialogHeader>
-    <AlertDialogFooter>
-      <AlertDialogCancel>Cancel</AlertDialogCancel>
-      <AlertDialogAction onclick={handleDeleteProvider} disabled={deletingProvider}>
-        {deletingProvider ? "Deleting..." : "Delete Provider"}
-      </AlertDialogAction>
-    </AlertDialogFooter>
-  </AlertDialogContent>
-</AlertDialog>
+<ConfirmDialog
+  bind:open={showDeleteProviderDialog}
+  title="Delete provider"
+  description={`Users who sign in through ${deleteTarget?.name ?? 'this provider'} will no longer be able to log in. This cannot be undone.`}
+  confirmLabel="Delete provider"
+  busy={deletingProvider}
+  onConfirm={handleDeleteProvider}
+/>
+
+<!-- Disable provider dialog -->
+<ConfirmDialog
+  bind:open={showDisableDialog}
+  title={`Disable ${disableTarget?.name ?? 'provider'}?`}
+  description={impact === 'last-any'
+    ? 'This is the last enabled sign-in method. Nobody will be able to sign in until you enable a provider again.'
+    : 'This is the last enabled external provider. Users will only be able to sign in with email and password.'}
+  confirmLabel="Disable provider"
+  onConfirm={async () => {
+    if (disableTarget) await setEnabled(disableTarget, false);
+  }}
+/>

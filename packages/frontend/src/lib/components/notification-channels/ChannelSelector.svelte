@@ -7,8 +7,8 @@
 	import * as Popover from '$lib/components/ui/popover';
 	import CreateChannelDialog from './CreateChannelDialog.svelte';
 	import type { NotificationChannel } from '$lib/api/notification-channels';
-	import Mail from '@lucide/svelte/icons/mail';
-	import Webhook from '@lucide/svelte/icons/webhook';
+	import DestinationTypeIcon from './DestinationTypeIcon.svelte';
+	import { displayTypeOf, destinationLabel } from './destination-types';
 	import Plus from '@lucide/svelte/icons/plus';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import X from '@lucide/svelte/icons/x';
@@ -26,7 +26,7 @@
 		onSelectionChange,
 		disabled = false,
 		showCreateButton = true,
-		placeholder = 'Select channels...',
+		placeholder = 'Select destinations...',
 	}: Props = $props();
 
 	let popoverOpen = $state(false);
@@ -72,9 +72,6 @@
 		onSelectionChange([...selectedIds, channel.id]);
 	}
 
-	function getChannelIcon(type: string) {
-		return type === 'email' ? Mail : Webhook;
-	}
 </script>
 
 <div class="space-y-2">
@@ -82,17 +79,17 @@
 	{#if selectedChannels.length > 0}
 		<div class="flex flex-wrap gap-1">
 			{#each selectedChannels as channel}
-				{@const Icon = getChannelIcon(channel.type)}
 				<Badge variant="secondary" class="gap-1 pr-1">
-					<Icon class="h-3 w-3" />
+					<DestinationTypeIcon type={displayTypeOf(channel)} class="!size-5" />
 					{channel.name}
 					<button
 						type="button"
 						class="ml-1 hover:bg-muted rounded-full p-0.5"
 						onclick={() => removeChannel(channel.id)}
+						aria-label={`Remove ${channel.name}`}
 						{disabled}
 					>
-						<X class="h-3 w-3" />
+						<X class="h-3 w-3" aria-hidden="true" />
 					</button>
 				</Badge>
 			{/each}
@@ -113,7 +110,7 @@
 					>
 						<span class="text-muted-foreground">
 							{selectedChannels.length > 0
-								? `${selectedChannels.length} channel${selectedChannels.length > 1 ? 's' : ''} selected`
+								? `${selectedChannels.length} destination${selectedChannels.length > 1 ? 's' : ''} selected`
 								: placeholder}
 						</span>
 						<ChevronDown class="h-4 w-4 opacity-50" />
@@ -123,10 +120,10 @@
 			<Popover.Content class="w-[300px] p-0" align="start">
 				<div class="max-h-[300px] overflow-y-auto">
 					{#if loading}
-						<div class="p-4 text-center text-sm text-muted-foreground">Loading channels...</div>
+						<div class="p-4 text-center text-sm text-muted-foreground">Loading destinations...</div>
 					{:else if enabledChannels.length === 0}
 						<div class="p-4 text-center">
-							<p class="text-sm text-muted-foreground mb-2">No channels configured</p>
+							<p class="text-sm text-muted-foreground mb-2">No destinations yet</p>
 							{#if showCreateButton}
 								<Button
 									type="button"
@@ -139,22 +136,21 @@
 									class="gap-1"
 								>
 									<Plus class="h-3 w-3" />
-									Create Channel
+									Create destination
 								</Button>
 							{/if}
 						</div>
 					{:else}
 						<div class="p-1">
 							{#each enabledChannels as channel}
-								{@const Icon = getChannelIcon(channel.type)}
-								{@const isSelected = selectedIds.includes(channel.id)}
+									{@const isSelected = selectedIds.includes(channel.id)}
 								<button
 									type="button"
 									class="flex items-center gap-3 w-full px-2 py-2 rounded-md hover:bg-muted text-left"
 									onclick={() => toggleChannel(channel.id)}
 								>
 									<Checkbox checked={isSelected} />
-									<Icon class="h-4 w-4 text-muted-foreground" />
+									<DestinationTypeIcon type={displayTypeOf(channel)} />
 									<div class="flex-1 min-w-0">
 										<div class="font-medium text-sm truncate">{channel.name}</div>
 										{#if channel.description}
@@ -164,7 +160,7 @@
 										{/if}
 									</div>
 									<Badge variant="outline" class="text-xs shrink-0">
-										{channel.type}
+										{destinationLabel(channel)}
 									</Badge>
 								</button>
 							{/each}
@@ -181,7 +177,7 @@
 									}}
 								>
 									<Plus class="h-4 w-4" />
-									Create new channel
+									Create new destination
 								</button>
 							</div>
 						{/if}
