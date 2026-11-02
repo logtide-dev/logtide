@@ -135,31 +135,49 @@ export class SiemService {
   // ==========================================================================
 
   /**
-   * Create a new incident (manually or via auto-grouping)
+   * Create a new incident (manually or via auto-grouping), with its `created`
+   * history row. `createdBy` is the user who created it by hand, if any.
    */
-  async createIncident(input: CreateIncidentInput): Promise<Incident> {
-    const result = await this.db
-      .insertInto('incidents')
-      .values({
-        organization_id: input.organizationId,
-        project_id: input.projectId ?? null,
-        title: input.title,
-        description: input.description ?? null,
-        severity: input.severity,
-        status: input.status ?? 'open',
-        assignee_id: input.assigneeId ?? null,
-        trace_id: input.traceId ?? null,
-        time_window_start: input.timeWindowStart ?? null,
-        time_window_end: input.timeWindowEnd ?? null,
-        affected_services: input.affectedServices ?? null,
-        mitre_tactics: input.mitreTactics ?? null,
-        mitre_techniques: input.mitreTechniques ?? null,
-        source: input.source ?? 'sigma',
-        monitor_id: input.monitorId ?? null,
-        ...(input.timeWindowEnd && { last_event_at: input.timeWindowEnd }),
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+  async createIncident(input: CreateIncidentInput, createdBy?: string): Promise<Incident> {
+    const result = await this.db.transaction().execute(async (trx) => {
+      const row = await trx
+        .insertInto('incidents')
+        .values({
+          organization_id: input.organizationId,
+          project_id: input.projectId ?? null,
+          title: input.title,
+          description: input.description ?? null,
+          severity: input.severity,
+          status: input.status ?? 'open',
+          assignee_id: input.assigneeId ?? null,
+          trace_id: input.traceId ?? null,
+          time_window_start: input.timeWindowStart ?? null,
+          time_window_end: input.timeWindowEnd ?? null,
+          affected_services: input.affectedServices ?? null,
+          mitre_tactics: input.mitreTactics ?? null,
+          mitre_techniques: input.mitreTechniques ?? null,
+          source: input.source ?? 'sigma',
+          monitor_id: input.monitorId ?? null,
+          ...(input.timeWindowEnd && { last_event_at: input.timeWindowEnd }),
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      await trx
+        .insertInto('incident_history')
+        .values({
+          incident_id: row.id,
+          user_id: createdBy ?? null,
+          action: 'created',
+          field_name: null,
+          old_value: null,
+          new_value: null,
+          metadata: null,
+        })
+        .execute();
+
+      return row;
+    });
 
     const incident = this.mapIncident(result);
 

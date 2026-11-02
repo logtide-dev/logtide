@@ -308,6 +308,16 @@ describe('SIEM Routes', () => {
             expect(body.title).toBe('New Test Incident');
             expect(body.severity).toBe('high');
             expect(body.status).toBe('open');
+
+            // The history starts with who created it
+            const history = await app.inject({
+                method: 'GET',
+                url: `/api/v1/siem/incidents/${body.id}/history?organizationId=${testOrganization.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            expect(JSON.parse(history.payload).history).toEqual([
+                expect.objectContaining({ action: 'created', userId: testUser.id, userEmail: testUser.email }),
+            ]);
         });
 
         it('should create incident with detection events', async () => {
