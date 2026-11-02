@@ -1,453 +1,305 @@
-import { test, expect, TestApiClient, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL } from '../fixtures/auth';
+import { test, expect, TestApiClient, registerUser, generateTestEmail, generateTestName, TEST_FRONTEND_URL } from '../fixtures/auth';
+import type { Page } from '@playwright/test';
+import { createTestLog } from '../helpers/factories';
+import {
+  openAsUser,
+  matchAnyLogSigmaYaml,
+  waitForDetection,
+  createIncidentFromDetections,
+} from '../helpers/siem';
+
+const INCIDENTS_URL = /\/dashboard\/incidents(\?.*)?$/;
 
 test.describe('SIEM Journey', () => {
   let apiClient: TestApiClient;
   let userToken: string;
   let organizationId: string;
-  let testIncidentId: string;
+  let projectId: string;
+
+  // Seeded once: a manual incident, and a sigma incident built from a real detection.
+  let manualTitle: string;
+  let manualIncidentId: string;
+  let sigmaRuleTitle: string;
+  let sigmaLogMessage: string;
+  let sigmaIncidentTitle: string;
+  let sigmaIncidentId: string;
+
+  const uniq = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  async function createIncident(
+    title: string,
+    severity: 'critical' | 'high' | 'medium' | 'low' | 'informational',
+    status: 'open' | 'investigating' | 'resolved' | 'false_positive' = 'open',
+    description = `Description of ${title}`
+  ): Promise<string> {
+    const incident = await apiClient.createSiemIncident({ organizationId, title, description, severity, status });
+    return incident.id;
+  }
+
+  const rowOf = (page: Page, title: string) =>
+    page.getByRole('row').filter({ has: page.getByRole('link', { name: title, exact: true }) });
 
   test.beforeAll(async () => {
-    // Create test user and setup
-    const email = generateTestEmail();
-    const { token } = await registerUser(generateTestName('SIEM'), email, 'TestPassword123!');
+    test.setTimeout(120_000);
+    const { token } = await registerUser(generateTestName('SIEM'), generateTestEmail(), 'TestPassword123!');
     userToken = token;
     apiClient = new TestApiClient(token);
 
-    // Create organization
-    const orgResult = await apiClient.createOrganization(`SIEM Test Org ${Date.now()}`);
-    organizationId = orgResult.organization.id;
+    organizationId = (await apiClient.createOrganization(`SIEM Test Org ${uniq()}`)).organization.id;
+    projectId = (await apiClient.createProject(organizationId, `SIEM Project ${uniq()}`)).project.id;
+    const apiKey = (await apiClient.createApiKey(projectId, 'SIEM Key')).apiKey;
 
-    // Create a test incident via API for testing
-    try {
-      const incident = await apiClient.createSiemIncident({
+    manualTitle = `Test Incident ${uniq()}`;
+    manualIncidentId = await createIncident(manualTitle, 'high', 'open', 'Incident created for E2E testing');
+
+    // A real detection: import a rule, ingest a matching log, wait for the worker.
+    const keyword = `siemkw${Date.now()}`;
+    sigmaRuleTitle = `SIEM rule ${keyword}`;
+    sigmaLogMessage = `login failure for ${keyword}`;
+    await apiClient.importSigmaRule(organizationId, matchAnyLogSigmaYaml(sigmaRuleTitle, keyword, 'high'));
+    await apiClient.ingestLogs(apiKey, [
+      createTestLog({ level: 'error', message: sigmaLogMessage, service: 'siem-service' }),
+    ]);
+    const detection = await waitForDetection(userToken, organizationId, sigmaRuleTitle);
+
+    sigmaIncidentTitle = `Detection incident ${uniq()}`;
+    sigmaIncidentId = (
+      await createIncidentFromDetections(userToken, {
         organizationId,
-        title: `Test Incident ${Date.now()}`,
-        description: 'Incident created for E2E testing',
+        projectId,
+        title: sigmaIncidentTitle,
         severity: 'high',
-        status: 'open',
-      });
-      testIncidentId = incident.id;
-    } catch (e) {
-      // SIEM endpoints might not be available in test env
-      console.warn('Could not create test incident:', e);
-    }
+        detectionEventIds: [detection.id],
+      })
+    ).id;
   });
 
   test.beforeEach(async ({ page }) => {
-    // Set auth state before each test
-    await page.goto(TEST_FRONTEND_URL);
-    await setAuthState(page, { id: 'test', email: 'test@test.com', name: 'Test', token: userToken }, userToken);
-
-    // Set the current organization ID in localStorage
-    await page.evaluate((orgId) => {
-      localStorage.setItem('currentOrganizationId', orgId);
-    }, organizationId);
-
-    // Navigate to dashboard first to trigger organization loading
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('load');
-    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
-    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
-    await page.waitForTimeout(500);
+    await openAsUser(page, userToken, organizationId);
   });
 
-  test('1. User can navigate to Security dashboard', async ({ page }) => {
+  test('1. Security overview shows the seeded detection and incident counts', async ({ page }) => {
+    const stats = await apiClient.getSiemDashboard(organizationId, '24h');
+    expect(stats.totalDetections).toBe(1);
+    expect(stats.totalIncidents).toBeGreaterThanOrEqual(2);
+
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await expect(page.getByRole('heading', { name: 'Security overview', level: 1 })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('No detections yet')).toHaveCount(0);
 
-    // Verify security dashboard elements
-    await expect(page.locator('h1:has-text("Security Dashboard"), h1:has-text("Security")').first()).toBeVisible();
+    // Stats bar: numbers come from the API response for this org
+    await expect(page.getByText(/^\s*1\s+detections\s*$/)).toBeVisible();
+    await expect(page.getByText(new RegExp(`^\\s*${stats.totalIncidents}\\s+incidents\\s*$`))).toBeVisible();
 
-    // Should show dashboard widgets or empty state
-    // Check for StatsBar, TimelineWidget, or any dashboard content
-    const hasWidgets = await page.locator('[class*="card"], [class*="Card"], [data-testid*="stats"], [data-testid*="widget"]').first().isVisible().catch(() => false);
-    // Empty state shows "No security events detected" or similar
-    const hasEmptyState = await page.locator('text=/no.*security.*events/i, text=/no.*detections/i, text=/no.*incidents/i, text=/enable.*sigma/i').first().isVisible().catch(() => false);
-    // Also check for loading state (Spinner) or the main content container
-    const hasContent = await page.locator('.container, [class*="grid"]').first().isVisible().catch(() => false);
-
-    expect(hasWidgets || hasEmptyState || hasContent).toBe(true);
+    // The detection we caused is listed in the recent events and in the top threats
+    await expect(page.getByText('Recent security events')).toBeVisible();
+    await expect(page.getByRole('button', { name: sigmaRuleTitle })).toBeVisible();
+    await expect(page.getByRole('table').getByText(sigmaRuleTitle, { exact: true })).toBeVisible();
   });
 
-  test('2. User can view the incidents list page', async ({ page }) => {
+  test('2. Incidents list shows a seeded incident with its severity, status and source', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await expect(page.getByRole('heading', { name: 'Incidents', level: 1 })).toBeVisible({ timeout: 30000 });
 
-    // Verify incidents page elements
-    await expect(page.locator('h1:has-text("Security Incidents"), h1:has-text("Incidents")').first()).toBeVisible();
+    const row = rowOf(page, manualTitle);
+    await expect(row).toHaveCount(1, { timeout: 15000 });
+    await expect(row).toContainText('High');
+    await expect(row).toContainText('Open');
+    await expect(row).toContainText('Manual');
+    await expect(page.getByText('No incidents', { exact: true })).toHaveCount(0);
 
-    // Should show incident list or empty state
-    const hasIncidents = await page.locator('[class*="Card"]').first().isVisible().catch(() => false);
-    const hasEmptyState = await page.locator('text=/no.*incidents/i').isVisible().catch(() => false);
-
-    expect(hasIncidents || hasEmptyState).toBe(true);
+    // The sigma incident is listed with its own source
+    await expect(rowOf(page, sigmaIncidentTitle)).toContainText('Security');
   });
 
   test('3. User can filter incidents by status', async ({ page }) => {
+    const openTitle = `Filter open ${uniq()}`;
+    const ackTitle = `Filter ack ${uniq()}`;
+    const resolvedTitle = `Filter resolved ${uniq()}`;
+    await createIncident(openTitle, 'medium', 'open');
+    await createIncident(ackTitle, 'medium', 'investigating');
+    await createIncident(resolvedTitle, 'medium', 'resolved');
+
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    // Default view: open and acknowledged incidents, resolved ones are hidden
+    await expect(rowOf(page, openTitle)).toHaveCount(1, { timeout: 15000 });
+    await expect(rowOf(page, ackTitle)).toHaveCount(1);
+    await expect(rowOf(page, resolvedTitle)).toHaveCount(0);
 
-    // Look for filter buttons/dropdowns
-    const statusFilter = page.locator('button:has-text("Status"), [data-testid="status-filter"], button:has-text("Open")').first();
-    if (await statusFilter.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await statusFilter.click();
-      await page.waitForTimeout(500);
+    // Narrow to Acknowledged only
+    await page.getByRole('button', { name: /Status:/ }).click();
+    await page.getByRole('checkbox', { name: 'Open', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(/[?&]status=investigating(&|$)/);
+    await expect(rowOf(page, ackTitle)).toHaveCount(1);
+    await expect(rowOf(page, openTitle)).toHaveCount(0);
+    await expect(rowOf(page, resolvedTitle)).toHaveCount(0);
 
-      // Select a status option
-      const openOption = page.locator('[role="menuitem"]:has-text("Open"), [role="option"]:has-text("Open")').first();
-      if (await openOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await openOption.click();
-        await page.waitForTimeout(1000);
-      }
-    }
-
-    // Verify URL was updated with filter
-    // Either URL has status param or page shows filtered state
-    const pageContent = await page.content();
-    expect(pageContent).toBeTruthy();
+    // Add Resolved
+    await page.getByRole('button', { name: /Status:/ }).click();
+    await page.getByRole('checkbox', { name: 'Resolved', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await expect(page).toHaveURL(/status=investigating(%2C|,)resolved/);
+    await expect(rowOf(page, resolvedTitle)).toHaveCount(1);
+    await expect(rowOf(page, ackTitle)).toHaveCount(1);
+    await expect(rowOf(page, openTitle)).toHaveCount(0);
   });
 
   test('4. User can filter incidents by severity', async ({ page }) => {
+    const lowTitle = `Filter low ${uniq()}`;
+    await createIncident(lowTitle, 'low');
+
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await expect(rowOf(page, lowTitle)).toHaveCount(1, { timeout: 15000 });
+    await expect(rowOf(page, manualTitle)).toHaveCount(1);
 
-    // Look for severity filter
-    const severityFilter = page.locator('button:has-text("Severity"), [data-testid="severity-filter"]').first();
-    if (await severityFilter.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await severityFilter.click();
-      await page.waitForTimeout(500);
+    await page.getByRole('button', { name: /Severity:/ }).click();
+    await page.getByRole('checkbox', { name: 'Low', exact: true }).click();
+    await page.keyboard.press('Escape');
 
-      // Select a severity option
-      const highOption = page.locator('[role="menuitem"]:has-text("High"), [role="option"]:has-text("High")').first();
-      if (await highOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await highOption.click();
-        await page.waitForTimeout(1000);
-      }
-    }
-
-    const pageContent = await page.content();
-    expect(pageContent).toBeTruthy();
+    await expect(page).toHaveURL(/[?&]severity=low(&|$)/);
+    await expect(rowOf(page, lowTitle)).toHaveCount(1);
+    await expect(rowOf(page, manualTitle)).toHaveCount(0);
+    await expect(rowOf(page, sigmaIncidentTitle)).toHaveCount(0);
   });
 
   test('5. User can view incident details', async ({ page }) => {
-    // First create an incident via API if we don't have one
-    let incidentId = testIncidentId;
-    if (!incidentId) {
-      try {
-        const incident = await apiClient.createSiemIncident({
-          organizationId,
-          title: `Details Test Incident ${Date.now()}`,
-          description: 'Incident for viewing details',
-          severity: 'medium',
-          status: 'open',
-        });
-        incidentId = incident.id;
-      } catch (e) {
-        // Skip test if SIEM API not available
-        console.warn('SIEM API not available, skipping test');
-        return;
-      }
-    }
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${manualIncidentId}`);
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    await expect(page.getByRole('heading', { name: /Test Incident/ }).first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('heading', { name: manualTitle, level: 1 })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText('Incident created for E2E testing', { exact: true })).toBeVisible();
+    await expect(page.getByText('High', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Open', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Manual', { exact: true }).first()).toBeVisible();
   });
 
-  test('6. User can change incident status', async ({ page }) => {
-    // Create a fresh incident for this test
-    let incidentId: string;
-    try {
-      const incident = await apiClient.createSiemIncident({
-        organizationId,
-        title: `Status Change Test ${Date.now()}`,
-        description: 'Incident for status change test',
-        severity: 'low',
-        status: 'open',
-      });
-      incidentId = incident.id;
-    } catch (e) {
-      console.warn('SIEM API not available, skipping test');
-      return;
-    }
+  test('6. User can acknowledge and resolve an incident', async ({ page }) => {
+    const title = `Status change ${uniq()}`;
+    const id = await createIncident(title, 'low');
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${id}`);
+    await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible({ timeout: 30000 });
 
-    // The primary action of an open incident is Acknowledge
-    const acknowledgeButton = page.getByRole('button', { name: 'Acknowledge' }).first();
-    if (await acknowledgeButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await acknowledgeButton.click();
-      await page.waitForTimeout(2000);
+    await page.getByRole('button', { name: 'Acknowledge' }).click();
+    // The UI calls the "investigating" status Acknowledged
+    await expect(page.getByText('Acknowledged', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Acknowledge' })).toHaveCount(0);
+    expect((await apiClient.getSiemIncident(id, organizationId)).incident.status).toBe('investigating');
 
-      // Verify status was updated (the UI says Acknowledged, the API keeps investigating)
-      const pageContent = await page.content();
-      expect(pageContent).toContain('Acknowledged');
-    }
+    await page.getByRole('button', { name: 'Resolve' }).click();
+    await expect(page.locator('span.rounded-full').filter({ hasText: /^\s*Resolved\s*$/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Resolve' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Reopen' })).toBeVisible();
+    expect((await apiClient.getSiemIncident(id, organizationId)).incident.status).toBe('resolved');
   });
 
   test('7. User can add a comment to an incident', async ({ page }) => {
-    // Create a fresh incident for this test
-    let incidentId: string;
-    try {
-      const incident = await apiClient.createSiemIncident({
-        organizationId,
-        title: `Comment Test ${Date.now()}`,
-        description: 'Incident for comment test',
-        severity: 'medium',
-        status: 'open',
-      });
-      incidentId = incident.id;
-    } catch (e) {
-      console.warn('SIEM API not available, skipping test');
-      return;
-    }
+    const title = `Comment ${uniq()}`;
+    const id = await createIncident(title, 'medium');
+    const comment = `E2E comment ${uniq()}`;
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${id}`);
+    await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible({ timeout: 30000 });
 
-    // Find comment input and add a comment
-    const commentInput = page.locator('textarea[placeholder*="comment" i], textarea[placeholder*="Add" i], textarea').first();
-    if (await commentInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-      const testComment = `E2E Test Comment ${Date.now()}`;
-      await commentInput.fill(testComment);
-      await page.waitForTimeout(300);
+    const textarea = page.getByLabel('Add a comment');
+    await textarea.fill(comment);
+    await page.getByRole('button', { name: 'Add comment' }).click();
 
-      // Submit comment
-      const submitButton = page.locator('button:has-text("Add comment")').first();
-      if (await submitButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await submitButton.click();
-        await page.waitForTimeout(2000);
+    const timeline = page.getByRole('region', { name: 'Incident timeline' });
+    await expect(timeline.getByText(comment, { exact: true })).toBeVisible();
+    await expect(textarea).toHaveValue('');
 
-        // Verify comment was added
-        const pageContent = await page.content();
-        expect(pageContent).toContain(testComment);
-      }
-    }
+    const detail = await apiClient.getSiemIncident(id, organizationId);
+    expect(detail.comments.map((c: { comment: string }) => c.comment)).toEqual([comment]);
   });
 
-  test('8. User can view incident history', async ({ page }) => {
-    // Create a fresh incident and update it to generate history
-    let incidentId: string;
-    try {
-      const incident = await apiClient.createSiemIncident({
-        organizationId,
-        title: `History Test ${Date.now()}`,
-        description: 'Incident for history test',
-        severity: 'high',
-        status: 'open',
-      });
-      incidentId = incident.id;
+  test('8. Incident timeline shows the status change history', async ({ page }) => {
+    const title = `History ${uniq()}`;
+    const id = await createIncident(title, 'high');
+    await apiClient.updateSiemIncident(id, { organizationId, status: 'investigating' });
 
-      // Update status to generate history entry
-      await apiClient.updateSiemIncident(incidentId, {
-        organizationId,
-        status: 'investigating',
-      });
-    } catch (e) {
-      console.warn('SIEM API not available, skipping test');
-      return;
-    }
-
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // History rows live in the single timeline, no tab to switch
-    const pageContent = await page.content();
-    expect(pageContent.toLowerCase()).toMatch(/created|status|changed|timeline/);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${id}`);
+    const timeline = page.getByRole('region', { name: 'Incident timeline' });
+    await expect(timeline.getByText('Status changed from Open to Acknowledged', { exact: true })).toBeVisible({ timeout: 30000 });
+    await expect(timeline.getByText('Status changed from Acknowledged to Resolved', { exact: true })).toHaveCount(0);
   });
 
-  test('9. User can view detection events in incident', async ({ page }) => {
-    // Create incident with detection events would require Sigma rules + log ingestion
-    // For now, just verify the Detections tab works
-    let incidentId: string;
-    try {
-      const incident = await apiClient.createSiemIncident({
-        organizationId,
-        title: `Detections Test ${Date.now()}`,
-        description: 'Incident for detections test',
-        severity: 'critical',
-        status: 'open',
-      });
-      incidentId = incident.id;
-    } catch (e) {
-      console.warn('SIEM API not available, skipping test');
-      return;
-    }
+  test('9. Incident built from a detection lists the detection in its timeline', async ({ page }) => {
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${sigmaIncidentId}`);
+    await expect(page.getByRole('heading', { name: sigmaIncidentTitle, level: 1 })).toBeVisible({ timeout: 30000 });
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    const timeline = page.getByRole('region', { name: 'Incident timeline' });
+    await expect(timeline.getByText(sigmaRuleTitle, { exact: true })).toBeVisible();
+    await expect(timeline.getByText('siem-service', { exact: true })).toBeVisible();
 
-    // Detections are entries of the timeline (or the timeline is empty)
-    const pageContent = await page.content();
-    expect(pageContent.toLowerCase()).toMatch(/detection|event|nothing has happened|timeline/);
+    await timeline.getByRole('button', { name: 'Show details' }).click();
+    await expect(timeline.getByText(sigmaLogMessage, { exact: true })).toBeVisible();
+    await expect(timeline.getByRole('link', { name: 'Open log' })).toBeVisible();
+
+    const detail = await apiClient.getSiemIncident(sigmaIncidentId, organizationId);
+    expect(detail.detections.map((d: { ruleTitle: string }) => d.ruleTitle)).toEqual([sigmaRuleTitle]);
   });
 
   test('10. User can delete an incident', async ({ page }) => {
-    // Create a fresh incident for deletion
-    let incidentId: string;
-    try {
-      const incident = await apiClient.createSiemIncident({
-        organizationId,
-        title: `Delete Test ${Date.now()}`,
-        description: 'Incident for deletion test',
-        severity: 'low',
-        status: 'open',
-      });
-      incidentId = incident.id;
-    } catch (e) {
-      console.warn('SIEM API not available, skipping test');
-      return;
-    }
+    const title = `Delete ${uniq()}`;
+    const id = await createIncident(title, 'low');
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${id}`);
+    await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible({ timeout: 30000 });
 
-    // Find the actions dropdown (3-dot menu)
-    const actionsButton = page.locator('button:has([class*="MoreVertical"]), button[aria-label="More actions"]').first();
-    if (await actionsButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await actionsButton.click();
-      await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'More actions' }).click();
+    await page.getByRole('menuitem', { name: 'Delete incident' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click();
 
-      // Click delete option
-      const deleteOption = page.locator('[role="menuitem"]:has-text("Delete incident")').first();
-      if (await deleteOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await deleteOption.click();
-        await page.waitForTimeout(500);
-
-        // Confirm deletion
-        const confirmButton = page.locator('[role="alertdialog"] button:has-text("Delete"), button:has-text("Confirm")').first();
-        if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await confirmButton.click();
-          await page.waitForTimeout(2000);
-
-          // Should redirect to incidents list
-          expect(page.url()).toContain('/incidents');
-        }
-      }
-    }
+    await expect(page).toHaveURL(INCIDENTS_URL);
+    await expect(page.getByRole('heading', { name: 'Incidents', level: 1 })).toBeVisible();
+    await expect(rowOf(page, manualTitle)).toHaveCount(1, { timeout: 15000 });
+    await expect(page.getByRole('link', { name: title, exact: true })).toHaveCount(0);
+    await expect(apiClient.getSiemIncident(id, organizationId)).rejects.toThrow();
   });
 
-  test('11. Dashboard shows summary stats widgets', async ({ page }) => {
+  test('11. Security overview time range switches the dashboard query', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await expect(page.getByRole('heading', { name: 'Security overview', level: 1 })).toBeVisible({ timeout: 30000 });
 
-    // Should have at least some cards (stats or empty state)
-    const pageContent = await page.content();
+    const request = page.waitForRequest(
+      (r) => r.url().includes('/api/v1/siem/dashboard') && new URL(r.url()).searchParams.get('timeRange') === '7d'
+    );
+    await page.getByRole('button', { name: 'Last 24 hours' }).click();
+    await page.getByRole('button', { name: 'Last 7 days', exact: true }).click();
+    await request;
 
-    // Verify page has dashboard content (stats, charts, or empty state)
-    const hasDashboardContent =
-      pageContent.toLowerCase().includes('detection') ||
-      pageContent.toLowerCase().includes('incident') ||
-      pageContent.toLowerCase().includes('threat') ||
-      pageContent.toLowerCase().includes('no data');
-
-    expect(hasDashboardContent).toBe(true);
+    await expect(page.getByRole('button', { name: 'Last 7 days' })).toBeVisible();
+    await expect(page.getByText(/^\s*1\s+detections\s*$/)).toBeVisible();
   });
 
-  test('12. Dashboard time range filter works', async ({ page }) => {
+  test('12. "View incidents" on the overview opens the Sigma incidents inbox', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/security`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await page.getByRole('link', { name: 'View incidents' }).click();
 
-    // Look for time range selector
-    const timeRangeSelector = page.locator('button:has-text("24h"), button:has-text("7d"), button:has-text("30d"), select, [data-testid="time-range"]').first();
-    if (await timeRangeSelector.isVisible({ timeout: 5000 }).catch(() => false)) {
-      // Click to open dropdown if it's a button
-      await timeRangeSelector.click();
-      await page.waitForTimeout(500);
-
-      // Select a different time range
-      const weekOption = page.locator('button:has-text("7d"), [role="option"]:has-text("7"), [role="menuitem"]:has-text("7")').first();
-      if (await weekOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await weekOption.click();
-        await page.waitForTimeout(1000);
-      }
-    }
-
-    // Page should still be functional
-    const pageContent = await page.content();
-    expect(pageContent).toBeTruthy();
+    // The overview link is scoped to Sigma incidents
+    await expect(page).toHaveURL(/\/dashboard\/incidents\?.*source=sigma/);
+    await expect(page.getByRole('heading', { name: 'Incidents', level: 1 })).toBeVisible();
+    await expect(rowOf(page, sigmaIncidentTitle)).toHaveCount(1, { timeout: 15000 });
+    await expect(rowOf(page, manualTitle)).toHaveCount(0);
   });
 
-  test('13. Navigation from dashboard to incidents works', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/security`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+  test('13. Breadcrumb leads back from an incident to the incidents list', async ({ page }) => {
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${manualIncidentId}`);
+    await expect(page.getByRole('heading', { name: manualTitle, level: 1 })).toBeVisible({ timeout: 30000 });
 
-    // Click on "View All Incidents" or similar link
-    const viewIncidentsLink = page.locator('a:has-text("View All"), a:has-text("Incidents"), button:has-text("View Incidents")').first();
-    if (await viewIncidentsLink.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await viewIncidentsLink.click();
-      await page.waitForLoadState('load');
-      await page.waitForTimeout(1000);
+    await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Incidents' }).click();
 
-      // Should be on incidents page
-      expect(page.url()).toContain('/incidents');
-    }
+    await expect(page).toHaveURL(INCIDENTS_URL);
+    await expect(page.getByRole('heading', { name: 'Incidents', level: 1 })).toBeVisible();
+    await expect(rowOf(page, manualTitle)).toHaveCount(1, { timeout: 15000 });
   });
 
-  test('14. Back navigation from incident detail works', async ({ page }) => {
-    // Create an incident first
-    let incidentId: string;
-    try {
-      const incident = await apiClient.createSiemIncident({
-        organizationId,
-        title: `Navigation Test ${Date.now()}`,
-        description: 'Incident for navigation test',
-        severity: 'low',
-        status: 'open',
-      });
-      incidentId = incident.id;
-    } catch (e) {
-      console.warn('SIEM API not available, skipping test');
-      return;
-    }
+  test('14. Security section in the sidebar leads to the overview', async ({ page }) => {
+    const nav = page.getByRole('navigation').first();
+    await nav.getByRole('link', { name: 'Overview', exact: true }).click();
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/incidents/${incidentId}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Click the Incidents breadcrumb
-    const backButton = page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Incidents' });
-    if (await backButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await backButton.click();
-      await page.waitForLoadState('load');
-      await page.waitForTimeout(1000);
-
-      // Should be back on incidents list
-      expect(page.url()).toContain('/incidents');
-    }
-  });
-
-  test('15. Security link appears in main navigation', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(1000);
-
-    // Look for Security link in navigation
-    const securityLink = page.locator('nav a:has-text("Security"), aside a:has-text("Security"), [role="navigation"] a:has-text("Security")').first();
-    const isVisible = await securityLink.isVisible({ timeout: 5000 }).catch(() => false);
-
-    if (isVisible) {
-      await securityLink.click();
-      await page.waitForLoadState('load');
-      await page.waitForTimeout(1000);
-
-      // Should navigate to security dashboard
-      expect(page.url()).toContain('/security');
-    }
+    await expect(page).toHaveURL(/\/dashboard\/security(\?.*)?$/);
+    await expect(page.getByRole('heading', { name: 'Security overview', level: 1 })).toBeVisible();
   });
 });

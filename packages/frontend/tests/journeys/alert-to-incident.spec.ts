@@ -59,9 +59,9 @@ test.describe('Alert to incident journey', () => {
     await dialog.locator('button[type="submit"]').click();
 
     await expect(dialog).toBeHidden({ timeout: 15000 });
-    await expect(page.getByRole('link', { name: ruleName }).or(page.getByText(ruleName)).first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('row').filter({ hasText: ruleName })).toHaveCount(1, { timeout: 15000 });
 
-    // 3. Push the matching logs over the threshold
+    // 3. Push the matching logs over the threshold: 1 log existed, 2 more make 3 against a threshold of 2
     await api.ingestLogs(key.apiKey, [
       createTestLog({ service, level: 'error', message: 'payment gateway timeout again' }),
       createTestLog({ service, level: 'error', message: 'payment gateway refused card' }),
@@ -89,20 +89,24 @@ test.describe('Alert to incident journey', () => {
     await expect(page.getByRole('heading', { name: new RegExp(ruleName) }).first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Acknowledge' }).click();
-    await expect(page.getByText('Acknowledged').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Acknowledged', { exact: true })).toBeVisible({ timeout: 15000 });
 
+    // Resolving applies immediately, there is no confirmation dialog
     await page.getByRole('button', { name: 'Resolve' }).click();
-    // Resolving may ask for confirmation
-    const confirm = page.getByRole('alertdialog').or(page.getByRole('dialog'));
-    if (await confirm.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await confirm.getByRole('button', { name: /^Resolve/ }).click();
-    }
-    await expect(page.getByText('Resolved').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('span.rounded-full').filter({ hasText: /^\s*Resolved\s*$/ })).toBeVisible({ timeout: 15000 });
     await expect(page.getByRole('button', { name: 'Resolve' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Reopen' })).toBeVisible();
 
     // The firing notification went to the email channel (mailhog API)
-    const mail = await fetch(`http://localhost:8025/api/v2/search?kind=to&query=${encodeURIComponent(recipient)}`);
-    expect(mail.ok).toBe(true);
-    expect((await mail.json()).total).toBeGreaterThan(0);
+    await expect
+      .poll(
+        async () => {
+          const mail = await fetch(`http://localhost:8025/api/v2/search?kind=to&query=${encodeURIComponent(recipient)}`);
+          if (!mail.ok) throw new Error(`mailhog answered ${mail.status}`);
+          return (await mail.json()).total;
+        },
+        { timeout: 60_000, intervals: [2_000] }
+      )
+      .toBeGreaterThan(0);
   });
 });
