@@ -26,8 +26,15 @@ jobs:
   # Backend Tests
   # ====================
   backend-test:
-    name: Backend Tests
+    # Six shards in parallel, each with its own database: the suite runs its
+    # files one at a time against a shared database (fileParallelism: false),
+    # so a single runner took about 24 minutes.
+    name: Backend Tests (${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
 
     services:
       postgres:
@@ -38,11 +45,14 @@ jobs:
           POSTGRES_PASSWORD: test_password
         ports:
           - 5433:5432
+        # A throwaway database: on tmpfs, with room for parallel queries.
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw
+          --shm-size=1g
           --health-cmd pg_isready
-          --health-interval 10s
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
 
       redis:
         image: redis:7-alpine
@@ -50,9 +60,9 @@ jobs:
           - 6380:6379
         options: >-
           --health-cmd "redis-cli ping"
-          --health-interval 10s
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
 
       mailhog:
         image: mailhog/mailhog:latest
@@ -63,6 +73,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Turn off durability on the test database
+        # Service containers take no command line; these settings reload
+        # without a restart. Every commit of the suite gets cheaper.
+        env:
+          PGPASSWORD: test_password
+        run: |
+          for setting in "fsync = off" "synchronous_commit = off" "full_page_writes = off"; do
+            psql -h localhost -p 5433 -U logtide_test -d logtide_test -c "ALTER SYSTEM SET $setting"
+          done
+          psql -h localhost -p 5433 -U logtide_test -d logtide_test -c "SELECT pg_reload_conf()"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -84,7 +105,7 @@ jobs:
       - name: Build reservoir package
         run: pnpm --filter '@logtide/reservoir' build
 
-      - name: Run backend tests with coverage
+      - name: Run backend tests (shard ${{ matrix.shard }}/6)
         working-directory: packages/backend
         env:
           NODE_ENV: test
@@ -103,7 +124,57 @@ jobs:
           SMTP_FROM: test@logtide.dev
           RATE_LIMIT_MAX: 1000
           RATE_LIMIT_WINDOW: 60000
-        run: pnpm test:ci:coverage
+        # Coverage thresholds apply to the merged report (backend-coverage),
+        # not to one shard's part of it.
+        run: >-
+          npx vitest run --shard=${{ matrix.shard }}/6 --coverage
+          --coverage.thresholds.lines=0 --coverage.thresholds.functions=0
+          --coverage.thresholds.branches=0 --coverage.thresholds.statements=0
+          --reporter=default --reporter=blob
+
+      - name: Upload shard report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-blob-${{ matrix.shard }}
+          path: packages/backend/.vitest-reports/*
+          include-hidden-files: true
+          retention-days: 1
+
+  backend-coverage:
+    # The required check for the backend suite: every shard passed, and the
+    # merged coverage meets the thresholds of vitest.config.ts.
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    needs: [backend-test]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download shard reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: backend-blob-*
+          path: packages/backend/.vitest-reports
+          merge-multiple: true
+
+      - name: Merge reports and check coverage thresholds
+        working-directory: packages/backend
+        run: npx vitest run --merge-reports --coverage
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -305,9 +376,14 @@ jobs:
   # E2E Tests (Playwright)
   # ====================
   e2e-test:
-    name: E2E Tests
+    # Two shards, each with its own stack; independent of the unit and
+    # integration jobs, so it starts right away.
+    name: E2E Tests (${{ matrix.shard }}/2)
     runs-on: ubuntu-24.04  # playwright 1.57 has no chromium build for ubuntu 26.04
-    needs: [backend-test, typecheck]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
 
     steps:
       - name: Checkout
@@ -331,9 +407,24 @@ jobs:
         working-directory: packages/frontend
         run: npx playwright install --with-deps chromium
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test images (cached)
+        # The backend and frontend images, from the GitHub Actions cache
+        # instead of a cold `compose up --build` every run.
+        uses: docker/bake-action@v5
+        with:
+          files: docker-compose.test.yml
+          targets: backend-test,frontend-test
+          load: true
+          set: |
+            *.cache-from=type=gha,scope=e2e
+            *.cache-to=type=gha,scope=e2e,mode=max
+
       - name: Start test infrastructure
         run: |
-          docker compose -f docker-compose.test.yml up -d --build
+          docker compose -f docker-compose.test.yml up -d
           # Wait for services to be healthy
           echo "Waiting for services to be ready..."
           timeout 120 bash -c 'until curl -s http://localhost:3001/health > /dev/null; do sleep 2; done'
@@ -350,13 +441,13 @@ jobs:
           E2E: 'true'
           TEST_API_URL: http://localhost:3001
           TEST_FRONTEND_URL: http://localhost:3002
-        run: npx playwright test --reporter=list
+        run: npx playwright test --reporter=list --shard=${{ matrix.shard }}/2
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: packages/frontend/playwright-report/
           retention-days: 7
 
@@ -364,7 +455,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: test-results
+          name: test-results-${{ matrix.shard }}
           path: packages/frontend/test-results/
           retention-days: 7
 
@@ -372,13 +463,24 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.test.yml down -v
 
+  e2e-result:
+    # Keeps the "E2E Tests" check name for branch protection.
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [e2e-test]
+    if: always()
+    steps:
+      - name: Every E2E shard passed
+        run: test "${{ needs.e2e-test.result }}" = "success"
+
   # ====================
   # Build Docker Images
   # ====================
   build:
+    # Only checks that the images build; nothing waits for it and it waits
+    # for nothing.
     name: Build Docker Images
     runs-on: ubuntu-latest
-    needs: [backend-test, reservoir-test, typecheck, e2e-test]
 
     steps:
       - name: Checkout
