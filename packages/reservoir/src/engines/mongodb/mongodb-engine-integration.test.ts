@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { MongoClient } from 'mongodb';
 import { MongoDBEngine } from './mongodb-engine.js';
-import type { LogRecord, SpanRecord, TraceRecord, MetricRecord, StorageConfig } from '../../core/types.js';
+import type { QueryParams, LogRecord, SpanRecord, TraceRecord, MetricRecord, StorageConfig } from '../../core/types.js';
 
 const TEST_CONFIG: StorageConfig = {
   host: 'localhost',
@@ -345,6 +345,57 @@ describe('MongoDBEngine (integration)', () => {
       });
 
       expect(result.logs.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('query paging on a time-only sort (ties broken by id)', () => {
+    // 3 logs at 10:00, 7 sharing 11:00, 3 at 12:00: page boundaries land
+    // inside the 11:00 group, where only the id orders the rows.
+    const times = ['10:00', '10:00', '10:00', ...Array(7).fill('11:00'), '12:00', '12:00', '12:00'];
+    const scope = { projectId: 'proj-ties', from: new Date('2025-02-01T00:00:00Z'), to: new Date('2025-02-02T00:00:00Z') };
+
+    beforeEach(async () => {
+      await engine.ingest(times.map((t, i) => makeLog({ projectId: 'proj-ties', time: new Date(`2025-02-01T${t}:00Z`), message: `tie ${i}` })));
+    });
+
+    async function allPages(sortOrder: 'asc' | 'desc', limit: number, q?: Partial<QueryParams>): Promise<string[]> {
+      const ids: string[] = [];
+      let cursor: string | undefined;
+      for (let guard = 0; guard < 50; guard++) {
+        const page = await engine.query({ ...scope, ...q, sortOrder, limit, ...(cursor ? { cursor } : {}) });
+        ids.push(...page.logs.map((l) => `${l.time.toISOString()}|${l.id}`));
+        if (!page.hasMore) return ids;
+        cursor = page.nextCursor;
+      }
+      throw new Error('paging did not end');
+    }
+
+    const expected = async (sortOrder: 'asc' | 'desc'): Promise<string[]> => {
+      const all = (await engine.query({ ...scope, limit: 1000 })).logs.map((l) => `${l.time.toISOString()}|${l.id}`);
+      const asc = [...all].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      return sortOrder === 'asc' ? asc : asc.reverse();
+    };
+
+    for (const sortOrder of ['desc', 'asc'] as const) {
+      for (const limit of [1, 2, 3, 4, 5]) {
+        it(`${sortOrder} pages of ${limit} visit every log once in (time, id) order`, async () => {
+          expect(await allPages(sortOrder, limit)).toEqual(await expected(sortOrder));
+        });
+      }
+    }
+
+    it('offset pages follow the same order', async () => {
+      const order = await expected('desc');
+      for (const offset of [0, 2, 5, 9]) {
+        const page = await engine.query({ ...scope, limit: 3, offset });
+        expect(page.logs.map((l) => `${l.time.toISOString()}|${l.id}`)).toEqual(order.slice(offset, offset + 3));
+        expect(page.hasMore).toBe(offset + 3 < order.length);
+      }
+    });
+
+    it('a filter keeps the order and the paging', async () => {
+      const filtered = (await expected('desc')).filter((key) => key.includes('T11:00'));
+      expect(await allPages('desc', 2, { textQuery: undefined, search: undefined, from: new Date('2025-02-01T11:00:00Z'), to: new Date('2025-02-01T11:00:00Z') })).toEqual(filtered);
     });
   });
 

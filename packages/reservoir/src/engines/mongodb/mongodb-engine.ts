@@ -456,18 +456,18 @@ export class MongoDBEngine extends StorageEngine {
     const start = Date.now();
     const col = this.logsCol();
     const native = this.translator.translateQuery(params);
-    const filter = native.query as Document;
-    const { limit, offset, sort } = native.metadata as { limit: number; offset: number; sort: Document };
+    const { limit, offset, base, keyset } = native.metadata as {
+      limit: number;
+      offset: number;
+      base: Document;
+      keyset: { time: Date; id: string } | null;
+    };
+    const dir: 1 | -1 = params.sortOrder === 'asc' ? 1 : -1;
 
-    const docs = await col
-      .find(filter, { ...ctxOpts(), projection: { _id: 0 } })
-      .sort(sort)
-      .skip(offset)
-      .limit(limit + 1)
-      .toArray();
-
-    const hasMore = docs.length > limit;
-    const trimmed = hasMore ? docs.slice(0, limit) : docs;
+    const docs = await this.pageByTime(col, base, keyset, dir, offset + limit + 1);
+    const page = docs.slice(offset, offset + limit + 1);
+    const hasMore = page.length > limit;
+    const trimmed = hasMore ? page.slice(0, limit) : page;
 
     let nextCursor: string | undefined;
     if (hasMore && trimmed.length > 0) {
@@ -485,6 +485,54 @@ export class MongoDBEngine extends StorageEngine {
       nextCursor,
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  /**
+   * The first `n` logs of `base` after `keyset`, ordered by (time, id) in
+   * `dir`, without asking MongoDB to sort by id. On the time-series logs
+   * collection only a time-only sort runs as a bounded sort (one bucket at a
+   * time); `{ time, id }`, or the `$or` a keyset needs, sorts the whole
+   * window (10.7 s instead of 0.8 s for a first page over 5 million logs).
+   * So: the logs sharing the keyset's time are read on their own, the rest
+   * comes from a plain time range sorted on time, the group of logs sharing
+   * the last time of that read is completed, and the id order is applied
+   * in memory. Same rows, same order as sorting by (time, id).
+   */
+  private async pageByTime(
+    col: Collection,
+    base: Document,
+    keyset: { time: Date; id: string } | null,
+    dir: 1 | -1,
+    n: number,
+  ): Promise<Document[]> {
+    const opts = { ...ctxOpts(), projection: { _id: 0 } };
+    const after = dir === 1 ? '$gt' : '$lt';
+    const and = (extra: Document): Document => ({ $and: [base, extra] });
+    const byKey = (a: Document, b: Document): number => {
+      const ta = (a.time instanceof Date ? a.time : new Date(a.time)).getTime();
+      const tb = (b.time instanceof Date ? b.time : new Date(b.time)).getTime();
+      if (ta !== tb) return (ta - tb) * dir;
+      const ia = String(a.id);
+      const ib = String(b.id);
+      return (ia < ib ? -1 : ia > ib ? 1 : 0) * dir;
+    };
+
+    const ties = keyset ? await col.find(and({ time: keyset.time, id: { [after]: keyset.id } }), opts).toArray() : [];
+    const need = n - ties.length;
+    let rest: Document[] = [];
+    if (need > 0) {
+      const range = keyset ? and({ time: { [after]: keyset.time } }) : base;
+      rest = await col.find(range, opts).sort({ time: dir }).limit(need).toArray();
+      if (rest.length === need) {
+        // The read may have cut a group of logs sharing its last time: take
+        // the whole group so the id order inside it is complete.
+        const edge = rest[rest.length - 1].time;
+        const group = await col.find(keyset ? and({ $and: [{ time: edge }, { time: { [after]: keyset.time } }] }) : and({ time: edge }), opts).toArray();
+        const edgeMs = (edge instanceof Date ? edge : new Date(edge)).getTime();
+        rest = rest.filter((d) => (d.time instanceof Date ? d.time : new Date(d.time)).getTime() !== edgeMs).concat(group);
+      }
+    }
+    return [...ties.sort(byKey), ...rest.sort(byKey)].slice(0, n);
   }
 
   async aggregate(params: AggregateParams): Promise<AggregateResult> {
