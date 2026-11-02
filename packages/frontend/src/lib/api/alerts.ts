@@ -233,8 +233,8 @@ export class AlertsAPI {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message || `HTTP ${response.status}`);
+      const error = await response.json().catch(() => ({ error: 'Request failed' }));
+      throw new Error(error.error || error.message || `HTTP ${response.status}`);
     }
 
     if (response.status === 204) {
