@@ -75,7 +75,10 @@ import type {
   ListSessionsResult,
   HasSessionsParams,
 } from '../../core/types.js';
-import { GLOBAL_SCOPE } from '../../core/types.js';
+import { GLOBAL_SCOPE, type LogFilterParams } from '../../core/types.js';
+import { isVolumeOnlyFilter, splitByStaleMinutes } from '../../core/log-volume.js';
+import { zeroFillHistogram } from '../../core/aggregation-helpers.js';
+import { MongoLogVolume } from './log-volume.js';
 import {
   assertTimeRange,
   normalizeDiscoverParams,
@@ -335,6 +338,7 @@ export class MongoDBEngine extends StorageEngine {
 
     // Create indexes
     await this.createLogsIndexes(db);
+    await this.logVolume().ensureIndexes();
     await this.createSpansIndexes(db);
     await this.createTracesIndexes(db);
     await this.createMetricsIndexes(db);
@@ -372,12 +376,17 @@ export class MongoDBEngine extends StorageEngine {
 
     const start = Date.now();
     const col = this.logsCol();
+    // Logs below the volume watermark are marked before the insert and
+    // re-checked after it (log-volume.ts); real-time batches skip both.
+    const seen = await this.logVolume().beforeInsert(logs);
 
     try {
       const docs = logs.map((log) => toMongoLogDoc(log, log.id ?? randomUUID()));
       const result = await col.insertMany(docs, { ...ctxOpts(), ordered: false });
+      await this.logVolume().afterInsert(logs, seen);
       return { ingested: result.insertedCount, failed: logs.length - result.insertedCount, durationMs: Date.now() - start };
     } catch (err) {
+      await this.logVolume().afterInsert(logs, seen).catch(() => undefined);
       if (err instanceof MongoBulkWriteError) {
         const inserted = err.result?.insertedCount ?? 0;
         return {
@@ -417,9 +426,11 @@ export class MongoDBEngine extends StorageEngine {
       hostname: log.hostname,
     });
 
+    const seen = await this.logVolume().beforeInsert(logsWithIds);
     try {
       const docs = logsWithIds.map((log) => toMongoLogDoc(log, log.id));
       await col.insertMany(docs, { ...ctxOpts(), ordered: false });
+      await this.logVolume().afterInsert(logsWithIds, seen);
 
       const rows: StoredLogRecord[] = logsWithIds.map(toRow);
 
@@ -604,6 +615,19 @@ export class MongoDBEngine extends StorageEngine {
   async count(params: CountParams): Promise<CountResult> {
     const start = Date.now();
     const col = this.logsCol();
+    const projects = this.volumeProjects(params);
+    const stale = projects ? await this.logVolume().staleSpans(projects, params.from, params.to).catch(() => null) : null;
+    if (projects && stale) {
+      const split = splitByStaleMinutes(params, stale);
+      if (split.aggregate.length > 0) {
+        const parts = await Promise.all([
+          this.logVolume().count(params, projects, split.aggregate),
+          ...split.raw.map((r) =>
+            col.countDocuments(this.translator.translateCount({ ...params, ...r }).query as Document, { ...ctxOpts(), ...this.analyticsOpts() })),
+        ]);
+        return { count: parts.reduce((sum, n) => sum + n, 0), executionTimeMs: Date.now() - start };
+      }
+    }
     const native = this.translator.translateCount(params);
     const filter = native.query as Document;
     const count = await col.countDocuments(filter, { ...ctxOpts(), ...this.analyticsOpts() });
@@ -717,6 +741,27 @@ export class MongoDBEngine extends StorageEngine {
     // Same validation as the client (bucket size, bucket cap, range), so a
     // direct engine call cannot build an unbounded zero-filled result.
     const normalized = normalizeHistogramParams(params);
+    const projects = normalized.bucketSeconds % 60 === 0 ? this.volumeProjects(normalized) : null;
+    // The volume collections unreadable (a transient error, permissions): the logs answer alone.
+    const stale = projects ? await this.logVolume().staleSpans(projects, normalized.from, normalized.to).catch(() => null) : null;
+    if (projects && stale) {
+      const split = splitByStaleMinutes(normalized, stale);
+      if (split.aggregate.length > 0) {
+        const bucketMs = normalized.bucketSeconds * 1000;
+        const [fromCounts, ...rawParts] = await Promise.all([
+          this.logVolume().histogramRows(normalized, projects, split.aggregate, bucketMs),
+          ...split.raw.map((r) =>
+            this.logsCol()
+              .aggregate(histogramPipeline(this.translator.buildLogFilter({ ...normalized, ...r }), bucketMs), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
+              .toArray()),
+        ]);
+        const rows = [...fromCounts];
+        for (const part of rawParts) {
+          for (const r of part as HistogramRow[]) rows.push({ time: new Date(Number(r._id.b)), level: String(r._id.level) as LogLevel, count: Number(r.n) });
+        }
+        return zeroFillHistogram(normalized, rows);
+      }
+    }
     const filter = this.translator.buildLogFilter(normalized);
     const rows = await this.logsCol()
       .aggregate(histogramPipeline(filter, normalized.bucketSeconds * 1000), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
@@ -784,7 +829,10 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateDelete(params);
     const filter = native.query as Document;
+    const projects = [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
+    const seen = await this.logVolume().beforeDelete(projects, params.from, params.to);
     const result = await col.deleteMany(filter, { ...ctxOpts() });
+    await this.logVolume().afterDelete(projects, params.from, params.to, seen);
     return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
   }
 
@@ -1614,6 +1662,24 @@ export class MongoDBEngine extends StorageEngine {
       throw new Error('Not connected. Call connect() first.');
     }
     return this.mongoClient.db(this.options.dbName ?? this.config.database);
+  }
+
+  private volume: MongoLogVolume | null = null;
+
+  /** The hand-kept log volume aggregate (see log-volume.ts). */
+  private logVolume(): MongoLogVolume {
+    this.volume ??= new MongoLogVolume(this.getDb(), () => this.logsCol(), () => ({ ...ctxOpts(), ...this.analyticsOpts() }));
+    return this.volume;
+  }
+
+  async refreshLogVolume(): Promise<void> {
+    await this.logVolume().refresh();
+  }
+
+  /** Explicit projects of a volume-only filter, or null when the aggregate cannot answer it. */
+  private volumeProjects(filter: LogFilterParams): string[] | null {
+    if (filter.projectId === GLOBAL_SCOPE || !isVolumeOnlyFilter(filter)) return null;
+    return [...new Set(Array.isArray(filter.projectId) ? filter.projectId : [filter.projectId])];
   }
 
   private logsCol(): Collection<Document> {
