@@ -24,7 +24,7 @@
  */
 import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
-import { isVolumeOnlyFilter, zeroFillHistogram, type LogHistogramResult, type LogFilterParams, type LogLevel } from '@logtide/reservoir';
+import { isVolumeOnlyFilter, splitByStaleMinutes, zeroFillHistogram, type LogHistogramResult, type LogFilterParams, type LogLevel, type StaleSpan } from '@logtide/reservoir';
 
 const MINUTE_MS = 60_000;
 
@@ -47,8 +47,7 @@ export interface VolumeSplit {
   raw: RawRange[];
 }
 
-/** Inclusive [lo, hi] spans in ms the aggregate must not answer for. */
-export type StaleSpan = [number, number];
+export type { StaleSpan };
 
 const toArray = <T>(v: T | T[] | undefined): T[] | undefined => (v === undefined ? undefined : Array.isArray(v) ? v : [v]);
 
@@ -65,45 +64,13 @@ export function aggregateCanAnswer(filter: LogFilterParams): boolean {
 /**
  * Splits [from, to] (bounds as flagged) into the minutes the aggregate
  * answers and the raw ranges around and between them: whole minutes inside
- * the trusted window, minus every minute touched by a stale span.
+ * the trusted window (older than AGGREGATE_TAIL_MS, newer than
+ * AGGREGATE_WINDOW_MS), minus every minute touched by a stale span.
  */
 export function splitVolumeRange(range: RawRange, now: Date, stale: StaleSpan[] = []): VolumeSplit {
-  const ceilMinute = (ms: number) => Math.ceil(ms / MINUTE_MS) * MINUTE_MS;
-  const floorMinute = (ms: number) => Math.floor(ms / MINUTE_MS) * MINUTE_MS;
-  const fromMs = range.from.getTime();
-  const toMs = range.to.getTime();
-  // An exclusive start on a minute boundary leaves that minute partial.
-  let start = ceilMinute(fromMs);
-  if (range.fromExclusive && start === fromMs) start += MINUTE_MS;
-  start = Math.max(start, ceilMinute(now.getTime() - AGGREGATE_WINDOW_MS));
-  // Minutes ending at or before `to`; an inclusive `to` on a boundary keeps that instant raw.
-  const end = Math.min(floorMinute(toMs), floorMinute(now.getTime() - AGGREGATE_TAIL_MS));
-  if (end - start < MINUTE_MS) return { aggregate: [], raw: [range] };
-
-  // Whole minutes in [start, end) not touched by a stale span.
-  const holes = stale
-    .map(([lo, hi]) => [Math.max(start, floorMinute(lo)), Math.min(end, floorMinute(hi) + MINUTE_MS)] as const)
-    .filter(([lo, hi]) => lo < hi)
-    .sort((x, y) => x[0] - y[0]);
-  const aggregate: { from: Date; to: Date }[] = [];
-  const raw: RawRange[] = [];
-  let cursor = start;
-  for (const [lo, hi] of holes) {
-    if (hi <= cursor) continue;
-    if (lo > cursor) aggregate.push({ from: new Date(cursor), to: new Date(lo) });
-    raw.push({ from: new Date(Math.max(lo, cursor)), to: new Date(hi), fromExclusive: false, toExclusive: true });
-    cursor = hi;
-  }
-  if (cursor < end) aggregate.push({ from: new Date(cursor), to: new Date(end) });
-  if (aggregate.length === 0) return { aggregate: [], raw: [range] };
-
-  if (start > fromMs) {
-    raw.unshift({ from: range.from, to: new Date(start), fromExclusive: range.fromExclusive, toExclusive: true });
-  }
-  if (end < toMs || (end === toMs && !range.toExclusive)) {
-    raw.push({ from: new Date(end), to: range.to, fromExclusive: false, toExclusive: range.toExclusive });
-  }
-  return { aggregate, raw };
+  const windowStart = Math.ceil((now.getTime() - AGGREGATE_WINDOW_MS) / MINUTE_MS) * MINUTE_MS;
+  const tailStart = Math.floor((now.getTime() - AGGREGATE_TAIL_MS) / MINUTE_MS) * MINUTE_MS;
+  return splitByStaleMinutes(range, [...stale, [-Infinity, windowStart - 1], [tailStart, Infinity]]);
 }
 
 /**
