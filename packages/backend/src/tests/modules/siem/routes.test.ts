@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, beforeAll, vi } from 'vitest';
+import { enrichmentService } from '../../../modules/siem/enrichment-service.js';
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { siemRoutes } from '../../../modules/siem/routes.js';
@@ -809,20 +810,35 @@ describe('SIEM Routes', () => {
     // ==========================================================================
 
     describe('POST /api/v1/siem/enrichment/ip-reputation', () => {
-        it('should check IP reputation (may return 503 if not configured)', async () => {
+        it('answers 503 when the IP reputation data is not loaded', async () => {
             const response = await app.inject({
                 method: 'POST',
                 url: '/api/v1/siem/enrichment/ip-reputation',
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                },
-                payload: {
-                    ip: '8.8.8.8',
-                },
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { ip: '8.8.8.8' },
             });
 
-            // Either returns data or 503 if service not configured
-            expect([200, 503]).toContain(response.statusCode);
+            expect(response.statusCode).toBe(503);
+            expect(response.json()).toEqual({ error: 'IP reputation service unavailable or not configured' });
+        });
+
+        it('returns the IP reputation data when the service has it', async () => {
+            const data = { ip: '8.8.8.8', reputation: 'malicious', score: 3, sources: ['ipsum'], lastChecked: '2026-11-02T00:00:00.000Z' };
+            const spy = vi.spyOn(enrichmentService, 'checkIpReputation').mockReturnValue(data as never);
+            try {
+                const response = await app.inject({
+                    method: 'POST',
+                    url: '/api/v1/siem/enrichment/ip-reputation',
+                    headers: { Authorization: `Bearer ${authToken}` },
+                    payload: { ip: '8.8.8.8' },
+                });
+
+                expect(response.statusCode).toBe(200);
+                expect(response.json()).toEqual(data);
+                expect(spy).toHaveBeenCalledWith('8.8.8.8');
+            } finally {
+                spy.mockRestore();
+            }
         });
 
         it('should reject invalid IP address', async () => {
@@ -842,20 +858,35 @@ describe('SIEM Routes', () => {
     });
 
     describe('POST /api/v1/siem/enrichment/geoip', () => {
-        it('should get GeoIP data (may return 503 if not configured)', async () => {
+        it('answers 503 when the GeoIP data is not loaded', async () => {
             const response = await app.inject({
                 method: 'POST',
                 url: '/api/v1/siem/enrichment/geoip',
-                headers: {
-                    Authorization: `Bearer ${authToken}`,
-                },
-                payload: {
-                    ip: '8.8.8.8',
-                },
+                headers: { Authorization: `Bearer ${authToken}` },
+                payload: { ip: '8.8.8.8' },
             });
 
-            // Either returns data or 503 if service not configured
-            expect([200, 503]).toContain(response.statusCode);
+            expect(response.statusCode).toBe(503);
+            expect(response.json()).toEqual({ error: 'GeoIP service unavailable or not configured' });
+        });
+
+        it('returns the GeoIP data when the service has it', async () => {
+            const data = { ip: '8.8.8.8', country: 'United States', countryCode: 'US', city: 'Mountain View', latitude: 37.4, longitude: -122.1, timezone: 'America/Los_Angeles' };
+            const spy = vi.spyOn(enrichmentService, 'getGeoIpData').mockReturnValue(data as never);
+            try {
+                const response = await app.inject({
+                    method: 'POST',
+                    url: '/api/v1/siem/enrichment/geoip',
+                    headers: { Authorization: `Bearer ${authToken}` },
+                    payload: { ip: '8.8.8.8' },
+                });
+
+                expect(response.statusCode).toBe(200);
+                expect(response.json()).toEqual(data);
+                expect(spy).toHaveBeenCalledWith('8.8.8.8');
+            } finally {
+                spy.mockRestore();
+            }
         });
 
         it('should reject invalid IP address', async () => {

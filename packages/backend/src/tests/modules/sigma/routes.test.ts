@@ -514,7 +514,7 @@ describe('Sigma Routes', () => {
 
             // The sync service uses @> jsonb operator on text[] columns
             // which may fail on some DB versions. Accept both 200 and 500.
-            expect([200, 500]).toContain(res.statusCode);
+            expect(res.statusCode).toBe(200);
         });
 
         it('should return 403 for non-member', async () => {
@@ -549,7 +549,7 @@ describe('Sigma Routes', () => {
 
             // The sync service uses @> jsonb operator on text[] columns
             // which may fail on some DB versions. Accept both 200 and 500.
-            expect([200, 500]).toContain(res.statusCode);
+            expect(res.statusCode).toBe(200);
         });
 
         it('should return 403 for non-member', async () => {
