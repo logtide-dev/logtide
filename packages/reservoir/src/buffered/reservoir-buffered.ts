@@ -115,6 +115,7 @@ export class ReservoirBuffered implements IReservoir {
   topValues(...args: Parameters<Reservoir['topValues']>): ReturnType<Reservoir['topValues']> { return this.inner.topValues(...args); }
   deleteByTimeRange(...args: Parameters<Reservoir['deleteByTimeRange']>): ReturnType<Reservoir['deleteByTimeRange']> { return this.inner.deleteByTimeRange(...args); }
   upsertTrace(...args: Parameters<Reservoir['upsertTrace']>): ReturnType<Reservoir['upsertTrace']> { return this.inner.upsertTrace(...args); }
+  upsertTraces(...args: Parameters<Reservoir['upsertTraces']>): ReturnType<Reservoir['upsertTraces']> { return this.inner.upsertTraces(...args); }
   querySpans(...args: Parameters<Reservoir['querySpans']>): ReturnType<Reservoir['querySpans']> { return this.inner.querySpans(...args); }
   getSpansByTraceId(...args: Parameters<Reservoir['getSpansByTraceId']>): ReturnType<Reservoir['getSpansByTraceId']> { return this.inner.getSpansByTraceId(...args); }
   queryTraces(...args: Parameters<Reservoir['queryTraces']>): ReturnType<Reservoir['queryTraces']> { return this.inner.queryTraces(...args); }

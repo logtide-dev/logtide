@@ -751,44 +751,37 @@ export class MongoDBEngine extends StorageEngine {
     }
   }
 
-  async upsertTrace(trace: TraceRecord): Promise<void> {
-    const col = this.tracesCol();
-    const filter = { trace_id: trace.traceId, project_id: trace.projectId };
-
-    // Single bulkWrite: upsert + compute duration_ms in one network round trip
-    await col.bulkWrite(
-      [
-        {
-          updateOne: {
-            filter,
-            update: {
-              $min: { start_time: trace.startTime },
-              $max: { end_time: trace.endTime, error: trace.error },
-              $inc: { span_count: trace.spanCount },
-              $set: {
-                service_name: trace.serviceName,
-                root_service_name: trace.rootServiceName ?? null,
-                root_operation_name: trace.rootOperationName ?? null,
-                updated_at: new Date(),
-              },
-              $setOnInsert: {
-                trace_id: trace.traceId,
-                project_id: trace.projectId,
-                organization_id: trace.organizationId ?? null,
-              },
+  async upsertTraces(traces: TraceRecord[]): Promise<void> {
+    if (traces.length === 0) return;
+    // One bulkWrite, one pipeline upsert per trace: the merge reads only the
+    // stored summary (never the spans), so concurrent batches serialize on the
+    // document. Literal values go through $literal so a name starting with `$`
+    // is never read as a field path. Root names are only written when the
+    // batch carried the root span, and service_name is kept from the first.
+    const lit = (v: unknown) => ({ $literal: v });
+    const ops = traces.map((trace) => ({
+      updateOne: {
+        filter: { trace_id: trace.traceId, project_id: trace.projectId },
+        update: [
+          {
+            $set: {
+              organization_id: { $ifNull: ['$organization_id', lit(trace.organizationId ?? null)] },
+              service_name: { $ifNull: ['$service_name', lit(trace.serviceName)] },
+              root_service_name: trace.rootServiceName != null ? lit(trace.rootServiceName) : { $ifNull: ['$root_service_name', null] },
+              root_operation_name: trace.rootOperationName != null ? lit(trace.rootOperationName) : { $ifNull: ['$root_operation_name', null] },
+              start_time: { $min: ['$start_time', trace.startTime] },
+              end_time: { $max: ['$end_time', trace.endTime] },
+              span_count: { $add: [{ $ifNull: ['$span_count', 0] }, trace.spanCount] },
+              error: { $or: [{ $ifNull: ['$error', false] }, trace.error] },
+              updated_at: '$$NOW',
             },
-            upsert: true,
           },
-        },
-        {
-          updateOne: {
-            filter,
-            update: [{ $set: { duration_ms: { $subtract: [{ $toLong: '$end_time' }, { $toLong: '$start_time' }] } } }],
-          },
-        },
-      ],
-      { ordered: true },
-    );
+          { $set: { duration_ms: { $subtract: [{ $toLong: '$end_time' }, { $toLong: '$start_time' }] } } },
+        ],
+        upsert: true,
+      },
+    }));
+    await this.tracesCol().bulkWrite(ops, { ordered: true });
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {

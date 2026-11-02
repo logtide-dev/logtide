@@ -2,6 +2,8 @@ import pg from 'pg';
 import { randomUUID } from 'crypto';
 import { currentOrNull } from '@logtide/shared/context';
 import { StorageEngine } from '../../core/storage-engine.js';
+import { collapseTraceSummaries } from '../../core/trace-merge.js';
+
 import type {
   LogRecord,
   LogLevel,
@@ -150,6 +152,9 @@ export interface TimescaleEngineOptions {
   /** SQL type for the project_id column (default: 'text') */
   projectIdType?: 'text' | 'uuid';
 }
+
+/** Rows per multi-row trace upsert (11 parameters each, far below the 65535 limit). */
+const TRACE_UPSERT_CHUNK = 1000;
 
 export class TimescaleEngine extends StorageEngine {
   private pool: pg.Pool | null = null;
@@ -870,33 +875,47 @@ export class TimescaleEngine extends StorageEngine {
     }
   }
 
-  async upsertTrace(trace: TraceRecord): Promise<void> {
+  async upsertTraces(traces: TraceRecord[]): Promise<void> {
     const s = this.schema;
-
-    // Single atomic upsert on the (trace_id, project_id) primary key. Spans for one
-    // trace routinely arrive in concurrent ingest batches; a read-modify-write would
-    // race and lose span counts or insert duplicates. ON CONFLICT lets Postgres
-    // serialize the per-row merge, accumulating span_count and widening the time
-    // window with LEAST/GREATEST.
-    await this.runQuery(
-      `INSERT INTO ${s}.traces (
-        trace_id, organization_id, project_id, service_name, root_service_name, root_operation_name,
-        start_time, end_time, duration_ms, span_count, error
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      ON CONFLICT (trace_id, project_id) DO UPDATE SET
-        start_time = LEAST(${s}.traces.start_time, EXCLUDED.start_time),
-        end_time = GREATEST(${s}.traces.end_time, EXCLUDED.end_time),
-        duration_ms = (EXTRACT(EPOCH FROM (
-          GREATEST(${s}.traces.end_time, EXCLUDED.end_time) - LEAST(${s}.traces.start_time, EXCLUDED.start_time)
-        )) * 1000)::integer,
-        span_count = ${s}.traces.span_count + EXCLUDED.span_count,
-        error = ${s}.traces.error OR EXCLUDED.error,
-        root_service_name = COALESCE(EXCLUDED.root_service_name, ${s}.traces.root_service_name),
-        root_operation_name = COALESCE(EXCLUDED.root_operation_name, ${s}.traces.root_operation_name)`,
-      [trace.traceId, trace.organizationId ?? null, trace.projectId, trace.serviceName,
-       trace.rootServiceName ?? null, trace.rootOperationName ?? null,
-       trace.startTime, trace.endTime, trace.durationMs, trace.spanCount, trace.error],
-    );
+    // One multi-row upsert on the (trace_id, project_id) primary key per chunk.
+    // ON CONFLICT cannot touch the same row twice in one statement, so repeated
+    // traces of the call are merged first. Postgres serializes the per-row merge
+    // against concurrent batches: span_count accumulates, the window widens
+    // with LEAST/GREATEST and known root names are never cleared.
+    // Rows are locked in statement order: a fixed (project, trace) order keeps
+    // two concurrent batches with the same traces from deadlocking.
+    const rows = collapseTraceSummaries(traces).sort((a, b) =>
+      a.projectId < b.projectId ? -1 : a.projectId > b.projectId ? 1 : a.traceId < b.traceId ? -1 : a.traceId > b.traceId ? 1 : 0);
+    for (let i = 0; i < rows.length; i += TRACE_UPSERT_CHUNK) {
+      const chunk = rows.slice(i, i + TRACE_UPSERT_CHUNK);
+      const values: unknown[] = [];
+      const tuples = chunk.map((trace, r) => {
+        values.push(
+          trace.traceId, trace.organizationId ?? null, trace.projectId, trace.serviceName,
+          trace.rootServiceName ?? null, trace.rootOperationName ?? null,
+          trace.startTime, trace.endTime, trace.endTime.getTime() - trace.startTime.getTime(), trace.spanCount, trace.error,
+        );
+        const b = r * 11;
+        return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, $${b + 11})`;
+      });
+      await this.runQuery(
+        `INSERT INTO ${s}.traces (
+          trace_id, organization_id, project_id, service_name, root_service_name, root_operation_name,
+          start_time, end_time, duration_ms, span_count, error
+        ) VALUES ${tuples.join(', ')}
+        ON CONFLICT (trace_id, project_id) DO UPDATE SET
+          start_time = LEAST(${s}.traces.start_time, EXCLUDED.start_time),
+          end_time = GREATEST(${s}.traces.end_time, EXCLUDED.end_time),
+          duration_ms = (EXTRACT(EPOCH FROM (
+            GREATEST(${s}.traces.end_time, EXCLUDED.end_time) - LEAST(${s}.traces.start_time, EXCLUDED.start_time)
+          )) * 1000)::integer,
+          span_count = ${s}.traces.span_count + EXCLUDED.span_count,
+          error = ${s}.traces.error OR EXCLUDED.error,
+          root_service_name = COALESCE(EXCLUDED.root_service_name, ${s}.traces.root_service_name),
+          root_operation_name = COALESCE(EXCLUDED.root_operation_name, ${s}.traces.root_operation_name)`,
+        values,
+      );
+    }
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {

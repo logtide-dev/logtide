@@ -275,6 +275,12 @@ export class Reservoir implements IReservoir {
     return this.engine.upsertTrace(trace);
   }
 
+  async upsertTraces(traces: TraceRecord[]): Promise<void> {
+    this.ensureInitialized();
+    if (traces.length === 0) return;
+    return this.engine.upsertTraces(traces);
+  }
+
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
     this.ensureInitialized();
     return this.engine.querySpans(normalizeSpanQueryParams(params));

@@ -28,6 +28,7 @@ import {
   zeroFillHistogram,
 } from '../core/aggregation-helpers.js';
 import type { StorageEngine } from '../core/storage-engine.js';
+import { mergeTraceSummary } from '../core/trace-merge.js';
 import {
   GLOBAL_SCOPE,
   type CountParams,
@@ -476,7 +477,20 @@ export class ReferenceEngine {
   }
 
   async upsertTrace(trace: TraceRecord): Promise<void> {
-    this.traces.set(`${trace.projectId}|${trace.traceId}`, structuredClone(trace));
+    await this.upsertTraces([trace]);
+  }
+
+  async upsertTraces(traces: TraceRecord[]): Promise<void> {
+    for (const trace of traces) {
+      const key = `${trace.projectId}|${trace.traceId}`;
+      const prev = this.traces.get(key);
+      this.traces.set(key, structuredClone(prev ? mergeTraceSummary(prev, trace) : trace));
+    }
+  }
+
+  async getTraceById(traceId: string, projectId: string): Promise<TraceRecord | null> {
+    const trace = this.traces.get(`${projectId}|${traceId}`);
+    return trace ? structuredClone(trace) : null;
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {

@@ -167,7 +167,20 @@ export abstract class StorageEngine {
   abstract ingestSpans(spans: SpanRecord[]): Promise<IngestSpansResult>;
 
   /** Upsert a trace record (merge start/end times, sum span counts) */
-  abstract upsertTrace(trace: TraceRecord): Promise<void>;
+  async upsertTrace(trace: TraceRecord): Promise<void> {
+    await this.upsertTraces([trace]);
+  }
+
+  /**
+   * Merge partial trace summaries, one per trace touched by an ingest request,
+   * in a single write. For each (projectId, traceId): span counts add up,
+   * start/end widen to the min/max (duration = end - start), error is sticky,
+   * and root service/operation names are set once known and never cleared by
+   * a summary without them. The merge must not depend on the spans table, so
+   * it is correct whatever order spans and summaries are written in. The same
+   * trace may appear more than once in `traces`.
+   */
+  abstract upsertTraces(traces: TraceRecord[]): Promise<void>;
 
   /** Query spans with filters and pagination */
   abstract querySpans(params: SpanQueryParams): Promise<SpanQueryResult>;
