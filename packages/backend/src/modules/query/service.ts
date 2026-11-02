@@ -8,6 +8,8 @@ import { hooks } from '../../hooks/index.js';
 import { context } from '@logtide/shared/context';
 import { buildLogFilter, type SearchMode } from './build-log-filter.js';
 import { MAX_HISTOGRAM_BUCKETS } from '@logtide/reservoir';
+import { STORAGE_ENGINE } from '../../database/storage-config.js';
+import { aggregateCanAnswer, countFromAggregate, histogramFromAggregate } from './log-volume.js';
 import {
   ExplorerParamError,
   histogramBucketCount,
@@ -237,8 +239,11 @@ export class QueryService {
     const cached = await CacheManager.get<{ count: number }>(cacheKey);
     if (cached && typeof cached.count === 'number') return { count: cached.count };
 
-    const result = await reservoir.count(filter);
-    const value = { count: result.count };
+    // TimescaleDB: whole minutes from the per-minute aggregate (log-volume.ts).
+    const count = STORAGE_ENGINE === 'timescale' && aggregateCanAnswer(filter)
+      ? await countFromAggregate(db, reservoir, filter)
+      : (await reservoir.count(filter)).count;
+    const value = { count };
     await CacheManager.set(cacheKey, value, CACHE_TTL.QUERY);
     return value;
   }
@@ -280,7 +285,10 @@ export class QueryService {
       };
     }
 
-    const result = await reservoir.histogram({ ...filter, bucketSeconds });
+    // TimescaleDB: whole minutes from the per-minute aggregate (log-volume.ts).
+    const result = STORAGE_ENGINE === 'timescale' && bucketSeconds % 60 === 0 && aggregateCanAnswer(filter)
+      ? await histogramFromAggregate(db, reservoir, filter, bucketSeconds)
+      : await reservoir.histogram({ ...filter, bucketSeconds });
     const response: LogHistogramResponse = {
       buckets: result.buckets,
       bucketSeconds: result.bucketSeconds,
