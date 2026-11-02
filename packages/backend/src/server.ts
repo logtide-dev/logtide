@@ -72,6 +72,7 @@ import { readFileSync } from 'fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { fastifyTrustProxy } from './config/trust-proxy.js';
 
 const __serverDirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(path.resolve(__serverDirname, '../package.json'), 'utf-8'));
@@ -107,7 +108,7 @@ export async function build(opts: BuildOptions = {}) {
   const fastify = Fastify({
     logger: true,
     bodyLimit: 10 * 1024 * 1024,
-    trustProxy: config.TRUST_PROXY,
+    trustProxy: fastifyTrustProxy(config.TRUST_PROXY),
     ...fastifyOpts,
   });
 

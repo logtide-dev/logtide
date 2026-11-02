@@ -4,6 +4,7 @@ import path from 'path';
 import { z } from 'zod';
 import { applyDefaultOverrides } from '../capabilities/registry.js';
 import { loadTestEnv } from './load-test-env.js';
+import { parseTrustProxy } from './trust-proxy.js';
 
 // Load environment variables
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -83,8 +84,16 @@ const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('8080').transform(Number),
   HOST: z.string().default('0.0.0.0'),
-  // Trust proxy headers (X-Forwarded-For, etc.) - enable when behind reverse proxy
-  TRUST_PROXY: z.string().default('false').transform((val) => val === 'true'),
+  // Which proxies may set X-Forwarded-For: false, true, a hop count or a
+  // list of IPs/CIDRs (see trust-proxy.ts)
+  TRUST_PROXY: z.string().default('false').transform((val, ctx) => {
+    try {
+      return parseTrustProxy(val);
+    } catch (err) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: (err as Error).message });
+      return z.NEVER;
+    }
+  }),
   // Frontend URL for OIDC redirects (defaults to localhost:5173 in development)
   FRONTEND_URL: z.string().url().optional(),
 
