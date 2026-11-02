@@ -155,18 +155,22 @@ describe('Tenant isolation - API key auth boundary', () => {
   // ---------------------------------------------------------------------------
   it('A1 api key cannot get stats for B1 project', async () => {
     const t = await createIsolatedTenants();
+    const a1Id = t.orgA.projects[0].id;
     const a1Key = t.orgA.projects[0].apiKey.key;
     const b1Id = t.orgB.projects[0].id;
+    // Different volumes and levels, so the stats tell the projects apart.
+    for (let i = 0; i < 2; i++) await createTestLog({ projectId: a1Id, level: 'info', message: `a1-${i}` });
+    for (let i = 0; i < 5; i++) await createTestLog({ projectId: b1Id, level: 'error', message: `b1-${i}` });
 
     const res = await request(app.server)
       .get('/api/v1/stats')
       .query({ projectId: b1Id, from: FROM, to: TO })
-      .set('x-api-key', a1Key);
+      .set('x-api-key', a1Key)
+      .expect(200);
 
-    // The stats endpoint resolves projectId from the api key, so querying
-    // with a different projectId should be 401/403 or return stats for a1 only.
-    expect([200, 401, 403]).toContain(res.status);
-    // If 200, it must be for a1 project (stats come from the key's project)
-    // The key's project is a1, not b1 - no explicit check needed beyond no crash
+    // The route takes the project from the api key and ignores projectId:
+    // A1's stats, nothing of B1.
+    expect(res.body.total).toBe(2);
+    expect(res.body.by_level).toEqual({ info: 2 });
   });
 });
