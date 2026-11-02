@@ -1342,6 +1342,8 @@ export interface Database {
   // Continuous aggregates (TimescaleDB materialized views)
   logs_hourly_stats: LogsHourlyStatsTable;
   logs_daily_stats: LogsDailyStatsTable;
+  /** Per-minute log volume (migration 075, same columns as the hourly aggregate). */
+  logs_minute_stats: LogsHourlyStatsTable;
   spans_hourly_stats: SpansHourlyStatsTable;
   spans_daily_stats: SpansDailyStatsTable;
   detection_events_hourly_stats: DetectionEventsHourlyStatsTable;
