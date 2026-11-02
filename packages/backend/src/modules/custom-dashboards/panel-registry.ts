@@ -235,6 +235,10 @@ const geoMapSchema = z.object({
   mode: z.enum(['country', 'points']),
   limit: z.number().int().min(10).max(500),
   fieldPrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]{0,31}$/),
+  // Metadata key holding the client IP, located at read time when the GeoIP
+  // fields are missing. Absent or null = try the usual names. Same charset as
+  // reservoir's metadata key check (a second barrier).
+  ipField: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/).nullable().optional(),
   levels: z.array(levelEnum),
   service: z.string().max(200).nullable(),
   hostname: z.string().max(200).nullable(),

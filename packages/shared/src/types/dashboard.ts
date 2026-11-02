@@ -292,6 +292,8 @@ export interface GeoMapConfig {
   mode: 'country' | 'points';
   limit: number; // points mode top-N; 10-500
   fieldPrefix: string; // geoip step target, e.g. 'geo'; strict charset, no dots
+  /** Metadata key with the client IP, located at read time without GeoIP fields; null/absent = auto. */
+  ipField?: string | null;
   levels: LogLevelKey[]; // empty = all levels
   service: string | null;
   hostname: string | null;
