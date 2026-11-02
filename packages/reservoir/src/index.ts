@@ -151,4 +151,5 @@ export type { MongoDBEngineOptions } from './engines/mongodb/index.js';
 
 // Buffered (async buffer layer)
 export * from './buffered/index.js';
-
+export { isVolumeOnlyFilter, splitWholeMinutes } from './core/log-volume.js';
+export type { VolumeRange } from './core/log-volume.js';
