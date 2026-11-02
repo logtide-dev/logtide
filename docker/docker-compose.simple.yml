@@ -19,6 +19,9 @@
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
+    # Docker's 64 MB /dev/shm makes parallel queries and VACUUM fail
+    # ("could not resize shared memory segment"); this is a cap, not an allocation.
+    shm_size: 1gb
     container_name: logtide-simple-postgres
     environment:
       POSTGRES_DB: ${DB_NAME}
