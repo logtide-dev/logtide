@@ -148,9 +148,7 @@ test.describe('Alert Journey', () => {
     await expect
       .poll(
         async () => {
-          const res = (await apiClient.getAlertHistory(organizationId)) as unknown as {
-            history: { ruleId: string; ruleName: string }[];
-          };
+          const res = await apiClient.getAlertHistory(organizationId);
           return res.history.some((h) => h.ruleId === rule.id && h.ruleName === alertName);
         },
         { timeout: 180_000, intervals: [5_000] }

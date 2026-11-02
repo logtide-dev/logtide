@@ -277,9 +277,12 @@ export class TestApiClient {
   }
 
   async getAlertHistory(organizationId: string) {
-    return this.request<{ alerts: any[]; total: number }>(
-      `/alerts/history?organizationId=${organizationId}`
-    );
+    return this.request<{
+      history: { id: string; ruleId: string; ruleName: string; triggeredAt: string; logCount: number }[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/alerts/history?organizationId=${organizationId}`);
   }
 
   async importSigmaRule(organizationId: string, yaml: string, projectId?: string) {
