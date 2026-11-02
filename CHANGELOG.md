@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Traffic map from client IPs**: the geo map dashboard panel needed the fields a GeoIP pipeline step writes at ingestion, so projects without that step showed "No geo data" even though their logs carry the client IP. When those fields are missing, the panel now locates the most frequent client IPs of the time range (up to 10,000 distinct addresses) with the GeoLite2 database the server already uses for security enrichment, and sums them per country or per place. It works on existing logs, stores nothing and sends nothing outside the server. The IP is read from a metadata field such as `client_ip` (what the Nginx and Apache parsers write), `ip` or `remote_addr`, or from the field set in the new "Client IP field" panel setting (`ipField`); forwarded-for lists and `ip:port` values are understood. Private and unknown addresses are skipped, and the panel says where its locations come from.
+
 ### Performance
 
 - **Log volume on MongoDB from per-minute counts**: MongoDB has no incremental aggregate, and counting logs in its time-series collection unpacks every one of them (2.8 seconds for the histogram and 0.6 seconds for the count of 5 million logs). LogTide now keeps per-minute counts per project, level and service next to the logs collection (`logs_volume_minutes`, with `logs_volume_state` and `logs_volume_dirty`), filled by the worker every minute up to five minutes ago (`refreshLogVolume`; about 5 seconds for 5 million logs the first time, a few milliseconds after that). Histograms and counts of searches that filter only by project, level or service read them for those minutes: 71 ms and 61 ms. Logs written with an older timestamp and deletes (retention, project purge) mark the minutes they touch before writing, and those minutes are read from the logs until the next refresh has counted the finished write, so the numbers match the logs; several workers can refresh at once without double counting. Batches of logs newer than two minutes skip this bookkeeping. If the counts cannot be read, the logs are read as before.

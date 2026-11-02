@@ -81,3 +81,59 @@ export function loadWorldGeoJson(): Promise<FeatureCollection> {
   }
   return worldPromise;
 }
+
+/** What the geo map panel payload says about where its locations came from. */
+export interface GeoMapSourceInfo {
+  points: unknown[];
+  droppedCount: number;
+  source?: 'geo_fields' | 'ip' | 'none';
+  ipField?: string;
+  ipLimitReached?: boolean;
+  geoipUnavailable?: boolean;
+}
+
+/** Title and hint of the empty panel, by what the server found. */
+export function geoMapEmptyState(
+  data: GeoMapSourceInfo | null,
+  fieldPrefix: string
+): { title: string; hint: string } {
+  if (data?.geoipUnavailable) {
+    return {
+      title: 'IP locations are not available',
+      hint: `Logs carry client IPs in "${data.ipField}", but the GeoLite2 database is not loaded on this server. It is downloaded on start, so check the server's network access.`,
+    };
+  }
+  if (data?.source === 'ip') {
+    return {
+      title: 'No IP could be placed on the map',
+      hint: `Client IPs come from "${data.ipField}". Private and unknown addresses have no location.`,
+    };
+  }
+  return {
+    title: 'No geo data in this time range',
+    hint: `The map locates the client IP of each log (a field such as "client_ip", or the one set in the panel settings), or reads the fields of a GeoIP pipeline step (target "${fieldPrefix}").`,
+  };
+}
+
+/** Footnotes under a non-empty map. */
+export function geoMapFootnotes(data: GeoMapSourceInfo): string[] {
+  const notes: string[] = [];
+  if (data.source === 'ip') {
+    notes.push(
+      data.ipLimitReached
+        ? `Located from "${data.ipField}" with GeoLite2, the 10,000 most frequent IPs`
+        : `Located from "${data.ipField}" with GeoLite2`
+    );
+  }
+  if (data.droppedCount > 0) {
+    const n = data.droppedCount.toLocaleString('en-US');
+    notes.push(
+      data.source === 'ip'
+        ? data.droppedCount === 1
+          ? '1 address without a location was skipped'
+          : `${n} addresses without a location were skipped`
+        : `${n} values without valid coordinates were skipped`
+    );
+  }
+  return notes;
+}
