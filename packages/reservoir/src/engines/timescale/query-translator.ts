@@ -17,7 +17,7 @@ import type {
 } from '../../core/types.js';
 import { compileTextQuery, resolveTextQuery } from './text-query.js';
 import { bindJsonKey, compileJsonFilters, scalarTextExpr } from './json-path.js';
-import { DISCOVER_DEFAULT_SAMPLE_SIZE, DISCOVER_MAX_KEYS } from '../../core/constants.js';
+import { DISCOVER_DEFAULT_SAMPLE_SIZE, DISCOVER_MAX_KEYS, FACETS_SAMPLE_SIZE, FACETS_SCAN_LIMIT } from '../../core/constants.js';
 
 
 const INTERVAL_MAP: Record<AggregationInterval, string> = {
@@ -240,8 +240,36 @@ export class TimescaleQueryTranslator extends QueryTranslator {
    * last parameter `limit`, plus the field's present total.
    */
   translateFacets(params: LogFacetsParams, limit: number): NativeQuery {
-    const { conditions, values, nextIdx } = this.buildLogConditions(params, 1);
-    let idx = nextIdx;
+    // Bounded sample (big projects): the newest scanLimit logs of each project
+    // in the window, one index scan per project on (project_id, time DESC, id DESC) that
+    // stops at the limit (several projects merge through a Merge Append, so
+    // nothing is sorted in full), then every filter, then the newest
+    // sampleSize of those. A trailing (fields.length, '1') pair counts them.
+    const values: unknown[] = [params.from, params.to, params.scanLimit ?? FACETS_SCAN_LIMIT];
+    let idx = 4;
+    const window = `time ${params.fromExclusive ? '>' : '>='} $1 AND time ${params.toExclusive ? '<' : '<='} $2`;
+    const order = 'ORDER BY time DESC, id DESC';
+    let branches: string[];
+    if (params.projectId === GLOBAL_SCOPE) {
+      branches = [`SELECT * FROM ${this.table} WHERE ${window} ${order} LIMIT $3`];
+    } else {
+      const projects = [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
+      this.validateArrayFilter('project_id', projects);
+      branches = projects.map((pid) => {
+        values.push(pid);
+        return `SELECT * FROM ${this.table} WHERE project_id = $${idx++} AND ${window} ${order} LIMIT $3`;
+      });
+    }
+    const scanned = branches.length === 1
+      ? branches[0]
+      : `SELECT * FROM (${branches.map((b) => `(${b})`).join(' UNION ALL ')}) u`;
+
+    const { conditions, values: filterValues, nextIdx } = this.buildLogConditions({ ...params, projectId: GLOBAL_SCOPE }, idx);
+    values.push(...filterValues);
+    idx = nextIdx;
+    const sampleIdx = idx++;
+    values.push(params.sampleSize ?? FACETS_SAMPLE_SIZE);
+
     const pairs = params.fields.map((field, position) => {
       let expr: string;
       if ('builtin' in field) {
@@ -257,11 +285,14 @@ export class TimescaleQueryTranslator extends QueryTranslator {
       }
       return `(${position}, ${expr})`;
     });
+    pairs.push(`(${params.fields.length}, '1')`);
     const limitIdx = idx++;
     values.push(limit);
 
     const query =
-      `WITH base AS (SELECT level, service, metadata FROM ${this.table} WHERE ${conditions.join(' AND ')}) ` +
+      `WITH scanned AS (${scanned}), ` +
+      `base AS (SELECT level, service, metadata FROM scanned WHERE ${conditions.join(' AND ')} ` +
+      `ORDER BY time DESC, id DESC LIMIT $${sampleIdx}) ` +
       `SELECT f, v, cnt, total FROM (` +
       `SELECT kv.f, kv.v, COUNT(*)::bigint AS cnt, ` +
       `(SUM(COUNT(*)) OVER (PARTITION BY kv.f))::bigint AS total, ` +
