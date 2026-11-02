@@ -893,7 +893,7 @@ export class TimescaleEngine extends StorageEngine {
         values.push(
           trace.traceId, trace.organizationId ?? null, trace.projectId, trace.serviceName,
           trace.rootServiceName ?? null, trace.rootOperationName ?? null,
-          trace.startTime, trace.endTime, trace.endTime.getTime() - trace.startTime.getTime(), trace.spanCount, trace.error,
+          trace.startTime, trace.endTime, trace.durationMs, trace.spanCount, trace.error,
         );
         const b = r * 11;
         return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}, $${b + 10}, $${b + 11})`;
