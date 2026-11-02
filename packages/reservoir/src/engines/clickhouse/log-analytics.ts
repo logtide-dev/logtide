@@ -52,13 +52,19 @@ export function assembleFacets(
 ): LogFacetsResult {
   const top = fields.map(() => [] as { value: string; count: number }[]);
   const totals = fields.map(() => 0);
+  let sampleSize = 0;
   for (const row of rows) {
     const index = Number(row.f);
-    if (!Number.isInteger(index) || index < 0 || index >= fields.length) continue;
+    // The pair after the last field counts the sampled logs.
+    if (index === fields.length) {
+      sampleSize = Number(row.cnt);
+      continue;
+    }
+    if (!Number.isInteger(index) || index < 0 || index > fields.length) continue;
     top[index].push({ value: String(row.v), count: Number(row.cnt) });
     totals[index] = Number(row.total);
   }
-  return { facets: fields.map((field, i) => buildFacet(field, top[i], totals[i], limit)) };
+  return { facets: fields.map((field, i) => buildFacet(field, top[i], totals[i], limit)), sampleSize };
 }
 
 /**
@@ -70,8 +76,8 @@ export function assembleFacets(
  * DISCOVER_MAX_KEYS keys.
  */
 export function translateDiscoverKeys(params: DiscoverMetadataKeysParams, tableName = 'logs'): NativeQuery {
+  const projects = [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
   const queryParams: Record<string, unknown> = {
-    p_pids: Array.isArray(params.projectId) ? [...params.projectId] : [params.projectId],
     p_from: toDateTime64(params.from),
     p_to: toDateTime64(params.to),
     p_n: params.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE,
@@ -80,9 +86,17 @@ export function translateDiscoverKeys(params: DiscoverMetadataKeysParams, tableN
     `arrayDistinct(arrayFlatten(arrayMap(kv -> if(JSONType(kv.2) = 'Object', ` +
     `arrayMap(c -> concat(kv.1, '.', c), JSONExtractKeys(kv.2)), ` +
     `[kv.1]), JSONExtractKeysAndValuesRaw(metadata))))`;
-  const sample =
-    `SELECT metadata FROM ${tableName} PREWHERE project_id IN {p_pids:Array(String)}` +
-    ` AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} ORDER BY time DESC LIMIT {p_n:UInt32}`;
+  // One branch per project with an equality on project_id: only then does
+  // ClickHouse read the (project_id, time) key in order and stop after p_n
+  // rows; an IN list reads and sorts the metadata of the whole window.
+  const branches = projects.map((pid, i) => {
+    queryParams[`p_pid${i}`] = pid;
+    return `SELECT metadata, time FROM ${tableName} PREWHERE project_id = {p_pid${i}:String}` +
+      ` AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} ORDER BY time DESC LIMIT {p_n:UInt32}`;
+  });
+  const sample = branches.length === 1
+    ? branches[0]
+    : `SELECT metadata FROM (${branches.join(' UNION ALL ')}) ORDER BY time DESC LIMIT {p_n:UInt32}`;
   const query =
     `SELECT key, count() AS occurrences FROM (SELECT ${keysOfLog} AS keys FROM (${sample}))` +
     ` ARRAY JOIN keys AS key GROUP BY key ORDER BY occurrences DESC, key ASC LIMIT ${DISCOVER_MAX_KEYS}`;
