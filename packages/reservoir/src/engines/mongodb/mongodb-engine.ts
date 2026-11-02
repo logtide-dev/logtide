@@ -78,7 +78,7 @@ import type {
 import { GLOBAL_SCOPE, type LogFilterParams } from '../../core/types.js';
 import { isVolumeOnlyFilter, splitByStaleMinutes } from '../../core/log-volume.js';
 import { zeroFillHistogram } from '../../core/aggregation-helpers.js';
-import { MongoLogVolume } from './log-volume.js';
+import { MongoLogVolume, type WriteToken } from './log-volume.js';
 import {
   assertTimeRange,
   normalizeDiscoverParams,
@@ -378,15 +378,18 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     // Logs below the volume watermark are marked before the insert and
     // re-checked after it (log-volume.ts); real-time batches skip both.
-    const seen = await this.logVolume().beforeInsert(logs);
+    const token = await this.beforeVolumeInsert(logs);
+    if (token instanceof Error) {
+      return { ingested: 0, failed: logs.length, durationMs: Date.now() - start, errors: [{ index: 0, error: token.message }] };
+    }
 
     try {
       const docs = logs.map((log) => toMongoLogDoc(log, log.id ?? randomUUID()));
       const result = await col.insertMany(docs, { ...ctxOpts(), ordered: false });
-      await this.logVolume().afterInsert(logs, seen);
+      await this.afterVolumeInsert(logs, token);
       return { ingested: result.insertedCount, failed: logs.length - result.insertedCount, durationMs: Date.now() - start };
     } catch (err) {
-      await this.logVolume().afterInsert(logs, seen).catch(() => undefined);
+      await this.afterVolumeInsert(logs, token);
       if (err instanceof MongoBulkWriteError) {
         const inserted = err.result?.insertedCount ?? 0;
         return {
@@ -426,16 +429,21 @@ export class MongoDBEngine extends StorageEngine {
       hostname: log.hostname,
     });
 
-    const seen = await this.logVolume().beforeInsert(logsWithIds);
+    const token = await this.beforeVolumeInsert(logsWithIds);
+    if (token instanceof Error) {
+      return { ingested: 0, failed: logs.length, durationMs: Date.now() - start, rows: [], errors: [{ index: 0, error: token.message }] };
+    }
     try {
       const docs = logsWithIds.map((log) => toMongoLogDoc(log, log.id));
       await col.insertMany(docs, { ...ctxOpts(), ordered: false });
-      await this.logVolume().afterInsert(logsWithIds, seen);
+      await this.afterVolumeInsert(logsWithIds, token);
 
       const rows: StoredLogRecord[] = logsWithIds.map(toRow);
 
       return { ingested: logs.length, failed: 0, durationMs: Date.now() - start, rows };
     } catch (err) {
+      // A partial bulk failure still inserted most rows.
+      await this.afterVolumeInsert(logsWithIds, token);
       if (err instanceof MongoBulkWriteError) {
         const inserted = err.result?.insertedCount ?? 0;
         // With ordered:false every doc is attempted; the failed ones are reported
@@ -830,10 +838,15 @@ export class MongoDBEngine extends StorageEngine {
     const native = this.translator.translateDelete(params);
     const filter = native.query as Document;
     const projects = [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
-    const seen = await this.logVolume().beforeDelete(projects, params.from, params.to);
-    const result = await col.deleteMany(filter, { ...ctxOpts() });
-    await this.logVolume().afterDelete(projects, params.from, params.to, seen);
-    return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
+    const token = await this.logVolume().beforeDelete(projects, params.from, params.to);
+    try {
+      const result = await col.deleteMany(filter, { ...ctxOpts() });
+      return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
+    } finally {
+      await this.logVolume().afterDelete(projects, params.from, params.to, token).catch((err) => {
+        console.warn('[MongoDB] log volume after-delete check failed; the pending mark expires and is rebuilt:', err);
+      });
+    }
   }
 
   // =========================================================================
@@ -1668,8 +1681,26 @@ export class MongoDBEngine extends StorageEngine {
 
   /** The hand-kept log volume aggregate (see log-volume.ts). */
   private logVolume(): MongoLogVolume {
-    this.volume ??= new MongoLogVolume(this.getDb(), () => this.logsCol(), () => ({ ...ctxOpts(), ...this.analyticsOpts() }));
+    this.volume ??= new MongoLogVolume(this.getDb(), () => this.logsCol(), this.tableName, () => ({ ...ctxOpts(), ...this.analyticsOpts() }));
     return this.volume;
+  }
+
+  /** The volume before-insert check; an Error (the batch is then reported failed, nothing written) when it cannot run. */
+  private async beforeVolumeInsert(logs: LogRecord[]): Promise<WriteToken | null | Error> {
+    try {
+      return await this.logVolume().beforeInsert(logs);
+    } catch (err) {
+      return err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  /** The volume after-insert check; a failure never changes the insert result (the pending marks expire and get rebuilt). */
+  private async afterVolumeInsert(logs: LogRecord[], token: WriteToken | null): Promise<void> {
+    try {
+      await this.logVolume().afterInsert(logs, token);
+    } catch (err) {
+      console.warn('[MongoDB] log volume after-insert check failed; the pending marks expire and are rebuilt:', err);
+    }
   }
 
   async refreshLogVolume(): Promise<void> {
