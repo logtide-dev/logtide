@@ -218,13 +218,14 @@ describe('1.6 contract', () => {
     expect(histogram.buckets.map((b) => b.total)).toEqual([0, 0, 0]);
     expect(histogram.buckets.map((b) => b.time.getTime())).toEqual([0, 600_000, 1_200_000]);
     expect(histogram.bucketSeconds).toBe(600);
-    expect(await r.facets({ ...P, fields: [{ metadata: 'env' }], matchNothing: true })).toEqual({ facets: [{ field: 'metadata.env', values: [], otherCount: 0 }] });
+    expect(await r.facets({ ...P, fields: [{ metadata: 'env' }], matchNothing: true })).toEqual({ facets: [{ field: 'metadata.env', values: [], otherCount: 0 }], sampleSize: 0 });
     expect(await r.facets({ ...P, fields: [{ builtin: 'service' }, { metadata: 'user.id' }, { builtin: 'level' }], matchNothing: true })).toEqual({
       facets: [
         { field: 'service', values: [], otherCount: 0 },
         { field: 'metadata.user.id', values: [], otherCount: 0 },
         { field: 'level', values: [], otherCount: 0 },
       ],
+      sampleSize: 0,
     });
     for (const fn of Object.values(engine)) expect(fn).not.toHaveBeenCalled();
   });

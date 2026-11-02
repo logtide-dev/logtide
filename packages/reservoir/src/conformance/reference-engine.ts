@@ -15,6 +15,8 @@ import {
   DEFAULT_OPERATION_KINDS,
   DISCOVER_DEFAULT_SAMPLE_SIZE,
   FACETS_DEFAULT_LIMIT,
+  FACETS_SAMPLE_SIZE,
+  FACETS_SCAN_LIMIT,
   LATENCY_HISTOGRAM_BOUNDS_MS,
   OPERATION_STATS_DEFAULT_LIMIT,
 } from '../core/constants.js';
@@ -390,7 +392,23 @@ export class ReferenceEngine {
   }
 
   async facets(params: LogFacetsParams): Promise<LogFacetsResult> {
-    const rows = this.matchLogs(params, 'facets');
+    // Newest scanLimit logs of each project in the window (time, then id,
+    // descending), then the filters, then the newest sampleSize of those.
+    this.matchLogs(params, 'facets');
+    const window = {
+      from: params.from,
+      to: params.to,
+      ...(params.fromExclusive !== undefined ? { fromExclusive: params.fromExclusive } : {}),
+      ...(params.toExclusive !== undefined ? { toExclusive: params.toExclusive } : {}),
+    };
+    const projects = params.projectId === GLOBAL_SCOPE
+      ? [GLOBAL_SCOPE]
+      : [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
+    const scanned = projects.flatMap((projectId) =>
+      this.logs.filter((log) => logMatches(log, { ...window, projectId } as LogFilterParams)).sort(compareLogs).reverse()
+        .slice(0, params.scanLimit ?? FACETS_SCAN_LIMIT));
+    const rows = scanned.filter((log) => logMatches(log, params)).sort(compareLogs).reverse()
+      .slice(0, params.sampleSize ?? FACETS_SAMPLE_SIZE);
     const limit = params.limit ?? FACETS_DEFAULT_LIMIT;
     const facets = params.fields.map((field) => {
       const counts = new Map<string, number>();
@@ -403,7 +421,7 @@ export class ReferenceEngine {
       }
       return buildFacet(field, [...counts].map(([value, count]) => ({ value, count })), present, limit);
     });
-    return { facets };
+    return { facets, sampleSize: rows.length };
   }
 
   async discoverMetadataKeys(params: DiscoverMetadataKeysParams): Promise<MetadataKeyOccurrence[]> {

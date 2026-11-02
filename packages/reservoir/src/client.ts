@@ -240,7 +240,7 @@ export class Reservoir implements IReservoir {
     this.ensureInitialized();
     const normalized = normalizeFacetsParams(params);
     if (normalized.matchNothing) {
-      return { facets: normalized.fields.map((field) => ({ field: facetFieldName(field), values: [], otherCount: 0 })) };
+      return { facets: normalized.fields.map((field) => ({ field: facetFieldName(field), values: [], otherCount: 0 })), sampleSize: 0 };
     }
     return this.engine.facets(forEngine(normalized));
   }
