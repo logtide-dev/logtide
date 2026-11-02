@@ -134,6 +134,14 @@ export abstract class StorageEngine {
   /** Delete logs by time range */
   abstract deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult>;
 
+  /**
+   * Brings a hand-kept log volume aggregate up to date (MongoDB); a no-op for
+   * engines whose database maintains it (ClickHouse projection, TimescaleDB
+   * continuous aggregate). Safe to call from several processes; call it about
+   * once a minute.
+   */
+  async refreshLogVolume(): Promise<void> {}
+
   /** Zero-filled, epoch-aligned log volume per level (1.6) */
   async histogram(_params: LogHistogramParams): Promise<LogHistogramResult> {
     throw new NotImplementedError('histogram', this.constructor.name);

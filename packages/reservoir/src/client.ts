@@ -275,6 +275,11 @@ export class Reservoir implements IReservoir {
     return this.engine.upsertTrace(trace);
   }
 
+  async refreshLogVolume(): Promise<void> {
+    this.ensureInitialized();
+    return this.engine.refreshLogVolume();
+  }
+
   async upsertTraces(traces: TraceRecord[]): Promise<void> {
     this.ensureInitialized();
     if (traces.length === 0) return;
