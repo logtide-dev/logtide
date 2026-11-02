@@ -174,7 +174,6 @@ test.describe('Traces Journey', () => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
     await page.waitForLoadState('load');
     await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
-    await page.waitForTimeout(500);
   });
 
   test('1. Trace list shows the seeded trace with root service, span count and status', async ({ page }) => {

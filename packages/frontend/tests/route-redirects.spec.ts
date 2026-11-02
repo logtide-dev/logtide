@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { TestApiClient, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL } from './fixtures/auth';
+import { TestApiClient, TEST_API_URL, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL, waitForAuthForm } from './fixtures/auth';
 
 // Old explore URLs must answer a real HTTP 308 from the Node server (the app is
 // a SPA, so a page-level redirect would first ship the empty shell).
@@ -31,6 +31,9 @@ test.describe('Legacy route redirects', () => {
 	test('a browser visit to an old URL ends at login without an error page', async ({ page }) => {
 		await page.goto(`${TEST_FRONTEND_URL}/dashboard/search?q=x`);
 		await expect(page).toHaveURL(/\/login/);
+		await waitForAuthForm(page);
+		await expect(page.locator('input#email')).toBeVisible();
+		await expect(page.getByRole('heading', { name: /not found|error|404/i })).toHaveCount(0);
 	});
 
 	test.describe('signed in', () => {
@@ -51,6 +54,14 @@ test.describe('Legacy route redirects', () => {
 				{ service: 'redirect-svc', level: 'error', message, time: new Date().toISOString() },
 				{ service: 'redirect-svc', level: 'info', message: 'redirect probe quiet', time: new Date().toISOString() },
 			]);
+
+			// A monitor must exist for the uptime page to show its status filter cards
+			const monitor = await fetch(`${TEST_API_URL}/api/v1/monitors`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+				body: JSON.stringify({ organizationId, projectId, name: 'Redirect heartbeat', type: 'log_heartbeat', target: 'redirect-svc' }),
+			});
+			if (!monitor.ok) throw new Error(`monitor create failed: ${monitor.status}`);
 		});
 
 		test.beforeEach(async ({ page }) => {
@@ -76,9 +87,11 @@ test.describe('Legacy route redirects', () => {
 		});
 
 		test('an old monitoring link lands on Uptime with its filter', async ({ page }) => {
-			await page.goto(`${TEST_FRONTEND_URL}/dashboard/monitoring?status=down`);
+			await page.goto(`${TEST_FRONTEND_URL}/dashboard/monitoring?status=down&project=${projectId}`);
 			await expect(page).toHaveURL(/\/dashboard\/uptime\?.*status=down/);
 			await expect(page.getByRole('heading', { name: 'Uptime', level: 1 })).toBeVisible({ timeout: 20000 });
+			await expect(page.getByRole('button', { name: /^Down/ })).toHaveAttribute('aria-pressed', 'true');
+			await expect(page.getByText('Try a different search or status.')).toBeVisible();
 		});
 
 		test('an old project sessions link lands on Sessions scoped to the project', async ({ page }) => {
@@ -99,6 +112,7 @@ test.describe('Legacy route redirects', () => {
 			await page.goto(`${TEST_FRONTEND_URL}/dashboard/security/incidents`);
 			await expect(page).toHaveURL(/\/dashboard\/incidents\?.*source=sigma/);
 			await expect(page.getByRole('heading', { name: 'Incidents', level: 1 })).toBeVisible({ timeout: 20000 });
+			await expect(page.getByRole('button', { name: 'Source: Security' })).toBeVisible();
 		});
 	});
 });
