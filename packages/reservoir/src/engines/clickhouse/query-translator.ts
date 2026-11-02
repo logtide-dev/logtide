@@ -256,6 +256,42 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     return { query, parameters: [queryParams] };
   }
 
+  /**
+   * Log volume over whole minutes [minutes.from, minutes.to), written so the
+   * proj_minute_volume aggregate projection answers it: every condition is on
+   * a projection key (project_id, level, service, toStartOfMinute(time)), so
+   * ClickHouse reads one row per minute, project, level and service instead
+   * of the logs. Only for filters isVolumeOnlyFilter accepts. With
+   * `bucketMs` it returns histogram rows (bucket_ms, level, n), else one
+   * `count` row.
+   */
+  translateMinuteVolume(params: LogFilterParams, minutes: { from: Date; to: Date }, bucketMs?: number): NativeQuery {
+    const conditions: string[] = [];
+    const queryParams: Record<string, unknown> = {};
+    if (params.projectId !== GLOBAL_SCOPE) this.pushClickHouseFilter(conditions, queryParams, 'project_id', params.projectId);
+    if (params.service !== undefined) this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
+    if (params.level !== undefined) this.pushClickHouseFilter(conditions, queryParams, 'level', params.level);
+    for (const column of ['service', 'level'] as const) {
+      const values = params.exclude?.[column];
+      if (values === undefined || values.length === 0) continue;
+      conditions.push(`${column} NOT IN {p_ex_${column}:Array(String)}`);
+      queryParams[`p_ex_${column}`] = [...values];
+    }
+    conditions.push('toStartOfMinute(time) >= {p_mfrom:DateTime64(3)}', 'toStartOfMinute(time) < {p_mto:DateTime64(3)}');
+    queryParams.p_mfrom = toDateTime64(minutes.from);
+    queryParams.p_mto = toDateTime64(minutes.to);
+    const where = conditions.join(' AND ');
+    if (bucketMs === undefined) {
+      return { query: `SELECT count() AS count FROM ${this.tableName} WHERE ${where}`, parameters: [queryParams] };
+    }
+    queryParams.p_bms = bucketMs;
+    const query =
+      `SELECT intDiv(toUnixTimestamp(m) * 1000, {p_bms:Int64}) * {p_bms:Int64} AS bucket_ms, level, sum(c) AS n FROM (` +
+      `SELECT toStartOfMinute(time) AS m, level, count() AS c FROM ${this.tableName} WHERE ${where} GROUP BY m, level` +
+      `) GROUP BY bucket_ms, level`;
+    return { query, parameters: [queryParams] };
+  }
+
   translateCount(params: CountParams): NativeQuery {
     const { prewhere, where: conditions, queryParams } = this.buildLogPredicates(params);
 

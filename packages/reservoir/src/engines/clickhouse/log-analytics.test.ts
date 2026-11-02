@@ -15,8 +15,12 @@ import type { LogFacetField, LogFacetsParams, LogHistogramParams } from '../../c
 const at = (iso: string) => new Date(iso);
 const ms = (iso: string) => String(at(iso).getTime());
 
-function stubEngine(rows: Record<string, unknown>[] = []) {
-  const query = vi.fn(async (_args: unknown) => ({ json: async () => rows }));
+function stubEngine(rows: Record<string, unknown>[] = [], later: Record<string, unknown>[] = []) {
+  let calls = 0;
+  const query = vi.fn(async (_args: unknown) => {
+    const answer = calls++ === 0 ? rows : later;
+    return { json: async () => answer };
+  });
   const client = { query } as unknown as ClickHouseClient;
   const engine = new ClickHouseEngine(
     { host: 'localhost', port: 18123, database: 'unused', username: 'default', password: '' },
@@ -101,9 +105,30 @@ describe('clickhouse histogram', () => {
       { bucket_ms: ms('2026-01-01T10:05:00.000Z'), level: 'error', n: '7' },
     ]);
     const result = await engine.histogram(base);
-    expect(query).toHaveBeenCalledTimes(1);
     expect(result.buckets.map((b) => b.total)).toEqual([0, 7, 0, 0]);
     expect(result.buckets[1].byLevel).toEqual({ error: 7 });
+  });
+
+  it('volume-only filters read whole minutes from the projection and the edges as logs, summed per bucket', async () => {
+    const { engine, query } = stubEngine(
+      [{ bucket_ms: ms('2026-01-01T10:05:00.000Z'), level: 'error', n: '7' }],
+      [{ bucket_ms: ms('2026-01-01T10:15:00.000Z'), level: 'error', n: '2' }],
+    );
+    const result = await engine.histogram({ ...base, from: at('2026-01-01T10:00:30.000Z') });
+    const sqls = query.mock.calls.map((c) => (c[0] as { query: string }).query);
+    // Whole minutes [10:01, 10:15) through the projection keys only, then the
+    // edge [10:00:30, 10:01) and the inclusive end instant 10:15 as logs.
+    expect(sqls[0]).toContain('toStartOfMinute(time) >= {p_mfrom:DateTime64(3)} AND toStartOfMinute(time) < {p_mto:DateTime64(3)}');
+    expect(sqls[0]).not.toMatch(/\btime >=|\btime <=|PREWHERE/);
+    expect(sqls).toHaveLength(3);
+    // The stub answers both edge queries with the same 10:15 row: 2 + 2.
+    expect(result.buckets.map((b) => b.total)).toEqual([0, 7, 0, 4]);
+  });
+
+  it('any other filter keeps the single logs query', async () => {
+    const { engine, query } = stubEngine();
+    await engine.histogram({ ...base, hostname: 'web-1' });
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it('the engine derives the text query from legacy search', async () => {

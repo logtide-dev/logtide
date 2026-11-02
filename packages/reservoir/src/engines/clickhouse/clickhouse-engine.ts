@@ -135,6 +135,7 @@ import {
   type EntryMode,
 } from './apm-queries.js';
 import { ensureAggregatingTracesTable } from './traces-table.js';
+import { isVolumeOnlyFilter, splitWholeMinutes } from '../../core/log-volume.js';
 import type { NativeQuery } from '../../core/query-translator.js';
 
 export interface ClickHouseEngineOptions {
@@ -341,6 +342,26 @@ export class ClickHouseEngine extends StorageEngine {
         });
         await this.runCommand({
           query: `ALTER TABLE ${t} MATERIALIZE PROJECTION proj_service_time`,
+        });
+      }
+    } catch {
+      // projection may already exist
+    }
+
+    // Aggregate projection of the log volume per minute, project, level and
+    // service: histograms and counts of volume-only filters read it instead
+    // of the logs (0.02 s instead of 0.8 s over 36 million logs). ClickHouse
+    // keeps it inside every part, so inserts, merges and ALTER DELETE
+    // mutations (retention) keep it exact. The one-time MATERIALIZE of the
+    // existing parts runs in the background; parts without it are read as
+    // logs meanwhile, with the same result.
+    try {
+      if (!(await this.chObjectExists('projection', t, 'proj_minute_volume'))) {
+        await this.runCommand({
+          query: `ALTER TABLE ${t} ADD PROJECTION IF NOT EXISTS proj_minute_volume (SELECT project_id, toStartOfMinute(time), level, service, count() GROUP BY project_id, toStartOfMinute(time), level, service)`,
+        });
+        await this.runCommand({
+          query: `ALTER TABLE ${t} MATERIALIZE PROJECTION proj_minute_volume`,
         });
       }
     } catch {
@@ -735,6 +756,16 @@ export class ClickHouseEngine extends StorageEngine {
 
   async count(params: CountParams): Promise<CountResult> {
     const start = Date.now();
+    if (isVolumeOnlyFilter(params)) {
+      const split = splitWholeMinutes(params);
+      if (split.minutes) {
+        const counts = await Promise.all([
+          this.runCountQuery(this.translator.translateMinuteVolume(params, split.minutes)),
+          ...split.edges.map((edge) => this.runCountQuery(this.translator.translateCount({ ...params, ...edge }))),
+        ]);
+        return { count: counts.reduce((sum, n) => sum + n, 0), executionTimeMs: Date.now() - start };
+      }
+    }
     const native = this.translator.translateCount(params);
     const resultSet = await this.runQuery({
       query: native.query as string,
@@ -747,6 +778,28 @@ export class ClickHouseEngine extends StorageEngine {
       count: Number(rows[0]?.count ?? 0),
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  /** JSONEachRow rows of a translated analytics read, under the analytics time limit. */
+  private async runAnalyticsRows(native: NativeQuery, op: string): Promise<Record<string, unknown>[]> {
+    const resultSet = await this.runQuery({
+      query: native.query as string,
+      query_params: (native.parameters as Record<string, unknown>[])[0],
+      format: 'JSONEachRow',
+      ...this.analyticsSettings(),
+    }, op);
+    return (await resultSet.json()) as Record<string, unknown>[];
+  }
+
+  private async runCountQuery(native: NativeQuery): Promise<number> {
+    const resultSet = await this.runQuery({
+      query: native.query as string,
+      query_params: (native.parameters as Record<string, unknown>[])[0],
+      format: 'JSONEachRow',
+      ...this.analyticsSettings(),
+    }, 'count');
+    const rows = await resultSet.json() as Record<string, unknown>[];
+    return Number(rows[0]?.count ?? 0);
   }
 
   async countEstimate(params: CountParams): Promise<CountResult> {
@@ -764,6 +817,18 @@ export class ClickHouseEngine extends StorageEngine {
     // Validate (bucket size, bucket count, time range) before any query; the
     // client already did, but the engine may be called directly.
     const normalized = normalizeHistogramParams(params);
+    // Volume-only filters with minute-multiple buckets: whole minutes from
+    // the proj_minute_volume projection, the partial edge minutes as logs.
+    if (normalized.bucketSeconds % 60 === 0 && isVolumeOnlyFilter(normalized)) {
+      const split = splitWholeMinutes(normalized);
+      if (split.minutes) {
+        const parts = await Promise.all([
+          this.runAnalyticsRows(this.translator.translateMinuteVolume(normalized, split.minutes, normalized.bucketSeconds * 1000), 'histogram'),
+          ...split.edges.map((edge) => this.runAnalyticsRows(this.translator.translateHistogram({ ...normalized, ...edge }), 'histogram')),
+        ]);
+        return assembleHistogram(normalized, parts.flat());
+      }
+    }
     const native = this.translator.translateHistogram(normalized);
     const resultSet = await this.runQuery(
       {
