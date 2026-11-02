@@ -66,6 +66,8 @@ export type { LogHistogramResponse };
 
 export interface LogFacetsResponse {
   facets: { field: string; values: { value: string; count: number }[]; otherCount: number }[];
+  /** Logs the facets were counted over (the newest matching ones on big projects). */
+  sampleSize: number;
 }
 
 export interface LogFieldsResponse {
@@ -300,7 +302,7 @@ export class QueryService {
   async getFacets(params: LogQueryParams & { fields: FacetFieldRequest[]; limit: number }): Promise<LogFacetsResponse> {
     const { fields, limit, ...rest } = params;
     const { filter } = await this.prepare(rest);
-    if (fields.length === 0) return { facets: [] };
+    if (fields.length === 0) return { facets: [], sampleSize: 0 };
 
     const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
       kind: 'facets',
@@ -309,7 +311,7 @@ export class QueryService {
       limit,
     });
     const cached = await CacheManager.get<LogFacetsResponse>(cacheKey);
-    if (cached && Array.isArray(cached.facets)) return cached;
+    if (cached && Array.isArray(cached.facets) && typeof cached.sampleSize === 'number') return cached;
 
     const result = await reservoir.facets({ ...filter, fields: fields.map((f) => f.field), limit });
     // The reservoir labels fields 'level' | 'service' | 'hostname' | 'metadata.<key>'.
@@ -322,6 +324,7 @@ export class QueryService {
         values: facet.values,
         otherCount: facet.otherCount,
       })),
+      sampleSize: result.sampleSize,
     };
     await CacheManager.set(cacheKey, response, CACHE_TTL.QUERY);
     return response;
