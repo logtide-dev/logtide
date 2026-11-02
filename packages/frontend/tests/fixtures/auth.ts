@@ -417,6 +417,11 @@ export class TestApiClient {
     return response.json();
   }
 
+  /** In-app notifications of the current user (invitations to existing users land here, with the invite link). */
+  async getNotifications() {
+    return this.request<{ notifications: any[]; total: number; unreadCount: number }>('/notifications');
+  }
+
   async acceptInvitation(token: string) {
     return this.request<{ success: boolean; organizationId: string; role: string }>('/invitations/accept', {
       method: 'POST',
