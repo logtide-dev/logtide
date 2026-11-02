@@ -72,8 +72,8 @@ test.describe('Traces Journey', () => {
     // Seed spans via OTLP traces endpoint.
     // Times are in unix nanoseconds; trace A spans: root 0-200ms,
     // charge-card 20-150ms (child of root), db-query 30-100ms (child of charge-card).
-    const baseNs = Date.now() * 1_000_000;
-    const ms = 1_000_000;
+    const baseNs = BigInt(Date.now()) * 1_000_000n; // BigInt: nanoseconds exceed Number precision
+    const ms = 1_000_000n;
 
     await ingestOtlpSpans(apiKey, [
       {
@@ -89,7 +89,7 @@ test.describe('Traces Journey', () => {
                 name: 'POST /checkout',
                 kind: 2, // SERVER
                 startTimeUnixNano: String(baseNs),
-                endTimeUnixNano: String(baseNs + 200 * ms),
+                endTimeUnixNano: String(baseNs + 200n * ms),
                 status: { code: 1 }, // OK
               },
             ],
@@ -109,8 +109,8 @@ test.describe('Traces Journey', () => {
                 parentSpanId: rootSpanId,
                 name: 'charge-card',
                 kind: 3, // CLIENT
-                startTimeUnixNano: String(baseNs + 20 * ms),
-                endTimeUnixNano: String(baseNs + 150 * ms),
+                startTimeUnixNano: String(baseNs + 20n * ms),
+                endTimeUnixNano: String(baseNs + 150n * ms),
                 status: { code: 1 }, // OK
                 attributes: [
                   { key: 'http.method', value: { stringValue: 'POST' } },
@@ -123,8 +123,8 @@ test.describe('Traces Journey', () => {
                 parentSpanId: chargeSpanId,
                 name: 'db-query',
                 kind: 1, // INTERNAL
-                startTimeUnixNano: String(baseNs + 30 * ms),
-                endTimeUnixNano: String(baseNs + 100 * ms),
+                startTimeUnixNano: String(baseNs + 30n * ms),
+                endTimeUnixNano: String(baseNs + 100n * ms),
                 status: { code: 1 }, // OK
               },
             ],
@@ -144,7 +144,7 @@ test.describe('Traces Journey', () => {
                 name: 'GET /stock',
                 kind: 2, // SERVER
                 startTimeUnixNano: String(baseNs),
-                endTimeUnixNano: String(baseNs + 50 * ms),
+                endTimeUnixNano: String(baseNs + 50n * ms),
                 status: { code: 1 }, // OK
               },
             ],
