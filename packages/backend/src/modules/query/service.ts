@@ -10,6 +10,7 @@ import { buildLogFilter, type SearchMode } from './build-log-filter.js';
 import { MAX_HISTOGRAM_BUCKETS } from '@logtide/reservoir';
 import { STORAGE_ENGINE } from '../../database/storage-config.js';
 import { aggregateCanAnswer, countFromAggregate, histogramFromAggregate } from './log-volume.js';
+import { startOfUtcDay } from '../../utils/time-buckets.js';
 import {
   ExplorerParamError,
   histogramBucketCount,
@@ -559,10 +560,11 @@ export class QueryService {
       if (reservoir.getEngineType() !== 'timescale') throw new Error('skip aggregate');
 
       // Fast path: use continuous aggregate (TimescaleDB only). Split the window
-      // at oneDayAgo: the historical part comes from logs_daily_stats, the recent
-      // part from raw data. Both halves must honor the requested [from, to] bounds.
+      // at the start of the current UTC day: whole days come from
+      // logs_daily_stats (real-time, see migration 076), today from raw data.
+      // Both halves must honor the requested [from, to] bounds.
       const { sql } = await import('kysely');
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const oneDayAgo = startOfUtcDay(new Date());
       const toDate = to ?? new Date();
 
       // Historical upper bound is min(oneDayAgo, to); recent lower bound is
@@ -659,8 +661,8 @@ export class QueryService {
     try {
       if (reservoir.getEngineType() !== 'timescale') throw new Error('skip aggregate');
 
-      // Fast path: combine aggregate (historical) + reservoir distinct (recent)
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      // Fast path: combine aggregate (whole days) + reservoir distinct (today)
+      const oneDayAgo = startOfUtcDay(new Date());
       const projectFilter = Array.isArray(projectId) ? projectId : [projectId];
 
       const [aggResults, recentResults] = await Promise.all([
