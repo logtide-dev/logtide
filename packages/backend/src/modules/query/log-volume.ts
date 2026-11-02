@@ -24,7 +24,7 @@
  */
 import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
-import { zeroFillHistogram, type LogHistogramResult, type LogFilterParams, type LogLevel } from '@logtide/reservoir';
+import { isVolumeOnlyFilter, zeroFillHistogram, type LogHistogramResult, type LogFilterParams, type LogLevel } from '@logtide/reservoir';
 
 const MINUTE_MS = 60_000;
 
@@ -53,23 +53,13 @@ export type StaleSpan = [number, number];
 const toArray = <T>(v: T | T[] | undefined): T[] | undefined => (v === undefined ? undefined : Array.isArray(v) ? v : [v]);
 
 /**
- * Whether the aggregate can answer this filter: only project, window, level
- * and service conditions (an exclusion of levels or services included).
+ * Whether the aggregate can answer this filter: a volume-only filter (see
+ * isVolumeOnlyFilter) over explicit projects; the aggregate rows are per
+ * project, so the global scope stays on the logs table.
  */
 export function aggregateCanAnswer(filter: LogFilterParams): boolean {
-  if (filter.matchNothing) return false;
   if (typeof filter.projectId !== 'string' && !Array.isArray(filter.projectId)) return false;
-  if (Array.isArray(filter.projectId) && filter.projectId.length === 0) return false;
-  if (filter.hostname !== undefined || filter.traceId !== undefined || filter.sessionId !== undefined || filter.spanId !== undefined) {
-    return false;
-  }
-  if (filter.search !== undefined && filter.search !== '') return false;
-  const text = filter.textQuery;
-  if (text && (text.all.length > 0 || text.anyOf.length > 0 || text.none.length > 0)) return false;
-  if (filter.metadataFilters && filter.metadataFilters.length > 0) return false;
-  const exclude = filter.exclude;
-  if (exclude && exclude.hostname !== undefined && exclude.hostname.length > 0) return false;
-  return true;
+  return isVolumeOnlyFilter(filter);
 }
 
 /**
