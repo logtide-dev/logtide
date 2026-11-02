@@ -28,6 +28,7 @@ function setup(props: Partial<{
   pinnedKeys: string[];
   candidateKeys: string[];
   collapsed: boolean;
+  sampleNote: string | null;
 }> = {}) {
   const onToggle = vi.fn();
   const onPin = vi.fn();
@@ -40,6 +41,7 @@ function setup(props: Partial<{
       q: props.q ?? '',
       pinnedKeys: props.pinnedKeys ?? ['env'],
       candidateKeys: props.candidateKeys ?? ['user.id', 'env', 'region'],
+      sampleNote: props.sampleNote ?? null,
       collapsed: props.collapsed ?? false,
       onToggle,
       onPin,
@@ -54,6 +56,16 @@ function valueButton(utils: ReturnType<typeof setup>, key: string, value: string
 }
 
 describe('FacetSidebar', () => {
+  it('shows the sample note above the lists', () => {
+    setup({ sampleNote: 'Top values of the newest 100,000 of 2,000,000 matching logs' });
+    expect(document.querySelector('[data-testid="facets-sample-note"]')?.textContent).toBe('Top values of the newest 100,000 of 2,000,000 matching logs');
+  });
+
+  it('shows no sample note by default', () => {
+    setup();
+    expect(document.querySelector('[data-testid="facets-sample-note"]')).toBeNull();
+  });
+
   it('renders Level, Service and Host with en-US counts', () => {
     const utils = setup();
     const headings = utils.getAllByRole('heading').map((h) => h.textContent?.trim());

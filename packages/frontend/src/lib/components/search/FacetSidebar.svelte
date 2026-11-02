@@ -25,6 +25,8 @@
     pinnedKeys: string[];
     /** Discovered metadata keys usable as facets (see `facetCandidates`). */
     candidateKeys: string[];
+    /** Shown above the lists when the facets cover only part of the matching logs. */
+    sampleNote?: string | null;
     collapsed?: boolean;
     /** Inside the phone sheet: always expanded, no collapse button. */
     embedded?: boolean;
@@ -40,6 +42,7 @@
     q,
     pinnedKeys,
     candidateKeys,
+    sampleNote = null,
     collapsed = $bindable(false),
     embedded = false,
     onToggle,
@@ -144,6 +147,9 @@
       {:else if loading && ordered.length === 0}
         <p class="text-sm text-muted-foreground" role="status">Loading facets</p>
       {:else}
+        {#if sampleNote}
+          <p class="text-xs text-muted-foreground" data-testid="facets-sample-note">{sampleNote}</p>
+        {/if}
         {#each ordered as facet, i (facet.field)}
           {@const builtin = BUILTINS.includes(facet.field)}
           {@const pinned = pinnedKeys.includes(facet.field)}

@@ -121,16 +121,21 @@ describe('logsAPI.getHistogram', () => {
 });
 
 describe('logsAPI.getFacets', () => {
-  it('joins fields with commas and unwraps facets', async () => {
+  it('joins fields with commas and returns the facets with their sample size', async () => {
     const facets = [{ field: 'level', values: [{ value: 'error', count: 2 }], otherCount: 0 }];
-    respond({ facets });
+    respond({ facets, sampleSize: 25 });
     const res = await logsAPI.getFacets({ ...scope, fields: ['level', 'service', 'host', 'user.id'], limit: 10 });
     const url = lastUrl();
     expect(url.pathname.endsWith('/logs/facets')).toBe(true);
     expect(url.searchParams.get('fields')).toBe('level,service,host,user.id');
     expect(url.searchParams.get('limit')).toBe('10');
     expect(url.searchParams.getAll('projectId')).toEqual(['p1', 'p2']);
-    expect(res).toEqual(facets);
+    expect(res).toEqual({ facets, sampleSize: 25 });
+  });
+
+  it('reports an unknown sample size as null (older backends)', async () => {
+    respond({ facets: [] });
+    expect(await logsAPI.getFacets({ ...scope, fields: ['level'] })).toEqual({ facets: [], sampleSize: null });
   });
 
   it('maps a 400 to LogQueryError', async () => {
