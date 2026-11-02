@@ -288,7 +288,9 @@
               <input
                 type="search"
                 bind:value={addFilter}
-                oninput={() => addList?.scrollTo({ top: 0 })}
+                oninput={() => {
+                  if (addList) addList.scrollTop = 0;
+                }}
                 placeholder="Filter fields"
                 aria-label="Filter fields"
                 class="mb-1 h-8 w-full rounded-sm border border-input bg-transparent px-2 font-mono text-xs placeholder:font-sans placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
