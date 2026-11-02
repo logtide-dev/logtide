@@ -209,10 +209,30 @@ describe('mongodb query plans', () => {
     expectIndexed(await explainAggregate('logs', histogramPipeline(filter, 300_000)));
   });
 
-  it('facets stay on an index', async () => {
-    const filter = translator.buildLogFilter(logScope);
+  /** Aggregation stage names of an explain, outermost first. */
+  const stageNames = (explain: Document): string[] =>
+    ((explain.stages ?? []) as Document[]).map((stage) => Object.keys(stage)[0]);
+
+  it('facets stay on an index and sort the newest logs bucket by bucket', async () => {
+    const scope = translator.buildLogFilter(logScope);
+    const filter = translator.buildLogFilter({ ...logScope, service: 'api' });
     const fields = [{ builtin: 'level' as const }, { builtin: 'hostname' as const }, { metadata: 'http.method' }];
-    expectIndexed(await explainAggregate('logs', facetsPipeline(filter, fields, 10)));
+    const explain = await explainAggregate('logs', facetsPipeline('logs', [scope], filter, fields, 10, 2_000_000, 100_000));
+    expectIndexed(explain);
+    expect(stageNames(explain)).toContain('$_internalBoundedSort');
+    expect(stageNames(explain), 'no blocking sort of the window').not.toContain('$sort');
+  });
+
+  it('multi-project facets sort bucket by bucket too', async () => {
+    const scopes = PROJECTS.map((projectId) => translator.buildLogFilter({ projectId, ...WINDOW }));
+    const filter = translator.buildLogFilter({ projectId: PROJECTS, ...WINDOW });
+    const explain = await explainAggregate('logs', facetsPipeline('logs', scopes, filter, [{ builtin: 'level' }], 10, 2_000_000, 100_000));
+    expectIndexed(explain);
+    // The first branch streams; the union branches carry their own explain
+    // and the final $sort only orders the per-project samples.
+    expect(stageNames(explain)).toContain('$_internalBoundedSort');
+    const union = ((explain.stages ?? []) as Document[]).find((stage) => '$unionWith' in stage);
+    expect(JSON.stringify(union)).toContain('$_internalBoundedSort');
   });
 
   it('metadata key discovery stays on an index', async () => {

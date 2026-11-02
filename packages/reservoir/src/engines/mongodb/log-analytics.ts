@@ -81,10 +81,49 @@ function facetValueExpr(field: LogFacetField): unknown {
  * key never builds one oversized document. The field index is the literal
  * position in `fields`, never a user string.
  */
-export function facetsPipeline(filter: Document, fields: LogFacetField[], limit: number): Document[] {
-  return [
+/**
+ * Facets over a bounded sample (big projects): per project (`scopes`, one
+ * $match each) the newest `scanLimit` logs of the window, then every filter,
+ * then the newest `sampleSize` of those; several projects are combined with
+ * $unionWith and cut to the newest `sampleSize` again. A trailing
+ * `{ f: fields.length, v: '1' }` pair counts the sampled logs.
+ *
+ * Each branch sorts on `time` alone: on the time-series logs collection that
+ * runs as a bounded sort, one bucket at a time (about 0.2 s for 100,000 of 5
+ * million logs), while adding `id`, or matching several projects with $in,
+ * turns it into a blocking sort of the whole window (6 to 18 s). The other
+ * engines also break time ties by id, so only logs sharing the exact
+ * millisecond at the edge of the sample can differ.
+ */
+export function facetsPipeline(
+  collection: string,
+  scopes: Document[],
+  filter: Document,
+  fields: LogFacetField[],
+  limit: number,
+  scanLimit: number,
+  sampleSize: number,
+): Document[] {
+  const branch = (scope: Document): Document[] => [
+    { $match: scope },
+    { $sort: { time: -1 } },
+    { $limit: scanLimit },
     { $match: filter },
-    { $project: { _id: 0, kv: fields.map((field, f) => ({ f: { $literal: f }, v: facetValueExpr(field) })) } },
+    { $limit: sampleSize },
+  ];
+  const sample = scopes.length === 1
+    ? branch(scopes[0])
+    : [
+        ...branch(scopes[0]),
+        ...scopes.slice(1).map((scope) => ({ $unionWith: { coll: collection, pipeline: branch(scope) } })),
+        { $sort: { time: -1 } },
+        { $limit: sampleSize },
+      ];
+  const pairs = fields.map((field, f) => ({ f: { $literal: f }, v: facetValueExpr(field) }));
+  pairs.push({ f: { $literal: fields.length }, v: { $literal: '1' } });
+  return [
+    ...sample,
+    { $project: { _id: 0, kv: pairs } },
     { $unwind: '$kv' },
     { $match: { 'kv.v': { $nin: [null, ''] } } },
     { $group: { _id: { f: '$kv.f', v: '$kv.v' }, count: { $sum: 1 } } },
@@ -108,7 +147,10 @@ export interface FacetRow {
 export function assembleFacets(fields: LogFacetField[], rows: FacetRow[], limit: number): LogFacetsResult {
   const byField = new Map<number, FacetRow>();
   for (const row of rows) byField.set(toNumber(row._id), row);
+  // The pair after the last field counts the sampled logs.
+  const sampleSize = toNumber(byField.get(fields.length)?.total ?? 0);
   return {
+    sampleSize,
     facets: fields.map((field, f) => {
       const row = byField.get(f);
       if (!row) return buildFacet(field, [], 0, limit);
@@ -158,15 +200,33 @@ const METADATA_KEYS: Document = {
 
 /**
  * Key occurrences over the most recent `sampleSize` logs of the projects in
- * range (newest first, id as the tie-break like the other engines), busiest
+ * range (newest first by time; see discoverKeysPipeline for why not id), busiest
  * key first, then key byte order, at most DISCOVER_MAX_KEYS keys.
  */
-export function discoverKeysPipeline(params: DiscoverMetadataKeysParams & { sampleSize: number }): Document[] {
-  const projects = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-  return [
-    { $match: { project_id: projects.length === 1 ? projects[0] : { $in: projects }, time: { $gte: params.from, $lte: params.to } } },
-    { $sort: { time: -1, id: -1 } },
+export function discoverKeysPipeline(
+  params: DiscoverMetadataKeysParams & { sampleSize: number },
+  collection = 'logs',
+): Document[] {
+  const projects = [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
+  // One branch per project sorted on time alone, so the time-series
+  // collection sorts bucket by bucket (see facetsPipeline): with id in the
+  // sort, or $in over several projects, it sorted the whole window (5 s on 5
+  // million logs for a 1,000 log sample).
+  const branch = (projectId: string): Document[] => [
+    { $match: { project_id: projectId, time: { $gte: params.from, $lte: params.to } } },
+    { $sort: { time: -1 } },
     { $limit: params.sampleSize },
+  ];
+  const sample = projects.length === 1
+    ? branch(projects[0])
+    : [
+        ...branch(projects[0]),
+        ...projects.slice(1).map((projectId) => ({ $unionWith: { coll: collection, pipeline: branch(projectId) } })),
+        { $sort: { time: -1 } },
+        { $limit: params.sampleSize },
+      ];
+  return [
+    ...sample,
     { $project: { _id: 0, keys: METADATA_KEYS } },
     { $unwind: '$keys' },
     { $group: { _id: '$keys', occurrences: { $sum: 1 } } },

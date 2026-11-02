@@ -75,6 +75,7 @@ import type {
   ListSessionsResult,
   HasSessionsParams,
 } from '../../core/types.js';
+import { GLOBAL_SCOPE } from '../../core/types.js';
 import {
   assertTimeRange,
   normalizeDiscoverParams,
@@ -89,6 +90,8 @@ import {
   DEFAULT_OPERATION_KINDS,
   DISCOVER_DEFAULT_SAMPLE_SIZE,
   FACETS_DEFAULT_LIMIT,
+  FACETS_SAMPLE_SIZE,
+  FACETS_SCAN_LIMIT,
   OPERATION_STATS_DEFAULT_LIMIT,
 } from '../../core/constants.js';
 import { MongoDBQueryTranslator, INTERVAL_MS } from './query-translator.js';
@@ -678,8 +681,27 @@ export class MongoDBEngine extends StorageEngine {
     const normalized = normalizeFacetsParams(params);
     const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
     const filter = this.translator.buildLogFilter(normalized);
+    const window = {
+      from: normalized.from,
+      to: normalized.to,
+      ...(normalized.fromExclusive !== undefined ? { fromExclusive: normalized.fromExclusive } : {}),
+      ...(normalized.toExclusive !== undefined ? { toExclusive: normalized.toExclusive } : {}),
+    };
+    const projects = normalized.projectId === GLOBAL_SCOPE
+      ? [GLOBAL_SCOPE]
+      : [...new Set(Array.isArray(normalized.projectId) ? normalized.projectId : [normalized.projectId])];
+    const scopes = projects.map((projectId) => this.translator.buildLogFilter({ ...window, projectId }));
+    const pipeline = facetsPipeline(
+      this.logsCol().collectionName,
+      scopes,
+      filter,
+      normalized.fields,
+      limit,
+      normalized.scanLimit ?? FACETS_SCAN_LIMIT,
+      normalized.sampleSize ?? FACETS_SAMPLE_SIZE,
+    );
     const rows = await this.logsCol()
-      .aggregate(facetsPipeline(filter, normalized.fields, limit), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
+      .aggregate(pipeline, { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
       .toArray();
     return assembleFacets(normalized.fields, rows as FacetRow[], limit);
   }
@@ -688,7 +710,7 @@ export class MongoDBEngine extends StorageEngine {
     const normalized = normalizeDiscoverParams(params);
     const sampleSize = normalized.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE;
     const rows = await this.logsCol()
-      .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
+      .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }, this.logsCol().collectionName), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
       .toArray();
     return assembleMetadataKeys(rows as { _id: unknown; occurrences: unknown }[]);
   }
