@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBullJobOptions } from '../../queue/adapters/bullmq-adapter.js';
+import { buildBullJobOptions, buildBullWorkerOptions } from '../../queue/adapters/bullmq-adapter.js';
 
 /**
  * Regression test for the Redis memory leak: the BullMQ adapter must NOT pass
@@ -40,5 +40,25 @@ describe('buildBullJobOptions', () => {
 
   it('maps jobKey to jobId', () => {
     expect(buildBullJobOptions({ jobKey: 'abc' }).jobId).toBe('abc');
+  });
+});
+
+/**
+ * BullMQ falls back to the worker's removeOnComplete/removeOnFail when a job
+ * carries none of its own, so the worker must have the same retention as the
+ * queue defaults. Otherwise any job without retention options is kept forever.
+ */
+describe('buildBullWorkerOptions', () => {
+  const connection = {} as any;
+
+  it('passes the connection through', () => {
+    expect(buildBullWorkerOptions(connection).connection).toBe(connection);
+  });
+
+  it('sets the same retention as the queue defaults', () => {
+    const opts = buildBullWorkerOptions(connection);
+
+    expect(opts.removeOnComplete).toEqual({ count: 100, age: 3600 });
+    expect(opts.removeOnFail).toEqual({ count: 50, age: 86400 });
   });
 });

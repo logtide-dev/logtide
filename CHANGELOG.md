@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Fixed
+
+- **BullMQ workers now apply job retention too**: BullMQ falls back to the worker's `removeOnComplete` / `removeOnFail` for jobs that carry none of their own, and the workers had none, so such a job was kept in Redis forever. Workers now use the same retention as the queues (keep 100 completed jobs for 1 hour, 50 failed jobs for 24 hours). Jobs added through LogTide already carried this since 1.0.3; this covers the remaining paths.
+
 ## [1.6.0] - 2026-10-31
 
 ### Added
