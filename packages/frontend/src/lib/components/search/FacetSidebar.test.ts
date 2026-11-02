@@ -158,6 +158,29 @@ describe('FacetSidebar', () => {
     expect(utils.onPin).toHaveBeenCalledWith('region');
   });
 
+  it('filters a long list of fields to add', async () => {
+    const many = Array.from({ length: 200 }, (_, i) => `einvoicing.reconcile.field${i}`);
+    const utils = setup({ candidateKeys: [...many, 'tenant.id'], pinnedKeys: [] });
+    await fireEvent.click(utils.getByRole('button', { name: 'Add facet' }));
+    await tick();
+
+    // Height-capped list: rows keep their height and the list scrolls
+    const first = await utils.findByRole('button', { name: 'einvoicing.reconcile.field0' });
+    expect(first).toHaveClass('shrink-0');
+
+    await fireEvent.input(utils.getByRole('searchbox', { name: 'Filter fields' }), { target: { value: 'TENANT' } });
+    await tick();
+    expect(utils.queryByRole('button', { name: 'einvoicing.reconcile.field0' })).toBeNull();
+    await fireEvent.click(utils.getByRole('button', { name: 'tenant.id' }));
+    expect(utils.onPin).toHaveBeenCalledWith('tenant.id');
+
+    await fireEvent.click(utils.getByRole('button', { name: 'Add facet' }));
+    await tick();
+    await fireEvent.input(await utils.findByRole('searchbox', { name: 'Filter fields' }), { target: { value: 'nothing-like-this' } });
+    await tick();
+    expect(utils.getByText('No field matches "nothing-like-this"')).toBeInTheDocument();
+  });
+
   it('collapses', async () => {
     const utils = setup();
     await fireEvent.click(utils.getByRole('button', { name: 'Collapse facets' }));
