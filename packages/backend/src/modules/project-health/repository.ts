@@ -32,7 +32,10 @@ export interface HealthIssueRow {
   details: Record<string, unknown>;
   notifiedOpenAt: Date | null;
   notifiedResolveAt: Date | null;
-  /** Opened on the project's first evaluation: shown in the app, never notified. */
+  /**
+   * Shown in the app, never notified: opened on the project's first evaluation,
+   * or a recurrence of the same check inside the evaluator's cooldown.
+   */
   baseline: boolean;
 }
 

@@ -9,6 +9,11 @@
  *    Rollout guard (migration 074): the silent check arms only once a pass has
  *    seen the project receiving data, and issues opened on a project's first
  *    pass are baseline (pre-existing, never notified).
+ *    Recurrence cooldown: a check that opens again within 24 h of its previous
+ *    episode resolving is a recurrence (a project that sends in bursts, sleeps
+ *    at night or between batch runs). The new episode is also baseline: shown
+ *    in the app, never notified, so an intermittent project does not send an
+ *    opened and a resolved email for every pause.
  * 3. Notify per the state machine: an open, unmuted issue with
  *    notified_open_at null sends "opened"; a resolved issue whose open was
  *    notified sends "resolved". Both are claimed with a conditional UPDATE
@@ -48,6 +53,13 @@ export interface ProjectHealthPassResult {
 
 /** Resolve notifications older than this are dropped instead of sent late. */
 const RESOLVE_NOTIFY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A check reopening within this long of its previous episode's resolution is a
+ * recurrence and is not notified. Must not exceed RESOLVE_NOTIFY_LOOKBACK_MS:
+ * the evaluator only loads issues resolved inside that lookback.
+ */
+export const RECURRENCE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 interface CounterRow {
   project_id: string;
@@ -154,12 +166,17 @@ async function reconcileProject(
   const resolved: ProjectHealthCheckKey[] = [];
   const openRows = new Map<ProjectHealthCheckKey, HealthIssueRow>();
   const recentResolved = new Map<ProjectHealthCheckKey, HealthIssueRow>();
+  const recurring = new Set<ProjectHealthCheckKey>();
   const reopenSince = now.getTime() - REOPEN_WINDOW_MS;
+  const cooldownSince = now.getTime() - RECURRENCE_COOLDOWN_MS;
 
   for (const row of issues) {
     if (row.resolvedAt === null) {
       openRows.set(row.checkKey, row);
-    } else if (row.resolvedAt.getTime() >= reopenSince) {
+      continue;
+    }
+    if (row.resolvedAt.getTime() >= cooldownSince) recurring.add(row.checkKey);
+    if (row.resolvedAt.getTime() >= reopenSince) {
       const prev = recentResolved.get(row.checkKey);
       if (!prev || (prev.resolvedAt as Date) < row.resolvedAt) recentResolved.set(row.checkKey, row);
     }
@@ -179,7 +196,8 @@ async function reconcileProject(
       checkKey,
       details,
       now,
-      baseline,
+      // A recurrence inside the cooldown is recorded like a baseline issue.
+      baseline: baseline || recurring.has(checkKey),
     });
     if (created) opened++;
   }
@@ -203,7 +221,8 @@ async function notifyDue(
   now: Date
 ): Promise<void> {
   for (const issue of issues) {
-    // Baseline issues predate the first evaluation: visible, never notified.
+    // Baseline issues (pre-existing on the first evaluation, or a recurrence
+    // inside the cooldown): visible, never notified.
     if (issue.baseline) continue;
     try {
       if (issue.resolvedAt === null) {
