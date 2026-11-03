@@ -200,6 +200,10 @@ interface FrontendExtension {
   settingsNav?: ExtensionSettingsItem[];
   /** Where the Usage page upgrade buttons point. */
   upgradeTarget?: { href: string };
+  /** Pages in the instance admin navigation. */
+  adminNav?: ExtensionAdminItem[];
+  /** Sections on the instance admin organization page. */
+  adminOrgPanels?: ExtensionAdminOrgPanel[];
 }
 
 interface ExtensionSettingsItem extends SettingsNavItem {
@@ -209,7 +213,25 @@ interface ExtensionSettingsItem extends SettingsNavItem {
 }
 ```
 
-Only extensions whose `isEnabled(cfg)` returns true contribute. Their `settingsNav` items appear in the settings navigation and the command palette. The first active extension that defines `upgradeTarget` decides where the Usage page upgrade buttons point. Pages themselves are ordinary SvelteKit routes added by the same overlay. A typical `isEnabled` reads the extension's `publicConfig` values:
+```ts
+interface ExtensionAdminItem {
+  id: string;
+  label: string;
+  href: string;          // must start with /dashboard/admin/ext/<name>
+  icon: Component;
+  group?: 'Instance' | 'Manage' | 'Cloud'; // default 'Cloud'
+  after?: string;        // href of a core item of the group to insert after; absent = end of the group
+  keywords?: string[];   // extra command palette search words
+}
+
+interface ExtensionAdminOrgPanel {
+  id: string;            // the section anchor is ext-<name>-<id>
+  label: string;         // entry in the organization section navigation
+  component: Component<{ orgId: string }>;
+}
+```
+
+Only extensions whose `isEnabled(cfg)` returns true contribute. Their `settingsNav` items appear in the settings navigation and the command palette. The first active extension that defines `upgradeTarget` decides where the Usage page upgrade buttons point. Their `adminNav` items appear in the instance admin navigation (the `Cloud` group is created only when an item lands in it) and in the command palette for instance administrators only; an item whose `href` is outside `/dashboard/admin/ext/<name>` is ignored with a console warning. Their `adminOrgPanels` are rendered on the instance admin organization page, before the danger zone, each with the organization id as `orgId`; a panel that throws shows an error line in its own section and leaves the rest of the page working. Admin pages are SvelteKit routes under `src/routes/dashboard/admin/ext/<name>/`, so they inherit the admin layout and its guard: nothing renders for users who are not instance administrators. Their backend routes should use `api.auth.requireInstanceAdmin`. Pages themselves are ordinary SvelteKit routes added by the same overlay. A typical `isEnabled` reads the extension's `publicConfig` values:
 
 ```ts
 isEnabled: (cfg) => cfg.extensions?.example?.enabled === true

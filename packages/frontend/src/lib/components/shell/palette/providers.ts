@@ -28,6 +28,7 @@ import { incidentsAPI } from '$lib/api/incidents';
 import { savedSearchUrl } from '$lib/components/search/explorer-url';
 import { INCIDENT_ACTIVE_STATUSES } from '@logtide/shared';
 import { settingsPages } from '../settings-pages';
+import { adminPaletteItems } from '$lib/extensions/registry';
 import { organizationStore } from '$lib/stores/organization';
 import { authAPI, type AuthConfig } from '$lib/api/auth';
 import { OPEN_ORG_SWITCHER_EVENT } from '../events';
@@ -53,6 +54,24 @@ function navigationItems(): PaletteItem[] {
     href: item.href,
     // Only advertise a shortcut that is registered right now.
     shortcut: item.shortcut && combos.has(item.shortcut) ? item.shortcut : undefined,
+  }));
+}
+
+/** Admin pages of active extensions; fetched only for instance admins. */
+async function extensionAdminItems(): Promise<PaletteItem[]> {
+  if (!get(authStore).user?.is_admin) return [];
+  let authConfig: AuthConfig | null = null;
+  try {
+    authConfig = await authAPI.getAuthConfig();
+  } catch {
+    return [];
+  }
+  return adminPaletteItems(authConfig).map((item) => ({
+    id: `nav:ext-admin:${item.href}`,
+    label: item.label,
+    icon: icon(item.icon),
+    href: item.href,
+    keywords: item.keywords,
   }));
 }
 
@@ -116,7 +135,7 @@ export function registerDefaultPaletteProviders(): void {
     heading: 'Navigation',
     order: 10,
     ttlMs: 0, // shortcut chips depend on what is registered right now
-    items: () => navigationItems(),
+    items: async () => [...navigationItems(), ...(await extensionAdminItems())],
   });
 
   registerPaletteProvider({

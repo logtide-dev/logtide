@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+const { extList } = vi.hoisted(() => ({ extList: [] as unknown[] }));
+vi.mock('$lib/extensions/index', () => ({ extensions: extList }));
 vi.mock('$lib/api/projects', () => ({
   projectsAPI: {
     getProjects: vi.fn(async () => ({
@@ -52,6 +54,10 @@ import { listPaletteProviders, loadPaletteGroups, clearPaletteCache } from './re
 import { organizationStore } from '$lib/stores/organization';
 import { shortcutsStore } from '$lib/stores/shortcuts';
 import { themeStore } from '$lib/stores/theme';
+import { authStore } from '$lib/stores/auth';
+import { authAPI } from '$lib/api/auth';
+import Box from '@lucide/svelte/icons/box';
+import type { FrontendExtension } from '$lib/extensions/types';
 
 function ctx() {
   return { organizationId: 'org-1', projectId: null, signal: new AbortController().signal };
@@ -198,5 +204,41 @@ describe('default palette providers', () => {
       expect.objectContaining({ organizationId: 'org-1', status: ['open', 'investigating'] }),
     );
     expect(g.items[0].label).toBe('Brute force on login');
+  });
+
+  describe('extension admin pages', () => {
+    const fxAdmin: FrontendExtension = {
+      name: 'fx',
+      isEnabled: (c) => c.extensions?.fx?.enabled === true,
+      adminNav: [{ id: 'revenue', label: 'Revenue', href: '/dashboard/admin/ext/fx/revenue', icon: Box }],
+    };
+
+    beforeEach(() => {
+      extList.splice(0, extList.length, fxAdmin);
+      vi.mocked(authAPI.getAuthConfig).mockResolvedValue({
+        authMode: 'standard',
+        signupEnabled: true,
+        extensions: { fx: { enabled: true } },
+      } as never);
+    });
+
+    afterEach(() => {
+      extList.splice(0, extList.length);
+      authStore.clearAuth();
+    });
+
+    it('admins see extension admin pages', async () => {
+      authStore.setAuth({ id: 'u1', email: 'a@b.c', name: 'A', is_admin: true } as never, 't');
+      const nav = await group('navigation');
+      const item = nav.items.find((i) => i.href === '/dashboard/admin/ext/fx/revenue');
+      expect(item?.label).toBe('Revenue');
+      expect(item?.keywords).toEqual(expect.arrayContaining(['admin', 'cloud']));
+    });
+
+    it('non admins never see extension admin pages', async () => {
+      authStore.setAuth({ id: 'u1', email: 'a@b.c', name: 'A', is_admin: false } as never, 't');
+      const nav = await group('navigation');
+      expect(nav.items.some((i) => i.href.startsWith('/dashboard/admin/ext/'))).toBe(false);
+    });
   });
 });
