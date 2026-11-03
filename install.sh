@@ -175,7 +175,6 @@ setup_env() {
 DB_NAME=logtide
 DB_USER=logtide
 DB_PASSWORD=$DB_PASSWORD
-DATABASE_URL=postgresql://logtide:$DB_PASSWORD@postgres:5432/logtide
 
 # Redis
 REDIS_PASSWORD=$REDIS_PASSWORD
