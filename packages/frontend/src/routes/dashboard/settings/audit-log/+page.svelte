@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { SelectField } from '$lib/components/ui/select';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { authStore } from '$lib/stores/auth';
@@ -338,67 +339,73 @@
 						<label for="category-filter" class="text-xs font-medium text-muted-foreground"
 							>Category</label
 						>
-						<select
+						<SelectField
 							id="category-filter"
-							bind:value={categoryFilter}
-							onchange={applyFilters}
-							class="flex h-9 w-44 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-						>
-							<option value="">All categories</option>
-							{#each CATEGORIES as cat}
-								<option value={cat.value}>{cat.label}</option>
-							{/each}
-						</select>
+							class="w-44"
+							value={categoryFilter}
+							onValueChange={(v) => {
+								categoryFilter = v as AuditCategory | '';
+								applyFilters();
+							}}
+							options={[{ value: '', label: 'All categories' }, ...CATEGORIES.map((c) => ({ value: c.value, label: c.label }))]}
+						/>
 					</div>
 
 					<div class="space-y-1">
 						<label for="action-filter" class="text-xs font-medium text-muted-foreground"
 							>Action</label
 						>
-						<select
+						<SelectField
 							id="action-filter"
-							bind:value={actionFilter}
-							onchange={applyFilters}
-							class="flex h-9 w-52 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-						>
-							<option value="">All actions</option>
-							{#each availableActions as action}
-								<option value={action}>{formatAction(action)}</option>
-							{/each}
-						</select>
+							class="w-52"
+							value={actionFilter}
+							onValueChange={(v) => {
+								actionFilter = v;
+								applyFilters();
+							}}
+							options={[{ value: '', label: 'All actions' }, ...availableActions.map((a) => ({ value: a, label: formatAction(a) }))]}
+						/>
 					</div>
 
 					<div class="space-y-1">
 						<label for="actor-type-filter" class="text-xs font-medium text-muted-foreground"
 							>Actor type</label
 						>
-						<select
+						<SelectField
 							id="actor-type-filter"
-							bind:value={actorTypeFilter}
-							onchange={applyFilters}
-							class="flex h-9 w-36 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-						>
-							<option value="">All actors</option>
-							<option value="user">User</option>
-							<option value="apiKey">API key</option>
-							<option value="system">System</option>
-						</select>
+							class="w-36"
+							value={actorTypeFilter}
+							onValueChange={(v) => {
+								actorTypeFilter = v as AuditActorType | '';
+								applyFilters();
+							}}
+							options={[
+								{ value: '', label: 'All actors' },
+								{ value: 'user', label: 'User' },
+								{ value: 'apiKey', label: 'API key' },
+								{ value: 'system', label: 'System' },
+							]}
+						/>
 					</div>
 
 					<div class="space-y-1">
 						<label for="outcome-filter" class="text-xs font-medium text-muted-foreground"
 							>Outcome</label
 						>
-						<select
+						<SelectField
 							id="outcome-filter"
-							bind:value={outcomeFilter}
-							onchange={applyFilters}
-							class="flex h-9 w-32 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-						>
-							<option value="">All outcomes</option>
-							<option value="success">Success</option>
-							<option value="failure">Failure</option>
-						</select>
+							class="w-32"
+							value={outcomeFilter}
+							onValueChange={(v) => {
+								outcomeFilter = v as AuditOutcome | '';
+								applyFilters();
+							}}
+							options={[
+								{ value: '', label: 'All outcomes' },
+								{ value: 'success', label: 'Success' },
+								{ value: 'failure', label: 'Failure' },
+							]}
+						/>
 					</div>
 
 					{#if categoryFilter || actionFilter || actorTypeFilter || outcomeFilter || fromFilter || toFilter}

@@ -23,6 +23,7 @@
         parseSort,
     } from "$lib/components/admin/admin-list-url";
     import { Button } from "$lib/components/ui/button";
+    import { SelectField } from "$lib/components/ui/select";
     import { Input } from "$lib/components/ui/input";
     import { FolderKanban, Database, Key, Bell, Search, RefreshCw } from "@lucide/svelte";
     import { toastStore } from "$lib/stores/toast";
@@ -33,8 +34,6 @@
     const DEFAULT_SORT: DataTableSort = { key: "created_at", dir: "desc" };
     const SORT_KEYS = ["name", "organization", "created_at"] as const;
     const DELETED = ["exclude", "include", "only"] as const;
-    const SELECT_CLASS =
-        "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:h-11";
 
     // The URL is the source of truth for search, filters, sort and page.
     const params = $derived(page.url.searchParams);
@@ -293,15 +292,16 @@
         </div>
         <label class="grid gap-1 text-xs font-medium text-muted-foreground">
             Deleted projects
-            <select
-                class={SELECT_CLASS}
+            <SelectField
+                class="w-44 max-md:h-11"
                 value={deleted}
-                onchange={(e) => navigate({ deleted: e.currentTarget.value, page: 1 })}
-            >
-                <option value="exclude">Hide deleted</option>
-                <option value="include">Include deleted</option>
-                <option value="only">Only deleted</option>
-            </select>
+                onValueChange={(v) => navigate({ deleted: v, page: 1 })}
+                options={[
+                    { value: "exclude", label: "Hide deleted" },
+                    { value: "include", label: "Include deleted" },
+                    { value: "only", label: "Only deleted" },
+                ]}
+            />
         </label>
     </div>
 

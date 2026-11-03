@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { authStore } from '$lib/stores/auth';
   import { toastStore } from '$lib/stores/toast';
+  import { SelectField } from '$lib/components/ui/select';
   import { AdminAuthAPI, type AuthProviderConfig, type CreateProviderInput, type TestConnectionResult } from '$lib/api/admin-auth';
   import { getApiBaseUrl } from '$lib/config';
   import AuthProviderCard from '$lib/components/admin/AuthProviderCard.svelte';
@@ -345,14 +346,15 @@
     <div class="space-y-4 py-4">
       <div class="space-y-2">
         <Label for="type">Provider type</Label>
-        <select
+        <SelectField
           id="type"
+          class="w-full"
           bind:value={createForm.type}
-          class="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        >
-          <option value="oidc">OpenID Connect (OIDC)</option>
-          <option value="ldap">LDAP / Active Directory</option>
-        </select>
+          options={[
+            { value: 'oidc', label: 'OpenID Connect (OIDC)' },
+            { value: 'ldap', label: 'LDAP / Active Directory' },
+          ]}
+        />
       </div>
 
       <div class="space-y-2">

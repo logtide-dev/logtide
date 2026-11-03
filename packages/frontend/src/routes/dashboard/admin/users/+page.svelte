@@ -17,6 +17,7 @@
         parseSort,
     } from "$lib/components/admin/admin-list-url";
     import { Button } from "$lib/components/ui/button";
+    import { SelectField } from "$lib/components/ui/select";
     import { Input } from "$lib/components/ui/input";
     import { Label } from "$lib/components/ui/label";
     import { Switch } from "$lib/components/ui/switch";
@@ -29,8 +30,6 @@
     const SORT_KEYS = ["email", "last_login", "created_at"] as const;
     const ROLES = ["", "admin", "user"] as const;
     const STATUSES = ["", "active", "disabled"] as const;
-    const SELECT_CLASS =
-        "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-md:h-11";
 
     // The URL is the source of truth for search, filters, sort and page.
     const params = $derived(page.url.searchParams);
@@ -244,27 +243,29 @@
         </div>
         <label class="grid gap-1 text-xs font-medium text-muted-foreground">
             Role
-            <select
-                class={SELECT_CLASS}
+            <SelectField
+                class="w-40 max-md:h-11"
                 value={role}
-                onchange={(e) => navigate({ role: e.currentTarget.value, page: 1 })}
-            >
-                <option value="">All roles</option>
-                <option value="admin">Admins</option>
-                <option value="user">Users</option>
-            </select>
+                onValueChange={(v) => navigate({ role: v, page: 1 })}
+                options={[
+                    { value: "", label: "All roles" },
+                    { value: "admin", label: "Admins" },
+                    { value: "user", label: "Users" },
+                ]}
+            />
         </label>
         <label class="grid gap-1 text-xs font-medium text-muted-foreground">
             Status
-            <select
-                class={SELECT_CLASS}
+            <SelectField
+                class="w-40 max-md:h-11"
                 value={status}
-                onchange={(e) => navigate({ status: e.currentTarget.value, page: 1 })}
-            >
-                <option value="">All statuses</option>
-                <option value="active">Active</option>
-                <option value="disabled">Disabled</option>
-            </select>
+                onValueChange={(v) => navigate({ status: v, page: 1 })}
+                options={[
+                    { value: "", label: "All statuses" },
+                    { value: "active", label: "Active" },
+                    { value: "disabled", label: "Disabled" },
+                ]}
+            />
         </label>
     </div>
 

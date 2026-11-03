@@ -26,6 +26,7 @@ vi.mock('$lib/api/projects', () => ({ projectsAPI: { getProjects: h.getProjects 
 vi.mock('$lib/stores/toast', () => ({ toastStore: h.toast }));
 
 import Page from './+page.svelte';
+import { chooseSelectOption } from '$lib/test-utils/select-field';
 import { authStore } from '$lib/stores/auth';
 import { organizationStore } from '$lib/stores/organization';
 
@@ -93,8 +94,7 @@ describe('PII masking page', () => {
     render(Page);
     await screen.findByText('Custom ID');
     expect(h.listRules).toHaveBeenLastCalledWith('org-1', undefined);
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
-    await fireEvent.change(screen.getByLabelText('Applies to:'), { target: { value: 'p1' } });
+    await chooseSelectOption(screen.getByLabelText('Applies to:'), 'Checkout');
     await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('org-1', 'p1'));
   });
 
@@ -111,8 +111,7 @@ describe('PII masking page', () => {
   it('Add rule while a project is selected sends projectId', async () => {
     render(Page);
     await screen.findByText('Custom ID');
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
-    await fireEvent.change(screen.getByLabelText('Applies to:'), { target: { value: 'p1' } });
+    await chooseSelectOption(screen.getByLabelText('Applies to:'), 'Checkout');
     await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('org-1', 'p1'));
     const input = await fillAndCreate();
     expect(input.projectId).toBe('p1');
@@ -212,8 +211,7 @@ describe('PII masking page', () => {
       );
       render(Page);
       await screen.findByText('Email');
-      await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
-      await fireEvent.change(screen.getByLabelText('Applies to:'), { target: { value: 'p1' } });
+      await chooseSelectOption(screen.getByLabelText('Applies to:'), 'Checkout');
       await waitFor(() => expect(h.listRules).toHaveBeenLastCalledWith('org-1', 'p1'));
       await screen.findByText('Other rule');
     }
@@ -248,8 +246,7 @@ describe('PII masking page', () => {
       );
       render(Page);
       await screen.findByText('Email org');
-      await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
-      await fireEvent.change(screen.getByLabelText('Applies to:'), { target: { value: 'p1' } });
+      await chooseSelectOption(screen.getByLabelText('Applies to:'), 'Checkout');
       await screen.findByText('Email project');
       expect(screen.queryByText('Email org')).toBeNull();
     });
