@@ -5,6 +5,7 @@
 
   import { toastStore } from '$lib/stores/toast';
   import { getApiUrl } from '$lib/config';
+  import { SelectField } from '$lib/components/ui/select';
   import Copy from '@lucide/svelte/icons/copy';
 
   type BadgeStyle = 'flat' | 'flat-square' | 'plastic' | 'for-the-badge' | 'minimal';
@@ -82,15 +83,14 @@
   <!-- Style picker -->
   <div class="space-y-1.5">
     <label class="text-xs font-medium" for="badge-style">Style</label>
-    <select
+    <SelectField
       id="badge-style"
-      bind:value={style}
-      class="h-8 w-full rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-    >
-      {#each styleOptions as opt}
-        <option value={opt.value}>{opt.label}</option>
-      {/each}
-    </select>
+      size="sm"
+      class="w-full"
+      value={style}
+      options={styleOptions}
+      onValueChange={(v) => (style = v as BadgeStyle)}
+    />
     <p class="text-[11px] text-muted-foreground">
       {styleOptions.find((o) => o.value === style)?.description}
     </p>

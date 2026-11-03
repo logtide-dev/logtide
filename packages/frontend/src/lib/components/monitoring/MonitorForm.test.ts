@@ -18,6 +18,7 @@ vi.mock('$lib/components/notification-channels/ChannelSelector.svelte', async ()
   default: (await import('../../../test-stubs/ChannelSelectorStub.svelte')).default,
 }));
 
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 import MonitorForm from './MonitorForm.svelte';
 import type { Monitor } from '$lib/api/monitoring';
 
@@ -66,10 +67,13 @@ function renderForm(over: Record<string, unknown> = {}) {
   return { ...render(MonitorForm, { props }), props };
 }
 
-async function chooseType(label: string) {
-  await fireEvent.change(screen.getByLabelText('Type'), {
-    target: { value: label },
-  });
+const TYPE_LABELS: Record<string, string | RegExp> = {
+  ssl: /ssl/i,
+  dns: /dns/i,
+};
+
+async function chooseType(type: string) {
+  await chooseSelectOption(screen.getByLabelText('Type'), TYPE_LABELS[type] ?? type);
 }
 
 beforeEach(() => {
@@ -102,10 +106,12 @@ describe('MonitorForm', () => {
 
   it('HTTP fields: method select, blank expected status hint "Any 2xx", header rows add and remove, body assertion', async () => {
     renderForm();
-    const method = screen.getByLabelText('Method') as HTMLSelectElement;
-    expect(Array.from(method.options).map((o) => o.value)).toEqual([
+    const method = screen.getByLabelText('Method');
+    expect(method).toHaveTextContent('GET');
+    expect(await openSelect(method)).toEqual([
       'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS',
     ]);
+    await fireEvent.keyDown(method, { key: 'Escape' });
     expect(screen.getByLabelText('Expected status')).toHaveAttribute('placeholder', 'Any 2xx');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add header' }));
@@ -116,9 +122,9 @@ describe('MonitorForm', () => {
     expect(screen.queryByLabelText('Header 2 name')).toBeNull();
 
     expect(screen.queryByLabelText('Text')).toBeNull();
-    await fireEvent.change(screen.getByLabelText('Response body check'), { target: { value: 'contains' } });
+    await chooseSelectOption(screen.getByLabelText('Response body check'), 'Contains text');
     expect(screen.getByLabelText('Text')).toBeInTheDocument();
-    await fireEvent.change(screen.getByLabelText('Response body check'), { target: { value: 'regex' } });
+    await chooseSelectOption(screen.getByLabelText('Response body check'), 'Matches regular expression');
     expect(screen.getByLabelText('Pattern')).toBeInTheDocument();
   });
 
@@ -141,7 +147,7 @@ describe('MonitorForm', () => {
     await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'MX' } });
     await chooseType('dns');
     await fireEvent.input(screen.getByLabelText('Hostname'), { target: { value: 'example.com' } });
-    await fireEvent.change(screen.getByLabelText('Record type'), { target: { value: 'MX' } });
+    await chooseSelectOption(screen.getByLabelText('Record type'), 'MX');
     await fireEvent.input(screen.getByLabelText('Expected value'), { target: { value: 'mx.example.com' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create monitor' }));
     await waitFor(() => expect(store.create).toHaveBeenCalledTimes(1));
@@ -213,11 +219,12 @@ describe('MonitorForm', () => {
     );
   });
 
-  it('severity select offers the five severities', () => {
+  it('severity select offers the five severities', async () => {
     renderForm();
-    const select = screen.getByLabelText('Severity') as HTMLSelectElement;
-    expect(Array.from(select.options).map((o) => o.value)).toEqual([
-      'critical', 'high', 'medium', 'low', 'informational',
+    const select = screen.getByLabelText('Severity');
+    expect(select).toHaveTextContent('High');
+    expect(await openSelect(select)).toEqual([
+      'Critical', 'High', 'Medium', 'Low', 'Informational',
     ]);
   });
 
