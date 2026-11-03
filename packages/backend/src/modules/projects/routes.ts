@@ -219,6 +219,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
 
   const notificationSettingsSchema = z.object({
     healthChannelIds: z.array(z.string().uuid()).max(50).optional(),
+    silentEnabled: z.boolean().optional(),
     silentMinutes: z
       .number()
       .int()
@@ -252,6 +253,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     }
     const settings = await updateProjectHealthSettings(project.organizationId, project.id, body.data);
     return reply.send({
+      silentEnabled: settings.silentEnabled,
       silentMinutes: settings.silentMinutes,
       healthChannelIds: settings.healthChannelIds,
     });

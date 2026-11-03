@@ -9,6 +9,8 @@
  *    Rollout guard (migration 074): the silent check arms only once a pass has
  *    seen the project receiving data, and issues opened on a project's first
  *    pass are baseline (pre-existing, never notified).
+ *    The silent check is opt-in per project (migration 077): with it off, the
+ *    check never opens and an open silent issue resolves without notifying.
  *    Recurrence cooldown: a check that opens again within 24 h of its previous
  *    episode resolving is a recurrence (a project that sends in bursts, sleeps
  *    at night or between batch runs). The new episode is also baseline: shown
@@ -160,7 +162,8 @@ async function reconcileProject(
   open: Map<ProjectHealthCheckKey, Record<string, unknown>>,
   issues: HealthIssueRow[],
   now: Date,
-  baseline: boolean
+  baseline: boolean,
+  quietResolve: ReadonlySet<ProjectHealthCheckKey> = new Set()
 ): Promise<{ opened: number; resolved: ProjectHealthCheckKey[] }> {
   let opened = 0;
   const resolved: ProjectHealthCheckKey[] = [];
@@ -204,7 +207,7 @@ async function reconcileProject(
 
   for (const [checkKey, row] of openRows) {
     if (open.has(checkKey)) continue;
-    if (await resolveIssue(row, now)) resolved.push(checkKey);
+    if (await resolveIssue(row, now, { quiet: quietResolve.has(checkKey) })) resolved.push(checkKey);
   }
 
   if (resolved.length > 0) {
@@ -288,10 +291,19 @@ export async function runProjectHealthPass(now: Date = new Date()): Promise<Proj
       const receiving =
         inputs.lastEventAt !== null &&
         now.getTime() - inputs.lastEventAt.getTime() <= settings.silentMinutes * 60_000;
-      inputs.silentArmed = receiving || (state?.lastReceivingAt ?? null) !== null;
+      inputs.silentArmed =
+        settings.silentEnabled && (receiving || (state?.lastReceivingAt ?? null) !== null);
       const open = computeOpenChecks(inputs);
       const before = issuesByProject.get(p.id) ?? [];
-      const { opened, resolved } = await reconcileProject(project, open, before, now, state === undefined);
+      const quietResolve = new Set<ProjectHealthCheckKey>(settings.silentEnabled ? [] : ['silent']);
+      const { opened, resolved } = await reconcileProject(
+        project,
+        open,
+        before,
+        now,
+        state === undefined,
+        quietResolve
+      );
       await recordEvaluation(p.organization_id, p.id, receiving, now);
       result.evaluated++;
       result.opened += opened;

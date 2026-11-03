@@ -1003,6 +1003,7 @@ export interface ProjectNotificationSettingsTable {
   organization_id: string;
   health_channel_ids: ColumnType<string[], string[] | string | undefined, string[] | string>;
   silent_minutes: Generated<number>;
+  silent_enabled: Generated<boolean>;
   mutes: ColumnType<Record<string, unknown>, string | Record<string, unknown> | undefined, string | Record<string, unknown>>;
   updated_at: Generated<Timestamp>;
 }

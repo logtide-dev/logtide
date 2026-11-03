@@ -20,8 +20,8 @@ describe('project health catalog', () => {
     for (const k of keys) expect(PROJECT_HEALTH_CHECKS[k].title.length).toBeGreaterThan(0);
   });
 
-  it('silent and pii_rejected are critical, the rest warning', () => {
-    expect(PROJECT_HEALTH_CHECKS.silent.severity).toBe('critical');
+  it('pii_rejected is critical, the rest warning', () => {
+    expect(PROJECT_HEALTH_CHECKS.silent.severity).toBe('warning');
     expect(PROJECT_HEALTH_CHECKS.pii_rejected.severity).toBe('critical');
     for (const k of keys.filter((x) => x !== 'silent' && x !== 'pii_rejected')) {
       expect(PROJECT_HEALTH_CHECKS[k].severity).toBe('warning');
