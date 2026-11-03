@@ -240,5 +240,24 @@ describe('default palette providers', () => {
       const nav = await group('navigation');
       expect(nav.items.some((i) => i.href.startsWith('/dashboard/admin/ext/'))).toBe(false);
     });
+
+    it('does not fetch the auth config when no extension has admin pages', async () => {
+      extList.splice(0, extList.length);
+      authStore.setAuth({ id: 'u1', email: 'a@b.c', name: 'A', is_admin: true } as never, 't');
+      vi.mocked(authAPI.getAuthConfig).mockClear();
+      // Call the navigation provider alone: the settings provider fetches the config on its own.
+      const navigation = listPaletteProviders().find((p) => p.id === 'navigation')!;
+      const items = await navigation.items(ctx());
+      expect(items.length).toBeGreaterThan(0);
+      expect(authAPI.getAuthConfig).not.toHaveBeenCalled();
+    });
+
+    it('a hanging auth config does not hide the core navigation items', async () => {
+      authStore.setAuth({ id: 'u1', email: 'a@b.c', name: 'A', is_admin: true } as never, 't');
+      vi.mocked(authAPI.getAuthConfig).mockImplementation(() => new Promise(() => {}));
+      const nav = await group('navigation');
+      expect(nav.items.some((i) => i.href === '/dashboard/admin')).toBe(true);
+      expect(nav.items.some((i) => i.href.startsWith('/dashboard/admin/ext/'))).toBe(false);
+    }, 10000);
   });
 });

@@ -134,7 +134,7 @@ describe('admin layout guard', () => {
       setAuth('t', true);
       render(Layout, { children: child });
       await waitFor(() => expect(screen.getByTestId('child')).toBeTruthy());
-      await waitFor(() => expect(getAuthConfig).toHaveBeenCalled());
+      expect(getAuthConfig).not.toHaveBeenCalled();
       expect(screen.queryByText('Cloud')).toBeNull();
       expect(screen.getByText('Instance')).toBeTruthy();
       expect(screen.getByText('Manage')).toBeTruthy();

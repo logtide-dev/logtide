@@ -9,6 +9,7 @@ import {
   adminOrgPanels,
   adminPaletteItems,
   extensionUpgradeTarget,
+  hasAdminContributions,
   type AdminNavGroup,
 } from './registry';
 import { extensions } from './index';
@@ -205,5 +206,33 @@ describe('admin slots', () => {
     expect(panels[0].anchor).toBe('ext-fx-billing');
     expect(panels[0].label).toBe('Billing');
     expect(panels[0].component).toBe(PanelStub);
+  });
+
+  it('duplicate admin hrefs and panel ids are dropped, first one wins', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dup: FrontendExtension = {
+      ...fxAdmin,
+      adminNav: [
+        { id: 'a', label: 'First', href: '/dashboard/admin/ext/fx/revenue', icon: Box },
+        { id: 'b', label: 'Second', href: '/dashboard/admin/ext/fx/revenue', icon: Box },
+      ],
+      adminOrgPanels: [
+        { id: 'billing', label: 'One', component: PanelStub },
+        { id: 'billing', label: 'Two', component: PanelStub },
+      ],
+    };
+    const cloud = adminNavGroups(core, enabledCfg, [dup]).find((g) => g.label === 'Cloud')!;
+    expect(cloud.items.map((i) => i.label)).toEqual(['First']);
+    expect(adminPaletteItems(enabledCfg, [dup]).map((i) => i.label)).toEqual(['First']);
+    expect(adminOrgPanels(enabledCfg, [dup]).map((p) => p.label)).toEqual(['One']);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('hasAdminContributions is false for the public build and plain extensions', () => {
+    expect(hasAdminContributions()).toBe(false);
+    expect(hasAdminContributions([fx])).toBe(false);
+    expect(hasAdminContributions([fxAdmin])).toBe(true);
+    expect(hasAdminContributions([{ name: 'p', isEnabled: () => true, adminOrgPanels: [{ id: 'x', label: 'X', component: PanelStub }] }])).toBe(true);
   });
 });

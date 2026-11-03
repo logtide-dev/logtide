@@ -56,6 +56,7 @@ function activeAdminItems(
   list: FrontendExtension[]
 ): Array<{ ext: FrontendExtension; item: ExtensionAdminItem }> {
   const out: Array<{ ext: FrontendExtension; item: ExtensionAdminItem }> = [];
+  const seen = new Set<string>();
   for (const ext of activeExtensions(cfg, list)) {
     for (const item of ext.adminNav ?? []) {
       if (!ownsHref(ext, item.href)) {
@@ -64,6 +65,12 @@ function activeAdminItems(
         );
         continue;
       }
+      // Navigation lists are keyed by href: a duplicate would break the sidebar.
+      if (seen.has(item.href)) {
+        console.warn(`[extensions] ${ext.name}: admin item '${item.id}' ignored, duplicate href ${item.href}`);
+        continue;
+      }
+      seen.add(item.href);
       out.push({ ext, item });
     }
   }
@@ -111,7 +118,28 @@ export function adminOrgPanels(
   cfg: AuthConfig | null,
   list: FrontendExtension[] = extensions
 ): Array<ExtensionAdminOrgPanel & { anchor: string }> {
-  return activeExtensions(cfg, list).flatMap((ext) =>
-    (ext.adminOrgPanels ?? []).map((panel) => ({ ...panel, anchor: `ext-${ext.name}-${panel.id}` }))
-  );
+  const out: Array<ExtensionAdminOrgPanel & { anchor: string }> = [];
+  const seen = new Set<string>();
+  for (const ext of activeExtensions(cfg, list)) {
+    for (const panel of ext.adminOrgPanels ?? []) {
+      const anchor = `ext-${ext.name}-${panel.id}`;
+      // Sections are keyed by anchor: a duplicate would break the organization page.
+      if (seen.has(anchor)) {
+        console.warn(`[extensions] ${ext.name}: organization panel '${panel.id}' ignored, duplicate id`);
+        continue;
+      }
+      seen.add(anchor);
+      out.push({ ...panel, anchor });
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether any registered extension contributes admin pages or organization
+ * panels. False in the public build, so the admin screens skip the auth
+ * config request and behave exactly as without extensions.
+ */
+export function hasAdminContributions(list: FrontendExtension[] = extensions): boolean {
+  return list.some((ext) => (ext.adminNav?.length ?? 0) > 0 || (ext.adminOrgPanels?.length ?? 0) > 0);
 }

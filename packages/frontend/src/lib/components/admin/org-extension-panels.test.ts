@@ -63,6 +63,7 @@ describe('admin organization page: extension panels', () => {
     render(OrgPage as never);
     await screen.findByTestId('org-side-nav');
     expect(navIds()).toEqual(['projects', 'members', 'retention', 'entitlements', 'danger-zone']);
+    expect(h.getAuthConfig).not.toHaveBeenCalled();
   });
 
   it('extension panels are listed before Danger zone and rendered with orgId', async () => {

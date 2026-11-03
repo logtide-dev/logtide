@@ -28,7 +28,7 @@
     import { createLatestGuard } from "$lib/components/admin/latest-request";
     import ExtensionPanelBoundary from "$lib/components/admin/ExtensionPanelBoundary.svelte";
     import { authAPI, type AuthConfig } from "$lib/api/auth";
-    import { adminOrgPanels } from "$lib/extensions/registry";
+    import { adminOrgPanels, hasAdminContributions } from "$lib/extensions/registry";
 
     type Member = OrganizationDetails["members"][number];
     type Project = OrganizationDetails["projects"][number];
@@ -53,16 +53,19 @@
 
     let activeSection = $state("projects");
 
-    // Extension sections, known once the auth config has loaded (best effort).
+    // Extension sections, known once the auth config has loaded (best effort;
+    // never requested when no extension has admin contributions).
     let authConfig = $state<AuthConfig | null>(null);
-    authAPI
-        .getAuthConfig()
-        .then((cfg) => {
-            authConfig = cfg;
-        })
-        .catch(() => {
-            authConfig = null;
-        });
+    if (hasAdminContributions()) {
+        authAPI
+            .getAuthConfig()
+            .then((cfg) => {
+                authConfig = cfg;
+            })
+            .catch(() => {
+                authConfig = null;
+            });
+    }
     const extPanels = $derived(adminOrgPanels(authConfig));
     const navItems = $derived.by(() => {
         const items = [...ORG_NAV_ITEMS];
