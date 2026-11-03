@@ -58,6 +58,7 @@ An extension must not import anything from the backend source tree (`packages/ba
 | `orgs` | `{ get, listOwnersAndAdmins }` | Read-only organization lookups |
 | `queue` | `{ registerJob, enqueue, schedule }` | Background jobs and crons |
 | `mail` | `{ send }` | Outbound mail |
+| `admin` | `{ audit }` | Audit log entries for instance admin actions |
 
 ### Prefixes at a glance
 
@@ -67,6 +68,7 @@ An extension must not import anything from the backend source tree (`packages/ba
 | Postgres schema | `<name>` |
 | Queue and cron name | `ext:<name>:<job>` |
 | Audit actor | `ext:<name>` |
+| Audit action of `admin.audit` | `ext.admin_action` (`metadata.extension`, `metadata.action`) |
 | Log prefix | `[ext:<name>]` |
 
 BullMQ does not allow `:` in queue names, so the Redis backend stores `ext:<name>:<job>` with each `:` mapped to `__`. You always use the `ext:` form in code and logs.
@@ -162,6 +164,23 @@ send(msg: { to: string | string[]; subject: string; text: string; html?: string 
 ```
 
 Sends through the core SMTP settings. It rejects with `MailNotConfiguredError` when `SMTP_HOST` is unset.
+
+### `admin`
+
+```ts
+audit(
+  entry: {
+    action: string;                  // ^[a-z][a-z0-9_.]{1,62}$, for example 'grant_created'
+    organizationId?: string | null;
+    target?: { type: string; id: string | null };
+    metadata?: Record<string, unknown>;
+    outcome?: 'success' | 'failure'; // default 'success'
+  },
+  request?: FastifyRequest
+): Promise<void>
+```
+
+Writes one row to the core audit log with the action `ext.admin_action`, category `config_change`. The extension name and `entry.action` are stored in `metadata.extension` and `metadata.action` (they win over keys of the same name in `entry.metadata`). Pass the route's `request` for actions done by a person: the actor is the session user, and the IP address and user agent come from that request. Without `request` (jobs, crons) the actor is `system` with the label `ext:<name>`. A malformed `organizationId` is stored as `null`. An invalid `action` rejects with an `[Extensions]` error and writes nothing.
 
 ## Frontend extensions
 

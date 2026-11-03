@@ -116,6 +116,8 @@ export const AUDIT_ACTIONS = {
   'data.session_events_viewed': 'log_access',
   'data.exported': 'log_access',
   'data.deleted': 'data_modification',
+  // extensions (metadata.extension + metadata.action name the real action)
+  'ext.admin_action': 'config_change',
 } as const satisfies Record<string, AuditCategory>;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

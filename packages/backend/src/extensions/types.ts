@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync, preHandlerHookHandler } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest, preHandlerHookHandler } from 'fastify';
 import type { OrgRole } from '@logtide/shared';
 import type { HookRegistry } from '../hooks/registry.js';
 import type { CronJobDefinition } from '../queue/abstractions/types.js';
@@ -88,6 +88,28 @@ export interface ExtensionApi {
   readonly orgs: ExtensionOrgs;
   readonly queue: ExtensionQueue;
   readonly mail: ExtensionMail;
+  readonly admin: ExtensionAdmin;
+}
+
+/** One admin action of an extension, recorded as core action `ext.admin_action`. */
+export interface ExtensionAuditEntry {
+  /** Extension-specific action name, `^[a-z][a-z0-9_.]{1,62}$` (e.g. `grant_created`). */
+  action: string;
+  /** Organization the action is about; a malformed id is stored as null. */
+  organizationId?: string | null;
+  target?: { type: string; id: string | null };
+  metadata?: Record<string, unknown>;
+  outcome?: 'success' | 'failure';
+}
+
+/** Helpers for instance admin features of an extension. */
+export interface ExtensionAdmin {
+  /**
+   * Write one row to the core audit log. With `request`, the actor is the
+   * session user and ip/user agent come from the request; without it the
+   * actor is `system` labelled `ext:<name>`. Rejects on an invalid action name.
+   */
+  audit(entry: ExtensionAuditEntry, request?: FastifyRequest): Promise<void>;
 }
 
 /** Background jobs and cron schedules. Queue names are `ext:<name>:<job>`. */
