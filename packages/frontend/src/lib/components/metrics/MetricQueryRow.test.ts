@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import MetricQueryRow from './MetricQueryRow.svelte';
 import { DEFAULT_QUERY, type MetricQueryState } from '$lib/utils/metrics-query';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
 function setup(query: Partial<MetricQueryState> = {}) {
   const onChange = vi.fn();
@@ -17,17 +18,21 @@ function setup(query: Partial<MetricQueryState> = {}) {
 }
 
 describe('MetricQueryRow', () => {
-  it('rate option present for any metric', () => {
+  it('rate option present for any metric', async () => {
     setup();
-    const options = screen.getAllByRole('option').map((o) => o.textContent);
+    const options = await openSelect(screen.getByLabelText('Aggregate'));
     expect(options).toContain('Rate');
     expect(options).toContain('p95');
-    expect(options).toContain('Auto');
+  });
+
+  it('interval offers auto', async () => {
+    setup();
+    expect(await openSelect(screen.getByLabelText('Interval'))).toContain('Auto');
   });
 
   it('changing aggregate emits patch', async () => {
     const onChange = setup();
-    await fireEvent.change(screen.getByLabelText('Aggregate'), { target: { value: 'rate' } });
+    await chooseSelectOption(screen.getByLabelText('Aggregate'), 'Rate');
     expect(onChange).toHaveBeenCalledWith({ aggregation: 'rate' });
   });
 
@@ -38,7 +43,8 @@ describe('MetricQueryRow', () => {
 
   it('changing service emits null for all services', async () => {
     const onChange = setup({ service: 'api' });
-    await fireEvent.change(screen.getByLabelText('Service'), { target: { value: '' } });
+    expect(screen.getByLabelText('Service')).toHaveTextContent('api');
+    await chooseSelectOption(screen.getByLabelText('Service'), 'All services');
     expect(onChange).toHaveBeenCalledWith({ service: null });
   });
 
@@ -67,7 +73,7 @@ describe('MetricQueryRow', () => {
   it('adds a multi-value filter and shows the series hint', async () => {
     const onChange = setup();
     await fireEvent.click(screen.getByRole('button', { name: 'Add filter' }));
-    await fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'env' } });
+    await chooseSelectOption(screen.getByLabelText('Label'), 'env');
     const a = await screen.findByRole('checkbox', { name: 'a' });
     await fireEvent.click(a);
     await fireEvent.click(screen.getByRole('checkbox', { name: 'b' }));

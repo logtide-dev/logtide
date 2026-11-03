@@ -8,6 +8,8 @@ import Value from "./select-value.svelte";
 import Separator from "./select-separator.svelte";
 import ScrollDownButton from "./select-scroll-down-button.svelte";
 import ScrollUpButton from "./select-scroll-up-button.svelte";
+import SelectField from "./select-field.svelte";
+export type { SelectFieldOption } from "./select-field.svelte";
 
 const Root = SelectPrimitive.Root;
 const Group = SelectPrimitive.Group;
@@ -23,6 +25,7 @@ export {
 	Separator,
 	ScrollDownButton,
 	ScrollUpButton,
+	SelectField,
 	//
 	Root as Select,
 	Group as SelectGroup,

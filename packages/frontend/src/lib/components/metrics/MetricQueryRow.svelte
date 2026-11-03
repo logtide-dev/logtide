@@ -2,6 +2,7 @@
   import MetricCombobox from './MetricCombobox.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import { Badge } from '$lib/components/ui/badge';
+  import { SelectField } from '$lib/components/ui/select';
   import {
     MAX_GROUP_BY,
     type MetricQueryState,
@@ -58,8 +59,11 @@
     { value: '1w', label: '1 week' },
   ];
 
-  const selectClass =
-    'h-9 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
+  const serviceOptions = $derived([
+    { value: '', label: 'All services' },
+    ...services.map((service) => ({ value: service, label: service })),
+  ]);
+  const labelKeyOptions = $derived(labelKeys.map((key) => ({ value: key, label: key })));
 
   let aggHint = $derived(AGGREGATIONS.find((a) => a.value === query.aggregation)?.hint);
 
@@ -130,16 +134,13 @@
 
     <div class="space-y-1">
       <label class="text-xs font-medium text-muted-foreground" for="metric-aggregation">Aggregate</label>
-      <select
+      <SelectField
         id="metric-aggregation"
-        class="{selectClass} block"
+        class="w-32"
         value={query.aggregation}
-        onchange={(e) => onChange({ aggregation: e.currentTarget.value as MetricAggregationFn })}
-      >
-        {#each AGGREGATIONS as agg (agg.value)}
-          <option value={agg.value} title={agg.hint}>{agg.label}</option>
-        {/each}
-      </select>
+        options={AGGREGATIONS.map((agg) => ({ value: agg.value, label: agg.label, title: agg.hint }))}
+        onValueChange={(v) => onChange({ aggregation: v as MetricAggregationFn })}
+      />
     </div>
 
     <div class="relative space-y-1">
@@ -184,33 +185,26 @@
 
     <div class="space-y-1">
       <label class="text-xs font-medium text-muted-foreground" for="metric-interval">Interval</label>
-      <select
+      <SelectField
         id="metric-interval"
-        class="{selectClass} block"
+        class="w-32"
         value={query.interval}
-        onchange={(e) => onChange({ interval: e.currentTarget.value as 'auto' | AggregationInterval })}
-      >
-        {#each INTERVALS as interval (interval.value)}
-          <option value={interval.value}>{interval.label}</option>
-        {/each}
-      </select>
+        options={INTERVALS}
+        onValueChange={(v) => onChange({ interval: v as 'auto' | AggregationInterval })}
+      />
     </div>
 
     {/if}
 
     <div class="space-y-1">
       <label class="text-xs font-medium text-muted-foreground" for="metric-service">Service</label>
-      <select
+      <SelectField
         id="metric-service"
-        class="{selectClass} block max-w-[200px]"
+        class="w-[200px]"
         value={query.service ?? ''}
-        onchange={(e) => onChange({ service: e.currentTarget.value || null })}
-      >
-        <option value="">All services</option>
-        {#each services as service (service)}
-          <option value={service}>{service}</option>
-        {/each}
-      </select>
+        options={serviceOptions}
+        onValueChange={(v) => onChange({ service: v || null })}
+      />
     </div>
   </div>
 
@@ -253,17 +247,14 @@
     <div class="flex flex-wrap items-start gap-3 rounded-md border bg-card p-3">
       <div class="space-y-1">
         <label class="text-xs font-medium text-muted-foreground" for="metric-filter-key">Label</label>
-        <select
+        <SelectField
           id="metric-filter-key"
-          class="{selectClass} block"
+          class="w-48"
           value={draftKey}
-          onchange={(e) => pickKey(e.currentTarget.value)}
-        >
-          <option value="">Select label</option>
-          {#each labelKeys as key (key)}
-            <option value={key}>{key}</option>
-          {/each}
-        </select>
+          placeholder="Select label"
+          options={labelKeyOptions}
+          onValueChange={pickKey}
+        />
       </div>
       <div class="min-w-[200px] space-y-1">
         <span class="text-xs font-medium text-muted-foreground">Values</span>
