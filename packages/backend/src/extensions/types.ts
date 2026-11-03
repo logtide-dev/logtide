@@ -31,6 +31,12 @@ export interface ExtensionAuth {
    * `{ error: 'forbidden' }`. On success sets `request.extOrg`.
    */
   requireOrgRole(roles: OrgRole[]): preHandlerHookHandler[];
+  /**
+   * Session auth + instance admin check (`users.is_admin`, not disabled),
+   * re-read on every request. No session: 401; not an admin or disabled:
+   * 403 `{ error: 'forbidden' }`. On success sets `request.extAdmin`.
+   */
+  readonly requireInstanceAdmin: preHandlerHookHandler[];
 }
 
 /** Queue job registered by an extension (populated by the worker runtime). */

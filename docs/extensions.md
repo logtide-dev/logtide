@@ -83,11 +83,14 @@ Extension routes skip the global API key and session plugin. A route with no aut
 interface ExtensionAuth {
   requireSession: preHandlerHookHandler;
   requireOrgRole(roles: OrgRole[]): preHandlerHookHandler[];
+  requireInstanceAdmin: preHandlerHookHandler[];
 }
 ```
 
 - `requireSession`: session auth, same as the core. `401` without a valid session.
 - `requireOrgRole(roles)`: use as `preHandler`. Authenticates the session, then checks membership on the `:orgId` route parameter. A malformed UUID or a user who is not a member answers `404 { "error": "not_found" }`; a member whose role is not in `roles` answers `403 { "error": "forbidden" }`. On success `request.extOrg` is `{ id, role }`.
+
+- `requireInstanceAdmin`: use as `preHandler` on routes for instance administrators (the users who see the admin section of the app). Authenticates the session, then reads `users.is_admin` and `users.disabled` on every request, so an administrator who loses the flag or is disabled is refused on their next request. `401` without a valid session, `403 { "error": "forbidden" }` for anyone else. On success `request.extAdmin` is `{ userId, email }`.
 
 `OrgRole` is `'owner' | 'admin' | 'member'`.
 
