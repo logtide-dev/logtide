@@ -16,6 +16,47 @@
 #
 # Usage: docker compose -f docker-compose.simple.yml up -d
 
+# Environment shared by backend and worker, so the two cannot drift apart
+x-backend-env: &backend-env
+  NODE_ENV: production
+  TRUST_PROXY: ${TRUST_PROXY:-false}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  # Separate settings: the backend builds the connection URLs and encodes the
+  # passwords, so any password works as-is. For an external or managed database
+  # set DATABASE_URL (and REDIS_URL) here instead, they take precedence.
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_USER: ${DB_USER}
+  DB_PASSWORD: ${DB_PASSWORD}
+  DB_NAME: ${DB_NAME}
+  # REDIS_URL intentionally not set - uses PostgreSQL queue (graphile-worker)
+  API_KEY_SECRET: ${API_KEY_SECRET}
+  PORT: 8080
+  HOST: 0.0.0.0
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASS: ${SMTP_PASS:-}
+  SMTP_FROM: ${SMTP_FROM:-noreply@logtide.local}
+  INTERNAL_LOGGING_ENABLED: ${INTERNAL_LOGGING_ENABLED:-false}
+  INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+  INTERNAL_DSN: ${INTERNAL_DSN:-}
+  DOCKER_CONTAINER: "true"
+  # Hosting seams: empty = inert (see docs/cloud-seams.md)
+  CAPABILITY_DEFAULTS_JSON: ${CAPABILITY_DEFAULTS_JSON:-}
+  LOGTIDE_ADMIN_SERVICE_TOKEN: ${LOGTIDE_ADMIN_SERVICE_TOKEN:-}
+  LOGTIDE_UPGRADE_URL: ${LOGTIDE_UPGRADE_URL:-}
+  LOGTIDE_UPGRADE_SIGNING_SECRET: ${LOGTIDE_UPGRADE_SIGNING_SECRET:-}
+  MAX_ORGANIZATIONS_PER_USER: ${MAX_ORGANIZATIONS_PER_USER:-}
+  MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: ${MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH:-}
+  REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-}
+  REGISTRATION_RATE_LIMIT_PER_HOUR: ${REGISTRATION_RATE_LIMIT_PER_HOUR:-}
+  LOGTIDE_TERMS_URL: ${LOGTIDE_TERMS_URL:-}
+  LOGTIDE_PRIVACY_URL: ${LOGTIDE_PRIVACY_URL:-}
+  LOGTIDE_TERMS_VERSION: ${LOGTIDE_TERMS_VERSION:-}
+  ANALYTICS_TIMEOUT_MS: ${ANALYTICS_TIMEOUT_MS:-}
+  STORAGE_ENGINE: timescale
+
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -77,40 +118,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      NODE_ENV: production
-      TRUST_PROXY: ${TRUST_PROXY:-false}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      DATABASE_HOST: postgres
-      DB_USER: ${DB_USER}
-      # REDIS_URL intentionally not set - uses PostgreSQL queue (graphile-worker)
-      API_KEY_SECRET: ${API_KEY_SECRET}
-      PORT: 8080
-      HOST: 0.0.0.0
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-noreply@logtide.local}
-      INTERNAL_LOGGING_ENABLED: ${INTERNAL_LOGGING_ENABLED:-false}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
-      INTERNAL_DSN: ${INTERNAL_DSN:-}
-      DOCKER_CONTAINER: "true"
+      <<: *backend-env
       SERVICE_NAME: logtide-backend
-      # Hosting seams: empty = inert (see docs/cloud-seams.md)
-      CAPABILITY_DEFAULTS_JSON: ${CAPABILITY_DEFAULTS_JSON:-}
-      LOGTIDE_ADMIN_SERVICE_TOKEN: ${LOGTIDE_ADMIN_SERVICE_TOKEN:-}
-      LOGTIDE_UPGRADE_URL: ${LOGTIDE_UPGRADE_URL:-}
-      LOGTIDE_UPGRADE_SIGNING_SECRET: ${LOGTIDE_UPGRADE_SIGNING_SECRET:-}
-      MAX_ORGANIZATIONS_PER_USER: ${MAX_ORGANIZATIONS_PER_USER:-}
-      MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: ${MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH:-}
-      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-}
-      REGISTRATION_RATE_LIMIT_PER_HOUR: ${REGISTRATION_RATE_LIMIT_PER_HOUR:-}
-      LOGTIDE_TERMS_URL: ${LOGTIDE_TERMS_URL:-}
-      LOGTIDE_PRIVACY_URL: ${LOGTIDE_PRIVACY_URL:-}
-      LOGTIDE_TERMS_VERSION: ${LOGTIDE_TERMS_VERSION:-}
-      ANALYTICS_TIMEOUT_MS: ${ANALYTICS_TIMEOUT_MS:-}
-      STORAGE_ENGINE: timescale
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,40 +140,8 @@ services:
     healthcheck:
       disable: true
     environment:
-      NODE_ENV: production
-      TRUST_PROXY: ${TRUST_PROXY:-false}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      DATABASE_HOST: postgres
-      DB_USER: ${DB_USER}
-      # REDIS_URL intentionally not set - uses PostgreSQL queue (graphile-worker)
-      API_KEY_SECRET: ${API_KEY_SECRET}
-      PORT: 8080
-      HOST: 0.0.0.0
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-noreply@logtide.local}
-      INTERNAL_LOGGING_ENABLED: ${INTERNAL_LOGGING_ENABLED:-false}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
-      INTERNAL_DSN: ${INTERNAL_DSN:-}
-      DOCKER_CONTAINER: "true"
+      <<: *backend-env
       SERVICE_NAME: logtide-worker
-      # Hosting seams: empty = inert (see docs/cloud-seams.md)
-      CAPABILITY_DEFAULTS_JSON: ${CAPABILITY_DEFAULTS_JSON:-}
-      LOGTIDE_ADMIN_SERVICE_TOKEN: ${LOGTIDE_ADMIN_SERVICE_TOKEN:-}
-      LOGTIDE_UPGRADE_URL: ${LOGTIDE_UPGRADE_URL:-}
-      LOGTIDE_UPGRADE_SIGNING_SECRET: ${LOGTIDE_UPGRADE_SIGNING_SECRET:-}
-      MAX_ORGANIZATIONS_PER_USER: ${MAX_ORGANIZATIONS_PER_USER:-}
-      MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: ${MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH:-}
-      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-}
-      REGISTRATION_RATE_LIMIT_PER_HOUR: ${REGISTRATION_RATE_LIMIT_PER_HOUR:-}
-      LOGTIDE_TERMS_URL: ${LOGTIDE_TERMS_URL:-}
-      LOGTIDE_PRIVACY_URL: ${LOGTIDE_PRIVACY_URL:-}
-      LOGTIDE_TERMS_VERSION: ${LOGTIDE_TERMS_VERSION:-}
-      ANALYTICS_TIMEOUT_MS: ${ANALYTICS_TIMEOUT_MS:-}
-      STORAGE_ENGINE: timescale
     depends_on:
       backend:
         condition: service_healthy

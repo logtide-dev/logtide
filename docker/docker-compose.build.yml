@@ -12,6 +12,60 @@
 # Combine profiles:
 #   docker compose -f docker-compose.build.yml --profile clickhouse --profile logging up -d --build
 
+# Environment shared by backend and worker, so the two cannot drift apart
+x-backend-env: &backend-env
+  NODE_ENV: production
+  TRUST_PROXY: ${TRUST_PROXY:-false}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  # Separate settings: the backend builds the connection URLs and encodes the
+  # passwords, so any password works as-is. For an external or managed database
+  # set DATABASE_URL (and REDIS_URL) here instead, they take precedence.
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_USER: ${DB_USER}
+  DB_PASSWORD: ${DB_PASSWORD}
+  DB_NAME: ${DB_NAME}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  API_KEY_SECRET: ${API_KEY_SECRET}
+  PORT: 8080
+  HOST: 0.0.0.0
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASS: ${SMTP_PASS:-}
+  SMTP_FROM: ${SMTP_FROM:-noreply@logtide.local}
+  INTERNAL_LOGGING_ENABLED: ${INTERNAL_LOGGING_ENABLED:-false}
+  INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+  INTERNAL_DSN: ${INTERNAL_DSN:-}
+  DOCKER_CONTAINER: "true"
+  # Hosting seams: empty = inert (see docs/cloud-seams.md)
+  CAPABILITY_DEFAULTS_JSON: ${CAPABILITY_DEFAULTS_JSON:-}
+  LOGTIDE_ADMIN_SERVICE_TOKEN: ${LOGTIDE_ADMIN_SERVICE_TOKEN:-}
+  LOGTIDE_UPGRADE_URL: ${LOGTIDE_UPGRADE_URL:-}
+  LOGTIDE_UPGRADE_SIGNING_SECRET: ${LOGTIDE_UPGRADE_SIGNING_SECRET:-}
+  MAX_ORGANIZATIONS_PER_USER: ${MAX_ORGANIZATIONS_PER_USER:-}
+  MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: ${MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH:-}
+  REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-}
+  REGISTRATION_RATE_LIMIT_PER_HOUR: ${REGISTRATION_RATE_LIMIT_PER_HOUR:-}
+  LOGTIDE_TERMS_URL: ${LOGTIDE_TERMS_URL:-}
+  LOGTIDE_PRIVACY_URL: ${LOGTIDE_PRIVACY_URL:-}
+  LOGTIDE_TERMS_VERSION: ${LOGTIDE_TERMS_VERSION:-}
+  ANALYTICS_TIMEOUT_MS: ${ANALYTICS_TIMEOUT_MS:-}
+  STORAGE_ENGINE: ${STORAGE_ENGINE:-timescale}
+  CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+  CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+  CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-logtide}
+  CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+  MONGODB_HOST: ${MONGODB_HOST:-mongodb}
+  MONGODB_PORT: ${MONGODB_PORT:-27017}
+  MONGODB_DATABASE: ${MONGODB_DATABASE:-logtide}
+  MONGODB_USERNAME: ${MONGODB_USERNAME:-}
+  MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+  MONGODB_AUTH_SOURCE: ${MONGODB_AUTH_SOURCE:-}
+
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -67,13 +121,17 @@ services:
   redis:
     image: redis:7-alpine
     container_name: logtide-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    # The password reaches redis through the environment, never through shell
+    # word splitting, so any characters work
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\""]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "sh", "-c", "redis-cli -a ${REDIS_PASSWORD} ping | grep -q PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -89,51 +147,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      NODE_ENV: production
-      TRUST_PROXY: ${TRUST_PROXY:-false}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      DATABASE_HOST: postgres
-      DB_USER: ${DB_USER}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      API_KEY_SECRET: ${API_KEY_SECRET}
-      PORT: 8080
-      HOST: 0.0.0.0
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-noreply@logtide.local}
-      INTERNAL_LOGGING_ENABLED: ${INTERNAL_LOGGING_ENABLED:-false}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
-      INTERNAL_DSN: ${INTERNAL_DSN:-}
-      DOCKER_CONTAINER: "true"
+      <<: *backend-env
       SERVICE_NAME: logtide-backend
-      # Hosting seams: empty = inert (see docs/cloud-seams.md)
-      CAPABILITY_DEFAULTS_JSON: ${CAPABILITY_DEFAULTS_JSON:-}
-      LOGTIDE_ADMIN_SERVICE_TOKEN: ${LOGTIDE_ADMIN_SERVICE_TOKEN:-}
-      LOGTIDE_UPGRADE_URL: ${LOGTIDE_UPGRADE_URL:-}
-      LOGTIDE_UPGRADE_SIGNING_SECRET: ${LOGTIDE_UPGRADE_SIGNING_SECRET:-}
-      MAX_ORGANIZATIONS_PER_USER: ${MAX_ORGANIZATIONS_PER_USER:-}
-      MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: ${MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH:-}
-      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-}
-      REGISTRATION_RATE_LIMIT_PER_HOUR: ${REGISTRATION_RATE_LIMIT_PER_HOUR:-}
-      LOGTIDE_TERMS_URL: ${LOGTIDE_TERMS_URL:-}
-      LOGTIDE_PRIVACY_URL: ${LOGTIDE_PRIVACY_URL:-}
-      LOGTIDE_TERMS_VERSION: ${LOGTIDE_TERMS_VERSION:-}
-      ANALYTICS_TIMEOUT_MS: ${ANALYTICS_TIMEOUT_MS:-}
-      STORAGE_ENGINE: ${STORAGE_ENGINE:-timescale}
-      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
-      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-logtide}
-      CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-logtide}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
-      MONGODB_AUTH_SOURCE: ${MONGODB_AUTH_SOURCE:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -158,51 +173,8 @@ services:
     healthcheck:
       disable: true
     environment:
-      NODE_ENV: production
-      TRUST_PROXY: ${TRUST_PROXY:-false}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
-      DATABASE_HOST: postgres
-      DB_USER: ${DB_USER}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      API_KEY_SECRET: ${API_KEY_SECRET}
-      PORT: 8080
-      HOST: 0.0.0.0
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-noreply@logtide.local}
-      INTERNAL_LOGGING_ENABLED: ${INTERNAL_LOGGING_ENABLED:-false}
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
-      INTERNAL_DSN: ${INTERNAL_DSN:-}
-      DOCKER_CONTAINER: "true"
+      <<: *backend-env
       SERVICE_NAME: logtide-worker
-      # Hosting seams: empty = inert (see docs/cloud-seams.md)
-      CAPABILITY_DEFAULTS_JSON: ${CAPABILITY_DEFAULTS_JSON:-}
-      LOGTIDE_ADMIN_SERVICE_TOKEN: ${LOGTIDE_ADMIN_SERVICE_TOKEN:-}
-      LOGTIDE_UPGRADE_URL: ${LOGTIDE_UPGRADE_URL:-}
-      LOGTIDE_UPGRADE_SIGNING_SECRET: ${LOGTIDE_UPGRADE_SIGNING_SECRET:-}
-      MAX_ORGANIZATIONS_PER_USER: ${MAX_ORGANIZATIONS_PER_USER:-}
-      MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: ${MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH:-}
-      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-}
-      REGISTRATION_RATE_LIMIT_PER_HOUR: ${REGISTRATION_RATE_LIMIT_PER_HOUR:-}
-      LOGTIDE_TERMS_URL: ${LOGTIDE_TERMS_URL:-}
-      LOGTIDE_PRIVACY_URL: ${LOGTIDE_PRIVACY_URL:-}
-      LOGTIDE_TERMS_VERSION: ${LOGTIDE_TERMS_VERSION:-}
-      ANALYTICS_TIMEOUT_MS: ${ANALYTICS_TIMEOUT_MS:-}
-      STORAGE_ENGINE: ${STORAGE_ENGINE:-timescale}
-      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
-      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
-      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-logtide}
-      CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-default}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
-      MONGODB_HOST: ${MONGODB_HOST:-mongodb}
-      MONGODB_PORT: ${MONGODB_PORT:-27017}
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-logtide}
-      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
-      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
-      MONGODB_AUTH_SOURCE: ${MONGODB_AUTH_SOURCE:-}
     depends_on:
       backend:
         condition: service_healthy
