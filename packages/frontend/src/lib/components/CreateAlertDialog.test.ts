@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
 
 const h = vi.hoisted(() => ({
@@ -71,7 +72,7 @@ describe('CreateAlertDialog', () => {
       initialValues: { name: 'Timeouts', channelIds: ['c1'], projectId: 'p1', query: 'timeout', service: 'api' },
     });
     await screen.findByDisplayValue('Timeouts');
-    await fireEvent.change(screen.getByLabelText('Renotify'), { target: { value: '60' } });
+    await chooseSelectOption(screen.getByLabelText('Renotify'), 'Every 1 hour');
     await fireEvent.click(screen.getByRole('button', { name: 'Create alert' }));
     await waitFor(() => expect(h.create).toHaveBeenCalled());
     expect(h.create.mock.calls[0][0]).toMatchObject({
@@ -103,7 +104,7 @@ describe('CreateAlertDialog', () => {
     expect(screen.getByDisplayValue('refused')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'warn' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'error' }).getAttribute('aria-pressed')).toBe('false');
-    await waitFor(() => expect((screen.getByLabelText('Scope') as HTMLSelectElement).value).toBe('p2'));
+    await waitFor(() => expect(screen.getByLabelText('Scope')).toHaveTextContent('API'));
   });
 
   it('a project tab projectId locks the scope', async () => {

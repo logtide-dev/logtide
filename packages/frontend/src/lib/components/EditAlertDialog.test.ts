@@ -80,7 +80,7 @@ describe('EditAlertDialog', () => {
     mount(rule());
     expect(await screen.findByDisplayValue('Timeouts')).toBeTruthy();
     expect((screen.getByLabelText('Query') as HTMLInputElement).value).toBe('timeout');
-    expect((screen.getByLabelText('Renotify') as HTMLSelectElement).value).toBe('30');
+    expect(screen.getByLabelText('Renotify')).toHaveTextContent('Every 30 minutes');
     expect(screen.getByDisplayValue('20')).toBeTruthy();
     await waitFor(() => expect(screen.getByTestId('scope-readonly').textContent).toBe('Web'));
   });

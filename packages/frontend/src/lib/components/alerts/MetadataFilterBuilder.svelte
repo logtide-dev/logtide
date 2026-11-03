@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { MetadataFilterInput, MetadataFilterOp } from '@logtide/shared';
 	import { METADATA_FILTER_OPS } from '@logtide/shared';
+	import { SelectField } from '$lib/components/ui/select';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import Input from '$lib/components/ui/input/input.svelte';
 	import Label from '$lib/components/ui/label/label.svelte';
@@ -60,8 +61,7 @@
 		filters = next;
 	}
 
-	const selectClass =
-		'border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex h-10 rounded-md border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
+	const OP_OPTIONS = METADATA_FILTER_OPS.map((op) => ({ value: op, label: OP_LABELS[op] }));
 </script>
 
 <div class="space-y-3">
@@ -80,19 +80,15 @@
 							{disabled}
 						/>
 
-						<select
-							class="{selectClass} w-36 shrink-0"
+						<SelectField
+							class="w-36 shrink-0"
 							data-testid="metadata-filter-op"
 							aria-label="Operator"
 							value={f.op}
-							onchange={(e) =>
-								updateOp(i, (e.currentTarget as HTMLSelectElement).value as MetadataFilterOp)}
+							options={OP_OPTIONS}
+							onValueChange={(v) => updateOp(i, v as MetadataFilterOp)}
 							{disabled}
-						>
-							{#each METADATA_FILTER_OPS as op}
-								<option value={op}>{OP_LABELS[op]}</option>
-							{/each}
-						</select>
+						/>
 
 						{#if TAKES_VALUE.includes(f.op)}
 							<Input

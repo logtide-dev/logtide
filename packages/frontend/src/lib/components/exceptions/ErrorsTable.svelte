@@ -7,6 +7,7 @@
   import Timestamp from '$lib/components/app/Timestamp.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import { Badge } from '$lib/components/ui/badge';
+  import { SelectField } from '$lib/components/ui/select';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { isMobile } from '$lib/stores/media-query';
   import Folder from '@lucide/svelte/icons/folder';
@@ -214,15 +215,12 @@
     <div class="flex items-end gap-3">
       <label class="grid flex-1 gap-1 text-xs font-medium text-muted-foreground">
         Sort by
-        <select
-          class="h-11 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        <SelectField
+          class="h-11 w-full px-3 text-sm font-normal text-foreground"
           value={sort.key}
-          onchange={(e) => onSort(e.currentTarget.value)}
-        >
-          {#each SORT_OPTIONS as o (o.value)}
-            <option value={o.value}>{o.label}</option>
-          {/each}
-        </select>
+          options={SORT_OPTIONS}
+          onValueChange={onSort}
+        />
       </label>
       <label class="flex h-11 shrink-0 items-center gap-2 rounded-md border bg-background px-3 text-sm">
         <Checkbox
