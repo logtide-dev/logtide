@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { applyDefaultOverrides } from '../capabilities/registry.js';
 import { loadTestEnv } from './load-test-env.js';
 import { parseTrustProxy } from './trust-proxy.js';
+import { applyConnectionUrls } from './connection-urls.js';
 
 // Load environment variables
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +19,9 @@ if (process.env.NODE_ENV === 'test') {
   const envPath = path.resolve(__dirname, '../../../../.env');
   dotenv.config({ path: envPath, debug: false });
 }
+
+// DB_HOST/DB_USER/... and REDIS_HOST/... become DATABASE_URL/REDIS_URL when those are unset
+applyConnectionUrls();
 
 /** Boot-time validation of the two env vars. Returns an error message, or null. */
 function validateUpgradeConfig(env: { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGRADE_SIGNING_SECRET?: string }): string | null {
@@ -296,7 +300,7 @@ export function formatConfigError(error: z.ZodError): string {
       lines.push(`    → Must be at least 32 characters. Generate with: openssl rand -base64 32`);
     }
     if (field === 'DATABASE_URL') {
-      lines.push(`    → Check that DB_USER, DB_PASSWORD, and DB_NAME are set in .env`);
+      lines.push(`    → Set DATABASE_URL, or DB_HOST, DB_USER, DB_PASSWORD and DB_NAME`);
     }
   }
 
