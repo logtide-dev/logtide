@@ -394,7 +394,7 @@
 						>
 						<SelectField
 							id="outcome-filter"
-							class="w-32"
+							class="w-40"
 							value={outcomeFilter}
 							onValueChange={(v) => {
 								outcomeFilter = v as AuditOutcome | '';
@@ -449,13 +449,12 @@
 							<TableHeader>
 								<TableRow>
 									<TableHead class="w-[30px]"></TableHead>
-									<TableHead class="w-[170px]">Time</TableHead>
+									<TableHead>Time</TableHead>
 									<TableHead>Actor</TableHead>
-									<TableHead>Category</TableHead>
+									<TableHead class="hidden xl:table-cell">Category</TableHead>
 									<TableHead>Action</TableHead>
 									<TableHead>Outcome</TableHead>
-									<TableHead>Resource</TableHead>
-									<TableHead>IP address</TableHead>
+									<TableHead class="hidden xl:table-cell">IP address</TableHead>
 								</TableRow>
 							</TableHeader>
 							<TableBody>
@@ -478,61 +477,51 @@
 											<Timestamp value={entry.time} precision="second" />
 										</TableCell>
 										<TableCell class="text-sm">
-											{#if entry.actor_type === 'apiKey'}
-												<span class="text-muted-foreground">{entry.actor_id ? entry.actor_id.slice(0, 8) + '\u2026' : 'api key'}</span>
-												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-warning/15 text-warning-text">api key</span>
-											{:else if entry.actor_type === 'system'}
-												<span class="text-muted-foreground">system</span>
-												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">system</span>
-											{:else}
-												{entry.user_email ?? '-'}
-												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-info/15 text-info-text">user</span>
-											{/if}
+											<div class="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+												{#if entry.actor_type === 'apiKey'}
+													<span class="text-muted-foreground">{entry.actor_id ? entry.actor_id.slice(0, 8) + '…' : 'api key'}</span>
+													<span class="inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium bg-warning/15 text-warning-text">api key</span>
+												{:else if entry.actor_type === 'system'}
+													<span class="inline-flex shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium bg-muted text-muted-foreground">system</span>
+												{:else}
+													<span class="max-w-[170px] truncate" title={entry.user_email ?? undefined}>{entry.user_email ?? '-'}</span>
+												{/if}
+											</div>
 										</TableCell>
-										<TableCell>
+										<TableCell class="hidden xl:table-cell">
 											<span
-												class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium {catInfo.color}"
+												class="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium {catInfo.color}"
 											>
 												{catInfo.label}
 											</span>
 										</TableCell>
-										<TableCell class="font-mono text-sm">
+										<TableCell class="whitespace-nowrap font-mono text-sm">
 											{formatAction(entry.action)}
 										</TableCell>
 										<TableCell>
 											{#if entry.outcome === 'failure'}
-												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-destructive/15 text-destructive-text">failure</span>
+												<span class="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium bg-destructive/15 text-destructive-text">failure</span>
 											{:else}
-												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-success/15 text-success-text">success</span>
+												<span class="inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium bg-success/15 text-success-text">success</span>
 											{/if}
 										</TableCell>
-										<TableCell class="text-sm">
-											{#if entry.resource_type}
-												<span class="text-muted-foreground">{entry.resource_type}</span>
-												{#if entry.resource_id}
-													<span class="ml-1 font-mono text-xs text-muted-foreground/70"
-														>{entry.resource_id.length > 12
-															? entry.resource_id.slice(0, 8) + '\u2026'
-															: entry.resource_id}</span
-													>
-												{/if}
-											{:else}
-												<span class="text-muted-foreground/50">{'-'}</span>
-											{/if}
-										</TableCell>
-										<TableCell class="font-mono text-xs text-muted-foreground">
+										<TableCell class="hidden whitespace-nowrap font-mono text-xs text-muted-foreground xl:table-cell">
 											{entry.ip_address ?? '-'}
 										</TableCell>
 									</TableRow>
 									{#if isExpanded}
 										<TableRow class="hover:bg-transparent">
-											<TableCell colspan={8} class="p-0">
+											<TableCell colspan={7} class="p-0">
 												<div class="bg-muted/30 mx-6 mb-4 mt-1 rounded-md px-5 py-4">
 													<p class="text-sm mb-3">{describeEntry(entry)}</p>
 													<div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-sm">
 														<div>
 															<span class="text-xs font-medium text-muted-foreground">Time</span>
 															<p><Timestamp value={entry.time} precision="second" showZone /></p>
+														</div>
+														<div>
+															<span class="text-xs font-medium text-muted-foreground">Category</span>
+															<p>{catInfo.label}</p>
 														</div>
 														<div>
 															<span class="text-xs font-medium text-muted-foreground">User</span>
