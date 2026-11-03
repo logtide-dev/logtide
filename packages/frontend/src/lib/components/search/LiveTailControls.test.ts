@@ -3,6 +3,7 @@ import { render, fireEvent } from '@testing-library/svelte';
 import LiveTailControls from './LiveTailControls.svelte';
 import { stateTone } from '$lib/utils/severity';
 import type { LiveTailState } from './live-tail';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
 type Props = {
   live: boolean;
@@ -47,7 +48,7 @@ describe('LiveTailControls', () => {
     const utils = setup();
     expect(utils.queryByRole('status')).toBeNull();
     expect(utils.queryByRole('button', { name: /live tail/i })).toBeNull();
-    expect(utils.queryByRole('combobox', { name: 'Rows kept in live tail' })).toBeNull();
+    expect(utils.queryByRole('button', { name: 'Rows kept in live tail' })).toBeNull();
   });
 
   it.each([
@@ -98,10 +99,10 @@ describe('LiveTailControls', () => {
 
   it('changes the buffer size', async () => {
     const utils = setup({ live: true, state: 'live' });
-    const select = utils.getByRole('combobox', { name: 'Rows kept in live tail' }) as HTMLSelectElement;
-    expect(select.value).toBe('100');
-    expect([...select.options].map((o) => o.textContent?.trim())).toEqual(['50', '100', '200', '500', '1,000']);
-    await fireEvent.change(select, { target: { value: '500' } });
+    const select = utils.getByRole('combobox', { name: 'Rows kept in live tail' });
+    expect(select).toHaveTextContent('100');
+    expect(await openSelect(select)).toEqual(['50', '100', '200', '500', '1,000']);
+    await chooseSelectOption(select, '500');
     expect(utils.onLimitChange).toHaveBeenCalledWith(500);
   });
 

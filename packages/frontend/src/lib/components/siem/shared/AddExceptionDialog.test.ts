@@ -10,6 +10,7 @@ vi.mock('$lib/stores/toast', () => ({
 }));
 
 import AddExceptionDialog from './AddExceptionDialog.svelte';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
 const base = { open: true, organizationId: 'org-1', ruleId: 'rule-1', ruleTitle: 'Suspicious login' };
 
@@ -49,7 +50,7 @@ describe('AddExceptionDialog', () => {
     expect((screen.getByLabelText('Field 1') as HTMLInputElement).value).toBe('service');
     expect((screen.getByLabelText('Value 1') as HTMLInputElement).value).toBe('billing');
     expect((screen.getByLabelText('Field 2') as HTMLInputElement).value).toBe('user');
-    expect((screen.getByLabelText('Operator 2') as HTMLSelectElement).value).toBe('contains');
+    expect(screen.getByLabelText('Operator 2')).toHaveTextContent('contains');
     expect((screen.getByLabelText('Reason') as HTMLTextAreaElement).value).toBe(
       'Marked as false positive',
     );
@@ -69,7 +70,7 @@ describe('AddExceptionDialog', () => {
     createException.mockResolvedValue({ exception: created() });
     render(AddExceptionDialog, base);
     await fireEvent.input(screen.getByLabelText('Field 1'), { target: { value: 'level' } });
-    await fireEvent.change(screen.getByLabelText('Operator 1'), { target: { value: 'in' } });
+    await chooseSelectOption(screen.getByLabelText('Operator 1'), 'is one of');
     await fireEvent.input(screen.getByLabelText('Value 1'), { target: { value: 'debug, info ,, warn' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add exception' }));
     await waitFor(() => expect(createException).toHaveBeenCalled());

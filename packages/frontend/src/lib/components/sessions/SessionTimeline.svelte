@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import type { SessionEvent } from '$lib/api/sessions';
   import { levelTone, stateTone, type Tone } from '$lib/utils/severity';
   import { formatTimestamp } from '$lib/utils/datetime';
@@ -221,41 +222,50 @@
       <div class="flex flex-wrap items-center gap-3">
         <Filter class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 
-        <select
+        <SelectField
           aria-label="Filter by type"
-          class="h-8 rounded-md border border-input bg-background px-2.5 text-sm"
-          bind:value={typeFilter}
-        >
-          <option value="all">All types ({allItems.length.toLocaleString('en-US')})</option>
-          <option value="logs">Logs ({logCount.toLocaleString('en-US')})</option>
-          <option value="breadcrumbs">Breadcrumbs ({breadcrumbCount.toLocaleString('en-US')})</option>
-        </select>
+          size="sm"
+          class="w-auto text-sm"
+          value={typeFilter}
+          onValueChange={(v) => (typeFilter = v as typeof typeFilter)}
+          options={[
+            { value: 'all', label: `All types (${allItems.length.toLocaleString('en-US')})` },
+            { value: 'logs', label: `Logs (${logCount.toLocaleString('en-US')})` },
+            { value: 'breadcrumbs', label: `Breadcrumbs (${breadcrumbCount.toLocaleString('en-US')})` },
+          ]}
+        />
 
-        <select
+        <SelectField
           aria-label="Filter by level"
-          class="h-8 rounded-md border border-input bg-background px-2.5 text-sm"
-          bind:value={levelFilter}
-        >
-          <option value="all">All levels</option>
-          <option value="error">Error{errorCount > 0 ? ` (${errorCount.toLocaleString('en-US')})` : ''}</option>
-          <option value="warn">Warning</option>
-          <option value="info">Info</option>
-          <option value="debug">Debug</option>
-        </select>
+          size="sm"
+          class="w-auto text-sm"
+          value={levelFilter}
+          onValueChange={(v) => (levelFilter = v as typeof levelFilter)}
+          options={[
+            { value: 'all', label: 'All levels' },
+            { value: 'error', label: `Error${errorCount > 0 ? ` (${errorCount.toLocaleString('en-US')})` : ''}` },
+            { value: 'warn', label: 'Warning' },
+            { value: 'info', label: 'Info' },
+            { value: 'debug', label: 'Debug' },
+          ]}
+        />
 
         {#if typeFilter !== 'logs'}
-          <select
+          <SelectField
             aria-label="Filter by category"
-            class="h-8 rounded-md border border-input bg-background px-2.5 text-sm"
-            bind:value={categoryFilter}
-          >
-            <option value="all">All categories</option>
-            <option value="ui">Click and UI</option>
-            <option value="http">Network and HTTP</option>
-            <option value="navigation">Navigation</option>
-            <option value="console">Console</option>
-            <option value="error">Error</option>
-          </select>
+            size="sm"
+            class="w-auto text-sm"
+            value={categoryFilter}
+            onValueChange={(v) => (categoryFilter = v as typeof categoryFilter)}
+            options={[
+              { value: 'all', label: 'All categories' },
+              { value: 'ui', label: 'Click and UI' },
+              { value: 'http', label: 'Network and HTTP' },
+              { value: 'navigation', label: 'Navigation' },
+              { value: 'console', label: 'Console' },
+              { value: 'error', label: 'Error' },
+            ]}
+          />
         {/if}
 
         <div class="relative min-w-[180px] flex-1">

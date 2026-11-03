@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { chooseSelectOption } from '$lib/test-utils/select-field';
 
 const h = vi.hoisted(() => ({
   goto: vi.fn(),
@@ -154,7 +155,7 @@ describe('sessions page', () => {
   it('service and errors filters are written to the url and sent to the api', async () => {
     render(SessionsPage);
     await screen.findByText('sess-1');
-    await fireEvent.change(screen.getByLabelText('Errors'), { target: { value: '1' } });
+    await chooseSelectOption(screen.getByLabelText('Errors'), 'With errors');
     await waitFor(() => expect(h.goto).toHaveBeenCalled());
     expect(String(h.goto.mock.calls.at(-1)![0])).toContain('errors=1');
     await waitFor(() => expect(h.listSessions.mock.calls.at(-1)![0].hasErrors).toBe(true));

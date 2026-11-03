@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import type { ExceptionCondition, ExceptionOperator, SigmaException } from '@logtide/shared';
   import { sigmaAPI } from '$lib/api/sigma';
   import { toastStore } from '$lib/stores/toast';
@@ -160,16 +161,18 @@
             </div>
             <div class="space-y-1">
               {#if i === 0}<Label for="{uid}-op-{i}">Operator</Label>{/if}
-              <select
+              <SelectField
                 id="{uid}-op-{i}"
                 aria-label="Operator {i + 1}"
-                class="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                bind:value={row.operator}
-              >
-                <option value="equals">equals</option>
-                <option value="contains">contains</option>
-                <option value="in">is one of</option>
-              </select>
+                class="h-10 w-36"
+                value={row.operator}
+                onValueChange={(v) => (row.operator = v as Row['operator'])}
+                options={[
+                  { value: 'equals', label: 'equals' },
+                  { value: 'contains', label: 'contains' },
+                  { value: 'in', label: 'is one of' },
+                ]}
+              />
             </div>
             <div class="min-w-[10rem] flex-[2] space-y-1">
               {#if i === 0}<Label for="{uid}-value-{i}">Value</Label>{/if}

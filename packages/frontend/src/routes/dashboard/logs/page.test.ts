@@ -109,6 +109,7 @@ import { shortcutsStore } from '$lib/stores/shortcuts';
 import { displayPreferences } from '$lib/stores/display-preferences';
 import { toastStore } from '$lib/stores/toast';
 import { makeLog, resetLogIds, deferred, FakeWebSocket } from '$lib/components/search/test-fixtures';
+import { chooseSelectOption } from '$lib/test-utils/select-field';
 
 const NOW = new Date('2026-10-21T10:42:13.000Z');
 
@@ -936,9 +937,9 @@ describe('logs page: live tail', () => {
     localStorage.setItem('logtide_livetail_limit', '200');
     await renderPage('/dashboard/logs?live=true&project=p1');
     await waitFor(() => expect(sockets.length).toBe(1));
-    const select = screen.getByRole('combobox', { name: 'Rows kept in live tail' }) as HTMLSelectElement;
-    expect(select.value).toBe('200');
-    await fireEvent.change(select, { target: { value: '500' } });
+    const select = screen.getByRole('combobox', { name: 'Rows kept in live tail' });
+    expect(select).toHaveTextContent('200');
+    await chooseSelectOption(select, '500');
     await settle();
     expect(localStorage.getItem('logtide_livetail_limit')).toBe('500');
   });

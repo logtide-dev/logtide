@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import { MITRE_TACTICS, SIGMA_LEVELS } from '@logtide/shared';
   import { Input } from '$lib/components/ui/input';
   import { Button } from '$lib/components/ui/button';
@@ -118,20 +119,13 @@
       </Button>
     {/if}
     {#if !$isMobile || filtersOpen || filterCount > 0}
-    <select
+    <SelectField
       aria-label="MITRE tactic"
-      class="h-10 max-md:h-11 max-md:w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      class="h-10 w-auto max-md:h-11 max-md:w-full"
       value={value.tactic[0] ?? ''}
-      onchange={(e) => {
-        const v = (e.currentTarget as HTMLSelectElement).value;
-        emit({ tactic: v ? [v] : [] });
-      }}
-    >
-      <option value="">All tactics</option>
-      {#each TACTICS as t (t.key)}
-        <option value={t.key}>{t.name}</option>
-      {/each}
-    </select>
+      onValueChange={(v) => emit({ tactic: v ? [v] : [] })}
+      options={[{ value: '', label: 'All tactics' }, ...TACTICS.map((t) => ({ value: t.key, label: t.name }))]}
+    />
     {/if}
     {#if active}
       <Button
