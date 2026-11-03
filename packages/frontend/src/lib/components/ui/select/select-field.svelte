@@ -4,21 +4,13 @@
   The empty string is a valid option value ("All services", "None"), mapped to
   an internal sentinel because the Select primitive treats "" as no selection.
 -->
-<script lang="ts" module>
-  export interface SelectFieldOption {
-    value: string;
-    label: string;
-    disabled?: boolean;
-    title?: string;
-  }
-</script>
-
 <script lang="ts">
   import { Select as SelectPrimitive } from 'bits-ui';
   import { cn } from '$lib/utils.js';
   import SelectTrigger from './select-trigger.svelte';
   import SelectContent from './select-content.svelte';
   import SelectItem from './select-item.svelte';
+  import type { SelectFieldOption } from './select-field-types';
 
   const EMPTY = '__select_field_empty__';
 
