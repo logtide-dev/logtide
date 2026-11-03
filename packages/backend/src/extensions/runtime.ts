@@ -83,6 +83,8 @@ function resolveAppUrl(): string | null {
 }
 
 // Malformed ids are answered like missing ones (never a Postgres cast error).
+const ORGS_GET_MANY_MAX = 500;
+
 const extensionOrgs: ExtensionOrgs = {
   async get(orgId) {
     if (!UUID_RE.test(orgId)) return null;
@@ -92,6 +94,41 @@ const extensionOrgs: ExtensionOrgs = {
       .where('id', '=', orgId)
       .executeTakeFirst();
     return org ?? null;
+  },
+  async getMany(orgIds) {
+    const ids = [...new Set(orgIds)];
+    if (ids.length > ORGS_GET_MANY_MAX) {
+      throw new RangeError(`[Extensions] orgs.getMany accepts at most ${ORGS_GET_MANY_MAX} ids`);
+    }
+    const valid = ids.filter((id) => typeof id === 'string' && UUID_RE.test(id));
+    if (valid.length === 0) return [];
+    const rows = await db
+      .selectFrom('organizations')
+      .innerJoin('users', 'users.id', 'organizations.owner_id')
+      .select([
+        'organizations.id',
+        'organizations.name',
+        'organizations.slug',
+        'organizations.created_at',
+        'users.id as ownerId',
+        'users.email as ownerEmail',
+      ])
+      .where('organizations.id', 'in', valid)
+      .execute();
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return valid.flatMap((id) => {
+      const r = byId.get(id);
+      if (!r) return [];
+      return [
+        {
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          createdAt: new Date(r.created_at as unknown as string | Date),
+          owner: { userId: r.ownerId, email: r.ownerEmail },
+        },
+      ];
+    });
   },
   async listOwnersAndAdmins(orgId) {
     if (!UUID_RE.test(orgId)) return [];

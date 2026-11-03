@@ -140,8 +140,14 @@ Read-only lookups. A malformed id behaves like a missing one.
 
 ```ts
 get(orgId: string): Promise<{ id: string; name: string } | null>
+getMany(orgIds: string[]): Promise<Array<{
+  id: string; name: string; slug: string; createdAt: Date;
+  owner: { userId: string; email: string };
+}>>
 listOwnersAndAdmins(orgId: string): Promise<Array<{ userId: string; email: string; role: 'owner' | 'admin' }>>
 ```
+
+`getMany` returns the organizations in the order of their first occurrence in `orgIds`; unknown and malformed ids are skipped and duplicates collapsed. It accepts at most 500 distinct ids and throws a `RangeError` above that, so page larger lists.
 
 ### `queue`
 

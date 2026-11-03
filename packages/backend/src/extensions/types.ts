@@ -164,8 +164,22 @@ export interface ExtensionRetention {
 }
 
 /** Read-only organization lookups. Malformed ids behave like missing ones. */
+export interface ExtensionOrgSummary {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: Date;
+  owner: { userId: string; email: string };
+}
+
 export interface ExtensionOrgs {
   get(orgId: string): Promise<{ id: string; name: string } | null>;
+  /**
+   * Summaries of several orgs, in the order of their first occurrence in
+   * `orgIds`. Missing or malformed ids are skipped, duplicates collapsed.
+   * More than 500 distinct ids throws a RangeError.
+   */
+  getMany(orgIds: string[]): Promise<ExtensionOrgSummary[]>;
   listOwnersAndAdmins(
     orgId: string
   ): Promise<Array<{ userId: string; email: string; role: 'owner' | 'admin' }>>;

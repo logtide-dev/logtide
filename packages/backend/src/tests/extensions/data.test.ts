@@ -267,5 +267,43 @@ describe('extension data api', () => {
     it('orgs.listOwnersAndAdmins returns [] for a malformed org id', async () => {
       expect(await api.orgs.listOwnersAndAdmins('not-a-uuid')).toEqual([]);
     });
+
+    describe('orgs.getMany', () => {
+      it('returns summaries in input order', async () => {
+        const second = await createTestOrganization({
+          ownerId: adminId,
+          name: 'Second Fixture Org',
+          slug: `ext-data-${crypto.randomUUID()}`,
+        });
+        const list = await api.orgs.getMany([second.id, orgId]);
+        expect(list.map((o) => o.id)).toEqual([second.id, orgId]);
+        const first = list[1];
+        expect(first.name).toBe('Data Fixture Org');
+        expect(first.slug).toMatch(/^ext-data-/);
+        expect(first.createdAt).toBeInstanceOf(Date);
+        expect(first.owner.userId).toBe(ownerId);
+        expect(first.owner.email).toMatch(/^ext-data-owner-/);
+        expect(list[0].owner.userId).toBe(adminId);
+      });
+
+      it('skips malformed and unknown ids and collapses duplicates', async () => {
+        const list = await api.orgs.getMany([orgId, 'nope', crypto.randomUUID(), orgId]);
+        expect(list.map((o) => o.id)).toEqual([orgId]);
+      });
+
+      it('empty input returns []', async () => {
+        expect(await api.orgs.getMany([])).toEqual([]);
+      });
+
+      it('more than 500 distinct ids throws RangeError', async () => {
+        const ids = Array.from({ length: 501 }, () => crypto.randomUUID());
+        await expect(api.orgs.getMany(ids)).rejects.toThrow(RangeError);
+      });
+
+      it('500 distinct ids are accepted', async () => {
+        const ids = [orgId, ...Array.from({ length: 499 }, () => crypto.randomUUID())];
+        expect((await api.orgs.getMany(ids)).map((o) => o.id)).toEqual([orgId]);
+      });
+    });
   });
 });
