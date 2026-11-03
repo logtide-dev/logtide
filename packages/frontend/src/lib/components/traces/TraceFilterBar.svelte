@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import X from '@lucide/svelte/icons/x';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -109,7 +110,7 @@
   }
 
   const selectClass =
-    'h-9 max-md:h-11 max-md:w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+    'h-9 w-auto max-md:h-11 max-md:w-full';
   const chipClass =
     'inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs text-secondary-foreground';
 </script>
@@ -122,32 +123,28 @@
   >
     <div class="grid gap-1 md:contents">
     <span class="text-xs font-medium text-muted-foreground md:sr-only" aria-hidden="true">Service</span>
-    <select
+    <SelectField
       class={selectClass}
       aria-label="Service"
       value={service ?? ''}
-      onchange={(e) => onChange({ service: e.currentTarget.value || null })}
-    >
-      <option value="">All services</option>
-      {#each services as s (s)}
-        <option value={s}>{s}</option>
-      {/each}
-    </select>
+      onValueChange={(v) => onChange({ service: v || null })}
+      options={[{ value: '', label: 'All services' }, ...services.map((s) => ({ value: s, label: s }))]}
+    />
 
     </div>
     <div class="grid gap-1 md:contents">
     <span class="text-xs font-medium text-muted-foreground md:sr-only" aria-hidden="true">Status</span>
-    <select
+    <SelectField
       class={selectClass}
       aria-label="Status"
       value={status ?? ''}
-      onchange={(e) =>
-        onChange({ status: (e.currentTarget.value || null) as 'errors' | 'ok' | null })}
-    >
-      <option value="">All statuses</option>
-      <option value="errors">Errors only</option>
-      <option value="ok">Success only</option>
-    </select>
+      onValueChange={(v) => onChange({ status: (v || null) as 'errors' | 'ok' | null })}
+      options={[
+        { value: '', label: 'All statuses' },
+        { value: 'errors', label: 'Errors only' },
+        { value: 'ok', label: 'Success only' },
+      ]}
+    />
 
     </div>
     <div class="grid gap-1 md:min-w-[16rem] md:flex-1">

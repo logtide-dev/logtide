@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SelectField } from '$lib/components/ui/select';
 	import { untrack } from 'svelte';
 	import type {
 		AlertBuilderPrefill,
@@ -66,9 +67,6 @@
 		{ value: '1440', label: 'Every 24 hours' },
 	];
 
-	const SELECT_CLASS =
-		'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50';
-
 	// Initial values are read once: the dialogs remount the form on every open.
 	const seed = untrack(() => initial ?? {});
 	const lockedAtMount = untrack(() => lockedProjectId);
@@ -97,6 +95,10 @@
 	let errors = $state<Record<string, string>>({});
 
 	const isThreshold = $derived(alertType === 'threshold');
+	const projectOptions = $derived([
+		{ value: '', label: 'All projects' },
+		...projects.map((p) => ({ value: p.id, label: p.name })),
+	]);
 	const effectiveProjectId = $derived(lockedProjectId ?? (projectChoice || null));
 	const trimmedQuery = $derived(query.trim());
 	const queryCheck = $derived<QueryValidation>(
@@ -233,12 +235,13 @@
 			{/if}
 		{:else}
 			<Label for="alert-scope">Scope</Label>
-			<select id="alert-scope" class={SELECT_CLASS} bind:value={projectChoice} disabled={submitting}>
-				<option value="">All projects</option>
-				{#each projects as p (p.id)}
-					<option value={p.id}>{p.name}</option>
-				{/each}
-			</select>
+			<SelectField
+				id="alert-scope"
+				class="w-full"
+				bind:value={projectChoice}
+				options={projectOptions}
+				disabled={submitting}
+			/>
 		{/if}
 	</div>
 
@@ -322,16 +325,13 @@
 
 		<div class="space-y-2">
 			<Label for="alert-renotify">Renotify</Label>
-			<select
+			<SelectField
 				id="alert-renotify"
-				class={SELECT_CLASS}
+				class="w-full"
 				bind:value={renotify}
+				options={RENOTIFY_OPTIONS}
 				disabled={submitting}
-			>
-				{#each RENOTIFY_OPTIONS as opt (opt.value)}
-					<option value={opt.value}>{opt.label}</option>
-				{/each}
-			</select>
+			/>
 			<p class="text-xs text-muted-foreground">Send another notification while the alert keeps firing</p>
 		</div>
 	{:else}

@@ -25,6 +25,8 @@
     pinnedKeys: string[];
     /** Discovered metadata keys usable as facets (see `facetCandidates`). */
     candidateKeys: string[];
+    /** Shown above the lists when the facets cover only part of the matching logs. */
+    sampleNote?: string | null;
     collapsed?: boolean;
     /** Inside the phone sheet: always expanded, no collapse button. */
     embedded?: boolean;
@@ -40,6 +42,7 @@
     q,
     pinnedKeys,
     candidateKeys,
+    sampleNote = null,
     collapsed = $bindable(false),
     embedded = false,
     onToggle,
@@ -60,6 +63,13 @@
   ]);
   const shown = $derived(new Set(ordered.map((f) => f.field)));
   const addable = $derived(candidateKeys.filter((k) => !shown.has(k) && !BUILTINS.includes(k)));
+  // Projects can carry hundreds of metadata keys: the add list gets a filter
+  let addFilter = $state('');
+  let addList = $state<HTMLDivElement | null>(null);
+  const addFilterNeedle = $derived(addFilter.trim().toLowerCase());
+  const addableShown = $derived(
+    addFilterNeedle ? addable.filter((k) => k.toLowerCase().includes(addFilterNeedle)) : addable
+  );
   const pinsFull = $derived(pinnedKeys.length >= MAX_METADATA_FACETS);
   const selections = $derived(new Map(ordered.map((f) => [f.field, getFieldValues(q, f.field)])));
 
@@ -105,6 +115,7 @@
 
   function addFacet(key: string) {
     addOpen = false;
+    addFilter = '';
     onPin(key);
   }
 </script>
@@ -144,6 +155,9 @@
       {:else if loading && ordered.length === 0}
         <p class="text-sm text-muted-foreground" role="status">Loading facets</p>
       {:else}
+        {#if sampleNote}
+          <p class="text-xs text-muted-foreground" data-testid="facets-sample-note">{sampleNote}</p>
+        {/if}
         {#each ordered as facet, i (facet.field)}
           {@const builtin = BUILTINS.includes(facet.field)}
           {@const pinned = pinnedKeys.includes(facet.field)}
@@ -267,20 +281,34 @@
               </Button>
             {/snippet}
           </Popover.Trigger>
-          <Popover.Content class="w-64 p-1" align="start">
+          <Popover.Content class="w-72 p-1" align="start">
             {#if addable.length === 0}
               <p class="px-2 py-1.5 text-sm text-muted-foreground">No more fields in this range</p>
             {:else}
-              <div class="flex max-h-64 flex-col overflow-y-auto">
-                {#each addable as key (key)}
+              <input
+                type="search"
+                bind:value={addFilter}
+                oninput={() => {
+                  if (addList) addList.scrollTop = 0;
+                }}
+                placeholder="Filter fields"
+                aria-label="Filter fields"
+                class="mb-1 h-8 w-full rounded-sm border border-input bg-transparent px-2 font-mono text-xs placeholder:font-sans placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+              <!-- Rows must not shrink: in a height-capped flex column they would
+                   squeeze to fit instead of scrolling, clipping the text. -->
+              <div bind:this={addList} class="flex max-h-64 flex-col overflow-y-auto">
+                {#each addableShown as key (key)}
                   <button
                     type="button"
-                    class="truncate rounded-sm px-2 py-1.5 text-left font-mono text-xs hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                    class="shrink-0 truncate rounded-sm px-2 py-1.5 text-left font-mono text-xs leading-5 hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                     title={key}
                     onclick={() => addFacet(key)}
                   >
                     {key}
                   </button>
+                {:else}
+                  <p class="px-2 py-1.5 text-sm text-muted-foreground">No field matches "{addFilter.trim()}"</p>
                 {/each}
               </div>
             {/if}

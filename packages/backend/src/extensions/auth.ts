@@ -2,12 +2,15 @@ import type { FastifyReply, FastifyRequest, preHandlerHookHandler } from 'fastif
 import type { OrgRole } from '@logtide/shared';
 import { authenticate } from '../modules/auth/middleware.js';
 import { OrganizationsService } from '../modules/organizations/service.js';
+import { db } from '../database/index.js';
 import type { ExtensionAuth } from './types.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
     /** Set by `api.auth.requireOrgRole` on extension routes. */
     extOrg?: { id: string; role: OrgRole };
+    /** Set by `api.auth.requireInstanceAdmin` on extension routes. */
+    extAdmin?: { userId: string; email: string };
   }
 }
 
@@ -40,8 +43,26 @@ function orgRoleCheck(roles: readonly OrgRole[]): preHandlerHookHandler {
   };
 }
 
+// Re-read on every request (no cache): a revoked or disabled admin is
+// refused on the next request of a still-valid session.
+const instanceAdminCheck: preHandlerHookHandler = async (request, reply) => {
+  if (!request.user) {
+    return reply.status(401).send({ error: 'Not authenticated' });
+  }
+  const row = await db
+    .selectFrom('users')
+    .select(['is_admin', 'disabled', 'email'])
+    .where('id', '=', request.user.id)
+    .executeTakeFirst();
+  if (!row?.is_admin || row.disabled) {
+    return reply.status(403).send({ error: 'forbidden' });
+  }
+  request.extAdmin = { userId: request.user.id, email: row.email };
+};
+
 export const extensionAuth: ExtensionAuth = {
   requireSession,
+  requireInstanceAdmin: [requireSession, instanceAdminCheck],
   requireOrgRole(roles) {
     return [requireSession, orgRoleCheck([...roles])];
   },

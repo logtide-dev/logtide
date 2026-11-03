@@ -223,6 +223,8 @@ describe('Logs explorer API', () => {
       const res = await facets({ q: 'region:eu', fields: 'service' });
       expect(res.status).toBe(200);
       expect(res.body.facets).toEqual([{ field: 'service', values: [{ value: 'api', count: 2 }], otherCount: 0 }]);
+      // Small windows are counted in full: the sample is every matching log.
+      expect(res.body.sampleSize).toBe(2);
     });
 
     it('echoes keys in request order', async () => {

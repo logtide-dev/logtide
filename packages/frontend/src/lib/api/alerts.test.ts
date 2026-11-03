@@ -69,3 +69,38 @@ describe('AlertsAPI lifecycle', () => {
     expect(body.metadataFilters).toEqual([{ key: 'env', op: 'equals', value: 'prod' }]);
   });
 });
+
+describe('AlertsAPI errors', () => {
+  const api = new AlertsAPI(() => 'tok');
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function fail(status: number, body: unknown) {
+    return Promise.resolve({
+      ok: false,
+      status,
+      json: () => (body === undefined ? Promise.reject(new Error('no body')) : Promise.resolve(body)),
+    } as Response);
+  }
+
+  it('surfaces the backend error text instead of the status code', async () => {
+    fetchMock.mockReturnValue(fail(400, { statusCode: 400, error: 'Threshold must be at least 1' }));
+    await expect(api.snoozeAlertRule('org1', 'r1', '2026-10-23T00:00:00.000Z')).rejects.toThrow(
+      'Threshold must be at least 1'
+    );
+  });
+
+  it('still reads a message field', async () => {
+    fetchMock.mockReturnValue(fail(409, { message: 'Rule changed meanwhile' }));
+    await expect(api.unsnoozeAlertRule('org1', 'r1')).rejects.toThrow('Rule changed meanwhile');
+  });
+
+  it('falls back to a generic text when the body is not JSON', async () => {
+    fetchMock.mockReturnValue(fail(502, undefined));
+    await expect(api.unsnoozeAlertRule('org1', 'r1')).rejects.toThrow('Request failed');
+  });
+});

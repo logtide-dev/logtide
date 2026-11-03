@@ -260,6 +260,52 @@ describe('TracesService', () => {
       // Duration should be from earliest start to latest end
       expect(storedTrace?.duration_ms).toBe(150);
     });
+
+    it('writes every trace summary of a request in one reservoir call (#309)', async () => {
+      const now = Date.now();
+      const spans: TransformedSpan[] = [];
+      const traces = new Map<string, AggregatedTrace>();
+      for (let i = 0; i < 3; i++) {
+        const traceId = crypto.randomBytes(16).toString('hex');
+        const start = new Date(now + i).toISOString();
+        const end = new Date(now + i + 20).toISOString();
+        spans.push({ trace_id: traceId, span_id: crypto.randomBytes(8).toString('hex'), service_name: 'api', operation_name: 'GET /', start_time: start, end_time: end, duration_ms: 20 });
+        traces.set(traceId, { trace_id: traceId, service_name: 'api', root_service_name: 'api', root_operation_name: 'GET /', start_time: start, end_time: end, duration_ms: 20, span_count: 1, error: false });
+      }
+      const batch = vi.spyOn(reservoir, 'upsertTraces');
+      const single = vi.spyOn(reservoir, 'upsertTrace');
+
+      await service.ingestSpans(spans, traces, context.project.id, context.organization.id);
+
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(batch.mock.calls[0][0]).toHaveLength(3);
+      expect(single).not.toHaveBeenCalled();
+      const stored = await db.selectFrom('traces').select('trace_id').where('trace_id', 'in', [...traces.keys()]).execute();
+      expect(stored).toHaveLength(3);
+      batch.mockRestore();
+      single.mockRestore();
+    });
+
+    it('keeps the root operation when a later request carries only a child span', async () => {
+      const traceId = crypto.randomBytes(16).toString('hex');
+      const now = Date.now();
+      const iso = (ms: number) => new Date(now + ms).toISOString();
+      const rootSpanId = crypto.randomBytes(8).toString('hex');
+
+      await service.ingestSpans(
+        [{ trace_id: traceId, span_id: rootSpanId, service_name: 'api', operation_name: 'POST /orders', start_time: iso(0), end_time: iso(500), duration_ms: 500 }],
+        new Map([[traceId, { trace_id: traceId, service_name: 'api', root_service_name: 'api', root_operation_name: 'POST /orders', start_time: iso(0), end_time: iso(500), duration_ms: 500, span_count: 1, error: false }]]),
+        context.project.id, context.organization.id,
+      );
+      await service.ingestSpans(
+        [{ trace_id: traceId, span_id: crypto.randomBytes(8).toString('hex'), parent_span_id: rootSpanId, service_name: 'worker', operation_name: 'queue.publish', start_time: iso(400), end_time: iso(900), duration_ms: 500 }],
+        new Map([[traceId, { trace_id: traceId, service_name: 'worker', start_time: iso(400), end_time: iso(900), duration_ms: 500, span_count: 1, error: false }]]),
+        context.project.id, context.organization.id,
+      );
+
+      const stored = await db.selectFrom('traces').selectAll().where('trace_id', '=', traceId).executeTakeFirst();
+      expect(stored).toMatchObject({ root_service_name: 'api', root_operation_name: 'POST /orders', span_count: 2, duration_ms: 900 });
+    });
   });
 
   // ==========================================================================

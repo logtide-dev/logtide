@@ -3,7 +3,14 @@
   import { tick, onMount } from 'svelte';
   import type { Map as LeafletMap, LayerGroup } from 'leaflet';
   import type { GeoMapConfig } from '@logtide/shared';
-  import { bubbleRadius, loadWorldGeoJson, geoMapRefitKey } from './geo-map-utils';
+  import {
+    bubbleRadius,
+    loadWorldGeoJson,
+    geoMapRefitKey,
+    geoMapEmptyState,
+    geoMapFootnotes,
+    type GeoMapSourceInfo,
+  } from './geo-map-utils';
 
   interface GeoMapPoint {
     lat: number;
@@ -13,7 +20,7 @@
     countryCode?: string;
   }
 
-  interface GeoMapData {
+  interface GeoMapData extends GeoMapSourceInfo {
     points: GeoMapPoint[];
     total: number;
     droppedCount: number;
@@ -29,6 +36,8 @@
   let { config, data }: Props = $props();
   const typed = $derived(data as GeoMapData | null);
   const refitKey = $derived(geoMapRefitKey(config));
+  const emptyState = $derived(geoMapEmptyState(typed, config.fieldPrefix));
+  const footnotes = $derived(typed ? geoMapFootnotes(typed) : []);
 
   let mapContainer: HTMLDivElement | undefined = $state();
   let map: LeafletMap | null = null;
@@ -250,11 +259,8 @@
 <div class="flex h-full flex-col">
   {#if !typed || typed.points.length === 0}
     <div class="flex flex-1 flex-col items-center justify-center gap-1 py-6 text-center">
-      <p class="text-sm text-muted-foreground">No geo data in this time range</p>
-      <p class="text-xs text-muted-foreground">
-        Logs need geo metadata: add a GeoIP step to a parsing pipeline
-        (target "{config.fieldPrefix}").
-      </p>
+      <p class="text-sm text-muted-foreground">{emptyState.title}</p>
+      <p class="max-w-md text-xs text-muted-foreground">{emptyState.hint}</p>
     </div>
   {:else if mapError}
     <div class="flex flex-1 items-center justify-center text-sm text-destructive">
@@ -262,11 +268,9 @@
     </div>
   {:else}
     <div bind:this={mapContainer} class="geo-map-canvas min-h-0 flex-1 rounded-md"></div>
-    {#if typed.droppedCount > 0}
-      <p class="px-2 pt-1 text-xs text-muted-foreground">
-        {typed.droppedCount.toLocaleString('en-US')} values without valid coordinates were skipped
-      </p>
-    {/if}
+    {#each footnotes as note (note)}
+      <p class="px-2 pt-1 text-xs text-muted-foreground">{note}</p>
+    {/each}
   {/if}
 </div>
 

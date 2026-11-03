@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import Switch from '$lib/components/ui/switch/switch.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import { stateTone } from '$lib/utils/severity';
@@ -41,8 +42,8 @@
 
   const tone = $derived(stateTone(TONES[state]));
 
-  function changeLimit(e: Event) {
-    const next = Number.parseInt((e.currentTarget as HTMLSelectElement).value, 10);
+  function changeLimit(value: string) {
+    const next = Number.parseInt(value, 10);
     if (Number.isFinite(next) && next > 0) onLimitChange(next);
   }
 </script>
@@ -108,16 +109,14 @@
       </Button>
     {/if}
 
-    <select
+    <SelectField
       aria-label="Rows kept in live tail"
       title="Rows kept in live tail"
-      class="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      size="sm"
+      class="w-auto text-sm"
       value={String(limit)}
-      onchange={changeLimit}
-    >
-      {#each LIVE_TAIL_LIMITS as size (size)}
-        <option value={String(size)}>{size.toLocaleString('en-US')}</option>
-      {/each}
-    </select>
+      onValueChange={changeLimit}
+      options={LIVE_TAIL_LIMITS.map((size) => ({ value: String(size), label: size.toLocaleString('en-US') }))}
+    />
   {/if}
 </div>

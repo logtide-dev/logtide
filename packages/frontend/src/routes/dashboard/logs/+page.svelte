@@ -84,6 +84,7 @@
     BUILTIN_FACET_KEYS,
     FACET_VALUE_LIMIT,
     facetCandidates,
+    facetSampleNote,
     selectMetadataFacetKeys,
   } from "$lib/components/search/facet-keys";
   import { createFacetPinsStore, type FacetPinsStore } from "$lib/components/search/facet-pins";
@@ -173,6 +174,9 @@
   let facets = $state.raw<LogFacet[]>([]);
   let facetsLoading = $state(false);
   let facetsError = $state<string | null>(null);
+  let facetsSampleSize = $state<number | null>(null);
+  // Only once both belong to the current run: a reload clears the sample size first.
+  const facetsNote = $derived(facetsLoading ? null : facetSampleNote(facetsSampleSize, histogramTotal));
   let facetsCollapsed = $state(false);
   /** Phone only: the facets live in a full-height panel opened from the toolbar. */
   let filtersOpen = $state(false);
@@ -484,6 +488,7 @@
     facetsGuard.invalidate();
     histogramLoading = false;
     facetsLoading = false;
+    facetsSampleSize = null;
   }
 
   async function loadHistogram(r: Run) {
@@ -519,6 +524,7 @@
     const key = JSON.stringify([r.projectIds, r.range]);
     facetsLoading = true;
     facetsError = null;
+    facetsSampleSize = null;
     try {
       if (key !== fieldsKey) {
         let fields: LogFieldInfo[] = [];
@@ -545,7 +551,8 @@
         limit: FACET_VALUE_LIMIT,
       });
       if (!facetsGuard.isCurrent(token)) return;
-      facets = Array.isArray(res) ? res : [];
+      facets = Array.isArray(res?.facets) ? res.facets : [];
+      facetsSampleSize = res?.sampleSize ?? null;
     } catch (e) {
       if (!facetsGuard.isCurrent(token)) return;
       facetsError = errorText(e);
@@ -1125,6 +1132,7 @@
     facets = [];
     facetsLoading = false;
     facetsError = null;
+    facetsSampleSize = null;
     discovered = [];
     fieldsKey = null;
     selectedId = null;
@@ -1421,6 +1429,7 @@
           {facets}
           loading={facetsLoading}
           error={facetsError}
+          sampleNote={facetsNote}
           {q}
           {pinnedKeys}
           {candidateKeys}
@@ -1434,6 +1443,7 @@
         {facets}
         loading={facetsLoading}
         error={facetsError}
+        sampleNote={facetsNote}
         {q}
         {pinnedKeys}
         {candidateKeys}

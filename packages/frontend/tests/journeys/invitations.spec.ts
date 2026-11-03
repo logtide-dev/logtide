@@ -1,484 +1,340 @@
-import { test, expect, TestApiClient, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL } from '../fixtures/auth';
+import { test, expect, type Page } from '@playwright/test';
+import {
+  registerUser,
+  setAuthState,
+  TestApiClient,
+  generateTestEmail,
+  generateTestName,
+  TEST_FRONTEND_URL,
+  type TestUser,
+} from '../fixtures/auth';
+import { generateId } from '../helpers/factories';
+import { pickOption } from '../fixtures/select';
+
+const PASSWORD = 'TestPassword123!';
+
+/** Authenticate the browser as the given user with the given organization selected. */
+async function loginBrowserAs(page: Page, user: TestUser, organizationId?: string) {
+  await page.goto(TEST_FRONTEND_URL);
+  await setAuthState(page, user, user.token);
+  if (organizationId) {
+    await page.evaluate((orgId) => localStorage.setItem('currentOrganizationId', orgId), organizationId);
+  }
+}
+
+/** Invite an email through the API and return the pending invitation (the list never exposes tokens). */
+async function seedInvitation(
+  api: TestApiClient,
+  organizationId: string,
+  email: string,
+  role: 'admin' | 'member' = 'member'
+) {
+  await api.inviteUser(organizationId, email, role);
+  const { invitations } = await api.getPendingInvitations(organizationId);
+  const invitation = invitations.find((i) => i.email === email);
+  expect(invitation, `invitation for ${email} should exist after seeding`).toBeTruthy();
+  return invitation;
+}
+
+/**
+ * Register a user, invite them and return the invite token. Existing users get an in-app
+ * notification carrying the invite link, which is the only way to obtain the token.
+ */
+async function seedInvitedUser(
+  ownerApi: TestApiClient,
+  organizationId: string,
+  role: 'admin' | 'member' = 'member',
+  nameSeed = 'Invitee'
+) {
+  const email = generateTestEmail();
+  const name = `${nameSeed} ${generateId()}`;
+  const { user } = await registerUser(name, email, PASSWORD);
+  const api = new TestApiClient(user.token);
+  await seedInvitation(ownerApi, organizationId, email, role);
+  const { notifications } = await api.getNotifications();
+  const note = notifications.find((n) => n.type === 'organization_invite' && n.organizationId === organizationId);
+  expect(note, 'invited user should get an organization_invite notification').toBeTruthy();
+  const token = String(note.metadata.link).replace('/invite/', '');
+  expect(token).toBeTruthy();
+  return { email, name, user, api, token };
+}
+
+async function openMembersPage(page: Page) {
+  await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings/members`);
+  await expect(page).toHaveURL(/\/dashboard\/settings\/members/);
+  await expect(page.getByRole('heading', { name: 'Members', level: 1 })).toBeVisible();
+}
+
+async function openPendingInvitations(page: Page) {
+  await page.getByRole('tab', { name: /Pending invitations/ }).click();
+}
 
 test.describe('Invitations Journey', () => {
+  let owner: TestUser;
   let ownerApiClient: TestApiClient;
-  let ownerToken: string;
   let organizationId: string;
   let organizationName: string;
 
   test.beforeAll(async () => {
-    // Create organization owner
-    const ownerEmail = generateTestEmail();
-    const { token } = await registerUser(generateTestName('Owner'), ownerEmail, 'TestPassword123!');
-    ownerToken = token;
-    ownerApiClient = new TestApiClient(token);
+    const registered = await registerUser(generateTestName('Owner'), generateTestEmail(), PASSWORD);
+    owner = registered.user;
+    ownerApiClient = new TestApiClient(registered.token);
 
-    // Create organization
-    organizationName = `Invite Test Org ${Date.now()}`;
+    organizationName = `Invite Test Org ${generateId()}`;
     const orgResult = await ownerApiClient.createOrganization(organizationName);
     organizationId = orgResult.organization.id;
   });
 
   test.beforeEach(async ({ page }) => {
-    // Set auth state for owner
-    await page.goto(TEST_FRONTEND_URL);
-    await setAuthState(page, { id: 'owner', email: 'owner@test.com', name: 'Owner', token: ownerToken }, ownerToken);
-
-    // Set the current organization ID in localStorage
-    await page.evaluate((orgId) => {
-      localStorage.setItem('currentOrganizationId', orgId);
-    }, organizationId);
-
-    // Navigate to dashboard to trigger org loading
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('load');
-    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
-    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
+    await loginBrowserAs(page, owner, organizationId);
   });
 
-  test('1. Owner can navigate to settings page', async ({ page }) => {
+  test('1. /dashboard/settings opens the General page of the organization', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
 
-    // Verify settings page loaded
-    // /dashboard/settings redirects to the General page
     await expect(page).toHaveURL(/\/dashboard\/settings\/general/);
-    await expect(page.getByRole('heading', { name: 'General', level: 1 })).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('heading', { name: 'General', level: 1 })).toBeVisible();
   });
 
-  test('2. Owner can see members tab in settings', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Look for Members tab
-    const membersTab = page.locator('button:has-text("Members"), [role="tab"]:has-text("Members")').first();
-    const hasTab = await membersTab.isVisible({ timeout: 5000 }).catch(() => false);
-
-    if (hasTab) {
-      await membersTab.click();
-      await page.waitForTimeout(500);
-
-      // Should see members list or table
-      const pageContent = await page.content();
-      expect(pageContent.toLowerCase()).toMatch(/member|owner|admin|role/);
-    }
-  });
-
-  test('3. Owner can open invite member dialog', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Click Members tab first if present
-    const membersTab = page.locator('button:has-text("Members"), [role="tab"]:has-text("Members")').first();
-    if (await membersTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await membersTab.click();
-      await page.waitForTimeout(500);
-    }
-
-    // Look for invite button
-    const inviteButton = page.locator('button:has-text("Invite"), button:has-text("Add Member")').first();
-    if (await inviteButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await inviteButton.click();
-      await page.waitForTimeout(500);
-
-      // Should see invite dialog
-      const dialog = page.locator('[role="dialog"], [data-testid="invite-dialog"]');
-      const hasDialog = await dialog.isVisible({ timeout: 3000 }).catch(() => false);
-
-      if (hasDialog) {
-        // Should see email input
-        const emailInput = page.locator('input[type="email"], input[placeholder*="email" i]').first();
-        await expect(emailInput).toBeVisible();
-      }
-    }
-  });
-
-  test('4. Owner can invite a new member via UI', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Click Members tab first if present
-    const membersTab = page.locator('button:has-text("Members"), [role="tab"]:has-text("Members")').first();
-    if (await membersTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await membersTab.click();
-      await page.waitForTimeout(500);
-    }
-
-    // Open invite dialog
-    const inviteButton = page.locator('button:has-text("Invite"), button:has-text("Add Member")').first();
-    if (await inviteButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await inviteButton.click();
-      await page.waitForTimeout(500);
-
-      // Fill in email
-      const inviteEmail = generateTestEmail();
-      const emailInput = page.locator('input[type="email"], input[placeholder*="email" i]').first();
-      if (await emailInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await emailInput.fill(inviteEmail);
-        await page.waitForTimeout(300);
-
-        // Submit invitation
-        const submitButton = page.locator('[role="dialog"] button:has-text("Send"), [role="dialog"] button:has-text("Invite")').first();
-        if (await submitButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await submitButton.click();
-          await page.waitForTimeout(2000);
-
-          // Should show success or invitation in list
-          const pageContent = await page.content();
-          const hasSuccess = pageContent.toLowerCase().includes('sent') ||
-                            pageContent.toLowerCase().includes('success') ||
-                            pageContent.includes(inviteEmail);
-          expect(hasSuccess || true).toBe(true); // Soft assertion
-        }
-      }
-    }
-  });
-
-  test('5. Owner can see pending invitations', async ({ page }) => {
-    // First create an invitation via API
+  test('2. Owner can invite a new member via the UI', async ({ page }) => {
     const inviteEmail = generateTestEmail();
-    try {
-      await ownerApiClient.inviteUser(organizationId, inviteEmail, 'member');
-    } catch (e) {
-      console.warn('Could not create invitation via API:', e);
-    }
+    await openMembersPage(page);
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await page.getByRole('button', { name: 'Invite member', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Invite member' })).toBeVisible();
+    await dialog.getByLabel('Email address').fill(inviteEmail);
+    await pickOption(dialog.getByLabel('Role'), 'Admin');
+    await dialog.getByRole('button', { name: 'Send invitation' }).click();
 
-    // Click Members tab
-    const membersTab = page.locator('button:has-text("Members"), [role="tab"]:has-text("Members")').first();
-    if (await membersTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await membersTab.click();
-      await page.waitForTimeout(500);
-    }
+    // The dialog reports success, then closes on its own
+    await expect(dialog.getByText(/invitation|sent|notified/i).first()).toBeVisible();
+    await expect(dialog).toBeHidden();
 
-    // Look for pending invitations section
-    const pageContent = await page.content();
-    const hasPendingSection = pageContent.toLowerCase().includes('pending') ||
-                              pageContent.toLowerCase().includes('invitation') ||
-                              pageContent.includes(inviteEmail);
+    // The invitation is listed with the chosen role
+    await openPendingInvitations(page);
+    const row = page.getByRole('row').filter({ hasText: inviteEmail });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Admin');
 
-    expect(hasPendingSection || true).toBe(true); // Soft assertion
+    // And it exists on the server
+    const { invitations } = await ownerApiClient.getPendingInvitations(organizationId);
+    const created = invitations.find((i) => i.email === inviteEmail);
+    expect(created, 'invitation should exist in the API').toBeTruthy();
+    expect(created.role).toBe('admin');
   });
 
-  test('6. Owner can revoke a pending invitation', async ({ page }) => {
-    // Create an invitation to revoke
+  test('3. Owner sees a seeded pending invitation with its role', async ({ page }) => {
     const inviteEmail = generateTestEmail();
-    try {
-      await ownerApiClient.inviteUser(organizationId, inviteEmail, 'member');
-      await ownerApiClient.getPendingInvitations(organizationId);
-    } catch (e) {
-      console.warn('Could not create invitation via API:', e);
-      return;
-    }
+    await seedInvitation(ownerApiClient, organizationId, inviteEmail, 'member');
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    await openMembersPage(page);
+    await openPendingInvitations(page);
 
-    // Click Members tab
-    const membersTab = page.locator('button:has-text("Members"), [role="tab"]:has-text("Members")').first();
-    if (await membersTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await membersTab.click();
-      await page.waitForTimeout(500);
-    }
-
-    // Find and click revoke button for the invitation
-    const revokeButton = page.locator(`button:has-text("Revoke"), button[aria-label*="revoke" i]`).first();
-    if (await revokeButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await revokeButton.click();
-      await page.waitForTimeout(500);
-
-      // Confirm revocation if dialog appears
-      const confirmButton = page.locator('[role="alertdialog"] button:has-text("Revoke"), [role="alertdialog"] button:has-text("Confirm")').first();
-      if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await confirmButton.click();
-        await page.waitForTimeout(2000);
-      }
-    }
-
-    // Verify invitation was revoked (or page still works)
-    const pageContent = await page.content();
-    expect(pageContent).toBeTruthy();
+    const row = page.getByRole('row').filter({ hasText: inviteEmail });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Member');
+    await expect(row.getByRole('button', { name: 'Revoke invitation' })).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Resend invitation' })).toBeVisible();
   });
 
-  test('7. Invitation accept page loads for valid token', async ({ page }) => {
-    // Create an invitation
+  test('4. Owner can revoke a pending invitation', async ({ page }) => {
     const inviteEmail = generateTestEmail();
-    let invitationToken: string | undefined;
+    const keepEmail = generateTestEmail();
+    await seedInvitation(ownerApiClient, organizationId, inviteEmail, 'member');
+    await seedInvitation(ownerApiClient, organizationId, keepEmail, 'member');
 
-    try {
-      await ownerApiClient.inviteUser(organizationId, inviteEmail, 'member');
-      const pendingResult = await ownerApiClient.getPendingInvitations(organizationId);
-      invitationToken = pendingResult.invitations.find(i => i.email === inviteEmail)?.token;
-    } catch (e) {
-      console.warn('Could not get invitation token:', e);
-      return;
-    }
+    await openMembersPage(page);
+    await openPendingInvitations(page);
+    const row = page.getByRole('row').filter({ hasText: inviteEmail });
+    await expect(row).toHaveCount(1);
+    await row.getByRole('button', { name: 'Revoke invitation' }).click();
 
-    if (!invitationToken) {
-      console.warn('No invitation token found');
-      return;
-    }
+    await expect(page.getByText('Invitation revoked')).toBeVisible();
+    await expect(row).toHaveCount(0);
+    // Only the targeted invitation went away
+    await expect(page.getByRole('row').filter({ hasText: keepEmail })).toHaveCount(1);
 
-    // Clear auth to simulate unauthenticated user
-    await page.evaluate(() => {
-      localStorage.clear();
-    });
-
-    await page.goto(`${TEST_FRONTEND_URL}/invite/${invitationToken}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Should see invitation page with org name
-    const pageContent = await page.content();
-    const hasInvitePage = pageContent.toLowerCase().includes('invited') ||
-                          pageContent.toLowerCase().includes('invitation') ||
-                          pageContent.includes(organizationName);
-
-    expect(hasInvitePage).toBe(true);
+    const { invitations } = await ownerApiClient.getPendingInvitations(organizationId);
+    expect(invitations.map((i) => i.email)).not.toContain(inviteEmail);
+    expect(invitations.map((i) => i.email)).toContain(keepEmail);
   });
 
-  test('8. Invitation page shows login button when not authenticated', async ({ page }) => {
-    // Create an invitation
-    const inviteEmail = generateTestEmail();
-    let invitationToken: string | undefined;
+  test('5. Invitation page for a logged out visitor shows the invite and sends them to login', async ({ browser }) => {
+    // Fresh context: nothing from the owner session can leak into the visitor's page
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const invitation = await seedInvitedUser(ownerApiClient, organizationId, 'member');
 
-    try {
-      await ownerApiClient.inviteUser(organizationId, inviteEmail, 'member');
-      const pendingResult = await ownerApiClient.getPendingInvitations(organizationId);
-      invitationToken = pendingResult.invitations.find(i => i.email === inviteEmail)?.token;
-    } catch (e) {
-      console.warn('Could not get invitation token:', e);
-      return;
-    }
+    await page.goto(`${TEST_FRONTEND_URL}/invite/${invitation.token}`);
 
-    if (!invitationToken) return;
-
-    // Clear auth
-    await page.evaluate(() => {
-      localStorage.clear();
-    });
-
-    await page.goto(`${TEST_FRONTEND_URL}/invite/${invitationToken}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Should see login button
-    const loginButton = page.locator('button:has-text("Log In"), a:has-text("Log In")').first();
-    const hasLoginButton = await loginButton.isVisible({ timeout: 5000 }).catch(() => false);
-
-    expect(hasLoginButton || true).toBe(true); // Soft assertion
-  });
-
-  test('9. Invitation page shows error for invalid token', async ({ page }) => {
-    // Clear auth
-    await page.evaluate(() => {
-      localStorage.clear();
-    });
-
-    await page.goto(`${TEST_FRONTEND_URL}/invite/invalid-token-12345`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Should show error message
-    const pageContent = await page.content();
-    const hasError = pageContent.toLowerCase().includes('not found') ||
-                     pageContent.toLowerCase().includes('invalid') ||
-                     pageContent.toLowerCase().includes('expired') ||
-                     pageContent.toLowerCase().includes('error');
-
-    expect(hasError).toBe(true);
-  });
-
-  test('10. User can accept invitation when logged in', async ({ page }) => {
-    // Create a new user to accept the invitation
-    const newUserEmail = generateTestEmail();
-    const { user: newUser, token: newUserToken } = await registerUser(
-      generateTestName('NewMember'),
-      newUserEmail,
-      'TestPassword123!'
+    await expect(page.getByText("You're invited")).toBeVisible();
+    await expect(page.getByRole('heading', { name: organizationName })).toBeVisible();
+    await expect(page.getByText('Your role')).toBeVisible();
+    await expect(page.getByText('member', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Accept invitation' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Register here' })).toHaveAttribute(
+      'href',
+      `/register?redirect=/invite/${invitation.token}`
     );
 
-    // Owner invites the new user
-    let invitationToken: string | undefined;
-    try {
-      await ownerApiClient.inviteUser(organizationId, newUserEmail, 'member');
-      const pendingResult = await ownerApiClient.getPendingInvitations(organizationId);
-      invitationToken = pendingResult.invitations.find(i => i.email === newUserEmail)?.token;
-    } catch (e) {
-      console.warn('Could not create invitation:', e);
-      return;
-    }
-
-    if (!invitationToken) return;
-
-    // Set auth for new user
-    await page.goto(TEST_FRONTEND_URL);
-    await setAuthState(page, { id: newUser.id, email: newUser.email, name: newUser.name, token: newUserToken }, newUserToken);
-
-    // Go to invitation page
-    await page.goto(`${TEST_FRONTEND_URL}/invite/${invitationToken}`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
-
-    // Should see accept button
-    const acceptButton = page.locator('button:has-text("Accept")').first();
-    if (await acceptButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await acceptButton.click();
-      await page.waitForTimeout(3000);
-
-      // Should show success or redirect
-      const pageContent = await page.content();
-      const currentUrl = page.url();
-      const hasSuccess = pageContent.toLowerCase().includes('welcome') ||
-                         pageContent.toLowerCase().includes('success') ||
-                         currentUrl.includes('/dashboard');
-
-      expect(hasSuccess || currentUrl.includes('/dashboard')).toBe(true);
-    }
+    await page.getByRole('button', { name: 'Log in to accept' }).click();
+    await expect(page).toHaveURL(/\/login\?redirect=/);
+    expect(decodeURIComponent(new URL(page.url()).searchParams.get('redirect') as string)).toBe(
+      `/invite/${invitation.token}`
+    );
+    await context.close();
   });
 
-  test('11. Settings page shows organization details', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+  test('6. Invitation page shows an error for an invalid token', async ({ browser }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(`${TEST_FRONTEND_URL}/invite/invalid-token-${generateId()}`);
 
-    // Should show organization name input or display
-    const pageContent = await page.content();
-    const hasOrgDetails = pageContent.includes(organizationName) ||
-                          pageContent.toLowerCase().includes('organization') ||
-                          pageContent.toLowerCase().includes('name');
-
-    expect(hasOrgDetails).toBe(true);
+    await expect(page.getByText('Invitation not found')).toBeVisible();
+    await expect(page.getByText('This invitation is invalid or has expired.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Go to login' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Accept invitation' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Log in to accept' })).toHaveCount(0);
+    await context.close();
   });
 
-  test('12. Settings page has save functionality', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+  test('7. Invited user can accept the invitation and becomes a member', async ({ page }) => {
+    const invitation = await seedInvitedUser(ownerApiClient, organizationId, 'member', 'NewMember');
+    const { user: newUser, api: newUserApi, email: newUserEmail } = invitation;
 
-    // Look for save button
-    const saveButton = page.locator('button:has-text("Save"), button:has-text("Update")').first();
-    const hasSaveButton = await saveButton.isVisible({ timeout: 5000 }).catch(() => false);
+    await loginBrowserAs(page, newUser);
+    await page.goto(`${TEST_FRONTEND_URL}/invite/${invitation.token}`);
 
-    expect(hasSaveButton || true).toBe(true); // Settings should have save option
+    await expect(page.getByRole('heading', { name: organizationName })).toBeVisible();
+    await page.getByRole('button', { name: 'Accept invitation' }).click();
+
+    await expect(page.getByText(`Welcome to ${organizationName}`)).toBeVisible();
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 15000 });
+
+    // The user is now a member with the invited role, and the invitation is consumed
+    const { members } = await ownerApiClient.getOrganizationMembers(organizationId);
+    const membership = members.find((m) => m.user.email === newUserEmail);
+    expect(membership, 'new user should be a member').toBeTruthy();
+    expect(membership.role).toBe('member');
+
+    const { organizations } = await newUserApi.getOrganizations();
+    expect(organizations.map((o) => o.id)).toContain(organizationId);
+
+    const { invitations } = await ownerApiClient.getPendingInvitations(organizationId);
+    expect(invitations.map((i) => i.email)).not.toContain(newUserEmail);
+  });
+
+  test('8. Invitation page warns when logged in as a different user', async ({ page }) => {
+    const invitation = await seedInvitedUser(ownerApiClient, organizationId, 'member');
+    const invitedEmail = invitation.email;
+    const { user: stranger } = await registerUser(generateTestName('Stranger'), generateTestEmail(), PASSWORD);
+
+    await loginBrowserAs(page, stranger);
+    await page.goto(`${TEST_FRONTEND_URL}/invite/${invitation.token}`);
+
+    await expect(page.getByText('Email mismatch')).toBeVisible();
+    await expect(page.getByText(invitedEmail)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Accept invitation' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Log out and switch account' })).toBeVisible();
+  });
+
+  test('9. General settings show the organization name', async ({ page }) => {
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings/general`);
+
+    await expect(page.getByLabel('Organization name')).toHaveValue(organizationName);
+  });
+
+  // Keep this last: it renames the shared organization.
+  test('10. Owner can rename the organization and the change persists', async ({ page }) => {
+    const newName = `Renamed Org ${generateId()}`;
+    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings/general`);
+
+    const nameInput = page.getByLabel('Organization name');
+    await expect(nameInput).toHaveValue(organizationName);
+    await nameInput.fill(newName);
+    await page.getByRole('button', { name: 'Save changes' }).click();
+
+    await expect(page.getByText('Organization updated')).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByLabel('Organization name')).toHaveValue(newName);
+
+    const { organizations } = await ownerApiClient.getOrganizations();
+    expect(organizations.find((o) => o.id === organizationId)?.name).toBe(newName);
+    organizationName = newName;
   });
 });
 
 test.describe('Member Management', () => {
+  let owner: TestUser;
   let ownerApiClient: TestApiClient;
-  let ownerToken: string;
-  let ownerUserId: string;
   let organizationId: string;
 
   test.beforeAll(async () => {
-    // Create organization owner
-    const ownerEmail = generateTestEmail();
-    const { user: owner, token } = await registerUser(generateTestName('MemberOwner'), ownerEmail, 'TestPassword123!');
-    ownerToken = token;
-    ownerUserId = owner.id;
-    ownerApiClient = new TestApiClient(token);
-
-    // Create organization
-    const orgResult = await ownerApiClient.createOrganization(`Member Test Org ${Date.now()}`);
+    const registered = await registerUser(generateTestName('MemberOwner'), generateTestEmail(), PASSWORD);
+    owner = registered.user;
+    ownerApiClient = new TestApiClient(registered.token);
+    const orgResult = await ownerApiClient.createOrganization(`Member Test Org ${generateId()}`);
     organizationId = orgResult.organization.id;
   });
 
   test.beforeEach(async ({ page }) => {
-    await page.goto(TEST_FRONTEND_URL);
-    await setAuthState(page, { id: ownerUserId, email: 'owner@test.com', name: 'Owner', token: ownerToken }, ownerToken);
-    await page.evaluate((orgId) => {
-      localStorage.setItem('currentOrganizationId', orgId);
-    }, organizationId);
-
-    // Navigate to dashboard to trigger org loading
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('load');
-    // Wait for organization to be loaded (RequireOrganization shows content only when org is ready)
-    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
+    await loginBrowserAs(page, owner, organizationId);
   });
 
-  test('1. Owner can see list of members', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+  /** Create a user and make them a member through the invitation API. */
+  async function addMember(role: 'admin' | 'member' = 'member') {
+    const invitee = await seedInvitedUser(ownerApiClient, organizationId, role, 'Member');
+    await invitee.api.acceptInvitation(invitee.token);
+    return { email: invitee.email, name: invitee.name, user: invitee.user };
+  }
 
-    // Click Members tab
-    const membersTab = page.locator('button:has-text("Members"), [role="tab"]:has-text("Members")').first();
-    if (await membersTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await membersTab.click();
-      await page.waitForTimeout(500);
-    }
+  test('1. Owner appears in the member list with the Owner role', async ({ page }) => {
+    await openMembersPage(page);
 
-    // Should see at least the owner in the list
-    const pageContent = await page.content();
-    const hasMembersList = pageContent.toLowerCase().includes('owner') ||
-                           pageContent.toLowerCase().includes('member') ||
-                           pageContent.toLowerCase().includes('role');
-
-    expect(hasMembersList).toBe(true);
+    const ownerRow = page.getByRole('row').filter({ hasText: owner.email });
+    await expect(ownerRow).toHaveCount(1);
+    await expect(ownerRow).toContainText('Owner');
+    await expect(ownerRow).toContainText('You');
+    // Nobody can act on the owner row
+    await expect(ownerRow.getByRole('button')).toHaveCount(0);
   });
 
-  test('2. Owner role badge is displayed correctly', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+  test('2. Owner can promote a member to admin from the actions menu', async ({ page }) => {
+    const member = await addMember('member');
 
-    // Click Members tab
-    const membersTab = page.locator('button:has-text("Members"), [role="tab"]:has-text("Members")').first();
-    if (await membersTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await membersTab.click();
-      await page.waitForTimeout(500);
-    }
+    await openMembersPage(page);
+    const row = page.getByRole('row').filter({ hasText: member.email });
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Member');
 
-    // Should see owner badge
-    const ownerBadge = page.locator('text=/owner/i').first();
-    const hasOwnerBadge = await ownerBadge.isVisible({ timeout: 5000 }).catch(() => false);
+    await row.getByRole('button', { name: `Member actions for ${member.name}` }).click();
+    await expect(page.getByRole('menuitem', { name: 'Transfer ownership' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Remove from organization' })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Promote to admin' }).click();
 
-    expect(hasOwnerBadge || true).toBe(true);
+    await expect(page.getByText('Member role updated')).toBeVisible();
+    await expect(row).toContainText('Admin');
+
+    const { members } = await ownerApiClient.getOrganizationMembers(organizationId);
+    expect(members.find((m) => m.user.email === member.email)?.role).toBe('admin');
   });
 
-  test('3. Member actions dropdown exists for non-owner members', async ({ page }) => {
-    // First add a member via API
-    const memberEmail = generateTestEmail();
-    const { token: memberToken } = await registerUser(generateTestName('Member'), memberEmail, 'TestPassword123!');
+  test('3. Owner can remove a member', async ({ page }) => {
+    const member = await addMember('member');
 
-    try {
-      // Invite and accept
-      await ownerApiClient.inviteUser(organizationId, memberEmail, 'member');
-      const memberClient = new TestApiClient(memberToken);
-      const pending = await ownerApiClient.getPendingInvitations(organizationId);
-      const invitation = pending.invitations.find(i => i.email === memberEmail);
-      if (invitation?.token) {
-        await memberClient.acceptInvitation(invitation.token);
-      }
-    } catch (e) {
-      console.warn('Could not add member:', e);
-      return;
-    }
+    await openMembersPage(page);
+    const row = page.getByRole('row').filter({ hasText: member.email });
+    await row.getByRole('button', { name: `Member actions for ${member.name}` }).click();
+    await page.getByRole('menuitem', { name: 'Remove from organization' }).click();
 
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard/settings`);
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(2000);
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText(member.name);
+    await dialog.getByRole('button', { name: 'Remove member' }).click();
 
-    // Click Members tab
-    const membersTab = page.locator('button:has-text("Members"), [role="tab"]:has-text("Members")').first();
-    if (await membersTab.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await membersTab.click();
-      await page.waitForTimeout(1000);
-    }
-
-    // Look for action menu (3-dot menu)
-    const actionMenu = page.locator('button:has([class*="MoreHorizontal"]), button[aria-label*="actions" i]').first();
-    const hasActionMenu = await actionMenu.isVisible({ timeout: 5000 }).catch(() => false);
-
-    expect(hasActionMenu || true).toBe(true); // May not have other members yet
+    await expect(row).toHaveCount(0);
+    const { members } = await ownerApiClient.getOrganizationMembers(organizationId);
+    expect(members.map((m) => m.user.email)).not.toContain(member.email);
   });
 });

@@ -28,6 +28,7 @@ import { incidentsAPI } from '$lib/api/incidents';
 import { savedSearchUrl } from '$lib/components/search/explorer-url';
 import { INCIDENT_ACTIVE_STATUSES } from '@logtide/shared';
 import { settingsPages } from '../settings-pages';
+import { adminPaletteItems, hasAdminContributions } from '$lib/extensions/registry';
 import { organizationStore } from '$lib/stores/organization';
 import { authAPI, type AuthConfig } from '$lib/api/auth';
 import { OPEN_ORG_SWITCHER_EVENT } from '../events';
@@ -53,6 +54,33 @@ function navigationItems(): PaletteItem[] {
     href: item.href,
     // Only advertise a shortcut that is registered right now.
     shortcut: item.shortcut && combos.has(item.shortcut) ? item.shortcut : undefined,
+  }));
+}
+
+const EXTENSION_CONFIG_TIMEOUT_MS = 1500;
+
+/** Admin pages of active extensions; fetched only for instance admins. */
+async function extensionAdminItems(): Promise<PaletteItem[]> {
+  if (!get(authStore).user?.is_admin || !hasAdminContributions()) return [];
+  // The core navigation items must never wait on this request for long.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), EXTENSION_CONFIG_TIMEOUT_MS);
+  });
+  let authConfig: AuthConfig | null = null;
+  try {
+    authConfig = await Promise.race([authAPI.getAuthConfig(), timeout]);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+  return adminPaletteItems(authConfig).map((item) => ({
+    id: `nav:ext-admin:${item.href}`,
+    label: item.label,
+    icon: icon(item.icon),
+    href: item.href,
+    keywords: item.keywords,
   }));
 }
 
@@ -116,7 +144,7 @@ export function registerDefaultPaletteProviders(): void {
     heading: 'Navigation',
     order: 10,
     ttlMs: 0, // shortcut chips depend on what is registered right now
-    items: () => navigationItems(),
+    items: async () => [...navigationItems(), ...(await extensionAdminItems())],
   });
 
   registerPaletteProvider({

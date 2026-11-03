@@ -5,7 +5,7 @@ const ALL_TABLES = [
   'logs', 'users', 'sessions', 'organizations', 'organization_members',
   'organization_invitations', 'projects', 'api_keys', 'alert_rules', 'alert_history',
   'notifications', 'sigma_rules', 'traces', 'spans', 'logs_hourly_stats',
-  'logs_daily_stats', 'spans_hourly_stats', 'spans_daily_stats',
+  'logs_daily_stats', 'logs_minute_stats', 'spans_hourly_stats', 'spans_daily_stats',
   'detection_events_hourly_stats', 'detection_events_daily_stats',
   'detection_events_rule_stats', 'user_onboarding', 'detection_events', 'incidents',
   'monitors', 'monitor_status', 'monitor_results', 'monitor_uptime_daily',

@@ -17,6 +17,7 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 import { goto } from '$app/navigation';
 import { page } from '$app/state';
+import { chooseSelectOption } from '$lib/test-utils/select-field';
 import StatusUpdatesPanel from './StatusUpdatesPanel.svelte';
 import { parseUptimeUrl } from './uptime-url';
 import type { Monitor } from '$lib/api/monitoring';
@@ -113,7 +114,7 @@ describe('StatusUpdatesPanel', () => {
     renderPanel(parseUptimeUrl(page.url).prefill);
     const dialog = await screen.findByRole('dialog');
     expect((within(dialog).getByLabelText('Title') as HTMLInputElement).value).toBe('API down');
-    expect((within(dialog).getByLabelText('Severity') as HTMLSelectElement).value).toBe('major');
+    expect(within(dialog).getByLabelText('Severity')).toHaveTextContent('Major');
     expect((within(dialog).getByLabelText('Message (optional)') as HTMLTextAreaElement).value).toBe(
       'Looking into it'
     );
@@ -189,7 +190,7 @@ describe('StatusUpdatesPanel', () => {
     const submit = within(dialog).getByRole('button', { name: 'Post update' });
     expect(submit).toBeDisabled();
 
-    await fireEvent.change(within(dialog).getByLabelText('Status'), { target: { value: 'resolved' } });
+    await chooseSelectOption(within(dialog).getByLabelText('Status'), 'Resolved');
     await fireEvent.input(within(dialog).getByLabelText('Message'), { target: { value: 'Fixed.' } });
     expect(submit).not.toBeDisabled();
     await fireEvent.click(submit);

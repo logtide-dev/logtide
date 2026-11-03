@@ -49,3 +49,14 @@ export function selectMetadataFacetKeys(pinned: string[], discovered: LogFieldIn
   }
   return out;
 }
+
+/**
+ * Note shown above the facets when they were counted over a sample of the
+ * matching logs (the backend counts the newest ones on big projects), or
+ * null when they cover every matching log or the total is unknown.
+ */
+export function facetSampleNote(sampleSize: number | null | undefined, total: number | null | undefined): string | null {
+  if (sampleSize == null || total == null || sampleSize >= total) return null;
+  const n = (v: number) => v.toLocaleString('en-US');
+  return `Top values of the newest ${n(sampleSize)} of ${n(total)} matching logs`;
+}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import SessionTimeline from './SessionTimeline.svelte';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
 const crumb = {
   type: 'ui',
@@ -37,14 +38,14 @@ describe('SessionTimeline', () => {
     });
     expect(screen.getAllByTestId('timeline-log')).toHaveLength(3);
 
-    await fireEvent.change(screen.getByLabelText('Filter by level'), { target: { value: 'error' } });
+    await chooseSelectOption(screen.getByLabelText('Filter by level'), /^Error/);
     expect(screen.getAllByTestId('timeline-log')).toHaveLength(1);
     expect(screen.getByText('message a')).toBeInTheDocument();
 
-    await fireEvent.change(screen.getByLabelText('Filter by level'), { target: { value: 'all' } });
-    await fireEvent.change(screen.getByLabelText('Filter by type'), { target: { value: 'breadcrumbs' } });
+    await chooseSelectOption(screen.getByLabelText('Filter by level'), 'All levels');
+    await chooseSelectOption(screen.getByLabelText('Filter by type'), /^Breadcrumbs/);
     expect(screen.getAllByTestId('timeline-breadcrumb')).toHaveLength(2);
-    await fireEvent.change(screen.getByLabelText('Filter by category'), { target: { value: 'http' } });
+    await chooseSelectOption(screen.getByLabelText('Filter by category'), 'Network and HTTP');
     expect(screen.getAllByTestId('timeline-breadcrumb')).toHaveLength(1);
     expect(screen.getByText('GET /x')).toBeInTheDocument();
   });

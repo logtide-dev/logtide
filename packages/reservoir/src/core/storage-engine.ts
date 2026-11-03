@@ -134,6 +134,14 @@ export abstract class StorageEngine {
   /** Delete logs by time range */
   abstract deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult>;
 
+  /**
+   * Brings a hand-kept log volume aggregate up to date (MongoDB); a no-op for
+   * engines whose database maintains it (ClickHouse projection, TimescaleDB
+   * continuous aggregate). Safe to call from several processes; call it about
+   * once a minute.
+   */
+  async refreshLogVolume(): Promise<void> {}
+
   /** Zero-filled, epoch-aligned log volume per level (1.6) */
   async histogram(_params: LogHistogramParams): Promise<LogHistogramResult> {
     throw new NotImplementedError('histogram', this.constructor.name);
@@ -167,7 +175,20 @@ export abstract class StorageEngine {
   abstract ingestSpans(spans: SpanRecord[]): Promise<IngestSpansResult>;
 
   /** Upsert a trace record (merge start/end times, sum span counts) */
-  abstract upsertTrace(trace: TraceRecord): Promise<void>;
+  async upsertTrace(trace: TraceRecord): Promise<void> {
+    await this.upsertTraces([trace]);
+  }
+
+  /**
+   * Merge partial trace summaries, one per trace touched by an ingest request,
+   * in a single write. For each (projectId, traceId): span counts add up,
+   * start/end widen to the min/max (duration = end - start), error is sticky,
+   * and root service/operation names are set once known and never cleared by
+   * a summary without them. The merge must not depend on the spans table, so
+   * it is correct whatever order spans and summaries are written in. The same
+   * trace may appear more than once in `traces`.
+   */
+  abstract upsertTraces(traces: TraceRecord[]): Promise<void>;
 
   /** Query spans with filters and pagination */
   abstract querySpans(params: SpanQueryParams): Promise<SpanQueryResult>;

@@ -62,6 +62,22 @@ export function buildBullJobOptions(options?: IJobOptions): Record<string, unkno
 }
 
 /**
+ * Build the options passed to BullMQ's Worker.
+ *
+ * BullMQ uses the worker's `removeOnComplete` / `removeOnFail` for any job that
+ * carries none of its own (jobs added outside `buildBullJobOptions`, or left in
+ * Redis by an older build), so the worker gets the same retention as the queue
+ * defaults. Without it such jobs are kept in Redis forever.
+ */
+export function buildBullWorkerOptions(connection: Redis) {
+  return {
+    connection,
+    removeOnComplete: DEFAULT_JOB_OPTIONS.removeOnComplete,
+    removeOnFail: DEFAULT_JOB_OPTIONS.removeOnFail,
+  };
+}
+
+/**
  * Convert BullMQ Job to unified IJob interface
  */
 function adaptBullJob<T>(bullJob: BullJob<T>): IJob<T> {
@@ -172,7 +188,7 @@ export class BullMQWorkerAdapter<T = unknown> implements IWorkerAdapter<T> {
         const adaptedJob = adaptBullJob(bullJob);
         await processor(adaptedJob);
       },
-      { connection }
+      buildBullWorkerOptions(connection)
     );
 
     // Forward BullMQ events to our handlers

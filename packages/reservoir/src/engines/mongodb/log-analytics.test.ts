@@ -201,35 +201,59 @@ describe('assembleFacets', () => {
 
 describe('facetsPipeline', () => {
   const translator = new MongoDBQueryTranslator();
+  const scope = translator.buildLogFilter({ projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00') });
   const filter = translator.buildLogFilter({ projectId: PROJECT, from: at('10:00:00'), to: at('11:00:00'), service: 'api' });
+  const pipe = (fields: Parameters<typeof facetsPipeline>[3], limit = 10) => facetsPipeline('logs', [scope], filter, fields, limit, 2_000_000, 100_000);
 
-  it('starts with the shared log filter and counts each field once per log', () => {
-    const pipeline = facetsPipeline(filter, [{ builtin: 'level' }, { builtin: 'service' }], 10);
-    expect(pipeline[0]).toEqual({ $match: filter });
-    const project = pipeline[1].$project as Document;
+  it('scans the newest logs of the window, then filters, then keeps the newest sample', () => {
+    const pipeline = facetsPipeline('logs', [scope], filter, [{ builtin: 'level' }], 10, 50, 7);
+    expect(pipeline.slice(0, 6)).toEqual([
+      { $match: scope },
+      { $sort: { time: -1 } },
+      { $limit: 50 },
+      { $match: filter },
+      { $limit: 7 },
+      expect.objectContaining({ $project: expect.anything() }),
+    ]);
+  });
+
+  it('several projects get one sorted, filtered, sampled branch each, then the newest sample overall', () => {
+    const other = translator.buildLogFilter({ projectId: 'other', from: at('10:00:00'), to: at('11:00:00') });
+    const pipeline = facetsPipeline('logs', [scope, other], filter, [{ builtin: 'level' }], 10, 50, 7);
+    const branch = (s: Document) => [{ $match: s }, { $sort: { time: -1 } }, { $limit: 50 }, { $match: filter }, { $limit: 7 }];
+    expect(pipeline.slice(0, 8)).toEqual([
+      ...branch(scope),
+      { $unionWith: { coll: 'logs', pipeline: branch(other) } },
+      { $sort: { time: -1 } },
+      { $limit: 7 },
+    ]);
+  });
+
+  it('counts each field once per log, plus one pair that counts the sample', () => {
+    const pipeline = pipe([{ builtin: 'level' }, { builtin: 'service' }]);
+    const project = pipeline[5].$project as Document;
     expect(project.kv).toEqual([
       { f: { $literal: 0 }, v: '$level' },
       { f: { $literal: 1 }, v: '$service' },
+      { f: { $literal: 2 }, v: { $literal: '1' } },
     ]);
-    expect(pipeline[2]).toEqual({ $unwind: '$kv' });
-    expect(pipeline[3]).toEqual({ $match: { 'kv.v': { $nin: [null, ''] } } });
+    expect(pipeline[6]).toEqual({ $unwind: '$kv' });
+    expect(pipeline[7]).toEqual({ $match: { 'kv.v': { $nin: [null, ''] } } });
   });
 
   it('ties break in byte order after the count', () => {
-    const topN = topNOf(facetsPipeline(filter, [{ builtin: 'service' }], 3));
+    const topN = topNOf(pipe([{ builtin: 'service' }], 3));
     expect(topN.sortBy).toEqual({ count: -1, '_id.v': 1 });
     expect(topN.n).toBe(3);
   });
 
   it('metadata fields facet by the text form of the resolved key', () => {
-    const pipeline = facetsPipeline(filter, [{ metadata: 'http.method' }], 10);
-    const v = (pipeline[1].$project as Document).kv[0].v;
+    const v = (pipe([{ metadata: 'http.method' }])[5].$project as Document).kv[0].v;
     expect(v).toEqual(scalarTextExpr(resolvedValueExpr('metadata', 'http.method')));
   });
 
   it('hostname facets only string hostnames from metadata', () => {
-    const pipeline = facetsPipeline(filter, [{ builtin: 'hostname' }], 10);
-    const json = JSON.stringify((pipeline[1].$project as Document).kv[0].v);
+    const json = JSON.stringify((pipe([{ builtin: 'hostname' }])[5].$project as Document).kv[0].v);
     expect(json).toContain('"$metadata.hostname"');
     expect(json).toContain('"string"');
   });
@@ -271,10 +295,16 @@ describe('MongoDBEngine.discoverMetadataKeys', () => {
 describe('discoverKeysPipeline', () => {
   const pipeline = discoverKeysPipeline({ projectId: [PROJECT, 'p2'], from: at('10:00:00'), to: at('11:00:00'), sampleSize: 50 });
 
-  it('samples the newest logs of the projects in range first', () => {
-    expect(pipeline[0]).toEqual({ $match: { project_id: { $in: [PROJECT, 'p2'] }, time: { $gte: at('10:00:00'), $lte: at('11:00:00') } } });
-    expect(pipeline[1]).toEqual({ $sort: { time: -1, id: -1 } });
-    expect(pipeline[2]).toEqual({ $limit: 50 });
+  it('samples the newest logs of each project, then the newest of those', () => {
+    const window = { $gte: at('10:00:00'), $lte: at('11:00:00') };
+    const branch = (projectId: string) => [{ $match: { project_id: projectId, time: window } }, { $sort: { time: -1 } }, { $limit: 50 }];
+    expect(pipeline.slice(0, 6)).toEqual([
+      ...branch(PROJECT),
+      { $unionWith: { coll: 'logs', pipeline: branch('p2') } },
+      { $sort: { time: -1 } },
+      { $limit: 50 },
+    ]);
+    expect(JSON.stringify(pipeline)).not.toContain('$in');
   });
 
   it('counts each key once per log, busiest first, at most 500 keys', () => {

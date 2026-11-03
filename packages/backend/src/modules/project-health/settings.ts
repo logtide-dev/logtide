@@ -1,6 +1,7 @@
 /**
  * Per-project health settings (project_notification_settings, migration 073):
- * channel override for project_health notifications, silent threshold, mutes.
+ * channel override for project_health notifications, silent check opt-in
+ * (migration 077) and threshold, mutes.
  * A project without a row uses the defaults.
  */
 
@@ -20,19 +21,27 @@ export type ProjectHealthMutes = Partial<Record<ProjectHealthCheckKey, ProjectHe
 
 export interface ProjectHealthSettings {
   healthChannelIds: string[];
+  /** The silent check is opt-in: no data for a while does not mean broken. */
+  silentEnabled: boolean;
   silentMinutes: number;
   mutes: ProjectHealthMutes;
 }
 
 export interface UpdateProjectHealthSettingsInput {
   healthChannelIds?: string[];
+  silentEnabled?: boolean;
   silentMinutes?: number;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function defaultProjectHealthSettings(): ProjectHealthSettings {
-  return { healthChannelIds: [], silentMinutes: PROJECT_HEALTH_SILENT_DEFAULT_MINUTES, mutes: {} };
+  return {
+    healthChannelIds: [],
+    silentEnabled: false,
+    silentMinutes: PROJECT_HEALTH_SILENT_DEFAULT_MINUTES,
+    mutes: {},
+  };
 }
 
 export function isCheckKey(value: string): value is ProjectHealthCheckKey {
@@ -63,11 +72,13 @@ export function parseMutes(raw: unknown): ProjectHealthMutes {
 
 export function rowToSettings(row: {
   health_channel_ids: string[] | null;
+  silent_enabled: boolean;
   silent_minutes: number;
   mutes: unknown;
 }): ProjectHealthSettings {
   return {
     healthChannelIds: row.health_channel_ids ?? [],
+    silentEnabled: row.silent_enabled === true,
     silentMinutes: row.silent_minutes,
     mutes: parseMutes(row.mutes),
   };
@@ -79,7 +90,7 @@ export async function getProjectHealthSettings(
 ): Promise<ProjectHealthSettings> {
   const row = await db
     .selectFrom('project_notification_settings')
-    .select(['health_channel_ids', 'silent_minutes', 'mutes'])
+    .select(['health_channel_ids', 'silent_enabled', 'silent_minutes', 'mutes'])
     .where('organization_id', '=', organizationId)
     .where('project_id', '=', projectId)
     .executeTakeFirst();
@@ -94,7 +105,7 @@ export async function getSettingsForProjects(
   if (projectIds.length === 0) return map;
   const rows = await db
     .selectFrom('project_notification_settings')
-    .select(['project_id', 'health_channel_ids', 'silent_minutes', 'mutes'])
+    .select(['project_id', 'health_channel_ids', 'silent_enabled', 'silent_minutes', 'mutes'])
     // tenant-scope-ok: system cron, project ids come from the non-deleted projects query
     .where('project_id', 'in', projectIds)
     .execute();
@@ -127,28 +138,37 @@ export async function updateProjectHealthSettings(
     : current.healthChannelIds;
   const silentMinutes =
     input.silentMinutes !== undefined ? clampSilent(input.silentMinutes) : current.silentMinutes;
+  const silentEnabled = input.silentEnabled ?? current.silentEnabled;
 
   await writeRow(organizationId, projectId, {
     health_channel_ids: healthChannelIds,
+    silent_enabled: silentEnabled,
     silent_minutes: silentMinutes,
   });
-  return { ...current, healthChannelIds, silentMinutes };
+  return { ...current, healthChannelIds, silentEnabled, silentMinutes };
 }
 
 async function writeRow(
   organizationId: string,
   projectId: string,
-  values: { health_channel_ids?: string[]; silent_minutes?: number; mutes?: ProjectHealthMutes }
+  values: {
+    health_channel_ids?: string[];
+    silent_enabled?: boolean;
+    silent_minutes?: number;
+    mutes?: ProjectHealthMutes;
+  }
 ): Promise<void> {
   const insert = {
     project_id: projectId,
     organization_id: organizationId,
     ...(values.health_channel_ids !== undefined ? { health_channel_ids: values.health_channel_ids } : {}),
+    ...(values.silent_enabled !== undefined ? { silent_enabled: values.silent_enabled } : {}),
     ...(values.silent_minutes !== undefined ? { silent_minutes: values.silent_minutes } : {}),
     ...(values.mutes !== undefined ? { mutes: JSON.stringify(values.mutes) } : {}),
   };
   const update = {
     ...(values.health_channel_ids !== undefined ? { health_channel_ids: values.health_channel_ids } : {}),
+    ...(values.silent_enabled !== undefined ? { silent_enabled: values.silent_enabled } : {}),
     ...(values.silent_minutes !== undefined ? { silent_minutes: values.silent_minutes } : {}),
     ...(values.mutes !== undefined ? { mutes: JSON.stringify(values.mutes) } : {}),
     updated_at: new Date(),

@@ -1,5 +1,6 @@
 import { QueryTranslator, type NativeQuery } from '../../core/query-translator.js';
 import { GLOBAL_SCOPE } from '../../core/types.js';
+import { FACETS_SAMPLE_SIZE, FACETS_SCAN_LIMIT } from '../../core/constants.js';
 import type {
   AggregateParams,
   AggregationInterval,
@@ -179,21 +180,47 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
   }
 
   /**
-   * Top values per facet field in one pass over the filtered logs. Each log
+   * Top values per facet field over a bounded sample (big projects): the
+   * newest `scanLimit` logs of each project in the window, so each branch
+   * reads the (project_id, time) key in order and stops at the limit, then
+   * the filters, then the newest `sampleSize` of those. Each sampled log
    * becomes one `(field index, text value)` pair per field (the index is the
-   * position in `fields`, never user text); empty and missing values drop
-   * out. The window sum runs before LIMIT BY, so `total` counts every
-   * present value of the field, not only the returned ones.
+   * position in `fields`, never user text) plus a `(fields.length, '1')` pair
+   * that counts the sample; empty and missing values drop out. The window sum
+   * runs before LIMIT BY, so `total` counts every present value of the field.
    */
   translateFacets(params: LogFacetsParams, limit: number): NativeQuery {
-    const { prewhere, where, queryParams } = this.buildLogPredicates(params);
-    const pairs = params.fields.map((field, i) => `(${i}, ${this.facetValueExpr(field, i, queryParams)})`);
+    // Filters (and the window again) for the scanned rows; with GLOBAL_SCOPE
+    // the predicates carry no project condition and start with the window.
+    const { prewhere, where, queryParams } = this.buildLogPredicates({ ...params, projectId: GLOBAL_SCOPE });
+    const windowConds = prewhere.slice(0, 2);
+    const filters = [...prewhere.slice(2), ...where];
+    queryParams.p_scan = params.scanLimit ?? FACETS_SCAN_LIMIT;
+    queryParams.p_sample = params.sampleSize ?? FACETS_SAMPLE_SIZE;
     queryParams.p_limit = limit;
-    const prewhereClause = prewhere.length > 0 ? ` PREWHERE ${prewhere.join(' AND ')}` : '';
-    const whereClause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+
+    const order = 'ORDER BY time DESC, id DESC';
+    const projects = params.projectId === GLOBAL_SCOPE
+      ? [null]
+      : [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
+    if (params.projectId !== GLOBAL_SCOPE) this.validateArrayFilter('project_id', params.projectId);
+    const branches = projects.map((pid, i) => {
+      const scope = [...windowConds];
+      if (pid !== null) {
+        scope.unshift(`project_id = {p_fp${i}:String}`);
+        queryParams[`p_fp${i}`] = pid;
+      }
+      return `SELECT *, hostname FROM ${this.tableName} PREWHERE ${scope.join(' AND ')} ${order} LIMIT {p_scan:UInt64}`;
+    });
+    const scanned = branches.length === 1 ? branches[0] : branches.join(' UNION ALL ');
+    const sample =
+      `SELECT * FROM (${scanned})${filters.length > 0 ? ` WHERE ${filters.join(' AND ')}` : ''} ${order} LIMIT {p_sample:UInt64}`;
+
+    const pairs = params.fields.map((field, i) => `(${i}, ${this.facetValueExpr(field, i, queryParams)})`);
+    pairs.push(`(${params.fields.length}, toNullable('1'))`);
     const query =
       `SELECT kv.1 AS f, kv.2 AS v, count() AS cnt, sum(count()) OVER (PARTITION BY f) AS total` +
-      ` FROM (SELECT [${pairs.join(', ')}] AS kvs FROM ${this.tableName}${prewhereClause}${whereClause})` +
+      ` FROM (SELECT [${pairs.join(', ')}] AS kvs FROM (${sample}))` +
       ` ARRAY JOIN kvs AS kv` +
       ` WHERE v IS NOT NULL AND v != ''` +
       ` GROUP BY f, v ORDER BY f ASC, cnt DESC, v ASC LIMIT {p_limit:UInt32} BY f`;
@@ -226,6 +253,42 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     const prewhereClause = prewhere.length > 0 ? ` PREWHERE ${prewhere.join(' AND ')}` : '';
     const whereClause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
     const query = `SELECT intDiv(toUnixTimestamp64Milli(time), {p_bms:Int64}) * {p_bms:Int64} AS bucket_ms, level, count() AS n FROM ${this.tableName}${prewhereClause}${whereClause} GROUP BY bucket_ms, level`;
+    return { query, parameters: [queryParams] };
+  }
+
+  /**
+   * Log volume over whole minutes [minutes.from, minutes.to), written so the
+   * proj_minute_volume aggregate projection answers it: every condition is on
+   * a projection key (project_id, level, service, toStartOfMinute(time)), so
+   * ClickHouse reads one row per minute, project, level and service instead
+   * of the logs. Only for filters isVolumeOnlyFilter accepts. With
+   * `bucketMs` it returns histogram rows (bucket_ms, level, n), else one
+   * `count` row.
+   */
+  translateMinuteVolume(params: LogFilterParams, minutes: { from: Date; to: Date }, bucketMs?: number): NativeQuery {
+    const conditions: string[] = [];
+    const queryParams: Record<string, unknown> = {};
+    if (params.projectId !== GLOBAL_SCOPE) this.pushClickHouseFilter(conditions, queryParams, 'project_id', params.projectId);
+    if (params.service !== undefined) this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
+    if (params.level !== undefined) this.pushClickHouseFilter(conditions, queryParams, 'level', params.level);
+    for (const column of ['service', 'level'] as const) {
+      const values = params.exclude?.[column];
+      if (values === undefined || values.length === 0) continue;
+      conditions.push(`${column} NOT IN {p_ex_${column}:Array(String)}`);
+      queryParams[`p_ex_${column}`] = [...values];
+    }
+    conditions.push('toStartOfMinute(time) >= {p_mfrom:DateTime64(3)}', 'toStartOfMinute(time) < {p_mto:DateTime64(3)}');
+    queryParams.p_mfrom = toDateTime64(minutes.from);
+    queryParams.p_mto = toDateTime64(minutes.to);
+    const where = conditions.join(' AND ');
+    if (bucketMs === undefined) {
+      return { query: `SELECT count() AS count FROM ${this.tableName} WHERE ${where}`, parameters: [queryParams] };
+    }
+    queryParams.p_bms = bucketMs;
+    const query =
+      `SELECT intDiv(toUnixTimestamp(m) * 1000, {p_bms:Int64}) * {p_bms:Int64} AS bucket_ms, level, sum(c) AS n FROM (` +
+      `SELECT toStartOfMinute(time) AS m, level, count() AS c FROM ${this.tableName} WHERE ${where} GROUP BY m, level` +
+      `) GROUP BY bucket_ms, level`;
     return { query, parameters: [queryParams] };
   }
 

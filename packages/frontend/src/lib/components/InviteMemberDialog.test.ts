@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
 import InviteMemberDialog from './InviteMemberDialog.svelte';
 
@@ -13,18 +14,17 @@ describe('InviteMemberDialog', () => {
     expect(text).not.toContain('cannot manage team settings');
   });
 
-  it('only offers the Admin role to owners', () => {
+  it('only offers the Admin role to owners', async () => {
     const a = render(InviteMemberDialog, { props: { open: true, onSubmit: vi.fn(), inviterRole: 'admin' } });
-    expect(screen.queryByRole('option', { name: 'Admin' })).toBeNull();
-    expect(screen.getByRole('option', { name: 'Member' })).toBeInTheDocument();
+    expect(await openSelect(screen.getByLabelText('Role'))).toEqual(['Member']);
     a.unmount();
     render(InviteMemberDialog, { props: { open: true, onSubmit: vi.fn(), inviterRole: 'owner' } });
-    expect(screen.getByRole('option', { name: 'Admin' })).toBeInTheDocument();
+    expect(await openSelect(screen.getByLabelText('Role'))).toEqual(['Member', 'Admin']);
   });
 
   it('admin helper text is unchanged', async () => {
     render(InviteMemberDialog, { props: { open: true, onSubmit: vi.fn(), inviterRole: 'owner' } });
-    await fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'admin' } });
+    await chooseSelectOption(screen.getByLabelText('Role'), 'Admin');
     expect(document.body.textContent).toContain(
       'Admins can invite members, manage roles, and remove members (except the owner).'
     );

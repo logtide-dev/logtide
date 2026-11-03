@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import { onMount, onDestroy, untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -800,16 +801,13 @@
           </Label>
           <Switch id="traces-live-tail" bind:checked={liveTail} disabled={liveBlocked} />
           {#if liveTail}
-            <select
-              class="h-9 rounded-md border border-input bg-background px-2 text-sm max-md:ml-auto"
+            <SelectField
+              class="w-auto max-md:ml-auto"
               aria-label="Live tail limit"
               value={String(liveTailLimit)}
-              onchange={(e) => setLiveLimit(e.currentTarget.value)}
-            >
-              {#each [50, 100, 200, 500, 1000] as n (n)}
-                <option value={String(n)}>{n.toLocaleString('en-US')}</option>
-              {/each}
-            </select>
+              onValueChange={setLiveLimit}
+              options={[50, 100, 200, 500, 1000].map((n) => ({ value: String(n), label: n.toLocaleString('en-US') }))}
+            />
           {/if}
         </div>
       {/if}

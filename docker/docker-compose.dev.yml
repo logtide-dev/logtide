@@ -3,6 +3,9 @@ version: '3.8'
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
+    # Docker's 64 MB /dev/shm makes parallel queries and VACUUM fail
+    # ("could not resize shared memory segment"); this is a cap, not an allocation.
+    shm_size: 1gb
     container_name: logtide-postgres
     environment:
       POSTGRES_DB: ${DB_NAME:-logtide}
@@ -23,13 +26,16 @@ services:
   redis:
     image: redis:7-alpine
     container_name: logtide-redis
-    command: redis-server --requirepass ${REDIS_PASSWORD:-redisdev123}
+    # Password through the environment, not shell word splitting
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redisdev123}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\""]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "sh", "-c", "redis-cli -a ${REDIS_PASSWORD:-redisdev123} ping | grep -q PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5

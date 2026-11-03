@@ -4,14 +4,18 @@ import { createRawSnippet } from 'svelte';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const { goto, getCurrentUser, pageState } = vi.hoisted(() => ({
+const { goto, getCurrentUser, getAuthConfig, pageState, extList } = vi.hoisted(() => ({
   goto: vi.fn(),
   getCurrentUser: vi.fn(),
+  getAuthConfig: vi.fn(),
   pageState: { url: { pathname: '/dashboard/admin' } },
+  extList: [] as unknown[],
 }));
 
 vi.mock('$app/navigation', () => ({ goto }));
 vi.mock('$app/state', () => ({ page: pageState }));
+vi.mock('$lib/extensions/index', () => ({ extensions: extList }));
+vi.mock('$lib/api/auth', () => ({ authAPI: { getAuthConfig } }));
 vi.mock('$lib/api/users', () => ({
   UsersAPI: class {
     getCurrentUser = getCurrentUser;
@@ -20,6 +24,8 @@ vi.mock('$lib/api/users', () => ({
 
 import Layout from './+layout.svelte';
 import { authStore } from '$lib/stores/auth';
+import Box from '@lucide/svelte/icons/box';
+import type { FrontendExtension } from '$lib/extensions/types';
 
 const child = createRawSnippet(() => ({ render: () => '<div data-testid="child">child</div>' }));
 
@@ -38,6 +44,9 @@ describe('admin layout guard', () => {
   beforeEach(() => {
     goto.mockReset();
     getCurrentUser.mockReset();
+    getAuthConfig.mockReset();
+    getAuthConfig.mockResolvedValue({ authMode: 'standard', signupEnabled: true });
+    extList.splice(0, extList.length);
     pageState.url.pathname = '/dashboard/admin';
     localStorage.clear();
   });
@@ -111,5 +120,56 @@ describe('admin layout guard', () => {
   it('the file named +layout@.svelte no longer exists', () => {
     expect(existsSync(resolve(__dirname, '+layout@.svelte'))).toBe(false);
     expect(existsSync(resolve(__dirname, '+layout.svelte'))).toBe(true);
+  });
+
+  describe('extension admin pages', () => {
+    const fxAdmin: FrontendExtension = {
+      name: 'fx',
+      isEnabled: (c) => c.extensions?.fx?.enabled === true,
+      adminNav: [{ id: 'revenue', label: 'Revenue', href: '/dashboard/admin/ext/fx/revenue', icon: Box }],
+    };
+    const enabled = { authMode: 'standard', signupEnabled: true, extensions: { fx: { enabled: true } } };
+
+    it('renders the core groups only when no extension is registered', async () => {
+      setAuth('t', true);
+      render(Layout, { children: child });
+      await waitFor(() => expect(screen.getByTestId('child')).toBeTruthy());
+      expect(getAuthConfig).not.toHaveBeenCalled();
+      expect(screen.queryByText('Cloud')).toBeNull();
+      expect(screen.getByText('Instance')).toBeTruthy();
+      expect(screen.getByText('Manage')).toBeTruthy();
+    });
+
+    it('renders extension items in a Cloud group once the auth config resolves', async () => {
+      extList.push(fxAdmin);
+      getAuthConfig.mockResolvedValue(enabled);
+      setAuth('t', true);
+      render(Layout, { children: child });
+      await waitFor(() => expect(screen.getAllByRole('link', { name: 'Revenue' }).length).toBeGreaterThan(0));
+      for (const l of screen.getAllByRole('link', { name: 'Revenue' })) {
+        expect(l.getAttribute('href')).toBe('/dashboard/admin/ext/fx/revenue');
+      }
+      expect(screen.getByText('Cloud')).toBeTruthy();
+    });
+
+    it('the extension group never renders before the admin guard resolves', async () => {
+      extList.push(fxAdmin);
+      getAuthConfig.mockResolvedValue(enabled);
+      setAuth('t', false);
+      render(Layout, { children: child });
+      await waitFor(() => expect(goto).toHaveBeenCalledWith('/dashboard'));
+      expect(getAuthConfig).not.toHaveBeenCalled();
+      expect(screen.queryByRole('link', { name: 'Revenue' })).toBeNull();
+    });
+
+    it('a failing auth config keeps the core groups', async () => {
+      extList.push(fxAdmin);
+      getAuthConfig.mockRejectedValue(new Error('down'));
+      setAuth('t', true);
+      render(Layout, { children: child });
+      await waitFor(() => expect(getAuthConfig).toHaveBeenCalled());
+      expect(screen.queryByText('Cloud')).toBeNull();
+      expect(screen.getAllByRole('link', { name: 'All users' }).length).toBeGreaterThan(0);
+    });
   });
 });

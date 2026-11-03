@@ -7,6 +7,7 @@ import { currentOrNull } from '@logtide/shared/context';
 import { formatContextComment } from '../context/kysely-plugin.js';
 import { TenantScopeGuardPlugin } from './tenant-scope-guard.js';
 import { loadTestEnv } from '../config/load-test-env.js';
+import { applyConnectionUrls } from '../config/connection-urls.js';
 
 const { Pool } = pg;
 
@@ -16,6 +17,8 @@ if (process.env.NODE_ENV === 'test') {
   const __dirname = path.dirname(__filename);
   loadTestEnv(path.resolve(__dirname, '../../.env.test'));
 }
+
+applyConnectionUrls();
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://localhost:5432/logtide';
 
@@ -31,7 +34,8 @@ try {
 } catch {
   throw new Error(
     'DATABASE_URL is not a valid URL. If the database password contains characters such as # % @ / ? : ' +
-      'percent-encode it in DATABASE_URL (e.g. # -> %23, % -> %25) or use a password without them.'
+      'percent-encode it in DATABASE_URL (e.g. # -> %23, % -> %25), or set DB_HOST, DB_USER, DB_PASSWORD ' +
+      'and DB_NAME instead of DATABASE_URL so the password is encoded for you.'
   );
 }
 if (parsedDatabaseUrl.password) parsedDatabaseUrl.password = '****';

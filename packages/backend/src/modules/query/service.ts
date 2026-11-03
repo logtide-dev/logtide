@@ -8,6 +8,9 @@ import { hooks } from '../../hooks/index.js';
 import { context } from '@logtide/shared/context';
 import { buildLogFilter, type SearchMode } from './build-log-filter.js';
 import { MAX_HISTOGRAM_BUCKETS } from '@logtide/reservoir';
+import { STORAGE_ENGINE } from '../../database/storage-config.js';
+import { aggregateCanAnswer, countFromAggregate, histogramFromAggregate } from './log-volume.js';
+import { startOfUtcDay } from '../../utils/time-buckets.js';
 import {
   ExplorerParamError,
   histogramBucketCount,
@@ -66,6 +69,8 @@ export type { LogHistogramResponse };
 
 export interface LogFacetsResponse {
   facets: { field: string; values: { value: string; count: number }[]; otherCount: number }[];
+  /** Logs the facets were counted over (the newest matching ones on big projects). */
+  sampleSize: number;
 }
 
 export interface LogFieldsResponse {
@@ -235,8 +240,11 @@ export class QueryService {
     const cached = await CacheManager.get<{ count: number }>(cacheKey);
     if (cached && typeof cached.count === 'number') return { count: cached.count };
 
-    const result = await reservoir.count(filter);
-    const value = { count: result.count };
+    // TimescaleDB: whole minutes from the per-minute aggregate (log-volume.ts).
+    const count = STORAGE_ENGINE === 'timescale' && aggregateCanAnswer(filter)
+      ? await countFromAggregate(db, reservoir, filter)
+      : (await reservoir.count(filter)).count;
+    const value = { count };
     await CacheManager.set(cacheKey, value, CACHE_TTL.QUERY);
     return value;
   }
@@ -278,7 +286,10 @@ export class QueryService {
       };
     }
 
-    const result = await reservoir.histogram({ ...filter, bucketSeconds });
+    // TimescaleDB: whole minutes from the per-minute aggregate (log-volume.ts).
+    const result = STORAGE_ENGINE === 'timescale' && bucketSeconds % 60 === 0 && aggregateCanAnswer(filter)
+      ? await histogramFromAggregate(db, reservoir, filter, bucketSeconds)
+      : await reservoir.histogram({ ...filter, bucketSeconds });
     const response: LogHistogramResponse = {
       buckets: result.buckets,
       bucketSeconds: result.bucketSeconds,
@@ -300,7 +311,7 @@ export class QueryService {
   async getFacets(params: LogQueryParams & { fields: FacetFieldRequest[]; limit: number }): Promise<LogFacetsResponse> {
     const { fields, limit, ...rest } = params;
     const { filter } = await this.prepare(rest);
-    if (fields.length === 0) return { facets: [] };
+    if (fields.length === 0) return { facets: [], sampleSize: 0 };
 
     const cacheKey = CacheManager.queryKey(cacheProjectPart(filter.projectId), {
       kind: 'facets',
@@ -309,7 +320,7 @@ export class QueryService {
       limit,
     });
     const cached = await CacheManager.get<LogFacetsResponse>(cacheKey);
-    if (cached && Array.isArray(cached.facets)) return cached;
+    if (cached && Array.isArray(cached.facets) && typeof cached.sampleSize === 'number') return cached;
 
     const result = await reservoir.facets({ ...filter, fields: fields.map((f) => f.field), limit });
     // The reservoir labels fields 'level' | 'service' | 'hostname' | 'metadata.<key>'.
@@ -322,6 +333,7 @@ export class QueryService {
         values: facet.values,
         otherCount: facet.otherCount,
       })),
+      sampleSize: result.sampleSize,
     };
     await CacheManager.set(cacheKey, response, CACHE_TTL.QUERY);
     return response;
@@ -548,10 +560,11 @@ export class QueryService {
       if (reservoir.getEngineType() !== 'timescale') throw new Error('skip aggregate');
 
       // Fast path: use continuous aggregate (TimescaleDB only). Split the window
-      // at oneDayAgo: the historical part comes from logs_daily_stats, the recent
-      // part from raw data. Both halves must honor the requested [from, to] bounds.
+      // at the start of the current UTC day: whole days come from
+      // logs_daily_stats (real-time, see migration 076), today from raw data.
+      // Both halves must honor the requested [from, to] bounds.
       const { sql } = await import('kysely');
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const oneDayAgo = startOfUtcDay(new Date());
       const toDate = to ?? new Date();
 
       // Historical upper bound is min(oneDayAgo, to); recent lower bound is
@@ -648,8 +661,8 @@ export class QueryService {
     try {
       if (reservoir.getEngineType() !== 'timescale') throw new Error('skip aggregate');
 
-      // Fast path: combine aggregate (historical) + reservoir distinct (recent)
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      // Fast path: combine aggregate (whole days) + reservoir distinct (today)
+      const oneDayAgo = startOfUtcDay(new Date());
       const projectFilter = Array.isArray(projectId) ? projectId : [projectId];
 
       const [aggResults, recentResults] = await Promise.all([

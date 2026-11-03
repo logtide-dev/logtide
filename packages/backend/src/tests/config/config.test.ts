@@ -142,7 +142,7 @@ describe('Config Validation', () => {
       if (!result.success) {
         const formatted = formatConfigError(result.error);
         expect(formatted).toContain('DATABASE_URL');
-        expect(formatted).toContain('DB_USER, DB_PASSWORD, and DB_NAME');
+        expect(formatted).toContain('or DB_HOST, DB_USER, DB_PASSWORD and DB_NAME');
       }
     });
 

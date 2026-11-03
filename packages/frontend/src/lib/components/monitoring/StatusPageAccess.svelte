@@ -6,6 +6,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import { SelectField } from '$lib/components/ui/select';
 
   interface Props {
     orgId: string;
@@ -94,17 +95,14 @@
 
   <div class="flex flex-wrap items-center gap-3">
     <Label for="sp-visibility">Visibility</Label>
-    <select
+    <SelectField
       id="sp-visibility"
       value={project.statusPageVisibility}
+      options={VISIBILITY_OPTIONS}
       disabled={saving || disabled}
-      onchange={(e) => updateVisibility((e.currentTarget as HTMLSelectElement).value)}
-      class="h-9 w-48 rounded-md border border-input bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-    >
-      {#each VISIBILITY_OPTIONS as opt (opt.value)}
-        <option value={opt.value}>{opt.label}</option>
-      {/each}
-    </select>
+      onValueChange={updateVisibility}
+      class="w-48"
+    />
   </div>
 
   {#if project.statusPageVisibility === 'password'}

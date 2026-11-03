@@ -1,3 +1,4 @@
+import { GLOBAL_SCOPE } from '../../core/types.js';
 import { describe, it, expect } from 'vitest';
 import { assembleFacets, histogramRowsToResult } from './log-analytics.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
@@ -150,20 +151,40 @@ describe('translateFacets', () => {
     exclude: { service: ['worker'] },
   };
 
-  it('counts every field in one pass over the shared log filter', () => {
+  it('counts every field in one pass over the shared log filter, on a capped scan of the window', () => {
     const r = translator.translateFacets(base, 10);
     const sql = r.query as string;
-    const shared = translator.buildLogConditions(base, 1);
-    expect(sql).toContain(`WITH base AS (SELECT level, service, metadata FROM public.logs WHERE ${shared.conditions.join(' AND ')})`);
+    // The window: an index scan on the project, stopped at scanLimit.
+    expect(sql).toContain(
+      'WITH scanned AS (SELECT * FROM public.logs WHERE project_id = $4 AND time >= $1 AND time <= $2 ORDER BY time DESC, id DESC LIMIT $3)',
+    );
     expect(sql.match(/FROM public\.logs/g)).toHaveLength(1);
-    expect(sql).toContain('CROSS JOIN LATERAL (VALUES (0, level), (1, metadata->>\'hostname\'), (2, ');
-    expect(r.parameters?.slice(0, shared.values.length)).toEqual(shared.values);
+    // Then the shared log filter (window included), then the newest sampleSize.
+    const shared = translator.buildLogConditions({ ...base, projectId: GLOBAL_SCOPE }, 5);
+    expect(sql).toContain(`base AS (SELECT level, service, metadata FROM scanned WHERE ${shared.conditions.join(' AND ')} ORDER BY time DESC, id DESC LIMIT $${5 + shared.values.length})`);
+    expect(r.parameters?.slice(0, 4)).toEqual([base.from, base.to, 2_000_000, base.projectId]);
+    expect(r.parameters?.slice(4, 4 + shared.values.length)).toEqual(shared.values);
+    expect(r.parameters?.[4 + shared.values.length]).toBe(100_000);
+    expect(sql).toContain("CROSS JOIN LATERAL (VALUES (0, level), (1, metadata->>'hostname'), (2, ");
+    expect(sql).toContain(", (4, '1')) AS kv(f, v)");
+  });
+
+  it('several projects merge one capped index scan each (scanLimit per project)', () => {
+    const r = translator.translateFacets({ ...base, projectId: ['p1', 'p2'], scanLimit: 50, sampleSize: 7 }, 10);
+    const sql = r.query as string;
+    expect(sql).toContain(
+      'WITH scanned AS (SELECT * FROM ((SELECT * FROM public.logs WHERE project_id = $4 AND time >= $1 AND time <= $2 ORDER BY time DESC, id DESC LIMIT $3) UNION ALL ' +
+        '(SELECT * FROM public.logs WHERE project_id = $5 AND time >= $1 AND time <= $2 ORDER BY time DESC, id DESC LIMIT $3)) u)',
+    );
+    expect(sql).not.toContain('ANY(');
+    expect(r.parameters?.slice(0, 5)).toEqual([base.from, base.to, 50, 'p1', 'p2']);
+    expect(r.parameters).toContain(7);
   });
 
   it('binds metadata keys and dotted paths, never interpolates them', () => {
     const r = translator.translateFacets(base, 10);
     const sql = r.query as string;
-    const n = translator.buildLogConditions(base, 1).values.length;
+    const n = 4 + translator.buildLogConditions({ ...base, projectId: GLOBAL_SCOPE }, 5).values.length + 1;
     expect(r.parameters?.slice(n)).toEqual([['http.method', 'http', 'method'], 'region', 10]);
     expect(sql).not.toContain('http.method');
     expect(sql).not.toContain("'region'");

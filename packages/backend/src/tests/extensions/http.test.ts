@@ -118,6 +118,55 @@ describe('extension http surface', () => {
     });
   });
 
+  describe('requireInstanceAdmin', () => {
+    const url = '/api/v1/ext/fixture/admin-only';
+
+    async function adminSession() {
+      const admin = await createTestUser({ email: uniqueEmail('admin') });
+      await db.updateTable('users').set({ is_admin: true }).where('id', '=', admin.id).execute();
+      return { admin, token: (await createTestSession(admin.id)).token };
+    }
+
+    it('401 without a session', async () => {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('403 forbidden for a non admin user', async () => {
+      const res = await app.inject({ method: 'GET', url, headers: bearer(ownerToken) });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toEqual({ error: 'forbidden' });
+    });
+
+    it('200 with extAdmin for an admin', async () => {
+      const { admin, token } = await adminSession();
+      const res = await app.inject({ method: 'GET', url, headers: bearer(token) });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ userId: admin.id, email: admin.email });
+    });
+
+    it('403 after is_admin is revoked on a live session', async () => {
+      const { admin, token } = await adminSession();
+      expect((await app.inject({ method: 'GET', url, headers: bearer(token) })).statusCode).toBe(200);
+      await db.updateTable('users').set({ is_admin: false }).where('id', '=', admin.id).execute();
+      const res = await app.inject({ method: 'GET', url, headers: bearer(token) });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('401 or 403 for a disabled admin', async () => {
+      const { admin, token } = await adminSession();
+      await db.updateTable('users').set({ disabled: true }).where('id', '=', admin.id).execute();
+      const res = await app.inject({ method: 'GET', url, headers: bearer(token) });
+      expect([401, 403]).toContain(res.statusCode);
+    });
+
+    it('the core build without extensions has no such route', async () => {
+      const { token } = await adminSession();
+      const res = await plain.inject({ method: 'GET', url, headers: bearer(token) });
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
   describe('public route with a raw-buffer JSON parser', () => {
     it('POST without credentials reaches the handler with a Buffer body', async () => {
       const payload = JSON.stringify({ id: 'evt_1', type: 'test' });

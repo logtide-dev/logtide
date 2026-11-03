@@ -100,6 +100,10 @@ export interface IReservoir {
   // Spans & traces
   ingestSpans(spans: SpanRecord[]): Promise<IngestSpansResult>;
   upsertTrace(trace: TraceRecord): Promise<void>;
+  /** Merge partial trace summaries in one write (see StorageEngine.upsertTraces). */
+  upsertTraces(traces: TraceRecord[]): Promise<void>;
+  /** See StorageEngine.refreshLogVolume. */
+  refreshLogVolume(): Promise<void>;
   querySpans(params: SpanQueryParams): Promise<SpanQueryResult>;
   getSpansByTraceId(traceId: string, projectId: string): Promise<SpanRecord[]>;
   queryTraces(params: TraceQueryParams): Promise<TraceQueryResult>;

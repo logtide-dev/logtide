@@ -5,6 +5,7 @@
   import ProjectSelect from '../pickers/ProjectSelect.svelte';
   import SuggestInput from '../pickers/SuggestInput.svelte';
   import {
+    createMetadataKeyOptions,
     createServiceOptions,
     keepServiceForProject,
   } from '../pickers/options-state.svelte';
@@ -25,6 +26,9 @@
   let { config, onChange }: Props = $props();
 
   const services = createServiceOptions('logs', () => config.projectId);
+  const metadataKeys = createMetadataKeyOptions(() => config.projectId);
+  // Same charset the server accepts for the IP field
+  const IP_FIELD_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/;
 
   // Keep the selected service when the new project offers it, drop it otherwise.
   async function handleProjectChange(projectId: string | null) {
@@ -142,6 +146,25 @@
       />
     </div>
   {/if}
+
+  <div class="space-y-1.5">
+    <Label for="geomap-ip-field">Client IP field (optional)</Label>
+    <SuggestInput
+      id="geomap-ip-field"
+      value={config.ipField ?? ''}
+      options={metadataKeys.list}
+      loading={metadataKeys.loading}
+      onChange={(v) => {
+        const trimmed = v.trim();
+        if (trimmed === '') update('ipField', null);
+        else if (IP_FIELD_PATTERN.test(trimmed)) update('ipField', trimmed);
+      }}
+    />
+    <p class="text-xs text-muted-foreground">
+      The metadata field with the client IP, located with the GeoLite2 database. Empty: the GeoIP
+      pipeline fields when logs have them, otherwise a field such as client_ip, ip or remote_addr.
+    </p>
+  </div>
 
   <div class="space-y-1.5">
     <Label for="geomap-prefix">Geo field prefix</Label>

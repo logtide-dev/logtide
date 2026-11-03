@@ -134,6 +134,8 @@ import {
   traceOrderSql,
   type EntryMode,
 } from './apm-queries.js';
+import { ensureAggregatingTracesTable } from './traces-table.js';
+import { isVolumeOnlyFilter, splitWholeMinutes } from '../../core/log-volume.js';
 import type { NativeQuery } from '../../core/query-translator.js';
 
 export interface ClickHouseEngineOptions {
@@ -346,6 +348,26 @@ export class ClickHouseEngine extends StorageEngine {
       // projection may already exist
     }
 
+    // Aggregate projection of the log volume per minute, project, level and
+    // service: histograms and counts of volume-only filters read it instead
+    // of the logs (0.02 s instead of 0.8 s over 36 million logs). ClickHouse
+    // keeps it inside every part, so inserts, merges and ALTER DELETE
+    // mutations (retention) keep it exact. The one-time MATERIALIZE of the
+    // existing parts runs in the background; parts without it are read as
+    // logs meanwhile, with the same result.
+    try {
+      if (!(await this.chObjectExists('projection', t, 'proj_minute_volume'))) {
+        await this.runCommand({
+          query: `ALTER TABLE ${t} ADD PROJECTION IF NOT EXISTS proj_minute_volume (SELECT project_id, toStartOfMinute(time), level, service, count() GROUP BY project_id, toStartOfMinute(time), level, service)`,
+        });
+        await this.runCommand({
+          query: `ALTER TABLE ${t} MATERIALIZE PROJECTION proj_minute_volume`,
+        });
+      }
+    } catch {
+      // projection may already exist
+    }
+
     // Materialized column for hostname - extracted from metadata JSON once at ingest time.
     // Eliminates JSONExtractString() calls on every DISTINCT/filter query row.
     // Gate the explicit MATERIALIZE so the one-time backfill of existing parts runs
@@ -419,28 +441,29 @@ export class ClickHouseEngine extends StorageEngine {
       }
     } catch { /* projection may already exist */ }
 
-    // Traces table (ReplacingMergeTree for upsert semantics)
-    await this.runCommand({
-      query: `
-        CREATE TABLE IF NOT EXISTS traces (
-          trace_id String NOT NULL,
-          organization_id Nullable(String) DEFAULT NULL,
-          project_id String NOT NULL,
-          service_name LowCardinality(String) NOT NULL,
-          root_service_name Nullable(String) DEFAULT NULL,
-          root_operation_name Nullable(String) DEFAULT NULL,
-          start_time DateTime64(3) NOT NULL,
-          end_time DateTime64(3) NOT NULL,
-          duration_ms UInt32 NOT NULL,
-          span_count UInt32 NOT NULL,
-          error UInt8 DEFAULT 0,
-          updated_at DateTime DEFAULT now()
-        )
-        ENGINE = ReplacingMergeTree(updated_at)
-        ORDER BY (project_id, trace_id)
-        SETTINGS index_granularity = 8192
-      `,
+    // Traces table: AggregatingMergeTree of partial summaries (issue #309),
+    // migrated once from the pre-1.6.1 ReplacingMergeTree under a lock.
+    // Its own client: the copy and its check scan the whole table, so they get
+    // no request timeout, no thread cap and no async insert.
+    const migrationClient = createClient({
+      url: `http://${this.config.host}:${this.config.port}`,
+      username: this.config.username,
+      password: this.config.password,
+      database: this.config.database,
+      request_timeout: 6 * 60 * 60 * 1000,
+      clickhouse_settings: { max_execution_time: 0, send_progress_in_http_headers: 1, http_headers_progress_interval_ms: '10000' },
     });
+    try {
+      await ensureAggregatingTracesTable({
+        command: async (query) => { await migrationClient.command({ query }); },
+        rows: async <T>(query: string, params?: Record<string, unknown>) => {
+          const rs = await migrationClient.query({ query, query_params: params, format: 'JSONEachRow' });
+          return (await rs.json()) as T[];
+        },
+      });
+    } finally {
+      await migrationClient.close();
+    }
 
     // Metrics table
     await this.runCommand({
@@ -733,6 +756,16 @@ export class ClickHouseEngine extends StorageEngine {
 
   async count(params: CountParams): Promise<CountResult> {
     const start = Date.now();
+    if (isVolumeOnlyFilter(params)) {
+      const split = splitWholeMinutes(params);
+      if (split.minutes) {
+        const counts = await Promise.all([
+          this.runCountQuery(this.translator.translateMinuteVolume(params, split.minutes)),
+          ...split.edges.map((edge) => this.runCountQuery(this.translator.translateCount({ ...params, ...edge }))),
+        ]);
+        return { count: counts.reduce((sum, n) => sum + n, 0), executionTimeMs: Date.now() - start };
+      }
+    }
     const native = this.translator.translateCount(params);
     const resultSet = await this.runQuery({
       query: native.query as string,
@@ -745,6 +778,28 @@ export class ClickHouseEngine extends StorageEngine {
       count: Number(rows[0]?.count ?? 0),
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  /** JSONEachRow rows of a translated analytics read, under the analytics time limit. */
+  private async runAnalyticsRows(native: NativeQuery, op: string): Promise<Record<string, unknown>[]> {
+    const resultSet = await this.runQuery({
+      query: native.query as string,
+      query_params: (native.parameters as Record<string, unknown>[])[0],
+      format: 'JSONEachRow',
+      ...this.analyticsSettings(),
+    }, op);
+    return (await resultSet.json()) as Record<string, unknown>[];
+  }
+
+  private async runCountQuery(native: NativeQuery): Promise<number> {
+    const resultSet = await this.runQuery({
+      query: native.query as string,
+      query_params: (native.parameters as Record<string, unknown>[])[0],
+      format: 'JSONEachRow',
+      ...this.analyticsSettings(),
+    }, 'count');
+    const rows = await resultSet.json() as Record<string, unknown>[];
+    return Number(rows[0]?.count ?? 0);
   }
 
   async countEstimate(params: CountParams): Promise<CountResult> {
@@ -762,6 +817,18 @@ export class ClickHouseEngine extends StorageEngine {
     // Validate (bucket size, bucket count, time range) before any query; the
     // client already did, but the engine may be called directly.
     const normalized = normalizeHistogramParams(params);
+    // Volume-only filters with minute-multiple buckets: whole minutes from
+    // the proj_minute_volume projection, the partial edge minutes as logs.
+    if (normalized.bucketSeconds % 60 === 0 && isVolumeOnlyFilter(normalized)) {
+      const split = splitWholeMinutes(normalized);
+      if (split.minutes) {
+        const parts = await Promise.all([
+          this.runAnalyticsRows(this.translator.translateMinuteVolume(normalized, split.minutes, normalized.bucketSeconds * 1000), 'histogram'),
+          ...split.edges.map((edge) => this.runAnalyticsRows(this.translator.translateHistogram({ ...normalized, ...edge }), 'histogram')),
+        ]);
+        return assembleHistogram(normalized, parts.flat());
+      }
+    }
     const native = this.translator.translateHistogram(normalized);
     const resultSet = await this.runQuery(
       {
@@ -1050,56 +1117,30 @@ export class ClickHouseEngine extends StorageEngine {
     }
   }
 
-  async upsertTrace(trace: TraceRecord): Promise<void> {
-    // Recompute the trace summary directly from the spans table (the source of
-    // truth) instead of read-modify-writing the existing traces row. The old
-    // approach (SELECT existing -> existing.span_count + delta -> INSERT) lost
-    // concurrent increments under a race. Aggregating from spans is idempotent and
-    // race-free: spans are always inserted before the upsert, so whichever upsert
-    // runs last writes the correct totals. The ReplacingMergeTree then keeps that
-    // latest (correct) row. Falls back to the payload when no spans are present.
-    const resultSet = await this.runQuery({
-      query: `SELECT count() AS span_count,
-                     min(start_time) AS start_time,
-                     max(end_time) AS end_time,
-                     max(status_code = 'ERROR') AS error
-              FROM spans
-              WHERE trace_id = {traceId:String} AND project_id = {projectId:String}`,
-      query_params: { traceId: trace.traceId, projectId: trace.projectId },
-      format: 'JSONEachRow',
-    });
-    const agg = (await resultSet.json<{
-      span_count: number;
-      start_time: string;
-      end_time: string;
-      error: number;
-    }>())[0];
-
-    const haveSpans = agg && Number(agg.span_count) > 0;
-    const startTime = haveSpans ? parseClickHouseTime(agg.start_time) : trace.startTime;
-    const endTime = haveSpans ? parseClickHouseTime(agg.end_time) : trace.endTime;
-    const spanCount = haveSpans ? Number(agg.span_count) : trace.spanCount;
-    const error = haveSpans ? !!agg.error : trace.error;
-
-    const durationMs = endTime.getTime() - startTime.getTime();
-
+  async upsertTraces(traces: TraceRecord[]): Promise<void> {
+    if (traces.length === 0) return;
+    // One insert of partial summaries; the AggregatingMergeTree merges rows of
+    // the same trace (sum, min, max, anyLast ignoring NULL) and reads use
+    // FINAL. Nothing is read first, so the result does not depend on whether
+    // the spans of the batch have landed yet (async buffer) or on concurrent
+    // batches of the same trace. Root names stay NULL when the batch did not
+    // carry the root span, which anyLast skips.
     await this.runInsert({
       table: 'traces',
-      values: [{
+      values: traces.map((trace) => ({
         trace_id: trace.traceId,
         organization_id: trace.organizationId ?? null,
         project_id: trace.projectId,
         service_name: trace.serviceName,
         root_service_name: trace.rootServiceName ?? null,
         root_operation_name: trace.rootOperationName ?? null,
-        start_time: startTime.getTime(),
-        end_time: endTime.getTime(),
-        duration_ms: durationMs,
-        span_count: spanCount,
-        error: error ? 1 : 0,
-      }],
+        start_time: trace.startTime.getTime(),
+        end_time: trace.endTime.getTime(),
+        span_count: trace.spanCount,
+        error: trace.error ? 1 : 0,
+      })),
       format: 'JSONEachRow',
-    }, 'upsert-trace');
+    }, 'upsert-traces');
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
@@ -1188,7 +1229,8 @@ export class ClickHouseEngine extends StorageEngine {
     const queryParams: Record<string, unknown> = {};
     const where = `WHERE ${buildTraceConditions(params, queryParams).join(' AND ')}`;
 
-    // Use FINAL to get deduplicated rows from ReplacingMergeTree
+    // FINAL merges the partial summaries before WHERE runs; duration_ms is an
+    // ALIAS (not part of *) computed from the merged window.
     const countResult = await this.runQuery({
       query: `SELECT count() AS count FROM traces FINAL ${where}`,
       query_params: queryParams,
@@ -1197,7 +1239,7 @@ export class ClickHouseEngine extends StorageEngine {
     const total = Number((await countResult.json<{ count: string }>())[0]?.count ?? 0);
 
     const resultSet = await this.runQuery({
-      query: `SELECT * FROM traces FINAL ${where} ${traceOrderSql(params)} LIMIT {p_limit:UInt32} OFFSET {p_offset:UInt32}`,
+      query: `SELECT *, duration_ms FROM traces FINAL ${where} ${traceOrderSql(params)} LIMIT {p_limit:UInt32} OFFSET {p_offset:UInt32}`,
       query_params: { ...queryParams, p_limit: limit, p_offset: offset },
       format: 'JSONEachRow',
     });
@@ -1215,7 +1257,7 @@ export class ClickHouseEngine extends StorageEngine {
 
   async getTraceById(traceId: string, projectId: string): Promise<TraceRecord | null> {
     const resultSet = await this.runQuery({
-      query: `SELECT * FROM traces FINAL WHERE trace_id = {traceId:String} AND project_id = {projectId:String}`,
+      query: `SELECT *, duration_ms FROM traces FINAL WHERE trace_id = {traceId:String} AND project_id = {projectId:String}`,
       query_params: { traceId, projectId },
       format: 'JSONEachRow',
     });
@@ -1230,7 +1272,7 @@ export class ClickHouseEngine extends StorageEngine {
     if (to) { conditions.push('start_time <= {p_to:DateTime64(3)}'); queryParams.p_to = toDateTime64(to); }
 
     const resultSet = await this.runQuery({
-      query: `SELECT DISTINCT service_name FROM traces WHERE ${conditions.join(' AND ')} ORDER BY service_name`,
+      query: `SELECT DISTINCT service_name FROM traces FINAL WHERE ${conditions.join(' AND ')} ORDER BY service_name`,
       query_params: queryParams,
       format: 'JSONEachRow',
     });

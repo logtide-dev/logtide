@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 import Harness from './DataTable.harness.svelte';
 
 const rows = [
@@ -51,13 +52,13 @@ describe('DataTable on phones', () => {
 
   it('moves sorting to a select over the sortable columns', async () => {
     render(Harness, { rows, withMobileRow: true });
-    const select = screen.getByRole('combobox', { name: 'Sort by' });
-    expect([...select.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+    const select = screen.getByLabelText('Sort by');
+    expect(await openSelect(select)).toEqual([
       'Default',
       'Name, ascending',
       'Name, descending',
     ]);
-    await fireEvent.change(select, { target: { value: 'name:desc' } });
+    await chooseSelectOption(select, 'Name, descending');
     expect(state().sort).toEqual({ key: 'name', dir: 'desc' });
   });
 

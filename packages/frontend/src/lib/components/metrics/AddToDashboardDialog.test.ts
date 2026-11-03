@@ -12,6 +12,7 @@ vi.mock('$lib/api/metrics', () => ({
 }));
 vi.mock('svelte-sonner', () => ({ toast }));
 
+import { chooseSelectOption } from '$lib/test-utils/select-field';
 import AddToDashboardDialog from './AddToDashboardDialog.svelte';
 import { DEFAULT_QUERY } from '$lib/utils/metrics-query';
 
@@ -37,8 +38,8 @@ function open(query = {}) {
 describe('AddToDashboardDialog', () => {
   it('lists dashboards and calls addMetricPanelToDashboard with resolved config', async () => {
     open();
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Ops' })).toBeInTheDocument());
-    await fireEvent.change(screen.getByLabelText('Dashboard'), { target: { value: 'd2' } });
+    await waitFor(() => expect(screen.getByLabelText('Dashboard')).not.toBeDisabled());
+    await chooseSelectOption(screen.getByLabelText('Dashboard'), 'Perf');
     await fireEvent.click(screen.getByRole('button', { name: 'Add panel' }));
     await waitFor(() => expect(add).toHaveBeenCalledTimes(1));
     const arg = add.mock.calls[0][0];
@@ -63,17 +64,17 @@ describe('AddToDashboardDialog', () => {
 
   it('disables confirm until a dashboard is chosen', async () => {
     open();
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Ops' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText('Dashboard')).not.toBeDisabled());
     expect(screen.getByRole('button', { name: 'Add panel' })).toBeDisabled();
-    await fireEvent.change(screen.getByLabelText('Dashboard'), { target: { value: 'd1' } });
+    await chooseSelectOption(screen.getByLabelText('Dashboard'), 'Ops');
     expect(screen.getByRole('button', { name: 'Add panel' })).not.toBeDisabled();
   });
 
   it('shows an error toast and keeps the dialog open when saving fails', async () => {
     add.mockRejectedValue(new Error('boom'));
     open();
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Ops' })).toBeInTheDocument());
-    await fireEvent.change(screen.getByLabelText('Dashboard'), { target: { value: 'd1' } });
+    await waitFor(() => expect(screen.getByLabelText('Dashboard')).not.toBeDisabled());
+    await chooseSelectOption(screen.getByLabelText('Dashboard'), 'Ops');
     await fireEvent.click(screen.getByRole('button', { name: 'Add panel' }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('boom'));
     expect(screen.getByRole('button', { name: 'Add panel' })).toBeInTheDocument();

@@ -28,6 +28,7 @@ function setup(props: Partial<{
   pinnedKeys: string[];
   candidateKeys: string[];
   collapsed: boolean;
+  sampleNote: string | null;
 }> = {}) {
   const onToggle = vi.fn();
   const onPin = vi.fn();
@@ -40,6 +41,7 @@ function setup(props: Partial<{
       q: props.q ?? '',
       pinnedKeys: props.pinnedKeys ?? ['env'],
       candidateKeys: props.candidateKeys ?? ['user.id', 'env', 'region'],
+      sampleNote: props.sampleNote ?? null,
       collapsed: props.collapsed ?? false,
       onToggle,
       onPin,
@@ -54,6 +56,16 @@ function valueButton(utils: ReturnType<typeof setup>, key: string, value: string
 }
 
 describe('FacetSidebar', () => {
+  it('shows the sample note above the lists', () => {
+    setup({ sampleNote: 'Top values of the newest 100,000 of 2,000,000 matching logs' });
+    expect(document.querySelector('[data-testid="facets-sample-note"]')?.textContent).toBe('Top values of the newest 100,000 of 2,000,000 matching logs');
+  });
+
+  it('shows no sample note by default', () => {
+    setup();
+    expect(document.querySelector('[data-testid="facets-sample-note"]')).toBeNull();
+  });
+
   it('renders Level, Service and Host with en-US counts', () => {
     const utils = setup();
     const headings = utils.getAllByRole('heading').map((h) => h.textContent?.trim());
@@ -144,6 +156,29 @@ describe('FacetSidebar', () => {
     expect(utils.queryByRole('button', { name: 'user.id' })).toBeNull();
     await fireEvent.click(region);
     expect(utils.onPin).toHaveBeenCalledWith('region');
+  });
+
+  it('filters a long list of fields to add', async () => {
+    const many = Array.from({ length: 200 }, (_, i) => `einvoicing.reconcile.field${i}`);
+    const utils = setup({ candidateKeys: [...many, 'tenant.id'], pinnedKeys: [] });
+    await fireEvent.click(utils.getByRole('button', { name: 'Add facet' }));
+    await tick();
+
+    // Height-capped list: rows keep their height and the list scrolls
+    const first = await utils.findByRole('button', { name: 'einvoicing.reconcile.field0' });
+    expect(first).toHaveClass('shrink-0');
+
+    await fireEvent.input(utils.getByRole('searchbox', { name: 'Filter fields' }), { target: { value: 'TENANT' } });
+    await tick();
+    expect(utils.queryByRole('button', { name: 'einvoicing.reconcile.field0' })).toBeNull();
+    await fireEvent.click(utils.getByRole('button', { name: 'tenant.id' }));
+    expect(utils.onPin).toHaveBeenCalledWith('tenant.id');
+
+    await fireEvent.click(utils.getByRole('button', { name: 'Add facet' }));
+    await tick();
+    await fireEvent.input(await utils.findByRole('searchbox', { name: 'Filter fields' }), { target: { value: 'nothing-like-this' } });
+    await tick();
+    expect(utils.getByText('No field matches "nothing-like-this"')).toBeInTheDocument();
   });
 
   it('collapses', async () => {

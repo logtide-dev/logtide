@@ -219,6 +219,24 @@ describe('SIEM Service - Incidents', () => {
         expect(incident.detectionCount).toBe(0);
     });
 
+    it('records the creation in the incident history, without a user when the system creates it', async () => {
+        const { organization, project } = await createTestContext();
+
+        const incident = await siemService.createIncident({
+            organizationId: organization.id,
+            projectId: project.id,
+            title: 'Grouped detections',
+            severity: 'high',
+        });
+
+        const history = await db
+            .selectFrom('incident_history')
+            .select(['action', 'user_id'])
+            .where('incident_id', '=', incident.id)
+            .execute();
+        expect(history).toEqual([{ action: 'created', user_id: null }]);
+    });
+
     it('should get incident by ID', async () => {
         const { organization, project } = await createTestContext();
 

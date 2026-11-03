@@ -82,7 +82,7 @@ beforeEach(() => {
       { id: 'i1', checkKey: 'timestamp_skew_logs', severity: 'warning', openedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), resolvedAt: null, details: {}, mute: null },
     ],
     checks: { receiving: true, piiRejected24h: 0, skew: {}, revokedKey24h: 0 },
-    settings: { silentMinutes: 60, healthChannelIds: [] },
+    settings: { silentEnabled: false, silentMinutes: 60, healthChannelIds: [] },
   });
   setRoute('p-1');
   organizationStore.setCurrentOrganization(org('org-1'));

@@ -4,7 +4,7 @@
  */
 export const TENANT_TABLES = new Set<string>([
   'logs', 'api_keys', 'alert_rules', 'alert_history', 'notifications',
-  'sigma_rules', 'traces', 'spans', 'logs_hourly_stats', 'logs_daily_stats',
+  'sigma_rules', 'traces', 'spans', 'logs_hourly_stats', 'logs_daily_stats', 'logs_minute_stats',
   'spans_hourly_stats', 'spans_daily_stats', 'detection_events_hourly_stats',
   'detection_events_daily_stats', 'detection_events_rule_stats', 'detection_events',
   'incidents', 'monitors', 'monitor_results', 'monitor_uptime_daily',

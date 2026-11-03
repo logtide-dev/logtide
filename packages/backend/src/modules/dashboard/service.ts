@@ -2,6 +2,7 @@ import { db } from '../../database/index.js';
 import { sql } from 'kysely';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 import { reservoir } from '../../database/reservoir.js';
+import { startOfUtcDay, startOfUtcHour } from '../../utils/time-buckets.js';
 
 export interface DashboardStats {
   totalLogsToday: {
@@ -184,9 +185,13 @@ class DashboardService {
       return this.getStatsFromRawLogs(projectIds, todayStart, yesterdayStart, lastHourStart, prevHourStart);
     }
 
-    // 2. Query aggregate for historical data and reservoir for recent data in parallel
-    const [todayAggregateStats, recentTotal, recentErrors, recentServices, yesterdayAggregateStats, prevHourCount] = await Promise.all([
-      // Today's historical stats from aggregate (today start to 1 hour ago)
+    // 2. Query aggregate for historical data and reservoir for recent data in parallel.
+    // Today splits at the start of the current UTC hour: the aggregate covers
+    // every whole hour before it (it is real-time, see migration 076) and the
+    // raw counts cover the open hour, so nothing is counted twice or missed.
+    const currentHourStart = startOfUtcHour(new Date());
+    const [todayAggregateStats, currentHourTotal, currentHourErrors, recentServices, yesterdayAggregateStats, prevHourCount, recentTotal] = await Promise.all([
+      // Today's whole hours from the aggregate
       db
         .selectFrom('logs_hourly_stats')
         .select([
@@ -196,25 +201,23 @@ class DashboardService {
         ])
         .where('project_id', 'in', projectIds)
         .where('bucket', '>=', todayStart)
-        .where('bucket', '<', lastHourStart)
+        .where('bucket', '<', currentHourStart)
         .executeTakeFirst(),
 
-      // Recent stats from reservoir (last hour)
-      // If volume is high (>50k), use the estimate we already got to save a query.
-      recentVolume > 50000 
-        ? Promise.resolve(recentTotalResult) 
-        : reservoir.count({ projectId: projectIds, from: lastHourStart, to: new Date() }),
-      
-      // Errors in last hour: use estimate if volume is high
+      // The open hour from reservoir; estimates when the volume is high
       recentVolume > 50000
-        ? reservoir.countEstimate({ projectId: projectIds, from: lastHourStart, to: new Date(), level: ['error', 'critical'] })
-        : reservoir.count({ projectId: projectIds, from: lastHourStart, to: new Date(), level: ['error', 'critical'] }),
-      
+        ? reservoir.countEstimate({ projectId: projectIds, from: currentHourStart, to: new Date() })
+        : reservoir.count({ projectId: projectIds, from: currentHourStart, to: new Date() }),
+
+      recentVolume > 50000
+        ? reservoir.countEstimate({ projectId: projectIds, from: currentHourStart, to: new Date(), level: ['error', 'critical'] })
+        : reservoir.count({ projectId: projectIds, from: currentHourStart, to: new Date(), level: ['error', 'critical'] }),
+
       // Active services: scanning millions of rows for DISTINCT is the #1 cause of dashboard lag.
       // We skip real-time distinct if volume is high and rely on the aggregate data.
-      recentVolume > 20000 
-        ? Promise.resolve({ values: [], executionTimeMs: 0 }) 
-        : reservoir.distinct({ field: 'service', projectId: projectIds, from: lastHourStart, to: new Date() }),
+      recentVolume > 20000
+        ? Promise.resolve({ values: [], executionTimeMs: 0 })
+        : reservoir.distinct({ field: 'service', projectId: projectIds, from: currentHourStart, to: new Date() }),
 
       // Yesterday's stats from aggregate
       db
@@ -233,11 +236,16 @@ class DashboardService {
       recentVolume > 50000
         ? reservoir.countEstimate({ projectId: projectIds, from: prevHourStart, to: lastHourStart })
         : reservoir.count({ projectId: projectIds, from: prevHourStart, to: lastHourStart }),
+
+      // Rolling last 60 minutes (throughput); reuse the estimate when the volume is high
+      recentVolume > 50000
+        ? Promise.resolve(recentTotalResult)
+        : reservoir.count({ projectId: projectIds, from: lastHourStart, to: new Date() }),
     ]);
 
     // Combine aggregate + recent stats
-    const todayCount = Number(todayAggregateStats?.total ?? 0) + recentTotal.count;
-    const todayErrorCount = Number(todayAggregateStats?.errors ?? 0) + recentErrors.count;
+    const todayCount = Number(todayAggregateStats?.total ?? 0) + currentHourTotal.count;
+    const todayErrorCount = Number(todayAggregateStats?.errors ?? 0) + currentHourErrors.count;
     const yesterdayCount = Number(yesterdayAggregateStats?.total ?? 0);
     const yesterdayErrorCount = Number(yesterdayAggregateStats?.errors ?? 0);
 
@@ -245,6 +253,7 @@ class DashboardService {
     const todayServiceCount = Number(todayAggregateStats?.services ?? 0) + recentServices.values.length;
     const yesterdayServiceCount = Number(yesterdayAggregateStats?.services ?? 0);
 
+    // Throughput stays a rolling 60 minutes
     const lastHourCount = recentTotal.count;
 
     return this.calculateStats(
@@ -361,9 +370,10 @@ class DashboardService {
 
     const now = new Date();
     const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const lastHour = new Date(now.getTime() - 60 * 60 * 1000);
+    // Split at a bucket boundary: aggregate for the whole hours, raw for the open one
+    const lastHour = startOfUtcHour(now);
 
-    // Try to use continuous aggregate for historical data (>1 hour old)
+    // Whole hours from the continuous aggregate, the open hour from raw data
     // This is much faster than real-time aggregation
     let historicalResults: Array<{ bucket: string | Date; level: string; count: string }> = [];
     let recentResults: Array<{ bucket: string; level: string; count: string }> = [];
@@ -501,7 +511,8 @@ class DashboardService {
 
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    // Whole days from the daily aggregate, today from raw data
+    const oneDayAgo = startOfUtcDay(now);
 
     let result: Array<{ name: string; count: number; percentage: number }>;
     try {
@@ -528,7 +539,7 @@ class DashboardService {
   ): Promise<Array<{ name: string; count: number; percentage: number }>> {
     // Query historical data from daily aggregate + recent data from reservoir
     const [historicalServices, recentServices] = await Promise.all([
-      // 7 days ago to 1 day ago (use daily stats)
+      // Whole days before today (use daily stats)
       db
         .selectFrom('logs_daily_stats')
         .select(['service', sql<string>`SUM(log_count)`.as('count')])
@@ -538,7 +549,7 @@ class DashboardService {
         .groupBy('service')
         .execute(),
 
-      // Last 24 hours from reservoir
+      // Today from reservoir
       reservoir.topValues({
         field: 'service',
         projectId: projectIds,
@@ -613,7 +624,8 @@ class DashboardService {
 
     const now = new Date();
     const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const lastHour = new Date(now.getTime() - 60 * 60 * 1000);
+    // Split at a bucket boundary: aggregate for the whole hours, raw for the open one
+    const lastHour = startOfUtcHour(now);
 
     // Query alerts from alert_history JOIN alert_rules (last 24h)
     let alertQuery = db

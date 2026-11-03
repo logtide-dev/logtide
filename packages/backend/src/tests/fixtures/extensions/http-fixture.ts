@@ -1,7 +1,7 @@
 import type { LogtideExtension } from '../../../extensions/types.js';
 
 /**
- * HTTP surface fixture: a session route, an org-role route, a public route
+ * HTTP surface fixture: a session route, an org-role route, an instance admin route, a public route
  * with a raw-buffer JSON parser (webhook style) and a public config entry.
  */
 const httpFixture: LogtideExtension = {
@@ -20,6 +20,11 @@ const httpFixture: LogtideExtension = {
         { preHandler: api.auth.requireOrgRole(['owner', 'admin']) },
         async (request) => ({ role: request.extOrg?.role, orgId: request.extOrg?.id })
       );
+
+      app.get('/admin-only', { preHandler: api.auth.requireInstanceAdmin }, async (request) => ({
+        userId: request.extAdmin?.userId,
+        email: request.extAdmin?.email,
+      }));
 
       app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_request, body, done) => {
         done(null, body);

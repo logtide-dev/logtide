@@ -45,8 +45,26 @@ export class MongoDBQueryTranslator extends QueryTranslator {
     return {
       query: filter,
       parameters: [],
-      metadata: { limit, offset, sort },
+      // `base` and `keyset` let the engine page on a time-only sort (see
+      // MongoDBEngine.query): the same rows as `query` sorted by `sort`.
+      metadata: { limit, offset, sort, base: this.composeLogFilter(params, []), keyset: this.decodeCursor(params.cursor) },
     };
+  }
+
+  /** The `<iso time>,<id>` keyset of a cursor; null when absent or undecodable. */
+  decodeCursor(cursor: string | undefined): { time: Date; id: string } | null {
+    if (!cursor) return null;
+    try {
+      const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+      const commaIdx = decoded.indexOf(',');
+      if (commaIdx <= 0) return null;
+      const time = new Date(decoded.slice(0, commaIdx));
+      const id = decoded.slice(commaIdx + 1);
+      if (!id || isNaN(time.getTime())) return null;
+      return { time, id };
+    } catch {
+      return null;
+    }
   }
 
   /** Keyset pagination clause for a `<iso time>,<id>` cursor; null when absent or undecodable. */

@@ -172,66 +172,62 @@ describe('Rate Limiting', () => {
         // that rate limiting is configured. For full rate limit testing,
         // use load testing tools (k6, etc.)
 
-        it('should return 429 status when rate limit is exceeded', async () => {
-            // Create a fresh app instance with very low rate limit for testing
-            const testApp = await build({
-                // Fastify options
-            });
-            await testApp.ready();
-
-            // Override rate limit won't work here since it's registered at build time
-            // This test documents expected behavior
-
-            // In a real scenario with exceeded rate limit, we'd expect:
-            // - Status code 429
-            // - Retry-After header
-            // - Error message about rate limit
-
-            await testApp.close();
+        it('should return 429 with Retry-After once a key exceeds the limit', async () => {
+            const limited = await buildWithLimit(3);
+            try {
+                const key = await createTestApiKey({ name: 'Limited key' });
+                const statuses: number[] = [];
+                let last: request.Response | undefined;
+                for (let i = 0; i < 4; i++) {
+                    last = await ingestOne(limited, key.plainKey, `burst ${i}`);
+                    statuses.push(last.status);
+                }
+                expect(statuses).toEqual([200, 200, 200, 429]);
+                expect(Number(last!.headers['retry-after'])).toBeGreaterThan(0);
+                expect(last!.headers['x-ratelimit-remaining']).toBe('0');
+            } finally {
+                await limited.close();
+            }
         });
     });
 
     describe('Rate Limit by Client', () => {
-        it('should rate limit based on API key for ingestion', async () => {
-            // Create two different API keys
-            const testKey1 = await createTestApiKey({ name: 'Key 1' });
-            const testKey2 = await createTestApiKey({ name: 'Key 2' });
-
-            // Make requests with key 1
-            const response1 = await request(app.server)
-                .post('/api/v1/ingest')
-                .set('x-api-key', testKey1.plainKey)
-                .send({
-                    logs: [{
-                        time: new Date().toISOString(),
-                        service: 'test',
-                        level: 'info',
-                        message: 'Key 1 request',
-                    }],
-                })
-                .expect(200);
-
-            // Make requests with key 2
-            const response2 = await request(app.server)
-                .post('/api/v1/ingest')
-                .set('x-api-key', testKey2.plainKey)
-                .send({
-                    logs: [{
-                        time: new Date().toISOString(),
-                        service: 'test',
-                        level: 'info',
-                        message: 'Key 2 request',
-                    }],
-                })
-                .expect(200);
-
-            // Both should have their own rate limit counters
-            // Key 2's remaining should not be affected by Key 1's request
-            const remaining1 = parseInt(response1.headers['x-ratelimit-remaining'] || '0');
-            const remaining2 = parseInt(response2.headers['x-ratelimit-remaining'] || '0');
-
-            // Both should have similar remaining values (within 1-2 of each other due to timing)
-            expect(Math.abs(remaining1 - remaining2)).toBeLessThanOrEqual(2);
+        it('counts each API key separately', async () => {
+            const limited = await buildWithLimit(2);
+            try {
+                const key1 = await createTestApiKey({ name: 'Key 1' });
+                const key2 = await createTestApiKey({ name: 'Key 2' });
+                // Key 1 uses up its limit...
+                expect((await ingestOne(limited, key1.plainKey, 'k1 a')).status).toBe(200);
+                expect((await ingestOne(limited, key1.plainKey, 'k1 b')).status).toBe(200);
+                expect((await ingestOne(limited, key1.plainKey, 'k1 c')).status).toBe(429);
+                // ...and key 2 still has all of its own.
+                const first = await ingestOne(limited, key2.plainKey, 'k2 a');
+                expect(first.status).toBe(200);
+                expect(first.headers['x-ratelimit-remaining']).toBe('1');
+            } finally {
+                await limited.close();
+            }
         });
     });
 });
+
+/** An app whose rate limits are `max` requests per window (read from config when the routes register). */
+async function buildWithLimit(max: number) {
+    const original = config.RATE_LIMIT_MAX;
+    (config as { RATE_LIMIT_MAX: number }).RATE_LIMIT_MAX = max;
+    try {
+        const limited = await build();
+        await limited.ready();
+        return limited;
+    } finally {
+        (config as { RATE_LIMIT_MAX: number }).RATE_LIMIT_MAX = original;
+    }
+}
+
+function ingestOne(target: Awaited<ReturnType<typeof build>>, apiKey: string, message: string) {
+    return request(target.server)
+        .post('/api/v1/ingest')
+        .set('x-api-key', apiKey)
+        .send({ logs: [{ time: new Date().toISOString(), service: 'test', level: 'info', message }] });
+}

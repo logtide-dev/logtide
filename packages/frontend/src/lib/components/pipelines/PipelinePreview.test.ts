@@ -12,6 +12,7 @@ vi.mock('$lib/api/projects', () => ({ projectsAPI: { getProjects: h.getProjects 
 vi.mock('$lib/api/log-pipeline', () => ({ logPipelineAPI: { preview: h.preview } }));
 
 import PipelinePreview from './PipelinePreview.svelte';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
 const steps = [{ type: 'parser', parser: 'nginx' }] as never;
 
@@ -27,7 +28,8 @@ describe('PipelinePreview recent logs', () => {
   it('Load recent log is disabled without a project', async () => {
     render(PipelinePreview, { props: { organizationId: 'org-1', steps } });
     expect(screen.getByRole('button', { name: 'Load recent log' })).toBeDisabled();
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
+    await waitFor(() => expect(h.getProjects).toHaveBeenCalled());
+    expect(await openSelect(screen.getByRole('combobox', { name: 'Project for recent logs' }))).toContain('Checkout');
   });
 
   it('fetches limit 20 for the chosen project', async () => {
@@ -39,8 +41,8 @@ describe('PipelinePreview recent logs', () => {
 
   it('org-wide pipelines pick a project inside the preview', async () => {
     render(PipelinePreview, { props: { organizationId: 'org-1', steps } });
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Checkout' })).toBeInTheDocument());
-    await fireEvent.change(screen.getByLabelText('Project for recent logs'), { target: { value: 'p1' } });
+    await waitFor(() => expect(h.getProjects).toHaveBeenCalled());
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Project for recent logs' }), 'Checkout');
     const btn = screen.getByRole('button', { name: 'Load recent log' });
     expect(btn).not.toBeDisabled();
     await fireEvent.click(btn);
@@ -50,10 +52,10 @@ describe('PipelinePreview recent logs', () => {
   it('selecting a recent log fills the sample textarea', async () => {
     render(PipelinePreview, { props: { organizationId: 'org-1', steps, projectId: 'p1' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Load recent log' }));
-    const select = await screen.findByLabelText('Recent logs');
+    const select = await screen.findByRole('combobox', { name: 'Recent logs' });
     // long messages are cut to 80 chars in the option label
-    expect(screen.getByRole('option', { name: 'x'.repeat(80) + '...' })).toBeInTheDocument();
-    await fireEvent.change(select, { target: { value: '0' } });
+    expect(await openSelect(select)).toContain('x'.repeat(80) + '...');
+    await chooseSelectOption(select, 'first message');
     expect((screen.getByLabelText('Sample log message') as HTMLTextAreaElement).value).toBe('first message');
   });
 

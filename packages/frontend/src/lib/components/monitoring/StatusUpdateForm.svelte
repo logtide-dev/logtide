@@ -11,6 +11,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import { SelectField } from '$lib/components/ui/select';
   import * as Dialog from '$lib/components/ui/dialog';
   import AffectedComponentsPicker from './AffectedComponentsPicker.svelte';
   import { STATUS_UPDATE_SEVERITIES, STATUS_UPDATE_STATUSES } from './monitor-meta';
@@ -38,8 +39,6 @@
 
   const uid = $props.id();
   const id = (name: string) => `${uid}-${name}`;
-  const selectClass =
-    'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 
   let title = $state('');
   let severity = $state<StatusUpdateSeverity>('minor');
@@ -135,19 +134,23 @@
       </div>
       <div class="space-y-1.5">
         <Label for={id('severity')}>Severity</Label>
-        <select id={id('severity')} class={selectClass} bind:value={severity}>
-          {#each STATUS_UPDATE_SEVERITIES as s (s.value)}
-            <option value={s.value}>{s.label}</option>
-          {/each}
-        </select>
+        <SelectField
+          id={id('severity')}
+          class="w-full"
+          value={severity}
+          options={[...STATUS_UPDATE_SEVERITIES]}
+          onValueChange={(v) => (severity = v as StatusUpdateSeverity)}
+        />
       </div>
       <div class="space-y-1.5">
         <Label for={id('status')}>Status</Label>
-        <select id={id('status')} class={selectClass} bind:value={status}>
-          {#each STATUS_UPDATE_STATUSES as s (s.value)}
-            <option value={s.value}>{s.label}</option>
-          {/each}
-        </select>
+        <SelectField
+          id={id('status')}
+          class="w-full"
+          value={status}
+          options={[...STATUS_UPDATE_STATUSES]}
+          onValueChange={(v) => (status = v as StatusUpdateStatus)}
+        />
       </div>
       <div class="space-y-1.5 sm:col-span-2">
         <Label for={id('message')}>Message (optional)</Label>

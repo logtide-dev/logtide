@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import type { PipelineStep, PreviewResult } from '$lib/api/log-pipeline';
   import { logPipelineAPI } from '$lib/api/log-pipeline';
   import { logsAPI } from '$lib/api/logs';
@@ -59,8 +60,7 @@
     }
   }
 
-  function handleRecentChange(e: Event) {
-    const value = (e.currentTarget as HTMLSelectElement).value;
+  function handleRecentChange(value: string) {
     selectedRecent = value;
     const log = recentLogs?.find((l) => l.id === value);
     if (log) sampleMessage = log.message;
@@ -102,16 +102,12 @@
   <CardContent class="space-y-4">
     <div class="flex flex-wrap items-center gap-2">
       {#if !projectId}
-        <select
+        <SelectField
           aria-label="Project for recent logs"
-          class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          class="w-auto"
           bind:value={pickedProjectId}
-        >
-          <option value="">Choose a project</option>
-          {#each projectOptions as p (p.id)}
-            <option value={p.id}>{p.name}</option>
-          {/each}
-        </select>
+          options={[{ value: '', label: 'Choose a project' }, ...projectOptions.map((p) => ({ value: p.id, label: p.name }))]}
+        />
       {/if}
       <Button
         variant="outline"
@@ -121,17 +117,13 @@
         {loadingRecent ? 'Loading...' : 'Load recent log'}
       </Button>
       {#if recentLogs && recentLogs.length > 0}
-        <select
+        <SelectField
           aria-label="Recent logs"
-          class="h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-background px-3 text-sm"
+          class="min-w-0 max-w-full flex-1"
           value={selectedRecent}
-          onchange={handleRecentChange}
-        >
-          <option value="">Choose a recent log</option>
-          {#each recentLogs as log (log.id)}
-            <option value={log.id}>{truncate(log.message)}</option>
-          {/each}
-        </select>
+          onValueChange={handleRecentChange}
+          options={[{ value: '', label: 'Choose a recent log' }, ...recentLogs.map((log) => ({ value: log.id, label: truncate(log.message) }))]}
+        />
       {/if}
     </div>
     {#if recentLogs && recentLogs.length === 0}

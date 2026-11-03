@@ -277,9 +277,12 @@ export class TestApiClient {
   }
 
   async getAlertHistory(organizationId: string) {
-    return this.request<{ alerts: any[]; total: number }>(
-      `/alerts/history?organizationId=${organizationId}`
-    );
+    return this.request<{
+      history: { id: string; ruleId: string; ruleName: string; triggeredAt: string; logCount: number }[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/alerts/history?organizationId=${organizationId}`);
   }
 
   async importSigmaRule(organizationId: string, yaml: string, projectId?: string) {
@@ -415,6 +418,11 @@ export class TestApiClient {
       throw new Error(error.error || `HTTP ${response.status}`);
     }
     return response.json();
+  }
+
+  /** In-app notifications of the current user (invitations to existing users land here, with the invite link). */
+  async getNotifications() {
+    return this.request<{ notifications: any[]; total: number; unreadCount: number }>('/notifications');
   }
 
   async acceptInvitation(token: string) {

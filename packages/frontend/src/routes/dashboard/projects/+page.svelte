@@ -8,6 +8,7 @@
   import { projectsAPI } from "$lib/api/projects";
   import type { Project } from "@logtide/shared";
   import Button from "$lib/components/ui/button/button.svelte";
+  import { SelectField } from "$lib/components/ui/select";
   import Input from "$lib/components/ui/input/input.svelte";
   import { buttonVariants } from "$lib/components/ui/button";
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "$lib/components/ui/card";
@@ -228,16 +229,18 @@
           bind:value={searchQuery}
           class="sm:max-w-md"
         />
-        <select
+        <SelectField
           aria-label="Filter by health"
-          class="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          bind:value={healthFilter}
-        >
-          <option value="all">All</option>
-          <option value="problems">With problems</option>
-          <option value="inactive">Inactive</option>
-          <option value="no_data">No data</option>
-        </select>
+          class="w-44"
+          value={healthFilter}
+          onValueChange={(v) => (healthFilter = v as HealthFilter)}
+          options={[
+            { value: "all", label: "All" },
+            { value: "problems", label: "With problems" },
+            { value: "inactive", label: "Inactive" },
+            { value: "no_data", label: "No data" },
+          ]}
+        />
       </div>
     {/if}
 

@@ -50,7 +50,7 @@ vi.mock('$lib/api/receivers', () => ({
 }));
 vi.mock('$lib/api/project-health', () => ({
   projectHealthAPI: {
-    getProjectHealth: vi.fn().mockResolvedValue({ settings: { silentMinutes: 60, healthChannelIds: [] } }),
+    getProjectHealth: vi.fn().mockResolvedValue({ settings: { silentEnabled: false, silentMinutes: 60, healthChannelIds: [] } }),
     updateSettings: vi.fn(),
   },
 }));

@@ -59,6 +59,7 @@ export { describeMetadataKeysConformance } from './suites/metadata-keys.js';
 export { describeOperationStatsConformance } from './suites/operation-stats.js';
 export { describeLatencyHistogramConformance } from './suites/latency-histogram.js';
 export { describeSpanTraceQueryConformance } from './suites/spans-traces.js';
+export { describeTraceUpsertConformance } from './suites/trace-upserts.js';
 export { describeSessionsConformance } from './suites/sessions.js';
 export { describeMetadataPathConformance, METADATA_PATH_CASES } from './suites/metadata-paths.js';
 export { describeTopValuesConformance } from './suites/top-values.js';

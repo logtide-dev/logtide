@@ -17,7 +17,7 @@
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Badge } from '$lib/components/ui/badge';
   import { Switch } from '$lib/components/ui/switch';
-  import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '$lib/components/ui/select';
+  import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectField } from '$lib/components/ui/select';
   import {
     Table,
     TableBody,
@@ -179,8 +179,13 @@
     }
   }
 
-  function handleScopeChange(e: Event) {
-    selectedProjectId = (e.currentTarget as HTMLSelectElement).value;
+  const scopeOptions = $derived([
+    { value: '', label: 'All projects (organization default)' },
+    ...projects.map((project) => ({ value: project.id, label: project.name })),
+  ]);
+
+  function handleScopeChange(value: string) {
+    selectedProjectId = value;
     void loadRules();
   }
 
@@ -480,17 +485,13 @@
 
   <div class="flex flex-wrap items-center gap-3">
     <Label for="pii-scope">Applies to:</Label>
-    <select
+    <SelectField
       id="pii-scope"
-      class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+      class="w-64"
       value={selectedProjectId}
-      onchange={handleScopeChange}
-    >
-      <option value="">All projects (organization default)</option>
-      {#each projects as project (project.id)}
-        <option value={project.id}>{project.name}</option>
-      {/each}
-    </select>
+      onValueChange={handleScopeChange}
+      options={scopeOptions}
+    />
   </div>
 
   <!-- Content Patterns -->

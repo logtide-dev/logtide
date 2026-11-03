@@ -58,6 +58,7 @@ An extension must not import anything from the backend source tree (`packages/ba
 | `orgs` | `{ get, listOwnersAndAdmins }` | Read-only organization lookups |
 | `queue` | `{ registerJob, enqueue, schedule }` | Background jobs and crons |
 | `mail` | `{ send }` | Outbound mail |
+| `admin` | `{ audit }` | Audit log entries for instance admin actions |
 
 ### Prefixes at a glance
 
@@ -67,6 +68,7 @@ An extension must not import anything from the backend source tree (`packages/ba
 | Postgres schema | `<name>` |
 | Queue and cron name | `ext:<name>:<job>` |
 | Audit actor | `ext:<name>` |
+| Audit action of `admin.audit` | `ext.admin_action` (`metadata.extension`, `metadata.action`) |
 | Log prefix | `[ext:<name>]` |
 
 BullMQ does not allow `:` in queue names, so the Redis backend stores `ext:<name>:<job>` with each `:` mapped to `__`. You always use the `ext:` form in code and logs.
@@ -83,11 +85,14 @@ Extension routes skip the global API key and session plugin. A route with no aut
 interface ExtensionAuth {
   requireSession: preHandlerHookHandler;
   requireOrgRole(roles: OrgRole[]): preHandlerHookHandler[];
+  requireInstanceAdmin: preHandlerHookHandler[];
 }
 ```
 
 - `requireSession`: session auth, same as the core. `401` without a valid session.
 - `requireOrgRole(roles)`: use as `preHandler`. Authenticates the session, then checks membership on the `:orgId` route parameter. A malformed UUID or a user who is not a member answers `404 { "error": "not_found" }`; a member whose role is not in `roles` answers `403 { "error": "forbidden" }`. On success `request.extOrg` is `{ id, role }`.
+
+- `requireInstanceAdmin`: use as `preHandler` on routes for instance administrators (the users who see the admin section of the app). Authenticates the session, then reads `users.is_admin` and `users.disabled` on every request, so an administrator who loses the flag or is disabled is refused on their next request. `401` without a valid session, `403 { "error": "forbidden" }` for anyone else. On success `request.extAdmin` is `{ userId, email }`.
 
 `OrgRole` is `'owner' | 'admin' | 'member'`.
 
@@ -135,8 +140,14 @@ Read-only lookups. A malformed id behaves like a missing one.
 
 ```ts
 get(orgId: string): Promise<{ id: string; name: string } | null>
+getMany(orgIds: string[]): Promise<Array<{
+  id: string; name: string; slug: string; createdAt: Date;
+  owner: { userId: string; email: string };
+}>>
 listOwnersAndAdmins(orgId: string): Promise<Array<{ userId: string; email: string; role: 'owner' | 'admin' }>>
 ```
+
+`getMany` returns the organizations in the order of their first occurrence in `orgIds`; unknown and malformed ids are skipped and duplicates collapsed. It accepts at most 500 distinct ids and throws a `RangeError` above that, so page larger lists.
 
 ### `queue`
 
@@ -160,6 +171,23 @@ send(msg: { to: string | string[]; subject: string; text: string; html?: string 
 
 Sends through the core SMTP settings. It rejects with `MailNotConfiguredError` when `SMTP_HOST` is unset.
 
+### `admin`
+
+```ts
+audit(
+  entry: {
+    action: string;                  // ^[a-z][a-z0-9_.]{1,62}$, for example 'grant_created'
+    organizationId?: string | null;
+    target?: { type: string; id: string | null };
+    metadata?: Record<string, unknown>;
+    outcome?: 'success' | 'failure'; // default 'success'
+  },
+  request?: FastifyRequest
+): Promise<void>
+```
+
+Writes one row to the core audit log with the action `ext.admin_action`, category `config_change`. The extension name and `entry.action` are stored in `metadata.extension` and `metadata.action` (they win over keys of the same name in `entry.metadata`). Pass the route's `request` for actions done by a person: the actor is the session user, and the IP address and user agent come from that request. Without `request` (jobs, crons) the actor is `system` with the label `ext:<name>`. A malformed `organizationId` is stored as `null`. An invalid `action` rejects with an `[Extensions]` error and writes nothing.
+
 ## Frontend extensions
 
 The frontend has a registry at `packages/frontend/src/lib/extensions/`. In the stock build `index.ts` exports an empty `extensions` array. A custom build replaces that file (for example by copying an overlay over it before `pnpm build`) with its own list of `FrontendExtension` objects:
@@ -172,6 +200,10 @@ interface FrontendExtension {
   settingsNav?: ExtensionSettingsItem[];
   /** Where the Usage page upgrade buttons point. */
   upgradeTarget?: { href: string };
+  /** Pages in the instance admin navigation. */
+  adminNav?: ExtensionAdminItem[];
+  /** Sections on the instance admin organization page. */
+  adminOrgPanels?: ExtensionAdminOrgPanel[];
 }
 
 interface ExtensionSettingsItem extends SettingsNavItem {
@@ -181,7 +213,25 @@ interface ExtensionSettingsItem extends SettingsNavItem {
 }
 ```
 
-Only extensions whose `isEnabled(cfg)` returns true contribute. Their `settingsNav` items appear in the settings navigation and the command palette. The first active extension that defines `upgradeTarget` decides where the Usage page upgrade buttons point. Pages themselves are ordinary SvelteKit routes added by the same overlay. A typical `isEnabled` reads the extension's `publicConfig` values:
+```ts
+interface ExtensionAdminItem {
+  id: string;
+  label: string;
+  href: string;          // must start with /dashboard/admin/ext/<name>
+  icon: Component;
+  group?: 'Instance' | 'Manage' | 'Cloud'; // default 'Cloud'
+  after?: string;        // href of a core item of the group to insert after; absent = end of the group
+  keywords?: string[];   // extra command palette search words
+}
+
+interface ExtensionAdminOrgPanel {
+  id: string;            // the section anchor is ext-<name>-<id>
+  label: string;         // entry in the organization section navigation
+  component: Component<{ orgId: string }>;
+}
+```
+
+Only extensions whose `isEnabled(cfg)` returns true contribute. Their `settingsNav` items appear in the settings navigation and the command palette. The first active extension that defines `upgradeTarget` decides where the Usage page upgrade buttons point. Their `adminNav` items appear in the instance admin navigation (the `Cloud` group is created only when an item lands in it) and in the command palette for instance administrators only; an item whose `href` is outside `/dashboard/admin/ext/<name>` is ignored with a console warning, and so is an item whose `href` was already used (the first one wins). Organization panels with an `id` already used by the same extension are ignored the same way. When no registered extension has `adminNav` or `adminOrgPanels`, the admin screens do not request the auth config at all. Their `adminOrgPanels` are rendered on the instance admin organization page, before the danger zone, each with the organization id as `orgId`; a panel that throws shows an error line in its own section and leaves the rest of the page working. Admin pages are SvelteKit routes under `src/routes/dashboard/admin/ext/<name>/`, so they inherit the admin layout and its guard: nothing renders for users who are not instance administrators. Their backend routes should use `api.auth.requireInstanceAdmin`. Pages themselves are ordinary SvelteKit routes added by the same overlay. A typical `isEnabled` reads the extension's `publicConfig` values:
 
 ```ts
 isEnabled: (cfg) => cfg.extensions?.example?.enabled === true

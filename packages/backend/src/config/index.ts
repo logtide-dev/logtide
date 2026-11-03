@@ -4,6 +4,8 @@ import path from 'path';
 import { z } from 'zod';
 import { applyDefaultOverrides } from '../capabilities/registry.js';
 import { loadTestEnv } from './load-test-env.js';
+import { parseTrustProxy } from './trust-proxy.js';
+import { applyConnectionUrls } from './connection-urls.js';
 
 // Load environment variables
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -17,6 +19,9 @@ if (process.env.NODE_ENV === 'test') {
   const envPath = path.resolve(__dirname, '../../../../.env');
   dotenv.config({ path: envPath, debug: false });
 }
+
+// DB_HOST/DB_USER/... and REDIS_HOST/... become DATABASE_URL/REDIS_URL when those are unset
+applyConnectionUrls();
 
 /** Boot-time validation of the two env vars. Returns an error message, or null. */
 function validateUpgradeConfig(env: { LOGTIDE_UPGRADE_URL?: string; LOGTIDE_UPGRADE_SIGNING_SECRET?: string }): string | null {
@@ -83,8 +88,16 @@ const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.string().default('8080').transform(Number),
   HOST: z.string().default('0.0.0.0'),
-  // Trust proxy headers (X-Forwarded-For, etc.) - enable when behind reverse proxy
-  TRUST_PROXY: z.string().default('false').transform((val) => val === 'true'),
+  // Which proxies may set X-Forwarded-For: false, true, a hop count or a
+  // list of IPs/CIDRs (see trust-proxy.ts)
+  TRUST_PROXY: z.string().default('false').transform((val, ctx) => {
+    try {
+      return parseTrustProxy(val);
+    } catch (err) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: (err as Error).message });
+      return z.NEVER;
+    }
+  }),
   // Frontend URL for OIDC redirects (defaults to localhost:5173 in development)
   FRONTEND_URL: z.string().url().optional(),
 
@@ -287,7 +300,7 @@ export function formatConfigError(error: z.ZodError): string {
       lines.push(`    → Must be at least 32 characters. Generate with: openssl rand -base64 32`);
     }
     if (field === 'DATABASE_URL') {
-      lines.push(`    → Check that DB_USER, DB_PASSWORD, and DB_NAME are set in .env`);
+      lines.push(`    → Set DATABASE_URL, or DB_HOST, DB_USER, DB_PASSWORD and DB_NAME`);
     }
   }
 

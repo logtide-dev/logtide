@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync, preHandlerHookHandler } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest, preHandlerHookHandler } from 'fastify';
 import type { OrgRole } from '@logtide/shared';
 import type { HookRegistry } from '../hooks/registry.js';
 import type { CronJobDefinition } from '../queue/abstractions/types.js';
@@ -31,6 +31,12 @@ export interface ExtensionAuth {
    * `{ error: 'forbidden' }`. On success sets `request.extOrg`.
    */
   requireOrgRole(roles: OrgRole[]): preHandlerHookHandler[];
+  /**
+   * Session auth + instance admin check (`users.is_admin`, not disabled),
+   * re-read on every request. No session: 401; not an admin or disabled:
+   * 403 `{ error: 'forbidden' }`. On success sets `request.extAdmin`.
+   */
+  readonly requireInstanceAdmin: preHandlerHookHandler[];
 }
 
 /** Queue job registered by an extension (populated by the worker runtime). */
@@ -82,6 +88,28 @@ export interface ExtensionApi {
   readonly orgs: ExtensionOrgs;
   readonly queue: ExtensionQueue;
   readonly mail: ExtensionMail;
+  readonly admin: ExtensionAdmin;
+}
+
+/** One admin action of an extension, recorded as core action `ext.admin_action`. */
+export interface ExtensionAuditEntry {
+  /** Extension-specific action name, `^[a-z][a-z0-9_.]{1,62}$` (e.g. `grant_created`). */
+  action: string;
+  /** Organization the action is about; a malformed id is stored as null. */
+  organizationId?: string | null;
+  target?: { type: string; id: string | null };
+  metadata?: Record<string, unknown>;
+  outcome?: 'success' | 'failure';
+}
+
+/** Helpers for instance admin features of an extension. */
+export interface ExtensionAdmin {
+  /**
+   * Write one row to the core audit log. With `request`, the actor is the
+   * session user and ip/user agent come from the request; without it the
+   * actor is `system` labelled `ext:<name>`. Rejects on an invalid action name.
+   */
+  audit(entry: ExtensionAuditEntry, request?: FastifyRequest): Promise<void>;
 }
 
 /** Background jobs and cron schedules. Queue names are `ext:<name>:<job>`. */
@@ -136,8 +164,22 @@ export interface ExtensionRetention {
 }
 
 /** Read-only organization lookups. Malformed ids behave like missing ones. */
+export interface ExtensionOrgSummary {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: Date;
+  owner: { userId: string; email: string };
+}
+
 export interface ExtensionOrgs {
   get(orgId: string): Promise<{ id: string; name: string } | null>;
+  /**
+   * Summaries of several orgs, in the order of their first occurrence in
+   * `orgIds`. Missing or malformed ids are skipped, duplicates collapsed.
+   * More than 500 distinct ids throws a RangeError.
+   */
+  getMany(orgIds: string[]): Promise<ExtensionOrgSummary[]>;
   listOwnersAndAdmins(
     orgId: string
   ): Promise<Array<{ userId: string; email: string; role: 'owner' | 'admin' }>>;
