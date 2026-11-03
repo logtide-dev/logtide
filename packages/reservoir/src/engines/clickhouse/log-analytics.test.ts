@@ -15,8 +15,12 @@ import type { LogFacetField, LogFacetsParams, LogHistogramParams } from '../../c
 const at = (iso: string) => new Date(iso);
 const ms = (iso: string) => String(at(iso).getTime());
 
-function stubEngine(rows: Record<string, unknown>[] = []) {
-  const query = vi.fn(async (_args: unknown) => ({ json: async () => rows }));
+function stubEngine(rows: Record<string, unknown>[] = [], later: Record<string, unknown>[] = []) {
+  let calls = 0;
+  const query = vi.fn(async (_args: unknown) => {
+    const answer = calls++ === 0 ? rows : later;
+    return { json: async () => answer };
+  });
   const client = { query } as unknown as ClickHouseClient;
   const engine = new ClickHouseEngine(
     { host: 'localhost', port: 18123, database: 'unused', username: 'default', password: '' },
@@ -101,9 +105,30 @@ describe('clickhouse histogram', () => {
       { bucket_ms: ms('2026-01-01T10:05:00.000Z'), level: 'error', n: '7' },
     ]);
     const result = await engine.histogram(base);
-    expect(query).toHaveBeenCalledTimes(1);
     expect(result.buckets.map((b) => b.total)).toEqual([0, 7, 0, 0]);
     expect(result.buckets[1].byLevel).toEqual({ error: 7 });
+  });
+
+  it('volume-only filters read whole minutes from the projection and the edges as logs, summed per bucket', async () => {
+    const { engine, query } = stubEngine(
+      [{ bucket_ms: ms('2026-01-01T10:05:00.000Z'), level: 'error', n: '7' }],
+      [{ bucket_ms: ms('2026-01-01T10:15:00.000Z'), level: 'error', n: '2' }],
+    );
+    const result = await engine.histogram({ ...base, from: at('2026-01-01T10:00:30.000Z') });
+    const sqls = query.mock.calls.map((c) => (c[0] as { query: string }).query);
+    // Whole minutes [10:01, 10:15) through the projection keys only, then the
+    // edge [10:00:30, 10:01) and the inclusive end instant 10:15 as logs.
+    expect(sqls[0]).toContain('toStartOfMinute(time) >= {p_mfrom:DateTime64(3)} AND toStartOfMinute(time) < {p_mto:DateTime64(3)}');
+    expect(sqls[0]).not.toMatch(/\btime >=|\btime <=|PREWHERE/);
+    expect(sqls).toHaveLength(3);
+    // The stub answers both edge queries with the same 10:15 row: 2 + 2.
+    expect(result.buckets.map((b) => b.total)).toEqual([0, 7, 0, 4]);
+  });
+
+  it('any other filter keeps the single logs query', async () => {
+    const { engine, query } = stubEngine();
+    await engine.histogram({ ...base, hostname: 'web-1' });
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it('the engine derives the text query from legacy search', async () => {
@@ -194,9 +219,27 @@ describe('clickhouse facets', () => {
       metadataFilters: [{ key: 'env', op: 'equals', value: 'prod', include_missing: false }],
     }, 10);
     const query = native.query as string;
-    expect(query).toContain(' PREWHERE project_id = {p_project_id:String} AND time >= {p_from:DateTime64(3)}');
+    const params = (native.parameters as Record<string, unknown>[])[0];
+    // The window is read in key order and capped before the filters apply.
+    expect(query).toContain(
+      'SELECT *, hostname FROM logs PREWHERE project_id = {p_fp0:String} AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} ORDER BY time DESC, id DESC LIMIT {p_scan:UInt64}) WHERE ',
+    );
     expect(query).toContain('lowerUTF8(message) LIKE {p_tq0:String}');
     expect(query).toContain('JSONExtractRaw(metadata, {p_mfk0:String})');
+    expect(query).toContain('ORDER BY time DESC, id DESC LIMIT {p_sample:UInt64}');
+    expect(params).toMatchObject({ p_scan: 2_000_000, p_sample: 100_000 });
+  });
+
+  it('facets read one capped branch per project and count the sample', () => {
+    const translator = new ClickHouseQueryTranslator('logs');
+    const native = translator.translateFacets({ ...facetBase, projectId: ['p1', 'p2'], fields: [{ builtin: 'level' }], scanLimit: 50, sampleSize: 7 }, 10);
+    const query = native.query as string;
+    const params = (native.parameters as Record<string, unknown>[])[0];
+    expect(query).toContain('PREWHERE project_id = {p_fp0:String} AND');
+    expect(query).toContain(' UNION ALL SELECT *, hostname FROM logs PREWHERE project_id = {p_fp1:String} AND');
+    expect(query).not.toContain('project_id IN');
+    expect(query).toContain("(1, toNullable('1'))");
+    expect(params).toMatchObject({ p_fp0: 'p1', p_fp1: 'p2', p_scan: 50, p_sample: 7 });
   });
 
   it('the engine maps rows to facets in request order', async () => {
@@ -233,11 +276,16 @@ describe('clickhouse metadata key discovery', () => {
     const native = translateDiscoverKeys({ ...discoverBase, projectId: ['p1', 'p2'], sampleSize: 10 });
     const query = native.query as string;
     const params = (native.parameters as Record<string, unknown>[])[0];
-    expect(query).toContain(
-      'FROM logs PREWHERE project_id IN {p_pids:Array(String)} AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} ORDER BY time DESC LIMIT {p_n:UInt32}',
-    );
+    // One equality branch per project, so each reads the key in order and stops at p_n.
+    for (const i of [0, 1]) {
+      expect(query).toContain(
+        `FROM logs PREWHERE project_id = {p_pid${i}:String} AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} ORDER BY time DESC LIMIT {p_n:UInt32}`,
+      );
+    }
+    expect(query).not.toContain('project_id IN');
+    expect(query).toContain(' UNION ALL ');
     expect(query).toContain('ORDER BY occurrences DESC, key ASC LIMIT 500');
-    expect(params).toMatchObject({ p_pids: ['p1', 'p2'], p_n: 10 });
+    expect(params).toMatchObject({ p_pid0: 'p1', p_pid1: 'p2', p_n: 10 });
   });
 
   it('objects expand one level, children with a dot in their name included', () => {

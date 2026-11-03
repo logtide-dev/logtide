@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { LogFieldInfo } from '$lib/api/logs';
 import {
+  facetSampleNote,
   BUILTIN_FACET_KEYS,
   FACET_VALUE_LIMIT,
   MAX_METADATA_FACETS,
@@ -54,5 +55,18 @@ describe('facet keys', () => {
   it('caps pins at 8 too', () => {
     const pins = ['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7', 'k8', 'k9'];
     expect(selectMetadataFacetKeys(pins, [f('other', 100)])).toEqual(pins.slice(0, 8));
+  });
+});
+
+describe('facetSampleNote', () => {
+  it('describes a partial sample with US-formatted numbers', () => {
+    expect(facetSampleNote(100_000, 36_048_449)).toBe('Top values of the newest 100,000 of 36,048,449 matching logs');
+  });
+
+  it('is null when every matching log was counted or a number is missing', () => {
+    expect(facetSampleNote(25, 25)).toBeNull();
+    expect(facetSampleNote(30, 25)).toBeNull();
+    expect(facetSampleNote(undefined, 25)).toBeNull();
+    expect(facetSampleNote(100_000, null)).toBeNull();
   });
 });

@@ -2,6 +2,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import { SelectField } from '$lib/components/ui/select';
   import Plus from '@lucide/svelte/icons/plus';
   import X from '@lucide/svelte/icons/x';
   import {
@@ -23,8 +24,13 @@
 
   let serviceSearchOpen = $state(false);
 
-  const selectClass =
-    'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
+  const methodOptions = HTTP_METHODS.map((m) => ({ value: m, label: m }));
+  const bodyKindOptions = [
+    { value: 'none', label: 'None' },
+    { value: 'contains', label: 'Contains text' },
+    { value: 'regex', label: 'Matches regular expression' },
+  ];
+  const recordTypeOptions = DNS_RECORD_TYPES.map((t) => ({ value: t, label: t }));
 
   const defaultGrace = $derived.by(() => {
     const n = Number(values.intervalSeconds);
@@ -62,11 +68,7 @@
 
   <div class="space-y-1.5">
     <Label for={id('method')}>Method</Label>
-    <select id={id('method')} class={selectClass} bind:value={values.method}>
-      {#each HTTP_METHODS as method (method)}
-        <option value={method}>{method}</option>
-      {/each}
-    </select>
+    <SelectField id={id('method')} class="w-full" bind:value={values.method} options={methodOptions} />
   </div>
 
   <div class="space-y-1.5">
@@ -129,11 +131,13 @@
 
   <div class="space-y-1.5">
     <Label for={id('body-kind')}>Response body check</Label>
-    <select id={id('body-kind')} class={selectClass} bind:value={values.bodyAssertionKind}>
-      <option value="none">None</option>
-      <option value="contains">Contains text</option>
-      <option value="regex">Matches regular expression</option>
-    </select>
+    <SelectField
+      id={id('body-kind')}
+      class="w-full"
+      value={values.bodyAssertionKind}
+      options={bodyKindOptions}
+      onValueChange={(v) => (values.bodyAssertionKind = v as typeof values.bodyAssertionKind)}
+    />
   </div>
   {#if values.bodyAssertionKind !== 'none'}
     <div class="space-y-1.5">
@@ -264,11 +268,13 @@
   </div>
   <div class="space-y-1.5">
     <Label for={id('record-type')}>Record type</Label>
-    <select id={id('record-type')} class={selectClass} bind:value={values.recordType}>
-      {#each DNS_RECORD_TYPES as type (type)}
-        <option value={type}>{type}</option>
-      {/each}
-    </select>
+    <SelectField
+      id={id('record-type')}
+      class="w-full"
+      value={values.recordType}
+      options={recordTypeOptions}
+      onValueChange={(v) => (values.recordType = v as typeof values.recordType)}
+    />
   </div>
   <div class="space-y-1.5 sm:col-span-2">
     <Label for={id('expected-value')}>Expected value</Label>

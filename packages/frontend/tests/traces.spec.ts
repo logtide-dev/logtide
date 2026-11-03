@@ -1,5 +1,6 @@
 import { test, expect, TestApiClient, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL, TEST_API_URL } from './fixtures/auth';
 import { createTracedLogs, wait } from './helpers/factories';
+import { pickOption } from './fixtures/select';
 
 /**
  * Generate a random lowercase hex string (OTLP trace/span ids).
@@ -72,8 +73,8 @@ test.describe('Traces Journey', () => {
     // Seed spans via OTLP traces endpoint.
     // Times are in unix nanoseconds; trace A spans: root 0-200ms,
     // charge-card 20-150ms (child of root), db-query 30-100ms (child of charge-card).
-    const baseNs = Date.now() * 1_000_000;
-    const ms = 1_000_000;
+    const baseNs = BigInt(Date.now()) * 1_000_000n; // BigInt: nanoseconds exceed Number precision
+    const ms = 1_000_000n;
 
     await ingestOtlpSpans(apiKey, [
       {
@@ -89,7 +90,7 @@ test.describe('Traces Journey', () => {
                 name: 'POST /checkout',
                 kind: 2, // SERVER
                 startTimeUnixNano: String(baseNs),
-                endTimeUnixNano: String(baseNs + 200 * ms),
+                endTimeUnixNano: String(baseNs + 200n * ms),
                 status: { code: 1 }, // OK
               },
             ],
@@ -109,8 +110,8 @@ test.describe('Traces Journey', () => {
                 parentSpanId: rootSpanId,
                 name: 'charge-card',
                 kind: 3, // CLIENT
-                startTimeUnixNano: String(baseNs + 20 * ms),
-                endTimeUnixNano: String(baseNs + 150 * ms),
+                startTimeUnixNano: String(baseNs + 20n * ms),
+                endTimeUnixNano: String(baseNs + 150n * ms),
                 status: { code: 1 }, // OK
                 attributes: [
                   { key: 'http.method', value: { stringValue: 'POST' } },
@@ -123,8 +124,8 @@ test.describe('Traces Journey', () => {
                 parentSpanId: chargeSpanId,
                 name: 'db-query',
                 kind: 1, // INTERNAL
-                startTimeUnixNano: String(baseNs + 30 * ms),
-                endTimeUnixNano: String(baseNs + 100 * ms),
+                startTimeUnixNano: String(baseNs + 30n * ms),
+                endTimeUnixNano: String(baseNs + 100n * ms),
                 status: { code: 1 }, // OK
               },
             ],
@@ -144,7 +145,7 @@ test.describe('Traces Journey', () => {
                 name: 'GET /stock',
                 kind: 2, // SERVER
                 startTimeUnixNano: String(baseNs),
-                endTimeUnixNano: String(baseNs + 50 * ms),
+                endTimeUnixNano: String(baseNs + 50n * ms),
                 status: { code: 1 }, // OK
               },
             ],
@@ -174,7 +175,6 @@ test.describe('Traces Journey', () => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
     await page.waitForLoadState('load');
     await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 30000 });
-    await page.waitForTimeout(500);
   });
 
   test('1. Trace list shows the seeded trace with root service, span count and status', async ({ page }) => {
@@ -204,18 +204,18 @@ test.describe('Traces Journey', () => {
     await expect(inventoryLink).toBeVisible();
 
     // Filter by root service of trace A
-    await page.getByRole('combobox', { name: 'Service' }).selectOption('checkout-service');
+    await pickOption(page.getByRole('combobox', { name: 'Service' }), 'checkout-service');
     await expect(checkoutLink).toBeVisible();
     await expect(inventoryLink).toHaveCount(0, { timeout: 15000 });
 
     // Error-only filter on non-error traces empties the list
-    await page.getByRole('combobox', { name: 'Status' }).selectOption({ label: 'Errors only' });
+    await pickOption(page.getByRole('combobox', { name: 'Status' }), 'Errors only');
     await expect(checkoutLink).toHaveCount(0, { timeout: 15000 });
     await expect(inventoryLink).toHaveCount(0);
 
     // Resetting both filters restores both traces
-    await page.getByRole('combobox', { name: 'Status' }).selectOption({ label: 'All statuses' });
-    await page.getByRole('combobox', { name: 'Service' }).selectOption({ label: 'All services' });
+    await pickOption(page.getByRole('combobox', { name: 'Status' }), 'All statuses');
+    await pickOption(page.getByRole('combobox', { name: 'Service' }), 'All services');
     await expect(checkoutLink).toBeVisible({ timeout: 15000 });
     await expect(inventoryLink).toBeVisible();
   });

@@ -2,6 +2,7 @@
   import { toast } from 'svelte-sonner';
   import { goto } from '$app/navigation';
   import * as Dialog from '$lib/components/ui/dialog';
+  import { SelectField } from '$lib/components/ui/select';
   import Button from '$lib/components/ui/button/button.svelte';
   import { addMetricPanelToDashboard, listDashboardsForPicker } from '$lib/api/metrics';
   import { toMetricPanelConfig, type MetricQueryState, type PanelRangeInput } from '$lib/utils/metrics-query';
@@ -20,6 +21,7 @@
   let loading = $state(false);
   let loadError = $state<string | null>(null);
   let selectedId = $state('');
+  const dashboardOptions = $derived(dashboards.map((d) => ({ value: d.id, label: d.name })));
   let saving = $state(false);
 
   let resolved = $derived(toMetricPanelConfig(query, projectId, range));
@@ -79,17 +81,14 @@
     <div class="space-y-3">
       <div class="space-y-1">
         <label class="text-sm font-medium" for="add-to-dashboard-select">Dashboard</label>
-        <select
+        <SelectField
           id="add-to-dashboard-select"
-          class="block h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-sm"
+          class="w-full"
           bind:value={selectedId}
+          options={dashboardOptions}
+          placeholder={loading ? 'Loading dashboards' : 'Select dashboard'}
           disabled={loading || dashboards.length === 0}
-        >
-          <option value="">{loading ? 'Loading dashboards' : 'Select dashboard'}</option>
-          {#each dashboards as dashboard (dashboard.id)}
-            <option value={dashboard.id}>{dashboard.name}</option>
-          {/each}
-        </select>
+        />
         {#if loadError}
           <p class="text-sm text-destructive-text" role="alert">{loadError}</p>
         {:else if !loading && dashboards.length === 0}

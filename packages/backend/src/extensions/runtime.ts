@@ -11,9 +11,11 @@ import {
 import { getMailer } from '../lib/mailer.js';
 import { createQueue } from '../queue/connection.js';
 import { retentionService } from '../modules/retention/service.js';
+import { auditLogService } from '../modules/audit-log/service.js';
 import { extensionAuth, UUID_RE } from './auth.js';
 import { runExtensionMigrations } from './migrate.js';
 import type {
+  ExtensionAdmin,
   ExtensionApi,
   ExtensionCron,
   ExtensionJob,
@@ -28,6 +30,9 @@ import { MailNotConfiguredError } from './types.js';
 
 /** Job names end up in queue ids `ext:<name>:<job>`, so no `:` and no `__`. */
 const JOB_NAME_RE = /^[a-z][a-z0-9_-]{0,62}$/;
+
+/** Extension audit action names, stored in metadata.action. */
+const AUDIT_ACTION_RE = /^[a-z][a-z0-9_.]{1,62}$/;
 
 function assertJobName(method: string, job: unknown): void {
   if (typeof job !== 'string' || !JOB_NAME_RE.test(job) || job.includes('__')) {
@@ -78,6 +83,8 @@ function resolveAppUrl(): string | null {
 }
 
 // Malformed ids are answered like missing ones (never a Postgres cast error).
+const ORGS_GET_MANY_MAX = 500;
+
 const extensionOrgs: ExtensionOrgs = {
   async get(orgId) {
     if (!UUID_RE.test(orgId)) return null;
@@ -87,6 +94,41 @@ const extensionOrgs: ExtensionOrgs = {
       .where('id', '=', orgId)
       .executeTakeFirst();
     return org ?? null;
+  },
+  async getMany(orgIds) {
+    const ids = [...new Set(orgIds)];
+    if (ids.length > ORGS_GET_MANY_MAX) {
+      throw new RangeError(`[Extensions] orgs.getMany accepts at most ${ORGS_GET_MANY_MAX} ids`);
+    }
+    const valid = ids.filter((id) => typeof id === 'string' && UUID_RE.test(id));
+    if (valid.length === 0) return [];
+    const rows = await db
+      .selectFrom('organizations')
+      .innerJoin('users', 'users.id', 'organizations.owner_id')
+      .select([
+        'organizations.id',
+        'organizations.name',
+        'organizations.slug',
+        'organizations.created_at',
+        'users.id as ownerId',
+        'users.email as ownerEmail',
+      ])
+      .where('organizations.id', 'in', valid)
+      .execute();
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return valid.flatMap((id) => {
+      const r = byId.get(id);
+      if (!r) return [];
+      return [
+        {
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          createdAt: new Date(r.created_at as unknown as string | Date),
+          owner: { userId: r.ownerId, email: r.ownerEmail },
+        },
+      ];
+    });
   },
   async listOwnersAndAdmins(orgId) {
     if (!UUID_RE.test(orgId)) return [];
@@ -116,6 +158,35 @@ const extensionMail: ExtensionMail = {
     });
   },
 };
+
+function createExtensionAdmin(name: string): ExtensionAdmin {
+  return {
+    async audit(entry, request) {
+      if (typeof entry.action !== 'string' || !AUDIT_ACTION_RE.test(entry.action)) {
+        throw new Error(
+          `[Extensions] admin.audit() action must match ${AUDIT_ACTION_RE} (got ${JSON.stringify(entry.action)})`
+        );
+      }
+      const user = request?.user;
+      const userAgent = request?.headers['user-agent'];
+      await auditLogService.record({
+        action: 'ext.admin_action',
+        target: entry.target,
+        outcome: entry.outcome ?? 'success',
+        organizationId:
+          typeof entry.organizationId === 'string' && UUID_RE.test(entry.organizationId)
+            ? entry.organizationId
+            : null,
+        actor: user
+          ? { type: 'user', id: user.id, label: user.email ?? null }
+          : { type: 'system', id: null, label: `ext:${name}` },
+        ip: request ? (request.ip ?? null) : undefined,
+        userAgent: request ? (typeof userAgent === 'string' ? userAgent : null) : undefined,
+        metadata: { ...(entry.metadata ?? {}), extension: name, action: entry.action },
+      });
+    },
+  };
+}
 
 function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
   const assertRegistering = (method: string) => {
@@ -192,6 +263,7 @@ function createExtensionApi(name: string, state: RuntimeState): ExtensionApi {
     orgs: extensionOrgs,
     queue,
     mail: extensionMail,
+    admin: createExtensionAdmin(name),
   };
 }
 

@@ -13,6 +13,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import { SelectField } from '$lib/components/ui/select';
   import * as Dialog from '$lib/components/ui/dialog';
   import ChannelSelector from '$lib/components/notification-channels/ChannelSelector.svelte';
   import WillNotify from '$lib/components/notification-channels/WillNotify.svelte';
@@ -51,8 +52,11 @@
   const uid = $props.id();
   const id = (name: string) => `${uid}-${name}`;
 
-  const selectClass =
-    'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
+  const projectOptions = $derived(projects.map((p) => ({ value: p.id, label: p.name })));
+  const severityOptions = SEVERITY_OPTIONS.map((sev) => ({
+    value: sev,
+    label: sev.charAt(0).toUpperCase() + sev.slice(1),
+  }));
 
   const editing = $derived(mode === 'edit');
 
@@ -198,24 +202,22 @@
       {#if !editing}
         <div class="space-y-1.5">
           <Label for={id('project')}>Project</Label>
-          <select id={id('project')} class={selectClass} bind:value={selectedProjectId}>
-            {#each projects as p (p.id)}
-              <option value={p.id}>{p.name}</option>
-            {/each}
-          </select>
+          <SelectField
+            id={id('project')}
+            class="w-full"
+            bind:value={selectedProjectId}
+            options={projectOptions}
+          />
         </div>
         <div class="space-y-1.5">
           <Label for={id('type')}>Type</Label>
-          <select
+          <SelectField
             id={id('type')}
-            class={selectClass}
+            class="w-full"
             value={values.type}
-            onchange={(e) => changeType(e.currentTarget.value as MonitorType)}
-          >
-            {#each MONITOR_TYPE_OPTIONS as option (option.value)}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
+            options={MONITOR_TYPE_OPTIONS}
+            onValueChange={(v) => changeType(v as MonitorType)}
+          />
         </div>
       {/if}
 
@@ -272,11 +274,12 @@
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div class="space-y-1.5">
             <Label for={id('severity')}>Severity</Label>
-            <select id={id('severity')} class={selectClass} bind:value={values.severity}>
-              {#each SEVERITY_OPTIONS as sev (sev)}
-                <option value={sev}>{sev.charAt(0).toUpperCase() + sev.slice(1)}</option>
-              {/each}
-            </select>
+            <SelectField
+              id={id('severity')}
+              class="w-full"
+              bind:value={values.severity}
+              options={severityOptions}
+            />
           </div>
           <div class="flex flex-col justify-end gap-2">
             <label class="flex items-center gap-2 text-sm">

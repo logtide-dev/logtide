@@ -27,10 +27,10 @@ const channels = [
 
 beforeEach(() => {
   for (const fn of Object.values(m)) fn.mockReset();
-  m.getHealth.mockResolvedValue({ settings: { silentMinutes: 60, healthChannelIds: [] } });
+  m.getHealth.mockResolvedValue({ settings: { silentEnabled: true, silentMinutes: 60, healthChannelIds: [] } });
   m.list.mockResolvedValue(channels);
   m.preview.mockResolvedValue({ destinations: [{ id: 'c9', name: 'Org default', type: 'email' }], fallback: null });
-  m.update.mockResolvedValue({ silentMinutes: 90, healthChannelIds: ['c1'] });
+  m.update.mockResolvedValue({ silentEnabled: true, silentMinutes: 90, healthChannelIds: ['c1'] });
 });
 
 const mount = (canManage = true) =>
@@ -55,8 +55,33 @@ describe('ProjectNotificationSettings', () => {
     await fireEvent.click(await screen.findByRole('checkbox', { name: /Ops Slack/ }));
     await fireEvent.input(screen.getByLabelText('Silent threshold (minutes)'), { target: { value: '90' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(m.update).toHaveBeenCalledWith('p1', { healthChannelIds: ['c1'], silentMinutes: 90 }));
+    await waitFor(() => expect(m.update).toHaveBeenCalledWith('p1', { healthChannelIds: ['c1'], silentEnabled: true, silentMinutes: 90 }));
     expect(m.toastSuccess).toHaveBeenCalled();
+  });
+
+  it('the silent check off disables the threshold and saves it off', async () => {
+    m.getHealth.mockResolvedValue({ settings: { silentEnabled: false, silentMinutes: 60, healthChannelIds: [] } });
+    m.update.mockResolvedValue({ silentEnabled: false, silentMinutes: 60, healthChannelIds: [] });
+    mount();
+    const toggle = await screen.findByRole('checkbox', { name: /stops sending data/ });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByLabelText('Silent threshold (minutes)')).toBeDisabled();
+    expect(screen.getByTestId('silent-hint').querySelector('a')).toHaveAttribute('href', '/dashboard/uptime');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(m.update).toHaveBeenCalledWith('p1', { healthChannelIds: [], silentEnabled: false, silentMinutes: 60 }),
+    );
+  });
+
+  it('turning the silent check on enables the threshold', async () => {
+    m.getHealth.mockResolvedValue({ settings: { silentEnabled: false, silentMinutes: 60, healthChannelIds: [] } });
+    mount();
+    await fireEvent.click(await screen.findByRole('checkbox', { name: /stops sending data/ }));
+    expect(screen.getByLabelText('Silent threshold (minutes)')).not.toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(m.update).toHaveBeenCalledWith('p1', { healthChannelIds: [], silentEnabled: true, silentMinutes: 60 }),
+    );
   });
 
   it('rejects 5 minutes on the client', async () => {

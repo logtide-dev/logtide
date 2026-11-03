@@ -34,7 +34,8 @@ describe('ClickHouse analytics time limit', () => {
   it('count, histogram, facets and key discovery carry max_execution_time by default', async () => {
     const { engine, queries } = engineWith();
     await runAnalytics(engine);
-    expect(queries).toHaveLength(4);
+    // Count and histogram read whole minutes and the edges as separate queries.
+    expect(queries.length).toBeGreaterThanOrEqual(4);
     for (const q of queries) {
       expect(q.clickhouse_settings).toEqual({ max_execution_time: ANALYTICS_TIMEOUT_MS / 1000 });
     }

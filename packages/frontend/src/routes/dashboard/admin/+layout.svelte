@@ -19,6 +19,8 @@
   import { untrack } from 'svelte';
   import { get } from 'svelte/store';
   import SectionNav from '$lib/components/settings/SectionNav.svelte';
+  import { authAPI, type AuthConfig } from '$lib/api/auth';
+  import { adminNavGroups, hasAdminContributions, type AdminNavGroup } from '$lib/extensions/registry';
 
   let { children }: { children: Snippet } = $props();
 
@@ -81,7 +83,7 @@
     }
   });
 
-  const groups = [
+  const CORE_GROUPS: AdminNavGroup[] = [
     {
       label: 'Instance',
       items: [
@@ -101,6 +103,27 @@
       ],
     },
   ];
+
+  // Extension pages join the navigation once the auth config is known, and
+  // only after the admin guard has resolved (non admins never fetch it), and
+  // only when some extension has admin pages (never in the public build).
+  let authConfig = $state<AuthConfig | null>(null);
+  let authConfigRequested = false;
+
+  $effect(() => {
+    if (!adminResolved || authConfigRequested || !hasAdminContributions()) return;
+    authConfigRequested = true;
+    authAPI
+      .getAuthConfig()
+      .then((cfg) => {
+        authConfig = cfg;
+      })
+      .catch(() => {
+        authConfig = null;
+      });
+  });
+
+  const groups = $derived(adminNavGroups(CORE_GROUPS, authConfig));
 
   const currentPath = $derived(page.url.pathname);
 

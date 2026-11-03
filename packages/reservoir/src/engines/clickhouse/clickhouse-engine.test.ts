@@ -755,9 +755,8 @@ describe('ClickHouseEngine (integration)', () => {
     });
 
     it('merges times and span count from spans on update', async () => {
-      // The trace summary is recomputed from the spans table (race-free), so spans
-      // are ingested across two batches and each batch re-upserts the trace. The
-      // final summary must reflect ALL spans (count and the widest time range).
+      // Spans arrive in two batches and each batch upserts its partial summary;
+      // the final summary must reflect ALL spans (count and the widest range).
       await engine.ingestSpans([
         makeSpan({ spanId: 'm1', traceId: 'trace-merge', startTime: new Date('2025-01-15T12:00:01Z'), endTime: new Date('2025-01-15T12:00:03Z') }),
         makeSpan({ spanId: 'm2', traceId: 'trace-merge', startTime: new Date('2025-01-15T12:00:02Z'), endTime: new Date('2025-01-15T12:00:04Z') }),
@@ -784,6 +783,20 @@ describe('ClickHouseEngine (integration)', () => {
       expect(trace!.spanCount).toBe(3);
       // Duration should cover the wider range (00 -> 05 = 5s)
       expect(trace!.durationMs).toBeGreaterThanOrEqual(4000);
+    });
+
+    it('is correct when the summaries land before their spans (async buffer, #309)', async () => {
+      await engine.upsertTrace(makeTrace({
+        traceId: 'trace-early', spanCount: 2, error: true,
+        startTime: new Date('2025-01-15T12:00:01Z'), endTime: new Date('2025-01-15T12:00:02Z'),
+      }));
+      await engine.upsertTrace(makeTrace({
+        traceId: 'trace-early', spanCount: 3, error: false,
+        startTime: new Date('2025-01-15T12:00:00Z'), endTime: new Date('2025-01-15T12:00:04Z'),
+      }));
+
+      const trace = await engine.getTraceById('trace-early', 'proj-1');
+      expect(trace).toMatchObject({ spanCount: 5, durationMs: 4000, error: true });
     });
   });
 

@@ -140,7 +140,7 @@ describe('SIEM SSE Events', () => {
                 });
                 clearTimeout(timeoutId);
                 // If we get a response, it should be success or internal error (not 4xx validation error)
-                expect([200, 500]).toContain(response.statusCode);
+                expect(response.statusCode).toBe(200);
             } catch (error: any) {
                 clearTimeout(timeoutId);
                 // AbortError is expected - means the SSE connection was established
@@ -178,7 +178,7 @@ describe('SIEM SSE Events', () => {
                     signal: controller.signal as any,
                 });
                 clearTimeout(timeoutId);
-                expect([200, 500]).toContain(response.statusCode);
+                expect(response.statusCode).toBe(200);
             } catch (error: any) {
                 clearTimeout(timeoutId);
                 if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
@@ -241,7 +241,7 @@ describe('SIEM SSE Events', () => {
                     signal: controller.signal as any,
                 });
                 clearTimeout(timeoutId);
-                expect([200, 500]).toContain(response.statusCode);
+                expect(response.statusCode).toBe(200);
             } catch (error: any) {
                 clearTimeout(timeoutId);
                 if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
@@ -280,7 +280,7 @@ describe('SIEM SSE Events', () => {
                     signal: controller.signal as any,
                 });
                 clearTimeout(timeoutId);
-                expect([200, 500]).toContain(response.statusCode);
+                expect(response.statusCode).toBe(200);
             } catch (error: any) {
                 clearTimeout(timeoutId);
                 if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
@@ -312,7 +312,7 @@ describe('SIEM SSE Events', () => {
                         signal: controller.signal as any,
                     });
                     clearTimeout(timeoutId);
-                    expect([200, 500]).toContain(response.statusCode);
+                    expect(response.statusCode).toBe(200);
                 } catch (error: any) {
                     clearTimeout(timeoutId);
                     if (error.name !== 'AbortError' && error.code !== 'ABORT_ERR') throw error;

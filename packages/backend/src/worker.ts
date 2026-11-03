@@ -974,6 +974,34 @@ async function runProjectHealth() {
 setInterval(runProjectHealth, 5 * 60 * 1000);
 setTimeout(runProjectHealth, 60 * 1000);
 
+// ============================================================================
+// Log volume aggregate refresh (every minute)
+// ============================================================================
+// MongoDB keeps the per-minute log counts behind the explorer histogram and
+// count by hand (reservoir engines/mongodb/log-volume.ts); the other engines
+// keep theirs in the database and this is a no-op. Several workers may run
+// it: the refresh takes a lease lock.
+
+let isRefreshingLogVolume = false;
+
+async function refreshLogVolume() {
+  if (isRefreshingLogVolume) return;
+  isRefreshingLogVolume = true;
+  try {
+    await reservoir.refreshLogVolume();
+  } catch (error) {
+    console.error('[Worker] Log volume refresh failed:', error);
+    if (isInternalLoggingEnabled()) {
+      hub.captureLog('error', `Log volume refresh failed: ${(error as Error).message}`, {});
+    }
+  } finally {
+    isRefreshingLogVolume = false;
+  }
+}
+
+setInterval(refreshLogVolume, 60 * 1000);
+setTimeout(refreshLogVolume, 15 * 1000);
+
 // Graceful shutdown
 async function gracefulShutdown(signal: string) {
   console.log(`Received ${signal}, shutting down gracefully...`);

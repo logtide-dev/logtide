@@ -514,7 +514,7 @@ describe('Metrics Routes', () => {
 
       // groupBy may be accepted or rejected depending on schema handling
       // Just verify it doesn't return a 500
-      expect([200, 400]).toContain(response.status);
+      expect(response.status).toBe(200);
     });
 
     it('should return 401 without auth', async () => {

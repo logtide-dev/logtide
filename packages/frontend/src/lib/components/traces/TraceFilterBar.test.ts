@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import TraceFilterBar from './TraceFilterBar.svelte';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
 function props(over: Record<string, unknown> = {}) {
   return {
@@ -91,7 +92,7 @@ describe('TraceFilterBar', () => {
   it('changing the service select reports the service', async () => {
     const p = props();
     render(TraceFilterBar, p);
-    await fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'web' } });
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Service' }), 'web');
     expect(p.onChange).toHaveBeenCalledWith({ service: 'web' });
   });
 });

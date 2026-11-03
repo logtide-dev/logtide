@@ -14,6 +14,7 @@
   } from '$lib/api/status-page';
   import Button from '$lib/components/ui/button/button.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
+  import { SelectField } from '$lib/components/ui/select';
   import * as Dialog from '$lib/components/ui/dialog';
   import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
@@ -42,8 +43,6 @@
 
   let { orgId, projectId, monitors, prefill = null }: Props = $props();
 
-  const selectClass =
-    'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 
   let items = $state<StatusUpdateItem[]>([]);
   let loading = $state(true);
@@ -286,11 +285,13 @@
     <form onsubmit={submitUpdate} class="space-y-3">
       <div class="space-y-1.5">
         <Label for="post-update-status">Status</Label>
-        <select id="post-update-status" class={selectClass} bind:value={updateStatus}>
-          {#each STATUS_UPDATE_STATUSES as s (s.value)}
-            <option value={s.value}>{s.label}</option>
-          {/each}
-        </select>
+        <SelectField
+          id="post-update-status"
+          class="w-full"
+          value={updateStatus}
+          options={[...STATUS_UPDATE_STATUSES]}
+          onValueChange={(v) => (updateStatus = v as StatusUpdateStatus)}
+        />
         {#if updateStatus === 'resolved'}
           <p class="text-xs text-muted-foreground">Posting this marks the status update as resolved.</p>
         {/if}

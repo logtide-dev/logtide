@@ -76,6 +76,51 @@ describe('runProjectHealthPass', () => {
     t0.setUTCSeconds(0, 0);
     // Most tests describe a mature project; the rollout tests below delete this.
     await seedMatureState(orgId, projectId);
+    // The silent check is opt-in; most tests below exercise it.
+    await updateProjectHealthSettings(orgId, projectId, { silentEnabled: true });
+  });
+
+  describe('silent opt-in', () => {
+    it('is off by default: an idle project raises nothing', async () => {
+      await updateProjectHealthSettings(orgId, projectId, { silentEnabled: false });
+      await setLastEvent(projectId, at(-120));
+      const r = await runProjectHealthPass(t0);
+      expect(r.opened).toBe(0);
+      expect(await listIssues(orgId, projectId)).toHaveLength(0);
+      expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('turning it off resolves the open silent issue without a resolve notification', async () => {
+      await setLastEvent(projectId, at(-120));
+      await runProjectHealthPass(t0);
+      expect(calls('opened', projectId)).toHaveLength(1);
+
+      await updateProjectHealthSettings(orgId, projectId, { silentEnabled: false });
+      const r = await runProjectHealthPass(at(5));
+      expect(r.resolved).toBe(1);
+      await runProjectHealthPass(at(30));
+      expect(await listOpenByOrg(orgId)).toHaveLength(0);
+      const [row] = await listIssues(orgId, projectId);
+      expect(row.notifiedResolveAt).not.toBeNull();
+      expect(calls('resolved', projectId)).toHaveLength(0);
+    });
+
+    it('other checks run with the silent check off', async () => {
+      await updateProjectHealthSettings(orgId, projectId, { silentEnabled: false });
+      await setLastEvent(projectId, at(-120));
+      await addMetering(orgId, projectId, 'ingestion.pii_rejected', at(-5));
+      await runProjectHealthPass(t0);
+      expect((await listOpenByOrg(orgId)).map((i) => i.checkKey)).toEqual(['pii_rejected']);
+    });
+
+    it('the setting persists and other updates keep it', async () => {
+      await updateProjectHealthSettings(orgId, projectId, { silentMinutes: 90 });
+      const s = await getProjectHealthSettings(orgId, projectId);
+      expect(s.silentEnabled).toBe(true);
+      expect(s.silentMinutes).toBe(90);
+      await setMute(orgId, projectId, 'pii_rejected', '24h', t0);
+      expect((await getProjectHealthSettings(orgId, projectId)).silentEnabled).toBe(true);
+    });
   });
 
   describe('rollout guard', () => {
@@ -221,15 +266,53 @@ describe('runProjectHealthPass', () => {
     expect(calls('opened', projectId)).toHaveLength(1);
   });
 
-  it('reopen after 15 minutes opens a new episode and notifies', async () => {
+  it('reopen after 15 minutes but within 24 hours opens a new episode without notifying', async () => {
     await setLastEvent(projectId, at(-120));
     await runProjectHealthPass(t0);
     await setLastEvent(projectId, at(1));
     await runProjectHealthPass(at(1));
     await updateProjectHealthSettings(orgId, projectId, { silentMinutes: 10 });
     await runProjectHealthPass(at(20));
-    expect(await listIssues(orgId, projectId)).toHaveLength(2);
+    const rows = await listIssues(orgId, projectId);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.resolvedAt === null)?.baseline).toBe(true);
+    expect(calls('opened', projectId)).toHaveLength(1);
+
+    // The recurrence resolves: only the first episode ever sends a resolve.
+    await setLastEvent(projectId, at(25));
+    await runProjectHealthPass(at(25));
+    await runProjectHealthPass(at(45));
+    expect(calls('resolved', projectId)).toHaveLength(1);
+  });
+
+  it('intermittent project: nightly pauses over several days send one opened and one resolved', async () => {
+    const DAY = 24 * 60;
+    // Works 08:00-18:00 (relative), idle overnight, default 60 min threshold.
+    for (let day = 0; day < 4; day++) {
+      await setLastEvent(projectId, at(day * DAY + 10 * 60));
+      await runProjectHealthPass(at(day * DAY + 10 * 60));
+      await runProjectHealthPass(at(day * DAY + 12 * 60)); // silent overnight
+      await runProjectHealthPass(at(day * DAY + 20 * 60));
+    }
+    await setLastEvent(projectId, at(4 * DAY + 10 * 60));
+    await runProjectHealthPass(at(4 * DAY + 10 * 60));
+    await runProjectHealthPass(at(4 * DAY + 10 * 60 + 20));
+    expect(calls('opened', projectId)).toHaveLength(1);
+    expect(calls('resolved', projectId)).toHaveLength(1);
+  });
+
+  it('a check quiet for more than 24 hours notifies again when it reopens', async () => {
+    await setLastEvent(projectId, at(-120));
+    await runProjectHealthPass(t0);
+    await setLastEvent(projectId, at(1));
+    await runProjectHealthPass(at(1));
+    await runProjectHealthPass(at(20)); // resolve sent
+    // Last event stays at +1: silent again only after 24 h + threshold.
+    await runProjectHealthPass(at(24 * 60 + 61));
     expect(calls('opened', projectId)).toHaveLength(2);
+    const open = await listOpenByOrg(orgId);
+    expect(open).toHaveLength(1);
+    expect(open[0].baseline).toBe(false);
   });
 
   it('muted open issue sends nothing until the mute expires while still open', async () => {

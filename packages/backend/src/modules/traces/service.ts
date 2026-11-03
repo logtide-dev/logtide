@@ -236,8 +236,12 @@ export class TracesService {
       recordSpanIngestion({ spanCount: result.ingested, organizationId, projectId, spans: spansToStore });
     }
 
-    for (const [, trace] of traces) {
-      await reservoir.upsertTrace({
+    // One write for every trace summary of the request (issue #309): the
+    // engines merge partial summaries, so this is correct whichever request
+    // carries the root span and whether or not the spans above are still in
+    // the async buffer.
+    await reservoir.upsertTraces(
+      [...traces.values()].map((trace) => ({
         traceId: trace.trace_id,
         organizationId,
         projectId,
@@ -249,8 +253,8 @@ export class TracesService {
         durationMs: trace.duration_ms,
         spanCount: trace.span_count,
         error: trace.error,
-      });
-    }
+      })),
+    );
 
     // Mark the project as having traces (debounced, fire-and-forget)
     projectsService.markHasData(projectId, 'traces').catch(() => {});

@@ -1,48 +1,83 @@
 import { test, expect } from '@playwright/test';
-import { waitForAuthForm, TEST_FRONTEND_URL } from './fixtures/auth';
+import {
+	waitForAuthForm,
+	registerUser,
+	TestApiClient,
+	generateTestEmail,
+	generateTestName,
+	TEST_FRONTEND_URL,
+} from './fixtures/auth';
+
+const PASSWORD = 'TestPassword123!';
 
 test.describe('Login Page', () => {
-	test('should display login form', async ({ page }) => {
+	test('the register link leads to the register form', async ({ page }) => {
 		await page.goto(`${TEST_FRONTEND_URL}/login`);
 		await waitForAuthForm(page);
 
-		// Check for login form elements
-		await expect(page.locator('input#email')).toBeVisible();
+		await page.getByRole('link', { name: 'Sign up' }).click();
+
+		await expect(page).toHaveURL(/\/register/);
+		await expect(page.locator('input#name')).toBeVisible();
+		await expect(page.getByRole('button', { name: /create account|sign up/i })).toBeVisible();
 		await expect(page.locator('input#password')).toBeVisible();
-		await expect(page.locator('button[type="submit"]')).toBeVisible();
 	});
 
-	test('should have link to register page', async ({ page }) => {
+	test('empty fields are blocked by the browser and no login request is sent', async ({ page }) => {
 		await page.goto(`${TEST_FRONTEND_URL}/login`);
 		await waitForAuthForm(page);
 
-		const registerLink = page.locator('a[href="/register"]');
-		await expect(registerLink).toBeVisible();
-	});
+		let loginRequests = 0;
+		page.on('request', (req) => {
+			if (req.url().includes('/api/v1/auth/login')) loginRequests++;
+		});
 
-	test('should show validation errors for empty fields', async ({ page }) => {
-		await page.goto(`${TEST_FRONTEND_URL}/login`);
-		await waitForAuthForm(page);
-
-		// Try to submit without filling fields
-		await page.locator('button[type="submit"]').click();
-
-		// HTML5 validation should prevent submission
 		const emailInput = page.locator('input#email');
-		const isInvalid = await emailInput.evaluate((el: HTMLInputElement) => !el.validity.valid);
-		expect(isInvalid).toBeTruthy();
+		const passwordInput = page.locator('input#password');
+
+		// Nothing filled: the email field is the first invalid one
+		await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+		await expect(emailInput).toHaveJSProperty('validity.valueMissing', true);
+		expect(await emailInput.evaluate((el: HTMLInputElement) => el.validationMessage)).not.toBe('');
+
+		// Email filled, password still empty: the password field blocks submission
+		await emailInput.fill(generateTestEmail());
+		await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+		await expect(passwordInput).toHaveJSProperty('validity.valueMissing', true);
+		expect(await passwordInput.evaluate((el: HTMLInputElement) => el.validationMessage)).not.toBe('');
+
+		await expect(page).toHaveURL(/\/login/);
+		expect(loginRequests).toBe(0);
 	});
 
-	test('should navigate to dashboard on successful login', async ({ page }) => {
+	test('a registered user signs in through the form and lands on the dashboard', async ({ page }) => {
+		const email = generateTestEmail();
+		const { token } = await registerUser(generateTestName('Login'), email, PASSWORD);
+		await new TestApiClient(token).createOrganization(`Login Org ${Date.now()}`);
+
 		await page.goto(`${TEST_FRONTEND_URL}/login`);
 		await waitForAuthForm(page);
+		await page.locator('input#email').fill(email);
+		await page.locator('input#password').fill(PASSWORD);
+		await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
-		// Fill in mock credentials
-		await page.locator('input#email').fill('test@example.com');
-		await page.locator('input#password').fill('password123');
-		await page.locator('button[type="submit"]').click();
+		await expect(page).toHaveURL(/\/dashboard/, { timeout: 15000 });
+		const stored = await page.evaluate(() => localStorage.getItem('logtide_auth'));
+		expect(JSON.parse(stored as string).user.email).toBe(email);
+	});
 
-		// Should redirect to dashboard (if backend is running)
-		// await expect(page).toHaveURL(/\/dashboard/);
+	test('a wrong password shows an error and keeps the user on the login page', async ({ page }) => {
+		const email = generateTestEmail();
+		await registerUser(generateTestName('Login'), email, PASSWORD);
+
+		await page.goto(`${TEST_FRONTEND_URL}/login`);
+		await waitForAuthForm(page);
+		await page.locator('input#email').fill(email);
+		await page.locator('input#password').fill('WrongPassword999!');
+		await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+
+		await expect(page.getByRole('alert').filter({ hasText: /invalid|incorrect|credentials/i })).toBeVisible();
+		await expect(page).toHaveURL(/\/login/);
+		expect(await page.evaluate(() => localStorage.getItem('logtide_auth'))).toBeNull();
 	});
 });

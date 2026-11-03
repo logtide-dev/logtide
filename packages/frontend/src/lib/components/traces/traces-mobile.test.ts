@@ -54,6 +54,7 @@ import TracesExplorer from './TracesExplorer.svelte';
 import TraceListTable from './TraceListTable.svelte';
 import OperationsTable from './OperationsTable.svelte';
 import TraceView from './TraceView.svelte';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
 const api = vi.mocked(tracesAPI, true) as any;
 const realMatchMedia = window.matchMedia;
@@ -159,7 +160,7 @@ describe('traces list on a phone', () => {
     const onSort = vi.fn();
     render(TraceListTable, { props: listProps({ onSort }) });
     const select = screen.getByLabelText('Sort by');
-    await fireEvent.change(select, { target: { value: 'duration:desc' } });
+    await chooseSelectOption(select, 'Slowest first');
     expect(onSort).toHaveBeenCalledWith('duration', 'desc');
   });
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { SelectField } from '$lib/components/ui/select';
 	import type { Snippet } from 'svelte';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
@@ -214,16 +215,16 @@
 	>
 		{#snippet actions()}
 			<div class="flex items-center gap-2">
-				<select
+				<SelectField
 					aria-label="Filter by status"
-					class="h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					bind:value={statusFilter}
-					onchange={onStatusChange}
-				>
-					{#each STATUS_OPTIONS as opt (opt.value)}
-						<option value={opt.value}>{opt.label}</option>
-					{/each}
-				</select>
+					class="w-36"
+					value={statusFilter}
+					options={STATUS_OPTIONS}
+					onValueChange={(v) => {
+						statusFilter = v as WebhookDeliveryStatus | '';
+						onStatusChange();
+					}}
+				/>
 				<Button variant="outline" size="sm" onclick={reload}>
 					<RotateCcw class="mr-1 h-4 w-4" aria-hidden="true" />
 					Refresh

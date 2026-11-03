@@ -16,6 +16,7 @@
   import Textarea from '$lib/components/ui/textarea/textarea.svelte';
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Switch } from '$lib/components/ui/switch';
+  import { SelectField } from '$lib/components/ui/select';
   import {
     Dialog,
     DialogContent,
@@ -166,17 +167,17 @@
       </div>
       <div class="space-y-2">
         <Label for="pipeline-project">Project <span class="text-muted-foreground text-xs">(optional, leave empty for an organization-wide default)</span></Label>
-        <select
+        <SelectField
           id="pipeline-project"
-          class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
-          onchange={(e) => { projectId = (e.currentTarget as HTMLSelectElement).value || null; }}
+          class="w-full"
+          value={projectId ?? ''}
+          onValueChange={(v) => { projectId = v || null; }}
+          options={[
+            { value: '', label: 'All projects (organization-wide)' },
+            ...projects.map((p) => ({ value: p.id, label: p.name })),
+          ]}
           disabled={saving || !canEdit}
-        >
-          <option value="">All projects (organization-wide)</option>
-          {#each projects as p}
-            <option value={p.id}>{p.name}</option>
-          {/each}
-        </select>
+        />
       </div>
       <div class="flex items-center gap-3">
         <Switch bind:checked={enabled} disabled={saving} />

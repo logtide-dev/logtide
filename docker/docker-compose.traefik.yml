@@ -17,12 +17,10 @@
 #   - LogTide UI: http://localhost:3080
 #   - Traefik Dashboard: http://localhost:8081 (dev only)
 
-version: '3.8'
-
 services:
   # Traefik reverse proxy - single entry point
   traefik:
-    image: traefik:v3.2
+    image: traefik:v3.6
     container_name: logtide-traefik
     command:
       - "--api.insecure=true"
@@ -42,16 +40,21 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    # Same network as the services it routes to
+    networks:
+      - logtide-network
 
   # Override backend for Traefik integration
   backend:
-    # Remove container_name for scaling
-    container_name: ""
+    # Remove container_name for scaling (!reset needs Docker Compose 2.24+)
+    container_name: !reset null
     # Remove direct port exposure (access via Traefik only)
-    ports: []
+    ports: !reset []
     environment:
-      # Trust proxy headers from Traefik
-      TRUST_PROXY: "true"
+      # One proxy (Traefik) in front of the backend. Set it here rather than in
+      # .env, which usually carries TRUST_PROXY=false; use 2 when Cloudflare or
+      # another proxy sits in front of Traefik
+      TRUST_PROXY: "1"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.backend.rule=PathPrefix(`/api`) || PathPrefix(`/health`)"
@@ -68,7 +71,7 @@ services:
 
   # Override worker for scaling
   worker:
-    container_name: ""
+    container_name: !reset null
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
       resources:
@@ -78,8 +81,8 @@ services:
 
   # Override frontend for Traefik integration
   frontend:
-    container_name: ""
-    ports: []
+    container_name: !reset null
+    ports: !reset []
     environment:
       # Empty = relative URLs (works with Traefik)
       PUBLIC_API_URL: ""

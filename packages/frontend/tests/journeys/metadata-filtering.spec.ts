@@ -1,5 +1,5 @@
 import { test, expect, TestApiClient, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL } from '../fixtures/auth';
-import { createTestLog, wait } from '../helpers/factories';
+import { createTestLog } from '../helpers/factories';
 
 test.describe('Metadata Filtering Journey', () => {
   let apiClient: TestApiClient;
@@ -30,7 +30,9 @@ test.describe('Metadata Filtering Journey', () => {
     ];
 
     await apiClient.ingestLogs(apiKey, logs);
-    await wait(2000);
+    await expect
+      .poll(async () => (await apiClient.getLogs(projectId, { limit: '10' })).logs.length, { timeout: 20000 })
+      .toBe(logs.length);
   });
 
   test.beforeEach(async ({ page }) => {
@@ -43,32 +45,29 @@ test.describe('Metadata Filtering Journey', () => {
 
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs?projectId=${projectId}`);
     await page.waitForLoadState('load');
-    await page.waitForSelector('text=prod boom', { timeout: 30000 });
-  });
-
-  test('1. All 3 logs visible before applying metadata filter', async ({ page }) => {
-    await expect(page.getByText('prod boom')).toBeVisible();
+    // All three seeded logs are listed before any filter is applied
+    await expect(page.getByText('prod boom')).toBeVisible({ timeout: 30000 });
     await expect(page.getByText('dev boom')).toBeVisible();
     await expect(page.getByText('no env boom')).toBeVisible();
   });
 
-  test('2. Metadata filter by environment=production shows only prod log', async ({ page }) => {
+  test('1. Metadata filter by environment=production shows only prod log', async ({ page }) => {
     // Metadata keys are plain field clauses in the log query
     const query = page.getByRole('combobox', { name: 'Log query' });
     await query.fill('environment:production');
     await query.press('Enter');
 
     await expect(page.getByText('prod boom')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('dev boom')).not.toBeVisible();
-    await expect(page.getByText('no env boom')).not.toBeVisible();
+    await expect(page.getByText('dev boom')).toHaveCount(0);
+    await expect(page.getByText('no env boom')).toHaveCount(0);
     await expect(page).toHaveURL(/q=environment%3Aproduction/);
   });
 
-  test('3. Clearing metadata filters restores all logs', async ({ page }) => {
+  test('2. Clearing metadata filters restores all logs', async ({ page }) => {
     const query = page.getByRole('combobox', { name: 'Log query' });
     await query.fill('environment:production');
     await query.press('Enter');
-    await expect(page.getByText('dev boom')).not.toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('dev boom')).toHaveCount(0, { timeout: 10000 });
 
     await query.fill('');
     await query.press('Enter');
@@ -78,13 +77,13 @@ test.describe('Metadata Filtering Journey', () => {
     await expect(page.getByText('no env boom')).toBeVisible();
   });
 
-  test('4. A negated metadata clause also keeps logs without the key', async ({ page }) => {
+  test('3. A negated metadata clause also keeps logs without the key', async ({ page }) => {
     const query = page.getByRole('combobox', { name: 'Log query' });
     await query.fill('-environment:production');
     await query.press('Enter');
 
     await expect(page.getByText('dev boom')).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('no env boom')).toBeVisible();
-    await expect(page.getByText('prod boom')).not.toBeVisible();
+    await expect(page.getByText('prod boom')).toHaveCount(0);
   });
 });

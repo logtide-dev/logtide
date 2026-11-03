@@ -109,6 +109,7 @@ import { shortcutsStore } from '$lib/stores/shortcuts';
 import { displayPreferences } from '$lib/stores/display-preferences';
 import { toastStore } from '$lib/stores/toast';
 import { makeLog, resetLogIds, deferred, FakeWebSocket } from '$lib/components/search/test-fixtures';
+import { chooseSelectOption } from '$lib/test-utils/select-field';
 
 const NOW = new Date('2026-10-21T10:42:13.000Z');
 
@@ -208,7 +209,7 @@ beforeEach(() => {
   h.getLogs.mockReset().mockResolvedValue(response([]));
   h.getLogById.mockReset().mockResolvedValue(null);
   h.getHistogram.mockReset().mockResolvedValue({ buckets: [], bucketSeconds: 60, total: 0, from: '', to: '' });
-  h.getFacets.mockReset().mockResolvedValue([]);
+  h.getFacets.mockReset().mockResolvedValue({ facets: [], sampleSize: 0 });
   h.getFields.mockReset().mockResolvedValue([]);
   h.getLogContext.mockReset().mockResolvedValue({ before: [], current: null, after: [], applied: { service: null, hostname: null } });
   h.createLogsWebSocket.mockReset();
@@ -515,11 +516,47 @@ describe('logs page: histogram, facets, details, links, saved and recent searche
     expect(lastGotoUrl().searchParams.get('from')).toBe('2026-10-21T10:00:00.000Z');
   });
 
+  it('says when the facets cover only the newest of the matching logs', async () => {
+    h.getHistogram.mockResolvedValue({ buckets: [], bucketSeconds: 60, total: 36_048_449, from: '', to: '' });
+    h.getFacets.mockResolvedValue({ facets: [{ field: 'level', values: [{ value: 'info', count: 90_000 }], otherCount: 10_000 }], sampleSize: 100_000 });
+    await renderPage();
+    expect((await screen.findAllByText('Top values of the newest 100,000 of 36,048,449 matching logs')).length).toBeGreaterThan(0);
+  });
+
+  it('shows no sample note when every matching log was counted', async () => {
+    h.getHistogram.mockResolvedValue({ buckets: [], bucketSeconds: 60, total: 8, from: '', to: '' });
+    h.getFacets.mockResolvedValue({ facets: [{ field: 'level', values: [{ value: 'info', count: 8 }], otherCount: 0 }], sampleSize: 8 });
+    await renderPage();
+    await waitFor(() => expect(h.getFacets).toHaveBeenCalledTimes(1));
+    await screen.findAllByRole('button', { name: 'level info (8 logs)' });
+    expect(screen.queryByText(/Top values of the newest/)).toBeNull();
+  });
+
+  it('never pairs the previous sample size with a new total while facets reload', async () => {
+    h.getHistogram.mockResolvedValue({ buckets: [], bucketSeconds: 60, total: 8, from: '', to: '' });
+    h.getFacets.mockResolvedValue({ facets: [{ field: 'service', values: [{ value: 'api', count: 8 }], otherCount: 0 }], sampleSize: 8 });
+    await renderPage();
+    const button = await screen.findByRole('button', { name: 'service api (8 logs)' });
+    // Next run: the histogram answers at once, the facets stay in flight.
+    let resolveFacets: (value: unknown) => void = () => undefined;
+    h.getHistogram.mockResolvedValue({ buckets: [], bucketSeconds: 60, total: 36_048_449, from: '', to: '' });
+    h.getFacets.mockReturnValue(new Promise((resolve) => { resolveFacets = resolve; }));
+    await fireEvent.click(button);
+    await waitFor(() => expect(h.getFacets).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(h.getHistogram).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/Top values of the newest/)).toBeNull();
+    resolveFacets({ facets: [{ field: 'service', values: [{ value: 'api', count: 100_000 }], otherCount: 0 }], sampleSize: 100_000 });
+    expect((await screen.findAllByText('Top values of the newest 100,000 of 36,048,449 matching logs')).length).toBeGreaterThan(0);
+  });
+
   it('a facet click adds the clause, re-runs and updates the url', async () => {
-    h.getFacets.mockResolvedValue([
-      { field: 'level', values: [{ value: 'error', count: 3 }], otherCount: 0 },
-      { field: 'service', values: [{ value: 'api', count: 5 }], otherCount: 0 },
-    ]);
+    h.getFacets.mockResolvedValue({
+      facets: [
+        { field: 'level', values: [{ value: 'error', count: 3 }], otherCount: 0 },
+        { field: 'service', values: [{ value: 'api', count: 5 }], otherCount: 0 },
+      ],
+      sampleSize: 8,
+    });
     await renderPage();
     await waitFor(() => expect(h.getFacets).toHaveBeenCalledTimes(1));
     expect(h.getFacets.mock.calls[0][0]).toMatchObject({ fields: ['level', 'service', 'host'], limit: 10 });
@@ -541,7 +578,7 @@ describe('logs page: histogram, facets, details, links, saved and recent searche
 
   it('refuses an unqueryable key with a toast', async () => {
     const toast = vi.spyOn(toastStore, 'error').mockImplementation(() => {});
-    h.getFacets.mockResolvedValue([{ field: 'user name', values: [{ value: 'ada', count: 1 }], otherCount: 0 }]);
+    h.getFacets.mockResolvedValue({ facets: [{ field: 'user name', values: [{ value: 'ada', count: 1 }], otherCount: 0 }], sampleSize: 1 });
     await renderPage();
     await fireEvent.click(await screen.findByRole('button', { name: 'user name ada (1 log)' }));
     await settle();
@@ -900,9 +937,9 @@ describe('logs page: live tail', () => {
     localStorage.setItem('logtide_livetail_limit', '200');
     await renderPage('/dashboard/logs?live=true&project=p1');
     await waitFor(() => expect(sockets.length).toBe(1));
-    const select = screen.getByRole('combobox', { name: 'Rows kept in live tail' }) as HTMLSelectElement;
-    expect(select.value).toBe('200');
-    await fireEvent.change(select, { target: { value: '500' } });
+    const select = screen.getByRole('combobox', { name: 'Rows kept in live tail' });
+    expect(select).toHaveTextContent('200');
+    await chooseSelectOption(select, '500');
     await settle();
     expect(localStorage.getItem('logtide_livetail_limit')).toBe('500');
   });
@@ -951,7 +988,7 @@ describe('logs page: phone layout', () => {
   ];
 
   it('keeps the facets out of the page and shows stacked rows', async () => {
-    h.getFacets.mockResolvedValue(FACETS);
+    h.getFacets.mockResolvedValue({ facets: FACETS, sampleSize: 5 });
     h.getLogs.mockResolvedValue(response(logsList(3)));
     await renderPage();
     await waitFor(() => expect(document.querySelectorAll('[data-log-row]').length).toBe(3));
@@ -963,7 +1000,7 @@ describe('logs page: phone layout', () => {
   });
 
   it('opens the filters panel, applies a facet, keeps the panel open and counts the clause', async () => {
-    h.getFacets.mockResolvedValue(FACETS);
+    h.getFacets.mockResolvedValue({ facets: FACETS, sampleSize: 5 });
     await renderPage();
     await fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
     const panel = await screen.findByRole('dialog', { name: 'Filters' });

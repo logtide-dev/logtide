@@ -12,7 +12,7 @@ export const PROJECT_HEALTH_CHECKS: Record<
   ProjectHealthCheckKey,
   { severity: ProjectHealthSeverity; title: string }
 > = {
-  silent: { severity: 'critical', title: 'Project stopped sending data' },
+  silent: { severity: 'warning', title: 'Project stopped sending data' },
   pii_rejected: { severity: 'critical', title: 'Records rejected by PII masking' },
   timestamp_skew_logs: { severity: 'warning', title: 'Logs with out-of-range timestamp' },
   timestamp_skew_spans: { severity: 'warning', title: 'Spans with out-of-range timestamp' },

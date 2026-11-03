@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import DataTable from '$lib/components/app/DataTable.svelte';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
   import Pagination from '$lib/components/app/Pagination.svelte';
@@ -153,15 +154,12 @@
     {#if $isMobile}
       <label class="grid gap-1 text-xs font-medium text-muted-foreground">
         Sort by
-        <select
-          class="h-11 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        <SelectField
+          class="h-11 w-full font-normal"
           value={`${sortBy}:${sortOrder}`}
-          onchange={(e) => onSortSelect(e.currentTarget.value)}
-        >
-          {#each SORT_OPTIONS as o (o.value)}
-            <option value={o.value}>{o.label}</option>
-          {/each}
-        </select>
+          onValueChange={onSortSelect}
+          options={SORT_OPTIONS}
+        />
       </label>
       {#if loading}
         <div class="space-y-2" aria-busy="true">

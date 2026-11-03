@@ -302,7 +302,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
           status: body.status,
           assigneeId: body.assigneeId,
           traceId: body.traceId,
-        });
+        }, request.user.id);
 
         // Link detection events if provided
         if (body.detectionEventIds && body.detectionEventIds.length > 0) {

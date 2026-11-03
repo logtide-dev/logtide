@@ -65,6 +65,10 @@ export interface RecordInput {
   actor?: { type: AuditActorType; id: string | null; label?: string | null };
   /** Override; otherwise taken from the request context. */
   organizationId?: string | null;
+  /** Override for callers whose request context predates authentication. */
+  ip?: string | null;
+  /** Override for callers whose request context predates authentication. */
+  userAgent?: string | null;
 }
 
 export interface RecordOptions {
@@ -136,8 +140,8 @@ export class AuditLogService {
       resource_type: input.target?.type ?? null,
       resource_id: input.target?.id ?? null,
       outcome: input.outcome ?? 'success',
-      ip_address: ctx?.ip ?? null,
-      user_agent: ctx?.userAgent ?? null,
+      ip_address: input.ip !== undefined ? input.ip : (ctx?.ip ?? null),
+      user_agent: input.userAgent !== undefined ? input.userAgent : (ctx?.userAgent ?? null),
       metadata: input.metadata ?? null,
     };
   }

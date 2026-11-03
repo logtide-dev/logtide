@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
 
 const routingPreview = vi.hoisted(() => vi.fn());
@@ -63,10 +64,9 @@ afterEach(() => {
 });
 
 describe('AlertRuleForm', () => {
-  it('renders Scope with All projects and each project', () => {
+  it('renders Scope with All projects and each project', async () => {
     mount();
-    const select = screen.getByLabelText('Scope') as HTMLSelectElement;
-    const labels = Array.from(select.options).map((o) => o.textContent);
+    const labels = await openSelect(screen.getByLabelText('Scope'));
     expect(labels).toEqual(['All projects', 'Web', 'API']);
   });
 
@@ -116,14 +116,14 @@ describe('AlertRuleForm', () => {
 
   it('renotify select appears for threshold only and emits minutes or null', async () => {
     const { onSubmit } = mount();
-    const select = screen.getByLabelText('Renotify') as HTMLSelectElement;
-    expect(select.value).toBe('');
-    await fireEvent.change(select, { target: { value: '240' } });
+    const select = screen.getByLabelText('Renotify');
+    expect(select).toHaveTextContent('Never');
+    await chooseSelectOption(select, 'Every 4 hours');
     await fireEvent.click(screen.getByRole('button', { name: 'Create alert' }));
     expect(onSubmit.mock.calls[0][0].renotifyMinutes).toBe(240);
 
     onSubmit.mockClear();
-    await fireEvent.change(select, { target: { value: '' } });
+    await chooseSelectOption(select, 'Never');
     await fireEvent.click(screen.getByRole('button', { name: 'Create alert' }));
     expect(onSubmit.mock.calls[0][0].renotifyMinutes).toBeNull();
 
@@ -133,7 +133,7 @@ describe('AlertRuleForm', () => {
 
   it('WillNotify rendered with eventType alert, the chosen project and selected channel ids', async () => {
     mount();
-    await fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'p2' } });
+    await chooseSelectOption(screen.getByLabelText('Scope'), 'API');
     await waitFor(
       () =>
         expect(routingPreview).toHaveBeenLastCalledWith(

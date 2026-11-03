@@ -10,6 +10,8 @@ import {
   MAX_HISTOGRAM_BUCKETS,
   FACETS_DEFAULT_LIMIT,
   FACETS_MAX_LIMIT,
+  FACETS_SAMPLE_SIZE,
+  FACETS_SCAN_LIMIT,
   FACETS_MAX_FIELDS,
   DISCOVER_DEFAULT_SAMPLE_SIZE,
   DISCOVER_MAX_SAMPLE_SIZE,
@@ -160,7 +162,13 @@ export function normalizeFacetsParams<T extends LogFacetsParams>(params: T): T {
     seen.add(name);
   }
   const out = normalizeLogFilter(params);
-  return { ...out, fields: [...fields], limit: clampLimit(params.limit, FACETS_DEFAULT_LIMIT, FACETS_MAX_LIMIT, 'limit') };
+  return {
+    ...out,
+    fields: [...fields],
+    limit: clampLimit(params.limit, FACETS_DEFAULT_LIMIT, FACETS_MAX_LIMIT, 'limit'),
+    sampleSize: clampLimit(params.sampleSize, FACETS_SAMPLE_SIZE, FACETS_SAMPLE_SIZE, 'sampleSize'),
+    scanLimit: clampLimit(params.scanLimit, FACETS_SCAN_LIMIT, FACETS_SCAN_LIMIT, 'scanLimit'),
+  };
 }
 
 /** Metadata key discovery: `sampleSize` defaulted and clamped, `from <= to`. */

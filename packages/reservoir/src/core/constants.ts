@@ -9,6 +9,13 @@ export const MAX_HISTOGRAM_BUCKETS = 1000;
 export const FACETS_DEFAULT_LIMIT = 10;
 export const FACETS_MAX_LIMIT = 50;
 export const FACETS_MAX_FIELDS = 20;
+/**
+ * Facets count the newest matching logs among the newest FACETS_SCAN_LIMIT
+ * logs of each project in the window, at most FACETS_SAMPLE_SIZE of them, so their cost does
+ * not grow with the project (both are also the most a caller may ask for).
+ */
+export const FACETS_SAMPLE_SIZE = 100_000;
+export const FACETS_SCAN_LIMIT = 2_000_000;
 
 export const DISCOVER_DEFAULT_SAMPLE_SIZE = 1000;
 export const DISCOVER_MAX_SAMPLE_SIZE = 5000;

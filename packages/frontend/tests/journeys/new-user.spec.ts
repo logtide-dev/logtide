@@ -1,6 +1,15 @@
-import { test, expect } from '@playwright/test';
-import { generateTestEmail, generateTestName, TEST_FRONTEND_URL, TEST_API_URL, waitForAuthForm } from '../fixtures/auth';
-import { createTestLog } from '../helpers/factories';
+import { test, expect, type Page } from '@playwright/test';
+import {
+  generateTestEmail,
+  generateTestName,
+  loginUser,
+  setAuthState,
+  TestApiClient,
+  TEST_FRONTEND_URL,
+  TEST_API_URL,
+  waitForAuthForm,
+} from '../fixtures/auth';
+import { createTestLog, generateId } from '../helpers/factories';
 
 test.describe('New User Journey', () => {
   test.describe.configure({ mode: 'serial' });
@@ -9,7 +18,10 @@ test.describe('New User Journey', () => {
   let userEmail: string;
   let userPassword: string;
   let userName: string;
-  let authToken: string;
+  let orgName: string;
+  let onboardingProjectName: string;
+  let api: TestApiClient;
+  let session: Awaited<ReturnType<typeof loginUser>>;
   let organizationId: string;
   let projectId: string;
   let apiKey: string;
@@ -18,50 +30,49 @@ test.describe('New User Journey', () => {
     userEmail = generateTestEmail();
     userPassword = 'TestPassword123!';
     userName = generateTestName('New');
+    orgName = `New User Org ${generateId()}`;
+    onboardingProjectName = `Onboarding Project ${generateId()}`;
   });
 
-  test('1. User can view the register page', async ({ page }) => {
+  /** Authenticate the browser as the journey user (the login form is covered by login.spec.ts). */
+  async function authenticate(page: Page) {
+    await page.goto(TEST_FRONTEND_URL);
+    await setAuthState(page, session.user, session.token);
+    await page.evaluate((orgId) => localStorage.setItem('currentOrganizationId', orgId), organizationId);
+  }
+
+  test('1. User can register a new account', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/register`);
     await waitForAuthForm(page);
 
-    // Verify register form is displayed - look for text that indicates register page
-    await expect(page.locator('text=/create.*account|sign up|get started/i').first()).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('input#email')).toBeVisible();
-    await expect(page.locator('input#password')).toBeVisible();
-    await expect(page.locator('button[type="submit"]')).toBeVisible();
-  });
-
-  test('2. User can register a new account', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/register`);
-    await waitForAuthForm(page);
-
-    // Fill registration form
     await page.locator('input#name').fill(userName);
     await page.locator('input#email').fill(userEmail);
     await page.locator('input#password').fill(userPassword);
-
-    // Submit form
     await page.locator('button[type="submit"]').click();
 
-    // Should redirect to organization creation (onboarding)
-    await expect(page).toHaveURL(/onboarding|create-organization/, { timeout: 15000 });
+    // A brand new user has no organization yet, so onboarding starts
+    await expect(page).toHaveURL(/\/onboarding/, { timeout: 15000 });
+    await expect(page.getByRole('heading', { name: 'Set up your workspace' })).toBeVisible();
+
+    // The account really exists: the API accepts the credentials
+    const created = await loginUser(userEmail, userPassword);
+    expect(created.user.email).toBe(userEmail);
+    expect(created.user.name).toBe(userName);
   });
 
-  test('3. User can create an organization', async ({ page }) => {
-    // Login first
+  test('2. User can create an organization and a project through onboarding', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/login`);
     await waitForAuthForm(page);
     await page.locator('input#email').fill(userEmail);
     await page.locator('input#password').fill(userPassword);
     await page.locator('button[type="submit"]').click();
 
-    // Should be on onboarding page
-    await expect(page).toHaveURL(/onboarding|create-organization/, { timeout: 15000 });
+    await expect(page).toHaveURL(/\/onboarding/, { timeout: 15000 });
+    await expect(page.getByRole('heading', { name: 'Set up your workspace' })).toBeVisible();
 
     // Workspace step creates the organization and the first project together
-    await expect(page.locator('input#org-name')).toBeVisible({ timeout: 10000 });
-    await page.locator('input#org-name').fill(`Test Org ${Date.now()}`);
-    await page.locator('input#project-name').fill(`Test Project ${Date.now()}`);
+    await page.locator('input#org-name').fill(orgName);
+    await page.locator('input#project-name').fill(onboardingProjectName);
     await page.getByRole('button', { name: 'Create workspace' }).click();
 
     // Connect step: skip the first signal wait to reach the end of onboarding
@@ -69,261 +80,87 @@ test.describe('New User Journey', () => {
     await page.getByRole('button', { name: 'Skip for now' }).click();
     await expect(page.getByRole('heading', { name: "You're all set" })).toBeVisible({ timeout: 10000 });
 
-    // Should now be on dashboard, projects, or still completing onboarding
-    await expect(page).toHaveURL(/dashboard|projects|onboarding/, { timeout: 15000 });
+    // The names typed in the UI are what the API now holds
+    session = await loginUser(userEmail, userPassword);
+    api = new TestApiClient(session.token);
+    const { organizations } = await api.getOrganizations();
+    const org = organizations.find((o) => o.name === orgName);
+    expect(org, `organization "${orgName}" should exist`).toBeTruthy();
+    organizationId = org.id;
 
-    // Get organization ID from API or localStorage
-    const authData = await page.evaluate(() => {
-      return localStorage.getItem('logtide_auth');
-    });
-
-    if (authData) {
-      const parsed = JSON.parse(authData);
-      authToken = parsed.token;
-    }
-
-    // Fetch organizations to get ID
-    const orgsResponse = await fetch(`${TEST_API_URL}/api/v1/organizations`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-    const orgsData = await orgsResponse.json();
-    organizationId = orgsData.organizations[0]?.id;
-    expect(organizationId).toBeTruthy();
+    const { projects } = await api.getProjects(organizationId);
+    expect(projects.map((p) => p.name)).toContain(onboardingProjectName);
   });
 
-  test('4. User can create a project', async ({ page }) => {
-    // Verify we have organizationId and authToken from previous test
-    expect(organizationId).toBeTruthy();
-    expect(authToken).toBeTruthy();
+  test('3. User can create a project from the Projects page', async ({ page }) => {
+    const projectName = `Second Project ${generateId()}`;
+    await authenticate(page);
 
-    // Login
-    await page.goto(`${TEST_FRONTEND_URL}/login`);
-    await waitForAuthForm(page);
-    await page.locator('input#email').fill(userEmail);
-    await page.locator('input#password').fill(userPassword);
-    await page.locator('button[type="submit"]').click();
-
-    // Wait for redirect (could be dashboard, projects, or onboarding)
-    await page.waitForURL(/dashboard|projects|onboarding/, { timeout: 15000 });
-
-    // Onboarding finished in the previous test, so the dashboard is the landing page.
-    // If we are still on onboarding, leave through the done step.
-    if (page.url().includes('onboarding')) {
-      await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    }
-
-    // Navigate to projects page
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects`);
-    await page.waitForLoadState('load');
+    await expect(page.getByRole('heading', { name: 'Projects', level: 1 })).toBeVisible();
+    await expect(page.getByText(onboardingProjectName).first()).toBeVisible();
 
-    // First check if project already exists via API
-    let projectsResponse = await fetch(`${TEST_API_URL}/api/v1/projects?organizationId=${organizationId}`, {
-      headers: { Authorization: `Bearer ${authToken}` },
-    });
-    let projectsData = await projectsResponse.json();
+    await page.getByRole('button', { name: 'New project' }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Create project' })).toBeVisible();
+    await dialog.locator('input#project-name').fill(projectName);
+    await dialog.getByRole('button', { name: 'Create project' }).click();
 
-    if (projectsData.projects && projectsData.projects.length > 0) {
-      // Project already created (probably during onboarding)
-      projectId = projectsData.projects[0].id;
-    } else {
-      // Try to create project via UI first
-      const createButton = page.locator('button:has-text("Create"), button:has-text("New Project"), button:has-text("Add Project")');
+    // Creating a project opens its page
+    await expect(page).toHaveURL(/\/dashboard\/projects\/[0-9a-f-]{36}/);
+    await expect(page.getByRole('heading', { name: projectName, level: 1 })).toBeVisible();
 
-      if (await createButton.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await createButton.first().click();
-        await page.waitForTimeout(1000);
-
-        // Fill project form in dialog - input has id="project-name"
-        const projectName = `Test Project ${Date.now()}`;
-        const projectInput = page.locator('input#project-name');
-
-        if (await projectInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-          await projectInput.fill(projectName);
-          await page.locator('button[type="submit"]').click();
-          await page.waitForTimeout(2000);
-        }
-      }
-
-      // Fetch projects to get ID
-      projectsResponse = await fetch(`${TEST_API_URL}/api/v1/projects?organizationId=${organizationId}`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-      projectsData = await projectsResponse.json();
-      projectId = projectsData.projects[0]?.id;
-
-      // If still no project, create via API as fallback
-      if (!projectId) {
-        const createResponse = await fetch(`${TEST_API_URL}/api/v1/projects`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({
-            name: `Test Project ${Date.now()}`,
-            organizationId: organizationId,
-          }),
-        });
-        const createData = await createResponse.json();
-        projectId = createData.project?.id || createData.id;
-
-        // Refresh the page to show the new project
-        if (projectId) {
-          await page.reload();
-          await page.waitForLoadState('load');
-        }
-      }
-    }
-
-    expect(projectId).toBeTruthy();
+    const { projects } = await api.getProjects(organizationId);
+    expect(projects).toHaveLength(2);
+    const created = projects.find((p) => p.name === projectName);
+    expect(created, `project "${projectName}" should exist in the API`).toBeTruthy();
+    projectId = created.id;
+    expect(page.url()).toContain(projectId);
   });
 
-  test('5. User can create an API key', async ({ page }) => {
-    // Login
-    await page.goto(`${TEST_FRONTEND_URL}/login`);
-    await waitForAuthForm(page);
-    await page.locator('input#email').fill(userEmail);
-    await page.locator('input#password').fill(userPassword);
-    await page.locator('button[type="submit"]').click();
+  test('4. User can create an API key', async ({ page }) => {
+    const keyName = `E2E Key ${generateId()}`;
+    await authenticate(page);
 
-    // Navigate to project settings
-    await page.waitForURL(/dashboard|projects/, { timeout: 15000 });
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/projects/${projectId}/settings`);
+    await page.getByRole('button', { name: 'Create API key' }).click();
 
-    // Wait for page to load
-    await page.waitForLoadState('load');
-    await page.waitForTimeout(1000);
+    const dialog = page.getByRole('dialog');
+    await dialog.locator('input#api-key-name').fill(keyName);
+    await dialog.getByRole('button', { name: 'Create API key' }).click();
 
-    // Try to create API key via UI, with fallback to API
-    try {
-      // Look for API keys section and create button
-      const createApiKeyButton = page.locator('button:has-text("Create API Key"), button:has-text("New API Key"), button:has-text("Generate")');
+    // The key is shown once, in full, and starts with the platform prefix
+    await expect(dialog.getByRole('heading', { name: 'API key created' })).toBeVisible();
+    const keyBox = dialog.locator('div.font-mono.select-all').first();
+    await expect(keyBox).toHaveText(/^\s*lp_\S+\s*$/);
+    apiKey = (await keyBox.innerText()).trim();
 
-      if (await createApiKeyButton.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await createApiKeyButton.first().click();
-        await page.waitForTimeout(500);
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await expect(dialog).toBeHidden();
 
-        // Wait for dialog to appear and find input
-        const keyNameInput = page.locator('input#api-key-name, input[placeholder*="key" i], [role="dialog"] input[type="text"]');
-        if (await keyNameInput.first().isVisible({ timeout: 3000 }).catch(() => false)) {
-          const keyName = `E2E Test Key ${Date.now()}`;
-          await keyNameInput.first().fill(keyName);
-
-          // Submit - use force to bypass overlay issues
-          await page.locator('[role="dialog"] button[type="submit"]').click({ force: true });
-
-          // Wait for API key to be displayed
-          await page.waitForTimeout(2000);
-
-          // API key should be shown in a code block
-          const apiKeyDisplay = page.locator('[role="dialog"] code, [role="dialog"] .font-mono');
-          if (await apiKeyDisplay.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-            const displayedKey = await apiKeyDisplay.first().textContent();
-            // API key starts with 'lp_' (log platform)
-            if (displayedKey && displayedKey.trim().startsWith('lp_')) {
-              apiKey = displayedKey.trim();
-            }
-          }
-
-          // Close the dialog
-          const closeButton = page.locator('[role="dialog"] button:has-text("Close"), [role="dialog"] button:has-text("Done")');
-          if (await closeButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await closeButton.click();
-          }
-        }
-      }
-    } catch {
-      // UI method failed, will fall back to API
-    }
-
-    // If we couldn't get key from UI, create via API
-    if (!apiKey) {
-      const response = await fetch(`${TEST_API_URL}/api/v1/projects/${projectId}/api-keys`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ name: 'E2E Test Key' }),
-      });
-      const data = await response.json();
-      apiKey = data.apiKey;
-    }
-
-    expect(apiKey).toBeTruthy();
+    // The key is now listed by name and can be deleted from the list
+    await expect(page.getByText(keyName, { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Delete API key ${keyName}` })).toBeVisible();
   });
 
-  test('6. User can send first log via API key', async ({ page }) => {
-    // Ensure we have an API key - if not, create one via API
-    if (!apiKey) {
-      const response = await fetch(`${TEST_API_URL}/api/v1/projects/${projectId}/api-keys`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ name: 'E2E Fallback Key' }),
-      });
-      const data = await response.json();
-      apiKey = data.apiKey;
-    }
-
-    expect(apiKey).toBeTruthy();
-
-    // Ingest a log using the API key
-    const testLog = createTestLog({
-      level: 'info',
-      message: 'First log from E2E test - New User Journey',
-      service: 'e2e-test-service',
-    });
+  test('5. User can send a first log with the API key and see it in Logs', async ({ page }) => {
+    const message = `first log from the new user journey ${generateId()}`;
+    const service = `e2e-newuser-${generateId()}`;
 
     const response = await fetch(`${TEST_API_URL}/api/v1/ingest`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey,
-      },
-      body: JSON.stringify({ logs: [testLog] }),
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({ logs: [createTestLog({ level: 'info', message, service })] }),
     });
+    expect(response.status).toBe(200);
+    expect((await response.json()).received).toBe(1);
 
-    // Debug: log response if not ok
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error(`Ingest failed: ${response.status} - ${errorBody}`);
-      // Note: Not logging API key for security reasons
-    }
-
-    expect(response.ok).toBe(true);
-    const data = await response.json();
-    expect(data.received).toBe(1);
-
-    // Login and verify log appears in dashboard
-    await page.goto(`${TEST_FRONTEND_URL}/login`);
-    await waitForAuthForm(page);
-    await page.locator('input#email').fill(userEmail);
-    await page.locator('input#password').fill(userPassword);
-    await page.locator('button[type="submit"]').click();
-
-    await page.waitForURL(/dashboard|projects/, { timeout: 15000 });
-
-    // Set currentOrganizationId in localStorage so the organization store initializes correctly
-    // (without this the search page's $currentOrganization is null and logs never load)
-    if (organizationId) {
-      await page.evaluate((orgId) => {
-        localStorage.setItem('currentOrganizationId', orgId);
-      }, organizationId);
-    }
-
-    // Visit dashboard so the org store hydrates before navigating to search
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('load');
-    await page.waitForSelector('nav, [class*="sidebar"], h1, h2', { timeout: 15000 });
-
-    // Navigate to search/logs page
+    await authenticate(page);
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/logs`);
-    await page.waitForLoadState('load');
+    await expect(page.getByRole('heading', { name: 'Logs', level: 1 })).toBeVisible();
 
-    // The ingested log shows up in the results
-    await expect(page.getByText('First log from E2E test').first()).toBeVisible({ timeout: 20000 });
+    const results = page.getByRole('region', { name: 'Results' });
+    await expect(results.getByText(message)).toBeVisible({ timeout: 20000 });
+    await expect(results.getByRole('button', { name: `Filter by service ${service}` })).toBeVisible();
   });
 });

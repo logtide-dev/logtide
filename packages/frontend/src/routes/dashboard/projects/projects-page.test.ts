@@ -54,6 +54,7 @@ vi.mock('$lib/stores/toast', () => ({
   toastStore: { success: (...a: unknown[]) => toastSuccess(...a), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+import { chooseSelectOption } from '$lib/test-utils/select-field';
 import ProjectsPage from './+page.svelte';
 import { organizationStore } from '$lib/stores/organization';
 import { page } from '$app/state';
@@ -211,7 +212,7 @@ describe('projects page', () => {
     });
     render(ProjectsPage);
     await screen.findByRole('link', { name: 'Alpha' });
-    await fireEvent.change(screen.getByLabelText('Filter by health'), { target: { value: 'problems' } });
+    await chooseSelectOption(screen.getByLabelText('Filter by health'), 'With problems');
     await waitFor(() => expect(screen.queryByRole('link', { name: 'Alpha' })).toBeNull());
     expect(screen.getByRole('link', { name: 'Beta' })).toBeInTheDocument();
   });

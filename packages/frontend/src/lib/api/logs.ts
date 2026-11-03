@@ -240,13 +240,16 @@ export class LogsAPI {
     return this.getJson<LogHistogramResponse>('/logs/histogram', params, 'Failed to fetch log histogram');
   }
 
-  async getFacets(p: LogScopeParams & { fields: string[]; limit?: number }): Promise<LogFacet[]> {
+  /** Facets plus how many logs they were counted over (the newest matching ones on big projects). */
+  async getFacets(
+    p: LogScopeParams & { fields: string[]; limit?: number },
+  ): Promise<{ facets: LogFacet[]; sampleSize: number | null }> {
     const params = new URLSearchParams();
     appendScope(params, p);
     params.append('fields', p.fields.join(','));
     if (p.limit != null) params.append('limit', String(p.limit));
-    const data = await this.getJson<{ facets: LogFacet[] }>('/logs/facets', params, 'Failed to fetch log facets');
-    return data.facets;
+    const data = await this.getJson<{ facets: LogFacet[]; sampleSize?: number }>('/logs/facets', params, 'Failed to fetch log facets');
+    return { facets: data.facets, sampleSize: typeof data.sampleSize === 'number' ? data.sampleSize : null };
   }
 
   async getFields(p: {

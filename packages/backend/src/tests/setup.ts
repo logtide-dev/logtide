@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { beforeAll, afterAll, beforeEach } from 'vitest';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -13,6 +14,44 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env.test') });
 /**
  * Global setup - runs once before all tests
  */
+
+/** Tables emptied before each test, children before parents (system_settings last). */
+const CLEANUP_TABLES = [
+    'logs',
+    'spans',
+    'metrics',
+    'alert_history',
+    'digest_recipients',
+    'digest_configs',
+    'monitor_results',
+    'monitor_status',
+    'monitor_channels',
+    'monitors',
+    'status_incident_updates',
+    'status_incidents',
+    'scheduled_maintenances',
+    'log_pipelines',
+    'custom_dashboards',
+    'incident_alerts',
+    'incident_comments',
+    'incident_history',
+    'detection_events',
+    'incidents',
+    'organization_invitations',
+    'sigma_rules',
+    'alert_rules',
+    'api_keys',
+    'notifications',
+    'organization_members',
+    'projects',
+    'organizations',
+    'audit_log',
+    'sessions',
+    'users',
+    'system_settings',
+];
+const CLEANUP_SQL = CLEANUP_TABLES.map((t) => `DELETE FROM ${t}`).join('; ');
+
 beforeAll(async () => {
     console.log('Setting up test environment...');
 
@@ -114,46 +153,9 @@ beforeEach(async () => {
 
     // Delete all data from tables in reverse dependency order
     try {
-        await db.deleteFrom('logs').execute();
-        await db.deleteFrom('spans').execute();
-        await db.deleteFrom('metrics').execute();
-        await db.deleteFrom('alert_history').execute();
-        // Digest tables (must delete recipients before configs)
-        await db.deleteFrom('digest_recipients').execute();
-        await db.deleteFrom('digest_configs').execute();
-        // Monitoring tables (must delete before monitors and incidents)
-        await db.deleteFrom('monitor_results').execute();
-        await db.deleteFrom('monitor_status').execute();
-        await db.deleteFrom('monitor_channels').execute();
-        await db.deleteFrom('monitors').execute();
-        // Status page tables
-        await db.deleteFrom('status_incident_updates').execute();
-        await db.deleteFrom('status_incidents').execute();
-        await db.deleteFrom('scheduled_maintenances').execute();
-        // Pipeline tables
-        await db.deleteFrom('log_pipelines').execute();
-        // Custom dashboards
-        await db.deleteFrom('custom_dashboards').execute();
-        // SIEM tables (must delete before incidents and sigma_rules)
-        await db.deleteFrom('incident_alerts').execute();
-        await db.deleteFrom('incident_comments').execute();
-        await db.deleteFrom('incident_history').execute();
-        await db.deleteFrom('detection_events').execute();
-        await db.deleteFrom('incidents').execute();
-        await db.deleteFrom('organization_invitations').execute();
-        await db.deleteFrom('sigma_rules').execute();
-        await db.deleteFrom('alert_rules').execute();
-        await db.deleteFrom('api_keys').execute();
-        await db.deleteFrom('notifications').execute();
-        await db.deleteFrom('organization_members').execute();
-        await db.deleteFrom('projects').execute();
-        await db.deleteFrom('organizations').execute();
-        await db.deleteFrom('audit_log').execute();
-        await db.deleteFrom('sessions').execute();
-        await db.deleteFrom('users').execute();
-        // Reset system_settings so cross-test pollution of `auth.mode`
-        // (standard vs none) doesn't cause 401 assertions to flip to 503.
-        await db.deleteFrom('system_settings').execute();
+        // One round trip for the whole cleanup (it runs before each of the
+        // ~7,000 tests): the same DELETEs in the same dependency order.
+        await sql.raw(CLEANUP_SQL).execute(db);
         await CacheManager.invalidateSettings();
     } catch (err) {
         // Only skip cleanup if DB is not reachable

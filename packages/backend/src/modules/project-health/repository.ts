@@ -32,7 +32,10 @@ export interface HealthIssueRow {
   details: Record<string, unknown>;
   notifiedOpenAt: Date | null;
   notifiedResolveAt: Date | null;
-  /** Opened on the project's first evaluation: shown in the app, never notified. */
+  /**
+   * Shown in the app, never notified: opened on the project's first evaluation,
+   * or a recurrence of the same check inside the evaluator's cooldown.
+   */
   baseline: boolean;
 }
 
@@ -200,14 +203,19 @@ export async function touchIssue(
     .execute();
 }
 
-/** Resolve an open issue. Returns the resolved row, null if it was not open anymore. */
+/**
+ * Resolve an open issue. Returns the resolved row, null if it was not open
+ * anymore. With `quiet`, notified_resolve_at is stamped too so no resolve
+ * notification is sent (the check was turned off, nothing got fixed).
+ */
 export async function resolveIssue(
   issue: Pick<HealthIssueRow, 'id' | 'organizationId' | 'projectId'>,
-  now: Date
+  now: Date,
+  opts: { quiet?: boolean } = {}
 ): Promise<HealthIssueRow | null> {
   const row = await db
     .updateTable('project_health_issues')
-    .set({ resolved_at: now })
+    .set(opts.quiet ? { resolved_at: now, notified_resolve_at: now } : { resolved_at: now })
     .where('id', '=', issue.id)
     .where('organization_id', '=', issue.organizationId)
     .where('project_id', '=', issue.projectId)

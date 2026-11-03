@@ -221,7 +221,7 @@ export interface ProjectHealthDetail {
     skew: Awaited<ReturnType<typeof projectsService.getIngestionHealth>>['skew'];
     revokedKey24h: number;
   };
-  settings: { silentMinutes: number; healthChannelIds: string[] };
+  settings: { silentEnabled: boolean; silentMinutes: number; healthChannelIds: string[] };
 }
 
 export async function getProjectHealthDetail(
@@ -275,7 +275,11 @@ export async function getProjectHealthDetail(
       skew: ingestion?.skew ?? { logs: null, spans: null, metrics: null },
       revokedKey24h: Number(row?.revoked ?? 0),
     },
-    settings: { silentMinutes: settings.silentMinutes, healthChannelIds: settings.healthChannelIds },
+    settings: {
+      silentEnabled: settings.silentEnabled,
+      silentMinutes: settings.silentMinutes,
+      healthChannelIds: settings.healthChannelIds,
+    },
   };
 }
 

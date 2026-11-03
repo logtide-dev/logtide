@@ -43,6 +43,13 @@ import { reservoir } from '../../database/reservoir.js';
 import { sql } from 'kysely';
 import { parseGeoPlace } from '../log-pipeline/geo-place.js';
 import { COUNTRY_CENTROIDS } from './geo-centroids.js';
+import {
+  GEO_IP_SAMPLE_LIMIT,
+  IP_FIELD_PATTERN,
+  aggregateIpsToGeo,
+  pickIpField,
+  type IpGeoLookup,
+} from './geo-from-ip.js';
 
 const siemDashboardService = new SiemDashboardService(db);
 
@@ -96,6 +103,17 @@ export interface GeoMapData {
   }>;
   total: number; // sum of counts of ALL aggregated values, dropped included
   droppedCount: number; // distinct values dropped (invalid parse / unknown country)
+  /**
+   * Where the locations come from: the GeoIP pipeline fields, the client IPs
+   * located at read time, or nothing usable ('none').
+   */
+  source?: 'geo_fields' | 'ip' | 'none';
+  /** The metadata key the IPs were read from (source 'ip'). */
+  ipField?: string;
+  /** More distinct IPs than GEO_IP_SAMPLE_LIMIT: only the most frequent were located. */
+  ipLimitReached?: boolean;
+  /** The GeoLite2 database is not loaded on this server. */
+  geoipUnavailable?: boolean;
 }
 
 export interface LiveLogStreamSnapshot {
@@ -585,11 +603,25 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
 // never reach the translators with a hostile prefix.
 const FIELD_PREFIX_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]{0,31}$/;
 
+// Lazy import, like the pipeline GeoIP step: the database may be missing.
+async function loadIpGeoLookup(): Promise<IpGeoLookup | null> {
+  try {
+    const { geoLite2Service } = await import('../siem/geolite2-service.js');
+    if (!geoLite2Service.isReady()) return null;
+    return (ip) => geoLite2Service.lookup(ip);
+  } catch {
+    return null;
+  }
+}
+
 const geoMapFetcher: PanelDataSource<GeoMapConfig, GeoMapData> = {
   type: 'geo_map',
   async fetchData(config, ctx) {
     if (!FIELD_PREFIX_PATTERN.test(config.fieldPrefix)) {
       throw new Error(`Invalid geo map field prefix: ${config.fieldPrefix}`);
+    }
+    if (config.ipField && !IP_FIELD_PATTERN.test(config.ipField)) {
+      throw new Error(`Invalid geo map IP field: ${config.ipField}`);
     }
 
     const projectIds = config.projectId
@@ -602,56 +634,102 @@ const geoMapFetcher: PanelDataSource<GeoMapConfig, GeoMapData> = {
 
     const now = new Date();
     const from = new Date(now.getTime() - panelTimeRangeToMs(config.interval));
-
-    const suffix = config.mode === 'country' ? '_country_code' : '_place';
-    const result = await reservoir.topValues({
-      field: `metadata.${config.fieldPrefix}${suffix}`,
+    const filters = {
       projectId: projectIds,
       from,
       to: now,
       level: config.levels.length > 0 ? config.levels : undefined,
       service: config.service ?? undefined,
       hostname: config.hostname ?? undefined,
-      // Country mode: fetch every country (the table has 235 entries).
-      // Points mode: the configured top-N.
-      limit: config.mode === 'country' ? 300 : config.limit,
-    });
+    };
 
-    const points: GeoMapData['points'] = [];
-    let total = 0;
-    let droppedCount = 0;
-
-    for (const { value, count } of result.values) {
-      total += count;
-
-      if (config.mode === 'country') {
-        const centroid = COUNTRY_CENTROIDS[value.toUpperCase()];
-        if (!centroid) {
-          droppedCount++;
-          continue;
-        }
-        points.push({
-          lat: centroid.lat,
-          lon: centroid.lon,
-          count,
-          label: centroid.name,
-          countryCode: value.toUpperCase(),
-        });
-      } else {
-        // geo_place values are untrusted client-written metadata; parseGeoPlace
-        // validates bounds and drops garbage.
-        const parsed = parseGeoPlace(value);
-        if (!parsed) {
-          droppedCount++;
-          continue;
-        }
-        points.push({ lat: parsed.lat, lon: parsed.lon, count, label: parsed.label });
-      }
+    // An explicit IP field means "locate the IPs"; otherwise the GeoIP
+    // pipeline fields come first and the IPs are the fallback.
+    if (!config.ipField) {
+      const fromFields = await geoFromPipelineFields(config, filters);
+      if (fromFields.total > 0) return { ...fromFields, source: 'geo_fields' };
     }
 
-    return { points, total, droppedCount };
+    const ipField =
+      config.ipField ??
+      pickIpField(
+        (await reservoir.discoverMetadataKeys({ projectId: projectIds, from, to: now })).map((k) => k.key),
+      );
+    if (!ipField) return { points: [], total: 0, droppedCount: 0, source: 'none' };
+
+    const lookup = await loadIpGeoLookup();
+    if (!lookup) {
+      return { points: [], total: 0, droppedCount: 0, source: 'ip', ipField, geoipUnavailable: true };
+    }
+
+    const ips = await reservoir.topValues({
+      ...filters,
+      field: `metadata.${ipField}`,
+      limit: GEO_IP_SAMPLE_LIMIT,
+    });
+    return {
+      ...aggregateIpsToGeo(ips.values, config.mode, config.limit, lookup),
+      source: 'ip',
+      ipField,
+      ipLimitReached: ips.values.length >= GEO_IP_SAMPLE_LIMIT,
+    };
   },
 };
+
+async function geoFromPipelineFields(
+  config: GeoMapConfig,
+  filters: {
+    projectId: string[];
+    from: Date;
+    to: Date;
+    level?: GeoMapConfig['levels'];
+    service?: string;
+    hostname?: string;
+  },
+): Promise<Pick<GeoMapData, 'points' | 'total' | 'droppedCount'>> {
+  const suffix = config.mode === 'country' ? '_country_code' : '_place';
+  const result = await reservoir.topValues({
+    ...filters,
+    field: `metadata.${config.fieldPrefix}${suffix}`,
+    // Country mode: fetch every country (the table has 235 entries).
+    // Points mode: the configured top-N.
+    limit: config.mode === 'country' ? 300 : config.limit,
+  });
+
+  const points: GeoMapData['points'] = [];
+  let total = 0;
+  let droppedCount = 0;
+
+  for (const { value, count } of result.values) {
+    total += count;
+
+    if (config.mode === 'country') {
+      const centroid = COUNTRY_CENTROIDS[value.toUpperCase()];
+      if (!centroid) {
+        droppedCount++;
+        continue;
+      }
+      points.push({
+        lat: centroid.lat,
+        lon: centroid.lon,
+        count,
+        label: centroid.name,
+        countryCode: value.toUpperCase(),
+      });
+    } else {
+      // geo_place values are untrusted client-written metadata; parseGeoPlace
+      // validates bounds and drops garbage.
+      const parsed = parseGeoPlace(value);
+      if (!parsed) {
+        droppedCount++;
+        continue;
+      }
+      points.push({ lat: parsed.lat, lon: parsed.lon, count, label: parsed.label });
+    }
+  }
+
+  return { points, total, droppedCount };
+}
 
 const liveLogStreamFetcher: PanelDataSource<
   LiveLogStreamConfig,

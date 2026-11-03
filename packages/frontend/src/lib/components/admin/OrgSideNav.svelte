@@ -17,9 +17,11 @@
   interface Props {
     /** Section id currently in view or last clicked. */
     active?: string;
+    /** Sections to list; defaults to the core ones. */
+    items?: OrgNavItem[];
   }
 
-  let { active = 'projects' }: Props = $props();
+  let { active = 'projects', items = ORG_NAV_ITEMS }: Props = $props();
 </script>
 
 <nav
@@ -27,7 +29,7 @@
   class="flex gap-1 overflow-x-auto pb-1 md:sticky md:top-20 md:w-44 md:shrink-0 md:flex-col md:self-start md:overflow-visible md:pb-0"
   data-testid="org-side-nav"
 >
-  {#each ORG_NAV_ITEMS as item (item.id)}
+  {#each items as item (item.id)}
     <a
       href="#{item.id}"
       aria-current={active === item.id ? 'true' : undefined}

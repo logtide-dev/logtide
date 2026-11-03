@@ -923,6 +923,22 @@ describe('TimescaleEngine', () => {
       expect(sql).toContain('ON CONFLICT (trace_id, project_id) DO UPDATE');
     });
 
+    it('stores the duration the summary was given for a new trace (the span timestamps are finer than Date)', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      // OTLP durations come from nanosecond timestamps: 50 ms although the
+      // millisecond Dates are 49 ms apart.
+      await engine.upsertTraces([makeTrace({
+        startTime: new Date('2024-01-01T00:00:00.298Z'),
+        endTime: new Date('2024-01-01T00:00:00.347Z'),
+        durationMs: 50,
+      })]);
+
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(params[8]).toBe(50);
+    });
+
     it('merges times and span count in SQL, not via a prior read', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [] });
       await engine.connect();

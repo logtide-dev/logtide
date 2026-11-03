@@ -8,6 +8,7 @@ dotenv.config({ path: path.join(__dirname, '../../../../.env') });
 import type { EngineType, TraceRecord, LogRecord } from '@logtide/reservoir';
 import { Reservoir } from '@logtide/reservoir';
 import pg from 'pg';
+import { applyConnectionUrls } from '../config/connection-urls.js';
 
 const { Pool } = pg;
 
@@ -91,6 +92,7 @@ Examples:
 // ---------------------------------------------------------------------------
 
 function getTimescaleConfig() {
+  applyConnectionUrls();
   const url = process.env.DATABASE_URL || 'postgresql://localhost:5432/logtide';
   return { connectionString: url };
 }

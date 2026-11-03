@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SelectField } from '$lib/components/ui/select';
   import Input from '$lib/components/ui/input/input.svelte';
 
   interface Props {
@@ -39,15 +40,16 @@
 
   <div class="space-y-1">
     <label class="text-xs font-medium text-muted-foreground" for="sessions-filter-errors">Errors</label>
-    <select
+    <SelectField
       id="sessions-filter-errors"
-      class="block h-9 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      class="w-44"
       value={errors}
-      onchange={(e) => onChange({ errors: e.currentTarget.value as '' | '0' | '1' })}
-    >
-      <option value="">All sessions</option>
-      <option value="1">With errors</option>
-      <option value="0">Without errors</option>
-    </select>
+      onValueChange={(v) => onChange({ errors: v as '' | '0' | '1' })}
+      options={[
+        { value: '', label: 'All sessions' },
+        { value: '1', label: 'With errors' },
+        { value: '0', label: 'Without errors' },
+      ]}
+    />
   </div>
 </div>

@@ -240,7 +240,7 @@ export class Reservoir implements IReservoir {
     this.ensureInitialized();
     const normalized = normalizeFacetsParams(params);
     if (normalized.matchNothing) {
-      return { facets: normalized.fields.map((field) => ({ field: facetFieldName(field), values: [], otherCount: 0 })) };
+      return { facets: normalized.fields.map((field) => ({ field: facetFieldName(field), values: [], otherCount: 0 })), sampleSize: 0 };
     }
     return this.engine.facets(forEngine(normalized));
   }
@@ -273,6 +273,17 @@ export class Reservoir implements IReservoir {
   async upsertTrace(trace: TraceRecord): Promise<void> {
     this.ensureInitialized();
     return this.engine.upsertTrace(trace);
+  }
+
+  async refreshLogVolume(): Promise<void> {
+    this.ensureInitialized();
+    return this.engine.refreshLogVolume();
+  }
+
+  async upsertTraces(traces: TraceRecord[]): Promise<void> {
+    this.ensureInitialized();
+    if (traces.length === 0) return;
+    return this.engine.upsertTraces(traces);
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {

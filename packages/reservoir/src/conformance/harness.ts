@@ -28,6 +28,7 @@ import { describeSessionsConformance } from './suites/sessions.js';
 import { describeMetadataPathConformance } from './suites/metadata-paths.js';
 import { describeTopValuesConformance } from './suites/top-values.js';
 import { describeMetricsConformance } from './suites/metrics.js';
+import { describeTraceUpsertConformance } from './suites/trace-upserts.js';
 
 export type ConformanceEngine = EngineType | 'reference';
 
@@ -47,6 +48,8 @@ export type ConformanceSubject = Pick<
   | 'getMetricLabelValues'
   | 'ingestSpans'
   | 'upsertTrace'
+  | 'upsertTraces'
+  | 'getTraceById'
   | 'querySpans'
   | 'queryTraces'
   | 'getOperationStats'
@@ -260,5 +263,6 @@ export function describeReservoirConformance(engine: ConformanceEngine, options:
     describeMetadataPathConformance(ctx);
     describeTopValuesConformance(ctx);
     describeMetricsConformance(ctx);
+    describeTraceUpsertConformance(ctx);
   });
 }

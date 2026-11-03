@@ -75,6 +75,10 @@ import type {
   ListSessionsResult,
   HasSessionsParams,
 } from '../../core/types.js';
+import { GLOBAL_SCOPE, type LogFilterParams } from '../../core/types.js';
+import { isVolumeOnlyFilter, splitByStaleMinutes } from '../../core/log-volume.js';
+import { zeroFillHistogram } from '../../core/aggregation-helpers.js';
+import { MongoLogVolume, type WriteToken } from './log-volume.js';
 import {
   assertTimeRange,
   normalizeDiscoverParams,
@@ -89,6 +93,8 @@ import {
   DEFAULT_OPERATION_KINDS,
   DISCOVER_DEFAULT_SAMPLE_SIZE,
   FACETS_DEFAULT_LIMIT,
+  FACETS_SAMPLE_SIZE,
+  FACETS_SCAN_LIMIT,
   OPERATION_STATS_DEFAULT_LIMIT,
 } from '../../core/constants.js';
 import { MongoDBQueryTranslator, INTERVAL_MS } from './query-translator.js';
@@ -332,6 +338,7 @@ export class MongoDBEngine extends StorageEngine {
 
     // Create indexes
     await this.createLogsIndexes(db);
+    await this.logVolume().ensureIndexes();
     await this.createSpansIndexes(db);
     await this.createTracesIndexes(db);
     await this.createMetricsIndexes(db);
@@ -369,12 +376,20 @@ export class MongoDBEngine extends StorageEngine {
 
     const start = Date.now();
     const col = this.logsCol();
+    // Logs below the volume watermark are marked before the insert and
+    // re-checked after it (log-volume.ts); real-time batches skip both.
+    const token = await this.beforeVolumeInsert(logs);
+    if (token instanceof Error) {
+      return { ingested: 0, failed: logs.length, durationMs: Date.now() - start, errors: [{ index: 0, error: token.message }] };
+    }
 
     try {
       const docs = logs.map((log) => toMongoLogDoc(log, log.id ?? randomUUID()));
       const result = await col.insertMany(docs, { ...ctxOpts(), ordered: false });
+      await this.afterVolumeInsert(logs, token);
       return { ingested: result.insertedCount, failed: logs.length - result.insertedCount, durationMs: Date.now() - start };
     } catch (err) {
+      await this.afterVolumeInsert(logs, token);
       if (err instanceof MongoBulkWriteError) {
         const inserted = err.result?.insertedCount ?? 0;
         return {
@@ -414,14 +429,21 @@ export class MongoDBEngine extends StorageEngine {
       hostname: log.hostname,
     });
 
+    const token = await this.beforeVolumeInsert(logsWithIds);
+    if (token instanceof Error) {
+      return { ingested: 0, failed: logs.length, durationMs: Date.now() - start, rows: [], errors: [{ index: 0, error: token.message }] };
+    }
     try {
       const docs = logsWithIds.map((log) => toMongoLogDoc(log, log.id));
       await col.insertMany(docs, { ...ctxOpts(), ordered: false });
+      await this.afterVolumeInsert(logsWithIds, token);
 
       const rows: StoredLogRecord[] = logsWithIds.map(toRow);
 
       return { ingested: logs.length, failed: 0, durationMs: Date.now() - start, rows };
     } catch (err) {
+      // A partial bulk failure still inserted most rows.
+      await this.afterVolumeInsert(logsWithIds, token);
       if (err instanceof MongoBulkWriteError) {
         const inserted = err.result?.insertedCount ?? 0;
         // With ordered:false every doc is attempted; the failed ones are reported
@@ -453,18 +475,18 @@ export class MongoDBEngine extends StorageEngine {
     const start = Date.now();
     const col = this.logsCol();
     const native = this.translator.translateQuery(params);
-    const filter = native.query as Document;
-    const { limit, offset, sort } = native.metadata as { limit: number; offset: number; sort: Document };
+    const { limit, offset, base, keyset } = native.metadata as {
+      limit: number;
+      offset: number;
+      base: Document;
+      keyset: { time: Date; id: string } | null;
+    };
+    const dir: 1 | -1 = params.sortOrder === 'asc' ? 1 : -1;
 
-    const docs = await col
-      .find(filter, { ...ctxOpts(), projection: { _id: 0 } })
-      .sort(sort)
-      .skip(offset)
-      .limit(limit + 1)
-      .toArray();
-
-    const hasMore = docs.length > limit;
-    const trimmed = hasMore ? docs.slice(0, limit) : docs;
+    const docs = await this.pageByTime(col, base, keyset, dir, offset + limit + 1);
+    const page = docs.slice(offset, offset + limit + 1);
+    const hasMore = page.length > limit;
+    const trimmed = hasMore ? page.slice(0, limit) : page;
 
     let nextCursor: string | undefined;
     if (hasMore && trimmed.length > 0) {
@@ -482,6 +504,54 @@ export class MongoDBEngine extends StorageEngine {
       nextCursor,
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  /**
+   * The first `n` logs of `base` after `keyset`, ordered by (time, id) in
+   * `dir`, without asking MongoDB to sort by id. On the time-series logs
+   * collection only a time-only sort runs as a bounded sort (one bucket at a
+   * time); `{ time, id }`, or the `$or` a keyset needs, sorts the whole
+   * window (10.7 s instead of 0.8 s for a first page over 5 million logs).
+   * So: the logs sharing the keyset's time are read on their own, the rest
+   * comes from a plain time range sorted on time, the group of logs sharing
+   * the last time of that read is completed, and the id order is applied
+   * in memory. Same rows, same order as sorting by (time, id).
+   */
+  private async pageByTime(
+    col: Collection,
+    base: Document,
+    keyset: { time: Date; id: string } | null,
+    dir: 1 | -1,
+    n: number,
+  ): Promise<Document[]> {
+    const opts = { ...ctxOpts(), projection: { _id: 0 } };
+    const after = dir === 1 ? '$gt' : '$lt';
+    const and = (extra: Document): Document => ({ $and: [base, extra] });
+    const byKey = (a: Document, b: Document): number => {
+      const ta = (a.time instanceof Date ? a.time : new Date(a.time)).getTime();
+      const tb = (b.time instanceof Date ? b.time : new Date(b.time)).getTime();
+      if (ta !== tb) return (ta - tb) * dir;
+      const ia = String(a.id);
+      const ib = String(b.id);
+      return (ia < ib ? -1 : ia > ib ? 1 : 0) * dir;
+    };
+
+    const ties = keyset ? await col.find(and({ time: keyset.time, id: { [after]: keyset.id } }), opts).toArray() : [];
+    const need = n - ties.length;
+    let rest: Document[] = [];
+    if (need > 0) {
+      const range = keyset ? and({ time: { [after]: keyset.time } }) : base;
+      rest = await col.find(range, opts).sort({ time: dir }).limit(need).toArray();
+      if (rest.length === need) {
+        // The read may have cut a group of logs sharing its last time: take
+        // the whole group so the id order inside it is complete.
+        const edge = rest[rest.length - 1].time;
+        const group = await col.find(keyset ? and({ $and: [{ time: edge }, { time: { [after]: keyset.time } }] }) : and({ time: edge }), opts).toArray();
+        const edgeMs = (edge instanceof Date ? edge : new Date(edge)).getTime();
+        rest = rest.filter((d) => (d.time instanceof Date ? d.time : new Date(d.time)).getTime() !== edgeMs).concat(group);
+      }
+    }
+    return [...ties.sort(byKey), ...rest.sort(byKey)].slice(0, n);
   }
 
   async aggregate(params: AggregateParams): Promise<AggregateResult> {
@@ -553,6 +623,19 @@ export class MongoDBEngine extends StorageEngine {
   async count(params: CountParams): Promise<CountResult> {
     const start = Date.now();
     const col = this.logsCol();
+    const projects = this.volumeProjects(params);
+    const stale = projects ? await this.logVolume().staleSpans(projects, params.from, params.to).catch(() => null) : null;
+    if (projects && stale) {
+      const split = splitByStaleMinutes(params, stale);
+      if (split.aggregate.length > 0) {
+        const parts = await Promise.all([
+          this.logVolume().count(params, projects, split.aggregate),
+          ...split.raw.map((r) =>
+            col.countDocuments(this.translator.translateCount({ ...params, ...r }).query as Document, { ...ctxOpts(), ...this.analyticsOpts() })),
+        ]);
+        return { count: parts.reduce((sum, n) => sum + n, 0), executionTimeMs: Date.now() - start };
+      }
+    }
     const native = this.translator.translateCount(params);
     const filter = native.query as Document;
     const count = await col.countDocuments(filter, { ...ctxOpts(), ...this.analyticsOpts() });
@@ -666,6 +749,27 @@ export class MongoDBEngine extends StorageEngine {
     // Same validation as the client (bucket size, bucket cap, range), so a
     // direct engine call cannot build an unbounded zero-filled result.
     const normalized = normalizeHistogramParams(params);
+    const projects = normalized.bucketSeconds % 60 === 0 ? this.volumeProjects(normalized) : null;
+    // The volume collections unreadable (a transient error, permissions): the logs answer alone.
+    const stale = projects ? await this.logVolume().staleSpans(projects, normalized.from, normalized.to).catch(() => null) : null;
+    if (projects && stale) {
+      const split = splitByStaleMinutes(normalized, stale);
+      if (split.aggregate.length > 0) {
+        const bucketMs = normalized.bucketSeconds * 1000;
+        const [fromCounts, ...rawParts] = await Promise.all([
+          this.logVolume().histogramRows(normalized, projects, split.aggregate, bucketMs),
+          ...split.raw.map((r) =>
+            this.logsCol()
+              .aggregate(histogramPipeline(this.translator.buildLogFilter({ ...normalized, ...r }), bucketMs), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
+              .toArray()),
+        ]);
+        const rows = [...fromCounts];
+        for (const part of rawParts) {
+          for (const r of part as HistogramRow[]) rows.push({ time: new Date(Number(r._id.b)), level: String(r._id.level) as LogLevel, count: Number(r.n) });
+        }
+        return zeroFillHistogram(normalized, rows);
+      }
+    }
     const filter = this.translator.buildLogFilter(normalized);
     const rows = await this.logsCol()
       .aggregate(histogramPipeline(filter, normalized.bucketSeconds * 1000), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
@@ -678,8 +782,27 @@ export class MongoDBEngine extends StorageEngine {
     const normalized = normalizeFacetsParams(params);
     const limit = normalized.limit ?? FACETS_DEFAULT_LIMIT;
     const filter = this.translator.buildLogFilter(normalized);
+    const window = {
+      from: normalized.from,
+      to: normalized.to,
+      ...(normalized.fromExclusive !== undefined ? { fromExclusive: normalized.fromExclusive } : {}),
+      ...(normalized.toExclusive !== undefined ? { toExclusive: normalized.toExclusive } : {}),
+    };
+    const projects = normalized.projectId === GLOBAL_SCOPE
+      ? [GLOBAL_SCOPE]
+      : [...new Set(Array.isArray(normalized.projectId) ? normalized.projectId : [normalized.projectId])];
+    const scopes = projects.map((projectId) => this.translator.buildLogFilter({ ...window, projectId }));
+    const pipeline = facetsPipeline(
+      this.logsCol().collectionName,
+      scopes,
+      filter,
+      normalized.fields,
+      limit,
+      normalized.scanLimit ?? FACETS_SCAN_LIMIT,
+      normalized.sampleSize ?? FACETS_SAMPLE_SIZE,
+    );
     const rows = await this.logsCol()
-      .aggregate(facetsPipeline(filter, normalized.fields, limit), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
+      .aggregate(pipeline, { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
       .toArray();
     return assembleFacets(normalized.fields, rows as FacetRow[], limit);
   }
@@ -688,7 +811,7 @@ export class MongoDBEngine extends StorageEngine {
     const normalized = normalizeDiscoverParams(params);
     const sampleSize = normalized.sampleSize ?? DISCOVER_DEFAULT_SAMPLE_SIZE;
     const rows = await this.logsCol()
-      .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
+      .aggregate(discoverKeysPipeline({ ...normalized, sampleSize }, this.logsCol().collectionName), { ...ctxOpts(), ...this.analyticsOpts(), allowDiskUse: true })
       .toArray();
     return assembleMetadataKeys(rows as { _id: unknown; occurrences: unknown }[]);
   }
@@ -714,8 +837,16 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateDelete(params);
     const filter = native.query as Document;
-    const result = await col.deleteMany(filter, { ...ctxOpts() });
-    return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
+    const projects = [...new Set(Array.isArray(params.projectId) ? params.projectId : [params.projectId])];
+    const token = await this.logVolume().beforeDelete(projects, params.from, params.to);
+    try {
+      const result = await col.deleteMany(filter, { ...ctxOpts() });
+      return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
+    } finally {
+      await this.logVolume().afterDelete(projects, params.from, params.to, token).catch((err) => {
+        console.warn('[MongoDB] log volume after-delete check failed; the pending mark expires and is rebuilt:', err);
+      });
+    }
   }
 
   // =========================================================================
@@ -751,44 +882,37 @@ export class MongoDBEngine extends StorageEngine {
     }
   }
 
-  async upsertTrace(trace: TraceRecord): Promise<void> {
-    const col = this.tracesCol();
-    const filter = { trace_id: trace.traceId, project_id: trace.projectId };
-
-    // Single bulkWrite: upsert + compute duration_ms in one network round trip
-    await col.bulkWrite(
-      [
-        {
-          updateOne: {
-            filter,
-            update: {
-              $min: { start_time: trace.startTime },
-              $max: { end_time: trace.endTime, error: trace.error },
-              $inc: { span_count: trace.spanCount },
-              $set: {
-                service_name: trace.serviceName,
-                root_service_name: trace.rootServiceName ?? null,
-                root_operation_name: trace.rootOperationName ?? null,
-                updated_at: new Date(),
-              },
-              $setOnInsert: {
-                trace_id: trace.traceId,
-                project_id: trace.projectId,
-                organization_id: trace.organizationId ?? null,
-              },
+  async upsertTraces(traces: TraceRecord[]): Promise<void> {
+    if (traces.length === 0) return;
+    // One bulkWrite, one pipeline upsert per trace: the merge reads only the
+    // stored summary (never the spans), so concurrent batches serialize on the
+    // document. Literal values go through $literal so a name starting with `$`
+    // is never read as a field path. Root names are only written when the
+    // batch carried the root span, and service_name is kept from the first.
+    const lit = (v: unknown) => ({ $literal: v });
+    const ops = traces.map((trace) => ({
+      updateOne: {
+        filter: { trace_id: trace.traceId, project_id: trace.projectId },
+        update: [
+          {
+            $set: {
+              organization_id: { $ifNull: ['$organization_id', lit(trace.organizationId ?? null)] },
+              service_name: { $ifNull: ['$service_name', lit(trace.serviceName)] },
+              root_service_name: trace.rootServiceName != null ? lit(trace.rootServiceName) : { $ifNull: ['$root_service_name', null] },
+              root_operation_name: trace.rootOperationName != null ? lit(trace.rootOperationName) : { $ifNull: ['$root_operation_name', null] },
+              start_time: { $min: ['$start_time', trace.startTime] },
+              end_time: { $max: ['$end_time', trace.endTime] },
+              span_count: { $add: [{ $ifNull: ['$span_count', 0] }, trace.spanCount] },
+              error: { $or: [{ $ifNull: ['$error', false] }, trace.error] },
+              updated_at: '$$NOW',
             },
-            upsert: true,
           },
-        },
-        {
-          updateOne: {
-            filter,
-            update: [{ $set: { duration_ms: { $subtract: [{ $toLong: '$end_time' }, { $toLong: '$start_time' }] } } }],
-          },
-        },
-      ],
-      { ordered: true },
-    );
+          { $set: { duration_ms: { $subtract: [{ $toLong: '$end_time' }, { $toLong: '$start_time' }] } } },
+        ],
+        upsert: true,
+      },
+    }));
+    await this.tracesCol().bulkWrite(ops, { ordered: true });
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
@@ -1551,6 +1675,42 @@ export class MongoDBEngine extends StorageEngine {
       throw new Error('Not connected. Call connect() first.');
     }
     return this.mongoClient.db(this.options.dbName ?? this.config.database);
+  }
+
+  private volume: MongoLogVolume | null = null;
+
+  /** The hand-kept log volume aggregate (see log-volume.ts). */
+  private logVolume(): MongoLogVolume {
+    this.volume ??= new MongoLogVolume(this.getDb(), () => this.logsCol(), this.tableName, () => ({ ...ctxOpts(), ...this.analyticsOpts() }));
+    return this.volume;
+  }
+
+  /** The volume before-insert check; an Error (the batch is then reported failed, nothing written) when it cannot run. */
+  private async beforeVolumeInsert(logs: LogRecord[]): Promise<WriteToken | null | Error> {
+    try {
+      return await this.logVolume().beforeInsert(logs);
+    } catch (err) {
+      return err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  /** The volume after-insert check; a failure never changes the insert result (the pending marks expire and get rebuilt). */
+  private async afterVolumeInsert(logs: LogRecord[], token: WriteToken | null): Promise<void> {
+    try {
+      await this.logVolume().afterInsert(logs, token);
+    } catch (err) {
+      console.warn('[MongoDB] log volume after-insert check failed; the pending marks expire and are rebuilt:', err);
+    }
+  }
+
+  async refreshLogVolume(): Promise<void> {
+    await this.logVolume().refresh();
+  }
+
+  /** Explicit projects of a volume-only filter, or null when the aggregate cannot answer it. */
+  private volumeProjects(filter: LogFilterParams): string[] | null {
+    if (filter.projectId === GLOBAL_SCOPE || !isVolumeOnlyFilter(filter)) return null;
+    return [...new Set(Array.isArray(filter.projectId) ? filter.projectId : [filter.projectId])];
   }
 
   private logsCol(): Collection<Document> {

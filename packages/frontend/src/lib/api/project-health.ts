@@ -20,6 +20,8 @@ export interface ProjectHealthSummaryEntry {
 }
 
 export interface ProjectHealthSettings {
+  /** The "stopped sending data" check is opt-in. */
+  silentEnabled: boolean;
   silentMinutes: number;
   healthChannelIds: string[];
 }
@@ -40,6 +42,7 @@ export interface ProjectHealth {
 
 export interface UpdateNotificationSettingsInput {
   healthChannelIds?: string[];
+  silentEnabled?: boolean;
   silentMinutes?: number;
 }
 

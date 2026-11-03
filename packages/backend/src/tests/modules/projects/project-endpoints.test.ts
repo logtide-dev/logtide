@@ -160,7 +160,7 @@ describe('project stats, health and summary endpoints', () => {
       expect(health.issues).toHaveLength(1);
       expect(health.issues[0].mute).not.toBeNull();
       expect(health.checks).toMatchObject({ piiRejected24h: 0, revokedKey24h: 0, receiving: true });
-      expect(health.settings).toEqual({ silentMinutes: 60, healthChannelIds: [] });
+      expect(health.settings).toEqual({ silentEnabled: false, silentMinutes: 60, healthChannelIds: [] });
       expect(
         (await call(token, 'PUT', `/${project.id}/health/mutes/silent`, { duration: null })).statusCode
       ).toBe(204);
@@ -341,10 +341,11 @@ describe('project stats, health and summary endpoints', () => {
       expect(bad.statusCode).toBe(400);
       const ok = await call(a.token, 'PUT', `/${a.project.id}/notification-settings`, {
         healthChannelIds: [own],
+        silentEnabled: true,
         silentMinutes: 30,
       });
       expect(ok.statusCode).toBe(200);
-      expect(ok.json()).toEqual({ silentMinutes: 30, healthChannelIds: [own] });
+      expect(ok.json()).toEqual({ silentEnabled: true, silentMinutes: 30, healthChannelIds: [own] });
       expect((await getProjectHealthSettings(a.org.id, a.project.id)).silentMinutes).toBe(30);
     });
   });

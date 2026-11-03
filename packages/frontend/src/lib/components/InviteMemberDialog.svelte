@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+  import { SelectField } from '$lib/components/ui/select';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Label from '$lib/components/ui/label/label.svelte';
@@ -17,7 +18,11 @@
 
   let { onSubmit, open = $bindable(false), inviterRole = null }: Props = $props();
   let email = $state('');
-  let role = $state<OrgRole>('member');
+  let role = $state<string>('member');
+  const roleOptions = $derived([
+    { value: 'member', label: 'Member' },
+    ...(inviterRole === 'owner' ? [{ value: 'admin', label: 'Admin' }] : []),
+  ]);
   let submitting = $state(false);
   let error = $state('');
   let successMessage = $state('');
@@ -31,7 +36,7 @@
     try {
       const result = await onSubmit({
         email: email.trim().toLowerCase(),
-        role,
+        role: role as OrgRole,
       });
 
       successMessage = result.message;
@@ -91,17 +96,13 @@
 
       <div class="space-y-2">
         <Label for="member-role">Role</Label>
-        <select
+        <SelectField
           id="member-role"
+          class="w-full"
           bind:value={role}
+          options={roleOptions}
           disabled={submitting || !!successMessage}
-          class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <option value="member">Member</option>
-          {#if inviterRole === 'owner'}
-            <option value="admin">Admin</option>
-          {/if}
-        </select>
+        />
         <p class="text-xs text-muted-foreground">
           {#if role === 'admin'}
             Admins can invite members, manage roles, and remove members (except the owner).

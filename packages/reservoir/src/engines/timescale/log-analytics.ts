@@ -58,8 +58,14 @@ export interface FacetRow {
  */
 export function assembleFacets(fields: LogFacetField[], rows: FacetRow[], limit: number): LogFacetsResult {
   const perField = new Map<number, { top: { value: string; count: number }[]; total: number }>();
+  let sampleSize = 0;
   for (const row of rows) {
     const f = Number(row.f);
+    // The pair after the last field counts the sampled logs.
+    if (f === fields.length) {
+      sampleSize = Number(row.cnt);
+      continue;
+    }
     let entry = perField.get(f);
     if (!entry) {
       entry = { top: [], total: Number(row.total) };
@@ -72,5 +78,6 @@ export function assembleFacets(fields: LogFacetField[], rows: FacetRow[], limit:
       const entry = perField.get(f);
       return buildFacet(field, entry?.top ?? [], entry?.total ?? 0, limit);
     }),
+    sampleSize,
   };
 }

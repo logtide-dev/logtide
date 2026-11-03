@@ -104,6 +104,8 @@ export {
   FACETS_DEFAULT_LIMIT,
   FACETS_MAX_LIMIT,
   FACETS_MAX_FIELDS,
+  FACETS_SAMPLE_SIZE,
+  FACETS_SCAN_LIMIT,
   DISCOVER_DEFAULT_SAMPLE_SIZE,
   DISCOVER_MAX_SAMPLE_SIZE,
   DISCOVER_MAX_KEYS,
@@ -149,4 +151,5 @@ export type { MongoDBEngineOptions } from './engines/mongodb/index.js';
 
 // Buffered (async buffer layer)
 export * from './buffered/index.js';
-
+export { isVolumeOnlyFilter, splitWholeMinutes, splitByStaleMinutes } from './core/log-volume.js';
+export type { VolumeRange, StaleSpan } from './core/log-volume.js';

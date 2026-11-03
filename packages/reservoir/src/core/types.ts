@@ -725,6 +725,16 @@ export interface LogFacetsParams extends LogFilterParams {
   fields: LogFacetField[];
   /** Values per field, default FACETS_DEFAULT_LIMIT, clamped to 1..FACETS_MAX_LIMIT. */
   limit?: number;
+  /**
+   * Most matching logs counted, the newest first (time, then id, descending);
+   * default and maximum FACETS_SAMPLE_SIZE.
+   */
+  sampleSize?: number;
+  /**
+   * Only the newest `scanLimit` logs of each project in the window (before
+   * the filters) are considered; default and maximum FACETS_SCAN_LIMIT.
+   */
+  scanLimit?: number;
 }
 
 export interface LogFacet {
@@ -739,6 +749,12 @@ export interface LogFacet {
 export interface LogFacetsResult {
   /** One entry per requested field, in request order. */
   facets: LogFacet[];
+  /**
+   * Logs the facets were counted over: the newest matching logs among the
+   * newest `scanLimit` logs of each project, at most `sampleSize`. Every
+   * matching log of the window when it has fewer logs than both limits.
+   */
+  sampleSize: number;
 }
 
 /** Metadata keys seen in the most recent `sampleSize` logs of the range (at most DISCOVER_MAX_KEYS keys). */

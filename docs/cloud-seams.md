@@ -129,7 +129,7 @@ When `false`, the verification routes are not registered and every user counts a
 
 ### REGISTRATION_RATE_LIMIT_PER_HOUR
 
-Positive integer; unset = off; anything else aborts startup. Caps `POST /api/v1/auth/register` per client IP over a one-hour window, on top of `AUTH_RATE_LIMIT_REGISTER`. It is keyed by IP only, so a forged `Authorization` header cannot rotate the counter. Over the cap the route answers `429` with a `Retry-After` header. It needs the rate-limit plugin; if that is not registered a warning is logged and the cap is not applied. Behind a reverse proxy set `TRUST_PROXY=true` so client IPs are resolved correctly, otherwise every request shares one IP (see Operator notes).
+Positive integer; unset = off; anything else aborts startup. Caps `POST /api/v1/auth/register` per client IP over a one-hour window, on top of `AUTH_RATE_LIMIT_REGISTER`. It is keyed by IP only, so a forged `Authorization` header cannot rotate the counter. Over the cap the route answers `429` with a `Retry-After` header. It needs the rate-limit plugin; if that is not registered a warning is logged and the cap is not applied. Behind a reverse proxy set `TRUST_PROXY` to the number of proxies in front of LogTide (or their IPs/CIDRs) so client IPs are resolved correctly, otherwise every request shares one IP (see Operator notes).
 
 ### Terms acceptance (LOGTIDE_TERMS_URL, LOGTIDE_PRIVACY_URL and LOGTIDE_TERMS_VERSION)
 
@@ -197,7 +197,7 @@ Unless `INTERNAL_LOGGING_ENABLED=false` (or an `INTERNAL_API_KEY` is supplied), 
 
 ## Operator notes
 
-- **Reverse proxy**: `REGISTRATION_RATE_LIMIT_PER_HOUR` (like every IP-keyed limit) needs `TRUST_PROXY=true` when LogTide runs behind a proxy or load balancer. Without it every request appears to come from the proxy and all visitors share one counter.
+- **Reverse proxy**: `REGISTRATION_RATE_LIMIT_PER_HOUR` (like every IP-keyed limit) needs `TRUST_PROXY` when LogTide runs behind a proxy or load balancer: the number of proxies in front (`1` for one reverse proxy, `2` with Cloudflare in front of it) or their IPs/CIDRs. Without it every request appears to come from the proxy and all visitors share one counter. Avoid `true` here: it trusts the left-most `X-Forwarded-For` entry, which a client can set to rotate the counter.
 - **Service token rate limit**: the four service-token routes keep the admin rate limit of 100 requests per minute. The limiter key is derived from the credential (a hash, never the raw value), so every call made with the service token shares one counter; send several entitlement changes in one `PUT` instead of one request per capability.
 - **Metering**: quotas are evaluated against metered usage. With `METERING_ENABLED=false` nothing is metered, so quotas see no usage and never block. Static limits such as `projects.max` still apply.
 - **Capability names are part of the contract**: `CAPABILITY_DEFAULTS_JSON` rejects unknown names at startup. If a future release renames a capability, a JSON value that still uses the old name aborts startup; check the release notes before upgrading.

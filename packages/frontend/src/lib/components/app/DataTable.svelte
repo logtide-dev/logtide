@@ -4,6 +4,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down';
   import * as Table from '$lib/components/ui/table';
+  import { SelectField } from '$lib/components/ui/select';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Skeleton } from '$lib/components/ui/skeleton';
   import { isMobile } from '$lib/stores/media-query';
@@ -104,16 +105,13 @@
         {#if sortOptions.length > 0}
           <label class="grid flex-1 gap-1 text-xs font-medium text-muted-foreground">
             Sort by
-            <select
-              class="h-11 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            <SelectField
+              aria-label="Sort by"
+              class="h-11 w-full px-3 text-sm font-normal text-foreground"
               value={sort ? `${sort.key}:${sort.dir}` : ''}
-              onchange={(e) => chooseSort(e.currentTarget.value)}
-            >
-              {#if !sort}<option value="">Default</option>{/if}
-              {#each sortOptions as o (o.value)}
-                <option value={o.value}>{o.label}</option>
-              {/each}
-            </select>
+              options={sort ? sortOptions : [{ value: '', label: 'Default' }, ...sortOptions]}
+              onValueChange={chooseSort}
+            />
           </label>
         {/if}
         {#if selectable}

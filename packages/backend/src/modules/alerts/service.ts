@@ -1133,7 +1133,9 @@ export class AlertsService {
 
   /**
    * Services of the logs matching a compiled filter (top 50), without the
-   * `unknown` placeholder.
+   * `unknown` placeholder. Read from the facets, so on big projects they
+   * come from the newest matching logs (reservoir facet sampling) and a
+   * service with only older matches in the window can be missing.
    */
   private async getFilteredAffectedServices(
     from: Date,
