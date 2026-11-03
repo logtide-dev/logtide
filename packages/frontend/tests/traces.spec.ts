@@ -1,5 +1,6 @@
 import { test, expect, TestApiClient, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL, TEST_API_URL } from './fixtures/auth';
 import { createTracedLogs, wait } from './helpers/factories';
+import { pickOption } from './fixtures/select';
 
 /**
  * Generate a random lowercase hex string (OTLP trace/span ids).
@@ -203,18 +204,18 @@ test.describe('Traces Journey', () => {
     await expect(inventoryLink).toBeVisible();
 
     // Filter by root service of trace A
-    await page.getByRole('combobox', { name: 'Service' }).selectOption('checkout-service');
+    await pickOption(page.getByRole('combobox', { name: 'Service' }), 'checkout-service');
     await expect(checkoutLink).toBeVisible();
     await expect(inventoryLink).toHaveCount(0, { timeout: 15000 });
 
     // Error-only filter on non-error traces empties the list
-    await page.getByRole('combobox', { name: 'Status' }).selectOption({ label: 'Errors only' });
+    await pickOption(page.getByRole('combobox', { name: 'Status' }), 'Errors only');
     await expect(checkoutLink).toHaveCount(0, { timeout: 15000 });
     await expect(inventoryLink).toHaveCount(0);
 
     // Resetting both filters restores both traces
-    await page.getByRole('combobox', { name: 'Status' }).selectOption({ label: 'All statuses' });
-    await page.getByRole('combobox', { name: 'Service' }).selectOption({ label: 'All services' });
+    await pickOption(page.getByRole('combobox', { name: 'Status' }), 'All statuses');
+    await pickOption(page.getByRole('combobox', { name: 'Service' }), 'All services');
     await expect(checkoutLink).toBeVisible({ timeout: 15000 });
     await expect(inventoryLink).toBeVisible();
   });

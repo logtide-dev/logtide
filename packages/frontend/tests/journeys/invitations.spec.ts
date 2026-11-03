@@ -9,6 +9,7 @@ import {
   type TestUser,
 } from '../fixtures/auth';
 import { generateId } from '../helpers/factories';
+import { pickOption } from '../fixtures/select';
 
 const PASSWORD = 'TestPassword123!';
 
@@ -103,7 +104,7 @@ test.describe('Invitations Journey', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Invite member' })).toBeVisible();
     await dialog.getByLabel('Email address').fill(inviteEmail);
-    await dialog.getByLabel('Role').selectOption('admin');
+    await pickOption(dialog.getByLabel('Role'), 'Admin');
     await dialog.getByRole('button', { name: 'Send invitation' }).click();
 
     // The dialog reports success, then closes on its own
