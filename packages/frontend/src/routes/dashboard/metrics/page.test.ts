@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { chooseSelectOption } from '$lib/test-utils/select-field';
 
 const h = vi.hoisted(() => ({
   goto: vi.fn(),
@@ -152,7 +153,7 @@ describe('metrics page', () => {
     render(MetricsPage);
     await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalledTimes(1));
     await flush();
-    await fireEvent.change(await screen.findByLabelText('Service'), { target: { value: 'b' } });
+    await chooseSelectOption(await screen.findByLabelText('Service'), 'b');
     await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalledTimes(2));
     expect(h.api.aggregateMetrics.mock.calls[1][0].serviceName).toBe('b');
   });

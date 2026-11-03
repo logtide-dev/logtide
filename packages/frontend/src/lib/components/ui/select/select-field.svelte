@@ -70,7 +70,9 @@
     onValueChange?.(next);
   }}
 >
+  <!-- role combobox: the select-only combobox pattern, same role a <select> exposes -->
   <SelectTrigger
+    role="combobox"
     {id}
     {title}
     aria-label={ariaLabel}

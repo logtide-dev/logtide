@@ -1,5 +1,6 @@
 // Drives the design system Select (bits-ui) in jsdom, where a plain
 // fireEvent.change on a <select> no longer applies.
+import { expect } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/svelte';
 
 /** Opens the Select whose trigger is `trigger` and returns its option labels. */
