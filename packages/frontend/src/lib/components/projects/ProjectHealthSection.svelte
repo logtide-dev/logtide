@@ -125,8 +125,21 @@
     return [
       {
         id: 'receiving',
-        state: noData ? 'idle' : openKeys.has('silent') ? 'fail' : 'ok',
-        label: noData ? 'No data yet' : openKeys.has('silent') ? 'Not receiving data' : 'Receiving data',
+        // Quiet is not failing: only an open silent issue (opt-in check) is red.
+        state: noData
+          ? 'idle'
+          : openKeys.has('silent')
+            ? 'fail'
+            : health.checks.receiving
+              ? 'ok'
+              : 'idle',
+        label: noData
+          ? 'No data yet'
+          : openKeys.has('silent')
+            ? 'Not receiving data'
+            : health.checks.receiving
+              ? 'Receiving data'
+              : 'No recent data',
       },
       {
         id: 'pii',

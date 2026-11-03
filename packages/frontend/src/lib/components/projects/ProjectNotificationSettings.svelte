@@ -25,6 +25,7 @@
 
   let channels = $state<NotificationChannel[]>([]);
   let selected = $state<string[]>([]);
+  let silentEnabled = $state(false);
   let minutes = $state<string>(String(PROJECT_HEALTH_SILENT_DEFAULT_MINUTES));
   let loading = $state(true);
   let loadError = $state('');
@@ -46,6 +47,7 @@
         if (!active) return;
         channels = list;
         selected = [...health.settings.healthChannelIds];
+        silentEnabled = health.settings.silentEnabled === true;
         minutes = String(health.settings.silentMinutes);
       } catch (e) {
         if (active) loadError = e instanceof Error ? e.message : 'Failed to load notification settings';
@@ -99,15 +101,20 @@
     selected = on ? [...new Set([...selected, id])] : selected.filter((x) => x !== id);
   }
 
+  // The threshold only blocks saving while the check is on.
+  const canSave = $derived(canManage && (!silentEnabled || minutesValid));
+
   async function save() {
-    if (!canManage || !minutesValid) return;
+    if (!canSave) return;
     saving = true;
     try {
       const res = await projectHealthAPI.updateSettings(projectId, {
         healthChannelIds: selected,
-        silentMinutes: parsedMinutes,
+        silentEnabled,
+        ...(minutesValid ? { silentMinutes: parsedMinutes } : {}),
       });
       selected = [...res.healthChannelIds];
+      silentEnabled = res.silentEnabled === true;
       minutes = String(res.silentMinutes);
       toastStore.success('Notification settings saved');
     } catch (e) {
@@ -165,6 +172,26 @@
       {/if}
     </fieldset>
 
+    <div class="space-y-2">
+      <div class="flex items-center gap-2.5">
+        <Checkbox
+          id="silent-enabled"
+          checked={silentEnabled}
+          disabled={!canManage}
+          onCheckedChange={(v) => (silentEnabled = v === true)}
+        />
+        <Label for="silent-enabled" class="cursor-pointer font-normal">
+          Alert when this project stops sending data
+        </Label>
+      </div>
+      <p class="text-xs text-muted-foreground" data-testid="silent-hint">
+        Off by default: a project can be quiet without being broken (nights, batch jobs, low traffic).
+        Turn it on only if this project should send data all the time. To know whether a service is up,
+        use an <a href="/dashboard/uptime" class="text-primary hover:underline">uptime monitor</a>
+        instead: a heartbeat your app pings, or a log heartbeat on one service.
+      </p>
+    </div>
+
     <div class="max-w-xs space-y-2">
       <Label for="silent-minutes">Silent threshold (minutes)</Label>
       <Input
@@ -174,10 +201,10 @@
         max={PROJECT_HEALTH_SILENT_MAX_MINUTES}
         step="1"
         bind:value={minutes}
-        disabled={!canManage}
-        aria-invalid={!minutesValid}
+        disabled={!canManage || !silentEnabled}
+        aria-invalid={silentEnabled && !minutesValid}
       />
-      {#if minutesValid}
+      {#if minutesValid || !silentEnabled}
         <p class="text-xs text-muted-foreground">
           Alert when the project sends nothing for this long (default {PROJECT_HEALTH_SILENT_DEFAULT_MINUTES}).
         </p>
@@ -189,7 +216,7 @@
     </div>
 
     <div class="flex justify-end">
-      <Button onclick={save} disabled={!canManage || !minutesValid || saving} class="gap-2">
+      <Button onclick={save} disabled={!canSave || saving} class="gap-2">
         {#if saving}<Spinner size="sm" />{/if}
         Save
       </Button>

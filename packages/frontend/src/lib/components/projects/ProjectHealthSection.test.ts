@@ -46,7 +46,7 @@ function health(overrides: Partial<ProjectHealth> = {}): ProjectHealth {
     lastEventAt: iso(1000),
     issues: [openSkew],
     checks: { receiving: true, piiRejected24h: 0, skew: {} as never, revokedKey24h: 0 },
-    settings: { silentMinutes: 60, healthChannelIds: [] },
+    settings: { silentEnabled: false, silentMinutes: 60, healthChannelIds: [] },
     ...overrides,
   };
 }
@@ -122,6 +122,22 @@ describe('ProjectHealthSection', () => {
   it('shows No data yet instead of all passing when nothing was received', () => {
     render(ProjectHealthSection, { projectId: 'p1', organizationId: 'o1', health: health({ status: 'no_data', lastEventAt: null, issues: [] }), canManage: true });
     expect(screen.getByTestId('health-all-clear')).toHaveTextContent('No data yet');
+  });
+
+  it('shows a quiet project as No recent data, not as failing', () => {
+    render(ProjectHealthSection, {
+      projectId: 'p1',
+      organizationId: 'o1',
+      health: health({
+        status: 'inactive',
+        issues: [],
+        checks: { receiving: false, piiRejected24h: 0, skew: {} as never, revokedKey24h: 0 },
+      }),
+      canManage: true,
+    });
+    const first = screen.getByTestId('health-checks').querySelector('li');
+    expect(first).toHaveTextContent('No recent data');
+    expect(first).toHaveAttribute('data-state', 'idle');
   });
 
   it('marks failing checks in the checklist', () => {
