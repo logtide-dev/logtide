@@ -26,6 +26,9 @@
     import OrgSideNav, { ORG_NAV_ITEMS } from "$lib/components/admin/OrgSideNav.svelte";
     import OrgEntitlementsSection from "$lib/components/admin/OrgEntitlementsSection.svelte";
     import { createLatestGuard } from "$lib/components/admin/latest-request";
+    import ExtensionPanelBoundary from "$lib/components/admin/ExtensionPanelBoundary.svelte";
+    import { authAPI, type AuthConfig } from "$lib/api/auth";
+    import { adminOrgPanels } from "$lib/extensions/registry";
 
     type Member = OrganizationDetails["members"][number];
     type Project = OrganizationDetails["projects"][number];
@@ -49,6 +52,25 @@
     let projectLogsLoading = $state(true);
 
     let activeSection = $state("projects");
+
+    // Extension sections, known once the auth config has loaded (best effort).
+    let authConfig = $state<AuthConfig | null>(null);
+    authAPI
+        .getAuthConfig()
+        .then((cfg) => {
+            authConfig = cfg;
+        })
+        .catch(() => {
+            authConfig = null;
+        });
+    const extPanels = $derived(adminOrgPanels(authConfig));
+    const navItems = $derived.by(() => {
+        const items = [...ORG_NAV_ITEMS];
+        const at = items.findIndex((i) => i.id === "danger-zone");
+        const ext = extPanels.map((p) => ({ id: p.anchor, label: p.label }));
+        items.splice(at < 0 ? items.length : at, 0, ...ext);
+        return items;
+    });
 
     const logs30d = $derived(
         projectLogs ? Object.values(projectLogs).reduce((sum, n) => sum + n, 0) : null,
@@ -148,14 +170,14 @@
 
     // Section highlight follows the scroll position.
     function updateActive() {
-        let current = ORG_NAV_ITEMS[0].id;
-        for (const item of ORG_NAV_ITEMS) {
+        let current = navItems[0].id;
+        for (const item of navItems) {
             const el = document.getElementById(item.id);
             if (el && el.getBoundingClientRect().top <= 120) current = item.id;
         }
         const { scrollHeight } = document.documentElement;
         if (scrollHeight > window.innerHeight && window.innerHeight + window.scrollY >= scrollHeight - 2) {
-            current = ORG_NAV_ITEMS[ORG_NAV_ITEMS.length - 1].id;
+            current = navItems[navItems.length - 1].id;
         }
         activeSection = current;
     }
@@ -297,7 +319,7 @@
         />
 
         <div class="flex flex-col gap-6 md:flex-row md:gap-8">
-            <OrgSideNav active={activeSection} />
+            <OrgSideNav active={activeSection} items={navItems} />
 
             <div class="min-w-0 flex-1 space-y-10">
                 <div id="projects" class="scroll-mt-24">
@@ -377,6 +399,14 @@
                 <div id="entitlements" class="scroll-mt-24">
                     <OrgEntitlementsSection {orgId} />
                 </div>
+
+                {#each extPanels as panel (panel.anchor)}
+                    <div id={panel.anchor} class="scroll-mt-24">
+                        <ExtensionPanelBoundary label={panel.label}>
+                            <panel.component orgId={org.id} />
+                        </ExtensionPanelBoundary>
+                    </div>
+                {/each}
 
                 <div id="danger-zone" class="scroll-mt-24">
                     <DangerZone>
