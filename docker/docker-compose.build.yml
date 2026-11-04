@@ -16,7 +16,7 @@
 x-backend-env: &backend-env
   NODE_ENV: production
   TRUST_PROXY: ${TRUST_PROXY:-false}
-  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-3000}}
   # Separate settings: the backend builds the connection URLs and encodes the
   # passwords, so any password works as-is. For an external or managed database
   # set DATABASE_URL (and REDIS_URL) here instead, they take precedence.
@@ -78,7 +78,7 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     command:
@@ -110,7 +110,7 @@ services:
       - "-c"
       - "log_min_duration_statement=100"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -127,7 +127,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\""]
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -145,7 +145,7 @@ services:
       dockerfile: packages/backend/Dockerfile
     container_name: logtide-backend
     ports:
-      - "8080:8080"
+      - "${BACKEND_PORT:-8080}:8080"
     environment:
       <<: *backend-env
       SERVICE_NAME: logtide-backend
@@ -189,13 +189,15 @@ services:
       context: ..
       dockerfile: packages/frontend/Dockerfile
       args:
-        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-auto}
     container_name: logtide-frontend
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
-      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+      # auto: the browser uses the host the UI was opened on + BACKEND_PORT
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-auto}
+      BACKEND_PORT: ${BACKEND_PORT:-8080}
       LOGTIDE_DSN: ${LOGTIDE_DSN}
       PUBLIC_LOGTIDE_DSN: ${PUBLIC_LOGTIDE_DSN}
     depends_on:
@@ -254,8 +256,8 @@ services:
     profiles:
       - logging
     ports:
-      - "514:514/udp"
-      - "514:514/tcp"
+      - "${SYSLOG_PORT:-514}:514/udp"
+      - "${SYSLOG_PORT:-514}:514/tcp"
     volumes:
       - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - ./parsers.conf:/fluent-bit/etc/parsers.conf:ro
