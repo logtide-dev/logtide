@@ -25,7 +25,7 @@ import {
 } from '@logtide/shared';
 
 const createProjectSchema = z.object({
-  organizationId: z.string().uuid('Invalid organization ID'),
+  organizationId: z.string().guid('Invalid organization ID'),
   name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
   description: z.string().optional(),
 });
@@ -39,15 +39,15 @@ const updateProjectSchema = z.object({
 });
 
 const projectIdSchema = z.object({
-  id: z.string().uuid('Invalid project ID format'),
+  id: z.string().guid('Invalid project ID format'),
 });
 
 const orgQuerySchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
 });
 
 const orgQueryWithDeletedSchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
   includeDeleted: z.enum(['true', 'false']).optional(),
 });
 
@@ -218,7 +218,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
   });
 
   const notificationSettingsSchema = z.object({
-    healthChannelIds: z.array(z.string().uuid()).max(50).optional(),
+    healthChannelIds: z.array(z.string().guid()).max(50).optional(),
     silentEnabled: z.boolean().optional(),
     silentMinutes: z
       .number()
@@ -231,7 +231,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
   fastify.put('/:id/notification-settings', async (request: any, reply) => {
     const body = notificationSettingsSchema.safeParse(request.body);
     if (!body.success) {
-      return reply.status(400).send({ error: 'Validation error', details: body.error.errors });
+      return reply.status(400).send({ error: 'Validation error', details: body.error.issues });
     }
     const project = await adminProject(request, reply);
     if (!project) return;
@@ -476,7 +476,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -545,7 +545,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
     } catch (error) {
       if (error instanceof z.ZodError) {
         // Check if it's a params validation error (UUID) or body validation error
-        const firstError = error.errors[0];
+        const firstError = error.issues[0];
         if (firstError?.path[0] === 'id') {
           return reply.status(400).send({
             error: 'Invalid project ID format',
@@ -553,7 +553,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         }
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 

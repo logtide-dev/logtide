@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Dependency updates**: Zod 4.6 replaces Zod 3 in the backend and shared packages (GHSA-mrhx-c7xc-m3w5: memory exhaustion validating a large array whose elements fail), plus fast-uri 3.1.9, Vite 6.4.5, minimatch 11 and postcss-selector-parser 6.1.5. API validation errors keep their status codes and `details` still lists the issues, but messages Zod generates itself read differently ("Required" is now "Invalid input: expected string, received undefined") and issues no longer carry `received`. Ids that are not RFC 9562 UUIDs keep being accepted as before.
+
 ### Added
 
 - **Configurable host ports** (discussion #317): the compose files publish the frontend, backend, Postgres, Redis and syslog on `FRONTEND_PORT`, `BACKEND_PORT`, `DB_PORT`, `REDIS_PORT` and `SYSLOG_PORT` (same defaults as before), so a machine where those ports are taken needs only a few lines in `.env`. Containers keep their own ports inside the docker network. In these files `DB_PORT` and `REDIS_PORT` set only the published port: backend and worker still reach Postgres and Redis on 5432 and 6379.

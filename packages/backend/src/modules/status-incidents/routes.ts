@@ -35,21 +35,21 @@ async function checkOrgMember(userId: string, organizationId: string): Promise<b
 }
 
 const createSchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid(),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid(),
   title: z.string().min(1).max(255),
   status: z.enum(STATUS_VALUES).optional(),
   severity: z.enum(SEVERITY_VALUES).optional(),
   message: z.string().max(5000).optional(),
-  monitorIds: z.array(z.string().uuid()).max(MAX_LINKED_MONITORS).optional(),
-  sourceIncidentId: z.string().uuid().optional(),
+  monitorIds: z.array(z.string().guid()).max(MAX_LINKED_MONITORS).optional(),
+  sourceIncidentId: z.string().guid().optional(),
 });
 
 const updateSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   status: z.enum(STATUS_VALUES).optional(),
   severity: z.enum(SEVERITY_VALUES).optional(),
-  monitorIds: z.array(z.string().uuid()).max(MAX_LINKED_MONITORS).optional(),
+  monitorIds: z.array(z.string().guid()).max(MAX_LINKED_MONITORS).optional(),
 });
 
 /**
@@ -92,8 +92,8 @@ const addUpdateSchema = z.object({
   message: z.string().min(1).max(5000),
 });
 
-const idSchema = z.object({ id: z.string().uuid() });
-const orgIdSchema = z.string().uuid();
+const idSchema = z.object({ id: z.string().guid() });
+const orgIdSchema = z.string().guid();
 
 export async function statusIncidentRoutes(fastify: FastifyInstance) {
   fastify.addHook('onRequest', authenticate);
@@ -139,7 +139,7 @@ export async function statusIncidentRoutes(fastify: FastifyInstance) {
   // Create incident (admin/owner only)
   fastify.post('/', async (request: any, reply) => {
     const parse = createSchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
 
     if (!(await checkOrgAdmin(request.user.id, parse.data.organizationId))) {
       return reply.status(403).send({ error: 'Admin or owner role required' });
@@ -174,7 +174,7 @@ export async function statusIncidentRoutes(fastify: FastifyInstance) {
     }
 
     const parse = updateSchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
 
     try {
       const before = parse.data.status === 'resolved'
@@ -218,7 +218,7 @@ export async function statusIncidentRoutes(fastify: FastifyInstance) {
     }
 
     const parse = addUpdateSchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
 
     try {
       const update = await statusIncidentService.addUpdate(

@@ -164,8 +164,8 @@ export async function sourcemapsRoutes(fastify: FastifyInstance) {
 
       try {
         const schema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid(),
           release: z.string().optional(),
         });
 
@@ -188,7 +188,7 @@ export async function sourcemapsRoutes(fastify: FastifyInstance) {
         return reply.send({ sourcemaps: maps });
       } catch (error: any) {
         if (error instanceof z.ZodError) {
-          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+          return reply.status(400).send({ error: 'Validation error', details: error.issues });
         }
         console.error('Error listing source maps:', error);
         return reply.status(500).send({ error: 'Failed to list source maps' });
@@ -231,8 +231,8 @@ export async function sourcemapsRoutes(fastify: FastifyInstance) {
       try {
         const paramsSchema = z.object({ release: z.string().min(1) });
         const querySchema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid(),
         });
 
         const params = paramsSchema.parse(request.params);
@@ -255,7 +255,7 @@ export async function sourcemapsRoutes(fastify: FastifyInstance) {
         return reply.send({ deleted });
       } catch (error: any) {
         if (error instanceof z.ZodError) {
-          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+          return reply.status(400).send({ error: 'Validation error', details: error.issues });
         }
         console.error('Error deleting source maps:', error);
         return reply.status(500).send({ error: 'Failed to delete source maps' });

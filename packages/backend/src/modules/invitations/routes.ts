@@ -6,12 +6,12 @@ import type { OrgRole } from '@logtide/shared';
 import { auditLogService } from '../audit-log/index.js';
 
 const organizationIdSchema = z.object({
-  organizationId: z.string().uuid('Invalid organization ID format'),
+  organizationId: z.string().guid('Invalid organization ID format'),
 });
 
 const invitationIdSchema = z.object({
-  organizationId: z.string().uuid('Invalid organization ID format'),
-  invitationId: z.string().uuid('Invalid invitation ID format'),
+  organizationId: z.string().guid('Invalid organization ID format'),
+  invitationId: z.string().guid('Invalid invitation ID format'),
 });
 
 const inviteUserSchema = z.object({
@@ -81,7 +81,7 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -141,7 +141,7 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
 

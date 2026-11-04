@@ -25,7 +25,7 @@ const updateSettingSchema = z.object({
 const updateSettingsSchema = z.object({
   'auth.signup_enabled': z.boolean().optional(),
   'auth.mode': z.enum(['standard', 'none']).optional(),
-  'auth.default_user_id': z.string().uuid().nullable().optional(),
+  'auth.default_user_id': z.string().guid().nullable().optional(),
   'updates.channel': z.enum(['stable', 'beta']).optional(),
 });
 
@@ -150,7 +150,7 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
 
@@ -200,7 +200,7 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
 

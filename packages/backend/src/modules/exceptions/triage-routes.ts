@@ -27,14 +27,14 @@ const triageService = new ErrorGroupTriageService(db);
 
 const MAX_TREND_RANGE_MS = 90 * 24 * 60 * 60 * 1000;
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const isoDate = z.string().datetime({ offset: true });
 
 const NOT_MEMBER = { error: 'You are not a member of this organization' };
 
 function handleError(error: any, reply: FastifyReply, label: string) {
   if (error instanceof z.ZodError) {
-    return reply.status(400).send({ error: 'Validation error', details: error.errors });
+    return reply.status(400).send({ error: 'Validation error', details: error.issues });
   }
   if (error instanceof ErrorGroupValidationError) {
     return reply.status(400).send({ error: error.message });

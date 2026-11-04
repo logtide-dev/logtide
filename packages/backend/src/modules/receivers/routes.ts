@@ -33,12 +33,12 @@ const updateReceiverSchema = z
   });
 
 const projectIdSchema = z.object({
-  projectId: z.string().uuid('Invalid project ID format'),
+  projectId: z.string().guid('Invalid project ID format'),
 });
 
 const receiverIdSchema = z.object({
-  projectId: z.string().uuid('Invalid project ID format'),
-  id: z.string().uuid('Invalid receiver ID format'),
+  projectId: z.string().guid('Invalid project ID format'),
+  id: z.string().guid('Invalid receiver ID format'),
 });
 
 const eventsQuerySchema = z.object({
@@ -123,7 +123,7 @@ export async function receiversRoutes(fastify: FastifyInstance) {
         throw error;
       }
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       throw error;
     }
@@ -147,7 +147,7 @@ export async function receiversRoutes(fastify: FastifyInstance) {
       return reply.send({ success: true });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       throw error;
     }

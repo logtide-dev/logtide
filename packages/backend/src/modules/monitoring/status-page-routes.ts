@@ -13,7 +13,7 @@ import {
 import { statusSubscribersService } from './subscribers.js';
 import { auditLogService } from '../audit-log/service.js';
 
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.string().guid();
 
 async function getMemberRole(userId: string, organizationId: string): Promise<string | null> {
   const member = await db
@@ -74,7 +74,7 @@ export async function statusPageRoutes(fastify: FastifyInstance) {
 
   fastify.put('/config', async (request: any, reply) => {
     const parse = configBodySchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
     const { organizationId, projectId, ...input } = parse.data;
 
     const role = await getMemberRole(request.user.id, organizationId);
@@ -97,7 +97,7 @@ export async function statusPageRoutes(fastify: FastifyInstance) {
 
   fastify.put('/components', async (request: any, reply) => {
     const parse = componentsBodySchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
     const { organizationId, projectId, components } = parse.data;
 
     const role = await getMemberRole(request.user.id, organizationId);

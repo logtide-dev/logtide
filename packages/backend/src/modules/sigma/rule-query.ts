@@ -24,7 +24,7 @@ const boolParam = z.preprocess((value) => {
 }, z.boolean().optional());
 
 export const ruleListQuerySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   page: z.coerce.number().int().min(1).optional(),
   pageSize: z.coerce.number().int().min(1).max(100).optional(),
   search: z.string().max(200).optional(),
@@ -33,7 +33,7 @@ export const ruleListQuerySchema = z.object({
   source: listParam(z.enum(['custom', 'sigmahq', 'pack'])),
   category: listParam(z.enum(PACK_CATEGORIES)),
   enabled: boolParam,
-  projectId: z.string().uuid().optional(),
+  projectId: z.string().guid().optional(),
   sortBy: z.enum(['title', 'level', 'hits7d', 'lastFiredAt', 'createdAt']).optional(),
   sortOrder: z.enum(['asc', 'desc']).optional(),
 });

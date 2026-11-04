@@ -55,7 +55,7 @@ export type StatusPageConfigInput = z.infer<typeof statusPageConfigSchema>;
 export const componentsSchema = z
   .array(
     z.object({
-      monitorId: z.string().uuid(),
+      monitorId: z.string().guid(),
       displayName: z.string().trim().min(1).max(255).nullable(),
       groupName: z.string().trim().min(1).max(100).nullable(),
       order: z.number().int().min(0).max(100000),

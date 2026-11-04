@@ -33,7 +33,7 @@ const emailConfigSchema = z.object({
 const webhookConfigSchema = z.object({
   url: z.string().url('Must be a valid URL'),
   method: z.enum(['POST', 'PUT', 'PATCH']).optional(),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
   auth: z
     .object({
       type: z.enum(['bearer', 'basic']),
@@ -87,22 +87,22 @@ const updateChannelSchema = z.object({
 });
 
 const testUnsavedSchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
-  channelId: z.string().uuid('Invalid channel ID format').optional(),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
+  channelId: z.string().guid('Invalid channel ID format').optional(),
   type: z.enum(['email', 'webhook', 'pagerduty']),
   config: updateChannelConfigSchema,
 });
 
 const channelIdSchema = z.object({
-  id: z.string().uuid('Invalid channel ID format'),
+  id: z.string().guid('Invalid channel ID format'),
 });
 
 const orgQuerySchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
 });
 
 const setChannelsSchema = z.object({
-  channelIds: z.array(z.string().uuid()),
+  channelIds: z.array(z.string().guid()),
 });
 
 const eventTypeSchema = z.enum(
@@ -191,7 +191,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       return reply.send({ channel: serializeChannel(channel, { isAdmin }) });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Invalid request', details: error.errors });
+        return reply.status(400).send({ error: 'Invalid request', details: error.issues });
       }
       console.error(error, 'Failed to get notification channel');
       return reply.status(500).send({ error: 'Failed to get channel' });
@@ -245,7 +245,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         throw error;
       }
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       if (error instanceof Error && error.message.startsWith('Invalid configuration')) {
         return reply.status(400).send({ error: error.message });
@@ -295,7 +295,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       return reply.send({ channel: serializeChannel(channel, { isAdmin: true }) });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       if (error instanceof Error && error.message.startsWith('Invalid configuration')) {
         return reply.status(400).send({ error: error.message });
@@ -341,7 +341,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       return reply.status(204).send();
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Invalid request', details: error.errors });
+        return reply.status(400).send({ error: 'Invalid request', details: error.issues });
       }
       console.error(error, 'Failed to delete notification channel');
       return reply.status(500).send({ error: 'Failed to delete channel' });
@@ -380,7 +380,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.send({ result });
       } catch (error) {
         if (error instanceof z.ZodError) {
-          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+          return reply.status(400).send({ error: 'Validation error', details: error.issues });
         }
         if (error instanceof Error && error.message.startsWith('Invalid configuration')) {
           return reply.status(400).send({ error: error.message });
@@ -564,7 +564,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       return reply.status(204).send();
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       console.error(error, 'Failed to set organization defaults');
       return reply.status(500).send({ error: 'Failed to set defaults' });

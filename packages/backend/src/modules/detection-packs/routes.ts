@@ -15,17 +15,17 @@ const thresholdOverrideSchema = z.object({
 });
 
 const enablePackSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   customThresholds: z.record(z.string(), thresholdOverrideSchema).optional(),
   /** @deprecated Use channelIds instead */
   emailRecipients: z.array(z.string().email()).optional(),
   /** @deprecated Use channelIds instead */
   webhookUrl: z.string().url().optional().nullable(),
-  channelIds: z.array(z.string().uuid()).optional(),
+  channelIds: z.array(z.string().guid()).optional(),
 });
 
 const updateThresholdsSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   customThresholds: z.record(z.string(), thresholdOverrideSchema),
 });
 
@@ -34,7 +34,7 @@ const packIdSchema = z.object({
 });
 
 const orgQuerySchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
 });
 
 /**
@@ -154,7 +154,7 @@ export async function detectionPacksRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
       if (error instanceof Error && error.message.includes('already enabled')) {
@@ -201,7 +201,7 @@ export async function detectionPacksRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
       if (error instanceof Error && error.message.includes('is not enabled')) {
@@ -260,7 +260,7 @@ export async function detectionPacksRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
       throw error;

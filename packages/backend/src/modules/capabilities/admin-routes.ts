@@ -47,7 +47,7 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
         return reply.send({ message: 'Entitlements updated', updated });
       } catch (error: unknown) {
         if (error instanceof z.ZodError) {
-          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+          return reply.status(400).send({ error: 'Validation error', details: error.issues });
         }
         // the service throws plain Errors for registry/shape mismatches -> 400
         if (error instanceof Error) {

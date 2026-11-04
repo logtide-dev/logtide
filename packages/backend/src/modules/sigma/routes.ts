@@ -75,11 +75,11 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       try {
         const schema = z.object({
           yaml: z.string().min(1),
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid().optional(),
           emailRecipients: z.array(z.string().email()).optional(),
           webhookUrl: z.string().url().optional(),
-          channelIds: z.array(z.string().uuid()).optional(),
+          channelIds: z.array(z.string().guid()).optional(),
           createAlertRule: z.boolean().optional().default(true),
         });
 
@@ -144,7 +144,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
 
@@ -236,11 +236,11 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const paramsSchema = z.object({
-        id: z.string().uuid(),
+        id: z.string().guid(),
       });
 
       const querySchema = z.object({
-        organizationId: z.string().uuid(),
+        organizationId: z.string().guid(),
       });
 
       const params = paramsSchema.parse(request.params);
@@ -299,13 +299,13 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const paramsSchema = z.object({
-        id: z.string().uuid(),
+        id: z.string().guid(),
       });
 
       const bodySchema = z.object({
-        organizationId: z.string().uuid(),
+        organizationId: z.string().guid(),
         enabled: z.boolean().optional(),
-        channelIds: z.array(z.string().uuid()).optional(),
+        channelIds: z.array(z.string().guid()).optional(),
         yaml: z.string().min(1).optional(),
       });
 
@@ -477,11 +477,11 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const paramsSchema = z.object({
-        id: z.string().uuid(),
+        id: z.string().guid(),
       });
 
       const querySchema = z.object({
-        organizationId: z.string().uuid(),
+        organizationId: z.string().guid(),
         deleteAlertRule: z.boolean().optional().default(false),
       });
 
@@ -573,8 +573,8 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid().optional(),
           category: z.string().optional(), // Legacy
           selection: z
             .object({
@@ -614,7 +614,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
 
@@ -733,7 +733,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
 
@@ -783,7 +783,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       const schema = z.object({
-        organizationId: z.string().uuid(),
+        organizationId: z.string().guid(),
       });
 
       const query = schema.parse(request.query);
@@ -835,7 +835,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       });
 
       const querySchema = z.object({
-        organizationId: z.string().uuid(),
+        organizationId: z.string().guid(),
       });
 
       const params = paramsSchema.parse(request.params);
@@ -919,7 +919,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       });
 
       const querySchema = z.object({
-        organizationId: z.string().uuid(),
+        organizationId: z.string().guid(),
       });
 
       const params = paramsSchema.parse(request.params);

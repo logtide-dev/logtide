@@ -17,7 +17,7 @@ import { statusSubscribersService } from './subscribers.js';
 export const monitorService = new MonitorService(db);
 const organizationsService = new OrganizationsService();
 
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.string().guid();
 
 function parseId(params: any): string | null {
   const result = uuidSchema.safeParse(params?.id);
@@ -84,7 +84,7 @@ const HTTP_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'
 const HEADER_NAME_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
 const httpHeadersSchema = z
-  .record(z.string().max(1024, 'Header value must be at most 1024 characters'))
+  .record(z.string(), z.string().max(1024, 'Header value must be at most 1024 characters'))
   .refine((h) => Object.keys(h).length <= 20, { message: 'At most 20 headers are allowed' })
   .refine((h) => Object.keys(h).every((name) => HEADER_NAME_PATTERN.test(name)), {
     message: 'Header names may contain only letters, digits and hyphens (1 to 64 characters)',
@@ -94,7 +94,7 @@ const httpConfigSchema = z.object({
   method: z
     .string()
     .transform((m) => m.toUpperCase())
-    .pipe(z.enum(HTTP_METHODS, { errorMap: () => ({ message: 'Unsupported HTTP method' }) }))
+    .pipe(z.enum(HTTP_METHODS, { error: 'Unsupported HTTP method' }))
     .optional(),
   expectedStatus: z.number().int().min(100).max(599).optional(),
   headers: httpHeadersSchema.optional(),
@@ -159,8 +159,8 @@ function isValidSslTarget(target: string): boolean {
 }
 
 const createMonitorSchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid(),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid(),
   name: z.string().min(1).max(255),
   type: z.enum(MONITOR_TYPES),
   target: z.string().optional().nullable(),
@@ -235,7 +235,7 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
 
   fastify.post('/', async (request: any, reply) => {
     const parse = createMonitorSchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
     const input = parse.data;
     if (!(await checkOrgMembership(request.user.id, input.organizationId))) return reply.status(403).send({ error: 'Forbidden' });
 
@@ -264,7 +264,7 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
     if (!(await checkOrgMembership(request.user.id, organizationId))) return reply.status(403).send({ error: 'Forbidden' });
 
     const parse = updateMonitorSchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
 
     const { checkConfig: rawCheckConfig, ...updateFields } = parse.data;
     const update: UpdateMonitorInput = updateFields;
@@ -411,8 +411,8 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
     if (!organizationId) return reply.status(400).send({ error: 'organizationId required' });
     if (!(await checkOrgMembership(request.user.id, organizationId))) return reply.status(403).send({ error: 'Forbidden' });
 
-    const parse = z.object({ channelIds: z.array(z.string().uuid()) }).safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    const parse = z.object({ channelIds: z.array(z.string().guid()) }).safeParse(request.body);
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
 
     const monitor = await monitorService.getMonitor(id, organizationId);
     if (!monitor) return reply.status(404).send({ error: 'Not found' });

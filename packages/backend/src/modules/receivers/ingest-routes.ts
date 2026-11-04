@@ -5,7 +5,7 @@ import { createQueue } from '../../queue/connection.js';
 import { RECEIVER_EVENTS_QUEUE, type ReceiverEventJobData } from '../../queue/jobs/receiver-event.js';
 
 const paramsSchema = z.object({
-  receiverId: z.string().uuid(),
+  receiverId: z.string().guid(),
   token: z.string().min(1).max(200),
 });
 

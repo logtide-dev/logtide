@@ -34,7 +34,7 @@ const createProviderSchema = z.object({
   isDefault: z.boolean().optional(),
   displayOrder: z.number().int().optional(),
   icon: z.string().max(100).optional(),
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
 });
 
 const updateProviderSchema = z.object({
@@ -43,7 +43,7 @@ const updateProviderSchema = z.object({
   isDefault: z.boolean().optional(),
   displayOrder: z.number().int().optional(),
   icon: z.string().max(100).nullable().optional(),
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
 });
 
 const linkIdentitySchema = z.object({
@@ -206,7 +206,7 @@ export async function publicAuthRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
 
@@ -286,7 +286,7 @@ export async function authenticatedAuthRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -404,7 +404,7 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -433,7 +433,7 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 

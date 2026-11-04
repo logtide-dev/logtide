@@ -4,15 +4,15 @@ import { onboardingService, OnboardingScopeError, ONBOARDING_STEPS } from './ser
 import { authenticate } from '../auth/middleware.js';
 
 const updateOnboardingSchema = z.object({
-  checklistItems: z.record(z.boolean()).optional(),
+  checklistItems: z.record(z.string(), z.boolean()).optional(),
   checklistCollapsed: z.boolean().optional(),
   checklistDismissed: z.boolean().optional(),
   tutorialCompleted: z.boolean().optional(),
   tutorialStep: z.number().int().min(0).optional(),
   tutorialSkipped: z.boolean().optional(),
   step: z.enum(ONBOARDING_STEPS).nullable().optional(),
-  organizationId: z.string().uuid().nullable().optional(),
-  projectId: z.string().uuid().nullable().optional(),
+  organizationId: z.string().guid().nullable().optional(),
+  projectId: z.string().guid().nullable().optional(),
 });
 
 const completeItemSchema = z.object({
@@ -39,7 +39,7 @@ export async function onboardingRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
       if (error instanceof OnboardingScopeError) {
@@ -60,7 +60,7 @@ export async function onboardingRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 

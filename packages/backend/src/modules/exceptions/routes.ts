@@ -66,11 +66,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const paramsSchema = z.object({
-          logId: z.string().uuid(),
+          logId: z.string().guid(),
         });
 
         const querySchema = z.object({
-          organizationId: z.string().uuid(),
+          organizationId: z.string().guid(),
         });
 
         const params = paramsSchema.parse(request.params);
@@ -101,7 +101,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting exception by log:', error);
@@ -146,11 +146,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const paramsSchema = z.object({
-          id: z.string().uuid(),
+          id: z.string().guid(),
         });
 
         const querySchema = z.object({
-          organizationId: z.string().uuid(),
+          organizationId: z.string().guid(),
         });
 
         const params = paramsSchema.parse(request.params);
@@ -181,7 +181,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting exception:', error);
@@ -235,11 +235,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          organizationId: z.string().uuid(),
+          organizationId: z.string().guid(),
           projectId: z
             .string()
             .transform((v) => v.split(',').map((x) => x.trim()))
-            .pipe(z.array(z.string().uuid()).min(1).max(50))
+            .pipe(z.array(z.string().guid()).min(1).max(50))
             .optional(),
           status: z.enum(ERROR_GROUP_STATUSES).optional(),
           language: z.enum(EXCEPTION_LANGUAGES).optional(),
@@ -247,7 +247,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
           from: z.string().datetime({ offset: true }).optional(),
           to: z.string().datetime({ offset: true }).optional(),
           sort: z.enum(ERROR_GROUP_SORTS).optional(),
-          assignedTo: z.union([z.literal('unassigned'), z.string().uuid()]).optional(),
+          assignedTo: z.union([z.literal('unassigned'), z.string().guid()]).optional(),
           service: z.string().min(1).max(200).optional(),
           limit: z.coerce.number().min(1).max(100).optional().default(20),
           offset: z.coerce.number().min(0).optional().default(0),
@@ -287,7 +287,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error listing error groups:', error);
@@ -327,8 +327,8 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid().optional(),
           limit: z.coerce.number().min(1).max(20).optional().default(5),
         });
 
@@ -357,7 +357,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting top error groups:', error);
@@ -402,11 +402,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const paramsSchema = z.object({
-          id: z.string().uuid(),
+          id: z.string().guid(),
         });
 
         const querySchema = z.object({
-          organizationId: z.string().uuid(),
+          organizationId: z.string().guid(),
         });
 
         const params = paramsSchema.parse(request.params);
@@ -444,7 +444,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting error group:', error);
@@ -490,11 +490,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const paramsSchema = z.object({
-          id: z.string().uuid(),
+          id: z.string().guid(),
         });
 
         const bodySchema = z.object({
-          organizationId: z.string().uuid(),
+          organizationId: z.string().guid(),
           status: z.enum(ERROR_GROUP_STATUSES),
         });
 
@@ -544,7 +544,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error updating error group status:', error);
@@ -564,9 +564,9 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     '/api/v1/error-groups/:id/duplicates',
     async (request: any, reply) => {
       try {
-        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const { id } = z.object({ id: z.string().guid() }).parse(request.params);
         const { organizationId } = z
-          .object({ organizationId: z.string().uuid() })
+          .object({ organizationId: z.string().guid() })
           .parse(request.query);
 
         const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -583,7 +583,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         return reply.send({ duplicates });
       } catch (error: any) {
         if (error instanceof z.ZodError) {
-          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+          return reply.status(400).send({ error: 'Validation error', details: error.issues });
         }
         console.error('Error finding duplicate error groups:', error);
         return reply.status(500).send({ error: 'Failed to find duplicate error groups' });
@@ -602,11 +602,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     },
     async (request: any, reply) => {
       try {
-        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const { id } = z.object({ id: z.string().guid() }).parse(request.params);
         const body = z
           .object({
-            organizationId: z.string().uuid(),
-            sourceIds: z.array(z.string().uuid()).min(1).max(100),
+            organizationId: z.string().guid(),
+            sourceIds: z.array(z.string().guid()).min(1).max(100),
           })
           .parse(request.body);
 
@@ -627,7 +627,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         return reply.send(merged);
       } catch (error: any) {
         if (error instanceof z.ZodError) {
-          return reply.status(400).send({ error: 'Validation error', details: error.errors });
+          return reply.status(400).send({ error: 'Validation error', details: error.issues });
         }
         console.error('Error merging error groups:', error);
         return reply.status(500).send({ error: 'Failed to merge error groups' });
@@ -670,11 +670,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const paramsSchema = z.object({
-          id: z.string().uuid(),
+          id: z.string().guid(),
         });
 
         const querySchema = z.object({
-          organizationId: z.string().uuid(),
+          organizationId: z.string().guid(),
           interval: z.enum(['1h', '1d']).optional().default('1d'),
           days: z.coerce.number().min(1).max(30).optional().default(7),
         });
@@ -718,7 +718,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting error group trend:', error);
@@ -765,11 +765,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const paramsSchema = z.object({
-          id: z.string().uuid(),
+          id: z.string().guid(),
         });
 
         const querySchema = z.object({
-          organizationId: z.string().uuid(),
+          organizationId: z.string().guid(),
           limit: z.coerce.number().min(1).max(100).optional().default(10),
           offset: z.coerce.number().min(0).optional().default(0),
         });
@@ -819,7 +819,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting error group logs:', error);
