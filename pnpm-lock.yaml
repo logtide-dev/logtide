@@ -25,7 +25,7 @@ overrides:
   ajv: '>=8.18.0'
   rollup: '>=4.59.0'
   svelte: '>=5.55.7'
-  '@sveltejs/kit': '>=2.70.2'
+  '@sveltejs/kit': '>=2.70.2 <3'
   protobufjs: '>=7.6.5 <8'
   '@protobufjs/utf8': '>=1.1.1'
   kysely: '>=0.28.17 <0.29'
@@ -243,7 +243,7 @@ importers:
         specifier: ^5.4.0
         version: 5.4.0(@sveltejs/kit@2.70.2(@opentelemetry/api@1.9.0)(@sveltejs/vite-plugin-svelte@5.1.1(svelte@5.55.9)(vite@6.4.5(@types/node@22.19.17)(jiti@1.21.7)(tsx@4.21.0)))(svelte@5.55.9)(typescript@5.9.3)(vite@6.4.5(@types/node@22.19.17)(jiti@1.21.7)(tsx@4.21.0)))
       '@sveltejs/kit':
-        specifier: '>=2.70.2'
+        specifier: '>=2.70.2 <3'
         version: 2.70.2(@opentelemetry/api@1.9.0)(@sveltejs/vite-plugin-svelte@5.1.1(svelte@5.55.9)(vite@6.4.5(@types/node@22.19.17)(jiti@1.21.7)(tsx@4.21.0)))(svelte@5.55.9)(typescript@5.9.3)(vite@6.4.5(@types/node@22.19.17)(jiti@1.21.7)(tsx@4.21.0))
       '@sveltejs/vite-plugin-svelte':
         specifier: ^5.1.1
@@ -752,7 +752,7 @@ packages:
   '@logtide/sveltekit@0.7.0':
     resolution: {integrity: sha512-4HaeHKHf5tZpdgCQts49NJjOE06sUotHoYgUrYOZewUQ104uGmISWDuiWwCIsgGH97aoaqObV5D6GcbbhVgtIg==}
     peerDependencies:
-      '@sveltejs/kit': '>=2.70.2'
+      '@sveltejs/kit': '>=2.70.2 <3'
 
   '@logtide/types@0.7.0':
     resolution: {integrity: sha512-77zBNij2F4QttSIv/EK0mU8y9Ct3uTYsTbqIcAH+T2B5kfBULyuzMRiiLmKQgOhZXzfOxUuAm7nUs1RaOnqwxQ==}
@@ -884,7 +884,7 @@ packages:
     resolution: {integrity: sha512-RilKiPC2Lt/ahC1qmqvL5B8YJPmpwcz/PVebhOmGA7VRcU97xvbn83428r3pVfRNVlxKjHm9NatbIgQim/ccJA==}
     engines: {node: ^20.5.0 || >=22.2.0}
     peerDependencies:
-      '@sveltejs/kit': '>=2.70.2'
+      '@sveltejs/kit': '>=2.70.2 <3'
       svelte: '>=5.55.7'
 
   '@protobufjs/aspromise@1.1.2':
@@ -1107,7 +1107,7 @@ packages:
   '@sveltejs/adapter-node@5.4.0':
     resolution: {integrity: sha512-NMsrwGVPEn+J73zH83Uhss/hYYZN6zT3u31R3IHAn3MiKC3h8fjmIAhLfTSOeNHr5wPYfjjMg8E+1gyFgyrEcQ==}
     peerDependencies:
-      '@sveltejs/kit': '>=2.70.2'
+      '@sveltejs/kit': '>=2.70.2 <3'
 
   '@sveltejs/kit@2.70.2':
     resolution: {integrity: sha512-RzRoRpuR2KXqc5yMO0akQHDZeT4AslOlznGITURsqHaVbtyYP4Wn3eE3gxj9JcDyNYO0crkxhdwFHc+2vkVm6w==}

@@ -27,7 +27,7 @@
       "ajv": ">=8.18.0",
       "rollup": ">=4.59.0",
       "svelte": ">=5.55.7",
-      "@sveltejs/kit": ">=2.70.2",
+      "@sveltejs/kit": ">=2.70.2 <3",
       "protobufjs": ">=7.6.5 <8",
       "@protobufjs/utf8": ">=1.1.1",
       "kysely": ">=0.28.17 <0.29",
