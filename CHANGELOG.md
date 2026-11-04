@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Configurable host ports** (discussion #317): the compose files publish the frontend, backend, Postgres, Redis and syslog on `FRONTEND_PORT`, `BACKEND_PORT`, `DB_PORT`, `REDIS_PORT` and `SYSLOG_PORT` (same defaults as before), so a machine where those ports are taken needs only a few lines in `.env`. Containers keep their own ports inside the docker network. In these files `DB_PORT` and `REDIS_PORT` set only the published port: backend and worker still reach Postgres and Redis on 5432 and 6379.
+
+### Fixed
+
+- **"Failed to fetch" when the UI is opened from another machine** (discussion #317): `.env.example` said the API URL is auto-detected, but the compose files set `PUBLIC_API_URL` to `http://localhost:8080`, so the browser called its own machine unless the variable was set by hand. The compose default is now `auto`: the browser uses the host the UI was opened on with `BACKEND_PORT`, or relative URLs on ports 80 and 443. An explicit `PUBLIC_API_URL` works as before, also when empty. `install.sh` no longer writes the old value into `.env`; an existing `.env` that has it keeps it, so remove that line to get auto-detection.
+- **`database "<user>" does not exist` every 10 seconds in the Postgres log** (discussion #317): with `DB_USER` different from `DB_NAME`, the healthcheck tried a database named after the user. It was harmless, the check passed anyway. It now names the database.
+
 ## [1.6.1] - 2026-11-04
 
 ### Added
