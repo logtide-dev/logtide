@@ -118,6 +118,27 @@ describe('receiver ingest endpoint', () => {
     expect(receivers[0].lastReceivedAt).not.toBeNull();
   });
 
+  it('fails the event with the validation messages when the adapter output is invalid', async () => {
+    await db
+      .updateTable('receivers')
+      .set({ field_mapping: JSON.stringify({ defaults: { service: '' } }) as any })
+      .where('id', '=', receiverId)
+      .execute();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/receivers/${receiverId}/${token}`,
+      payload: { msg: 'from external' },
+    });
+    const { eventId } = JSON.parse(res.body);
+
+    await processReceiverEvent(fakeJob(eventId));
+
+    const event = await receiversService.getEventWithReceiver(eventId);
+    expect(event!.status).toBe('failed');
+    const events = await receiversService.listEvents(receiverId, 10);
+    expect(events[0].error).toMatch(/^adapter produced no valid logs: ./);
+  });
+
   it('marks github ping events as skipped', async () => {
     const gh = await receiversService.createReceiver({
       projectId,
