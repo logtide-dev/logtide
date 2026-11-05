@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **"Failed to fetch" when the UI is opened from another machine** (discussion #317): `.env.example` said the API URL is auto-detected, but the compose files set `PUBLIC_API_URL` to `http://localhost:8080`, so the browser called its own machine unless the variable was set by hand. The compose default is now `auto`: the browser uses the host the UI was opened on with `BACKEND_PORT`, or relative URLs on ports 80 and 443. An explicit `PUBLIC_API_URL` works as before, also when empty. `install.sh` no longer writes the old value into `.env`; an existing `.env` that has it keeps it, so remove that line to get auto-detection.
+- **"Failed to fetch" when the UI is opened from another machine** (discussion #317): `.env.example` said the API URL is auto-detected, but the compose files set `PUBLIC_API_URL` to `http://localhost:8080`, so the browser called its own machine unless the variable was set by hand. The compose default is now `auto`: the browser uses the host the UI was opened on with `BACKEND_PORT`, or relative URLs on ports 80 and 443. An explicit `PUBLIC_API_URL` works as before; left empty in `.env` it counts as unset and gives `auto`. `install.sh` no longer writes the old value into `.env`; an existing `.env` that has it keeps it, so remove that line to get auto-detection.
 - **`database "<user>" does not exist` every 10 seconds in the Postgres log** (discussion #317): with `DB_USER` different from `DB_NAME`, the healthcheck tried a database named after the user. It was harmless, the check passed anyway. It now names the database.
 
 ## [1.6.1] - 2026-11-04
