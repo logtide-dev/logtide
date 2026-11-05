@@ -18,8 +18,8 @@ const alertTypeEnum = z.enum(['threshold', 'rate_of_change']);
 const baselineTypeEnum = z.enum(['same_time_yesterday', 'same_day_last_week', 'rolling_7d_avg', 'percentile_p95']);
 
 const createAlertRuleSchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid().optional().nullable(),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid().optional().nullable(),
   name: z.string().min(1).max(200),
   enabled: z.boolean().optional(),
   service: z.string().max(100).optional().nullable(),
@@ -34,7 +34,7 @@ const createAlertRuleSchema = z.object({
   sustainedMinutes: z.number().int().min(1).max(60).optional().nullable(),
   emailRecipients: z.array(z.string().email()).optional(),
   webhookUrl: z.string().url().optional().nullable(),
-  channelIds: z.array(z.string().uuid()).optional(),
+  channelIds: z.array(z.string().guid()).optional(),
   metadataFilters: metadataFiltersSchema,
   query: z.string().max(2000).optional().nullable(),
   renotifyMinutes: z.number().int().min(5).max(1440).optional().nullable(),
@@ -63,7 +63,7 @@ const updateAlertRuleSchema = z.object({
   sustainedMinutes: z.number().int().min(1).max(60).optional().nullable(),
   emailRecipients: z.array(z.string().email()).optional(),
   webhookUrl: z.string().url().optional().nullable(),
-  channelIds: z.array(z.string().uuid()).optional(),
+  channelIds: z.array(z.string().guid()).optional(),
   metadataFilters: metadataFiltersSchema.optional(),
   query: z.string().max(2000).optional().nullable(),
   renotifyMinutes: z.number().int().min(5).max(1440).optional().nullable(),
@@ -78,12 +78,12 @@ const updateAlertRuleSchema = z.object({
 );
 
 const alertRuleIdSchema = z.object({
-  id: z.string().uuid('Invalid alert rule ID format'),
+  id: z.string().guid('Invalid alert rule ID format'),
 });
 
 const getAlertsQuerySchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
-  projectId: z.string().uuid().optional(),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
+  projectId: z.string().guid().optional(),
   enabledOnly: z
     .string()
     .optional()
@@ -98,8 +98,8 @@ const parsePositiveInt = (val: string | undefined, fallback: number, max: number
 };
 
 const getHistoryQuerySchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
-  projectId: z.string().uuid().optional(),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
+  projectId: z.string().guid().optional(),
   limit: z
     .string()
     .optional()
@@ -111,12 +111,12 @@ const getHistoryQuerySchema = z.object({
 });
 
 const orgQuerySchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
 });
 
 const previewAlertRuleSchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid().optional().nullable(),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid().optional().nullable(),
   service: z.string().max(100).optional().nullable(),
   level: z.array(levelEnum).min(1),
   threshold: z.number().int().min(1),
@@ -309,7 +309,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
       if (error instanceof AlertRuleInputError) {
@@ -348,7 +348,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -381,7 +381,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -418,7 +418,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
       if (error instanceof AlertRuleInputError) {
@@ -453,7 +453,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -474,7 +474,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -593,7 +593,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
       if (error instanceof AlertRuleInputError) {

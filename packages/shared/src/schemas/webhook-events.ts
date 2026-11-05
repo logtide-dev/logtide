@@ -15,7 +15,7 @@ export const webhookEventTypeSchema = z.enum([
 ]);
 export type WebhookEventType = z.infer<typeof webhookEventTypeSchema>;
 
-const organizationRefSchema = z.object({ id: z.string().uuid(), name: z.string() });
+const organizationRefSchema = z.object({ id: z.string().guid(), name: z.string() });
 
 export const alertTriggeredDataSchema = z
   .object({
@@ -35,10 +35,10 @@ export const alertTriggeredDataSchema = z
     link: z.string(),
     // 1.6 alert lifecycle fields. Optional so pre-1.6 payloads, Sigma
     // detections and replays of old deliveries stay valid.
-    alert_rule_id: z.string().uuid().optional(),
+    alert_rule_id: z.string().guid().optional(),
     renotify: z.boolean().optional(),
     firing_since: z.string().datetime().optional(),
-    incident_id: z.string().uuid().nullable().optional(),
+    incident_id: z.string().guid().nullable().optional(),
   })
   .passthrough();
 
@@ -48,7 +48,7 @@ export const alertTriggeredDataSchema = z
  */
 export const alertResolvedDataSchema = z
   .object({
-    alert_rule_id: z.string().uuid(),
+    alert_rule_id: z.string().guid(),
     alert_name: z.string(),
     alert_type: z.enum(['threshold', 'rate_of_change']),
     title: z.string(),
@@ -59,7 +59,7 @@ export const alertResolvedDataSchema = z
     firing_since: z.string().datetime(),
     resolved_at: z.string().datetime(),
     duration_seconds: z.number().int().min(0),
-    incident_id: z.string().uuid().nullable(),
+    incident_id: z.string().guid().nullable(),
     link: z.string(),
   })
   .passthrough();
@@ -72,7 +72,7 @@ export const errorDetectedDataSchema = z
     severity: z.string(),
     organization: organizationRefSchema,
     // project is always sent by the producer; id may be null (ErrorNotificationJobData.projectId)
-    project: z.object({ id: z.string().uuid().nullable(), name: z.string() }),
+    project: z.object({ id: z.string().guid().nullable(), name: z.string() }),
     error_group_id: z.string(),
     exception_type: z.string().nullable().optional(),
     language: z.string().nullable().optional(),
@@ -115,7 +115,7 @@ export const incidentCreatedDataSchema = z
 /** Project health issue opened or resolved. resolved_at is null while open. */
 export const projectHealthDataSchema = z
   .object({
-    project_id: z.string().uuid(),
+    project_id: z.string().guid(),
     project_name: z.string(),
     check_key: z.string(),
     severity: z.enum(['critical', 'warning']),
@@ -123,7 +123,7 @@ export const projectHealthDataSchema = z
     message: z.string(),
     opened_at: z.string().datetime(),
     resolved_at: z.string().datetime().nullable(),
-    details: z.record(z.unknown()),
+    details: z.record(z.string(), z.unknown()),
     link: z.string(),
   })
   .passthrough();
@@ -134,9 +134,9 @@ export const channelNotificationDataSchema = z
     title: z.string(),
     message: z.string(),
     severity: z.string().optional(),
-    organization: z.object({ id: z.string().uuid(), name: z.string() }).optional(),
+    organization: z.object({ id: z.string().guid(), name: z.string() }).optional(),
     link: z.string().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
@@ -145,9 +145,9 @@ export const webhookEnvelopeSchema = z.object({
   type: webhookEventTypeSchema,
   version: z.literal(1),
   occurredAt: z.string().datetime(),
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid().nullable(),
-  data: z.record(z.unknown()),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid().nullable(),
+  data: z.record(z.string(), z.unknown()),
 });
 export type WebhookEnvelope = z.infer<typeof webhookEnvelopeSchema>;
 

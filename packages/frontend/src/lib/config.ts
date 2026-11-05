@@ -2,25 +2,24 @@
 // This allows the API URL to be configured at runtime via Docker environment variables
 
 import { browser } from '$app/environment';
+import type { RuntimeConfig } from './runtime-config';
 
 // Declare the global window config type
 declare global {
   interface Window {
-    __LOGTIDE_CONFIG__?: {
-      apiUrl: string;
-    };
+    __LOGTIDE_CONFIG__?: RuntimeConfig;
   }
 }
 
 /**
  * Get the API URL from runtime config or fallback.
  *
- * Auto-detection logic (when PUBLIC_API_URL is not explicitly set):
+ * Auto-detection logic (when PUBLIC_API_URL is "auto", the compose default):
  *
  * 1. Standard port (80/443) → Assume reverse proxy → Use relative URLs ("/api/v1")
  *    Example: https://logtide.example.com → API: /api/v1
  *
- * 2. Non-standard port (e.g., 3000) → Assume Docker direct → Use same host + port 8080
+ * 2. Non-standard port (e.g., 3000) → Assume Docker direct → Use same host + BACKEND_PORT (default 8080)
  *    Example: http://192.168.1.100:3000 → API: http://192.168.1.100:8080/api/v1
  *
  * 3. Explicit PUBLIC_API_URL → Use as-is (allows full customization)
@@ -38,7 +37,7 @@ export function getApiUrl(): string {
       return window.__LOGTIDE_CONFIG__.apiUrl;
     }
 
-    // Auto-detect only when no explicit PUBLIC_API_URL is configured
+    // Auto-detect when PUBLIC_API_URL is "auto"
     // This helps self-hosted users who don't set PUBLIC_API_URL
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
@@ -53,8 +52,9 @@ export function getApiUrl(): string {
       return '';
     }
 
-    // Non-standard port (e.g., 3000) = Docker direct access = backend on :8080
-    return `${protocol}//${hostname}:8080`;
+    // Non-standard port (e.g., 3000) = Docker direct access = backend on its host port
+    const apiPort = window.__LOGTIDE_CONFIG__?.apiPort ?? '8080';
+    return `${protocol}//${hostname}:${apiPort}`;
   }
 
   // SSR fallback (not used for API calls, but needed for hydration)

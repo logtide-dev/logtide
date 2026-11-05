@@ -155,9 +155,9 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
-          incidentId: z.string().uuid().optional(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid().optional(),
+          incidentId: z.string().guid().optional(),
           source: listParam(z.enum(INCIDENT_SOURCES)),
           ticket: z.string().min(1).optional(),
           token: z.string().min(1).optional(),
@@ -322,7 +322,7 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error setting up SIEM SSE:', error);

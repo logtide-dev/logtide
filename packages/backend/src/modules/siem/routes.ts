@@ -79,8 +79,8 @@ export async function siemRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid().optional(),
           timeRange: z.enum(['24h', '7d', '30d']),
           severity: z.array(z.enum(SEVERITIES)).optional(),
         });
@@ -111,7 +111,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting dashboard stats:', error);
@@ -160,8 +160,8 @@ export async function siemRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid().optional(),
           category: z.array(z.enum(PACK_CATEGORIES)).optional(),
           severity: z.array(z.enum(SEVERITIES)).optional(),
           limit: z.coerce.number().min(1).max(100).optional().default(10),
@@ -196,7 +196,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting detection events:', error);
@@ -255,15 +255,15 @@ export async function siemRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          organizationId: z.string().uuid(),
-          projectId: z.string().uuid().optional(),
+          organizationId: z.string().guid(),
+          projectId: z.string().guid().optional(),
           title: z.string().min(1).max(500),
           description: z.string().optional(),
           severity: z.enum(SEVERITIES),
           status: z.enum(INCIDENT_STATUSES).optional(),
-          assigneeId: z.string().uuid().optional(),
-          traceId: z.string().uuid().optional(),
-          detectionEventIds: z.array(z.string().uuid()).optional(),
+          assigneeId: z.string().guid().optional(),
+          traceId: z.string().guid().optional(),
+          detectionEventIds: z.array(z.string().guid()).optional(),
         });
 
         const body = schema.parse(request.body);
@@ -321,7 +321,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         if (error instanceof IncidentError) {
@@ -369,11 +369,11 @@ export async function siemRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const paramsSchema = z.object({
-          id: z.string().uuid(),
+          id: z.string().guid(),
         });
 
         const querySchema = z.object({
-          organizationId: z.string().uuid(),
+          organizationId: z.string().guid(),
         });
 
         const params = paramsSchema.parse(request.params);
@@ -404,7 +404,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error deleting incident:', error);
@@ -446,7 +446,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          ip: z.string().ip(),
+          ip: z.union([z.ipv4(), z.ipv6()]),
         });
 
         const body = schema.parse(request.body);
@@ -464,7 +464,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error checking IP reputation:', error);
@@ -502,7 +502,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const schema = z.object({
-          ip: z.string().ip(),
+          ip: z.union([z.ipv4(), z.ipv6()]),
         });
 
         const body = schema.parse(request.body);
@@ -520,7 +520,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('Error getting GeoIP data:', error);

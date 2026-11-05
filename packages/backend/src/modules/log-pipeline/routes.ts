@@ -26,8 +26,8 @@ const stepSchema = z.discriminatedUnion('type', [
 ]);
 
 const createSchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid().optional().nullable(),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid().optional().nullable(),
   name: z.string().min(1).max(200),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
@@ -42,15 +42,15 @@ const updateSchema = z.object({
 });
 
 const previewSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   steps: z.array(stepSchema),
   message: z.string(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const importYamlSchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid().optional().nullable(),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid().optional().nullable(),
   yaml: z.string().min(1),
 });
 
@@ -81,7 +81,7 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       const result = await PipelineExecutor.execute(logEntry, body.steps as any);
       return reply.send(result);
     } catch (e) {
-      if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.errors });
+      if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.issues });
       throw e;
     }
   });
@@ -102,7 +102,7 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       });
       return reply.status(201).send({ pipeline });
     } catch (e) {
-      if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.errors });
+      if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.issues });
       if (e instanceof Error) return reply.status(400).send({ error: e.message });
       throw e;
     }
@@ -124,7 +124,7 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       });
       return reply.status(201).send({ pipeline });
     } catch (e) {
-      if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.errors });
+      if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.issues });
       if (e instanceof Error && e.message.includes('unique')) return reply.status(409).send({ error: 'A pipeline already exists for this project/org scope.' });
       throw e;
     }
@@ -157,7 +157,7 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       });
       return reply.send({ pipeline });
     } catch (e) {
-      if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.errors });
+      if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.issues });
       throw e;
     }
   });

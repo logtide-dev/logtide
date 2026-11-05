@@ -1,6 +1,6 @@
 {
   "name": "@logtide/shared",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "private": true,
   "description": "Shared types, schemas and utilities for LogTide",
   "type": "module",
@@ -25,7 +25,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^20.19.25",

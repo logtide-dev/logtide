@@ -4,7 +4,7 @@ import { notificationsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 
 const notificationIdSchema = z.object({
-  id: z.string().uuid('Invalid notification ID format'),
+  id: z.string().guid('Invalid notification ID format'),
 });
 
 const parsePositiveInt = (val: string | undefined, fallback: number, max: number): number => {
@@ -49,7 +49,7 @@ export async function notificationsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 

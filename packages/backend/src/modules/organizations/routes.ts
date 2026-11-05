@@ -24,7 +24,7 @@ const updateOrganizationSchema = z.object({
 });
 
 const organizationIdSchema = z.object({
-  id: z.string().uuid('Invalid organization ID format'),
+  id: z.string().guid('Invalid organization ID format'),
 });
 
 const organizationSlugSchema = z.object({
@@ -32,8 +32,8 @@ const organizationSlugSchema = z.object({
 });
 
 const memberIdSchema = z.object({
-  id: z.string().uuid('Invalid organization ID format'),
-  memberId: z.string().uuid('Invalid member ID format'),
+  id: z.string().guid('Invalid organization ID format'),
+  memberId: z.string().guid('Invalid member ID format'),
 });
 
 const updateMemberRoleSchema = z.object({
@@ -41,7 +41,7 @@ const updateMemberRoleSchema = z.object({
 });
 
 const transferOwnershipBodySchema = z.object({
-  userId: z.string().uuid('Invalid user ID format'),
+  userId: z.string().guid('Invalid user ID format'),
 });
 
 const upgradeHandoffBodySchema = z.object({
@@ -183,7 +183,7 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -323,7 +323,7 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -418,7 +418,7 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 
@@ -452,7 +452,7 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
       return reply.send({ organization });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        const firstError = error.errors[0];
+        const firstError = error.issues[0];
         if (firstError?.path[0] === 'id') {
           return reply.status(400).send({
             error: 'Invalid organization ID format',
@@ -460,7 +460,7 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
         }
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 

@@ -7,7 +7,7 @@ import { capabilities } from '../../capabilities/index.js';
 const organizationsService = new OrganizationsService();
 
 const querySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
 });
 
 async function checkMembership(userId: string, orgId: string): Promise<boolean> {
@@ -31,7 +31,7 @@ export async function capabilitiesRoutes(fastify: FastifyInstance) {
       return reply.send({ capabilities: list });
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: e.errors });
+        return reply.status(400).send({ error: 'Validation error', details: e.issues });
       }
       throw e;
     }

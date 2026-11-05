@@ -26,26 +26,26 @@ function auditActor(request: FastifyRequest) {
   return { type: 'user' as const, id: user.id, label: user.email ?? null };
 }
 
-const orgQuery = z.object({ organizationId: z.string().uuid() });
-const ruleParams = z.object({ id: z.string().uuid() });
-const exceptionParams = z.object({ id: z.string().uuid(), exceptionId: z.string().uuid() });
-const createBody = createExceptionSchema.extend({ organizationId: z.string().uuid() });
+const orgQuery = z.object({ organizationId: z.string().guid() });
+const ruleParams = z.object({ id: z.string().guid() });
+const exceptionParams = z.object({ id: z.string().guid(), exceptionId: z.string().guid() });
+const createBody = createExceptionSchema.extend({ organizationId: z.string().guid() });
 const bulkBody = z.object({
-  organizationId: z.string().uuid(),
-  ids: z.array(z.string().uuid()).min(1).max(200),
+  organizationId: z.string().guid(),
+  ids: z.array(z.string().guid()).min(1).max(200),
   action: z.enum(['enable', 'disable', 'delete']),
 });
 
-const validateBody = z.object({ organizationId: z.string().uuid(), yaml: z.string().min(1) });
+const validateBody = z.object({ organizationId: z.string().guid(), yaml: z.string().min(1) });
 const matchesQuery = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
   offset: z.coerce.number().int().min(0).default(0),
   days: z.coerce.number().int().min(1).max(30).default(7),
 });
 
 const previewBody = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   range: z.enum(PREVIEW_RANGES),
   yaml: z.string().min(1).optional(),
 });

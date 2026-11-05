@@ -137,8 +137,8 @@ export async function build(opts: BuildOptions = {}) {
       const body: Record<string, unknown> = { statusCode, error: errMessage };
       if ((error as any).validation) {
         body.details = (error as any).validation;
-      } else if ((error as any).name === 'ZodError' && Array.isArray((error as any).errors)) {
-        body.details = (error as any).errors;
+      } else if ((error as any).name === 'ZodError' && Array.isArray((error as any).issues)) {
+        body.details = (error as any).issues;
       }
       if (typeof (error as any).code === 'string') {
         body.code = (error as any).code;

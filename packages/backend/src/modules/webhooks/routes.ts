@@ -17,7 +17,7 @@ const organizationsService = new OrganizationsService();
 // ============================================================================
 
 const listQuerySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   status: z.enum(['pending', 'delivered', 'failed', 'dead']).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -50,7 +50,7 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
   fastify.get('/deliveries', async (request: any, reply) => {
     const parsed = listQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply.status(400).send({ error: 'Invalid query', details: parsed.error.errors });
+      return reply.status(400).send({ error: 'Invalid query', details: parsed.error.issues });
     }
     const { organizationId, status, limit, offset } = parsed.data;
 

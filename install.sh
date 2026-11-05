@@ -182,9 +182,6 @@ REDIS_PASSWORD=$REDIS_PASSWORD
 # API
 API_KEY_SECRET=$API_KEY_SECRET
 
-# Frontend
-PUBLIC_API_URL=http://localhost:8080
-
 # SMTP (Optional - Configure for email alerts)
 # SMTP_HOST=smtp.example.com
 # SMTP_PORT=587

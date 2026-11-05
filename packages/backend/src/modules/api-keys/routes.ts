@@ -22,12 +22,12 @@ const createApiKeySchema = z.object({
 });
 
 const projectIdSchema = z.object({
-  projectId: z.string().uuid('Invalid project ID format'),
+  projectId: z.string().guid('Invalid project ID format'),
 });
 
 const apiKeyIdSchema = z.object({
-  projectId: z.string().uuid('Invalid project ID format'),
-  id: z.string().uuid('Invalid API key ID format'),
+  projectId: z.string().guid('Invalid project ID format'),
+  id: z.string().guid('Invalid API key ID format'),
 });
 
 export async function apiKeysRoutes(fastify: FastifyInstance) {
@@ -122,7 +122,7 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         });
       }
 

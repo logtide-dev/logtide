@@ -17,7 +17,7 @@ export const savedSearchVisibilitySchema = z.enum(SAVED_SEARCH_VISIBILITIES);
 export const savedSearchStateSchema = z
   .object({
     q: z.string().max(SAVED_SEARCH_Q_MAX_LENGTH),
-    projectIds: z.array(z.string().uuid()).max(SAVED_SEARCH_MAX_PROJECTS),
+    projectIds: z.array(z.string().guid()).max(SAVED_SEARCH_MAX_PROJECTS),
     range: z.enum(TIME_RANGE_PRESETS).optional(),
     from: z.string().datetime().optional(),
     to: z.string().datetime().optional(),
@@ -56,7 +56,7 @@ export type SavedSearchState = z.infer<typeof savedSearchStateSchema>;
 const savedSearchNameSchema = z.string().trim().min(1).max(SAVED_SEARCH_NAME_MAX_LENGTH);
 
 export const savedSearchCreateSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   name: savedSearchNameSchema,
   visibility: savedSearchVisibilitySchema.default('private'),
   state: savedSearchStateSchema,

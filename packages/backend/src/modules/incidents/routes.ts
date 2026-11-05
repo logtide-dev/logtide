@@ -37,14 +37,14 @@ export interface IncidentRouteOptions {
 const ASSIGNEE_KEYWORDS = ['me', 'unassigned', 'anyone'] as const;
 
 const listQuerySchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: listParam(z.string().uuid()),
+  organizationId: z.string().guid(),
+  projectId: listParam(z.string().guid()),
   status: listParam(z.enum(INCIDENT_STATUSES)),
   source: listParam(z.enum(INCIDENT_SOURCES)),
   severity: listParam(z.enum(SEVERITIES)),
-  assignee: z.union([z.enum(ASSIGNEE_KEYWORDS), z.string().uuid()]).optional(),
-  assigneeId: z.string().uuid().optional(),
-  ruleId: z.string().uuid().optional(),
+  assignee: z.union([z.enum(ASSIGNEE_KEYWORDS), z.string().guid()]).optional(),
+  assigneeId: z.string().guid().optional(),
+  ruleId: z.string().guid().optional(),
   service: z.string().min(1).max(255).optional(),
   technique: z.string().min(1).max(255).optional(),
   sort: z.enum(INCIDENT_SORT_KEYS).optional(),
@@ -53,13 +53,13 @@ const listQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional(),
 });
 
-const idParamsSchema = z.object({ id: z.string().uuid() });
-const orgQuerySchema = z.object({ organizationId: z.string().uuid() });
+const idParamsSchema = z.object({ id: z.string().guid() });
+const orgQuerySchema = z.object({ organizationId: z.string().guid() });
 
 const patchBodySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   status: z.enum(INCIDENT_STATUSES).optional(),
-  assigneeId: z.string().uuid().nullable().optional(),
+  assigneeId: z.string().guid().nullable().optional(),
   severity: z.enum(SEVERITIES).optional(),
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(10000).optional(),
@@ -67,10 +67,10 @@ const patchBodySchema = z.object({
 
 const bulkBodySchema = z
   .object({
-    organizationId: z.string().uuid(),
-    ids: z.array(z.string().uuid()).min(1).max(INCIDENT_BULK_MAX_IDS),
+    organizationId: z.string().guid(),
+    ids: z.array(z.string().guid()).min(1).max(INCIDENT_BULK_MAX_IDS),
     action: z.enum(INCIDENT_BULK_ACTIONS),
-    assigneeId: z.string().uuid().nullable().optional(),
+    assigneeId: z.string().guid().nullable().optional(),
   })
   .refine((b) => b.action !== 'assign' || b.assigneeId !== undefined, {
     message: 'assigneeId is required for the assign action',
@@ -78,7 +78,7 @@ const bulkBodySchema = z
   });
 
 const commentBodySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   comment: z.string().min(1).max(10000),
 });
 
@@ -112,7 +112,7 @@ async function requireMember(
  */
 function handleError(error: unknown, request: FastifyRequest, reply: FastifyReply, fallback: string) {
   if (error instanceof z.ZodError) {
-    return reply.status(400).send({ error: 'Validation error', details: error.errors });
+    return reply.status(400).send({ error: 'Validation error', details: error.issues });
   }
   if (error instanceof IncidentError) {
     return reply.status(error.statusCode).send({ error: error.message, code: error.code });

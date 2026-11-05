@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.6.2] - 2026-11-05
+
+### Security
+
+- **Dependency updates**: Zod 4.6 replaces Zod 3 in the backend and shared packages (GHSA-mrhx-c7xc-m3w5: memory exhaustion validating a large array whose elements fail), plus fast-uri 3.1.9, Vite 6.4.5, minimatch 11 and postcss-selector-parser 6.1.5. API validation errors keep their status codes and `details` still lists the issues, but messages Zod generates itself read differently ("Required" is now "Invalid input: expected string, received undefined") and issues no longer carry `received`. Ids that are not RFC 9562 UUIDs keep being accepted as before.
+
+### Added
+
+- **Configurable host ports** (discussion #317): the compose files publish the frontend, backend, Postgres, Redis and syslog on `FRONTEND_PORT`, `BACKEND_PORT`, `DB_PORT`, `REDIS_PORT` and `SYSLOG_PORT` (same defaults as before), so a machine where those ports are taken needs only a few lines in `.env`. Containers keep their own ports inside the docker network. In these files `DB_PORT` and `REDIS_PORT` set only the published port: backend and worker still reach Postgres and Redis on 5432 and 6379.
+
+### Fixed
+
+- **"Failed to fetch" when the UI is opened from another machine** (discussion #317): `.env.example` said the API URL is auto-detected, but the compose files set `PUBLIC_API_URL` to `http://localhost:8080`, so the browser called its own machine unless the variable was set by hand. The compose default is now `auto`: the browser uses the host the UI was opened on with `BACKEND_PORT`, or relative URLs on ports 80 and 443. An explicit `PUBLIC_API_URL` works as before; left empty in `.env` it counts as unset and gives `auto`. `install.sh` no longer writes the old value into `.env`; an existing `.env` that has it keeps it, so remove that line to get auto-detection.
+- **`database "<user>" does not exist` every 10 seconds in the Postgres log** (discussion #317): with `DB_USER` different from `DB_NAME`, the healthcheck tried a database named after the user. It was harmless, the check passed anyway. It now names the database.
+
 ## [1.6.1] - 2026-11-04
 
 ### Added

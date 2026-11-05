@@ -17,7 +17,7 @@ import {
 // Saved log searches. Session auth only: API keys are project-scoped machine
 // credentials and get 401 from `authenticate`.
 
-const uuidSchema = z.string().uuid();
+const uuidSchema = z.string().guid();
 
 const isUuid = (value: unknown): value is string => uuidSchema.safeParse(value).success;
 
@@ -69,7 +69,7 @@ function sendKnownError(reply: FastifyReply, err: unknown): boolean {
     return true;
   }
   if (err instanceof z.ZodError) {
-    reply.status(400).send({ error: 'Validation error', details: err.errors });
+    reply.status(400).send({ error: 'Validation error', details: err.issues });
     return true;
   }
   return false;

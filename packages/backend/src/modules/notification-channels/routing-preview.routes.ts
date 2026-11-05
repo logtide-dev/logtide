@@ -18,7 +18,7 @@ const organizationsService = new OrganizationsService();
 
 const MAX_CHANNEL_IDS = 50;
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 const previewQuerySchema = z
   .object({
@@ -41,7 +41,7 @@ export async function notificationRoutingRoutes(fastify: FastifyInstance) {
   fastify.get('/preview', async (request: any, reply) => {
     const parsed = previewQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply.status(400).send({ error: 'Invalid query', details: parsed.error.errors });
+      return reply.status(400).send({ error: 'Invalid query', details: parsed.error.issues });
     }
     const { organizationId, eventType, projectId, channelIds } = parsed.data;
 

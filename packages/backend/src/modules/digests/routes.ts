@@ -23,7 +23,7 @@ const organizationsService = new OrganizationsService();
 // ============================================================================
 
 const orgQuerySchema = z.object({
-  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+  organizationId: z.string().guid('organizationId must be a valid uuid'),
 });
 
 // Generated from the shared catalog so the API cannot drift from it; strict so
@@ -52,7 +52,7 @@ const addRecipientSchema = z.object({
 });
 
 const recipientParamsSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
 });
 
 // ============================================================================
@@ -102,7 +102,7 @@ export async function digestsRoutes(fastify: FastifyInstance) {
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       console.error(error, 'Failed to get digest config');
       return reply.status(500).send({ error: 'Failed to get digest config' });
@@ -153,7 +153,7 @@ export async function digestsRoutes(fastify: FastifyInstance) {
       return reply.send({ config: { ...config, sections } });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       console.error(error, 'Failed to save digest config');
       return reply.status(500).send({ error: 'Failed to save digest config' });
@@ -192,7 +192,7 @@ export async function digestsRoutes(fastify: FastifyInstance) {
       return reply.status(204).send();
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       console.error(error, 'Failed to delete digest config');
       return reply.status(500).send({ error: 'Failed to delete digest config' });
@@ -242,7 +242,7 @@ export async function digestsRoutes(fastify: FastifyInstance) {
         throw error;
       }
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       if (error instanceof Error && error.message.includes('not configured')) {
         return reply.status(409).send({ error: 'Configure the digest before adding recipients' });
@@ -288,7 +288,7 @@ export async function digestsRoutes(fastify: FastifyInstance) {
       return reply.status(204).send();
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       console.error(error, 'Failed to remove digest recipient');
       return reply.status(500).send({ error: 'Failed to remove recipient' });
@@ -329,7 +329,7 @@ export async function digestsRoutes(fastify: FastifyInstance) {
       return reply.send({ recipient });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: error.errors });
+        return reply.status(400).send({ error: 'Validation error', details: error.issues });
       }
       console.error(error, 'Failed to resubscribe digest recipient');
       return reply.status(500).send({ error: 'Failed to resubscribe recipient' });

@@ -176,7 +176,7 @@ const configSchema = z.object({
   MAX_ORGANIZATIONS_PER_USER: z.preprocess(
     (v) => (v === '' ? undefined : v),
     z.coerce
-      .number({ invalid_type_error: 'MAX_ORGANIZATIONS_PER_USER must be a positive integer' })
+      .number({ error: 'MAX_ORGANIZATIONS_PER_USER must be a positive integer' })
       .int('MAX_ORGANIZATIONS_PER_USER must be a positive integer')
       .positive('MAX_ORGANIZATIONS_PER_USER must be a positive integer')
       .optional()
@@ -189,7 +189,7 @@ const configSchema = z.object({
   MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH: z.preprocess(
     (v) => (v === '' ? undefined : v),
     z.coerce
-      .number({ invalid_type_error: 'MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer' })
+      .number({ error: 'MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer' })
       .int('MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer')
       .positive('MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH must be a positive integer')
       .optional()
@@ -200,7 +200,7 @@ const configSchema = z.object({
   // Unset/false = no verification email, no gate (users count as verified).
   REQUIRE_EMAIL_VERIFICATION: z.preprocess(
     (v) => (v === '' ? undefined : v),
-    z.enum(['true', 'false'], { errorMap: () => ({ message: 'REQUIRE_EMAIL_VERIFICATION must be true or false' }) })
+    z.enum(['true', 'false'], { error: 'REQUIRE_EMAIL_VERIFICATION must be true or false' })
       .default('false')
       .transform((v) => v === 'true')
   ),
@@ -210,7 +210,7 @@ const configSchema = z.object({
   REGISTRATION_RATE_LIMIT_PER_HOUR: z.preprocess(
     (v) => (v === '' ? undefined : v),
     z.coerce
-      .number({ invalid_type_error: 'REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer' })
+      .number({ error: 'REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer' })
       .int('REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer')
       .positive('REGISTRATION_RATE_LIMIT_PER_HOUR must be a positive integer')
       .optional()
@@ -291,7 +291,7 @@ export function formatConfigError(error: z.ZodError): string {
     '',
   ];
 
-  const errors = error.flatten().fieldErrors;
+  const errors = error.flatten().fieldErrors as Record<string, string[] | undefined>;
   for (const [field, messages] of Object.entries(errors)) {
     lines.push(`  • ${field}: ${messages?.join(', ')}`);
 

@@ -59,7 +59,7 @@ export async function processReceiverEvent(job: IJob<ReceiverEventJobData>): Pro
   for (const log of result.logs) {
     const parsed = logSchema.safeParse(log);
     if (parsed.success) valid.push(parsed.data);
-    else invalid.push(parsed.error.errors.map((e) => e.message).join('; '));
+    else invalid.push(parsed.error.issues.map((e) => e.message).join('; '));
   }
 
   if (valid.length === 0) {

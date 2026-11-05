@@ -10,7 +10,7 @@ import type { MeteringEventType } from './types.js';
 const organizationsService = new OrganizationsService();
 
 const usageQuerySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   from: z.string().datetime(),
   to: z.string().datetime(),
   groupBy: z.enum(['type', 'project', 'day']).default('type'),
@@ -18,13 +18,13 @@ const usageQuerySchema = z.object({
 });
 
 const breakdownQuerySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   from: z.string().datetime(),
   to: z.string().datetime(),
 });
 
 const orgOnlyQuerySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
 });
 
 async function checkMembership(userId: string, orgId: string): Promise<boolean> {
@@ -64,7 +64,7 @@ export async function usageRoutes(fastify: FastifyInstance) {
       return reply.send({ usage });
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: e.errors });
+        return reply.status(400).send({ error: 'Validation error', details: e.issues });
       }
       throw e;
     }
@@ -88,7 +88,7 @@ export async function usageRoutes(fastify: FastifyInstance) {
       return reply.send({ breakdown });
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: e.errors });
+        return reply.status(400).send({ error: 'Validation error', details: e.issues });
       }
       throw e;
     }
@@ -113,7 +113,7 @@ export async function usageRoutes(fastify: FastifyInstance) {
       return reply.send({ current, series });
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: e.errors });
+        return reply.status(400).send({ error: 'Validation error', details: e.issues });
       }
       throw e;
     }
@@ -133,7 +133,7 @@ export async function usageRoutes(fastify: FastifyInstance) {
       return reply.send({ capabilities });
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Validation error', details: e.errors });
+        return reply.status(400).send({ error: 'Validation error', details: e.issues });
       }
       throw e;
     }

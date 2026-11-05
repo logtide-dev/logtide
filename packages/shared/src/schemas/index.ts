@@ -32,13 +32,13 @@ export const logSchema = z.object({
   service: z.string().min(1).max(100),
   level: logLevelSchema,
   message: z.string().min(1),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   trace_id: z.string().optional(),
   span_id: z
     .string()
     .regex(/^[a-f0-9]{16}$/i)
     .optional(),
-  session_id: z.string().uuid().optional(),
+  session_id: z.string().guid().optional(),
 });
 
 export const ingestRequestSchema = z.object({

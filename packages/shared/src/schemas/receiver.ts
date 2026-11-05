@@ -15,7 +15,7 @@ export const receiverFieldMappingSchema = z
     level: dotPath.optional(),
     service: dotPath.optional(),
     timestamp: dotPath.optional(),
-    levelMap: z.record(z.enum(LOG_LEVELS)).optional(),
+    levelMap: z.record(z.string(), z.enum(LOG_LEVELS)).optional(),
     defaults: z
       .object({
         level: z.enum(LOG_LEVELS).optional(),

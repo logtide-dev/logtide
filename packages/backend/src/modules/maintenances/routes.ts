@@ -28,14 +28,14 @@ async function checkOrgMember(userId: string, organizationId: string): Promise<b
 }
 
 const createSchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid(),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid(),
   title: z.string().min(1).max(255),
   description: z.string().max(5000).optional(),
   scheduledStart: z.string().datetime(),
   scheduledEnd: z.string().datetime(),
   autoUpdateStatus: z.boolean().optional(),
-  monitorIds: z.array(z.string().uuid()).max(MAX_LINKED_MONITORS).optional(),
+  monitorIds: z.array(z.string().guid()).max(MAX_LINKED_MONITORS).optional(),
 }).refine((d) => new Date(d.scheduledEnd) > new Date(d.scheduledStart), {
   message: 'End time must be after start time',
 });
@@ -47,7 +47,7 @@ const updateSchema = z.object({
   scheduledStart: z.string().datetime().optional(),
   scheduledEnd: z.string().datetime().optional(),
   autoUpdateStatus: z.boolean().optional(),
-  monitorIds: z.array(z.string().uuid()).max(MAX_LINKED_MONITORS).optional(),
+  monitorIds: z.array(z.string().guid()).max(MAX_LINKED_MONITORS).optional(),
 });
 
 export async function maintenanceRoutes(fastify: FastifyInstance) {
@@ -83,7 +83,7 @@ export async function maintenanceRoutes(fastify: FastifyInstance) {
   // Create maintenance (admin/owner only)
   fastify.post('/', async (request: any, reply) => {
     const parse = createSchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
 
     if (!(await checkOrgAdmin(request.user.id, parse.data.organizationId))) {
       return reply.status(403).send({ error: 'Admin or owner role required' });
@@ -134,7 +134,7 @@ export async function maintenanceRoutes(fastify: FastifyInstance) {
     }
 
     const parse = updateSchema.safeParse(request.body);
-    if (!parse.success) return reply.status(400).send({ error: parse.error.errors[0].message });
+    if (!parse.success) return reply.status(400).send({ error: parse.error.issues[0].message });
 
     const input: Record<string, unknown> = {};
     if (parse.data.title !== undefined) input.title = parse.data.title;

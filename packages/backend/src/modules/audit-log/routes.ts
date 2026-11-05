@@ -10,11 +10,11 @@ const organizationsService = new OrganizationsService();
 const AUDIT_CATEGORIES = ['log_access', 'config_change', 'user_management', 'data_modification'] as const;
 
 const querySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   category: z.enum(AUDIT_CATEGORIES).optional(),
   action: z.string().optional(),
   resourceType: z.string().optional(),
-  userId: z.string().uuid().optional(),
+  userId: z.string().guid().optional(),
   actorType: z.enum(['user', 'apiKey', 'system']).optional(),
   outcome: z.enum(['success', 'failure']).optional(),
   from: z.string().datetime().optional(),
@@ -24,7 +24,7 @@ const querySchema = z.object({
 });
 
 const exportSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   category: z.enum(AUDIT_CATEGORIES).optional(),
   action: z.string().optional(),
   actorType: z.enum(['user', 'apiKey', 'system']).optional(),
@@ -77,7 +77,7 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('[AuditLog] Error querying audit logs:', error);
@@ -99,7 +99,7 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
     async (request: any, reply) => {
       try {
         const { organizationId } = z
-          .object({ organizationId: z.string().uuid() })
+          .object({ organizationId: z.string().guid() })
           .parse(request.query);
 
         const isAdmin = await organizationsService.isOwnerOrAdmin(
@@ -118,7 +118,7 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         throw error;
@@ -222,7 +222,7 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
-            details: error.errors,
+            details: error.issues,
           });
         }
         console.error('[AuditLog] Error exporting audit logs:', error);

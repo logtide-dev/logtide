@@ -16,8 +16,8 @@ import { listPickerOptions, projectBelongsToOrg } from './options-service.js';
 const organizationsService = new OrganizationsService();
 
 const createSchema = z.object({
-  organizationId: z.string().uuid(),
-  projectId: z.string().uuid().optional().nullable(),
+  organizationId: z.string().guid(),
+  projectId: z.string().guid().optional().nullable(),
   name: z.string().min(1).max(200),
   description: z.string().max(2000).optional().nullable(),
   isPersonal: z.boolean().optional(),
@@ -32,7 +32,7 @@ const updateSchema = z.object({
 });
 
 const importYamlSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   yaml: z.string().min(1),
 });
 
@@ -41,9 +41,9 @@ const duplicateSchema = z.object({
 });
 
 const fromTemplateSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   templateId: z.string().min(1).max(64),
-  projectId: z.string().uuid().optional().nullable(),
+  projectId: z.string().guid().optional().nullable(),
   name: z.string().min(1).max(200).optional(),
 });
 
@@ -60,14 +60,14 @@ const addPanelSchema = z.object({
 });
 
 const optionsQuerySchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   kind: z.enum(['metric-names', 'services']),
   source: z.enum(['logs', 'traces', 'metrics']).optional(),
-  projectId: z.string().uuid().optional(),
+  projectId: z.string().guid().optional(),
 });
 
 const panelDataBatchSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   panelIds: z.array(z.string()).optional(),
   // Dashboard-level time override (#305): applied to every window-scoped
   // panel for this request only, never persisted.
@@ -175,7 +175,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
-          .send({ error: 'Validation error', details: e.errors });
+          .send({ error: 'Validation error', details: e.issues });
       }
       throw e;
     }
@@ -208,7 +208,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
-          .send({ error: 'Validation error', details: e.errors });
+          .send({ error: 'Validation error', details: e.issues });
       }
       if (e instanceof Error) {
         return reply.status(400).send({ error: e.message });
@@ -251,7 +251,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
-          .send({ error: 'Validation error', details: e.errors });
+          .send({ error: 'Validation error', details: e.issues });
       }
       if (e instanceof Error && e.message === 'Dashboard not found') {
         return reply.status(404).send({ error: e.message });
@@ -296,7 +296,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
-          .send({ error: 'Validation error', details: e.errors });
+          .send({ error: 'Validation error', details: e.issues });
       }
       if (e instanceof Error && e.message === 'Template not found') {
         return reply.status(404).send({ error: e.message });
@@ -314,7 +314,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
     if (!parsed.success) {
       return reply
         .status(400)
-        .send({ error: 'Validation error', details: parsed.error.errors });
+        .send({ error: 'Validation error', details: parsed.error.issues });
     }
     const q = parsed.data;
     if (!(await checkMembership(request.user.id, q.organizationId))) {
@@ -384,7 +384,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
-          .send({ error: 'Validation error', details: e.errors });
+          .send({ error: 'Validation error', details: e.issues });
       }
       if (e instanceof Error && e.message === 'Dashboard not found') {
         return reply.status(404).send({ error: e.message });
@@ -424,7 +424,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
-          .send({ error: 'Validation error', details: e.errors });
+          .send({ error: 'Validation error', details: e.issues });
       }
       if (e instanceof Error && e.message === 'Dashboard not found') {
         return reply.status(404).send({ error: e.message });
@@ -596,7 +596,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
-          .send({ error: 'Validation error', details: e.errors });
+          .send({ error: 'Validation error', details: e.issues });
       }
       throw e;
     }
