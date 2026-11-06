@@ -12,6 +12,7 @@ This page is for operators who run LogTide on behalf of other people (a managed 
 | `LOGTIDE_ADMIN_SERVICE_TOKEN` | unset | Static bearer for a billing service on the entitlements and retention admin routes |
 | `LOGTIDE_UPGRADE_URL` | unset | External billing portal the Upgrade / Manage billing buttons redirect to |
 | `LOGTIDE_UPGRADE_SIGNING_SECRET` | unset | HMAC secret used to sign the handoff token |
+| `DEFAULT_ORG_RETENTION_DAYS` | unset (90) | Retention new organizations start with, in days |
 | `MAX_ORGANIZATIONS_PER_USER` | unset (unlimited) | Maximum organizations one user may own |
 | `MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH` | unset (unlimited) | Maximum organizations one user may create per UTC calendar month |
 | `REQUIRE_EMAIL_VERIFICATION` | `false` | Require new local users to confirm their email |
@@ -103,6 +104,10 @@ A complete reference verifier using only Node's `crypto` is in [`docs/examples/v
 ### Removed: in-app billing (LOGTIDE_BILLING_API_URL and LOGTIDE_BILLING_API_TOKEN)
 
 These two variables and the in-app billing proxy were removed in 1.6.0. They are ignored (startup logs a warning if either is set), and `/api/v1/auth/config` no longer carries `billingEnabled`. Hosting providers can build features like this with the extension system, see [Extensions](extensions.md).
+
+### DEFAULT_ORG_RETENTION_DAYS
+
+Integer from 1 to 365; unset = the column default of 90 days; anything else aborts startup. It applies only when an organization is created: existing organizations keep their value, and retention can still be changed per organization afterwards. A host whose free plan keeps data for less than 90 days should set this to that plan's retention, because lowering retention later deletes data.
 
 ### MAX_ORGANIZATIONS_PER_USER
 
