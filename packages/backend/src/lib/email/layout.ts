@@ -64,7 +64,7 @@ function styleBlock(): string {
     .map(([sel, decl]) => `[data-ogsc] ${sel}{${decl}}`)
     .join('\n');
   const ogsb = rules
-    .filter(([, decl]) => decl.startsWith('background'))
+    .filter(([, decl]) => decl.startsWith('background') || decl.startsWith('border'))
     .map(([sel, decl]) => `[data-ogsb] ${sel}{${decl}}`)
     .join('\n');
   return `<style>
@@ -125,6 +125,7 @@ ${styleBlock()}
 ${preheader}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${L.ground}" class="lt-ground" style="background-color:${L.ground};">
 <tr><td align="center" class="lt-pad" style="padding:32px 24px;">
+<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0"><tr><td><![endif]-->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
 <tr><td class="lt-border" style="padding:0 0 20px;border-bottom:1px solid ${L.border};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
@@ -139,6 +140,7 @@ ${opts.body}
 ${footerHtml(opts.footer)}
 </td></tr>
 </table>
+<!--[if mso]></td></tr></table><![endif]-->
 </td></tr>
 </table>
 </body>

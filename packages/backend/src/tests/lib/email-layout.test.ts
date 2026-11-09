@@ -132,3 +132,22 @@ describe('boxes render as tables for Outlook', () => {
     expect(html).not.toMatch(/<(div|span)[^>]*style="[^"]*padding:/);
   });
 });
+
+describe('Outlook details', () => {
+  it('pins the width to 600px in Outlook for Windows with a ghost table', () => {
+    const html = page();
+    expect(html).toContain('<!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0"><tr><td><![endif]-->');
+    expect(html).toContain('<!--[if mso]></td></tr></table><![endif]-->');
+  });
+
+  it('recolors hairlines in Outlook.com dark mode too', () => {
+    expect(page()).toMatch(/\[data-ogsb\] \.lt-border\{border-color:/);
+  });
+
+  it('keeps the meter bar 8px tall and places its label with a cell, not a percent padding', () => {
+    const html = meter({ value: 1284, threshold: 500, label: 'threshold 500' });
+    expect(html).toContain('mso-line-height-rule:exactly');
+    expect(html).not.toMatch(/padding-left:\d+%/);
+    expect(html).toMatch(/<td width="39%"[^>]*>&nbsp;<\/td><td[^>]*>threshold 500<\/td>/);
+  });
+});

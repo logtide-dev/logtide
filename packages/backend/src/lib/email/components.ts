@@ -50,11 +50,13 @@ export function meter(opts: { value: number; threshold: number; label: string })
   if (!(threshold > 0) || !(value > threshold) || !Number.isFinite(value)) return '';
   const mark = Math.min(98, Math.max(2, Math.round((threshold / value) * 100)));
   const over = 100 - mark;
+  // Outlook draws an empty cell at least one line tall unless the line height is exact.
+  const bar = 'height:8px;font-size:0;line-height:0;mso-line-height-rule:exactly;';
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;border-collapse:collapse;"><tr>
-<td class="lt-track" width="${mark}%" height="8" style="width:${mark}%;height:8px;background-color:${L.track};border-radius:4px 0 0 4px;font-size:0;line-height:0;">&nbsp;</td>
-<td class="lt-mark" width="2" height="8" style="width:2px;height:8px;background-color:${L.text};font-size:0;line-height:0;">&nbsp;</td>
-<td class="lt-solid-error" width="${over}%" height="8" style="height:8px;background-color:${L.errorSolid};border-radius:0 4px 4px 0;font-size:0;line-height:0;">&nbsp;</td>
-</tr></table><p class="lt-muted" style="margin:0 0 32px;padding-left:${mark}%;font-family:${FONT_MONO};font-size:12px;line-height:16px;color:${L.muted};">${escapeHtml(opts.label)}</p>`;
+<td class="lt-track" width="${mark}%" height="8" style="width:${mark}%;${bar}background-color:${L.track};border-radius:4px 0 0 4px;">&nbsp;</td>
+<td class="lt-mark" width="2" height="8" style="width:2px;${bar}background-color:${L.text};">&nbsp;</td>
+<td class="lt-solid-error" width="${over}%" height="8" style="${bar}background-color:${L.errorSolid};border-radius:0 4px 4px 0;">&nbsp;</td>
+</tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 32px;border-collapse:collapse;"><tr><td width="${mark}%" style="width:${mark}%;font-size:0;line-height:0;">&nbsp;</td><td class="lt-muted" style="font-family:${FONT_MONO};font-size:12px;line-height:16px;color:${L.muted};white-space:nowrap;">${escapeHtml(opts.label)}</td></tr></table>`;
 }
 
 /** key=value lines in mono on a raised block, like a log record. */
