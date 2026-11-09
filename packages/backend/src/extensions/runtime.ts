@@ -27,6 +27,7 @@ import type {
   LogtideExtension,
 } from './types.js';
 import { MailNotConfiguredError } from './types.js';
+import { renderNoticeEmail } from '../lib/email/layout.js';
 
 /** Job names end up in queue ids `ext:<name>:<job>`, so no `:` and no `__`. */
 const JOB_NAME_RE = /^[a-z][a-z0-9_-]{0,62}$/;
@@ -154,7 +155,8 @@ const extensionMail: ExtensionMail = {
       to: msg.to,
       subject: msg.subject,
       text: msg.text,
-      html: msg.html,
+      // Extensions that send only text still get the branded HTML shell.
+      html: msg.html ?? renderNoticeEmail({ subject: msg.subject, text: msg.text }),
     });
   },
 };

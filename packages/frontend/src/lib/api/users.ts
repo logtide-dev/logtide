@@ -1,3 +1,4 @@
+import { weakPasswordMessage } from '$lib/utils/weak-password';
 import { getApiBaseUrl } from '$lib/config';
 
 export interface UpdateUserInput {
@@ -40,7 +41,7 @@ export class UsersAPI {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(error.error || `HTTP ${response.status}`);
+      throw new Error(weakPasswordMessage(error) ?? (error.error || `HTTP ${response.status}`));
     }
 
     // Handle 204 No Content responses (like DELETE)

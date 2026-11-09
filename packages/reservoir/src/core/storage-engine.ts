@@ -135,6 +135,15 @@ export abstract class StorageEngine {
   abstract deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult>;
 
   /**
+   * Drop all logs, spans, traces and metrics older than `cutoff`, for every
+   * project: the max-retention pass of the retention job. Engines drop whole
+   * storage units where they can (TimescaleDB chunks, ClickHouse partitions),
+   * so data may survive up to one unit past the cutoff; shorter per-project
+   * retentions use the time-range deletes.
+   */
+  abstract dropOlderThan(cutoff: Date): Promise<DeleteResult>;
+
+  /**
    * Brings a hand-kept log volume aggregate up to date (MongoDB); a no-op for
    * engines whose database maintains it (ClickHouse projection, TimescaleDB
    * continuous aggregate). Safe to call from several processes; call it about

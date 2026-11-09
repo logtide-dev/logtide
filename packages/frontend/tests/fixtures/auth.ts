@@ -517,7 +517,7 @@ export const test = base.extend<AuthFixtures>({
     // Register a new user for each test
     const email = generateTestEmail();
     const name = generateTestName();
-    const password = 'TestPassword123!';
+    const password = 'tidal-Orbit-Granite-57';
 
     const { user, token: _token } = await registerUser(name, email, password);
     await use(user);

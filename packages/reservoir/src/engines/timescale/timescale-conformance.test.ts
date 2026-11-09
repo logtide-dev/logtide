@@ -634,3 +634,32 @@ describeTimescaleSpecifics(
     });
   },
 );
+
+const OLD = Date.UTC(2020, 0, 1, 0, 0, 0);
+const oldOrNew = (id: string, at: number): { log: LogRecord; span: SpanRecord; trace: TraceRecord } => ({
+  log: { time: new Date(at), projectId: SPECIFICS_PROJECT, service: 'api', level: 'info', message: id, metadata: {} },
+  span: {
+    time: new Date(at), spanId: id, traceId: `trace-${id}`, projectId: SPECIFICS_PROJECT, serviceName: 'api',
+    operationName: 'op', startTime: new Date(at), endTime: new Date(at + 10), durationMs: 10,
+  },
+  trace: {
+    traceId: `trace-${id}`, projectId: SPECIFICS_PROJECT, serviceName: 'api', startTime: new Date(at),
+    endTime: new Date(at + 10), durationMs: 10, spanCount: 1, error: false,
+  },
+});
+const retentionRows = [oldOrNew('old', OLD), oldOrNew('new', SPECIFICS_BASE)];
+
+describeTimescaleSpecifics(
+  'timescale retention specifics',
+  'reservoir_ts_retention',
+  { logs: retentionRows.map((r) => r.log), spans: retentionRows.map((r) => r.span), traces: retentionRows.map((r) => r.trace) },
+  (subject) => {
+    it('dropOlderThan drops the old chunks and the old trace summaries only', async () => {
+      await subject().dropOlderThan(new Date(SPECIFICS_BASE - 30 * 24 * 3_600_000));
+      const all = { projectId: SPECIFICS_PROJECT, from: new Date(OLD - 60_000), to: SPECIFICS_WINDOW.to };
+      expect((await subject().query({ ...all, limit: 10 })).logs.map((l) => l.message)).toEqual(['new']);
+      expect((await subject().querySpans({ ...all, limit: 10 })).spans.map((s) => s.spanId)).toEqual(['new']);
+      expect((await subject().queryTraces({ ...all, limit: 10 })).traces.map((t) => t.traceId)).toEqual(['trace-new']);
+    });
+  },
+);

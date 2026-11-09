@@ -10,7 +10,7 @@ test.describe('Metadata Filtering Journey', () => {
 
   test.beforeAll(async () => {
     const email = generateTestEmail();
-    const { token } = await registerUser(generateTestName('MetaFilter'), email, 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('MetaFilter'), email, 'tidal-Orbit-Granite-57');
     userToken = token;
     apiClient = new TestApiClient(token);
 

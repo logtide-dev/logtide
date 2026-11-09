@@ -8,6 +8,7 @@ import { settingsService } from '../../../modules/settings/service.js';
 import { authenticationService } from '../../../modules/auth/authentication-service.js';
 import { AuthError, AuthErrorCode } from '../../../modules/auth/providers/types.js';
 import { createTestSession } from '../../helpers/auth.js';
+import { STRONG_TEST_PASSWORD } from '../../helpers/factories.js';
 
 // Mock internal observability so the auto-login failure path is fully
 // exercised (isInternalLoggingEnabled is env-driven and off in tests)
@@ -76,7 +77,7 @@ describe('Users Routes', () => {
         url: '/register',
         payload: {
           email: 'newuser@example.com',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
           name: 'New User',
         },
       });
@@ -97,7 +98,7 @@ describe('Users Routes', () => {
         url: '/register',
         payload: {
           email: 'no-session@example.com',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
           name: 'No Session',
         },
       });
@@ -119,7 +120,7 @@ describe('Users Routes', () => {
       authSpy.mockRestore();
       const result = await authenticationService.authenticateWithProvider('local', {
         email: 'no-session@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
       });
       expect(result.session.token).toBeDefined();
     });
@@ -130,7 +131,7 @@ describe('Users Routes', () => {
         url: '/register',
         payload: {
           email: 'invalid-email',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
           name: 'Test User',
         },
       });
@@ -158,7 +159,7 @@ describe('Users Routes', () => {
         url: '/register',
         payload: {
           email: 'test@example.com',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
         },
       });
 
@@ -172,7 +173,7 @@ describe('Users Routes', () => {
         url: '/register',
         payload: {
           email: 'duplicate@example.com',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
           name: 'First User',
         },
       });
@@ -183,7 +184,7 @@ describe('Users Routes', () => {
         url: '/register',
         payload: {
           email: 'duplicate@example.com',
-          password: 'password456',
+          password: 'orbit-Granite-Tidal-59',
           name: 'Second User',
         },
       });
@@ -199,7 +200,7 @@ describe('Users Routes', () => {
         url: '/register',
         payload: {
           email: 'test@example.com',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
           name: 'Test User',
         },
       });
@@ -214,7 +215,7 @@ describe('Users Routes', () => {
     beforeEach(async () => {
       await usersService.createUser({
         email: 'login@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Login User',
       });
     });
@@ -225,7 +226,7 @@ describe('Users Routes', () => {
         url: '/login',
         payload: {
           email: 'login@example.com',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
         },
       });
 
@@ -254,7 +255,7 @@ describe('Users Routes', () => {
         url: '/login',
         payload: {
           email: 'nonexistent@example.com',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
         },
       });
 
@@ -266,7 +267,7 @@ describe('Users Routes', () => {
         method: 'POST',
         url: '/login',
         payload: {
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
         },
       });
 
@@ -284,7 +285,7 @@ describe('Users Routes', () => {
         url: '/login',
         payload: {
           email: 'login@example.com',
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
         },
       });
 
@@ -297,7 +298,7 @@ describe('Users Routes', () => {
     it('should logout with valid token', async () => {
       const user = await usersService.createUser({
         email: 'logout@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Logout User',
       });
 
@@ -330,7 +331,7 @@ describe('Users Routes', () => {
     it('should return user profile with valid token', async () => {
       const user = await usersService.createUser({
         email: 'me@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Me User',
       });
 
@@ -376,7 +377,7 @@ describe('Users Routes', () => {
     it('should update user name', async () => {
       const user = await usersService.createUser({
         email: 'update@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Old Name',
       });
 
@@ -401,7 +402,7 @@ describe('Users Routes', () => {
     it('should update email', async () => {
       const user = await usersService.createUser({
         email: 'oldemail@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Test User',
       });
 
@@ -440,7 +441,7 @@ describe('Users Routes', () => {
         },
         payload: {
           currentPassword: 'oldpassword',
-          newPassword: 'newpassword123',
+          newPassword: 'granite-Tidal-Orbit-58',
         },
       });
 
@@ -449,7 +450,7 @@ describe('Users Routes', () => {
       // Verify the new password authenticates through the provider path
       const result = await authenticationService.authenticateWithProvider('local', {
         email: 'password@example.com',
-        password: 'newpassword123',
+        password: 'granite-Tidal-Orbit-58',
       });
       expect(result.session.token).toBeDefined();
     });
@@ -457,7 +458,7 @@ describe('Users Routes', () => {
     it('should return 400 when changing password without current password', async () => {
       const user = await usersService.createUser({
         email: 'nopassword@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Test User',
       });
 
@@ -470,7 +471,7 @@ describe('Users Routes', () => {
           authorization: `Bearer ${session.token}`,
         },
         payload: {
-          newPassword: 'newpassword123',
+          newPassword: 'granite-Tidal-Orbit-58',
         },
       });
 
@@ -492,13 +493,13 @@ describe('Users Routes', () => {
     it('should return 409 when email already in use', async () => {
       await usersService.createUser({
         email: 'existing@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Existing User',
       });
 
       const user = await usersService.createUser({
         email: 'changemail@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Change Mail User',
       });
 
@@ -523,7 +524,7 @@ describe('Users Routes', () => {
     it('should delete user with correct password', async () => {
       const user = await usersService.createUser({
         email: 'delete@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Delete User',
       });
 
@@ -536,7 +537,7 @@ describe('Users Routes', () => {
           authorization: `Bearer ${session.token}`,
         },
         payload: {
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
         },
       });
 
@@ -554,7 +555,7 @@ describe('Users Routes', () => {
     it('should return 400 with incorrect password', async () => {
       const user = await usersService.createUser({
         email: 'nodelete@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'No Delete User',
       });
 
@@ -577,7 +578,7 @@ describe('Users Routes', () => {
     it('should return 400 without password', async () => {
       const user = await usersService.createUser({
         email: 'needpassword@example.com',
-        password: 'password123',
+        password: STRONG_TEST_PASSWORD,
         name: 'Need Password User',
       });
 
@@ -600,7 +601,7 @@ describe('Users Routes', () => {
         method: 'DELETE',
         url: '/me',
         payload: {
-          password: 'password123',
+          password: STRONG_TEST_PASSWORD,
         },
       });
 

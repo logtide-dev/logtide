@@ -23,7 +23,15 @@ import { STORAGE_ENGINE, getClickHouseConfig, getMongoDBConfig } from './storage
  * engines. Unset keeps the engine default (30 s); 0 disables the limit.
  */
 export function readAnalyticsTimeoutMs(env: NodeJS.ProcessEnv = process.env): number | undefined {
-  const raw = env.ANALYTICS_TIMEOUT_MS;
+  return readMsSetting('ANALYTICS_TIMEOUT_MS', env);
+}
+
+/**
+ * Optional non-negative millisecond setting; unset, empty or invalid keeps the
+ * engine default.
+ */
+export function readMsSetting(name: string, env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env[name];
   if (raw === undefined || raw.trim() === '') return undefined;
   const ms = Number(raw);
   return Number.isFinite(ms) && ms >= 0 ? Math.floor(ms) : undefined;
@@ -32,10 +40,17 @@ export function readAnalyticsTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
 function createBaseReservoir(): Reservoir {
   const analyticsTimeoutMs = readAnalyticsTimeoutMs();
   if (STORAGE_ENGINE === 'clickhouse') {
+    // Flush windows of the async inserts (see ClickHouseEngineOptions).
+    const insertFlushMs = readMsSetting('CLICKHOUSE_INSERT_FLUSH_MS');
+    const traceSummaryFlushMs = readMsSetting('CLICKHOUSE_TRACE_SUMMARY_FLUSH_MS');
     return new Reservoir('clickhouse', getClickHouseConfig(), {
       tableName: 'logs',
       skipInitialize: false,
       ...(analyticsTimeoutMs !== undefined ? { analyticsTimeoutMs } : {}),
+      ...(insertFlushMs !== undefined ? { insertFlushMs } : {}),
+      ...(traceSummaryFlushMs !== undefined ? { traceSummaryFlushMs } : {}),
+      // Escape hatch for the one-time move to daily partitions (1.6.3).
+      ...(process.env.CLICKHOUSE_DAILY_PARTITIONS === 'false' ? { autoRepartition: false } : {}),
     });
   }
   if (STORAGE_ENGINE === 'mongodb') {

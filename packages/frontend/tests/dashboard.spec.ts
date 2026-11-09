@@ -11,7 +11,7 @@ import { createTestLog, generateId } from './helpers/factories';
 
 test.describe('Dashboard', () => {
 	test('the default dashboard shows the counts of the logs the org ingested', async ({ page }) => {
-		const { user, token } = await registerUser(generateTestName('Dash'), generateTestEmail(), 'TestPassword123!');
+		const { user, token } = await registerUser(generateTestName('Dash'), generateTestEmail(), 'tidal-Orbit-Granite-57');
 		const api = new TestApiClient(token);
 		const { organization } = await api.createOrganization(`Dash Org ${Date.now()}`);
 		const { project } = await api.createProject(organization.id, `Dash Project ${Date.now()}`);

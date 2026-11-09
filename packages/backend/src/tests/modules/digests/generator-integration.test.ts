@@ -306,7 +306,7 @@ describe('DigestGeneratorService Integration', () => {
     expect(text).toContain('Open incidents: 1');
 
     // Uptime section (9 up / 10 checks = 90%)
-    expect(text).toContain('UPTIME');
+    expect(text).toContain('Uptime');
     expect(text).toContain('API Health');
     expect(text).toContain('90%');
 
@@ -479,12 +479,12 @@ describe('DigestGeneratorService Integration', () => {
 
     // Sections with seeded data render
     for (const title of [
-      'Log Breakdown',
-      'Top Error Messages',
+      'Log breakdown',
+      'Top error messages',
       'Alerts',
-      'Security Activity',
+      'Security activity',
       'Webhooks',
-      'Team Activity',
+      'Team activity',
     ]) {
       expect(html, `html should contain the ${title} section`).toContain(title);
     }
@@ -498,7 +498,7 @@ describe('DigestGeneratorService Integration', () => {
     expect(text).toContain('Config changes: 1');
 
     // Nothing was seeded for these verticals, so they are skipped entirely
-    for (const title of ['Traces', 'Metrics', 'Monitor Performance', 'Usage']) {
+    for (const title of ['Traces', 'Metrics', 'Monitor performance', 'Usage']) {
       expect(html, `html should omit the ${title} section`).not.toContain(title);
     }
   });

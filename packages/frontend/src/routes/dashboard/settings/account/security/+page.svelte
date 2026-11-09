@@ -11,6 +11,8 @@
   import SettingsSection from '$lib/components/app/SettingsSection.svelte';
   import DangerZone from '$lib/components/app/DangerZone.svelte';
   import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
+  import PasswordStrengthField from '$lib/components/auth/PasswordStrengthField.svelte';
+  import { isStrongPassword } from '$lib/utils/password-check';
   import Save from '@lucide/svelte/icons/save';
   import Trash2 from '@lucide/svelte/icons/trash-2';
 
@@ -21,12 +23,15 @@
 
   let currentPassword = $state('');
   let newPassword = $state('');
+  let newPasswordOk = $state(false);
+  let userName = $state('');
   let confirmPassword = $state('');
   let deletePassword = $state('');
 
   const unsubAuthStore = authStore.subscribe((state) => {
     token = state.token;
     userEmail = state.user?.email || '';
+    userName = state.user?.name || '';
   });
 
   onDestroy(() => {
@@ -50,8 +55,11 @@
       toastStore.error('Passwords do not match');
       return;
     }
-    if (newPassword.length < 8) {
-      toastStore.error('Password must be at least 8 characters');
+    if (!newPasswordOk) {
+      newPasswordOk = await isStrongPassword(newPassword, { email: userEmail, name: userName });
+    }
+    if (!newPasswordOk) {
+      toastStore.error('Choose a stronger password');
       return;
     }
 
@@ -100,7 +108,7 @@
     description="Change your password or delete your account."
   />
 
-  <SettingsSection title="Change password" description="Use at least 8 characters">
+  <SettingsSection title="Change password" description="Use at least 12 characters, and nothing built from your name or email.">
     <form
       class="space-y-4"
       onsubmit={(e) => {
@@ -119,17 +127,14 @@
           autocomplete="current-password"
         />
       </div>
-      <div class="space-y-2">
-        <Label for="new-password">New password</Label>
-        <Input
-          id="new-password"
-          type="password"
-          placeholder="Enter new password (min 8 characters)"
-          bind:value={newPassword}
-          disabled={saving}
-          autocomplete="new-password"
-        />
-      </div>
+      <PasswordStrengthField
+        id="new-password"
+        label="New password"
+        bind:value={newPassword}
+        bind:ok={newPasswordOk}
+        user={{ email: userEmail, name: userName }}
+        disabled={saving}
+      />
       <div class="space-y-2">
         <Label for="confirm-password">Confirm new password</Label>
         <Input

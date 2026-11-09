@@ -23,7 +23,7 @@ test.describe('Empty States', () => {
   test.beforeAll(async () => {
     // Create a fresh user with no data
     const email = generateTestEmail();
-    const { token } = await registerUser(generateTestName('Empty'), email, 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('Empty'), email, 'tidal-Orbit-Granite-57');
     userToken = token;
 
     const apiClient = new TestApiClient(token);
@@ -103,7 +103,7 @@ test.describe('Empty States', () => {
   });
 
   test('A user without an organization is sent to onboarding', async ({ page }) => {
-    const { user, token } = await registerUser(generateTestName('NoOrg'), generateTestEmail(), 'TestPassword123!');
+    const { user, token } = await registerUser(generateTestName('NoOrg'), generateTestEmail(), 'tidal-Orbit-Granite-57');
     await page.goto(TEST_FRONTEND_URL);
     await setAuthState(page, user, token);
 

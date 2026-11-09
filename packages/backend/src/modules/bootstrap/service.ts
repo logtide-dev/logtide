@@ -14,6 +14,9 @@ import { db } from '../../database/connection.js';
 import { config } from '../../config/index.js';
 import { settingsService } from '../settings/service.js';
 import type { UserProfile } from '../users/service.js';
+import { hub } from '@logtide/core';
+import { checkPasswordStrength, passwordUserInputs } from '@logtide/shared/password';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 
 // Cache for default user (avoid DB query on every request in auth-free mode)
 let cachedDefaultUser: UserProfile | null = null;
@@ -65,6 +68,19 @@ export class BootstrapService {
     const adminName = INITIAL_ADMIN_NAME || 'Admin';
 
     console.log(`[Bootstrap] No users found. Creating initial admin: ${INITIAL_ADMIN_EMAIL}`);
+
+    // Never refuse to boot over this: existing installs may carry a weak value.
+    const strength = checkPasswordStrength(
+      INITIAL_ADMIN_PASSWORD,
+      passwordUserInputs({ email: INITIAL_ADMIN_EMAIL, name: adminName })
+    );
+    if (!strength.ok) {
+      const warning = `[Bootstrap] INITIAL_ADMIN_PASSWORD is weak: ${strength.message} Change it after the first login.`;
+      console.warn(warning);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('warn', warning, { email: INITIAL_ADMIN_EMAIL });
+      }
+    }
 
     const passwordHash = await bcrypt.hash(INITIAL_ADMIN_PASSWORD, SALT_ROUNDS);
 

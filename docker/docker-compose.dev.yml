@@ -55,6 +55,8 @@ services:
       - "9000:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-system-logs.xml:/etc/clickhouse-server/config.d/logtide-system-logs.xml:ro
+      - ./clickhouse-profile.xml:/etc/clickhouse-server/users.d/logtide-profile.xml:ro
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 10s

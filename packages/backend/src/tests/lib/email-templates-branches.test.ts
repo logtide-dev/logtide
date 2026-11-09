@@ -82,7 +82,7 @@ describe('Email Templates (branches) - Alert Email', () => {
       },
     });
 
-    expect(result.html).toContain('Service Filter');
+    expect(result.html).toContain('>service<');
     expect(result.html).toContain('payments-api');
     expect(result.html).toContain('Acme Corp');
     expect(result.html).toContain('Checkout');
@@ -124,9 +124,9 @@ describe('Email Templates (branches) - Alert Email', () => {
       levels: ['error', 'critical'],
     });
 
-    expect(result.html).toContain('15</strong> minutes');
-    expect(result.html).toContain('Log Levels');
-    expect(result.html).toContain('error, critical');
+    expect(result.html).toContain('last 15 minutes');
+    expect(result.html).toContain('>levels<');
+    expect(result.html).toContain('error,critical');
     expect(result.text).toContain('last 15 minutes');
     expect(result.text).toContain('Log Levels: error, critical');
   });
@@ -142,7 +142,7 @@ describe('Email Templates (branches) - Alert Email', () => {
 
     expect(result.text).toContain('last 1 minute,');
     expect(result.text).not.toContain('Log Levels');
-    expect(result.html).not.toContain('Log Levels');
+    expect(result.html).not.toContain('>levels<');
   });
 });
 
@@ -207,16 +207,16 @@ describe('Email Templates (branches) - Monitor Email', () => {
 
     expect(result.html).toContain('Monitor down: API &lt;Health&gt;');
     expect(result.html).toContain('is not responding.');
-    expect(result.html).toContain('Error: <strong>ECONNREFUSED</strong>');
+    expect(result.html).toContain('Error: ECONNREFUSED');
     expect(result.html).toContain('Critical');
-    expect(result.html).toContain('#fef2f2');
+    expect(result.html).toContain('lt-fill-error');
     expect(result.html).toContain('https://api.example.com/health');
-    expect(result.html).toContain('Response Time');
-    expect(result.html).toContain('Consecutive Failures');
-    expect(result.html).not.toContain('Downtime Duration');
+    expect(result.html).toContain('response_time');
+    expect(result.html).toContain('consecutive_failures');
+    expect(result.html).not.toContain('downtime_duration');
     expect(result.html).toContain('https://app.logtide.dev/dashboard/uptime');
 
-    expect(result.text).toContain('MONITOR DOWN: API <Health>');
+    expect(result.text).toContain('Monitor down: API <Health>');
     expect(result.text).toContain('API <Health> is not responding.');
     expect(result.text).toContain('Target: https://api.example.com/health');
     expect(result.text).toContain('Error: ECONNREFUSED');
@@ -236,9 +236,9 @@ describe('Email Templates (branches) - Monitor Email', () => {
       responseTimeMs: null,
     });
 
-    expect(result.html).toContain('#fefce8');
-    expect(result.html).not.toContain('#fef2f2');
-    expect(result.html).not.toContain('Error: <strong>');
+    expect(result.html).toContain('class="lt-fill-warning');
+    expect(result.html).not.toContain('class="lt-fill-error');
+    expect(result.html).not.toContain('Error:');
     expect(result.html).toContain('Medium');
     expect(result.text).not.toContain('Target:');
     expect(result.text).not.toContain('Error:');
@@ -251,13 +251,13 @@ describe('Email Templates (branches) - Monitor Email', () => {
 
     expect(result.html).toContain('Monitor recovered: API &lt;Health&gt;');
     expect(result.html).toContain('is back online.');
-    expect(result.html).toContain('Downtime: <strong>5m</strong>');
-    expect(result.html).toContain('#f0fdf4');
-    expect(result.html).toContain('Recovered');
-    expect(result.html).not.toContain('Consecutive Failures');
-    expect(result.html).toContain('Downtime Duration');
+    expect(result.html).toContain('Downtime: 5m');
+    expect(result.html).toContain('lt-fill-success');
+    expect(result.html).toContain('&nbsp;Up<');
+    expect(result.html).not.toContain('consecutive_failures');
+    expect(result.html).toContain('downtime_duration');
 
-    expect(result.text).toContain('MONITOR RECOVERED: API <Health>');
+    expect(result.text).toContain('Monitor recovered: API <Health>');
     expect(result.text).toContain('API <Health> is back online.');
     expect(result.text).toContain('Response Time: 87ms');
     expect(result.text).toContain('Downtime Duration: 5m');
@@ -274,7 +274,7 @@ describe('Email Templates (branches) - Monitor Email', () => {
       organizationName: 'Acme Corp',
     });
 
-    expect(result.html).toContain('Cron</strong> is back online.');
+    expect(result.html).toContain('Cron is back online.');
     expect(result.html).not.toContain('Downtime:');
     expect(result.html).toContain('odd');
     expect(result.text).not.toContain('Downtime Duration');
@@ -333,7 +333,7 @@ describe('Email Templates (branches) - Digest edge cases', () => {
     expect(result.html).not.toContain('>Triggers</th>');
 
     // Security activity without severities or techniques.
-    expect(result.html).toContain('Incidents Opened');
+    expect(result.html).toContain('Incidents opened');
     expect(result.html).not.toContain('MITRE Technique');
     expect(result.text).toContain('Incidents opened: 0');
     expect(result.text).not.toContain('Opened by severity:');
@@ -360,7 +360,7 @@ describe('Email Templates (branches) - Digest edge cases', () => {
       webhooks: { delivered: 0, failed: 1, dead: 1 },
     } as DigestEmailData);
 
-    expect(result.html).toContain('<strong>1</strong> delivery reached the dead-letter queue');
+    expect(result.html).toContain('1 delivery reached the dead-letter queue');
     expect(result.text).toContain('Dead-lettered deliveries need attention.');
   });
 
@@ -383,7 +383,7 @@ describe('Email Templates (branches) - Digest edge cases', () => {
     } as DigestEmailData);
 
     expect(result.html).toContain('Digest for Acme Corp');
-    expect(result.html).not.toContain('Log Volume');
+    expect(result.html).not.toContain('Log volume');
     expect(result.text).toContain('Config changes: 1');
   });
 

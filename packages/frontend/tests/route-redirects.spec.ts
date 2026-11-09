@@ -43,7 +43,7 @@ test.describe('Legacy route redirects', () => {
 		const message = `redirect probe ${Date.now()}`;
 
 		test.beforeAll(async () => {
-			({ token } = await registerUser(generateTestName('Redirect'), generateTestEmail(), 'TestPassword123!'));
+			({ token } = await registerUser(generateTestName('Redirect'), generateTestEmail(), 'tidal-Orbit-Granite-57'));
 			const api = new TestApiClient(token);
 			const org = await api.createOrganization(`Redirect Org ${Date.now()}`);
 			organizationId = org.organization.id;
