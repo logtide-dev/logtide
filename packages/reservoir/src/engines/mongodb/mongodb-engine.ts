@@ -849,6 +849,22 @@ export class MongoDBEngine extends StorageEngine {
     }
   }
 
+  async dropOlderThan(cutoff: Date): Promise<DeleteResult> {
+    const start = Date.now();
+    const db = this.getDb();
+    let deleted = 0;
+    // Logs go through deleteByTimeRange so the log volume rollup stays exact.
+    const projects = (await this.logsCol().distinct('project_id', { time: { $lt: cutoff } }, { ...ctxOpts() })) as string[];
+    if (projects.length > 0) {
+      deleted += (await this.deleteByTimeRange({ projectId: projects, from: new Date(0), to: cutoff })).deleted;
+    }
+    for (const name of ['spans', 'metrics', 'metric_exemplars']) {
+      deleted += (await db.collection(name).deleteMany({ time: { $lt: cutoff } }, { ...ctxOpts() })).deletedCount;
+    }
+    deleted += (await this.tracesCol().deleteMany({ end_time: { $lt: cutoff } }, { ...ctxOpts() })).deletedCount;
+    return { deleted, executionTimeMs: Date.now() - start };
+  }
+
   // =========================================================================
   // Span & Trace Operations
   // =========================================================================

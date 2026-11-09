@@ -114,6 +114,7 @@ export class ReservoirBuffered implements IReservoir {
   distinct(...args: Parameters<Reservoir['distinct']>): ReturnType<Reservoir['distinct']> { return this.inner.distinct(...args); }
   topValues(...args: Parameters<Reservoir['topValues']>): ReturnType<Reservoir['topValues']> { return this.inner.topValues(...args); }
   deleteByTimeRange(...args: Parameters<Reservoir['deleteByTimeRange']>): ReturnType<Reservoir['deleteByTimeRange']> { return this.inner.deleteByTimeRange(...args); }
+  dropOlderThan(...args: Parameters<Reservoir['dropOlderThan']>): ReturnType<Reservoir['dropOlderThan']> { return this.inner.dropOlderThan(...args); }
   upsertTrace(...args: Parameters<Reservoir['upsertTrace']>): ReturnType<Reservoir['upsertTrace']> { return this.inner.upsertTrace(...args); }
   upsertTraces(...args: Parameters<Reservoir['upsertTraces']>): ReturnType<Reservoir['upsertTraces']> { return this.inner.upsertTraces(...args); }
   refreshLogVolume(): ReturnType<Reservoir['refreshLogVolume']> { return this.inner.refreshLogVolume(); }

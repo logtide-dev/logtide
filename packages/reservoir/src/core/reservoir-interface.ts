@@ -86,6 +86,8 @@ export interface IReservoir {
   distinct(params: DistinctParams): Promise<DistinctResult>;
   topValues(params: TopValuesParams): Promise<TopValuesResult>;
   deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult>;
+  /** Drop all telemetry older than `cutoff` for every project (max retention). */
+  dropOlderThan(cutoff: Date): Promise<DeleteResult>;
   /** Zero-filled, epoch-aligned log volume per level. */
   histogram(params: LogHistogramParams): Promise<LogHistogramResult>;
   /** Top values per field over the matching logs. */

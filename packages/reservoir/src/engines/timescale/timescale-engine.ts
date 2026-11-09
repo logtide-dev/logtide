@@ -715,6 +715,22 @@ export class TimescaleEngine extends StorageEngine {
     };
   }
 
+  async dropOlderThan(cutoff: Date): Promise<DeleteResult> {
+    const start = Date.now();
+    const s = this.schema;
+    // Whole chunks only: no decompression, no row deletes. A table that is not
+    // a hypertable in this schema (or has no chunk old enough) is skipped.
+    for (const table of [this.tableName, 'spans', 'metrics', 'metric_exemplars']) {
+      try {
+        await this.runQuery(`SELECT drop_chunks('${s}.${table}'::regclass, older_than => $1::timestamptz)`, [cutoff]);
+      } catch {
+        // not a hypertable here
+      }
+    }
+    const traces = await this.runQuery(`DELETE FROM ${s}.traces WHERE end_time < $1`, [cutoff]);
+    return { deleted: Number(traces.rowCount ?? 0), executionTimeMs: Date.now() - start };
+  }
+
   getCapabilities(): EngineCapabilities {
     return {
       engine: 'timescale',

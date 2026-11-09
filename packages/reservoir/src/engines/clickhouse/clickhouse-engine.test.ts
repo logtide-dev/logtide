@@ -1132,4 +1132,112 @@ describe('ClickHouseEngine (integration)', () => {
       expect(remaining.spans[0].spanId).toBe('new-span');
     });
   });
+
+  describe('retention (daily partitions)', () => {
+    const scalar = async (query: string, params: Record<string, unknown> = {}) => {
+      const rs = await client.query({ query, query_params: params, format: 'JSONEachRow' });
+      const rows = (await rs.json()) as { n: string | number }[];
+      return Number(rows[0]?.n ?? 0);
+    };
+    const mutations = (table: string) =>
+      scalar('SELECT count() AS n FROM system.mutations WHERE database = currentDatabase() AND table = {t:String}', { t: table });
+    const settle = async () => {
+      for (let i = 0; i < 100; i++) {
+        if ((await scalar('SELECT count() AS n FROM system.mutations WHERE database = currentDatabase() AND NOT is_done')) === 0) return;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error('mutations did not finish');
+    };
+    const logCount = () => scalar(`SELECT count() AS n FROM ${TABLE_NAME}`);
+
+    beforeEach(async () => {
+      await settle();
+      await client.command({ query: 'TRUNCATE TABLE IF EXISTS spans' });
+      await client.command({ query: 'TRUNCATE TABLE IF EXISTS traces' });
+      await engine.ingest([
+        makeLog({ time: new Date('2025-01-10T12:00:00Z') }),
+        makeLog({ time: new Date('2025-01-11T12:00:00Z') }),
+        makeLog({ time: new Date('2025-01-12T12:00:00Z') }),
+        makeLog({ time: new Date('2025-01-12T13:00:00Z'), projectId: 'proj-2' }),
+      ]);
+    });
+
+    it('creates the logs and spans tables partitioned by day', async () => {
+      for (const t of [TABLE_NAME, 'spans']) {
+        const rs = await client.query({
+          query: 'SELECT partition_key AS k FROM system.tables WHERE database = currentDatabase() AND name = {t:String}',
+          query_params: { t },
+          format: 'JSONEachRow',
+        });
+        expect(((await rs.json()) as { k: string }[])[0].k).toBe('toYYYYMMDD(time)');
+      }
+    });
+
+    it('queues one mutation per partition that holds matching rows, scoped to that partition', async () => {
+      const before = await mutations(TABLE_NAME);
+      await engine.deleteByTimeRange({
+        projectId: 'proj-1',
+        from: new Date('2025-01-01T00:00:00Z'),
+        to: new Date('2025-01-11T00:00:00Z'),
+      });
+      expect(await mutations(TABLE_NAME)).toBe(before + 1);
+      await settle();
+      expect(await logCount()).toBe(3);
+    });
+
+    it('queues no mutation when nothing matches', async () => {
+      const before = await mutations(TABLE_NAME);
+      await engine.deleteByTimeRange({
+        projectId: 'proj-1',
+        from: new Date('2024-01-01T00:00:00Z'),
+        to: new Date('2024-02-01T00:00:00Z'),
+      });
+      expect(await mutations(TABLE_NAME)).toBe(before);
+    });
+
+    it('drops whole day partitions older than the cutoff without a mutation', async () => {
+      const before = await mutations(TABLE_NAME);
+      await engine.dropOlderThan(new Date('2025-01-12T00:00:00Z'));
+      expect(await mutations(TABLE_NAME)).toBe(before);
+      expect(await logCount()).toBe(2);
+    });
+
+    it('deletes trace summaries with their spans and on dropOlderThan', async () => {
+      await engine.ingestSpans([makeSpan({ traceId: 't-old' }), makeSpan({ traceId: 't-new', time: new Date('2025-01-20T12:00:00Z') })]);
+      await engine.upsertTraces([
+        makeTrace({ traceId: 't-old' }),
+        makeTrace({ traceId: 't-new', startTime: new Date('2025-01-20T12:00:00Z'), endTime: new Date('2025-01-20T12:00:01Z') }),
+        makeTrace({ traceId: 't-other', projectId: 'proj-2' }),
+      ]);
+
+      await engine.deleteSpansByTimeRange({
+        projectId: 'proj-1',
+        from: new Date('2025-01-01T00:00:00Z'),
+        to: new Date('2025-01-16T00:00:00Z'),
+      });
+      await settle();
+      expect(await scalar('SELECT count() AS n FROM spans')).toBe(1);
+      const left = await client.query({ query: 'SELECT trace_id FROM traces FINAL ORDER BY trace_id', format: 'JSONEachRow' });
+      expect(await left.json()).toEqual([{ trace_id: 't-new' }, { trace_id: 't-other' }]);
+
+      await engine.dropOlderThan(new Date('2025-01-16T00:00:00Z'));
+      await settle();
+      const after = await client.query({ query: 'SELECT trace_id FROM traces FINAL', format: 'JSONEachRow' });
+      expect(await after.json()).toEqual([{ trace_id: 't-new' }]);
+    });
+
+    it('refuses row deletes while the table is moving to daily partitions', async () => {
+      await client.command({ query: `CREATE TABLE ${TABLE_NAME}_repartition_lock (owner String, beat_at DateTime64(3)) ENGINE = MergeTree ORDER BY beat_at` });
+      try {
+        await expect(
+          engine.deleteByTimeRange({ projectId: 'proj-1', from: new Date(0), to: new Date('2100-01-01T00:00:00Z') }),
+        ).rejects.toThrow(/paused/);
+        // The max-retention drop skips that table instead of failing.
+        await engine.dropOlderThan(new Date('2025-01-12T00:00:00Z'));
+        expect(await logCount()).toBe(4);
+      } finally {
+        await client.command({ query: `DROP TABLE IF EXISTS ${TABLE_NAME}_repartition_lock` });
+      }
+    });
+  });
 });

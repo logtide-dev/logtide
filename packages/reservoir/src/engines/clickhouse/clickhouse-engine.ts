@@ -135,6 +135,14 @@ import {
   type EntryMode,
 } from './apm-queries.js';
 import { ensureAggregatingTracesTable } from './traces-table.js';
+import {
+  ensureDailyPartitions,
+  repartitionPending,
+  type RepartitionOptions,
+  type RepartitionRunner,
+  type RepartitionSpec,
+} from './repartition.js';
+import { logsTableDdl, spansTableDdl } from './daily-tables.js';
 import { isVolumeOnlyFilter, splitWholeMinutes } from '../../core/log-volume.js';
 import type { NativeQuery } from '../../core/query-translator.js';
 
@@ -169,6 +177,18 @@ export interface ClickHouseEngineOptions {
    * readable as soon as upsertTraces resolves.
    */
   traceSummaryFlushMs?: number;
+  /**
+   * Move pre-1.6.3 logs and spans tables to daily partitions in the
+   * background after initialize() (see repartition.ts). Default true.
+   */
+  autoRepartition?: boolean;
+  /** Tuning of that move (test seam). */
+  repartitionOptions?: RepartitionOptions;
+}
+
+/** Whether a CREATE TABLE statement declares the named projection. */
+export function projectionDeclared(createTableQuery: string, name: string): boolean {
+  return new RegExp(`\\bPROJECTION\\s+\`?${name}\`?[\\s(]`).test(createTableQuery);
 }
 
 export const DEFAULT_INSERT_FLUSH_MS = 2_000;
@@ -179,6 +199,7 @@ export class ClickHouseEngine extends StorageEngine {
   private ownsClient: boolean;
   private translator: ClickHouseQueryTranslator;
   private options: ClickHouseEngineOptions;
+  private repartitioning: Promise<void> = Promise.resolve();
 
   private get tableName(): string {
     return this.options.tableName ?? 'logs';
@@ -263,27 +284,9 @@ export class ClickHouseEngine extends StorageEngine {
 
     const t = this.tableName;
 
-    await this.runCommand({
-      query: `
-        CREATE TABLE IF NOT EXISTS ${t} (
-          id UUID DEFAULT generateUUIDv4(),
-          time DateTime64(3) NOT NULL,
-          project_id String NOT NULL,
-          service LowCardinality(String) NOT NULL,
-          level LowCardinality(String) NOT NULL,
-          message String NOT NULL,
-          metadata String DEFAULT '{}',
-          trace_id Nullable(String) DEFAULT NULL,
-          span_id Nullable(String) DEFAULT NULL,
-          session_id Nullable(String) DEFAULT NULL,
-          created_at DateTime DEFAULT now()
-        )
-        ENGINE = MergeTree()
-        PARTITION BY toYYYYMM(time)
-        ORDER BY (project_id, time)
-        SETTINGS index_granularity = 8192
-      `,
-    });
+    // New installs get the complete daily-partitioned layout at once; the
+    // ALTERs below only bring pre-1.6.3 tables up to date (no-ops otherwise).
+    await this.runCommand({ query: logsTableDdl(t, true) });
 
     try {
       await this.runCommand({
@@ -354,21 +357,10 @@ export class ClickHouseEngine extends StorageEngine {
       // column/index may already exist
     }
 
-    // Projection for fast service+level filtered queries.
-    // Gate the MATERIALIZE so the one-time backfill of existing parts runs only at
-    // creation, not on every boot (see idx_id note above).
-    try {
-      if (!(await this.chObjectExists('projection', t, 'proj_service_time'))) {
-        await this.runCommand({
-          query: `ALTER TABLE ${t} ADD PROJECTION IF NOT EXISTS proj_service_time (SELECT * ORDER BY project_id, service, level, time)`,
-        });
-        await this.runCommand({
-          query: `ALTER TABLE ${t} MATERIALIZE PROJECTION proj_service_time`,
-        });
-      }
-    } catch {
-      // projection may already exist
-    }
+    // Pre-1.6.3 tables carry proj_service_time, a full second copy of every log
+    // that doubled each insert, merge and retention mutation. Dropping it only
+    // removes the projection files (the rest of each part is hardlinked).
+    await this.dropProjectionIfExists(t, 'proj_service_time');
 
     // Aggregate projection of the log volume per minute, project, level and
     // service: histograms and counts of volume-only filters read it instead
@@ -409,34 +401,7 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     // Spans table
-    await this.runCommand({
-      query: `
-        CREATE TABLE IF NOT EXISTS spans (
-          time DateTime64(3) NOT NULL,
-          span_id String NOT NULL,
-          trace_id String NOT NULL,
-          parent_span_id Nullable(String) DEFAULT NULL,
-          organization_id Nullable(String) DEFAULT NULL,
-          project_id String NOT NULL,
-          service_name LowCardinality(String) NOT NULL,
-          operation_name String NOT NULL,
-          start_time DateTime64(3) NOT NULL,
-          end_time DateTime64(3) NOT NULL,
-          duration_ms UInt32 NOT NULL,
-          kind LowCardinality(Nullable(String)) DEFAULT NULL,
-          status_code LowCardinality(Nullable(String)) DEFAULT NULL,
-          status_message Nullable(String) DEFAULT NULL,
-          attributes String DEFAULT '{}',
-          events String DEFAULT '[]',
-          links String DEFAULT '[]',
-          resource_attributes String DEFAULT '{}'
-        )
-        ENGINE = MergeTree()
-        PARTITION BY toYYYYMM(time)
-        ORDER BY (project_id, trace_id, time)
-        SETTINGS index_granularity = 8192
-      `,
-    });
+    await this.runCommand({ query: spansTableDdl('spans', true) });
 
     try {
       await this.runCommand({
@@ -450,31 +415,14 @@ export class ClickHouseEngine extends StorageEngine {
       });
     } catch { /* index may already exist */ }
 
-    // Projection for fast service_name filtered span queries.
-    // One-time MATERIALIZE only (see idx_id note above).
-    try {
-      if (!(await this.chObjectExists('projection', 'spans', 'proj_service_time'))) {
-        await this.runCommand({
-          query: `ALTER TABLE spans ADD PROJECTION IF NOT EXISTS proj_service_time (SELECT * ORDER BY project_id, service_name, status_code, time)`,
-        });
-        await this.runCommand({
-          query: `ALTER TABLE spans MATERIALIZE PROJECTION proj_service_time`,
-        });
-      }
-    } catch { /* projection may already exist */ }
+    // Same full-copy projection as on logs (see above).
+    await this.dropProjectionIfExists('spans', 'proj_service_time');
 
     // Traces table: AggregatingMergeTree of partial summaries (issue #309),
     // migrated once from the pre-1.6.1 ReplacingMergeTree under a lock.
     // Its own client: the copy and its check scan the whole table, so they get
     // no request timeout, no thread cap and no async insert.
-    const migrationClient = createClient({
-      url: `http://${this.config.host}:${this.config.port}`,
-      username: this.config.username,
-      password: this.config.password,
-      database: this.config.database,
-      request_timeout: 6 * 60 * 60 * 1000,
-      clickhouse_settings: { max_execution_time: 0, send_progress_in_http_headers: 1, http_headers_progress_interval_ms: '10000' },
-    });
+    const migrationClient = this.longRunningClient();
     try {
       await ensureAggregatingTracesTable({
         command: async (query) => { await migrationClient.command({ query }); },
@@ -613,6 +561,12 @@ export class ClickHouseEngine extends StorageEngine {
         GROUP BY bucket, project_id, metric_name, metric_type, service_name
       `,
     });
+
+    // Not awaited: on a large install the copy takes a while, and the old
+    // tables keep serving reads and writes meanwhile.
+    if (this.options.autoRepartition !== false) {
+      this.repartitioning = this.repartitionTables();
+    }
   }
 
   async migrate(_version: string): Promise<void> {
@@ -953,12 +907,9 @@ export class ClickHouseEngine extends StorageEngine {
 
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {
     const start = Date.now();
-    const native = this.translator.translateDelete(params);
-    // ClickHouse mutations are async - the command returns immediately
-    await this.runCommand({
-      query: native.query as string,
-      query_params: (native.parameters as Record<string, unknown>[])[0],
-    });
+    const { where, queryParams } = this.translator.translateDeleteCondition(params);
+    // ClickHouse mutations are async - the commands return immediately
+    await this.deleteInPartitions(this.tableName, where, queryParams, params.from, params.to);
     return {
       // ClickHouse async mutations don't report row count immediately
       deleted: 0,
@@ -1011,12 +962,16 @@ export class ClickHouseEngine extends StorageEngine {
     table: string,
     name: string,
   ): Promise<boolean> {
-    const source =
-      kind === 'index'
-        ? 'system.data_skipping_indices'
-        : kind === 'projection'
-          ? 'system.projections'
-          : 'system.columns';
+    // system.projections only exists from ClickHouse 24.10: read the table
+    // definition instead, which every version has.
+    if (kind === 'projection') {
+      try {
+        return projectionDeclared(await this.createTableQuery(table), name);
+      } catch {
+        return true;
+      }
+    }
+    const source = kind === 'index' ? 'system.data_skipping_indices' : 'system.columns';
     try {
       const resultSet = await this.runQuery(
         {
@@ -1031,6 +986,130 @@ export class ClickHouseEngine extends StorageEngine {
     } catch {
       return true;
     }
+  }
+
+  private async createTableQuery(table: string): Promise<string> {
+    const rs = await this.runQuery(
+      {
+        query: 'SELECT create_table_query AS q FROM system.tables WHERE database = {db:String} AND name = {tbl:String}',
+        query_params: { db: this.config.database, tbl: table },
+        format: 'JSONEachRow',
+      },
+      'schema-introspect',
+    );
+    const rows = (await rs.json()) as { q: string }[];
+    return rows[0]?.q ?? '';
+  }
+
+  private async dropProjectionIfExists(table: string, name: string): Promise<void> {
+    try {
+      if (!projectionDeclared(await this.createTableQuery(table), name)) return;
+      await this.runCommand({ query: `ALTER TABLE ${table} DROP PROJECTION IF EXISTS ${name}` });
+    } catch (err) {
+      console.warn(`[ClickHouse] Could not drop projection ${name} of ${table}:`, err);
+    }
+  }
+
+  /** Runner of the daily-partition move and its checks, on a given client. */
+  private repartitionRunner(client: ClickHouseClient): RepartitionRunner {
+    return {
+      command: async (query, params) => { await client.command({ query, query_params: params }); },
+      rows: async <T>(query: string, params?: Record<string, unknown>) => {
+        const rs = await client.query({ query, query_params: params, format: 'JSONEachRow' });
+        return (await rs.json()) as T[];
+      },
+    };
+  }
+
+  /** Client for long one-time jobs: no request timeout, no execution limit, no async insert. */
+  private longRunningClient(): ClickHouseClient {
+    return createClient({
+      url: `http://${this.config.host}:${this.config.port}`,
+      username: this.config.username,
+      password: this.config.password,
+      database: this.config.database,
+      request_timeout: 6 * 60 * 60 * 1000,
+      clickhouse_settings: { max_execution_time: 0, send_progress_in_http_headers: 1, http_headers_progress_interval_ms: '10000' },
+    });
+  }
+
+  /**
+   * Moves the logs and spans tables to daily partitions in the background
+   * (see repartition.ts). Never rejects: a failure is logged and the move
+   * resumes on the next start.
+   */
+  private async repartitionTables(): Promise<void> {
+    const client = this.longRunningClient();
+    const run = this.repartitionRunner(client);
+    const specs: RepartitionSpec[] = [
+      { table: this.tableName, ddl: (name) => logsTableDdl(name), key: 'id' },
+      { table: 'spans', ddl: (name) => spansTableDdl(name), key: '(trace_id, span_id)' },
+    ];
+    try {
+      for (const spec of specs) {
+        try {
+          await ensureDailyPartitions(run, spec, this.options.repartitionOptions);
+        } catch (err) {
+          console.error(`[ClickHouse] Moving ${spec.table} to daily partitions failed; it resumes on the next start:`, err);
+        }
+      }
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }
+
+  /** Resolves when the background daily-partition move of this process is over. */
+  async repartitionSettled(): Promise<void> {
+    await this.repartitioning;
+  }
+
+  /**
+   * Deletes the rows of `table` matching `where`, one partition at a time:
+   * only partitions whose time range overlaps [from, to] and that hold at
+   * least one matching row get a mutation, scoped to that partition. With
+   * daily partitions a retention day rewrites that day only, and a mutation
+   * that would change nothing is never queued.
+   */
+  private async deleteInPartitions(
+    table: string,
+    where: string,
+    params: Record<string, unknown>,
+    from: Date,
+    to: Date,
+  ): Promise<void> {
+    const run = this.repartitionRunner(this.getClient());
+    if (await repartitionPending(run, table)) {
+      throw new Error(
+        `[ClickHouse] Deletes on ${table} are paused while it moves to daily partitions; they run again once the move is over.`,
+      );
+    }
+    const partitions = await run.rows<{ partition_id: string }>(
+      `SELECT partition_id FROM system.parts
+       WHERE database = currentDatabase() AND table = {t:String} AND active
+         AND (max_time = toDateTime(0) OR (max_time >= toDateTime({from:DateTime64(3)}) AND min_time <= toDateTime({to:DateTime64(3)})))
+       GROUP BY partition_id ORDER BY partition_id`,
+      { t: table, from: toDateTime64(from), to: toDateTime64(to) },
+    );
+    for (const { partition_id: pid } of partitions) {
+      if (!/^[A-Za-z0-9_-]+$/.test(pid)) continue;
+      const hit = await run.rows<{ one: number }>(
+        `SELECT 1 AS one FROM ${table} WHERE _partition_id = {pid:String} AND (${where}) LIMIT 1`,
+        { ...params, pid },
+      );
+      if (hit.length === 0) continue;
+      await this.runCommand({
+        query: `ALTER TABLE ${table} DELETE IN PARTITION ID '${pid}' WHERE ${where}`,
+        query_params: params,
+      });
+    }
+  }
+
+  /** Lightweight delete of trace summaries (the traces table has no projection and no partition). */
+  private async deleteTraces(where: string, params: Record<string, unknown>): Promise<void> {
+    const run = this.repartitionRunner(this.getClient());
+    const hit = await run.rows<{ one: number }>(`SELECT 1 AS one FROM traces WHERE ${where} LIMIT 1`, params);
+    if (hit.length === 0) return;
+    await this.runCommand({ query: `DELETE FROM traces WHERE ${where}`, query_params: params });
   }
 
   private async runCommand(args: Parameters<ClickHouseClient['command']>[0], op = 'cmd') {
@@ -1510,11 +1589,41 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     // ClickHouse mutations are async
-    await this.runCommand({
-      query: `ALTER TABLE spans DELETE WHERE ${conditions.join(' AND ')}`,
-      query_params: queryParams,
-    });
+    await this.deleteInPartitions('spans', conditions.join(' AND '), queryParams, params.from, params.to);
 
+    // Trace summaries ending in the range go with their spans, unless only some
+    // services of the traces are being deleted.
+    if (!params.serviceName) {
+      await this.deleteTraces(
+        `project_id IN {p_pids:Array(String)} AND end_time >= {p_from:DateTime64(3)} AND end_time <= {p_to:DateTime64(3)}`,
+        { p_pids: queryParams.p_pids, p_from: queryParams.p_from, p_to: queryParams.p_to },
+      );
+    }
+
+    return { deleted: 0, executionTimeMs: Date.now() - start };
+  }
+
+  async dropOlderThan(cutoff: Date): Promise<DeleteResult> {
+    const start = Date.now();
+    const run = this.repartitionRunner(this.getClient());
+    // Whole partitions only (no mutation, nothing rewritten): on daily
+    // partitions that is exact to the day, on pre-1.6.3 monthly ones data
+    // lives on until its whole month is past the cutoff.
+    for (const table of [this.tableName, 'spans', 'metrics', 'metric_exemplars']) {
+      if (await repartitionPending(run, table)) continue; // the old table is still being copied
+      const expired = await run.rows<{ partition_id: string }>(
+        `SELECT partition_id FROM system.parts
+         WHERE database = currentDatabase() AND table = {t:String} AND active
+         GROUP BY partition_id
+         HAVING max(max_time) > toDateTime(0) AND max(max_time) < toDateTime({cutoff:DateTime64(3)})`,
+        { t: table, cutoff: toDateTime64(cutoff) },
+      );
+      for (const { partition_id: pid } of expired) {
+        if (!/^[A-Za-z0-9_-]+$/.test(pid)) continue;
+        await this.runCommand({ query: `ALTER TABLE ${table} DROP PARTITION ID '${pid}'` });
+      }
+    }
+    await this.deleteTraces('end_time < {cutoff:DateTime64(3)}', { cutoff: toDateTime64(cutoff) });
     return { deleted: 0, executionTimeMs: Date.now() - start };
   }
 
