@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`DEFAULT_ORG_RETENTION_DAYS`**: optional hosting setting for the retention new organizations start with. Unset keeps the 90 day default.
-- **`CLICKHOUSE_INSERT_FLUSH_MS` and `CLICKHOUSE_TRACE_SUMMARY_FLUSH_MS`**: optional settings for the ClickHouse async insert flush windows (defaults 2000 and 10000 ms, see below).
+- **`CLICKHOUSE_INSERT_FLUSH_MS` and `CLICKHOUSE_TRACE_SUMMARY_FLUSH_MS`**: optional settings for the ClickHouse async insert flush windows (defaults 2000 and 10000 ms, see below). `CLICKHOUSE_DAILY_PARTITIONS=false` keeps existing ClickHouse tables on monthly partitions.
 
 ### Changed
 
