@@ -279,6 +279,27 @@ export class RetentionService {
     return totalDeleted;
   }
 
+  /** Delete the spans, trace summaries and metrics of these projects older than cutoffDate. */
+  private async deleteSignalsBefore(projectIds: string[], cutoffDate: Date, retentionDays: number): Promise<void> {
+    const range = { projectId: projectIds, from: new Date(0), to: cutoffDate };
+    for (const [signal, run] of [
+      ['spans', () => reservoir.deleteSpansByTimeRange(range)],
+      ['metrics', () => reservoir.deleteMetricsByTimeRange(range)],
+    ] as const) {
+      try {
+        await run();
+      } catch (err) {
+        /* v8 ignore next 7 -- telemetry, disabled in tests */
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog('error', `Failed ${signal} retention for ${retentionDays}d group`, {
+            retentionDays,
+            error: err instanceof Error ? { name: err.name, message: err.message } : { message: String(err) },
+          });
+        }
+      }
+    }
+  }
+
   /**
    * Execute retention cleanup for a single organization.
    * Used by the admin manual trigger endpoint.
@@ -310,6 +331,7 @@ export class RetentionService {
       }
 
       const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      await this.deleteSignalsBefore(projectIds, cutoffDate, retentionDays);
 
       // Find oldest log to know where to start the batch window (reservoir: works with any engine)
       const oldestResult = await reservoir.query({
@@ -416,31 +438,18 @@ export class RetentionService {
     const maxRetention = Math.max(...organizations.map(o => o.retention_days));
     const maxCutoff = new Date(Date.now() - maxRetention * 24 * 60 * 60 * 1000);
 
-    // Step 1: drop_chunks older than max retention (TimescaleDB only - instant, no decompression)
-    // For ClickHouse, TTL policies handle this natively or deleteByTimeRange in step 3
-    let chunksDropped = 0;
-    if (reservoir.getEngineType() === 'timescale') {
-      try {
-        const dropResult = await sql`
-          SELECT drop_chunks('logs', older_than => ${maxCutoff}::timestamptz)
-        `.execute(db);
-        chunksDropped = dropResult.rows.length;
-
-        /* v8 ignore next 6 -- telemetry, disabled in tests */
-        if (chunksDropped > 0 && logging) {
-          hub.captureLog('info', `Dropped ${chunksDropped} chunks older than ${maxRetention} days`, {
-            maxRetentionDays: maxRetention,
-            cutoffDate: maxCutoff.toISOString(),
-            chunksDropped,
-          });
-        }
-      } catch (err) {
-        // drop_chunks may fail if no chunks to drop - that's fine
-        /* v8 ignore next 4 -- telemetry, disabled in tests */
-        if (logging) {
-          const msg = err instanceof Error ? err.message : String(err);
-          hub.captureLog('debug', `drop_chunks: ${msg}`);
-        }
+    // Step 1: drop everything older than the max retention, for every project
+    // and every signal (logs, spans, traces, metrics), as whole storage units
+    // where the engine has them: TimescaleDB chunks, ClickHouse partitions.
+    // Before 1.6.3 this ran on TimescaleDB only, so ClickHouse and MongoDB kept
+    // max-retention data (and every span and metric) forever.
+    try {
+      await reservoir.dropOlderThan(maxCutoff);
+    } catch (err) {
+      /* v8 ignore next 4 -- telemetry, disabled in tests */
+      if (logging) {
+        const msg = err instanceof Error ? err.message : String(err);
+        hub.captureLog('error', `Max retention drop failed: ${msg}`, { maxRetentionDays: maxRetention });
       }
     }
 
@@ -480,6 +489,11 @@ export class RetentionService {
       const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
 
       try {
+        // Spans (with their trace summaries) and metrics follow the org
+        // retention too; before 1.6.3 only logs did. A failure here is logged
+        // and retried next run without holding back the log deletes.
+        await this.deleteSignalsBefore(group.projectIds, cutoffDate, retentionDays);
+
         // Find oldest log in this group to know where to start batching (reservoir: works with any engine)
         const oldestResult = await reservoir.query({
           projectId: group.projectIds,
@@ -577,7 +591,6 @@ export class RetentionService {
         successfulOrganizations: successCount,
         failedOrganizations: failedCount,
         totalLogsDeleted: totalDeleted,
-        chunksDropped,
         retentionGroups: retentionGroups.size,
         totalExecutionTimeMs,
       });
