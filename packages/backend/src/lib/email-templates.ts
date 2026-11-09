@@ -638,22 +638,22 @@ export function generateInvitationEmail(data: InvitationEmailData): { html: stri
   const inviteUrl = `${frontendUrl}/invite/${data.token}`;
   const roleLabel = roleLabels[data.role] || data.role;
 
-  const html = baseTemplate(
-    card(`
-      ${header(`Join ${data.organizationName}`, { text: 'Invitation', color: colors.info })}
-      ${divider()}
-      ${subtitle(`${data.inviterName} has invited you to join their organization on LogTide.`)}
-      ${alertBox(`You've been invited as <strong>${roleLabel}</strong>. This invitation expires in 7 days.`, 'info')}
-      ${infoBox([
-        { label: 'Organization', value: data.organizationName },
-        { label: 'Invited By', value: data.inviterName },
-        { label: 'Role', value: roleLabel },
-        { label: 'Email', value: data.email },
-      ])}
-      ${cta('Accept Invitation', inviteUrl)}
-    `),
-    { preheader: `${data.inviterName} invited you to join ${data.organizationName}` }
-  );
+  const html = renderEmail({
+    title: `Join ${data.organizationName}`,
+    preheader: `${data.inviterName} invited you to join ${data.organizationName}`,
+    body:
+      ui.title(`Join ${data.organizationName}`) +
+      ui.paragraph(`${data.inviterName} has invited you to join ${data.organizationName} on LogTide as ${roleLabel}.`) +
+      ui.logBlock([
+        { key: 'organization', value: data.organizationName },
+        { key: 'role', value: roleLabel },
+        { key: 'email', value: data.email },
+      ]) +
+      ui.button('Accept invitation', inviteUrl) +
+      ui.linkFallback(inviteUrl) +
+      ui.paragraph('This invitation expires in 7 days.'),
+    footer: { kind: 'account' },
+  });
 
   const text = `
 INVITATION: Join ${data.organizationName}
@@ -692,16 +692,17 @@ export function generateEmailVerificationEmail(data: EmailVerificationEmailData)
   const frontendUrl = getFrontendUrl();
   const verifyUrl = `${frontendUrl}/verify-email?token=${encodeURIComponent(data.token)}`;
 
-  const html = baseTemplate(
-    card(`
-      ${header('Verify your email', { text: 'Account', color: colors.info })}
-      ${divider()}
-      ${subtitle(`Hi ${data.name}, confirm your email address to finish setting up your LogTide account.`)}
-      ${alertBox('This link expires in 24 hours and can be used once.', 'info')}
-      ${cta('Verify email', verifyUrl)}
-    `),
-    { preheader: 'Confirm your email address for LogTide' }
-  );
+  const html = renderEmail({
+    title: 'Verify your email',
+    preheader: 'Confirm your email address for LogTide',
+    body:
+      ui.title('Verify your email') +
+      ui.paragraph(`Hi ${data.name}, confirm your email address to finish setting up your LogTide account.`) +
+      ui.button('Verify email', verifyUrl) +
+      ui.linkFallback(verifyUrl) +
+      ui.paragraph('This link expires in 24 hours and can be used once. If you did not create a LogTide account, you can ignore this email.'),
+    footer: { kind: 'account' },
+  });
 
   const text = `
 VERIFY YOUR EMAIL
@@ -734,16 +735,17 @@ export function generatePasswordResetEmail(data: PasswordResetEmailData): { html
   const frontendUrl = getFrontendUrl();
   const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(data.token)}`;
 
-  const html = baseTemplate(
-    card(`
-      ${header('Reset your password', { text: 'Account', color: colors.info })}
-      ${divider()}
-      ${subtitle(`Hi ${data.name}, we received a request to reset the password of your LogTide account.`)}
-      ${alertBox('This link expires in 1 hour and can be used once.', 'info')}
-      ${cta('Reset password', resetUrl)}
-    `),
-    { preheader: 'Reset your LogTide password' }
-  );
+  const html = renderEmail({
+    title: 'Reset your password',
+    preheader: 'Reset your LogTide password',
+    body:
+      ui.title('Reset your password') +
+      ui.paragraph(`Hi ${data.name}, we received a request to reset the password of your LogTide account.`) +
+      ui.button('Reset password', resetUrl) +
+      ui.linkFallback(resetUrl) +
+      ui.paragraph('This link expires in 1 hour and can be used once. If you did not ask for this, you can ignore this email and your password stays the same.'),
+    footer: { kind: 'account' },
+  });
 
   const text = `
 RESET YOUR PASSWORD
