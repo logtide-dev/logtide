@@ -424,23 +424,7 @@ export async function usersRoutes(fastify: FastifyInstance) {
         });
       }
 
-      if (body.newPassword) {
-        try {
-          assertStrongPassword(body.newPassword, {
-            email: body.email ?? currentUser.email,
-            name: body.name ?? currentUser.name,
-          });
-        } catch (weak) {
-          if (weak instanceof WeakPasswordError) {
-            return reply.status(400).send({
-              error: 'Validation error',
-              details: weakPasswordDetails(weak.check, 'newPassword'),
-            });
-          }
-          throw weak;
-        }
-      }
-
+      // updateUser checks the current password, then the new one's strength.
       const updatedUser = await usersService.updateUser(currentUser.id, body);
 
       // Gate on: a changed address must be confirmed again (updateUser already
@@ -476,6 +460,13 @@ export async function usersRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({
           error: 'Validation error',
           details: error.issues,
+        });
+      }
+
+      if (error instanceof WeakPasswordError) {
+        return reply.status(400).send({
+          error: 'Validation error',
+          details: weakPasswordDetails(error.check, 'newPassword'),
         });
       }
 

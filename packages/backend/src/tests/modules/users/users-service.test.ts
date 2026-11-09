@@ -397,13 +397,13 @@ describe('UsersService', () => {
 
             await usersService.updateUser(user.id, {
                 currentPassword: 'oldPassword',
-                newPassword: 'newPassword',
+                newPassword: 'granite-Tidal-Orbit-58',
             });
 
             // Should be able to authenticate with the new password
             const result = await authenticationService.authenticateWithProvider('local', {
                 email: 'password@example.com',
-                password: 'newPassword',
+                password: 'granite-Tidal-Orbit-58',
             });
 
             expect(result.session.token).toBeDefined();

@@ -4,6 +4,7 @@ import { sql } from 'kysely';
 import { db } from '../../database/connection.js';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 import { isEmailVerificationRequired } from './email-verification-flag.js';
+import { assertStrongPassword } from '../../lib/password-policy.js';
 
 const SALT_ROUNDS = 10;
 
@@ -355,6 +356,12 @@ export class UsersService {
       if (!isValidPassword) {
         throw new Error('Current password is incorrect');
       }
+
+      // Judged only once the caller proved they own the account.
+      assertStrongPassword(input.newPassword, {
+        email: normalizedEmail ?? user.email,
+        name: input.name ?? user.name,
+      });
     }
 
     // Build update object

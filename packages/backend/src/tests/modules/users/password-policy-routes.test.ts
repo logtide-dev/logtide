@@ -102,6 +102,14 @@ describe('password strength on auth routes', () => {
       expect(res.json().details[0]).toMatchObject({ path: ['newPassword'], code: 'weak_password' });
     });
 
+    it('reports a wrong current password before judging the new one', async () => {
+      const user = await createTestUser();
+      const { token } = await createTestSession(user.id);
+      const res = await change(token, '123456789012', 'not-the-password');
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('Current password is incorrect');
+    });
+
     it('accepts a strong new password', async () => {
       const user = await createTestUser();
       const { token } = await createTestSession(user.id);
