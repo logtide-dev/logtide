@@ -2,6 +2,9 @@ import { db } from '../../database/index.js';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 
+/** A password that passes the strength policy, for tests that go through the auth routes. */
+export const STRONG_TEST_PASSWORD = 'tidal-Orbit-Granite-57';
+
 /**
  * Factory for creating test users
  */

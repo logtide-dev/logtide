@@ -13,10 +13,11 @@ import { getActiveTerms, termsAcceptanceService } from './terms.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
 import { auditLogService } from '../audit-log/index.js';
+import { assertStrongPassword, WeakPasswordError, weakPasswordDetails } from '../../lib/password-policy.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z.string().min(1, 'Password is required'),
   name: z.string().min(1, 'Name is required'),
   // Must be exactly true only when the terms seam is active. Typed unknown so
   // an inactive seam never rejects a body it used to accept (unknown keys were
@@ -37,7 +38,7 @@ const updateUserSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   email: z.string().email().optional(),
   currentPassword: z.string().min(1).optional(),
-  newPassword: z.string().min(8, 'Password must be at least 8 characters').optional(),
+  newPassword: z.string().min(1).optional(),
 });
 
 const verifyEmailSchema = z.object({
@@ -54,7 +55,7 @@ const passwordResetRequestSchema = z.object({
 
 const passwordResetConfirmSchema = z.object({
   token: z.string().min(1).max(200),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
+  password: z.string().min(1, 'Password is required'),
 });
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -125,6 +126,15 @@ export async function usersRoutes(fastify: FastifyInstance) {
         }
 
         const body = registerSchema.parse(request.body);
+
+        try {
+          assertStrongPassword(body.password, { email: body.email, name: body.name });
+        } catch (weak) {
+          if (weak instanceof WeakPasswordError) {
+            return reply.status(400).send({ error: 'Validation error', details: weakPasswordDetails(weak.check) });
+          }
+          throw weak;
+        }
 
         // Terms seam: when active, the Terms and Privacy Policy must be
         // accepted explicitly; acceptance is stored with the new user.
@@ -414,6 +424,23 @@ export async function usersRoutes(fastify: FastifyInstance) {
         });
       }
 
+      if (body.newPassword) {
+        try {
+          assertStrongPassword(body.newPassword, {
+            email: body.email ?? currentUser.email,
+            name: body.name ?? currentUser.name,
+          });
+        } catch (weak) {
+          if (weak instanceof WeakPasswordError) {
+            return reply.status(400).send({
+              error: 'Validation error',
+              details: weakPasswordDetails(weak.check, 'newPassword'),
+            });
+          }
+          throw weak;
+        }
+      }
+
       const updatedUser = await usersService.updateUser(currentUser.id, body);
 
       // Gate on: a changed address must be confirmed again (updateUser already
@@ -698,6 +725,21 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       const bearer = request.headers.authorization?.replace('Bearer ', '');
       const sessionUser = bearer ? await usersService.validateSession(bearer) : null;
+
+      // The policy needs the account the token belongs to; looking it up does
+      // not consume the token, so a weak password can be retried.
+      const tokenUser = await passwordResetService.findTokenUser(parsed.data.token, sessionUser?.id);
+      if (!tokenUser) {
+        return reply.status(400).send({ error: 'invalid_or_expired_token' });
+      }
+      try {
+        assertStrongPassword(parsed.data.password, tokenUser);
+      } catch (weak) {
+        if (weak instanceof WeakPasswordError) {
+          return reply.status(400).send({ error: 'Validation error', details: weakPasswordDetails(weak.check) });
+        }
+        throw weak;
+      }
 
       const result = await passwordResetService.confirm(parsed.data.token, parsed.data.password, sessionUser?.id);
       if (!result.ok) {
