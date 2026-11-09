@@ -275,7 +275,7 @@ describe('Email Template', () => {
 
     expect(mockSendMail).toHaveBeenCalledWith(
       expect.objectContaining({
-        html: expect.stringContaining('Accept Invitation'),
+        html: expect.stringContaining('Accept invitation'),
       })
     );
   });
