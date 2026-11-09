@@ -1,3 +1,4 @@
+import { weakPasswordMessage } from '$lib/utils/weak-password';
 import { getApiBaseUrl } from '$lib/config';
 
 export interface RegisterInput {
@@ -87,7 +88,7 @@ export class AuthAPI {
       const error: ErrorResponse = await response
         .json()
         .catch(() => ({ error: response.statusText }));
-      throw new Error(error.error || 'Registration failed');
+      throw new Error(weakPasswordMessage(error) ?? (error.error || 'Registration failed'));
     }
 
     return response.json();
@@ -356,6 +357,8 @@ export class AuthAPI {
       if (body?.error === 'invalid_or_expired_token') {
         throw new Error('invalid_or_expired_token');
       }
+      const weak = weakPasswordMessage(body);
+      if (weak) throw new Error(weak);
       throw new Error(response.status === 429 ? 'rate_limited' : 'Could not reset the password');
     }
   }

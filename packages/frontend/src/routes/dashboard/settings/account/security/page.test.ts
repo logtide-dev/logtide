@@ -45,11 +45,23 @@ describe('security page', () => {
     updateCurrentUser.mockResolvedValue({ user: {} });
     render(Page);
     await fireEvent.input(screen.getByLabelText('Current password'), { target: { value: 'oldpassword' } });
-    await fireEvent.input(screen.getByLabelText('New password'), { target: { value: 'newpassword1' } });
-    await fireEvent.input(screen.getByLabelText('Confirm new password'), { target: { value: 'newpassword1' } });
+    await fireEvent.input(screen.getByLabelText('New password'), { target: { value: 'tidal-Orbit-Granite-57' } });
+    await waitFor(() => expect(screen.getByText('Strong')).toBeTruthy());
+    await fireEvent.input(screen.getByLabelText('Confirm new password'), { target: { value: 'tidal-Orbit-Granite-57' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Password changed'));
-    expect(updateCurrentUser).toHaveBeenCalledWith({ currentPassword: 'oldpassword', newPassword: 'newpassword1' });
+    expect(updateCurrentUser).toHaveBeenCalledWith({ currentPassword: 'oldpassword', newPassword: 'tidal-Orbit-Granite-57' });
+  });
+
+  it('a weak new password does not call the API', async () => {
+    render(Page);
+    await fireEvent.input(screen.getByLabelText('Current password'), { target: { value: 'oldpassword' } });
+    await fireEvent.input(screen.getByLabelText('New password'), { target: { value: '123456789012' } });
+    await waitFor(() => expect(screen.getByText(/^(Weak|Fair)$/)).toBeTruthy());
+    await fireEvent.input(screen.getByLabelText('Confirm new password'), { target: { value: '123456789012' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
+    expect(toast.error).toHaveBeenCalledWith('Choose a stronger password');
+    expect(updateCurrentUser).not.toHaveBeenCalled();
   });
 
   it('delete is disabled until a password is typed', async () => {

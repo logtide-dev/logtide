@@ -17,9 +17,7 @@
   import ProviderSelector from '$lib/components/auth/ProviderSelector.svelte';
   import LdapLoginForm from '$lib/components/auth/LdapLoginForm.svelte';
   import { smallLogoPath } from '$lib/utils/theme';
-  import Eye from '@lucide/svelte/icons/eye';
-  import EyeOff from '@lucide/svelte/icons/eye-off';
-  import Check from '@lucide/svelte/icons/check';
+  import PasswordStrengthField from '$lib/components/auth/PasswordStrengthField.svelte';
   import { isSafeInternalPath, safeRedirect } from '$lib/utils/redirect';
 
   // Get redirect URL from query params (e.g., for invitation flow)
@@ -33,14 +31,13 @@
   let name = $state('');
   let email = $state('');
   let password = $state('');
-  let showPassword = $state(false);
+  let passwordOk = $state(false);
   let hasExternalProvider = $state(false);
   let error = $state('');
   let loading = $state(false);
   let nameError = $state('');
   let emailError = $state('');
   let passwordError = $state('');
-  const passwordMet = $derived(password.length >= 8);
   let token = $state<string | null>(null);
   let hasLocalProvider = $state(true);
   let organizationsAPI = $derived(new OrganizationsAPI(() => token));
@@ -111,8 +108,8 @@
     if (!password) {
       passwordError = 'Password is required';
       isValid = false;
-    } else if (password.length < 8) {
-      passwordError = 'Password must be at least 8 characters';
+    } else if (!passwordOk) {
+      passwordError = 'Choose a stronger password';
       isValid = false;
     }
 
@@ -315,39 +312,13 @@
               </div>
 
               <div class="space-y-2">
-                <Label for="password">Password</Label>
-                <div class="relative">
-                  <Input
-                    id="password"
-                    type={(showPassword ? 'text' : 'password') as 'text'}
-                    autocomplete="new-password"
-                    bind:value={password}
-                    disabled={loading}
-                    required
-                    class="pr-10 {passwordError ? 'border-destructive' : ''}"
-                  />
-                  <button
-                    type="button"
-                    class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    aria-pressed={showPassword}
-                    onclick={() => (showPassword = !showPassword)}
-                  >
-                    {#if showPassword}
-                      <EyeOff class="size-4" aria-hidden="true" />
-                    {:else}
-                      <Eye class="size-4" aria-hidden="true" />
-                    {/if}
-                  </button>
-                </div>
-                <p
-                  class="flex items-center gap-1 text-xs {passwordMet ? 'text-success-text' : 'text-muted-foreground'}"
-                  data-testid="password-rule"
-                  data-met={passwordMet}
-                >
-                  {#if passwordMet}<Check class="size-3" aria-hidden="true" />{/if}
-                  At least 8 characters
-                </p>
+                <PasswordStrengthField
+                  id="password"
+                  bind:value={password}
+                  bind:ok={passwordOk}
+                  user={{ email, name }}
+                  disabled={loading}
+                />
                 {#if passwordError}
                   <p class="text-sm text-destructive-text">{passwordError}</p>
                 {/if}

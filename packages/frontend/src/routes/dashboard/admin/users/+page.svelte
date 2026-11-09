@@ -7,6 +7,7 @@
     import EmptyState from "$lib/components/app/EmptyState.svelte";
     import Pagination from "$lib/components/app/Pagination.svelte";
     import CopyButton from "$lib/components/app/CopyButton.svelte";
+    import PasswordStrengthMeter from "$lib/components/auth/PasswordStrengthMeter.svelte";
     import type { DataTableSort } from "$lib/components/app/data-table";
     import AdminUsersTable from "$lib/components/admin/AdminUsersTable.svelte";
     import {
@@ -138,6 +139,7 @@
         is_admin: false,
     });
     let createError = $state("");
+    let createPasswordOk = $state(false);
 
     function resetCreateForm() {
         createForm = {
@@ -173,8 +175,8 @@
             createError = "Name is required";
             return;
         }
-        if (createForm.password.length < 8) {
-            createError = "Password must be at least 8 characters long";
+        if (!createPasswordOk) {
+            createError = "Choose a stronger password";
             return;
         }
         if (createForm.password !== createForm.confirmPassword) {
@@ -360,10 +362,16 @@
                     <Input
                         id="create-user-password"
                         type={showPassword ? "text" : "password"}
-                        placeholder="Minimum 8 characters"
                         bind:value={createForm.password}
                         disabled={creating}
                         autocomplete="new-password"
+                        aria-describedby="create-user-password-strength"
+                    />
+                    <PasswordStrengthMeter
+                        id="create-user-password-strength"
+                        value={createForm.password}
+                        bind:ok={createPasswordOk}
+                        user={{ email: createForm.email, name: createForm.name }}
                     />
                 </div>
                 <div class="space-y-2">

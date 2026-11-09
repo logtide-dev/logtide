@@ -5,26 +5,19 @@
   import { authStore } from '$lib/stores/auth';
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card';
   import Button from '$lib/components/ui/button/button.svelte';
-  import Input from '$lib/components/ui/input/input.svelte';
-  import Label from '$lib/components/ui/label/label.svelte';
   import { Alert, AlertDescription } from '$lib/components/ui/alert';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
   import CircleCheck from '@lucide/svelte/icons/circle-check';
-  import Eye from '@lucide/svelte/icons/eye';
-  import EyeOff from '@lucide/svelte/icons/eye-off';
+  import PasswordStrengthField from '$lib/components/auth/PasswordStrengthField.svelte';
   import { smallLogoPath } from '$lib/utils/theme';
-
-  const MIN_LENGTH = 8;
 
   let token = $state<string | null>(null);
   let view = $state<'form' | 'success' | 'invalid'>('form');
   let password = $state('');
-  let showPassword = $state(false);
+  let passwordOk = $state(false);
   let submitting = $state(false);
   let errorMessage = $state('');
-
-  const tooShort = $derived(password.length < MIN_LENGTH);
 
   onMount(() => {
     token = page.url.searchParams.get('token');
@@ -37,8 +30,8 @@
     event.preventDefault();
     if (submitting || !token) return;
     errorMessage = '';
-    if (tooShort) {
-      errorMessage = 'Password must be at least 8 characters';
+    if (!passwordOk) {
+      errorMessage = 'Choose a stronger password';
       return;
     }
 
@@ -56,7 +49,8 @@
       } else if (message === 'rate_limited') {
         errorMessage = 'Too many attempts, try again later';
       } else {
-        errorMessage = 'Could not reset the password. Try again.';
+        // The API passes the server's reason for a weak password through.
+        errorMessage = message || 'Could not reset the password. Try again.';
       }
     } finally {
       submitting = false;
@@ -113,36 +107,14 @@
           </Alert>
         {/if}
         <form onsubmit={handleSubmit} class="space-y-4" novalidate>
-          <div class="space-y-2">
-            <Label for="password">New password</Label>
-            <div class="relative">
-              <Input
-                id="password"
-                type={(showPassword ? 'text' : 'password') as 'text'}
-                autocomplete="new-password"
-                bind:value={password}
-                disabled={submitting}
-                class="pr-10"
-              />
-              <button
-                type="button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                aria-pressed={showPassword}
-                onclick={() => (showPassword = !showPassword)}
-              >
-                {#if showPassword}
-                  <EyeOff class="size-4" aria-hidden="true" />
-                {:else}
-                  <Eye class="size-4" aria-hidden="true" />
-                {/if}
-              </button>
-            </div>
-            <p class="text-xs {tooShort ? 'text-muted-foreground' : 'text-success-text'}">
-              At least 8 characters
-            </p>
-          </div>
-          <Button type="submit" class="w-full gap-2" disabled={submitting || tooShort}>
+          <PasswordStrengthField
+            id="password"
+            label="New password"
+            bind:value={password}
+            bind:ok={passwordOk}
+            disabled={submitting}
+          />
+          <Button type="submit" class="w-full gap-2" disabled={submitting || !passwordOk}>
             {#if submitting}
               <Spinner size="sm" />
               Saving...

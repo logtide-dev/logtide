@@ -56,28 +56,28 @@ describe('/register password field', () => {
     expect(hide.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('password rule is unmet at 7 characters and met at 8', async () => {
+  it('blocks a weak password and says why', async () => {
     render(RegisterPage);
-    const input = await screen.findByLabelText('Password');
-    const rule = screen.getByTestId('password-rule');
-    expect(rule.textContent).toContain('At least 8 characters');
-    await fireEvent.input(input, { target: { value: '1234567' } });
-    expect(rule.getAttribute('data-met')).toBe('false');
-    await fireEvent.input(input, { target: { value: '12345678' } });
-    expect(rule.getAttribute('data-met')).toBe('true');
+    await fireEvent.input(await screen.findByLabelText('Name'), { target: { value: 'Jane' } });
+    await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'jane@example.com' } });
+    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: '12345678' } });
+    await waitFor(() => expect(screen.getByText('Use at least 12 characters.')).toBeTruthy());
+    await fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    expect(register).not.toHaveBeenCalled();
   });
 
   it('submit sends name, email, password only', async () => {
     render(RegisterPage);
     await fireEvent.input(await screen.findByLabelText('Name'), { target: { value: 'Jane' } });
     await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'jane@example.com' } });
-    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'tidal-Orbit-Granite-57' } });
+    await waitFor(() => expect(screen.getByText('Strong')).toBeTruthy());
     await fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
     await waitFor(() => expect(register).toHaveBeenCalled());
     expect(register.mock.calls[0][0]).toEqual({
       name: 'Jane',
       email: 'jane@example.com',
-      password: 'password123',
+      password: 'tidal-Orbit-Granite-57',
     });
   });
 

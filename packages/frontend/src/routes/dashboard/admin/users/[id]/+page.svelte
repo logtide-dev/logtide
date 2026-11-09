@@ -16,6 +16,7 @@
     import SettingsSection from "$lib/components/app/SettingsSection.svelte";
     import DangerZone from "$lib/components/app/DangerZone.svelte";
     import CopyButton from "$lib/components/app/CopyButton.svelte";
+    import PasswordStrengthMeter from "$lib/components/auth/PasswordStrengthMeter.svelte";
     import Timestamp from "$lib/components/app/Timestamp.svelte";
     import SeverityBadge from "$lib/components/app/SeverityBadge.svelte";
     import DataTable from "$lib/components/app/DataTable.svelte";
@@ -41,6 +42,7 @@
     let newPassword = $state("");
     let confirmPassword = $state("");
     let passwordError = $state("");
+    let newPasswordOk = $state(false);
     let showPassword = $state(false);
 
     const isOwnProfile = $derived($authStore.user?.id === userId);
@@ -115,8 +117,8 @@
     async function resetPassword() {
         if (!user) return;
         passwordError = "";
-        if (newPassword.length < 8) {
-            passwordError = "Password must be at least 8 characters";
+        if (!newPasswordOk) {
+            passwordError = "Choose a stronger password";
             return;
         }
         if (newPassword !== confirmPassword) {
@@ -397,10 +399,16 @@
                 <Input
                     id="new-password"
                     type={showPassword ? "text" : "password"}
-                    placeholder="Minimum 8 characters"
                     bind:value={newPassword}
                     disabled={actionLoading}
                     autocomplete="new-password"
+                    aria-describedby="new-password-strength"
+                />
+                <PasswordStrengthMeter
+                    id="new-password-strength"
+                    value={newPassword}
+                    bind:ok={newPasswordOk}
+                    user={{ email: user?.email, name: user?.name }}
                 />
             </div>
             <div class="space-y-2">
