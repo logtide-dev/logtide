@@ -11,7 +11,7 @@ import {
 import { generateId } from '../helpers/factories';
 import { pickOption } from '../fixtures/select';
 
-const PASSWORD = 'TestPassword123!';
+const PASSWORD = 'tidal-Orbit-Granite-57';
 
 /** Authenticate the browser as the given user with the given organization selected. */
 async function loginBrowserAs(page: Page, user: TestUser, organizationId?: string) {

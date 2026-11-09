@@ -54,7 +54,7 @@ test.describe('Traces Journey', () => {
   test.beforeAll(async () => {
     // Create test user and setup
     const email = generateTestEmail();
-    const { token } = await registerUser(generateTestName('Traces'), email, 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('Traces'), email, 'tidal-Orbit-Granite-57');
     userToken = token;
     apiClient = new TestApiClient(token);
 

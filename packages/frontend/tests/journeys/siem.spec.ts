@@ -41,7 +41,7 @@ test.describe('SIEM Journey', () => {
 
   test.beforeAll(async () => {
     test.setTimeout(120_000);
-    const { token } = await registerUser(generateTestName('SIEM'), generateTestEmail(), 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('SIEM'), generateTestEmail(), 'tidal-Orbit-Granite-57');
     userToken = token;
     apiClient = new TestApiClient(token);
 

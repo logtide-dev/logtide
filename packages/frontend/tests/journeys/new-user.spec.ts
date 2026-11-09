@@ -28,7 +28,7 @@ test.describe('New User Journey', () => {
 
   test.beforeAll(() => {
     userEmail = generateTestEmail();
-    userPassword = 'TestPassword123!';
+    userPassword = 'tidal-Orbit-Granite-57';
     userName = generateTestName('New');
     orgName = `New User Org ${generateId()}`;
     onboardingProjectName = `Onboarding Project ${generateId()}`;

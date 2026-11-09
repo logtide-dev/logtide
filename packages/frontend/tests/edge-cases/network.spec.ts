@@ -13,7 +13,7 @@ test.describe('Network Edge Cases', () => {
 
   test.beforeAll(async () => {
     const email = generateTestEmail();
-    const { token } = await registerUser(generateTestName('Network'), email, 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('Network'), email, 'tidal-Orbit-Granite-57');
     userToken = token;
 
     apiClient = new TestApiClient(token);
@@ -205,7 +205,7 @@ test.describe('Network Edge Cases', () => {
 test.describe('Session Edge Cases', () => {
   test('Handles concurrent sessions gracefully', async ({ browser }) => {
     const email = generateTestEmail();
-    const { user, token } = await registerUser(generateTestName('Concurrent'), email, 'TestPassword123!');
+    const { user, token } = await registerUser(generateTestName('Concurrent'), email, 'tidal-Orbit-Granite-57');
     const apiClient = new TestApiClient(token);
     const orgName = `Concurrent Test Org ${Date.now()}`;
     const organizationId = (await apiClient.createOrganization(orgName)).organization.id;
@@ -270,7 +270,7 @@ test.describe('Session Edge Cases', () => {
 test.describe('Browser Edge Cases', () => {
   async function signIn(page: import('@playwright/test').Page, label: string) {
     const email = generateTestEmail();
-    const { user, token } = await registerUser(generateTestName(label), email, 'TestPassword123!');
+    const { user, token } = await registerUser(generateTestName(label), email, 'tidal-Orbit-Granite-57');
     const apiClient = new TestApiClient(token);
     const orgName = `${label} Test Org ${Date.now()}`;
     const organizationId = (await apiClient.createOrganization(orgName)).organization.id;

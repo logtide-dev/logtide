@@ -10,7 +10,7 @@ const MAILHOG_API = process.env.TEST_MAILHOG_URL || 'http://localhost:8025';
 test.describe('Status page subscription journey', () => {
   test('a visitor subscribes, confirms by email and is listed as a subscriber', async ({ page }) => {
     // Owner setup: a project with a public status page
-    const { token } = await registerUser(generateTestName('Status'), generateTestEmail(), 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('Status'), generateTestEmail(), 'tidal-Orbit-Granite-57');
     const api = new TestApiClient(token);
     const { organization } = await api.createOrganization(`Status Org ${Date.now()}`);
     const { project } = await api.createProject(organization.id, `Status Project ${Date.now()}`);

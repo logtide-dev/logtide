@@ -35,7 +35,7 @@ test.describe('Alert Journey', () => {
 
   test.beforeAll(async () => {
     testUserEmail = generateTestEmail();
-    const { token } = await registerUser(generateTestName('Alert'), testUserEmail, 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('Alert'), testUserEmail, 'tidal-Orbit-Granite-57');
     userToken = token;
     apiClient = new TestApiClient(token);
 
