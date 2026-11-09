@@ -15,7 +15,7 @@ import {
   hashVerificationToken,
   RESEND_COOLDOWN_MS,
 } from '../../../modules/users/email-verification.js';
-import { createTestUser, createTestOrganization, createTestProject } from '../../helpers/factories.js';
+import { createTestUser, createTestOrganization, createTestProject, STRONG_TEST_PASSWORD } from '../../helpers/factories.js';
 import { createTestSession } from '../../helpers/auth.js';
 
 beforeEach(() => {
@@ -56,7 +56,7 @@ async function register(app: FastifyInstance, email: string, remoteAddress = '12
     url: '/api/v1/auth/register',
     remoteAddress,
     headers,
-    payload: { email, password: 'password123', name: 'Verify Me' },
+    payload: { email, password: STRONG_TEST_PASSWORD, name: 'Verify Me' },
   });
 }
 
