@@ -30,11 +30,12 @@ function buttonColor(accent: string | null | undefined): string {
   return ui.contrastWithWhite(color) >= 4.5 ? color : light.button;
 }
 
-function wrapStatusEmail(opts: { pageTitle: string; heading: string; body: string; footer: FooterKind }): string {
+/** lead renders above the heading (the status pill). */
+function wrapStatusEmail(opts: { pageTitle: string; heading: string; lead?: string; body: string; footer: FooterKind }): string {
   return renderEmail({
     title: opts.heading,
     brand: opts.pageTitle,
-    body: ui.title(opts.heading) + opts.body,
+    body: (opts.lead ?? '') + ui.title(opts.heading) + opts.body,
     footer: opts.footer,
   });
 }
@@ -110,10 +111,11 @@ export function generateStatusUpdateEmail(data: {
   const subject = `[${oneLine(data.pageTitle)}] ${labels.subject}: ${oneLine(data.title)}`;
 
   const parts: string[] = [];
+  let lead = '';
   const textLines: string[] = [data.title, ''];
   if (data.status) {
     const label = STATUS_LABELS[data.status] ?? data.status;
-    parts.push(ui.pill(label, STATUS_TONES[data.status] ?? 'neutral'));
+    lead = ui.pill(label, STATUS_TONES[data.status] ?? 'neutral');
     textLines.push(`Status: ${label}`);
   }
   parts.push(ui.sectionTitle(data.title));
@@ -140,6 +142,7 @@ export function generateStatusUpdateEmail(data: {
     html: wrapStatusEmail({
       pageTitle: data.pageTitle,
       heading: labels.heading,
+      lead,
       body: parts.join(''),
       footer: { kind: 'custom', html: footerHtml },
     }),
