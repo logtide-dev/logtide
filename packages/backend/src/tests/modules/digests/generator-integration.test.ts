@@ -306,7 +306,7 @@ describe('DigestGeneratorService Integration', () => {
     expect(text).toContain('Open incidents: 1');
 
     // Uptime section (9 up / 10 checks = 90%)
-    expect(text).toContain('UPTIME');
+    expect(text).toContain('Uptime');
     expect(text).toContain('API Health');
     expect(text).toContain('90%');
 

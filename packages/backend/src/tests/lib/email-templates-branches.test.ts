@@ -216,7 +216,7 @@ describe('Email Templates (branches) - Monitor Email', () => {
     expect(result.html).not.toContain('downtime_duration');
     expect(result.html).toContain('https://app.logtide.dev/dashboard/uptime');
 
-    expect(result.text).toContain('MONITOR DOWN: API <Health>');
+    expect(result.text).toContain('Monitor down: API <Health>');
     expect(result.text).toContain('API <Health> is not responding.');
     expect(result.text).toContain('Target: https://api.example.com/health');
     expect(result.text).toContain('Error: ECONNREFUSED');
@@ -257,7 +257,7 @@ describe('Email Templates (branches) - Monitor Email', () => {
     expect(result.html).not.toContain('consecutive_failures');
     expect(result.html).toContain('downtime_duration');
 
-    expect(result.text).toContain('MONITOR RECOVERED: API <Health>');
+    expect(result.text).toContain('Monitor recovered: API <Health>');
     expect(result.text).toContain('API <Health> is back online.');
     expect(result.text).toContain('Response Time: 87ms');
     expect(result.text).toContain('Downtime Duration: 5m');
@@ -333,7 +333,7 @@ describe('Email Templates (branches) - Digest edge cases', () => {
     expect(result.html).not.toContain('>Triggers</th>');
 
     // Security activity without severities or techniques.
-    expect(result.html).toContain('Incidents Opened');
+    expect(result.html).toContain('Incidents opened');
     expect(result.html).not.toContain('MITRE Technique');
     expect(result.text).toContain('Incidents opened: 0');
     expect(result.text).not.toContain('Opened by severity:');

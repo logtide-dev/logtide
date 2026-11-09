@@ -273,7 +273,7 @@ describe('Email Templates - Error Email', () => {
     });
 
     expect(result.html).toContain('New Error');
-    expect(result.text).toContain('NEW');
+    expect(result.text).toContain('New error');
   });
 
   it('should include language label', () => {
@@ -371,7 +371,7 @@ describe('Email Templates - Incident Email', () => {
     });
 
     expect(result.html).toContain('Critical');
-    expect(result.text).toContain('CRITICAL');
+    expect(result.text).toContain('Critical');
   });
 
   it('should include incident link', () => {
@@ -739,7 +739,7 @@ describe('Email Templates - Baseline Alert Email', () => {
     expect(result.html).toContain('5x');
     expect(result.html).toContain('above normal');
     expect(result.text).toContain('5x');
-    expect(result.text).toContain('ANOMALY');
+    expect(result.text).toContain('Anomaly detected');
   });
 
   it('should display correct baseline type labels', () => {
@@ -917,7 +917,7 @@ describe('Email Templates - Digest', () => {
     const result = generateDigestEmail(weekly);
 
     expect(result.html).toContain('Weekly digest');
-    expect(result.text).toContain('Weekly Digest');
+    expect(result.text).toContain('weekly digest');
     expect(result.text).toContain('last 7 days');
   });
 
@@ -1011,16 +1011,16 @@ describe('Email Templates - Digest', () => {
     }
 
     const textTitles = [
-      'LOG BREAKDOWN',
-      'TOP ERROR MESSAGES',
-      'TRACES',
-      'METRICS',
-      'ALERTS',
-      'SECURITY ACTIVITY',
-      'MONITOR PERFORMANCE',
-      'USAGE',
-      'WEBHOOKS',
-      'TEAM ACTIVITY',
+      'Log breakdown',
+      'Top error messages',
+      'Traces',
+      'Metrics',
+      'Alerts',
+      'Security activity',
+      'Monitor performance',
+      'Usage',
+      'Webhooks',
+      'Team activity',
     ];
     for (const title of textTitles) {
       expect(result.text, `text should contain the ${title} section`).toContain(title);
@@ -1204,16 +1204,16 @@ describe('Email Templates - Digest', () => {
     }
 
     const textTitles = [
-      'LOG BREAKDOWN',
-      'TOP ERROR MESSAGES',
-      'TRACES',
-      'METRICS',
-      'ALERTS',
-      'SECURITY ACTIVITY',
-      'MONITOR PERFORMANCE',
-      'USAGE',
-      'WEBHOOKS',
-      'TEAM ACTIVITY',
+      'Log breakdown',
+      'Top error messages',
+      'Traces',
+      'Metrics',
+      'Alerts',
+      'Security activity',
+      'Monitor performance',
+      'Usage',
+      'Webhooks',
+      'Team activity',
     ];
     for (const title of textTitles) {
       expect(result.text, `text should omit the ${title} section`).not.toContain(title);
@@ -1279,7 +1279,7 @@ describe('Email Templates - Digest', () => {
     const result = generateDigestEmail({ ...baseData, logVolume: undefined });
 
     expect(result.html).not.toContain('Log volume');
-    expect(result.text).not.toContain('LOG VOLUME');
+    expect(result.text).not.toContain('Log volume');
     expect(result.text).not.toContain('Total logs:');
   });
 
@@ -1287,7 +1287,7 @@ describe('Email Templates - Digest', () => {
     const result = generateDigestEmail({ ...baseData, topErrorServices: undefined });
 
     expect(result.html).not.toContain('Top services by errors');
-    expect(result.text).not.toContain('TOP SERVICES BY ERRORS');
+    expect(result.text).not.toContain('Top services by errors');
     expect(result.html).not.toContain('No errors recorded in this period.');
   });
 
@@ -1295,7 +1295,7 @@ describe('Email Templates - Digest', () => {
     const result = generateDigestEmail({ ...baseData, newErrorGroups: undefined });
 
     expect(result.html).not.toContain('New error groups');
-    expect(result.text).not.toContain('NEW ERROR GROUPS');
+    expect(result.text).not.toContain('New error groups');
     expect(result.html).not.toContain('No new error groups appeared in this period.');
   });
 
@@ -1303,7 +1303,7 @@ describe('Email Templates - Digest', () => {
     const result = generateDigestEmail({ ...baseData, security: undefined });
 
     expect(result.html).not.toContain('Security');
-    expect(result.text).not.toContain('SECURITY');
+    expect(result.text).not.toContain('Security');
     expect(result.text).not.toContain('Open incidents:');
   });
 
@@ -1311,7 +1311,7 @@ describe('Email Templates - Digest', () => {
     const result = generateDigestEmail({ ...baseData, uptime: undefined });
 
     expect(result.html).not.toContain('Uptime');
-    expect(result.text).not.toContain('UPTIME');
+    expect(result.text).not.toContain('Uptime');
   });
 
   it('keeps the enabled-but-empty sections with their empty-state lines', () => {
@@ -1330,7 +1330,7 @@ describe('Email Templates - Digest', () => {
     expect(result.html).toContain('No errors recorded in this period.');
     expect(result.html).toContain('New error groups');
     expect(result.html).toContain('No new error groups appeared in this period.');
-    expect(result.text).toContain('SECURITY');
+    expect(result.text).toContain('Security');
     expect(result.text).toContain('Open incidents: 0');
   });
 

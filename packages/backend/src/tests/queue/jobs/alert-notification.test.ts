@@ -1230,7 +1230,7 @@ describe('Alert Notification Job', () => {
 
             const mail = sendMailMock.mock.calls[0][0];
             expect(mail.subject).toBe('[Detection] Suspicious login (high)');
-            expect(mail.text).toContain('SIGMA DETECTION: Suspicious login');
+            expect(mail.text).toContain('Sigma detection: Suspicious login');
             expect(mail.text).toContain('Service: auth-api');
             expect(mail.html).not.toContain('threshold');
             expect(mail.html).not.toContain('View Alert History');

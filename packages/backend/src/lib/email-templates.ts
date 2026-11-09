@@ -87,7 +87,7 @@ export function generateAlertEmail(data: AlertEmailData): { html: string; text: 
     });
 
     const text = `
-ANOMALY DETECTED: ${data.ruleName}
+Anomaly detected: ${data.ruleName}
 ${'='.repeat(50)}
 
 Log volume is ${bm.deviation_ratio}x above the baseline.
@@ -96,7 +96,7 @@ Current Rate: ${Math.round(bm.current_value).toLocaleString('en-US')} logs/hr
 Baseline (${baselineLabel}): ${Math.round(bm.baseline_value).toLocaleString('en-US')} logs/hr
 Deviation: ${bm.deviation_ratio}x above normal
 
-DETAILS
+Details
 -------
 Rule Name: ${data.ruleName}
 ${data.service ? `Service: ${data.service}` : ''}
@@ -135,12 +135,12 @@ Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinatio
   });
 
   const text = `
-ALERT TRIGGERED: ${data.ruleName}
+Alert triggered: ${data.ruleName}
 ${'='.repeat(50)}
 
 ${data.logCount.toLocaleString('en-US')} logs matched in the last ${data.timeWindow} minute${data.timeWindow > 1 ? 's' : ''}, exceeding your threshold of ${data.threshold.toLocaleString('en-US')}.
 
-DETAILS
+Details
 -------
 Rule Name: ${data.ruleName}
 ${data.service ? `Service: ${data.service}` : ''}
@@ -227,12 +227,12 @@ export function generateErrorEmail(data: ErrorEmailData): { html: string; text: 
   });
 
   const text = `
-${data.isNewErrorGroup ? 'NEW ' : ''}ERROR: ${data.exceptionType}
+${data.isNewErrorGroup ? 'New error' : 'Error'}: ${data.exceptionType}
 ${'='.repeat(50)}
 
 ${data.exceptionMessage ? `Message: ${truncate(data.exceptionMessage, 300)}` : ''}
 
-DETAILS
+Details
 -------
 Exception Type: ${data.exceptionType}
 Service: ${data.service}
@@ -295,13 +295,13 @@ export function generateIncidentEmail(data: IncidentEmailData): { html: string; 
   });
 
   const text = `
-SECURITY INCIDENT: ${data.title}
+Security incident: ${data.title}
 ${'='.repeat(50)}
-Severity: ${severityLabel.toUpperCase()}
+Severity: ${severityLabel}
 
 ${data.description || ''}
 
-DETAILS
+Details
 -------
 Organization: ${data.organizationName}
 ${data.affectedServices?.length ? `Affected Services: ${data.affectedServices.join(', ')}` : ''}
@@ -369,13 +369,13 @@ export function generateSigmaDetectionEmail(data: SigmaDetectionEmailData): { ht
   });
 
   const text = `
-SIGMA DETECTION: ${data.ruleTitle}
+Sigma detection: ${data.ruleTitle}
 ${'='.repeat(50)}
-Severity: ${severityLabel.toUpperCase()}
+Severity: ${severityLabel}
 
 ${data.ruleDescription || ''}
 
-DETAILS
+Details
 -------
 Service: ${data.service}
 Organization: ${data.organizationName}
@@ -434,12 +434,12 @@ export function generateInvitationEmail(data: InvitationEmailData): { html: stri
   });
 
   const text = `
-INVITATION: Join ${data.organizationName}
+Invitation: join ${data.organizationName}
 ${'='.repeat(50)}
 
 ${data.inviterName} has invited you to join ${data.organizationName} on LogTide as a ${roleLabel}.
 
-DETAILS
+Details
 -------
 Organization: ${data.organizationName}
 Invited By: ${data.inviterName}
@@ -483,7 +483,7 @@ export function generateEmailVerificationEmail(data: EmailVerificationEmailData)
   });
 
   const text = `
-VERIFY YOUR EMAIL
+Verify your email
 ${'='.repeat(50)}
 
 Hi ${data.name}, confirm your email address to finish setting up your LogTide account.
@@ -526,7 +526,7 @@ export function generatePasswordResetEmail(data: PasswordResetEmailData): { html
   });
 
   const text = `
-RESET YOUR PASSWORD
+Reset your password
 ${'='.repeat(50)}
 
 Hi ${data.name}, we received a request to reset the password of your LogTide account.
@@ -621,12 +621,12 @@ export function generateMonitorEmail(data: MonitorEmailData): { html: string; te
   });
 
   const text = `
-MONITOR ${statusLabel.toUpperCase()}: ${data.monitorName}
+Monitor ${statusLabel.toLowerCase()}: ${data.monitorName}
 ${'='.repeat(50)}
 
 ${isDown ? `${data.monitorName} is not responding.` : `${data.monitorName} is back online.`}
 
-DETAILS
+Details
 -------
 Organization: ${data.organizationName}
 ${data.target ? `Target: ${data.target}` : ''}
@@ -697,12 +697,12 @@ export function generateProjectHealthEmail(data: ProjectHealthEmailData): { html
   });
 
   const text = `
-PROJECT HEALTH ${isOpen ? badge.text.toUpperCase() : 'RESOLVED'}: ${data.title}
+Project health ${isOpen ? badge.text.toLowerCase() : 'resolved'}: ${data.title}
 ${'='.repeat(50)}
 
 ${data.message}
 
-DETAILS
+Details
 -------
 Project: ${data.projectName}
 Organization: ${data.organizationName}
@@ -886,7 +886,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     ? digestSectionTitle('Security') +
       ui.statRows([
         { label: 'Detections', value: data.security.totalDetections.toLocaleString('en-US') },
-        { label: 'Open Incidents', value: data.security.openIncidents.toLocaleString('en-US') },
+        { label: 'Open incidents', value: data.security.openIncidents.toLocaleString('en-US') },
       ]) +
       (data.security.topRules.length > 0
         ? digestTable(
@@ -931,8 +931,8 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
         ])
       ) +
       ui.statRows([
-        { label: 'Error Rate', value: formatPct(data.logBreakdown.errorRatePct) },
-        { label: 'Previous Error Rate', value: formatPct(data.logBreakdown.previousErrorRatePct) },
+        { label: 'Error rate', value: formatPct(data.logBreakdown.errorRatePct) },
+        { label: 'Previous error rate', value: formatPct(data.logBreakdown.previousErrorRatePct) },
       ]) +
       (data.logBreakdown.daily?.length
         ? digestTable(
@@ -957,9 +957,9 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     ? digestSectionTitle('Traces') +
       ui.statRows([
         { label: 'Spans', value: data.traces.spanCount.toLocaleString('en-US') },
-        { label: 'Span Trend', value: data.traces.trend },
-        { label: 'Previous Period', value: data.traces.previousSpanCount.toLocaleString('en-US') },
-        { label: 'Error Spans', value: data.traces.errorSpanCount.toLocaleString('en-US') },
+        { label: 'Span trend', value: data.traces.trend },
+        { label: 'Previous period', value: data.traces.previousSpanCount.toLocaleString('en-US') },
+        { label: 'Error spans', value: data.traces.errorSpanCount.toLocaleString('en-US') },
       ]) +
       (data.traces.services.length > 0
         ? digestEmptyLine(
@@ -992,9 +992,9 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     ? digestSectionTitle('Metrics') +
       ui.statRows([
         { label: 'Datapoints', value: data.metrics.datapoints.toLocaleString('en-US') },
-        { label: 'Datapoint Trend', value: data.metrics.trend },
+        { label: 'Datapoint trend', value: data.metrics.trend },
         {
-          label: 'Previous Period',
+          label: 'Previous period',
           value: data.metrics.previousDatapoints.toLocaleString('en-US'),
         },
       ])
@@ -1004,8 +1004,8 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     ? digestSectionTitle('Alerts') +
       ui.statRows([
         { label: 'Triggers', value: data.alerts.total.toLocaleString('en-US') },
-        { label: 'Alert Trend', value: data.alerts.trend },
-        { label: 'Previous Period', value: data.alerts.previousTotal.toLocaleString('en-US') },
+        { label: 'Alert trend', value: data.alerts.trend },
+        { label: 'Previous period', value: data.alerts.previousTotal.toLocaleString('en-US') },
       ]) +
       // Nothing fired this period but something fired in the previous one: the
       // totals still matter, the (empty) ranking does not.
@@ -1024,9 +1024,9 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
   const securityActivitySection = data.securityActivity
     ? digestSectionTitle('Security Activity') +
       ui.statRows([
-        { label: 'Incidents Opened', value: incidentsOpened.toLocaleString('en-US') },
+        { label: 'Incidents opened', value: incidentsOpened.toLocaleString('en-US') },
         {
-          label: 'Incidents Resolved',
+          label: 'Incidents resolved',
           value: data.securityActivity.resolvedCount.toLocaleString('en-US'),
         },
       ]) +
@@ -1041,7 +1041,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
         : '') +
       (data.securityActivity.topTechniques.length > 0
         ? digestTable(
-            ['MITRE Technique', 'Detections'],
+            ['MITRE technique', 'Detections'],
             data.securityActivity.topTechniques.map((t) => [
               t.technique,
               t.count.toLocaleString('en-US'),
@@ -1067,8 +1067,8 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
   const usageSection = data.usage
     ? digestSectionTitle('Usage') +
       ui.statRows([
-        { label: 'Log Events', value: data.usage.logEvents.toLocaleString('en-US') },
-        { label: 'Log Volume', value: formatBytes(data.usage.logBytes) },
+        { label: 'Log events', value: data.usage.logEvents.toLocaleString('en-US') },
+        { label: 'Log volume', value: formatBytes(data.usage.logBytes) },
         { label: 'Spans', value: data.usage.spans.toLocaleString('en-US') },
       ]) +
       (data.usage.topProjects.length > 0
@@ -1106,13 +1106,13 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
   const teamActivitySection = data.teamActivity
     ? digestSectionTitle('Team Activity') +
       ui.statRows([
-        { label: 'Members Added', value: data.teamActivity.membersAdded.toLocaleString('en-US') },
+        { label: 'Members added', value: data.teamActivity.membersAdded.toLocaleString('en-US') },
         {
-          label: 'Members Removed',
+          label: 'Members removed',
           value: data.teamActivity.membersRemoved.toLocaleString('en-US'),
         },
-        { label: 'Config Changes', value: data.teamActivity.configChanges.toLocaleString('en-US') },
-        { label: 'Failed Logins', value: data.teamActivity.failedLogins.toLocaleString('en-US') },
+        { label: 'Config changes', value: data.teamActivity.configChanges.toLocaleString('en-US') },
+        { label: 'Failed logins', value: data.teamActivity.failedLogins.toLocaleString('en-US') },
       ])
     : '';
 
@@ -1150,13 +1150,13 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     lines.push('-'.repeat(text.length));
   };
 
-  lines.push(`LogTide ${frequencyLabel} Digest`);
+  lines.push(`LogTide ${frequencyLabel.toLowerCase()} digest`);
   lines.push(`Organization: ${data.organizationName}`);
   lines.push(`Period: ${data.periodLabel}`);
   lines.push('');
   lines.push('='.repeat(50));
   if (data.logVolume) {
-    heading('LOG VOLUME');
+    heading('Log volume');
     if (quiet) {
       lines.push('No activity during this period.');
       lines.push('Your systems have been quiet.');
@@ -1167,7 +1167,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.logBreakdown) {
-    heading('LOG BREAKDOWN');
+    heading('Log breakdown');
     for (const l of data.logBreakdown.levels) {
       lines.push(
         `${l.level}: ${l.current.toLocaleString('en-US')} (previous: ${l.previous.toLocaleString('en-US')})`
@@ -1184,7 +1184,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.topErrorServices) {
-    heading('TOP SERVICES BY ERRORS');
+    heading('Top services by errors');
     if (data.topErrorServices.length > 0) {
       for (const s of data.topErrorServices) {
         lines.push(
@@ -1196,13 +1196,13 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.topErrorMessages) {
-    heading('TOP ERROR MESSAGES');
+    heading('Top error messages');
     for (const m of data.topErrorMessages) {
       lines.push(`${truncate(m.message, 120)}: ${m.count.toLocaleString('en-US')}`);
     }
   }
   if (data.newErrorGroups) {
-    heading('NEW ERROR GROUPS');
+    heading('New error groups');
     if (data.newErrorGroups.length > 0) {
       for (const g of data.newErrorGroups) {
         const message = g.exceptionMessage ? `: ${truncate(g.exceptionMessage, 80)}` : '';
@@ -1213,7 +1213,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.traces) {
-    heading('TRACES');
+    heading('Traces');
     lines.push(`Spans: ${data.traces.spanCount.toLocaleString('en-US')}`);
     lines.push(`Span trend: ${data.traces.trend}`);
     lines.push(`Previous spans: ${data.traces.previousSpanCount.toLocaleString('en-US')}`);
@@ -1234,13 +1234,13 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.metrics) {
-    heading('METRICS');
+    heading('Metrics');
     lines.push(`Datapoints: ${data.metrics.datapoints.toLocaleString('en-US')}`);
     lines.push(`Datapoint trend: ${data.metrics.trend}`);
     lines.push(`Previous datapoints: ${data.metrics.previousDatapoints.toLocaleString('en-US')}`);
   }
   if (data.alerts) {
-    heading('ALERTS');
+    heading('Alerts');
     lines.push(`Triggers: ${data.alerts.total.toLocaleString('en-US')}`);
     lines.push(`Alert trend: ${data.alerts.trend}`);
     lines.push(`Previous triggers: ${data.alerts.previousTotal.toLocaleString('en-US')}`);
@@ -1249,7 +1249,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.security) {
-    heading('SECURITY');
+    heading('Security');
     lines.push(`Detections: ${data.security.totalDetections.toLocaleString('en-US')}`);
     lines.push(`Open incidents: ${data.security.openIncidents.toLocaleString('en-US')}`);
     for (const r of data.security.topRules) {
@@ -1257,7 +1257,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.securityActivity) {
-    heading('SECURITY ACTIVITY');
+    heading('Security activity');
     lines.push(`Incidents opened: ${incidentsOpened.toLocaleString('en-US')}`);
     lines.push(
       `Incidents resolved: ${data.securityActivity.resolvedCount.toLocaleString('en-US')}`
@@ -1276,14 +1276,14 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.uptime) {
-    heading('UPTIME');
+    heading('Uptime');
     lines.push(`Overall: ${data.uptime.overallUptimePct.toLocaleString('en-US')}% across ${data.uptime.monitorCount.toLocaleString('en-US')} monitor(s)`);
     for (const m of data.uptime.worstMonitors) {
       lines.push(`${m.name}: ${m.uptimePct.toLocaleString('en-US')}%`);
     }
   }
   if (data.monitorPerformance) {
-    heading('MONITOR PERFORMANCE');
+    heading('Monitor performance');
     lines.push('Monitors without response timing (heartbeats) show a dash.');
     for (const m of data.monitorPerformance) {
       lines.push(
@@ -1292,7 +1292,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.usage) {
-    heading('USAGE');
+    heading('Usage');
     lines.push(`Log events: ${data.usage.logEvents.toLocaleString('en-US')}`);
     lines.push(`Log volume: ${formatBytes(data.usage.logBytes)}`);
     lines.push(`Spans: ${data.usage.spans.toLocaleString('en-US')}`);
@@ -1310,7 +1310,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.webhooks) {
-    heading('WEBHOOKS');
+    heading('Webhooks');
     lines.push(`Delivered: ${data.webhooks.delivered.toLocaleString('en-US')}`);
     lines.push(`Failed: ${data.webhooks.failed.toLocaleString('en-US')}`);
     lines.push(`Dead: ${data.webhooks.dead.toLocaleString('en-US')}`);
@@ -1319,7 +1319,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.teamActivity) {
-    heading('TEAM ACTIVITY');
+    heading('Team activity');
     lines.push(`Members added: ${data.teamActivity.membersAdded.toLocaleString('en-US')}`);
     lines.push(`Members removed: ${data.teamActivity.membersRemoved.toLocaleString('en-US')}`);
     lines.push(`Config changes: ${data.teamActivity.configChanges.toLocaleString('en-US')}`);
