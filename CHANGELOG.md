@@ -15,6 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`DEFAULT_ORG_RETENTION_DAYS`**: optional hosting setting for the retention new organizations start with. Unset keeps the 90 day default.
+- **`CLICKHOUSE_INSERT_FLUSH_MS` and `CLICKHOUSE_TRACE_SUMMARY_FLUSH_MS`**: optional settings for the ClickHouse async insert flush windows (defaults 2000 and 10000 ms, see below).
+
+### Changed
+
+- **ClickHouse writes far less to disk**: on a hosted instance with about 3 GB of new data a day, ClickHouse was writing 300 to 500 GB a day, wearing out NVMe drives in months. Almost all of it was background rewrites:
+  - Inserts now share a 2 second flush window instead of 200 ms, and trace summaries a 10 second one (they no longer wait for the flush, the spans they come from still do). Every flush is a new part, and every part costs merges that rewrite the data around it. Inserts also no longer carry the request id in `log_comment`: the server buffers async inserts per query and settings, so every request got its own part. Ingest of logs, spans and metrics answers up to about 2 seconds later; trace lists can show a new trace up to 10 seconds after its spans.
+  - The logs and spans tables are partitioned by day instead of by month. Retention used to delete rows with a mutation that rewrote the whole month every night; now the max retention drops whole days and a shorter one rewrites only the day it deletes, and only when that day holds matching rows. Existing installs move their tables once, in the background after the upgrade, while the old tables keep serving reads and writes. The move needs about the size of the tables in free disk space; without it the tables stay monthly (with a warning in the logs) and retention keeps working, more expensively. Row deletes (retention, project purge) wait until the move is over.
+  - The `proj_service_time` projection of logs and spans is removed: it was a full second copy of every row, doubling each write. Log counts use the per-minute volume projection instead, which is now actually created on ClickHouse 24.1 (the check for it read `system.projections`, which 24.1 does not have).
+  - The compose files mount `docker/clickhouse-system-logs.xml` and `docker/clickhouse-profile.xml`: the query profiler and the `trace_log`, `metric_log`, `asynchronous_metric_log` and `asynchronous_insert_log` tables are off, `query_log` keeps 3 days (queries over 5 seconds only) and `part_log` 7, in daily partitions. These tables grew forever and their merges wrote as much as the LogTide tables. After the first start with the new files, the old copies can be dropped by hand: see the comment at the top of `clickhouse-system-logs.xml`.
+
+### Fixed
+
+- **Retention did not apply to everything**: on ClickHouse and MongoDB, logs of organizations with the longest retention in the instance were never deleted (the drop of old data ran on TimescaleDB only), and on every engine spans, trace summaries and metrics ignored the organization retention (TimescaleDB only had its fixed 30 and 90 day policies; ClickHouse and MongoDB kept them forever). The nightly retention now drops all signals older than the longest retention on every engine and deletes spans, traces and metrics of organizations with a shorter one. On an existing ClickHouse or MongoDB install the first run can delete a lot of old data.
+- **Project purge left trace summaries behind on ClickHouse**: they are now deleted with the spans.
 
 
 ## [1.6.2] - 2026-11-05
