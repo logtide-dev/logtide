@@ -7,6 +7,7 @@
 import { escapeHtml, getFrontendUrl } from './util.js';
 import { dark, light, TONES, toneColors, FONT_MONO, FONT_SANS } from './tokens.js';
 import { LOGO_DARK_URL, LOGO_WHITE_URL } from '../logo.js';
+import { title } from './components.js';
 
 export type FooterKind =
   | { kind: 'notifications' }
@@ -20,6 +21,11 @@ export interface RenderEmailOptions {
   preheader?: string;
   /** Short mono label on the right of the logo row: org, project, status page. */
   context?: string;
+  /**
+   * Shows this name instead of the LogTide logo, for mail sent on behalf of a
+   * customer's public status page.
+   */
+  brand?: string;
   body: string;
   footer: FooterKind;
 }
@@ -97,6 +103,9 @@ export function renderEmail(opts: RenderEmailOptions): string {
   const preheader = opts.preheader
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(opts.preheader)}</div>`
     : '';
+  const logo = opts.brand
+    ? `<span class="lt-text" style="font-family:${FONT_SANS};font-size:16px;line-height:28px;font-weight:600;color:${L.text};">${escapeHtml(opts.brand)}</span>`
+    : `<a href="${escapeHtml(frontendUrl)}" style="text-decoration:none;"><img class="lt-logo-light" src="${LOGO_DARK_URL}" alt="LogTide" width="89" height="28" style="display:block;border:0;width:89px;height:28px;"><img class="lt-logo-dark" src="${LOGO_WHITE_URL}" alt="LogTide" width="89" height="28" style="display:none;mso-hide:all;border:0;width:89px;height:28px;"></a>`;
   const context = opts.context
     ? `<td align="right" class="lt-muted" style="font-family:${FONT_MONO};font-size:12px;line-height:16px;color:${L.muted};">${escapeHtml(opts.context)}</td>`
     : '';
@@ -119,7 +128,7 @@ ${preheader}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
 <tr><td class="lt-border" style="padding:0 0 20px;border-bottom:1px solid ${L.border};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-<td align="left"><a href="${escapeHtml(frontendUrl)}" style="text-decoration:none;"><img class="lt-logo-light" src="${LOGO_DARK_URL}" alt="LogTide" width="89" height="28" style="display:block;border:0;width:89px;height:28px;"><img class="lt-logo-dark" src="${LOGO_WHITE_URL}" alt="LogTide" width="89" height="28" style="display:none;mso-hide:all;border:0;width:89px;height:28px;"></a></td>
+<td align="left">${logo}</td>
 ${context}
 </tr></table>
 </td></tr>
@@ -134,4 +143,25 @@ ${footerHtml(opts.footer)}
 </table>
 </body>
 </html>`;
+}
+
+/**
+ * A plain-text notice (quota warnings, extension mail without its own HTML)
+ * in the same shell: the subject as title, each blank-line-separated block of
+ * the text as a paragraph.
+ */
+export function renderNoticeEmail(opts: { subject: string; text: string; context?: string }): string {
+  const blocks = opts.text
+    .split(/\r?\n\s*\r?\n/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+  const body =
+    title(opts.subject) +
+    blocks
+      .map(
+        (b) =>
+          `<p class="lt-text" style="margin:0 0 16px;font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${L.text};white-space:pre-wrap;word-break:break-word;">${escapeHtml(b)}</p>`,
+      )
+      .join('');
+  return renderEmail({ title: opts.subject, context: opts.context, body, footer: { kind: 'account' } });
 }

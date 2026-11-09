@@ -19,9 +19,10 @@ export function title(text: string): string {
   return `<h1 class="lt-text" style="margin:0 0 8px;font-family:${FONT_SANS};font-size:24px;line-height:32px;font-weight:600;letter-spacing:-0.025em;color:${L.text};">${escapeHtml(text)}</h1>`;
 }
 
-export function paragraph(text: string, opts: { muted?: boolean } = {}): string {
+export function paragraph(text: string, opts: { muted?: boolean; preWrap?: boolean } = {}): string {
   const muted = opts.muted !== false;
-  return `<p class="${muted ? 'lt-muted' : 'lt-text'}" style="margin:0 0 24px;font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${muted ? L.muted : L.text};">${escapeHtml(text)}</p>`;
+  const wrap = opts.preWrap ? 'white-space:pre-wrap;word-break:break-word;' : '';
+  return `<p class="${muted ? 'lt-muted' : 'lt-text'}" style="margin:0 0 24px;font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${muted ? L.muted : L.text};${wrap}">${escapeHtml(text)}</p>`;
 }
 
 /** The key metric of an email, large and in mono, with a one-line caption. */

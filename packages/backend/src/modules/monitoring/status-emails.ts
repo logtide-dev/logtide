@@ -1,8 +1,12 @@
 import { escapeHtml, getFrontendUrl } from '../../lib/email-templates.js';
+import { renderEmail, type FooterKind } from '../../lib/email/layout.js';
+import * as ui from '../../lib/email/components.js';
+import { light } from '../../lib/email/tokens.js';
 
 /**
- * Self-contained emails of the public status page (confirmation now, update
- * notices in the subscriber job). Every dynamic value is HTML-escaped.
+ * Emails of the public status page (confirmation now, update notices in the
+ * subscriber job), in the shared console layout under the page's own name.
+ * Every dynamic value is HTML-escaped.
  */
 
 export interface StatusEmail {
@@ -20,29 +24,19 @@ export function safeAccent(accent: string | null | undefined): string {
   return accent && /^#[0-9a-fA-F]{6}$/.test(accent) ? accent : '#2563eb';
 }
 
-export function wrapStatusEmail(opts: {
-  pageTitle: string;
-  accent?: string | null;
-  heading: string;
-  bodyHtml: string;
-  footerHtml?: string;
-}): string {
-  const accent = safeAccent(opts.accent);
-  return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-<body style="margin:0;padding:24px;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18181b;">
-  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #e4e4e7;">
-    <div style="height:4px;background:${accent};"></div>
-    <div style="padding:24px;">
-      <p style="margin:0 0 4px;font-size:13px;color:#71717a;">${escapeHtml(opts.pageTitle)}</p>
-      <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3;">${escapeHtml(opts.heading)}</h1>
-      ${opts.bodyHtml}
-    </div>
-    ${opts.footerHtml ? `<div style="padding:16px 24px;border-top:1px solid #e4e4e7;font-size:12px;color:#71717a;">${opts.footerHtml}</div>` : ''}
-  </div>
-</body>
-</html>`;
+/** The page accent as button color when white text reads on it (4.5:1), else the LogTide violet. */
+function buttonColor(accent: string | null | undefined): string {
+  const color = safeAccent(accent);
+  return ui.contrastWithWhite(color) >= 4.5 ? color : light.button;
+}
+
+function wrapStatusEmail(opts: { pageTitle: string; heading: string; body: string; footer: FooterKind }): string {
+  return renderEmail({
+    title: opts.heading,
+    brand: opts.pageTitle,
+    body: ui.title(opts.heading) + opts.body,
+    footer: opts.footer,
+  });
 }
 
 export function generateConfirmationEmail(data: {
@@ -51,15 +45,16 @@ export function generateConfirmationEmail(data: {
   confirmUrl: string;
 }): StatusEmail {
   const subject = `Confirm your subscription to ${data.pageTitle.replace(/[\r\n]+/g, ' ')}`;
-  const bodyHtml = `
-      <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">Confirm your email address to receive incident and maintenance updates from ${escapeHtml(data.pageTitle)}.</p>
-      <p style="margin:0 0 16px;"><a href="${escapeHtml(data.confirmUrl)}" style="display:inline-block;padding:10px 18px;background:${safeAccent(data.accentColor)};color:#ffffff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">Confirm subscription</a></p>
-      <p style="margin:0;font-size:13px;color:#52525b;">The link is valid for 48 hours. If you did not ask for this, you can ignore this email and nothing will be sent to you.</p>`;
+  const body =
+    ui.paragraph(`Confirm your email address to receive incident and maintenance updates from ${data.pageTitle}.`) +
+    ui.button('Confirm subscription', data.confirmUrl, { color: buttonColor(data.accentColor) }) +
+    ui.linkFallback(data.confirmUrl) +
+    ui.paragraph('The link is valid for 48 hours. If you did not ask for this, you can ignore this email and nothing will be sent to you.');
   const html = wrapStatusEmail({
     pageTitle: data.pageTitle,
-    accent: data.accentColor,
     heading: 'Confirm your subscription',
-    bodyHtml,
+    body,
+    footer: { kind: 'custom', html: `Sent for ${escapeHtml(data.pageTitle)}` },
   });
   const text = [
     `Confirm your email address to receive incident and maintenance updates from ${data.pageTitle}.`,
@@ -91,6 +86,13 @@ const STATUS_LABELS: Record<string, string> = {
   resolved: 'Resolved',
 };
 
+const STATUS_TONES: Record<string, ui.Cell['tone']> = {
+  investigating: 'error',
+  identified: 'warning',
+  monitoring: 'info',
+  resolved: 'success',
+};
+
 export function generateStatusUpdateEmail(data: {
   kind: StatusUpdateKind;
   pageTitle: string;
@@ -107,38 +109,39 @@ export function generateStatusUpdateEmail(data: {
   const oneLine = (s: string) => s.replace(/[\r\n]+/g, ' ');
   const subject = `[${oneLine(data.pageTitle)}] ${labels.subject}: ${oneLine(data.title)}`;
 
-  const facts: string[] = [];
+  const parts: string[] = [];
   const textLines: string[] = [data.title, ''];
   if (data.status) {
     const label = STATUS_LABELS[data.status] ?? data.status;
-    facts.push(`<p style="margin:0 0 8px;font-size:13px;color:#52525b;">Status: <strong style="color:#18181b;">${escapeHtml(label)}</strong></p>`);
+    parts.push(ui.pill(label, STATUS_TONES[data.status] ?? 'neutral'));
     textLines.push(`Status: ${label}`);
   }
+  parts.push(ui.sectionTitle(data.title));
   if (data.scheduledStart && data.scheduledEnd) {
     const start = new Date(data.scheduledStart).toUTCString();
     const end = new Date(data.scheduledEnd).toUTCString();
-    facts.push(`<p style="margin:0 0 8px;font-size:13px;color:#52525b;">From <strong style="color:#18181b;">${escapeHtml(start)}</strong> to <strong style="color:#18181b;">${escapeHtml(end)}</strong></p>`);
+    parts.push(ui.logBlock([
+      { key: 'from', value: start },
+      { key: 'to', value: end },
+    ]));
     textLines.push(`From ${start} to ${end}`);
   }
   if (data.message) {
-    facts.push(`<p style="margin:12px 0;font-size:14px;line-height:1.6;white-space:pre-wrap;">${escapeHtml(data.message)}</p>`);
+    parts.push(ui.paragraph(data.message, { muted: false, preWrap: true }));
     textLines.push('', data.message);
   }
-  const bodyHtml = `
-      <h2 style="margin:0 0 12px;font-size:16px;">${escapeHtml(data.title)}</h2>
-      ${facts.join('\n      ')}
-      <p style="margin:16px 0 0;"><a href="${escapeHtml(data.pageUrl)}" style="color:${safeAccent(data.accentColor)};font-size:14px;">View the status page</a></p>`;
-  const footerHtml = `You receive this because you subscribed to ${escapeHtml(data.pageTitle)}. <a href="${escapeHtml(data.unsubscribeUrl)}" style="color:#71717a;">Unsubscribe</a>`;
+  parts.push(ui.button('View the status page', data.pageUrl, { color: buttonColor(data.accentColor) }));
   textLines.push('', `Status page: ${data.pageUrl}`, '', `Unsubscribe: ${data.unsubscribeUrl}`);
+
+  const footerHtml = `You receive this because you subscribed to ${escapeHtml(data.pageTitle)}. <a href="${escapeHtml(data.unsubscribeUrl)}" class="lt-muted" style="color:${light.muted};text-decoration:underline;">Unsubscribe</a>`;
 
   return {
     subject,
     html: wrapStatusEmail({
       pageTitle: data.pageTitle,
-      accent: data.accentColor,
       heading: labels.heading,
-      bodyHtml,
-      footerHtml,
+      body: parts.join(''),
+      footer: { kind: 'custom', html: footerHtml },
     }),
     text: textLines.join('\n'),
   };
