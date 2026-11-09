@@ -8,6 +8,7 @@
     import Pagination from "$lib/components/app/Pagination.svelte";
     import CopyButton from "$lib/components/app/CopyButton.svelte";
     import PasswordStrengthMeter from "$lib/components/auth/PasswordStrengthMeter.svelte";
+    import { isStrongPassword } from "$lib/utils/password-check";
     import type { DataTableSort } from "$lib/components/app/data-table";
     import AdminUsersTable from "$lib/components/admin/AdminUsersTable.svelte";
     import {
@@ -174,6 +175,9 @@
         if (!name) {
             createError = "Name is required";
             return;
+        }
+        if (!createPasswordOk) {
+            createPasswordOk = await isStrongPassword(createForm.password, { email, name });
         }
         if (!createPasswordOk) {
             createError = "Choose a stronger password";

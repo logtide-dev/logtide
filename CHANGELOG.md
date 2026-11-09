@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Stronger account passwords**: a password set on registration, password change, password reset or from the admin user pages needs at least 12 characters and has to pass a strength check (zxcvbn, run on the server and in the browser, nothing sent anywhere). Common passwords, keyboard sequences, repeats and passwords built from the account's email or name are refused; a few unrelated words pass, and there are no uppercase or symbol rules. The forms show a strength meter with the reason a password is weak. Existing passwords keep working until they are changed. A weak `INITIAL_ADMIN_PASSWORD` still creates the first admin, with a warning in the logs.
+
 ### Added
 
 - **`DEFAULT_ORG_RETENTION_DAYS`**: optional hosting setting for the retention new organizations start with. Unset keeps the 90 day default.

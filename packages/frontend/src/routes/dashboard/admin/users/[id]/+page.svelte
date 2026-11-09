@@ -17,6 +17,7 @@
     import DangerZone from "$lib/components/app/DangerZone.svelte";
     import CopyButton from "$lib/components/app/CopyButton.svelte";
     import PasswordStrengthMeter from "$lib/components/auth/PasswordStrengthMeter.svelte";
+    import { isStrongPassword } from "$lib/utils/password-check";
     import Timestamp from "$lib/components/app/Timestamp.svelte";
     import SeverityBadge from "$lib/components/app/SeverityBadge.svelte";
     import DataTable from "$lib/components/app/DataTable.svelte";
@@ -117,6 +118,9 @@
     async function resetPassword() {
         if (!user) return;
         passwordError = "";
+        if (!newPasswordOk) {
+            newPasswordOk = await isStrongPassword(newPassword, { email: user.email, name: user.name });
+        }
         if (!newPasswordOk) {
             passwordError = "Choose a stronger password";
             return;

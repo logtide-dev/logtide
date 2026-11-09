@@ -12,6 +12,7 @@
   import DangerZone from '$lib/components/app/DangerZone.svelte';
   import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
   import PasswordStrengthField from '$lib/components/auth/PasswordStrengthField.svelte';
+  import { isStrongPassword } from '$lib/utils/password-check';
   import Save from '@lucide/svelte/icons/save';
   import Trash2 from '@lucide/svelte/icons/trash-2';
 
@@ -53,6 +54,9 @@
     if (newPassword !== confirmPassword) {
       toastStore.error('Passwords do not match');
       return;
+    }
+    if (!newPasswordOk) {
+      newPasswordOk = await isStrongPassword(newPassword, { email: userEmail, name: userName });
     }
     if (!newPasswordOk) {
       toastStore.error('Choose a stronger password');

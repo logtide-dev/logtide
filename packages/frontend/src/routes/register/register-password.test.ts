@@ -81,6 +81,15 @@ describe('/register password field', () => {
     });
   });
 
+  it('submits a strong password typed and sent right away, before the meter loads', async () => {
+    render(RegisterPage);
+    await fireEvent.input(await screen.findByLabelText('Name'), { target: { value: 'Jane' } });
+    await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'jane@example.com' } });
+    await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'tidal-Orbit-Granite-57' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    await waitFor(() => expect(register).toHaveBeenCalled());
+  });
+
   it('button reads "Create account with email" when an external provider exists', async () => {
     getProviders.mockResolvedValue({ providers: [LOCAL, OIDC] });
     render(RegisterPage);

@@ -60,7 +60,7 @@ describe('security page', () => {
     await waitFor(() => expect(screen.getByText(/^(Weak|Fair)$/)).toBeTruthy());
     await fireEvent.input(screen.getByLabelText('Confirm new password'), { target: { value: '123456789012' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Change password' }));
-    expect(toast.error).toHaveBeenCalledWith('Choose a stronger password');
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Choose a stronger password'));
     expect(updateCurrentUser).not.toHaveBeenCalled();
   });
 

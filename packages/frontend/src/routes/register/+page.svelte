@@ -18,6 +18,7 @@
   import LdapLoginForm from '$lib/components/auth/LdapLoginForm.svelte';
   import { smallLogoPath } from '$lib/utils/theme';
   import PasswordStrengthField from '$lib/components/auth/PasswordStrengthField.svelte';
+  import { isStrongPassword } from '$lib/utils/password-check';
   import { isSafeInternalPath, safeRedirect } from '$lib/utils/redirect';
 
   // Get redirect URL from query params (e.g., for invitation flow)
@@ -117,6 +118,9 @@
   }
 
   async function handleSubmit() {
+    if (password && !passwordOk) {
+      passwordOk = await isStrongPassword(password, { email, name });
+    }
     if (!validateForm()) {
       error = 'Please fix the errors below';
       return;

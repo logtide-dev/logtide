@@ -10,6 +10,7 @@
   import EmptyState from '$lib/components/app/EmptyState.svelte';
   import CircleCheck from '@lucide/svelte/icons/circle-check';
   import PasswordStrengthField from '$lib/components/auth/PasswordStrengthField.svelte';
+  import { isStrongPassword } from '$lib/utils/password-check';
   import { smallLogoPath } from '$lib/utils/theme';
 
   let token = $state<string | null>(null);
@@ -30,6 +31,9 @@
     event.preventDefault();
     if (submitting || !token) return;
     errorMessage = '';
+    if (!passwordOk) {
+      passwordOk = await isStrongPassword(password);
+    }
     if (!passwordOk) {
       errorMessage = 'Choose a stronger password';
       return;
