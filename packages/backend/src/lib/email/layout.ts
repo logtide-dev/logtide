@@ -151,7 +151,7 @@ ${footerHtml(opts.footer)}
  * the text as a paragraph.
  */
 export function renderNoticeEmail(opts: { subject: string; text: string; context?: string }): string {
-  const blocks = opts.text
+  const blocks = (opts.text ?? '')
     .split(/\r?\n\s*\r?\n/)
     .map((b) => b.trim())
     .filter(Boolean);

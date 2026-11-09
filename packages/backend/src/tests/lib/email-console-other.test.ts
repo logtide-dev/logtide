@@ -75,6 +75,13 @@ describe('renderNoticeEmail', () => {
   });
 });
 
+describe('renderNoticeEmail without text', () => {
+  it('does not throw when a JS extension sends neither text nor html', () => {
+    const html = renderNoticeEmail({ subject: 'Only a subject', text: undefined as unknown as string });
+    expect(html).toContain('Only a subject');
+  });
+});
+
 describe('contrastWithWhite', () => {
   it('measures white text contrast', () => {
     expect(contrastWithWhite('#7c3aed')).toBeGreaterThan(4.5);
