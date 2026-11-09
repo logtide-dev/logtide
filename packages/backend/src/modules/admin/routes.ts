@@ -13,6 +13,8 @@ import {
 import { authenticate } from '../auth/middleware.js';
 import { requireAdmin } from './middleware.js';
 import { auditLogService } from '../audit-log/index.js';
+import { db } from '../../database/connection.js';
+import { assertStrongPassword, WeakPasswordError } from '../../lib/password-policy.js';
 
 /** Map typed service errors to 404/409; anything else is a 500 with `fallback`. */
 function sendServiceError(reply: FastifyReply, error: unknown, fallback: string) {
@@ -265,10 +267,17 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     return reply.status(400).send({ error: 'Name is required' });
                 }
 
-                if (!password || typeof password !== 'string' || password.length < 8) {
-                    return reply.status(400).send({
-                        error: 'Password must be at least 8 characters long',
-                    });
+                if (!password || typeof password !== 'string') {
+                    return reply.status(400).send({ error: 'Password is required' });
+                }
+
+                try {
+                    assertStrongPassword(password, { email, name });
+                } catch (weak) {
+                    if (weak instanceof WeakPasswordError) {
+                        return reply.status(400).send({ error: weak.message });
+                    }
+                    throw weak;
                 }
 
                 const user = await adminService.createUser({
@@ -428,10 +437,25 @@ export async function adminRoutes(fastify: FastifyInstance) {
                 const { id } = request.params as { id: string };
                 const { newPassword } = request.body as { newPassword: string };
 
-                if (!newPassword || newPassword.length < 8) {
-                    return reply.status(400).send({
-                        error: 'Password must be at least 8 characters long',
-                    });
+                if (!newPassword || typeof newPassword !== 'string') {
+                    return reply.status(400).send({ error: 'Password is required' });
+                }
+
+                const target = await db
+                    .selectFrom('users')
+                    .select(['email', 'name'])
+                    .where('id', '=', id)
+                    .executeTakeFirst();
+                if (!target) {
+                    return reply.status(404).send({ error: 'User not found' });
+                }
+                try {
+                    assertStrongPassword(newPassword, target);
+                } catch (weak) {
+                    if (weak instanceof WeakPasswordError) {
+                        return reply.status(400).send({ error: weak.message });
+                    }
+                    throw weak;
                 }
 
                 const user = await adminService.resetUserPassword(id, newPassword);

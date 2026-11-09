@@ -78,6 +78,29 @@ describe('BootstrapService', () => {
             (config as any).INITIAL_ADMIN_PASSWORD = originalPassword;
         });
 
+        it('creates the initial admin with a weak password and warns about it', async () => {
+            const originalEmail = config.INITIAL_ADMIN_EMAIL;
+            const originalPassword = config.INITIAL_ADMIN_PASSWORD;
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            (config as any).INITIAL_ADMIN_EMAIL = 'weakadmin@example.com';
+            (config as any).INITIAL_ADMIN_PASSWORD = 'adminpass123';
+
+            try {
+                await bootstrapService.ensureInitialAdmin();
+
+                const users = await db.selectFrom('users').selectAll().execute();
+                expect(users).toHaveLength(1);
+                expect(users[0].email).toBe('weakadmin@example.com');
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining('INITIAL_ADMIN_PASSWORD'));
+            } finally {
+                (config as any).INITIAL_ADMIN_EMAIL = originalEmail;
+                (config as any).INITIAL_ADMIN_PASSWORD = originalPassword;
+                vi.restoreAllMocks();
+            }
+        });
+
         it('should create initial admin when no users exist', async () => {
             const originalEmail = config.INITIAL_ADMIN_EMAIL;
             const originalPassword = config.INITIAL_ADMIN_PASSWORD;
