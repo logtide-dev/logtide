@@ -60,7 +60,7 @@ describe('ClickHouseEngine (integration)', () => {
       database: TEST_CONFIG.database,
     });
 
-    engine = new ClickHouseEngine(TEST_CONFIG, { tableName: TABLE_NAME });
+    engine = new ClickHouseEngine(TEST_CONFIG, { tableName: TABLE_NAME, insertFlushMs: 50, traceSummaryFlushMs: 0 });
     await engine.connect();
     await engine.initialize();
     available = true;

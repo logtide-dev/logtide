@@ -153,7 +153,26 @@ export interface ClickHouseEngineOptions {
    * 0 disables it.
    */
   analyticsTimeoutMs?: number;
+  /**
+   * `async_insert_busy_timeout_ms` of the log, span and metric inserts, which
+   * wait for the flush. Every flush is a new part and every part costs a
+   * merge, so a longer window means fewer parts and far fewer bytes written
+   * by background merges, at the price of that much ingest latency. Default
+   * DEFAULT_INSERT_FLUSH_MS.
+   */
+  insertFlushMs?: number;
+  /**
+   * Flush window of the trace summary inserts. Summaries are derived from the
+   * spans and read through FINAL, so these inserts do not wait for the flush
+   * and can use a long window. Default DEFAULT_TRACE_SUMMARY_FLUSH_MS; 0
+   * writes them like the spans (waiting for the flush), so a summary is
+   * readable as soon as upsertTraces resolves.
+   */
+  traceSummaryFlushMs?: number;
 }
+
+export const DEFAULT_INSERT_FLUSH_MS = 2_000;
+export const DEFAULT_TRACE_SUMMARY_FLUSH_MS = 10_000;
 
 export class ClickHouseEngine extends StorageEngine {
   private client: ClickHouseClient | null = null;
@@ -163,6 +182,10 @@ export class ClickHouseEngine extends StorageEngine {
 
   private get tableName(): string {
     return this.options.tableName ?? 'logs';
+  }
+
+  private get traceSummaryFlushMs(): number {
+    return this.options.traceSummaryFlushMs ?? DEFAULT_TRACE_SUMMARY_FLUSH_MS;
   }
 
   constructor(config: StorageConfig, options: ClickHouseEngineOptions = {}) {
@@ -189,7 +212,6 @@ export class ClickHouseEngine extends StorageEngine {
       clickhouse_settings: {
         async_insert: 1,
         wait_for_async_insert: 1,
-        async_insert_busy_timeout_ms: 200,
         max_threads: 2,
       },
     });
@@ -1039,19 +1061,26 @@ export class ClickHouseEngine extends StorageEngine {
     return client.query<Format>(final as any);
   }
 
+  /**
+   * Inserts carry the request id in query_id only, never in log_comment: the
+   * server keys the async insert buffers on the query and its settings, so a
+   * per-request log_comment would give every request its own buffer and its
+   * own part instead of sharing one flush.
+   */
   private async runInsert(args: InsertParams<import('stream').Readable>, op = 'insert') {
     const client = this.getClient();
     const queryId = chQueryId(op);
-    const final: typeof args = { ...args };
+    const final: typeof args = {
+      ...args,
+      clickhouse_settings: {
+        async_insert: 1,
+        wait_for_async_insert: 1,
+        async_insert_busy_timeout_ms: this.options.insertFlushMs ?? DEFAULT_INSERT_FLUSH_MS,
+        ...args.clickhouse_settings,
+      },
+    };
     if (queryId) {
       (final as any).query_id = queryId;
-    }
-    const comment = chCtxComment().trim();
-    if (comment) {
-      (final as any).clickhouse_settings = {
-        ...((args as any).clickhouse_settings as object | undefined),
-        log_comment: comment,
-      };
     }
     return client.insert(final);
   }
@@ -1140,6 +1169,18 @@ export class ClickHouseEngine extends StorageEngine {
         error: trace.error ? 1 : 0,
       })),
       format: 'JSONEachRow',
+      // Fire-and-forget into a long flush window: the summaries are derived
+      // data (the spans are stored and acknowledged on their own), and one
+      // part every few seconds instead of one per request is what keeps the
+      // merges of this table from rewriting it many times a day.
+      ...(this.traceSummaryFlushMs > 0
+        ? {
+            clickhouse_settings: {
+              wait_for_async_insert: 0,
+              async_insert_busy_timeout_ms: this.traceSummaryFlushMs,
+            },
+          }
+        : {}),
     }, 'upsert-traces');
   }
 

@@ -320,7 +320,9 @@ function constructEngine(target: ConformanceTarget): StorageEngine {
     case 'timescale':
       return new TimescaleEngine({ ...target.config, schema: TIMESCALE_CONFORMANCE_SCHEMA });
     case 'clickhouse':
-      return new ClickHouseEngine({ ...target.config });
+      // Short flush windows and synchronous trace summaries: the suite reads
+      // its writes back immediately.
+      return new ClickHouseEngine({ ...target.config }, { insertFlushMs: 50, traceSummaryFlushMs: 0 });
     case 'mongodb':
       return new MongoDBEngine({ ...target.config });
   }
