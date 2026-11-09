@@ -137,6 +137,7 @@ import {
 import { ensureAggregatingTracesTable } from './traces-table.js';
 import {
   ensureDailyPartitions,
+  isDaily,
   repartitionPending,
   type RepartitionOptions,
   type RepartitionRunner,
@@ -369,8 +370,11 @@ export class ClickHouseEngine extends StorageEngine {
     // mutations (retention) keep it exact. The one-time MATERIALIZE of the
     // existing parts runs in the background; parts without it are read as
     // logs meanwhile, with the same result.
+    // A monthly table about to move to daily partitions gets it with the new
+    // layout: materializing it first would read the whole old table for nothing.
     try {
-      if (!(await this.chObjectExists('projection', t, 'proj_minute_volume'))) {
+      const moving = this.options.autoRepartition !== false && !isDaily(await this.partitionKeyOf(t));
+      if (!moving && !(await this.chObjectExists('projection', t, 'proj_minute_volume'))) {
         await this.runCommand({
           query: `ALTER TABLE ${t} ADD PROJECTION IF NOT EXISTS proj_minute_volume (SELECT project_id, toStartOfMinute(time), level, service, count() GROUP BY project_id, toStartOfMinute(time), level, service)`,
         });
@@ -999,6 +1003,18 @@ export class ClickHouseEngine extends StorageEngine {
     );
     const rows = (await rs.json()) as { q: string }[];
     return rows[0]?.q ?? '';
+  }
+
+  private async partitionKeyOf(table: string): Promise<string | null> {
+    const rs = await this.runQuery(
+      {
+        query: 'SELECT partition_key AS k FROM system.tables WHERE database = {db:String} AND name = {tbl:String}',
+        query_params: { db: this.config.database, tbl: table },
+        format: 'JSONEachRow',
+      },
+      'schema-introspect',
+    );
+    return ((await rs.json()) as { k: string }[])[0]?.k ?? null;
   }
 
   private async dropProjectionIfExists(table: string, name: string): Promise<void> {

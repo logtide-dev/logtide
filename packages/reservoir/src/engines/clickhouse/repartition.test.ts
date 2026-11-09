@@ -9,6 +9,7 @@ import {
   type RepartitionSpec,
 } from './repartition.js';
 import { logsTableDdl, spansTableDdl } from './daily-tables.js';
+import { ClickHouseEngine } from './clickhouse-engine.js';
 
 // Pre-1.6.3 logs layout (monthly, with the full-copy projection).
 const LEGACY_LOGS = `
@@ -189,6 +190,33 @@ describe('ClickHouse move to daily partitions (integration)', () => {
     expect(await tables()).toEqual(['logs']);
     expect(messages.join(' ')).toMatch(/GiB free/);
     expect(await rows(`SELECT 1 FROM system.tables WHERE database = currentDatabase() AND name = '${lockTable('logs')}'`)).toEqual([]);
+  });
+
+  it('an engine started on a pre-1.6.3 install moves both tables in the background', async () => {
+    await seedLogs();
+    await client.command({ query: LEGACY_SPANS });
+    const before = await logIds();
+
+    const engine = new ClickHouseEngine(
+      { host: 'localhost', port: 18123, database: DATABASE, username: 'default', password: '' },
+      { insertFlushMs: 50, traceSummaryFlushMs: 0, repartitionOptions: FAST },
+    );
+    await engine.connect();
+    try {
+      await engine.initialize();
+      await engine.repartitionSettled();
+
+      expect(isDaily(await keyOf('logs'))).toBe(true);
+      expect(isDaily(await keyOf('spans'))).toBe(true);
+      expect(await logIds()).toEqual(before);
+      const [ddl] = await rows<{ q: string }>("SELECT create_table_query AS q FROM system.tables WHERE database = currentDatabase() AND name = 'logs'");
+      expect(ddl.q).toContain('proj_minute_volume');
+      expect(ddl.q).not.toContain('proj_service_time');
+      // Retention deletes run again once the move is over.
+      await engine.deleteByTimeRange({ projectId: 'p1', from: new Date(0), to: new Date('2026-10-01T00:00:00Z') });
+    } finally {
+      await engine.disconnect();
+    }
   });
 
   it('moves spans keyed by trace and span id', async () => {

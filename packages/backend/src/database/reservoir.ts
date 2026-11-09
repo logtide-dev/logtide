@@ -49,6 +49,8 @@ function createBaseReservoir(): Reservoir {
       ...(analyticsTimeoutMs !== undefined ? { analyticsTimeoutMs } : {}),
       ...(insertFlushMs !== undefined ? { insertFlushMs } : {}),
       ...(traceSummaryFlushMs !== undefined ? { traceSummaryFlushMs } : {}),
+      // Escape hatch for the one-time move to daily partitions (1.6.3).
+      ...(process.env.CLICKHOUSE_DAILY_PARTITIONS === 'false' ? { autoRepartition: false } : {}),
     });
   }
   if (STORAGE_ENGINE === 'mongodb') {
