@@ -253,7 +253,7 @@ describe('Email Templates (branches) - Monitor Email', () => {
     expect(result.html).toContain('is back online.');
     expect(result.html).toContain('Downtime: 5m');
     expect(result.html).toContain('lt-fill-success');
-    expect(result.html).toContain('>Up<');
+    expect(result.html).toContain('&nbsp;Up<');
     expect(result.html).not.toContain('consecutive_failures');
     expect(result.html).toContain('downtime_duration');
 

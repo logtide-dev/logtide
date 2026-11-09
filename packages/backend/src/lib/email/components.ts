@@ -9,10 +9,19 @@ import { light, toneColors, FONT_MONO, FONT_SANS, type Tone } from './tokens.js'
 
 const L = light;
 
+/**
+ * A bordered, filled box as a one-cell table: Outlook for Windows ignores
+ * padding and backgrounds on div and span, but honors them on a td.
+ */
+function box(inner: string, o: { bg: string; line: string; cls: string; style: string; margin: string; radius?: string }): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:${o.margin};border-collapse:separate;"><tr><td bgcolor="${o.bg}" class="${o.cls}" style="padding:16px;background-color:${o.bg};border:1px solid ${o.line};border-radius:${o.radius ?? '8px'};${o.style}">${inner}</td></tr></table>`;
+}
+
 /** Status pill: tinted fill, line, dot and the word (color alone never carries meaning). */
 export function pill(text: string, tone: Tone): string {
   const c = toneColors(L, tone);
-  return `<div style="margin:0 0 16px;"><span class="lt-fill-${tone} lt-tone-${tone}" style="display:inline-block;padding:2px 10px;background-color:${c.fill};border:1px solid ${c.line};border-radius:9999px;font-family:${FONT_SANS};font-size:12px;line-height:16px;font-weight:500;color:${c.text};"><span class="lt-solid-${tone}" style="display:inline-block;width:6px;height:6px;margin:0 6px 1px 0;border-radius:9999px;background-color:${c.solid};vertical-align:middle;"></span>${escapeHtml(text)}</span></div>`;
+  // The dot is a character, not a sized span, so every client draws it.
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px;border-collapse:separate;"><tr><td bgcolor="${c.fill}" class="lt-fill-${tone} lt-tone-${tone}" style="padding:2px 10px;background-color:${c.fill};border:1px solid ${c.line};border-radius:9999px;font-family:${FONT_SANS};font-size:12px;line-height:16px;font-weight:500;color:${c.text};white-space:nowrap;"><span class="lt-tone-${tone}" style="color:${c.solid};font-size:9px;">&#9679;</span>&nbsp;${escapeHtml(text)}</td></tr></table>`;
 }
 
 export function title(text: string): string {
@@ -57,11 +66,23 @@ export function logBlock(rows: Array<{ key: string; value: string }>): string {
         `<div><span class="lt-key" style="color:${L.key};">${escapeHtml(r.key)}</span><span class="lt-muted" style="color:${L.muted};">=</span>${escapeHtml(r.value)}</div>`,
     )
     .join('');
-  return `<div class="lt-card lt-text" style="margin:0 0 32px;padding:16px;background-color:${L.card};border:1px solid ${L.border};border-radius:8px;font-family:${FONT_MONO};font-size:12px;line-height:20px;color:${L.text};word-break:break-word;">${lines}</div>`;
+  return box(lines, {
+    bg: L.card,
+    line: L.border,
+    cls: 'lt-card lt-text',
+    margin: '0 0 32px',
+    style: `font-family:${FONT_MONO};font-size:12px;line-height:20px;color:${L.text};word-break:break-word;`,
+  });
 }
 
 export function codeBlock(text: string): string {
-  return `<div class="lt-card lt-text" style="margin:0 0 24px;padding:16px;background-color:${L.card};border:1px solid ${L.border};border-radius:8px;font-family:${FONT_MONO};font-size:12px;line-height:20px;color:${L.text};white-space:pre-wrap;word-break:break-word;">${escapeHtml(text)}</div>`;
+  return box(escapeHtml(text), {
+    bg: L.card,
+    line: L.border,
+    cls: 'lt-card lt-text',
+    margin: '0 0 24px',
+    style: `font-family:${FONT_MONO};font-size:12px;line-height:20px;color:${L.text};white-space:pre-wrap;word-break:break-word;`,
+  });
 }
 
 export interface Cell {
@@ -130,13 +151,26 @@ export function button(label: string, url: string, opts: { color?: string } = {}
 
 /** The raw link in mono under a button, for clients that break buttons. */
 export function linkFallback(url: string): string {
-  return `<p class="lt-muted" style="margin:-16px 0 8px;font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${L.muted};">If the button does not work, paste this address in your browser:</p><div class="lt-card lt-text" style="margin:0 0 32px;padding:12px 16px;background-color:${L.card};border:1px solid ${L.border};border-radius:8px;font-family:${FONT_MONO};font-size:12px;line-height:16px;color:${L.text};word-break:break-all;">${escapeHtml(url)}</div>`;
+  return `<p class="lt-muted" style="margin:-16px 0 8px;font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${L.muted};">If the button does not work, paste this address in your browser:</p>` +
+    box(escapeHtml(url), {
+      bg: L.card,
+      line: L.border,
+      cls: 'lt-card lt-text',
+      margin: '0 0 32px',
+      style: `font-family:${FONT_MONO};font-size:12px;line-height:16px;color:${L.text};word-break:break-all;`,
+    });
 }
 
 /** A tinted message box with a hairline all round (never a left border). */
 export function notice(text: string, tone: Tone): string {
   const c = toneColors(L, tone);
-  return `<div class="lt-fill-${tone} lt-text" style="margin:0 0 24px;padding:12px 16px;background-color:${c.fill};border:1px solid ${c.line};border-radius:8px;font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${L.text};">${escapeHtml(text)}</div>`;
+  return box(escapeHtml(text), {
+    bg: c.fill,
+    line: c.line,
+    cls: `lt-fill-${tone} lt-text`,
+    margin: '0 0 24px',
+    style: `font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${L.text};`,
+  });
 }
 
 /** label / value rows with hairlines: label in sans, value in mono on the right. */

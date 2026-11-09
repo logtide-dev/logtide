@@ -118,3 +118,17 @@ describe('severityTone', () => {
     expect(severityTone('informational')).toBe('neutral');
   });
 });
+
+describe('boxes render as tables for Outlook', () => {
+  it.each([
+    ['pill', () => pill('Alert triggered', 'error')],
+    ['logBlock', () => logBlock([{ key: 'service', value: 'payments-api' }])],
+    ['codeBlock', () => codeBlock('trace')],
+    ['linkFallback', () => linkFallback('https://example.com/x')],
+    ['notice', () => notice('Quiet period', 'info')],
+  ])('%s puts padding and background on a table cell, not a div or span', (_name, render) => {
+    const html = render();
+    expect(html).toMatch(/<td[^>]*bgcolor="#[0-9a-f]{6}"[^>]*style="[^"]*padding:/);
+    expect(html).not.toMatch(/<(div|span)[^>]*style="[^"]*padding:/);
+  });
+});

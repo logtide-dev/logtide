@@ -84,7 +84,7 @@ describe('console notification emails', () => {
   it.each([
     [{ isRegression: true }, 'Regression'],
     [{ isEscalating: true }, 'Escalating'],
-    [{}, '>Error<'],
+    [{}, '&nbsp;Error<'],
   ])('error pill for %o reads %s', (flags, label) => {
     const { html } = generateErrorEmail({
       exceptionType: 'KeyError',
@@ -134,7 +134,7 @@ describe('console notification emails', () => {
     }).html;
     expectConsole(down);
     expect(down).toContain('lt-fill-error');
-    expect(down).toContain('>Down<');
+    expect(down).toContain('&nbsp;Down<');
     expect(down).toContain('View monitor');
 
     const up = generateMonitorEmail({
@@ -146,7 +146,7 @@ describe('console notification emails', () => {
       downtimeDuration: '4m 12s',
     }).html;
     expect(up).toContain('lt-fill-success');
-    expect(up).toContain('>Up<');
+    expect(up).toContain('&nbsp;Up<');
   });
 
   it('project health keeps its message', () => {
