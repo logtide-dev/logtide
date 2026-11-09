@@ -31,6 +31,12 @@ describe('security page', () => {
     authStore.setAuth({ id: 'u1', email: 'me@example.com', name: 'Me' } as never, 'tok');
   });
 
+  it('describes the 12 character rule, not the old 8', () => {
+    render(Page);
+    expect(screen.getByText('Use at least 12 characters, and nothing built from your name or email.')).toBeTruthy();
+    expect(screen.queryByText(/at least 8 characters/i)).toBeNull();
+  });
+
   it('password mismatch toasts and does not call the API', async () => {
     render(Page);
     await fireEvent.input(screen.getByLabelText('Current password'), { target: { value: 'oldpassword' } });

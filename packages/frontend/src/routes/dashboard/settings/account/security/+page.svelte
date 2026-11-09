@@ -108,7 +108,7 @@
     description="Change your password or delete your account."
   />
 
-  <SettingsSection title="Change password" description="Use at least 8 characters">
+  <SettingsSection title="Change password" description="Use at least 12 characters, and nothing built from your name or email.">
     <form
       class="space-y-4"
       onsubmit={(e) => {
