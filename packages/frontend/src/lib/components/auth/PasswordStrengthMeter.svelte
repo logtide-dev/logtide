@@ -28,8 +28,19 @@
     return loading;
   }
 
+  // zxcvbn costs up to ~200 ms on a long password: judge once typing pauses,
+  // not on every keystroke.
+  const DEBOUNCE_MS = 150;
+  let judged = $state('');
+
+  $effect(() => {
+    const next = value;
+    const timer = setTimeout(() => (judged = next), DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  });
+
   const check = $derived<PasswordCheck | null>(
-    policy && value ? policy.checkPasswordStrength(value, policy.passwordUserInputs(user)) : null
+    policy && judged ? policy.checkPasswordStrength(judged, policy.passwordUserInputs(user)) : null
   );
 
   const strength = $derived.by(() => {
@@ -40,7 +51,8 @@
   });
 
   $effect(() => {
-    const next = check?.ok ?? false;
+    // Never ok for a value that has not been judged yet.
+    const next = (check?.ok ?? false) && judged === value;
     if (next !== ok) ok = next;
     onCheck?.(next);
   });
@@ -50,18 +62,18 @@
   });
 </script>
 
-<div {id} aria-live="polite" class="space-y-1.5">
+<div {id} class="space-y-1.5">
   <div class="flex gap-1" aria-hidden="true">
     {#each [1, 2, 3, 4] as segment (segment)}
       <div class="h-1 flex-1 rounded-full {strength && segment <= strength.segments ? strength.bar : 'bg-muted'}"></div>
     {/each}
   </div>
   {#if strength && check}
-    <p class="flex gap-2 text-xs">
+    <p aria-live="polite" class="flex gap-2 text-xs">
       <span class="font-medium {strength.text}">{strength.label}</span>
       {#if check.message}<span class="text-muted-foreground">{check.message}</span>{/if}
     </p>
   {:else}
-    <p class="text-xs text-muted-foreground">Use at least 12 characters. A few unrelated words work well.</p>
+    <p aria-live="polite" class="text-xs text-muted-foreground">Use at least 12 characters. A few unrelated words work well.</p>
   {/if}
 </div>
