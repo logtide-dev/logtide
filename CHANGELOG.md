@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **ClickHouse server log at warning level**: the bundled ClickHouse config now sets the server's own log (`clickhouse-server.log`) to `warning` instead of the image default `trace`. At trace level it was the largest source of disk writes left after 1.6.3, about 2 MiB/s on a busy instance. Needs a ClickHouse restart; to debug ClickHouse itself, raise the level again in `docker/clickhouse-system-logs.xml`.
+
 
 ## [1.6.3] - 2026-11-09
 
