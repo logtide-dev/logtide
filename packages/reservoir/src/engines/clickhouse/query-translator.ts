@@ -420,6 +420,12 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
   }
 
   translateDelete(params: DeleteByTimeRangeParams): NativeQuery {
+    const { where, queryParams } = this.translateDeleteCondition(params);
+    return { query: `ALTER TABLE ${this.tableName} DELETE WHERE ${where}`, parameters: [queryParams] };
+  }
+
+  /** WHERE condition (without the keyword) of a time-range log delete, and its parameters. */
+  translateDeleteCondition(params: DeleteByTimeRangeParams): { where: string; queryParams: Record<string, unknown> } {
     const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
 
@@ -444,9 +450,7 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
       this.pushClickHouseFilter(conditions, queryParams, 'level', params.level);
     }
 
-    const where = ` WHERE ${conditions.join(' AND ')}`;
-    const query = `ALTER TABLE ${this.tableName} DELETE${where}`;
-    return { query, parameters: [queryParams] };
+    return { where: conditions.join(' AND '), queryParams };
   }
 
   /**

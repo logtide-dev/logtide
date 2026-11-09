@@ -12,7 +12,7 @@ import { reservoirReady } from '../../../database/reservoir.js';
 import { config, configSchema } from '../../../config/index.js';
 import { settingsService } from '../../../modules/settings/index.js';
 import { SETTING_KEYS } from '../../../modules/settings/service.js';
-import { createTestContext, createTestUser } from '../../helpers/factories.js';
+import { createTestContext, createTestUser, STRONG_TEST_PASSWORD } from '../../helpers/factories.js';
 import { createTestSession } from '../../helpers/auth.js';
 
 const TERMS_URL = 'https://logtide.example.com/terms';
@@ -56,7 +56,7 @@ async function register(app: FastifyInstance, extra: Record<string, unknown> = {
     method: 'POST',
     url: '/api/v1/auth/register',
     remoteAddress: nextIp(),
-    payload: { email: uniqueEmail('terms'), password: 'password123', name: 'Terms User', ...extra },
+    payload: { email: uniqueEmail('terms'), password: STRONG_TEST_PASSWORD, name: 'Terms User', ...extra },
   });
 }
 
@@ -284,7 +284,7 @@ describe('terms acceptance active (real app)', () => {
         method: 'POST',
         url: '/api/v1/auth/register',
         remoteAddress: nextIp(),
-        payload: { email, password: 'password123', name: 'No Accept' },
+        payload: { email, password: STRONG_TEST_PASSWORD, name: 'No Accept' },
       });
       expect(missing.statusCode).toBe(400);
       expect(missing.json()).toEqual({ error: 'terms_not_accepted' });

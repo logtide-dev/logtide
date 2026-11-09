@@ -1,0 +1,18 @@
+<!--
+  Default ClickHouse profile settings for LogTide.
+
+  - The sampling query profiler is off: it only feeds system.trace_log.
+  - Only queries slower than 5 s reach system.query_log. Inserts wait for the
+    async insert flush (a few seconds at most), so they stay out of it.
+
+  Mounted at /etc/clickhouse-server/users.d/. Reloaded without a restart.
+-->
+<clickhouse>
+    <profiles>
+        <default>
+            <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+            <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+            <log_queries_min_query_duration_ms>5000</log_queries_min_query_duration_ms>
+        </default>
+    </profiles>
+</clickhouse>

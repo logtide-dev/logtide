@@ -491,4 +491,34 @@ describe('mongodb specifics', () => {
       expect(await subject().hasSessions({ projectId: SPEC_PROJECT, from: sec(25), to: sec(45) })).toBe(false);
     });
   });
+
+  describe('mongodb retention specifics', () => {
+    it('dropOlderThan removes logs, spans and traces older than the cutoff only', async () => {
+      await seedLogs([{ message: 'old', at: 0 }, { message: 'new', at: 600 }]);
+      const span = (id: string, at: number): SpanRecord => ({
+        time: new Date(SPEC_BASE + at * 1000),
+        spanId: id,
+        traceId: `trace-${id}`,
+        projectId: SPEC_PROJECT,
+        serviceName: 'spec',
+        operationName: 'op',
+        startTime: new Date(SPEC_BASE + at * 1000),
+        endTime: new Date(SPEC_BASE + at * 1000 + 10),
+        durationMs: 10,
+      });
+      await subject().ingestSpans([span('old', 0), span('new', 600)]);
+      await subject().upsertTraces([
+        { traceId: 'trace-old', projectId: SPEC_PROJECT, serviceName: 'spec', startTime: new Date(SPEC_BASE), endTime: new Date(SPEC_BASE + 10), durationMs: 10, spanCount: 1, error: false },
+        { traceId: 'trace-new', projectId: SPEC_PROJECT, serviceName: 'spec', startTime: new Date(SPEC_BASE + 600_000), endTime: new Date(SPEC_BASE + 600_010), durationMs: 10, spanCount: 1, error: false },
+      ]);
+
+      await subject().dropOlderThan(new Date(SPEC_BASE + 300_000));
+
+      expect(await messagesFor({})).toEqual(['new']);
+      const { spans } = await subject().querySpans({ projectId: SPEC_PROJECT, ...SPEC_WINDOW, limit: 10 });
+      expect(spans.map((s) => s.spanId)).toEqual(['new']);
+      const traces = await raw!.db(SPECIFICS_DATABASE).collection('traces').find({}, { projection: { _id: 0, trace_id: 1 } }).toArray();
+      expect(traces).toEqual([{ trace_id: 'trace-new' }]);
+    });
+  });
 });

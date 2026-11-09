@@ -191,4 +191,20 @@ describe('extension mail', () => {
     expect(item?.Content.Headers.Subject[0]).toBe('hello ext');
     expect(item?.Content.Headers.From[0]).toBe(config.SMTP_FROM);
   });
+
+  it('send adds a branded html part when the extension gives only text', async () => {
+    const fx = captureFixture();
+    await initExtensions([fx.mod], 'server');
+    const to = `ext-mail-html-${crypto.randomUUID()}@example.com`;
+    await fx.api().mail.send({ to, subject: 'notice ext', text: 'plain body' });
+
+    const raw = await waitFor(async () => {
+      const res = await fetch(`http://localhost:8025/api/v2/search?kind=to&query=${encodeURIComponent(to)}`);
+      const data = (await res.json()) as { items: Array<{ Raw: { Data: string } }> };
+      return data.items[0]?.Raw.Data;
+    });
+    const decoded = (raw ?? '').replace(/=\r?\n/g, '').replace(/=3D/g, '=');
+    expect(decoded).toContain('text/html');
+    expect(decoded).toContain('prefers-color-scheme');
+  });
 });

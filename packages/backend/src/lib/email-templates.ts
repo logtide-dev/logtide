@@ -5,299 +5,30 @@
  * Gmail, Outlook, Apple Mail, etc. all have different CSS support.
  */
 
-import { config } from '../config/index.js';
-import { getLogoUrl } from './logo.js';
 import type { DigestReportData } from '../modules/digests/generator.js';
 
 // ============================================================================
 // HELPERS
 // ============================================================================
 
-/**
- * Get the frontend URL from config, with a sensible fallback.
- * In production, FRONTEND_URL should always be set.
- */
-export function getFrontendUrl(): string {
-  if (config.FRONTEND_URL) {
-    return config.FRONTEND_URL.replace(/\/$/, ''); // Remove trailing slash
-  }
+export { getFrontendUrl, formatEmailDate, escapeHtml, truncate } from './email/util.js';
+import { getFrontendUrl, formatEmailDate, truncate } from './email/util.js';
+import { renderEmail } from './email/layout.js';
+import * as ui from './email/components.js';
+import { severityTone } from './email/tokens.js';
 
-  // Log warning in production if FRONTEND_URL is not set
-  if (config.NODE_ENV === 'production') {
-    console.warn('[Email] FRONTEND_URL not set in production - email links will be broken');
-  }
-
-  return 'http://localhost:5173';
+/** The mono label next to the logo: organization, and project when there is one. */
+function emailContext(organizationName?: string | null, projectName?: string | null): string | undefined {
+  if (!organizationName) return projectName ?? undefined;
+  return projectName ? `${organizationName} / ${projectName}` : organizationName;
 }
 
-/**
- * Format a date for display in emails
- */
-export function formatEmailDate(date: Date = new Date()): string {
-  return date.toLocaleString('en-US', {
-    weekday: 'short',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
-}
-
-/**
- * Escape HTML to prevent XSS in email content
- */
-export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-/**
- * Truncate text with ellipsis
- */
-export function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength - 3) + '...';
-}
-
-// ============================================================================
-// SHARED STYLES
-// ============================================================================
-
-const colors = {
-  background: '#f4f4f5',
-  cardBg: '#ffffff',
-  text: '#18181b',
-  textMuted: '#71717a',
-  textLight: '#a1a1aa',
-  border: '#e4e4e7',
-  primary: '#18181b',
-  error: '#dc2626',
-  errorBg: '#fef2f2',
-  warning: '#ca8a04',
-  warningBg: '#fefce8',
-  success: '#16a34a',
-  successBg: '#f0fdf4',
-  info: '#2563eb',
-  infoBg: '#eff6ff',
-  critical: '#dc2626',
-  high: '#ea580c',
-  medium: '#ca8a04',
-  low: '#2563eb',
-  informational: '#6b7280',
-};
-
-// ============================================================================
-// BASE TEMPLATE
-// ============================================================================
-
-interface BaseEmailOptions {
-  preheader?: string; // Preview text shown in email clients
-  // When set, the footer swaps the channel-settings link for a one-click
-  // unsubscribe link (used by digest emails, where recipients may have no account)
-  unsubscribeUrl?: string;
-}
-
-function baseTemplate(content: string, options: BaseEmailOptions = {}): string {
-  const { preheader, unsubscribeUrl } = options;
-  const frontendUrl = getFrontendUrl();
-  const logoUrl = getLogoUrl();
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>LogTide Notification</title>
-  <!--[if mso]>
-  <noscript>
-    <xml>
-      <o:OfficeDocumentSettings>
-        <o:PixelsPerInch>96</o:PixelsPerInch>
-      </o:OfficeDocumentSettings>
-    </xml>
-  </noscript>
-  <![endif]-->
-</head>
-<body style="margin: 0; padding: 0; width: 100%; background-color: ${colors.background}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased;">
-  ${preheader ? `<div style="display: none; max-height: 0; overflow: hidden;">${escapeHtml(preheader)}</div>` : ''}
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${colors.background};">
-    <tr>
-      <td align="center" style="padding: 40px 16px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px;">
-          <!-- Logo -->
-          <tr>
-            <td align="center" style="padding: 0 0 24px;">
-              <a href="${frontendUrl}" style="text-decoration: none;">
-                <img src="${logoUrl}" alt="LogTide" width="140" height="auto" style="display: block; max-width: 140px; height: auto;" />
-              </a>
-            </td>
-          </tr>
-          ${content}
-          <!-- Footer -->
-          <tr>
-            <td style="padding: 24px 0; text-align: center;">
-              <p style="margin: 0 0 8px; font-size: 12px; color: ${colors.textLight};">
-                Sent by <a href="${frontendUrl}" style="color: ${colors.textMuted}; text-decoration: none;">LogTide</a>
-              </p>
-              <p style="margin: 0; font-size: 11px; color: ${colors.textLight};">
-                ${unsubscribeUrl
-                  ? `<a href="${unsubscribeUrl}" style="color: ${colors.textMuted}; text-decoration: underline;">Unsubscribe from these reports</a>`
-                  : `<a href="${frontendUrl}/dashboard/settings/notifications/destinations" style="color: ${colors.textMuted}; text-decoration: underline;">Manage notification settings</a>`}
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
-}
-
-// ============================================================================
-// COMPONENTS
-// ============================================================================
-
-function card(content: string): string {
-  return `<tr>
-    <td style="background-color: ${colors.cardBg}; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-      ${content}
-    </td>
-  </tr>`;
-}
-
-function header(title: string, badge?: { text: string; color: string }): string {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-    <tr>
-      <td style="padding: 24px 24px 16px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td style="vertical-align: middle;">
-              <h1 style="margin: 0; font-size: 20px; font-weight: 600; color: ${colors.text}; line-height: 1.3;">
-                ${escapeHtml(title)}
-              </h1>
-            </td>
-            ${badge ? `<td align="right" style="vertical-align: middle;">
-              <span style="display: inline-block; padding: 4px 10px; background-color: ${badge.color}; color: white; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
-                ${escapeHtml(badge.text)}
-              </span>
-            </td>` : ''}
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>`;
-}
-
-function divider(): string {
-  return `<tr><td style="padding: 0 24px;"><hr style="border: none; border-top: 1px solid ${colors.border}; margin: 0;"></td></tr>`;
-}
-
-function infoRow(label: string, value: string, isCode = false): string {
-  const valueStyle = isCode
-    ? `font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; font-size: 13px; background-color: ${colors.background}; padding: 2px 6px; border-radius: 4px;`
-    : '';
-
-  return `<tr>
-    <td style="padding: 8px 0;">
-      <span style="font-size: 12px; color: ${colors.textMuted}; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(label)}</span><br>
-      <span style="font-size: 14px; color: ${colors.text}; font-weight: 500; ${valueStyle}">${escapeHtml(value)}</span>
-    </td>
-  </tr>`;
-}
-
-function infoBox(rows: Array<{ label: string; value: string; isCode?: boolean }>): string {
-  return `<tr>
-    <td style="padding: 16px 24px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${colors.background}; border-radius: 8px;">
-        <tr>
-          <td style="padding: 16px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-              ${rows.map(r => infoRow(r.label, r.value, r.isCode)).join('')}
-            </table>
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>`;
-}
-
-function alertBox(message: string, type: 'error' | 'warning' | 'success' | 'info' = 'error'): string {
-  const bgColors = {
-    error: colors.errorBg,
-    warning: colors.warningBg,
-    success: colors.successBg,
-    info: colors.infoBg,
-  };
-  const borderColors = {
-    error: colors.error,
-    warning: colors.warning,
-    success: colors.success,
-    info: colors.info,
-  };
-
-  return `<tr>
-    <td style="padding: 0 24px 16px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${bgColors[type]}; border-left: 4px solid ${borderColors[type]}; border-radius: 4px;">
-        <tr>
-          <td style="padding: 12px 16px; font-size: 14px; color: ${colors.text}; line-height: 1.5;">
-            ${message}
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>`;
-}
-
-function cta(text: string, url: string): string {
-  return `<tr>
-    <td style="padding: 8px 24px 24px;" align="center">
-      <a href="${url}" style="display: inline-block; padding: 12px 24px; background-color: ${colors.primary}; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">
-        ${escapeHtml(text)}
-      </a>
-    </td>
-  </tr>`;
-}
-
-function codeBlock(code: string): string {
-  return `<tr>
-    <td style="padding: 0 24px 16px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: #1e1e1e; border-radius: 8px;">
-        <tr>
-          <td style="padding: 16px; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; font-size: 13px; color: #d4d4d4; line-height: 1.5; white-space: pre-wrap; word-break: break-word;">
-            ${escapeHtml(code)}
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>`;
-}
-
-function subtitle(text: string): string {
-  return `<tr>
-    <td style="padding: 16px 24px 8px;">
-      <p style="margin: 0; font-size: 14px; color: ${colors.textMuted}; line-height: 1.5;">
-        ${escapeHtml(text)}
-      </p>
-    </td>
-  </tr>`;
-}
-
-function timestamp(): string {
-  return `<tr>
-    <td style="padding: 0 24px 8px;">
-      <p style="margin: 0; font-size: 12px; color: ${colors.textLight};">
-        ${formatEmailDate()}
-      </p>
-    </td>
-  </tr>`;
+/** Filters of an alert rule as log-style key=value lines. */
+function alertRows(data: { service?: string | null; levels?: string[] }): Array<{ key: string; value: string }> {
+  return [
+    ...(data.service ? [{ key: 'service', value: data.service }] : []),
+    ...(data.levels?.length ? [{ key: 'levels', value: data.levels.join(',') }] : []),
+  ];
 }
 
 // ============================================================================
@@ -338,33 +69,25 @@ export function generateAlertEmail(data: AlertEmailData): { html: string; text: 
     const bm = data.baselineMetadata!;
     const baselineLabel = baselineTypeLabels[bm.baseline_type] || bm.baseline_type;
 
-    const html = baseTemplate(
-      card(`
-        ${header(`Anomaly: ${data.ruleName}`, { text: `${bm.deviation_ratio}x above normal`, color: colors.warning })}
-        ${divider()}
-        ${subtitle(`Unusual log volume detected compared to baseline.`)}
-        ${timestamp()}
-        ${alertBox(
-          `Current rate: <strong>${Math.round(bm.current_value).toLocaleString('en-US')}</strong> logs/hr &mdash; Baseline: <strong>${Math.round(bm.baseline_value).toLocaleString('en-US')}</strong> logs/hr &mdash; <strong>${bm.deviation_ratio}x</strong> above normal`,
+    const html = renderEmail({
+      title: `Anomaly: ${data.ruleName}`,
+      preheader: `${bm.deviation_ratio}x above baseline`,
+      context: emailContext(data.organizationName, data.projectName),
+      body:
+        ui.pill('Anomaly', 'warning') +
+        ui.title(data.ruleName) +
+        ui.bigNumber(
+          `${bm.deviation_ratio}x`,
+          `above normal: current ${Math.round(bm.current_value).toLocaleString('en-US')} logs/hr, baseline ${Math.round(bm.baseline_value).toLocaleString('en-US')} logs/hr (${baselineLabel})`,
           'warning'
-        )}
-        ${infoBox([
-          { label: 'Rule Name', value: data.ruleName },
-          { label: 'Baseline Method', value: baselineLabel },
-          { label: 'Current Rate', value: `${Math.round(bm.current_value).toLocaleString('en-US')} logs/hr` },
-          { label: 'Baseline Rate', value: `${Math.round(bm.baseline_value).toLocaleString('en-US')} logs/hr` },
-          { label: 'Deviation', value: `${bm.deviation_ratio}x` },
-          ...(data.service ? [{ label: 'Service Filter', value: data.service, isCode: true }] : []),
-          ...(data.organizationName ? [{ label: 'Organization', value: data.organizationName }] : []),
-          ...(data.projectName ? [{ label: 'Project', value: data.projectName }] : []),
-        ])}
-        ${cta('View Alert History', dashboardUrl)}
-      `),
-      { preheader: `${bm.deviation_ratio}x above baseline for "${data.ruleName}"` }
-    );
+        ) +
+        ui.logBlock(alertRows(data)) +
+        ui.button('View alert history', dashboardUrl),
+      footer: { kind: 'notifications' },
+    });
 
     const text = `
-ANOMALY DETECTED: ${data.ruleName}
+Anomaly detected: ${data.ruleName}
 ${'='.repeat(50)}
 
 Log volume is ${bm.deviation_ratio}x above the baseline.
@@ -373,7 +96,7 @@ Current Rate: ${Math.round(bm.current_value).toLocaleString('en-US')} logs/hr
 Baseline (${baselineLabel}): ${Math.round(bm.baseline_value).toLocaleString('en-US')} logs/hr
 Deviation: ${bm.deviation_ratio}x above normal
 
-DETAILS
+Details
 -------
 Rule Name: ${data.ruleName}
 ${data.service ? `Service: ${data.service}` : ''}
@@ -393,35 +116,31 @@ Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinatio
   }
 
   // Standard threshold alert email
-  const html = baseTemplate(
-    card(`
-      ${header(`Alert: ${data.ruleName}`, { text: 'Triggered', color: colors.error })}
-      ${divider()}
-      ${subtitle(`Your alert threshold was exceeded.`)}
-      ${timestamp()}
-      ${alertBox(
-        `<strong>${data.logCount.toLocaleString('en-US')}</strong> logs matched in the last <strong>${data.timeWindow}</strong> minute${data.timeWindow > 1 ? 's' : ''}, exceeding your threshold of <strong>${data.threshold.toLocaleString('en-US')}</strong>.`,
+  const html = renderEmail({
+    title: `Alert: ${data.ruleName}`,
+    preheader: `${data.logCount} logs exceeded threshold of ${data.threshold}`,
+    context: emailContext(data.organizationName, data.projectName),
+    body:
+      ui.pill('Alert triggered', 'error') +
+      ui.title(data.ruleName) +
+      ui.bigNumber(
+        data.logCount.toLocaleString('en-US'),
+        `logs matched in the last ${data.timeWindow} minute${data.timeWindow === 1 ? '' : 's'}`,
         'error'
-      )}
-      ${infoBox([
-        { label: 'Rule Name', value: data.ruleName },
-        ...(data.service ? [{ label: 'Service Filter', value: data.service, isCode: true }] : []),
-        ...(data.levels?.length ? [{ label: 'Log Levels', value: data.levels.join(', ') }] : []),
-        ...(data.organizationName ? [{ label: 'Organization', value: data.organizationName }] : []),
-        ...(data.projectName ? [{ label: 'Project', value: data.projectName }] : []),
-      ])}
-      ${cta('View Alert History', dashboardUrl)}
-    `),
-    { preheader: `${data.logCount} logs exceeded threshold of ${data.threshold} for "${data.ruleName}"` }
-  );
+      ) +
+      ui.meter({ value: data.logCount, threshold: data.threshold, label: `threshold ${data.threshold.toLocaleString('en-US')}` }) +
+      ui.logBlock(alertRows(data)) +
+      ui.button('View alert history', dashboardUrl),
+    footer: { kind: 'notifications' },
+  });
 
   const text = `
-ALERT TRIGGERED: ${data.ruleName}
+Alert triggered: ${data.ruleName}
 ${'='.repeat(50)}
 
 ${data.logCount.toLocaleString('en-US')} logs matched in the last ${data.timeWindow} minute${data.timeWindow > 1 ? 's' : ''}, exceeding your threshold of ${data.threshold.toLocaleString('en-US')}.
 
-DETAILS
+Details
 -------
 Rule Name: ${data.ruleName}
 ${data.service ? `Service: ${data.service}` : ''}
@@ -483,35 +202,37 @@ export function generateErrorEmail(data: ErrorEmailData): { html: string; text: 
     ? `New Error: ${data.exceptionType}`
     : `Error: ${data.exceptionType}`;
 
-  const html = baseTemplate(
-    card(`
-      ${header(title, { text: languageLabel, color: colors.error })}
-      ${divider()}
-      ${data.exceptionMessage ? subtitle(truncate(data.exceptionMessage, 200)) : ''}
-      ${timestamp()}
-      ${data.exceptionMessage ? codeBlock(truncate(data.exceptionMessage, 500)) : ''}
-      ${infoBox([
-        { label: 'Exception Type', value: data.exceptionType, isCode: true },
-        { label: 'Service', value: data.service, isCode: true },
-        { label: 'Language', value: languageLabel },
-        { label: 'Organization', value: data.organizationName },
-        { label: 'Project', value: data.projectName },
-      ])}
-      ${data.isNewErrorGroup ? alertBox('This is a <strong>new error</strong> that hasn\'t been seen before.', 'warning') : ''}
-      ${data.isRegression ? alertBox('This error was resolved and is now a <strong>regression</strong>: it has occurred again.', 'warning') : ''}
-      ${data.isEscalating ? alertBox('This error was ignored and is now <strong>escalating</strong>: its ignore limit was reached.', 'warning') : ''}
-      ${cta('View Error Details', errorUrl)}
-    `),
-    { preheader: `${data.isNewErrorGroup ? 'New ' : ''}${data.exceptionType} in ${data.service}` }
-  );
+  const state = data.isRegression
+    ? { label: 'Regression', tone: 'warning' as const, note: 'This error was resolved and is now a regression: it has occurred again.' }
+    : data.isEscalating
+      ? { label: 'Escalating', tone: 'warning' as const, note: 'This error was ignored and is now escalating: its ignore limit was reached.' }
+      : data.isNewErrorGroup
+        ? { label: 'New error', tone: 'error' as const, note: 'This error has not been seen before.' }
+        : { label: 'Error', tone: 'error' as const, note: null };
+  const html = renderEmail({
+    title,
+    preheader: `${data.isNewErrorGroup ? 'New ' : ''}${data.exceptionType} in ${data.service}`,
+    context: emailContext(data.organizationName, data.projectName),
+    body:
+      ui.pill(state.label, state.tone) +
+      ui.title(data.exceptionType) +
+      (state.note ? ui.paragraph(state.note) : '') +
+      (data.exceptionMessage ? ui.codeBlock(truncate(data.exceptionMessage, 500)) : '') +
+      ui.logBlock([
+        { key: 'service', value: data.service },
+        { key: 'language', value: languageLabel },
+      ]) +
+      ui.button('View error details', errorUrl),
+    footer: { kind: 'notifications' },
+  });
 
   const text = `
-${data.isNewErrorGroup ? 'NEW ' : ''}ERROR: ${data.exceptionType}
+${data.isNewErrorGroup ? 'New error' : 'Error'}: ${data.exceptionType}
 ${'='.repeat(50)}
 
 ${data.exceptionMessage ? `Message: ${truncate(data.exceptionMessage, 300)}` : ''}
 
-DETAILS
+Details
 -------
 Exception Type: ${data.exceptionType}
 Service: ${data.service}
@@ -544,14 +265,6 @@ export interface IncidentEmailData {
   organizationName: string;
 }
 
-const severityColors: Record<string, string> = {
-  critical: colors.critical,
-  high: colors.high,
-  medium: colors.medium,
-  low: colors.low,
-  informational: colors.informational,
-};
-
 const severityLabels: Record<string, string> = {
   critical: 'Critical',
   high: 'High',
@@ -563,38 +276,32 @@ const severityLabels: Record<string, string> = {
 export function generateIncidentEmail(data: IncidentEmailData): { html: string; text: string } {
   const frontendUrl = getFrontendUrl();
   const incidentUrl = `${frontendUrl}/dashboard/incidents/${data.incidentId}`;
-  const severityColor = severityColors[data.severity] || colors.informational;
   const severityLabel = severityLabels[data.severity] || data.severity;
 
-  const html = baseTemplate(
-    card(`
-      ${header(`Security Incident: ${data.title}`, { text: severityLabel, color: severityColor })}
-      ${divider()}
-      ${data.description ? subtitle(truncate(data.description, 200)) : ''}
-      ${timestamp()}
-      ${(data.severity === 'critical' || data.severity === 'high') ?
-        alertBox('This incident requires <strong>immediate attention</strong>.', data.severity === 'critical' ? 'error' : 'warning')
-        : ''
-      }
-      ${infoBox([
-        { label: 'Incident', value: data.title },
-        { label: 'Severity', value: severityLabel },
-        { label: 'Organization', value: data.organizationName },
-        ...(data.affectedServices?.length ? [{ label: 'Affected Services', value: data.affectedServices.join(', '), isCode: true }] : []),
-      ])}
-      ${cta('View Incident', incidentUrl)}
-    `),
-    { preheader: `[${severityLabel}] ${data.title}` }
-  );
+  const html = renderEmail({
+    title: `Security incident: ${data.title}`,
+    preheader: `[${severityLabel}] ${data.title}`,
+    context: data.organizationName,
+    body:
+      ui.pill(severityLabel, severityTone(data.severity)) +
+      ui.title(data.title) +
+      (data.description ? ui.paragraph(truncate(data.description, 500)) : '') +
+      (data.severity === 'critical' || data.severity === 'high'
+        ? ui.notice('This incident requires immediate attention.', data.severity === 'critical' ? 'critical' : 'error')
+        : '') +
+      ui.logBlock(data.affectedServices?.length ? [{ key: 'services', value: data.affectedServices.join(', ') }] : []) +
+      ui.button('View incident', incidentUrl),
+    footer: { kind: 'notifications' },
+  });
 
   const text = `
-SECURITY INCIDENT: ${data.title}
+Security incident: ${data.title}
 ${'='.repeat(50)}
-Severity: ${severityLabel.toUpperCase()}
+Severity: ${severityLabel}
 
 ${data.description || ''}
 
-DETAILS
+Details
 -------
 Organization: ${data.organizationName}
 ${data.affectedServices?.length ? `Affected Services: ${data.affectedServices.join(', ')}` : ''}
@@ -637,42 +344,38 @@ export function generateSigmaDetectionEmail(data: SigmaDetectionEmailData): { ht
       ? `${frontendUrl}/dashboard/security/rules/${data.ruleId}`
       : `${frontendUrl}/dashboard/security`;
   const ctaLabel = data.incidentId ? 'View incident' : data.ruleId ? 'View rule' : 'View in Security Dashboard';
-  const severityColor = severityColors[data.severity] || colors.informational;
   const severityLabel = severityLabels[data.severity] || data.severity;
 
-  const html = baseTemplate(
-    card(`
-      ${header(`Detection: ${data.ruleTitle}`, { text: severityLabel, color: severityColor })}
-      ${divider()}
-      ${data.ruleDescription ? subtitle(truncate(data.ruleDescription, 200)) : ''}
-      ${timestamp()}
-      ${(data.severity === 'critical' || data.severity === 'high') ?
-        alertBox('A Sigma rule has detected potentially <strong>malicious activity</strong>.', data.severity === 'critical' ? 'error' : 'warning')
-        : ''
-      }
-      ${infoBox([
-        { label: 'Rule', value: data.ruleTitle },
-        { label: 'Severity', value: severityLabel },
-        { label: 'Service', value: data.service, isCode: true },
-        { label: 'Organization', value: data.organizationName },
-      ])}
-      ${data.matchedFields && Object.keys(data.matchedFields).length > 0 ?
-        codeBlock(JSON.stringify(data.matchedFields, null, 2))
-        : ''
-      }
-      ${cta(ctaLabel, detectionUrl)}
-    `),
-    { preheader: `[${severityLabel}] Sigma detection: ${data.ruleTitle}` }
-  );
+  const html = renderEmail({
+    title: `Detection: ${data.ruleTitle}`,
+    preheader: `[${severityLabel}] Sigma detection: ${data.ruleTitle}`,
+    context: data.organizationName,
+    body:
+      ui.pill(severityLabel, severityTone(data.severity)) +
+      ui.title(data.ruleTitle) +
+      (data.ruleDescription ? ui.paragraph(truncate(data.ruleDescription, 500)) : '') +
+      (data.severity === 'critical' || data.severity === 'high'
+        ? ui.notice(
+            'A Sigma rule has detected potentially malicious activity.',
+            data.severity === 'critical' ? 'critical' : 'error'
+          )
+        : '') +
+      ui.logBlock([{ key: 'service', value: data.service }]) +
+      (data.matchedFields && Object.keys(data.matchedFields).length > 0
+        ? ui.codeBlock(JSON.stringify(data.matchedFields, null, 2))
+        : '') +
+      ui.button(ctaLabel, detectionUrl),
+    footer: { kind: 'notifications' },
+  });
 
   const text = `
-SIGMA DETECTION: ${data.ruleTitle}
+Sigma detection: ${data.ruleTitle}
 ${'='.repeat(50)}
-Severity: ${severityLabel.toUpperCase()}
+Severity: ${severityLabel}
 
 ${data.ruleDescription || ''}
 
-DETAILS
+Details
 -------
 Service: ${data.service}
 Organization: ${data.organizationName}
@@ -713,30 +416,30 @@ export function generateInvitationEmail(data: InvitationEmailData): { html: stri
   const inviteUrl = `${frontendUrl}/invite/${data.token}`;
   const roleLabel = roleLabels[data.role] || data.role;
 
-  const html = baseTemplate(
-    card(`
-      ${header(`Join ${data.organizationName}`, { text: 'Invitation', color: colors.info })}
-      ${divider()}
-      ${subtitle(`${data.inviterName} has invited you to join their organization on LogTide.`)}
-      ${alertBox(`You've been invited as <strong>${roleLabel}</strong>. This invitation expires in 7 days.`, 'info')}
-      ${infoBox([
-        { label: 'Organization', value: data.organizationName },
-        { label: 'Invited By', value: data.inviterName },
-        { label: 'Role', value: roleLabel },
-        { label: 'Email', value: data.email },
-      ])}
-      ${cta('Accept Invitation', inviteUrl)}
-    `),
-    { preheader: `${data.inviterName} invited you to join ${data.organizationName}` }
-  );
+  const html = renderEmail({
+    title: `Join ${data.organizationName}`,
+    preheader: `${data.inviterName} invited you to join ${data.organizationName}`,
+    body:
+      ui.title(`Join ${data.organizationName}`) +
+      ui.paragraph(`${data.inviterName} has invited you to join ${data.organizationName} on LogTide as ${roleLabel}.`) +
+      ui.logBlock([
+        { key: 'organization', value: data.organizationName },
+        { key: 'role', value: roleLabel },
+        { key: 'email', value: data.email },
+      ]) +
+      ui.button('Accept invitation', inviteUrl) +
+      ui.linkFallback(inviteUrl) +
+      ui.paragraph('This invitation expires in 7 days.'),
+    footer: { kind: 'account' },
+  });
 
   const text = `
-INVITATION: Join ${data.organizationName}
+Invitation: join ${data.organizationName}
 ${'='.repeat(50)}
 
 ${data.inviterName} has invited you to join ${data.organizationName} on LogTide as a ${roleLabel}.
 
-DETAILS
+Details
 -------
 Organization: ${data.organizationName}
 Invited By: ${data.inviterName}
@@ -767,19 +470,20 @@ export function generateEmailVerificationEmail(data: EmailVerificationEmailData)
   const frontendUrl = getFrontendUrl();
   const verifyUrl = `${frontendUrl}/verify-email?token=${encodeURIComponent(data.token)}`;
 
-  const html = baseTemplate(
-    card(`
-      ${header('Verify your email', { text: 'Account', color: colors.info })}
-      ${divider()}
-      ${subtitle(`Hi ${data.name}, confirm your email address to finish setting up your LogTide account.`)}
-      ${alertBox('This link expires in 24 hours and can be used once.', 'info')}
-      ${cta('Verify email', verifyUrl)}
-    `),
-    { preheader: 'Confirm your email address for LogTide' }
-  );
+  const html = renderEmail({
+    title: 'Verify your email',
+    preheader: 'Confirm your email address for LogTide',
+    body:
+      ui.title('Verify your email') +
+      ui.paragraph(`Hi ${data.name}, confirm your email address to finish setting up your LogTide account.`) +
+      ui.button('Verify email', verifyUrl) +
+      ui.linkFallback(verifyUrl) +
+      ui.paragraph('This link expires in 24 hours and can be used once. If you did not create a LogTide account, you can ignore this email.'),
+    footer: { kind: 'account' },
+  });
 
   const text = `
-VERIFY YOUR EMAIL
+Verify your email
 ${'='.repeat(50)}
 
 Hi ${data.name}, confirm your email address to finish setting up your LogTide account.
@@ -809,19 +513,20 @@ export function generatePasswordResetEmail(data: PasswordResetEmailData): { html
   const frontendUrl = getFrontendUrl();
   const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(data.token)}`;
 
-  const html = baseTemplate(
-    card(`
-      ${header('Reset your password', { text: 'Account', color: colors.info })}
-      ${divider()}
-      ${subtitle(`Hi ${data.name}, we received a request to reset the password of your LogTide account.`)}
-      ${alertBox('This link expires in 1 hour and can be used once.', 'info')}
-      ${cta('Reset password', resetUrl)}
-    `),
-    { preheader: 'Reset your LogTide password' }
-  );
+  const html = renderEmail({
+    title: 'Reset your password',
+    preheader: 'Reset your LogTide password',
+    body:
+      ui.title('Reset your password') +
+      ui.paragraph(`Hi ${data.name}, we received a request to reset the password of your LogTide account.`) +
+      ui.button('Reset password', resetUrl) +
+      ui.linkFallback(resetUrl) +
+      ui.paragraph('This link expires in 1 hour and can be used once. If you did not ask for this, you can ignore this email and your password stays the same.'),
+    footer: { kind: 'account' },
+  });
 
   const text = `
-RESET YOUR PASSWORD
+Reset your password
 ${'='.repeat(50)}
 
 Hi ${data.name}, we received a request to reset the password of your LogTide account.
@@ -866,7 +571,6 @@ export function generateMonitorEmail(data: MonitorEmailData): { html: string; te
   const severityLabel = severityLabels[data.severity] || data.severity;
 
   const statusLabel = isDown ? 'Down' : 'Recovered';
-  const statusColor = isDown ? colors.error : colors.success;
 
   const infoRows: Array<{ label: string; value: string; isCode?: boolean }> = [
     { label: 'Monitor', value: data.monitorName },
@@ -895,34 +599,34 @@ export function generateMonitorEmail(data: MonitorEmailData): { html: string; te
     ? `Monitor down: ${data.monitorName}`
     : `Monitor recovered: ${data.monitorName}`;
 
-  const html = baseTemplate(
-    card(`
-      ${header(title, { text: statusLabel, color: statusColor })}
-      ${divider()}
-      ${timestamp()}
-      ${isDown
-        ? alertBox(
-            `<strong>${escapeHtml(data.monitorName)}</strong> is not responding.${data.errorCode ? ` Error: <strong>${escapeHtml(data.errorCode)}</strong>` : ''}`,
-            data.severity === 'critical' ? 'error' : 'warning'
-          )
-        : alertBox(
-            `<strong>${escapeHtml(data.monitorName)}</strong> is back online.${data.downtimeDuration ? ` Downtime: <strong>${escapeHtml(data.downtimeDuration)}</strong>` : ''}`,
-            'success'
-          )
-      }
-      ${infoBox(infoRows)}
-      ${cta('View Monitor', monitorUrl)}
-    `),
-    { preheader: `[${statusLabel}] ${data.monitorName}` }
-  );
+  const html = renderEmail({
+    title,
+    preheader: `[${statusLabel}] ${data.monitorName}`,
+    context: data.organizationName,
+    body:
+      ui.pill(isDown ? 'Down' : 'Up', isDown ? (data.severity === 'critical' ? 'error' : 'warning') : 'success') +
+      ui.title(data.monitorName) +
+      ui.paragraph(
+        isDown
+          ? `${data.monitorName} is not responding.${data.errorCode ? ` Error: ${data.errorCode}` : ''}`
+          : `${data.monitorName} is back online.${data.downtimeDuration ? ` Downtime: ${data.downtimeDuration}` : ''}`
+      ) +
+      ui.logBlock(
+        infoRows
+          .filter((r) => !['Monitor', 'Status', 'Organization'].includes(r.label))
+          .map((r) => ({ key: r.label.toLowerCase().replace(/ /g, '_'), value: r.value }))
+      ) +
+      ui.button('View monitor', monitorUrl),
+    footer: { kind: 'notifications' },
+  });
 
   const text = `
-MONITOR ${statusLabel.toUpperCase()}: ${data.monitorName}
+Monitor ${statusLabel.toLowerCase()}: ${data.monitorName}
 ${'='.repeat(50)}
 
 ${isDown ? `${data.monitorName} is not responding.` : `${data.monitorName} is back online.`}
 
-DETAILS
+Details
 -------
 Organization: ${data.organizationName}
 ${data.target ? `Target: ${data.target}` : ''}
@@ -963,8 +667,8 @@ export function generateProjectHealthEmail(data: ProjectHealthEmailData): { html
   const frontendUrl = getFrontendUrl();
   const isOpen = data.kind === 'opened';
   const badge = isOpen
-    ? { text: data.severity === 'critical' ? 'Critical' : 'Warning', color: data.severity === 'critical' ? colors.error : colors.warning }
-    : { text: 'Resolved', color: colors.success };
+    ? { text: data.severity === 'critical' ? 'Critical' : 'Warning' }
+    : { text: 'Resolved' };
   const heading = isOpen ? `${data.title}: ${data.projectName}` : `Resolved: ${data.title} (${data.projectName})`;
 
   const infoRows: Array<{ label: string; value: string }> = [
@@ -974,25 +678,31 @@ export function generateProjectHealthEmail(data: ProjectHealthEmailData): { html
   ];
   if (data.resolvedAt) infoRows.push({ label: 'Resolved', value: data.resolvedAt });
 
-  const html = baseTemplate(
-    card(`
-      ${header(heading, badge)}
-      ${divider()}
-      ${timestamp()}
-      ${alertBox(escapeHtml(data.message), isOpen ? (data.severity === 'critical' ? 'error' : 'warning') : 'success')}
-      ${infoBox(infoRows)}
-      ${cta('View project health', data.link)}
-    `),
-    { preheader: `[${badge.text}] ${data.projectName}: ${data.title}` }
-  );
+  const tone = !isOpen ? 'success' : data.severity === 'critical' ? 'error' : 'warning';
+  const html = renderEmail({
+    title: heading,
+    preheader: `[${badge.text}] ${data.projectName}: ${data.title}`,
+    context: emailContext(data.organizationName, data.projectName),
+    body:
+      ui.pill(badge.text, tone) +
+      ui.title(data.title) +
+      ui.notice(data.message, tone) +
+      ui.logBlock(
+        infoRows
+          .filter((r) => r.label === 'Opened' || r.label === 'Resolved')
+          .map((r) => ({ key: r.label.toLowerCase(), value: r.value }))
+      ) +
+      ui.button('View project health', data.link),
+    footer: { kind: 'notifications' },
+  });
 
   const text = `
-PROJECT HEALTH ${isOpen ? badge.text.toUpperCase() : 'RESOLVED'}: ${data.title}
+Project health ${isOpen ? badge.text.toLowerCase() : 'resolved'}: ${data.title}
 ${'='.repeat(50)}
 
 ${data.message}
 
-DETAILS
+Details
 -------
 Project: ${data.projectName}
 Organization: ${data.organizationName}
@@ -1024,51 +734,25 @@ export type DigestEmailData = DigestReportData & {
   dashboardUrl: string;
 };
 
+/** Section titles in sentence case; all-caps words such as MITRE stay as they are. */
 function digestSectionTitle(title: string): string {
-  return `<tr>
-    <td style="padding: 20px 24px 4px;">
-      <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: ${colors.text}; text-transform: uppercase; letter-spacing: 0.5px;">
-        ${escapeHtml(title)}
-      </h2>
-    </td>
-  </tr>`;
+  const words = title.split(' ');
+  const sentence = words
+    .map((w, i) => (i === 0 || (w.length > 1 && w === w.toUpperCase()) ? w : w.toLowerCase()))
+    .join(' ');
+  return ui.sectionTitle(sentence);
 }
 
 function digestEmptyLine(message: string): string {
-  return `<tr>
-    <td style="padding: 4px 24px 8px;">
-      <p style="margin: 0; font-size: 13px; color: ${colors.textMuted};">${escapeHtml(message)}</p>
-    </td>
-  </tr>`;
+  return ui.emptyLine(message);
 }
 
 function digestTable(headers: string[], rows: string[][]): string {
-  const headerCells = headers
-    .map(
-      (h, i) =>
-        `<th align="${i === 0 ? 'left' : 'right'}" style="padding: 6px 8px; font-size: 11px; color: ${colors.textMuted}; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid ${colors.border};">${escapeHtml(h)}</th>`
-    )
-    .join('');
-  const bodyRows = rows
-    .map(
-      (cells) =>
-        `<tr>${cells
-          .map(
-            (c, i) =>
-              `<td align="${i === 0 ? 'left' : 'right'}" style="padding: 6px 8px; font-size: 13px; color: ${colors.text}; border-bottom: 1px solid ${colors.border};">${escapeHtml(c)}</td>`
-          )
-          .join('')}</tr>`
-    )
-    .join('');
-
-  return `<tr>
-    <td style="padding: 4px 24px 8px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-        <tr>${headerCells}</tr>
-        ${bodyRows}
-      </table>
-    </td>
-  </tr>`;
+  return ui.dataTable(
+    headers,
+    rows.map((cells) => cells.map((text) => ({ text }))),
+    { alignRight: headers.map((_, i) => i).filter((i) => i > 0) }
+  );
 }
 
 function formatDelta(delta: number): string {
@@ -1144,7 +828,6 @@ function buildPreheader(data: DigestEmailData): string {
 
 export function generateDigestEmail(data: DigestEmailData): { html: string; text: string } {
   const frequencyLabel = data.frequency === 'daily' ? 'Daily' : 'Weekly';
-  const title = `${frequencyLabel} Digest`;
   // A period is only quiet when nothing arrived at all: an org that ships no
   // logs but does ship traces is not quiet, so spans veto the message. With the
   // log volume section disabled there is no volume to call quiet at all.
@@ -1163,12 +846,11 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
   const logVolumeSection = data.logVolume
     ? digestSectionTitle('Log Volume') +
       (quiet
-        ? alertBox('No activity during this period. Your systems have been quiet.', 'info')
-        : infoBox([
-            { label: 'Total Logs', value: data.logVolume.current.toLocaleString('en-US') },
-            { label: 'Trend', value: data.logVolume.trend },
-            { label: 'Previous Period', value: data.logVolume.previous.toLocaleString('en-US') },
-          ]))
+        ? ui.notice('No activity during this period. Your systems have been quiet.', 'info')
+        : ui.bigNumber(
+            data.logVolume.current.toLocaleString('en-US'),
+            `logs, ${data.logVolume.trend} compared to the previous period (${data.logVolume.previous.toLocaleString('en-US')})`
+          ))
     : '';
 
   const topServicesSection = data.topErrorServices
@@ -1202,9 +884,9 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const securitySection = data.security
     ? digestSectionTitle('Security') +
-      infoBox([
+      ui.statRows([
         { label: 'Detections', value: data.security.totalDetections.toLocaleString('en-US') },
-        { label: 'Open Incidents', value: data.security.openIncidents.toLocaleString('en-US') },
+        { label: 'Open incidents', value: data.security.openIncidents.toLocaleString('en-US') },
       ]) +
       (data.security.topRules.length > 0
         ? digestTable(
@@ -1220,7 +902,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const uptimeSection = data.uptime
     ? digestSectionTitle('Uptime') +
-      infoBox([
+      ui.statRows([
         { label: 'Overall', value: `${data.uptime.overallUptimePct.toLocaleString('en-US')}%` },
         { label: 'Monitors', value: data.uptime.monitorCount.toLocaleString('en-US') },
       ]) +
@@ -1248,9 +930,9 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
           l.previous.toLocaleString('en-US'),
         ])
       ) +
-      infoBox([
-        { label: 'Error Rate', value: formatPct(data.logBreakdown.errorRatePct) },
-        { label: 'Previous Error Rate', value: formatPct(data.logBreakdown.previousErrorRatePct) },
+      ui.statRows([
+        { label: 'Error rate', value: formatPct(data.logBreakdown.errorRatePct) },
+        { label: 'Previous error rate', value: formatPct(data.logBreakdown.previousErrorRatePct) },
       ]) +
       (data.logBreakdown.daily?.length
         ? digestTable(
@@ -1273,11 +955,11 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const tracesSection = data.traces
     ? digestSectionTitle('Traces') +
-      infoBox([
+      ui.statRows([
         { label: 'Spans', value: data.traces.spanCount.toLocaleString('en-US') },
-        { label: 'Span Trend', value: data.traces.trend },
-        { label: 'Previous Period', value: data.traces.previousSpanCount.toLocaleString('en-US') },
-        { label: 'Error Spans', value: data.traces.errorSpanCount.toLocaleString('en-US') },
+        { label: 'Span trend', value: data.traces.trend },
+        { label: 'Previous period', value: data.traces.previousSpanCount.toLocaleString('en-US') },
+        { label: 'Error spans', value: data.traces.errorSpanCount.toLocaleString('en-US') },
       ]) +
       (data.traces.services.length > 0
         ? digestEmptyLine(
@@ -1308,11 +990,11 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const metricsSection = data.metrics
     ? digestSectionTitle('Metrics') +
-      infoBox([
+      ui.statRows([
         { label: 'Datapoints', value: data.metrics.datapoints.toLocaleString('en-US') },
-        { label: 'Datapoint Trend', value: data.metrics.trend },
+        { label: 'Datapoint trend', value: data.metrics.trend },
         {
-          label: 'Previous Period',
+          label: 'Previous period',
           value: data.metrics.previousDatapoints.toLocaleString('en-US'),
         },
       ])
@@ -1320,10 +1002,10 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const alertsSection = data.alerts
     ? digestSectionTitle('Alerts') +
-      infoBox([
+      ui.statRows([
         { label: 'Triggers', value: data.alerts.total.toLocaleString('en-US') },
-        { label: 'Alert Trend', value: data.alerts.trend },
-        { label: 'Previous Period', value: data.alerts.previousTotal.toLocaleString('en-US') },
+        { label: 'Alert trend', value: data.alerts.trend },
+        { label: 'Previous period', value: data.alerts.previousTotal.toLocaleString('en-US') },
       ]) +
       // Nothing fired this period but something fired in the previous one: the
       // totals still matter, the (empty) ranking does not.
@@ -1341,10 +1023,10 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const securityActivitySection = data.securityActivity
     ? digestSectionTitle('Security Activity') +
-      infoBox([
-        { label: 'Incidents Opened', value: incidentsOpened.toLocaleString('en-US') },
+      ui.statRows([
+        { label: 'Incidents opened', value: incidentsOpened.toLocaleString('en-US') },
         {
-          label: 'Incidents Resolved',
+          label: 'Incidents resolved',
           value: data.securityActivity.resolvedCount.toLocaleString('en-US'),
         },
       ]) +
@@ -1359,7 +1041,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
         : '') +
       (data.securityActivity.topTechniques.length > 0
         ? digestTable(
-            ['MITRE Technique', 'Detections'],
+            ['MITRE technique', 'Detections'],
             data.securityActivity.topTechniques.map((t) => [
               t.technique,
               t.count.toLocaleString('en-US'),
@@ -1384,9 +1066,9 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const usageSection = data.usage
     ? digestSectionTitle('Usage') +
-      infoBox([
-        { label: 'Log Events', value: data.usage.logEvents.toLocaleString('en-US') },
-        { label: 'Log Volume', value: formatBytes(data.usage.logBytes) },
+      ui.statRows([
+        { label: 'Log events', value: data.usage.logEvents.toLocaleString('en-US') },
+        { label: 'Log volume', value: formatBytes(data.usage.logBytes) },
         { label: 'Spans', value: data.usage.spans.toLocaleString('en-US') },
       ]) +
       (data.usage.topProjects.length > 0
@@ -1397,9 +1079,9 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
         : '') +
       // Quota windows are month-to-date, not period-scoped: say so.
       (data.usage.quotaWarnings.length > 0
-        ? alertBox(
+        ? ui.notice(
             `Month-to-date usage above 80% of limit: ${data.usage.quotaWarnings
-              .map((w) => `<strong>${escapeHtml(w.capability)}</strong> ${w.usedPct}%`)
+              .map((w) => `${w.capability} ${w.usedPct}%`)
               .join(', ')}`,
             'warning'
           )
@@ -1408,14 +1090,14 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const webhooksSection = data.webhooks
     ? digestSectionTitle('Webhooks') +
-      infoBox([
+      ui.statRows([
         { label: 'Delivered', value: data.webhooks.delivered.toLocaleString('en-US') },
         { label: 'Failed', value: data.webhooks.failed.toLocaleString('en-US') },
         { label: 'Dead', value: data.webhooks.dead.toLocaleString('en-US') },
       ]) +
       (data.webhooks.dead > 0
-        ? alertBox(
-            `<strong>${data.webhooks.dead.toLocaleString('en-US')}</strong> deliver${data.webhooks.dead === 1 ? 'y' : 'ies'} reached the dead-letter queue and need attention.`,
+        ? ui.notice(
+            `${data.webhooks.dead.toLocaleString('en-US')} deliver${data.webhooks.dead === 1 ? 'y' : 'ies'} reached the dead-letter queue and need attention.`,
             'warning'
           )
         : '')
@@ -1423,45 +1105,42 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const teamActivitySection = data.teamActivity
     ? digestSectionTitle('Team Activity') +
-      infoBox([
-        { label: 'Members Added', value: data.teamActivity.membersAdded.toLocaleString('en-US') },
+      ui.statRows([
+        { label: 'Members added', value: data.teamActivity.membersAdded.toLocaleString('en-US') },
         {
-          label: 'Members Removed',
+          label: 'Members removed',
           value: data.teamActivity.membersRemoved.toLocaleString('en-US'),
         },
-        { label: 'Config Changes', value: data.teamActivity.configChanges.toLocaleString('en-US') },
-        { label: 'Failed Logins', value: data.teamActivity.failedLogins.toLocaleString('en-US') },
+        { label: 'Config changes', value: data.teamActivity.configChanges.toLocaleString('en-US') },
+        { label: 'Failed logins', value: data.teamActivity.failedLogins.toLocaleString('en-US') },
       ])
     : '';
 
-  const html = baseTemplate(
-    card(`
-      ${header(title, { text: data.frequency, color: colors.info })}
-      ${divider()}
-      ${subtitle(`${data.organizationName} - ${data.periodLabel}`)}
-      ${timestamp()}
-      ${logVolumeSection}
-      ${logBreakdownSection}
-      ${topServicesSection}
-      ${topErrorMessagesSection}
-      ${errorGroupsSection}
-      ${tracesSection}
-      ${metricsSection}
-      ${alertsSection}
-      ${securitySection}
-      ${securityActivitySection}
-      ${uptimeSection}
-      ${monitorPerformanceSection}
-      ${usageSection}
-      ${webhooksSection}
-      ${teamActivitySection}
-      ${cta('View Dashboard', data.dashboardUrl)}
-    `),
-    {
-      preheader: quiet ? `Quiet period for ${data.organizationName}` : buildPreheader(data),
-      unsubscribeUrl: data.unsubscribeUrl,
-    }
-  );
+  const html = renderEmail({
+    title: `${frequencyLabel} digest`,
+    preheader: quiet ? `Quiet period for ${data.organizationName}` : buildPreheader(data),
+    context: data.organizationName,
+    body:
+      ui.title(`${frequencyLabel} digest`) +
+      ui.paragraph(`${data.organizationName}, ${data.periodLabel}`) +
+      logVolumeSection +
+      logBreakdownSection +
+      topServicesSection +
+      topErrorMessagesSection +
+      errorGroupsSection +
+      tracesSection +
+      metricsSection +
+      alertsSection +
+      securitySection +
+      securityActivitySection +
+      uptimeSection +
+      monitorPerformanceSection +
+      usageSection +
+      webhooksSection +
+      teamActivitySection +
+      ui.button('View dashboard', data.dashboardUrl),
+    footer: { kind: 'unsubscribe', url: data.unsubscribeUrl },
+  });
 
   const lines: string[] = [];
   // Same shape as before: a blank line, the heading, then a rule of its length.
@@ -1471,13 +1150,13 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     lines.push('-'.repeat(text.length));
   };
 
-  lines.push(`LogTide ${frequencyLabel} Digest`);
+  lines.push(`LogTide ${frequencyLabel.toLowerCase()} digest`);
   lines.push(`Organization: ${data.organizationName}`);
   lines.push(`Period: ${data.periodLabel}`);
   lines.push('');
   lines.push('='.repeat(50));
   if (data.logVolume) {
-    heading('LOG VOLUME');
+    heading('Log volume');
     if (quiet) {
       lines.push('No activity during this period.');
       lines.push('Your systems have been quiet.');
@@ -1488,7 +1167,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.logBreakdown) {
-    heading('LOG BREAKDOWN');
+    heading('Log breakdown');
     for (const l of data.logBreakdown.levels) {
       lines.push(
         `${l.level}: ${l.current.toLocaleString('en-US')} (previous: ${l.previous.toLocaleString('en-US')})`
@@ -1505,7 +1184,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.topErrorServices) {
-    heading('TOP SERVICES BY ERRORS');
+    heading('Top services by errors');
     if (data.topErrorServices.length > 0) {
       for (const s of data.topErrorServices) {
         lines.push(
@@ -1517,13 +1196,13 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.topErrorMessages) {
-    heading('TOP ERROR MESSAGES');
+    heading('Top error messages');
     for (const m of data.topErrorMessages) {
       lines.push(`${truncate(m.message, 120)}: ${m.count.toLocaleString('en-US')}`);
     }
   }
   if (data.newErrorGroups) {
-    heading('NEW ERROR GROUPS');
+    heading('New error groups');
     if (data.newErrorGroups.length > 0) {
       for (const g of data.newErrorGroups) {
         const message = g.exceptionMessage ? `: ${truncate(g.exceptionMessage, 80)}` : '';
@@ -1534,7 +1213,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.traces) {
-    heading('TRACES');
+    heading('Traces');
     lines.push(`Spans: ${data.traces.spanCount.toLocaleString('en-US')}`);
     lines.push(`Span trend: ${data.traces.trend}`);
     lines.push(`Previous spans: ${data.traces.previousSpanCount.toLocaleString('en-US')}`);
@@ -1555,13 +1234,13 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.metrics) {
-    heading('METRICS');
+    heading('Metrics');
     lines.push(`Datapoints: ${data.metrics.datapoints.toLocaleString('en-US')}`);
     lines.push(`Datapoint trend: ${data.metrics.trend}`);
     lines.push(`Previous datapoints: ${data.metrics.previousDatapoints.toLocaleString('en-US')}`);
   }
   if (data.alerts) {
-    heading('ALERTS');
+    heading('Alerts');
     lines.push(`Triggers: ${data.alerts.total.toLocaleString('en-US')}`);
     lines.push(`Alert trend: ${data.alerts.trend}`);
     lines.push(`Previous triggers: ${data.alerts.previousTotal.toLocaleString('en-US')}`);
@@ -1570,7 +1249,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.security) {
-    heading('SECURITY');
+    heading('Security');
     lines.push(`Detections: ${data.security.totalDetections.toLocaleString('en-US')}`);
     lines.push(`Open incidents: ${data.security.openIncidents.toLocaleString('en-US')}`);
     for (const r of data.security.topRules) {
@@ -1578,7 +1257,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.securityActivity) {
-    heading('SECURITY ACTIVITY');
+    heading('Security activity');
     lines.push(`Incidents opened: ${incidentsOpened.toLocaleString('en-US')}`);
     lines.push(
       `Incidents resolved: ${data.securityActivity.resolvedCount.toLocaleString('en-US')}`
@@ -1597,14 +1276,14 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.uptime) {
-    heading('UPTIME');
+    heading('Uptime');
     lines.push(`Overall: ${data.uptime.overallUptimePct.toLocaleString('en-US')}% across ${data.uptime.monitorCount.toLocaleString('en-US')} monitor(s)`);
     for (const m of data.uptime.worstMonitors) {
       lines.push(`${m.name}: ${m.uptimePct.toLocaleString('en-US')}%`);
     }
   }
   if (data.monitorPerformance) {
-    heading('MONITOR PERFORMANCE');
+    heading('Monitor performance');
     lines.push('Monitors without response timing (heartbeats) show a dash.');
     for (const m of data.monitorPerformance) {
       lines.push(
@@ -1613,7 +1292,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.usage) {
-    heading('USAGE');
+    heading('Usage');
     lines.push(`Log events: ${data.usage.logEvents.toLocaleString('en-US')}`);
     lines.push(`Log volume: ${formatBytes(data.usage.logBytes)}`);
     lines.push(`Spans: ${data.usage.spans.toLocaleString('en-US')}`);
@@ -1631,7 +1310,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.webhooks) {
-    heading('WEBHOOKS');
+    heading('Webhooks');
     lines.push(`Delivered: ${data.webhooks.delivered.toLocaleString('en-US')}`);
     lines.push(`Failed: ${data.webhooks.failed.toLocaleString('en-US')}`);
     lines.push(`Dead: ${data.webhooks.dead.toLocaleString('en-US')}`);
@@ -1640,7 +1319,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
     }
   }
   if (data.teamActivity) {
-    heading('TEAM ACTIVITY');
+    heading('Team activity');
     lines.push(`Members added: ${data.teamActivity.membersAdded.toLocaleString('en-US')}`);
     lines.push(`Members removed: ${data.teamActivity.membersRemoved.toLocaleString('en-US')}`);
     lines.push(`Config changes: ${data.teamActivity.configChanges.toLocaleString('en-US')}`);

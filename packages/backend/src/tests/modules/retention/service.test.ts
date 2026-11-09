@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RetentionService } from '../../../modules/retention/service.js';
 import { db } from '../../../database/index.js';
+import { reservoir } from '../../../database/reservoir.js';
 import {
   createTestContext,
   createTestLog,
@@ -483,6 +484,59 @@ describe('RetentionService', () => {
       );
 
       expect(result.executionTimeMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should apply the retention to spans as well', async () => {
+      const ctx = await createTestContext();
+      const span = (id: string, time: Date) => ({
+        time,
+        spanId: id,
+        traceId: `trace-${id}`,
+        projectId: ctx.project.id,
+        organizationId: ctx.organization.id,
+        serviceName: 'api',
+        operationName: 'op',
+        startTime: time,
+        endTime: new Date(time.getTime() + 10),
+        durationMs: 10,
+      });
+      const ing = await reservoir.ingestSpans([
+        span('old', new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)),
+        span('new', new Date()),
+      ]);
+
+      expect(ing.failed).toBe(0);
+      await service.executeRetentionForOrganization(ctx.organization.id, 1, ctx.organization.name);
+
+      const { spans } = await reservoir.querySpans({
+        projectId: ctx.project.id,
+        from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        to: new Date(Date.now() + 60_000),
+        limit: 10,
+      });
+      expect(spans.map((s) => s.spanId)).toEqual(['new']);
+    });
+  });
+
+  describe('executeRetentionForAllOrganizations - max retention', () => {
+    it('drops everything older than the longest retention on every engine', async () => {
+      const ctx = await createTestContext();
+      const { max } = await db
+        .selectFrom('organizations')
+        .select((eb) => eb.fn.max('retention_days').as('max'))
+        .executeTakeFirstOrThrow();
+      const spy = vi.spyOn(reservoir, 'dropOlderThan');
+      try {
+        const before = Date.now();
+        await service.executeRetentionForAllOrganizations();
+        expect(spy).toHaveBeenCalledTimes(1);
+        const cutoff = (spy.mock.calls[0][0] as Date).getTime();
+        const expected = before - Number(max) * 24 * 60 * 60 * 1000;
+        expect(Math.abs(cutoff - expected)).toBeLessThan(60_000);
+        expect(ctx.organization.id).toBeTruthy();
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 

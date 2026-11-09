@@ -7,6 +7,10 @@ import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer'
 import { config } from '../../../config/index.js';
 import type { NotificationProvider, NotificationContext, DeliveryResult } from './interface.js';
 import type { EmailChannelConfig, ChannelConfig } from '@logtide/shared';
+import { getFrontendUrl } from '../../../lib/email/util.js';
+import { renderEmail } from '../../../lib/email/layout.js';
+import * as ui from '../../../lib/email/components.js';
+import { severityTone, type Severity } from '../../../lib/email/tokens.js';
 
 export class EmailProvider implements NotificationProvider {
   readonly type = 'email' as const;
@@ -103,97 +107,7 @@ export class EmailProvider implements NotificationProvider {
   }
 
   private generateHtml(context: NotificationContext): string {
-    const severityColor = this.getSeverityColor(context.severity);
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const link = context.link ? `${frontendUrl}${context.link}` : frontendUrl;
-
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      </head>
-      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5;">
-        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
-          <tr>
-            <td align="center">
-              <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                <!-- Header -->
-                <tr>
-                  <td style="padding: 32px 32px 24px; border-bottom: 1px solid #e4e4e7;">
-                    <table width="100%" cellpadding="0" cellspacing="0">
-                      <tr>
-                        <td>
-                          <span style="font-size: 24px; font-weight: 700; color: ${severityColor};">${context.title}</span>
-                        </td>
-                        ${context.severity ? `
-                        <td align="right">
-                          <span style="display: inline-block; padding: 6px 12px; background-color: ${severityColor}; color: white; border-radius: 4px; font-size: 12px; font-weight: 600; text-transform: uppercase;">
-                            ${context.severity}
-                          </span>
-                        </td>
-                        ` : ''}
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-
-                <!-- Content -->
-                <tr>
-                  <td style="padding: 32px;">
-                    <p style="margin: 0 0 24px; font-size: 14px; color: #52525b; line-height: 1.6;">
-                      ${context.message}
-                    </p>
-
-                    <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; border-radius: 6px; margin-bottom: 24px;">
-                      <tr>
-                        <td style="padding: 16px;">
-                          <table width="100%" cellpadding="0" cellspacing="0">
-                            <tr>
-                              <td style="padding-bottom: 8px;">
-                                <span style="font-size: 12px; color: #71717a;">Organization</span><br>
-                                <span style="font-size: 14px; font-weight: 500; color: #18181b;">${context.organizationName}</span>
-                              </td>
-                            </tr>
-                            <tr>
-                              <td>
-                                <span style="font-size: 12px; color: #71717a;">Event Type</span><br>
-                                <span style="font-size: 14px; font-weight: 500; color: #18181b;">${context.eventType}</span>
-                              </td>
-                            </tr>
-                          </table>
-                        </td>
-                      </tr>
-                    </table>
-
-                    <table width="100%" cellpadding="0" cellspacing="0">
-                      <tr>
-                        <td align="center">
-                          <a href="${link}" style="display: inline-block; padding: 12px 24px; background-color: #18181b; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">
-                            View Details
-                          </a>
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-
-                <!-- Footer -->
-                <tr>
-                  <td style="padding: 24px 32px; background-color: #f4f4f5; border-radius: 0 0 8px 8px;">
-                    <p style="margin: 0; font-size: 12px; color: #71717a; text-align: center;">
-                      This is an automated notification from LogTide.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
+    return renderChannelEmail(context);
   }
 
   private generateText(context: NotificationContext): string {
@@ -210,14 +124,30 @@ This is an automated notification from LogTide.
     `.trim();
   }
 
-  private getSeverityColor(severity?: string): string {
-    const colors: Record<string, string> = {
-      critical: '#dc2626',
-      high: '#ea580c',
-      medium: '#ca8a04',
-      low: '#2563eb',
-      informational: '#6b7280',
-    };
-    return colors[severity || 'informational'] || '#6b7280';
-  }
+}
+
+const SEVERITY_LABELS: Record<string, string> = {
+  critical: 'Critical',
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
+  informational: 'Info',
+};
+
+/** HTML of a notification sent through an email channel (and of its test message). */
+export function renderChannelEmail(context: NotificationContext): string {
+  const link = context.link ? `${getFrontendUrl()}${context.link}` : getFrontendUrl();
+  const severity = context.severity as Severity | undefined;
+  return renderEmail({
+    title: context.title,
+    preheader: context.message,
+    context: context.organizationName,
+    body:
+      (severity ? ui.pill(SEVERITY_LABELS[severity] ?? severity, severityTone(severity)) : '') +
+      ui.title(context.title) +
+      ui.paragraph(context.message, { preWrap: true }) +
+      ui.logBlock([{ key: 'event', value: context.eventType }]) +
+      ui.button('View details', link),
+    footer: { kind: 'notifications' },
+  });
 }

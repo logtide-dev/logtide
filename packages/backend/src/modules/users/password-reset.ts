@@ -117,6 +117,27 @@ export class PasswordResetService {
   }
 
   /**
+   * The account a still-valid token belongs to, without consuming the token.
+   * Same conditions as confirm(): unused, unexpired, enabled user with a local
+   * password, and the expected user when the caller holds a session.
+   */
+  async findTokenUser(token: string, expectedUserId?: string): Promise<{ email: string; name: string | null } | null> {
+    let query = db
+      .selectFrom('password_reset_tokens')
+      .innerJoin('users', 'users.id', 'password_reset_tokens.user_id')
+      .select(['users.email', 'users.name'])
+      .where('password_reset_tokens.token_hash', '=', hashResetToken(token))
+      .where('password_reset_tokens.used_at', 'is', null)
+      .where('password_reset_tokens.expires_at', '>', sql<Date>`NOW()`)
+      .where('users.disabled', '=', false)
+      .where('users.password_hash', 'is not', null);
+    if (expectedUserId) {
+      query = query.where('password_reset_tokens.user_id', '=', expectedUserId);
+    }
+    return (await query.executeTakeFirst()) ?? null;
+  }
+
+  /**
    * Consume a token and set the new password in one transaction. Single use is
    * enforced by the conditional UPDATE. When `expectedUserId` is given (the
    * caller holds a session) a token belonging to someone else is rejected

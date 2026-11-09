@@ -1,0 +1,38 @@
+<!--
+  ClickHouse system log tables, tuned for LogTide.
+
+  With the defaults of ClickHouse 24.1 the system log tables grow forever and
+  their background merges write more to disk than the LogTide tables do:
+  trace_log is fed by the sampling query profiler, query_log by every insert.
+  Here the tables nobody reads are disabled and the others keep a few days of
+  data in daily partitions, so expired days are dropped as whole parts.
+
+  Mounted at /etc/clickhouse-server/config.d/. Needs a server restart. On the
+  first start with this file ClickHouse renames the existing query_log and
+  part_log to query_log_0 / part_log_0 (their layout changed); those copies and
+  the tables disabled below keep their old data until dropped by hand:
+    DROP TABLE IF EXISTS system.query_log_0;
+    DROP TABLE IF EXISTS system.part_log_0;
+    DROP TABLE IF EXISTS system.trace_log;
+    DROP TABLE IF EXISTS system.metric_log;
+    DROP TABLE IF EXISTS system.asynchronous_metric_log;
+    DROP TABLE IF EXISTS system.asynchronous_insert_log;
+-->
+<clickhouse>
+    <trace_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <asynchronous_insert_log remove="1"/>
+
+    <query_log>
+        <partition_by>event_date</partition_by>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+        <flush_interval_milliseconds>30000</flush_interval_milliseconds>
+    </query_log>
+
+    <part_log>
+        <partition_by>event_date</partition_by>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+        <flush_interval_milliseconds>30000</flush_interval_milliseconds>
+    </part_log>
+</clickhouse>

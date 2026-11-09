@@ -23,6 +23,8 @@ export default defineConfig({
       // Use fileURLToPath so paths with spaces are decoded correctly
       // (new URL().pathname encodes spaces as %20 which breaks Vite resolution)
       $lib: path.resolve(__dirname, 'src/lib'),
+      // Subpath first: the bare alias below would otherwise swallow it.
+      '@logtide/shared/password': path.resolve(__dirname, '../../packages/shared/src/password/index.ts'),
       '@logtide/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
       // $app/environment is a SvelteKit virtual module with no resolution under
       // plain vitest; point it at a stub so store/component tests can import it.

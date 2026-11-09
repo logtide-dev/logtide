@@ -16,13 +16,14 @@ import { QuotaEvaluator } from '../../capabilities/quota-evaluator.js';
 import { settingsService } from '../../modules/settings/index.js';
 import { SETTING_KEYS } from '../../modules/settings/service.js';
 import { createTestSession } from '../helpers/auth.js';
-import { createTestApiKey, createTestContext } from '../helpers/factories.js';
+import { createTestApiKey, createTestContext, STRONG_TEST_PASSWORD } from '../helpers/factories.js';
 
 const SEAM_ENV = [
   'CAPABILITY_DEFAULTS_JSON',
   'LOGTIDE_ADMIN_SERVICE_TOKEN',
   'LOGTIDE_UPGRADE_URL',
   'LOGTIDE_UPGRADE_SIGNING_SECRET',
+  'DEFAULT_ORG_RETENTION_DAYS',
   'MAX_ORGANIZATIONS_PER_USER',
   'MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH',
   'REQUIRE_EMAIL_VERIFICATION',
@@ -203,7 +204,7 @@ describe('hosting seams with all env unset', () => {
       const reg = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/register',
-        payload: { email, password: 'password123', name: 'Seams' },
+        payload: { email, password: STRONG_TEST_PASSWORD, name: 'Seams' },
       });
       expect(reg.statusCode).toBe(201);
       const regBody = reg.json();

@@ -8,7 +8,7 @@ import {
 	TEST_FRONTEND_URL,
 } from './fixtures/auth';
 
-const PASSWORD = 'TestPassword123!';
+const PASSWORD = 'tidal-Orbit-Granite-57';
 
 test.describe('Login Page', () => {
 	test('the register link leads to the register form', async ({ page }) => {

@@ -28,7 +28,8 @@ const LOCAL = {
 async function fillForm() {
   await fireEvent.input(await screen.findByLabelText('Name'), { target: { value: 'Jane' } });
   await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'jane@example.com' } });
-  await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+  await fireEvent.input(screen.getByLabelText('Password'), { target: { value: 'tidal-Orbit-Granite-57' } });
+  await waitFor(() => expect(screen.getByText('Strong')).toBeTruthy());
 }
 
 function submitButton(): HTMLButtonElement {
@@ -55,7 +56,7 @@ describe('/register terms checkbox', () => {
     expect(submitButton().disabled).toBe(false);
     await fireEvent.click(submitButton());
     await waitFor(() => expect(register).toHaveBeenCalled());
-    expect(register.mock.calls[0][0]).toEqual({ name: 'Jane', email: 'jane@example.com', password: 'password123' });
+    expect(register.mock.calls[0][0]).toEqual({ name: 'Jane', email: 'jane@example.com', password: 'tidal-Orbit-Granite-57' });
   });
 
   it('requires the checkbox when terms are configured and sends acceptTerms', async () => {
@@ -87,7 +88,7 @@ describe('/register terms checkbox', () => {
     expect(register.mock.calls[0][0]).toEqual({
       name: 'Jane',
       email: 'jane@example.com',
-      password: 'password123',
+      password: 'tidal-Orbit-Granite-57',
       acceptTerms: true,
     });
   });

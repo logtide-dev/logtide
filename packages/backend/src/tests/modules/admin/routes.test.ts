@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { adminRoutes } from '../../../modules/admin/routes.js';
-import { createTestContext, createTestUser, createTestProject, createTestOrganization } from '../../helpers/factories.js';
+import { createTestContext, createTestUser, createTestProject, createTestOrganization, STRONG_TEST_PASSWORD } from '../../helpers/factories.js';
 import crypto from 'crypto';
 
 // Helper to create a session for a user
@@ -279,7 +279,7 @@ describe('Admin Routes', () => {
                     Authorization: `Bearer ${adminToken}`,
                 },
                 payload: {
-                    newPassword: 'newpassword123',
+                    newPassword: STRONG_TEST_PASSWORD,
                 },
             });
 
@@ -302,6 +302,18 @@ describe('Admin Routes', () => {
 
             expect(response.statusCode).toBe(400);
         });
+
+        it('should return 400 for a long but guessable password', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/admin/users/${regularUser.id}/reset-password`,
+                headers: { Authorization: `Bearer ${adminToken}` },
+                payload: { newPassword: '123456789012' },
+            });
+
+            expect(response.statusCode).toBe(400);
+            expect(JSON.parse(response.payload).error).toEqual(expect.any(String));
+        });
     });
 
     describe('POST /api/v1/admin/users', () => {
@@ -315,7 +327,7 @@ describe('Admin Routes', () => {
                 payload: {
                     email: 'newuser@test.com',
                     name: 'New User',
-                    password: 'password123',
+                    password: STRONG_TEST_PASSWORD,
                 },
             });
 
@@ -332,7 +344,7 @@ describe('Admin Routes', () => {
                 .where('email', '=', 'newuser@test.com')
                 .executeTakeFirst();
             expect(created?.password_hash).toBeTruthy();
-            expect(created?.password_hash).not.toBe('password123');
+            expect(created?.password_hash).not.toBe(STRONG_TEST_PASSWORD);
         });
 
         it('should create an admin user when is_admin=true', async () => {
@@ -345,7 +357,7 @@ describe('Admin Routes', () => {
                 payload: {
                     email: 'newadmin@test.com',
                     name: 'New Admin',
-                    password: 'password123',
+                    password: STRONG_TEST_PASSWORD,
                     is_admin: true,
                 },
             });
@@ -385,6 +397,16 @@ describe('Admin Routes', () => {
             expect(response.statusCode).toBe(400);
         });
 
+        it('should return 400 for a long but guessable password', async () => {
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/admin/users',
+                headers: { Authorization: `Bearer ${adminToken}` },
+                payload: { email: 'guessable@test.com', name: 'x', password: '123456789012' },
+            });
+            expect(response.statusCode).toBe(400);
+        });
+
         it('should return 409 for duplicate email', async () => {
             const response = await app.inject({
                 method: 'POST',
@@ -393,7 +415,7 @@ describe('Admin Routes', () => {
                 payload: {
                     email: regularUser.email,
                     name: 'Dup',
-                    password: 'password123',
+                    password: STRONG_TEST_PASSWORD,
                 },
             });
             expect(response.statusCode).toBe(409);

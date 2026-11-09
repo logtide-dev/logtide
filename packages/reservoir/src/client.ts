@@ -229,6 +229,11 @@ export class Reservoir implements IReservoir {
     return this.engine.deleteByTimeRange(params);
   }
 
+  async dropOlderThan(cutoff: Date): Promise<DeleteResult> {
+    this.ensureInitialized();
+    return this.engine.dropOlderThan(cutoff);
+  }
+
   async histogram(params: LogHistogramParams): Promise<LogHistogramResult> {
     this.ensureInitialized();
     const normalized = normalizeHistogramParams(params);

@@ -7,7 +7,7 @@ import { generateTestEmail, generateTestName, TEST_FRONTEND_URL, waitForAuthForm
  * so these journeys start at the workspace step.
  */
 
-const PASSWORD = 'TestPassword123!';
+const PASSWORD = 'tidal-Orbit-Granite-57';
 
 async function register(page: Page, label: string) {
   await page.goto(`${TEST_FRONTEND_URL}/register`);

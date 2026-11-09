@@ -11,7 +11,7 @@ test.describe('Logs query and facets journey', () => {
   let projectId: string;
 
   test.beforeAll(async () => {
-    const { token } = await registerUser(generateTestName('Facets'), generateTestEmail(), 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('Facets'), generateTestEmail(), 'tidal-Orbit-Granite-57');
     userToken = token;
     const api = new TestApiClient(token);
 

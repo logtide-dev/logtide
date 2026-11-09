@@ -11,7 +11,7 @@ test.describe('Alert to incident journey', () => {
   test.setTimeout(240_000);
 
   test('a rule built from a search fires, opens an incident and is resolved from the inbox', async ({ page }) => {
-    const { token } = await registerUser(generateTestName('Alerter'), generateTestEmail(), 'TestPassword123!');
+    const { token } = await registerUser(generateTestName('Alerter'), generateTestEmail(), 'tidal-Orbit-Granite-57');
     const api = new TestApiClient(token);
     const org = await api.createOrganization(`Alert Journey Org ${Date.now()}`);
     const organizationId = org.organization.id;

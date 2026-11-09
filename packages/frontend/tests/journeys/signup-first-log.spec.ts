@@ -7,7 +7,7 @@ import { generateTestEmail, generateTestName, TEST_API_URL, TEST_FRONTEND_URL, w
  * ingest API, see the connect step detect it and find the log in Logs.
  */
 
-const PASSWORD = 'TestPassword123!';
+const PASSWORD = 'tidal-Orbit-Granite-57';
 
 test.describe('Signup to first log', () => {
   test('a new user registers, connects an app and sees the first log', async ({ page }) => {

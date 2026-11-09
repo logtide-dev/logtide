@@ -6,6 +6,7 @@ import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../utils/internal-logger.js';
 import { CAPABILITIES, quotaSignals, type CapabilityName } from './registry.js';
 import { startOfUtcMonth } from './month.js';
+import { renderNoticeEmail } from '../lib/email/layout.js';
 
 export type QuotaNotifyState = 'grace' | 'blocked';
 
@@ -132,6 +133,7 @@ export async function notifyQuotaThreshold(params: {
         to: sent.recipients.map((r) => r.email).join(', '),
         subject: `[${sent.orgName ?? 'LogTide'}] ${sent.title}`,
         text: sent.message,
+        html: renderNoticeEmail({ subject: sent.title, text: sent.message, context: sent.orgName ?? undefined }),
       });
     } catch (err) {
       log('error', `[QuotaNotifier] email failed for org ${organizationId}: ${(err as Error).message}`);

@@ -107,6 +107,9 @@ export class OrganizationsService {
           slug: uniqueSlug,
           description: input.description || null,
           owner_id: input.userId,
+          ...(config.DEFAULT_ORG_RETENTION_DAYS !== undefined
+            ? { retention_days: config.DEFAULT_ORG_RETENTION_DAYS }
+            : {}),
         })
         .returning(['id', 'name', 'slug', 'description', 'owner_id', 'retention_days', 'created_at', 'updated_at'])
         .executeTakeFirstOrThrow();

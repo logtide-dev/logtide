@@ -171,6 +171,18 @@ const configSchema = z.object({
   LOGTIDE_PRIVACY_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   LOGTIDE_TERMS_VERSION: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
 
+  // Hosting seam: retention new organizations start with, in days (1-365). Unset or
+  // empty = the column default (90). Any other value = boot failure.
+  DEFAULT_ORG_RETENTION_DAYS: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce
+      .number({ error: 'DEFAULT_ORG_RETENTION_DAYS must be an integer between 1 and 365' })
+      .int('DEFAULT_ORG_RETENTION_DAYS must be an integer between 1 and 365')
+      .min(1, 'DEFAULT_ORG_RETENTION_DAYS must be an integer between 1 and 365')
+      .max(365, 'DEFAULT_ORG_RETENTION_DAYS must be an integer between 1 and 365')
+      .optional()
+  ),
+
   // Hosting seam: maximum organizations a single user may own. Positive integer;
   // unset or empty = unlimited. Any other value = boot failure.
   MAX_ORGANIZATIONS_PER_USER: z.preprocess(

@@ -185,7 +185,7 @@ describe('clickhouse query plans', () => {
     client = createClient(connection);
     explainClient = createClient(connection);
     querySpy = vi.spyOn(client, 'query');
-    engine = new ClickHouseEngine(PLANS_CONFIG, { client });
+    engine = new ClickHouseEngine(PLANS_CONFIG, { client, insertFlushMs: 50, traceSummaryFlushMs: 0 });
     await engine.connect();
     await engine.initialize();
 
