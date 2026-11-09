@@ -916,7 +916,7 @@ describe('Email Templates - Digest', () => {
 
     const result = generateDigestEmail(weekly);
 
-    expect(result.html).toContain('Weekly Digest');
+    expect(result.html).toContain('Weekly digest');
     expect(result.text).toContain('Weekly Digest');
     expect(result.text).toContain('last 7 days');
   });
@@ -995,16 +995,16 @@ describe('Email Templates - Digest', () => {
     const result = generateDigestEmail(fullData);
 
     const htmlTitles = [
-      'Log Breakdown',
-      'Top Error Messages',
+      'Log breakdown',
+      'Top error messages',
       'Traces',
       'Metrics',
       'Alerts',
-      'Security Activity',
-      'Monitor Performance',
+      'Security activity',
+      'Monitor performance',
       'Usage',
       'Webhooks',
-      'Team Activity',
+      'Team activity',
     ];
     for (const title of htmlTitles) {
       expect(result.html, `html should contain the ${title} section`).toContain(title);
@@ -1031,22 +1031,22 @@ describe('Email Templates - Digest', () => {
     const { html } = generateDigestEmail(fullData);
 
     const order = [
-      'Log Volume',
-      'Log Breakdown',
-      'Top Services by Errors',
-      'Top Error Messages',
-      'New Error Groups',
+      'Log volume',
+      'Log breakdown',
+      'Top services by errors',
+      'Top error messages',
+      'New error groups',
       'Traces',
       'Metrics',
       'Alerts',
       'Security',
-      'Security Activity',
+      'Security activity',
       'Uptime',
-      'Monitor Performance',
+      'Monitor performance',
       'Usage',
       'Webhooks',
-      'Team Activity',
-      'View Dashboard',
+      'Team activity',
+      'View dashboard',
     ];
 
     const positions = order.map((title) => html.indexOf(title));
@@ -1188,16 +1188,16 @@ describe('Email Templates - Digest', () => {
     const result = generateDigestEmail(baseData);
 
     const htmlTitles = [
-      'Log Breakdown',
-      'Top Error Messages',
+      'Log breakdown',
+      'Top error messages',
       'Traces',
       'Metrics',
       'Alerts',
-      'Security Activity',
-      'Monitor Performance',
+      'Security activity',
+      'Monitor performance',
       'Usage',
       'Webhooks',
-      'Team Activity',
+      'Team activity',
     ];
     for (const title of htmlTitles) {
       expect(result.html, `html should omit the ${title} section`).not.toContain(title);
@@ -1278,7 +1278,7 @@ describe('Email Templates - Digest', () => {
   it('omits the log volume section when it is undefined', () => {
     const result = generateDigestEmail({ ...baseData, logVolume: undefined });
 
-    expect(result.html).not.toContain('Log Volume');
+    expect(result.html).not.toContain('Log volume');
     expect(result.text).not.toContain('LOG VOLUME');
     expect(result.text).not.toContain('Total logs:');
   });
@@ -1286,7 +1286,7 @@ describe('Email Templates - Digest', () => {
   it('omits the top services section when it is undefined', () => {
     const result = generateDigestEmail({ ...baseData, topErrorServices: undefined });
 
-    expect(result.html).not.toContain('Top Services by Errors');
+    expect(result.html).not.toContain('Top services by errors');
     expect(result.text).not.toContain('TOP SERVICES BY ERRORS');
     expect(result.html).not.toContain('No errors recorded in this period.');
   });
@@ -1294,7 +1294,7 @@ describe('Email Templates - Digest', () => {
   it('omits the new error groups section when it is undefined', () => {
     const result = generateDigestEmail({ ...baseData, newErrorGroups: undefined });
 
-    expect(result.html).not.toContain('New Error Groups');
+    expect(result.html).not.toContain('New error groups');
     expect(result.text).not.toContain('NEW ERROR GROUPS');
     expect(result.html).not.toContain('No new error groups appeared in this period.');
   });
@@ -1326,9 +1326,9 @@ describe('Email Templates - Digest', () => {
 
     const result = generateDigestEmail(empty);
 
-    expect(result.html).toContain('Top Services by Errors');
+    expect(result.html).toContain('Top services by errors');
     expect(result.html).toContain('No errors recorded in this period.');
-    expect(result.html).toContain('New Error Groups');
+    expect(result.html).toContain('New error groups');
     expect(result.html).toContain('No new error groups appeared in this period.');
     expect(result.text).toContain('SECURITY');
     expect(result.text).toContain('Open incidents: 0');

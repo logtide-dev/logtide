@@ -360,7 +360,7 @@ describe('Email Templates (branches) - Digest edge cases', () => {
       webhooks: { delivered: 0, failed: 1, dead: 1 },
     } as DigestEmailData);
 
-    expect(result.html).toContain('<strong>1</strong> delivery reached the dead-letter queue');
+    expect(result.html).toContain('1 delivery reached the dead-letter queue');
     expect(result.text).toContain('Dead-lettered deliveries need attention.');
   });
 
@@ -383,7 +383,7 @@ describe('Email Templates (branches) - Digest edge cases', () => {
     } as DigestEmailData);
 
     expect(result.html).toContain('Digest for Acme Corp');
-    expect(result.html).not.toContain('Log Volume');
+    expect(result.html).not.toContain('Log volume');
     expect(result.text).toContain('Config changes: 1');
   });
 

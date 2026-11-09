@@ -5,7 +5,6 @@
  * Gmail, Outlook, Apple Mail, etc. all have different CSS support.
  */
 
-import { getLogoUrl } from './logo.js';
 import type { DigestReportData } from '../modules/digests/generator.js';
 
 // ============================================================================
@@ -13,7 +12,7 @@ import type { DigestReportData } from '../modules/digests/generator.js';
 // ============================================================================
 
 export { getFrontendUrl, formatEmailDate, escapeHtml, truncate } from './email/util.js';
-import { getFrontendUrl, formatEmailDate, escapeHtml, truncate } from './email/util.js';
+import { getFrontendUrl, formatEmailDate, truncate } from './email/util.js';
 import { renderEmail } from './email/layout.js';
 import * as ui from './email/components.js';
 import { severityTone } from './email/tokens.js';
@@ -30,227 +29,6 @@ function alertRows(data: { service?: string | null; levels?: string[] }): Array<
     ...(data.service ? [{ key: 'service', value: data.service }] : []),
     ...(data.levels?.length ? [{ key: 'levels', value: data.levels.join(',') }] : []),
   ];
-}
-
-// ============================================================================
-// SHARED STYLES
-// ============================================================================
-
-const colors = {
-  background: '#f4f4f5',
-  cardBg: '#ffffff',
-  text: '#18181b',
-  textMuted: '#71717a',
-  textLight: '#a1a1aa',
-  border: '#e4e4e7',
-  primary: '#18181b',
-  error: '#dc2626',
-  errorBg: '#fef2f2',
-  warning: '#ca8a04',
-  warningBg: '#fefce8',
-  success: '#16a34a',
-  successBg: '#f0fdf4',
-  info: '#2563eb',
-  infoBg: '#eff6ff',
-  critical: '#dc2626',
-  high: '#ea580c',
-  medium: '#ca8a04',
-  low: '#2563eb',
-  informational: '#6b7280',
-};
-
-// ============================================================================
-// BASE TEMPLATE
-// ============================================================================
-
-interface BaseEmailOptions {
-  preheader?: string; // Preview text shown in email clients
-  // When set, the footer swaps the channel-settings link for a one-click
-  // unsubscribe link (used by digest emails, where recipients may have no account)
-  unsubscribeUrl?: string;
-}
-
-function baseTemplate(content: string, options: BaseEmailOptions = {}): string {
-  const { preheader, unsubscribeUrl } = options;
-  const frontendUrl = getFrontendUrl();
-  const logoUrl = getLogoUrl();
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>LogTide Notification</title>
-  <!--[if mso]>
-  <noscript>
-    <xml>
-      <o:OfficeDocumentSettings>
-        <o:PixelsPerInch>96</o:PixelsPerInch>
-      </o:OfficeDocumentSettings>
-    </xml>
-  </noscript>
-  <![endif]-->
-</head>
-<body style="margin: 0; padding: 0; width: 100%; background-color: ${colors.background}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased;">
-  ${preheader ? `<div style="display: none; max-height: 0; overflow: hidden;">${escapeHtml(preheader)}</div>` : ''}
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${colors.background};">
-    <tr>
-      <td align="center" style="padding: 40px 16px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px;">
-          <!-- Logo -->
-          <tr>
-            <td align="center" style="padding: 0 0 24px;">
-              <a href="${frontendUrl}" style="text-decoration: none;">
-                <img src="${logoUrl}" alt="LogTide" width="140" height="auto" style="display: block; max-width: 140px; height: auto;" />
-              </a>
-            </td>
-          </tr>
-          ${content}
-          <!-- Footer -->
-          <tr>
-            <td style="padding: 24px 0; text-align: center;">
-              <p style="margin: 0 0 8px; font-size: 12px; color: ${colors.textLight};">
-                Sent by <a href="${frontendUrl}" style="color: ${colors.textMuted}; text-decoration: none;">LogTide</a>
-              </p>
-              <p style="margin: 0; font-size: 11px; color: ${colors.textLight};">
-                ${unsubscribeUrl
-                  ? `<a href="${unsubscribeUrl}" style="color: ${colors.textMuted}; text-decoration: underline;">Unsubscribe from these reports</a>`
-                  : `<a href="${frontendUrl}/dashboard/settings/notifications/destinations" style="color: ${colors.textMuted}; text-decoration: underline;">Manage notification settings</a>`}
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
-}
-
-// ============================================================================
-// COMPONENTS
-// ============================================================================
-
-function card(content: string): string {
-  return `<tr>
-    <td style="background-color: ${colors.cardBg}; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-      ${content}
-    </td>
-  </tr>`;
-}
-
-function header(title: string, badge?: { text: string; color: string }): string {
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-    <tr>
-      <td style="padding: 24px 24px 16px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-          <tr>
-            <td style="vertical-align: middle;">
-              <h1 style="margin: 0; font-size: 20px; font-weight: 600; color: ${colors.text}; line-height: 1.3;">
-                ${escapeHtml(title)}
-              </h1>
-            </td>
-            ${badge ? `<td align="right" style="vertical-align: middle;">
-              <span style="display: inline-block; padding: 4px 10px; background-color: ${badge.color}; color: white; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
-                ${escapeHtml(badge.text)}
-              </span>
-            </td>` : ''}
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>`;
-}
-
-function divider(): string {
-  return `<tr><td style="padding: 0 24px;"><hr style="border: none; border-top: 1px solid ${colors.border}; margin: 0;"></td></tr>`;
-}
-
-function infoRow(label: string, value: string, isCode = false): string {
-  const valueStyle = isCode
-    ? `font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; font-size: 13px; background-color: ${colors.background}; padding: 2px 6px; border-radius: 4px;`
-    : '';
-
-  return `<tr>
-    <td style="padding: 8px 0;">
-      <span style="font-size: 12px; color: ${colors.textMuted}; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(label)}</span><br>
-      <span style="font-size: 14px; color: ${colors.text}; font-weight: 500; ${valueStyle}">${escapeHtml(value)}</span>
-    </td>
-  </tr>`;
-}
-
-function infoBox(rows: Array<{ label: string; value: string; isCode?: boolean }>): string {
-  return `<tr>
-    <td style="padding: 16px 24px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${colors.background}; border-radius: 8px;">
-        <tr>
-          <td style="padding: 16px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-              ${rows.map(r => infoRow(r.label, r.value, r.isCode)).join('')}
-            </table>
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>`;
-}
-
-function alertBox(message: string, type: 'error' | 'warning' | 'success' | 'info' = 'error'): string {
-  const bgColors = {
-    error: colors.errorBg,
-    warning: colors.warningBg,
-    success: colors.successBg,
-    info: colors.infoBg,
-  };
-  const borderColors = {
-    error: colors.error,
-    warning: colors.warning,
-    success: colors.success,
-    info: colors.info,
-  };
-
-  return `<tr>
-    <td style="padding: 0 24px 16px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${bgColors[type]}; border-left: 4px solid ${borderColors[type]}; border-radius: 4px;">
-        <tr>
-          <td style="padding: 12px 16px; font-size: 14px; color: ${colors.text}; line-height: 1.5;">
-            ${message}
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>`;
-}
-
-function cta(text: string, url: string): string {
-  return `<tr>
-    <td style="padding: 8px 24px 24px;" align="center">
-      <a href="${url}" style="display: inline-block; padding: 12px 24px; background-color: ${colors.primary}; color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">
-        ${escapeHtml(text)}
-      </a>
-    </td>
-  </tr>`;
-}
-
-function subtitle(text: string): string {
-  return `<tr>
-    <td style="padding: 16px 24px 8px;">
-      <p style="margin: 0; font-size: 14px; color: ${colors.textMuted}; line-height: 1.5;">
-        ${escapeHtml(text)}
-      </p>
-    </td>
-  </tr>`;
-}
-
-function timestamp(): string {
-  return `<tr>
-    <td style="padding: 0 24px 8px;">
-      <p style="margin: 0; font-size: 12px; color: ${colors.textLight};">
-        ${formatEmailDate()}
-      </p>
-    </td>
-  </tr>`;
 }
 
 // ============================================================================
@@ -889,8 +667,8 @@ export function generateProjectHealthEmail(data: ProjectHealthEmailData): { html
   const frontendUrl = getFrontendUrl();
   const isOpen = data.kind === 'opened';
   const badge = isOpen
-    ? { text: data.severity === 'critical' ? 'Critical' : 'Warning', color: data.severity === 'critical' ? colors.error : colors.warning }
-    : { text: 'Resolved', color: colors.success };
+    ? { text: data.severity === 'critical' ? 'Critical' : 'Warning' }
+    : { text: 'Resolved' };
   const heading = isOpen ? `${data.title}: ${data.projectName}` : `Resolved: ${data.title} (${data.projectName})`;
 
   const infoRows: Array<{ label: string; value: string }> = [
@@ -956,51 +734,25 @@ export type DigestEmailData = DigestReportData & {
   dashboardUrl: string;
 };
 
+/** Section titles in sentence case; all-caps words such as MITRE stay as they are. */
 function digestSectionTitle(title: string): string {
-  return `<tr>
-    <td style="padding: 20px 24px 4px;">
-      <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: ${colors.text}; text-transform: uppercase; letter-spacing: 0.5px;">
-        ${escapeHtml(title)}
-      </h2>
-    </td>
-  </tr>`;
+  const words = title.split(' ');
+  const sentence = words
+    .map((w, i) => (i === 0 || (w.length > 1 && w === w.toUpperCase()) ? w : w.toLowerCase()))
+    .join(' ');
+  return ui.sectionTitle(sentence);
 }
 
 function digestEmptyLine(message: string): string {
-  return `<tr>
-    <td style="padding: 4px 24px 8px;">
-      <p style="margin: 0; font-size: 13px; color: ${colors.textMuted};">${escapeHtml(message)}</p>
-    </td>
-  </tr>`;
+  return ui.emptyLine(message);
 }
 
 function digestTable(headers: string[], rows: string[][]): string {
-  const headerCells = headers
-    .map(
-      (h, i) =>
-        `<th align="${i === 0 ? 'left' : 'right'}" style="padding: 6px 8px; font-size: 11px; color: ${colors.textMuted}; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid ${colors.border};">${escapeHtml(h)}</th>`
-    )
-    .join('');
-  const bodyRows = rows
-    .map(
-      (cells) =>
-        `<tr>${cells
-          .map(
-            (c, i) =>
-              `<td align="${i === 0 ? 'left' : 'right'}" style="padding: 6px 8px; font-size: 13px; color: ${colors.text}; border-bottom: 1px solid ${colors.border};">${escapeHtml(c)}</td>`
-          )
-          .join('')}</tr>`
-    )
-    .join('');
-
-  return `<tr>
-    <td style="padding: 4px 24px 8px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-        <tr>${headerCells}</tr>
-        ${bodyRows}
-      </table>
-    </td>
-  </tr>`;
+  return ui.dataTable(
+    headers,
+    rows.map((cells) => cells.map((text) => ({ text }))),
+    { alignRight: headers.map((_, i) => i).filter((i) => i > 0) }
+  );
 }
 
 function formatDelta(delta: number): string {
@@ -1076,7 +828,6 @@ function buildPreheader(data: DigestEmailData): string {
 
 export function generateDigestEmail(data: DigestEmailData): { html: string; text: string } {
   const frequencyLabel = data.frequency === 'daily' ? 'Daily' : 'Weekly';
-  const title = `${frequencyLabel} Digest`;
   // A period is only quiet when nothing arrived at all: an org that ships no
   // logs but does ship traces is not quiet, so spans veto the message. With the
   // log volume section disabled there is no volume to call quiet at all.
@@ -1095,12 +846,11 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
   const logVolumeSection = data.logVolume
     ? digestSectionTitle('Log Volume') +
       (quiet
-        ? alertBox('No activity during this period. Your systems have been quiet.', 'info')
-        : infoBox([
-            { label: 'Total Logs', value: data.logVolume.current.toLocaleString('en-US') },
-            { label: 'Trend', value: data.logVolume.trend },
-            { label: 'Previous Period', value: data.logVolume.previous.toLocaleString('en-US') },
-          ]))
+        ? ui.notice('No activity during this period. Your systems have been quiet.', 'info')
+        : ui.bigNumber(
+            data.logVolume.current.toLocaleString('en-US'),
+            `logs, ${data.logVolume.trend} compared to the previous period (${data.logVolume.previous.toLocaleString('en-US')})`
+          ))
     : '';
 
   const topServicesSection = data.topErrorServices
@@ -1134,7 +884,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const securitySection = data.security
     ? digestSectionTitle('Security') +
-      infoBox([
+      ui.statRows([
         { label: 'Detections', value: data.security.totalDetections.toLocaleString('en-US') },
         { label: 'Open Incidents', value: data.security.openIncidents.toLocaleString('en-US') },
       ]) +
@@ -1152,7 +902,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const uptimeSection = data.uptime
     ? digestSectionTitle('Uptime') +
-      infoBox([
+      ui.statRows([
         { label: 'Overall', value: `${data.uptime.overallUptimePct.toLocaleString('en-US')}%` },
         { label: 'Monitors', value: data.uptime.monitorCount.toLocaleString('en-US') },
       ]) +
@@ -1180,7 +930,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
           l.previous.toLocaleString('en-US'),
         ])
       ) +
-      infoBox([
+      ui.statRows([
         { label: 'Error Rate', value: formatPct(data.logBreakdown.errorRatePct) },
         { label: 'Previous Error Rate', value: formatPct(data.logBreakdown.previousErrorRatePct) },
       ]) +
@@ -1205,7 +955,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const tracesSection = data.traces
     ? digestSectionTitle('Traces') +
-      infoBox([
+      ui.statRows([
         { label: 'Spans', value: data.traces.spanCount.toLocaleString('en-US') },
         { label: 'Span Trend', value: data.traces.trend },
         { label: 'Previous Period', value: data.traces.previousSpanCount.toLocaleString('en-US') },
@@ -1240,7 +990,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const metricsSection = data.metrics
     ? digestSectionTitle('Metrics') +
-      infoBox([
+      ui.statRows([
         { label: 'Datapoints', value: data.metrics.datapoints.toLocaleString('en-US') },
         { label: 'Datapoint Trend', value: data.metrics.trend },
         {
@@ -1252,7 +1002,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const alertsSection = data.alerts
     ? digestSectionTitle('Alerts') +
-      infoBox([
+      ui.statRows([
         { label: 'Triggers', value: data.alerts.total.toLocaleString('en-US') },
         { label: 'Alert Trend', value: data.alerts.trend },
         { label: 'Previous Period', value: data.alerts.previousTotal.toLocaleString('en-US') },
@@ -1273,7 +1023,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const securityActivitySection = data.securityActivity
     ? digestSectionTitle('Security Activity') +
-      infoBox([
+      ui.statRows([
         { label: 'Incidents Opened', value: incidentsOpened.toLocaleString('en-US') },
         {
           label: 'Incidents Resolved',
@@ -1316,7 +1066,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const usageSection = data.usage
     ? digestSectionTitle('Usage') +
-      infoBox([
+      ui.statRows([
         { label: 'Log Events', value: data.usage.logEvents.toLocaleString('en-US') },
         { label: 'Log Volume', value: formatBytes(data.usage.logBytes) },
         { label: 'Spans', value: data.usage.spans.toLocaleString('en-US') },
@@ -1329,9 +1079,9 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
         : '') +
       // Quota windows are month-to-date, not period-scoped: say so.
       (data.usage.quotaWarnings.length > 0
-        ? alertBox(
+        ? ui.notice(
             `Month-to-date usage above 80% of limit: ${data.usage.quotaWarnings
-              .map((w) => `<strong>${escapeHtml(w.capability)}</strong> ${w.usedPct}%`)
+              .map((w) => `${w.capability} ${w.usedPct}%`)
               .join(', ')}`,
             'warning'
           )
@@ -1340,14 +1090,14 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const webhooksSection = data.webhooks
     ? digestSectionTitle('Webhooks') +
-      infoBox([
+      ui.statRows([
         { label: 'Delivered', value: data.webhooks.delivered.toLocaleString('en-US') },
         { label: 'Failed', value: data.webhooks.failed.toLocaleString('en-US') },
         { label: 'Dead', value: data.webhooks.dead.toLocaleString('en-US') },
       ]) +
       (data.webhooks.dead > 0
-        ? alertBox(
-            `<strong>${data.webhooks.dead.toLocaleString('en-US')}</strong> deliver${data.webhooks.dead === 1 ? 'y' : 'ies'} reached the dead-letter queue and need attention.`,
+        ? ui.notice(
+            `${data.webhooks.dead.toLocaleString('en-US')} deliver${data.webhooks.dead === 1 ? 'y' : 'ies'} reached the dead-letter queue and need attention.`,
             'warning'
           )
         : '')
@@ -1355,7 +1105,7 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
 
   const teamActivitySection = data.teamActivity
     ? digestSectionTitle('Team Activity') +
-      infoBox([
+      ui.statRows([
         { label: 'Members Added', value: data.teamActivity.membersAdded.toLocaleString('en-US') },
         {
           label: 'Members Removed',
@@ -1366,34 +1116,31 @@ export function generateDigestEmail(data: DigestEmailData): { html: string; text
       ])
     : '';
 
-  const html = baseTemplate(
-    card(`
-      ${header(title, { text: data.frequency, color: colors.info })}
-      ${divider()}
-      ${subtitle(`${data.organizationName} - ${data.periodLabel}`)}
-      ${timestamp()}
-      ${logVolumeSection}
-      ${logBreakdownSection}
-      ${topServicesSection}
-      ${topErrorMessagesSection}
-      ${errorGroupsSection}
-      ${tracesSection}
-      ${metricsSection}
-      ${alertsSection}
-      ${securitySection}
-      ${securityActivitySection}
-      ${uptimeSection}
-      ${monitorPerformanceSection}
-      ${usageSection}
-      ${webhooksSection}
-      ${teamActivitySection}
-      ${cta('View Dashboard', data.dashboardUrl)}
-    `),
-    {
-      preheader: quiet ? `Quiet period for ${data.organizationName}` : buildPreheader(data),
-      unsubscribeUrl: data.unsubscribeUrl,
-    }
-  );
+  const html = renderEmail({
+    title: `${frequencyLabel} digest`,
+    preheader: quiet ? `Quiet period for ${data.organizationName}` : buildPreheader(data),
+    context: data.organizationName,
+    body:
+      ui.title(`${frequencyLabel} digest`) +
+      ui.paragraph(`${data.organizationName}, ${data.periodLabel}`) +
+      logVolumeSection +
+      logBreakdownSection +
+      topServicesSection +
+      topErrorMessagesSection +
+      errorGroupsSection +
+      tracesSection +
+      metricsSection +
+      alertsSection +
+      securitySection +
+      securityActivitySection +
+      uptimeSection +
+      monitorPerformanceSection +
+      usageSection +
+      webhooksSection +
+      teamActivitySection +
+      ui.button('View dashboard', data.dashboardUrl),
+    footer: { kind: 'unsubscribe', url: data.unsubscribeUrl },
+  });
 
   const lines: string[] = [];
   // Same shape as before: a blank line, the heading, then a rule of its length.

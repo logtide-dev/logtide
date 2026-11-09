@@ -71,12 +71,15 @@ export interface Cell {
 
 /** A hairline table in mono, for digest lists. alignRight lists column indexes. */
 export function dataTable(headers: string[], rows: Cell[][], opts: { alignRight?: number[] } = {}): string {
+  // Digests repeat this table many times: fonts and the base color sit on the
+  // table and cells carry only what differs, to stay under Gmail's 102 KB clip.
   const right = new Set(opts.alignRight ?? []);
-  const align = (i: number) => (right.has(i) ? 'right' : 'left');
+  const pad = (i: number, last: number, v: number) => `padding:${v}px ${i === last ? 0 : 12}px ${v}px 0;`;
+  const alignAttr = (i: number) => (right.has(i) ? ' align="right"' : '');
   const head = headers
     .map(
       (h, i) =>
-        `<th class="lt-muted lt-border" align="${align(i)}" style="padding:8px ${i === headers.length - 1 ? '0' : '12px'} 8px 0;border-bottom:1px solid ${L.border};font-family:${FONT_SANS};font-size:12px;line-height:16px;font-weight:500;color:${L.muted};text-align:${align(i)};">${escapeHtml(h)}</th>`,
+        `<th class="lt-muted lt-border"${alignAttr(i)} style="${pad(i, headers.length - 1, 8)}border-bottom:1px solid ${L.border};font-family:${FONT_SANS};font-weight:500;color:${L.muted};${right.has(i) ? 'text-align:right;' : 'text-align:left;'}">${escapeHtml(h)}</th>`,
     )
     .join('');
   const body = rows
@@ -84,14 +87,17 @@ export function dataTable(headers: string[], rows: Cell[][], opts: { alignRight?
       (row) =>
         `<tr>${row
           .map((cell, i) => {
-            const color = cell.tone ? toneColors(L, cell.tone).text : cell.muted ? L.muted : L.text;
-            const cls = cell.tone ? `lt-tone-${cell.tone}` : cell.muted ? 'lt-muted' : 'lt-text';
-            return `<td class="${cls} lt-border" align="${align(i)}" style="padding:10px ${i === row.length - 1 ? '0' : '12px'} 10px 0;border-bottom:1px solid ${L.border};font-family:${FONT_MONO};font-size:12px;line-height:16px;color:${color};text-align:${align(i)};word-break:break-word;">${escapeHtml(cell.text)}</td>`;
+            const tone = cell.tone
+              ? ` lt-tone-${cell.tone}" style="color:${toneColors(L, cell.tone).text};`
+              : cell.muted
+                ? ` lt-muted" style="color:${L.muted};`
+                : '" style="';
+            return `<td class="lt-border${tone}${pad(i, row.length - 1, 10)}border-bottom:1px solid ${L.border};"${alignAttr(i)}>${escapeHtml(cell.text)}</td>`;
           })
           .join('')}</tr>`,
     )
     .join('');
-  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 32px;border-collapse:collapse;"><tr>${head}</tr>${body}</table>`;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="lt-text" style="margin:0 0 32px;border-collapse:collapse;font-family:${FONT_MONO};font-size:12px;line-height:16px;color:${L.text};word-break:break-word;"><tr>${head}</tr>${body}</table>`;
 }
 
 export function sectionTitle(text: string): string {
@@ -130,4 +136,16 @@ export function linkFallback(url: string): string {
 export function notice(text: string, tone: Tone): string {
   const c = toneColors(L, tone);
   return `<div class="lt-fill-${tone} lt-text" style="margin:0 0 24px;padding:12px 16px;background-color:${c.fill};border:1px solid ${c.line};border-radius:8px;font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${L.text};">${escapeHtml(text)}</div>`;
+}
+
+/** label / value rows with hairlines: label in sans, value in mono on the right. */
+export function statRows(rows: Array<{ label: string; value: string; isCode?: boolean }>): string {
+  if (rows.length === 0) return '';
+  const body = rows
+    .map(
+      (r) =>
+        `<tr><td class="lt-muted lt-border" style="padding:10px 12px 10px 0;border-bottom:1px solid ${L.border};font-family:${FONT_SANS};font-size:14px;line-height:20px;color:${L.muted};">${escapeHtml(r.label)}</td><td class="lt-text lt-border" align="right" style="padding:10px 0;border-bottom:1px solid ${L.border};font-family:${FONT_MONO};font-size:12px;line-height:20px;color:${L.text};text-align:right;word-break:break-word;">${escapeHtml(r.value)}</td></tr>`,
+    )
+    .join('');
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 32px;border-collapse:collapse;border-top:1px solid ${L.border};" class="lt-border">${body}</table>`;
 }
