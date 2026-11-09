@@ -26,6 +26,26 @@ describe('checkPasswordStrength', () => {
     expect(checkPasswordStrength('alex.rossi2026!', inputs).ok).toBe(false);
   });
 
+  it.each(['GiuseppePolli1!', 'Giuseppe2026!!', 'giuseppepolli2026', 'polli.giuseppe.99'])(
+    'refuses %s built from the name or email plus a few characters',
+    (pw) => {
+      const inputs = passwordUserInputs({ email: 'giuseppe.polli@example.com', name: 'Giuseppe Polli' });
+      const r = checkPasswordStrength(pw, inputs);
+      expect(r.ok).toBe(false);
+      expect(r.reason).toBe('too_weak');
+    },
+  );
+
+  it('still accepts a passphrase that only shares a short word with the name', () => {
+    const inputs = passwordUserInputs({ email: 'rose@example.com', name: 'Rose Smith' });
+    expect(checkPasswordStrength('rose-garden-tidal-orbit-57', inputs).ok).toBe(true);
+    expect(checkPasswordStrength('tidal-Orbit-Granite-57', inputs).ok).toBe(true);
+  });
+
+  it('refuses the product name plus a year', () => {
+    expect(checkPasswordStrength('Logtide2026!!').ok).toBe(false);
+  });
+
   it('refuses a password built from the product name', () => {
     expect(checkPasswordStrength('logtide-logtide-1').ok).toBe(false);
   });
