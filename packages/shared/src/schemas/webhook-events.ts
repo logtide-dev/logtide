@@ -8,6 +8,8 @@ export const webhookEventTypeSchema = z.enum([
   'monitor.status_changed',
   'project.health.opened',
   'project.health.resolved',
+  'hardware.health.degraded',
+  'hardware.health.recovered',
   'channel.test',
   // Generic notification deliveries through notification channels.
   // Type-specific events (alert.triggered, etc.) use their own types via the queue jobs.
@@ -129,6 +131,40 @@ export const projectHealthDataSchema = z
   .passthrough();
 export type ProjectHealthData = z.infer<typeof projectHealthDataSchema>;
 
+/**
+ * Hardware host health got worse (degraded: ok to warning or critical, or
+ * warning to critical) or came back to ok (recovered). `findings` are the
+ * evaluator findings at that moment, worst first (empty on recovered).
+ */
+export const hardwareHealthDataSchema = z
+  .object({
+    host_id: z.string().guid(),
+    host_name: z.string(),
+    project_id: z.string().guid(),
+    project_name: z.string(),
+    status: z.enum(['ok', 'warning', 'critical']),
+    previous_status: z.string(),
+    severity: z.enum(['critical', 'warning', 'ok']),
+    title: z.string(),
+    message: z.string(),
+    findings: z.array(
+      z
+        .object({
+          component: z.string(),
+          hw_id: z.string(),
+          severity: z.string(),
+          code: z.string(),
+          message: z.string(),
+        })
+        .passthrough()
+    ),
+    incident_id: z.string().guid().nullable(),
+    changed_at: z.string().datetime(),
+    link: z.string(),
+  })
+  .passthrough();
+export type HardwareHealthData = z.infer<typeof hardwareHealthDataSchema>;
+
 export const channelNotificationDataSchema = z
   .object({
     title: z.string(),
@@ -159,6 +195,8 @@ export const WEBHOOK_EVENT_DATA_SCHEMAS = {
   'monitor.status_changed': monitorStatusChangedDataSchema,
   'project.health.opened': projectHealthDataSchema,
   'project.health.resolved': projectHealthDataSchema,
+  'hardware.health.degraded': hardwareHealthDataSchema,
+  'hardware.health.recovered': hardwareHealthDataSchema,
   'channel.test': channelNotificationDataSchema,
   'channel.notification': channelNotificationDataSchema,
 } as const;
