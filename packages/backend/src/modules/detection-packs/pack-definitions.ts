@@ -758,6 +758,266 @@ const fileIntegrityPack: DetectionPack = {
 };
 
 /**
+ * Hardware Health Pack
+ * Kernel and BMC hardware events (memory ECC, machine checks, disk and NVMe
+ * errors, PCIe AER, thermal throttling, power supplies, NIC problems).
+ * Matches plain syslog/journald kernel lines as well as the events sent by the
+ * LogTide hardware agent. Hardware faults are not attacks, so rules carry no
+ * MITRE ATT&CK tags. Matching is case-insensitive.
+ */
+const hardwareHealthPack: DetectionPack = {
+  id: 'hardware-health',
+  name: 'Hardware Health Pack',
+  description: 'Early warning for failing hardware from kernel and BMC logs: ECC memory errors, machine checks, disk and NVMe I/O errors, PCIe errors, thermal throttling, power supply faults and NIC problems.',
+  category: 'hardware',
+  icon: 'cpu',
+  author: 'LogTide',
+  version: '1.0.0',
+  rules: [
+    {
+      id: 'memory-corrected-error',
+      name: 'Corrected Memory Error (ECC)',
+      description: 'EDAC or BMC reported a corrected memory error. A steady stream means a DIMM is degrading.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection_edac or selection_sel',
+        selection_edac: {
+          'message|contains|all': ['EDAC', ' CE '],
+        },
+        selection_sel: {
+          // leading space keeps "Uncorrectable ECC" out
+          'message|contains': [' Correctable ECC'],
+        },
+      },
+      level: 'medium',
+      status: 'stable',
+      tags: ['hardware', 'hardware.memory'],
+    },
+    {
+      id: 'memory-uncorrected-error',
+      name: 'Uncorrected Memory Error (ECC)',
+      description: 'EDAC or BMC reported an uncorrectable memory error. Data may be corrupted, replace the DIMM.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection_edac or selection_text',
+        selection_edac: {
+          'message|contains|all': ['EDAC', ' UE '],
+        },
+        selection_text: {
+          'message|contains': ['Uncorrectable ECC', 'Uncorrected memory error', 'Uncorrectable memory error'],
+        },
+      },
+      level: 'critical',
+      status: 'stable',
+      tags: ['hardware', 'hardware.memory'],
+    },
+    {
+      id: 'machine-check-exception',
+      name: 'Machine Check Exception',
+      description: 'The CPU reported a hardware error through the machine check architecture (cache, bus, memory or CPU fault).',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['mce: [Hardware Error]', 'Machine check events logged', 'Machine Check Exception', 'Hardware Error:'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.cpu'],
+    },
+    {
+      id: 'disk-io-error',
+      name: 'Disk I/O Error',
+      description: 'The kernel failed a block I/O request, or the drive reported a medium or unrecovered read error.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': [
+            'I/O error, dev',
+            'Buffer I/O error',
+            'Medium Error',
+            'Unrecovered read error',
+            'error: { UNC }',
+            'Error: UNC',
+          ],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.disk'],
+    },
+    {
+      id: 'ata-command-failed',
+      name: 'ATA Command Failed',
+      description: 'A SATA or ATA command failed or the port raised an exception. Often a failing drive, cable or controller.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': [
+            'failed command: READ FPDMA',
+            'failed command: WRITE FPDMA',
+            'failed command: READ DMA',
+            'failed command: WRITE DMA',
+            'failed command: FLUSH',
+            'exception Emask',
+          ],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.disk'],
+    },
+    {
+      id: 'ata-link-reset',
+      name: 'SATA Link Reset or Down',
+      description: 'The kernel reset a SATA link or lost it. One occurrence at boot is normal, repeated ones point to a bad cable, port or drive.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['hard resetting link', 'SATA link down'],
+        },
+      },
+      level: 'medium',
+      status: 'stable',
+      tags: ['hardware', 'hardware.disk'],
+    },
+    {
+      id: 'nvme-controller-fault',
+      name: 'NVMe Timeout or Controller Down',
+      description: 'An NVMe command timed out or the controller stopped responding.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection_nvme and selection_fault',
+        selection_nvme: {
+          'message|contains': ['nvme'],
+        },
+        selection_fault: {
+          'message|contains': ['timeout', 'controller is down', 'will reset', 'probe failure'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.disk'],
+    },
+    {
+      id: 'pcie-aer-uncorrected',
+      name: 'PCIe Uncorrected Error',
+      description: 'PCIe Advanced Error Reporting logged an uncorrected (fatal or non-fatal) error on a device or link.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['AER: Uncorrected', 'AER: Multiple Uncorrected', 'severity=Uncorrected'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.pcie'],
+    },
+    {
+      id: 'pcie-aer-corrected',
+      name: 'PCIe Corrected Error',
+      description: 'PCIe Advanced Error Reporting logged a corrected error. Frequent ones indicate a marginal slot, riser or device.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['AER: Corrected error', 'severity=Corrected'],
+        },
+      },
+      level: 'low',
+      status: 'stable',
+      tags: ['hardware', 'hardware.pcie'],
+    },
+    {
+      id: 'cpu-thermal-throttle',
+      name: 'CPU Thermal Throttling',
+      description: 'The CPU exceeded its temperature threshold and was throttled. Check cooling and airflow.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['temperature above threshold', 'cpu clock throttled'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.thermal'],
+    },
+    {
+      id: 'thermal-critical',
+      name: 'Critical Temperature Reached',
+      description: 'A thermal zone hit its critical trip point, the system may shut down.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['critical temperature reached'],
+        },
+      },
+      level: 'critical',
+      status: 'stable',
+      tags: ['hardware', 'hardware.thermal'],
+    },
+    {
+      id: 'power-supply-fault',
+      name: 'Power Supply Fault',
+      description: 'The BMC or kernel reported a power supply failure, AC loss or lost redundancy.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: '(selection_psu and selection_fault) or selection_redundancy',
+        selection_psu: {
+          'message|contains': ['power supply', 'psu failure', 'psu fault'],
+        },
+        selection_fault: {
+          'message|contains': ['fail', 'AC lost', 'lost', 'predictive', 'non-recoverable', 'critical'],
+        },
+        selection_redundancy: {
+          'message|contains': ['redundancy lost', 'Non-redundant'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.power'],
+    },
+    {
+      id: 'nic-link-problem',
+      name: 'NIC Link Down or Hang',
+      description: 'A network card lost its link, hung its transmit unit or hit the transmit watchdog.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['NIC Link is Down', 'Detected Tx Unit Hang', 'NETDEV WATCHDOG'],
+        },
+      },
+      level: 'medium',
+      status: 'stable',
+      tags: ['hardware', 'hardware.network'],
+    },
+    {
+      id: 'nic-link-not-ready',
+      name: 'NIC Link Not Ready',
+      description: 'The kernel reported a network interface whose link is not ready. Common at boot, informative when repeated.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['link is not ready'],
+        },
+      },
+      level: 'low',
+      status: 'experimental',
+      tags: ['hardware', 'hardware.network'],
+    },
+  ],
+};
+
+/**
  * All available detection packs
  */
 export const DETECTION_PACKS: DetectionPack[] = [
@@ -768,6 +1028,7 @@ export const DETECTION_PACKS: DetectionPack[] = [
   antivirusMalwarePack,
   rootkitDetectionPack,
   fileIntegrityPack,
+  hardwareHealthPack,
 ];
 
 /**
