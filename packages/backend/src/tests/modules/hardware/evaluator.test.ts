@@ -898,6 +898,23 @@ describe('vanished devices', () => {
     expect(r.status).toBe('stale');
     expect(r.findings).toEqual([]);
   });
+
+  it('is not reported when the latest window has no point at all (no new information)', () => {
+    const r = run([], [hist('hw.power_supply.status', { 'hw.id': 'bmc', sensor: 'PS2' }, { min24h: 1, max24h: 1 })]);
+    expect(r.findings).toEqual([]);
+    expect(r.components.power.missing).toEqual([]);
+  });
+
+  it('is not reported when the latest window is partial (truncated load)', () => {
+    const r = evaluateHost({
+      latest: alive,
+      history: [hist('hw.power_supply.status', { 'hw.id': 'bmc', sensor: 'PS2' }, { min24h: 1, max24h: 1 })],
+      now: NOW,
+      lastSeenAt: NOW,
+      partial: true,
+    });
+    expect(r.findings).toEqual([]);
+  });
 });
 
 describe('collector down', () => {
@@ -922,6 +939,32 @@ describe('collector down', () => {
       hist('hw.physical_disk.smart_status', { 'hw.id': 'sda' }, { min24h: 1, max24h: 1 }),
     ]);
     expect(r.findings).toEqual([]);
+  });
+
+  describe('needs 3 minutes of zeros when the window shows when it went down', () => {
+    const smart = (value: number, minutes: number) =>
+      pt('hw.agent.collector.status', value, { 'hw.type': 'agent', collector: 'smart' }, minutesAgo(minutes));
+    const history = [hist('hw.physical_disk.smart_status', { 'hw.id': 'SER1' }, { min24h: 1, max24h: 1 })];
+
+    it('down for 2 minutes after reporting ok: not yet, and its devices are not missing either', () => {
+      const r = run([smart(1, 3), smart(0, 2), smart(0, 1), smart(0, 0)], history);
+      expect(codes(r)).toEqual([]);
+    });
+
+    it('down for 3 minutes after reporting ok: collector_down', () => {
+      const r = run([smart(1, 4), smart(0, 3), smart(0, 2), smart(0, 1), smart(0, 0)], history);
+      expect(codes(r)).toEqual(['agent.collector_down']);
+    });
+
+    it('flapping back to 1 resets the run', () => {
+      const r = run([smart(0, 6), smart(0, 5), smart(1, 1), smart(0, 0)], history);
+      expect(codes(r)).toEqual([]);
+    });
+
+    it('skipped on a partial window', () => {
+      const r = evaluateHost({ latest: [smart(0, 0)], history, now: NOW, lastSeenAt: NOW, partial: true });
+      expect(codes(r)).toEqual([]);
+    });
   });
 
   it('ipmi down affects cooling and power', () => {

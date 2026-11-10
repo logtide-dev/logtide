@@ -214,8 +214,8 @@ export async function runHardwarePass(now: Date = new Date()): Promise<HardwareP
 
     for (const host of projectHosts) {
       try {
-        const input = data.hosts.get(host.hostName) ?? { latest: [], history: [] };
-        const evaluation = evaluateHost({ latest: input.latest, history: input.history, now, lastSeenAt: host.lastSeenAt });
+        const input = data.hosts.get(host.hostName) ?? { latest: [], history: [], partial: false };
+        const evaluation = evaluateHost({ latest: input.latest, history: input.history, now, lastSeenAt: host.lastSeenAt, partial: input.partial });
         const saved = await saveEvaluation(host, host.status, evaluation, now);
         result.evaluated++;
         if (!saved) {

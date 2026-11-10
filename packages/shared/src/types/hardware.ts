@@ -174,6 +174,23 @@ export const HARDWARE_WINDOW_7D_MS = 7 * 24 * 60 * 60 * 1000;
 export const HARDWARE_EVALUATION_INTERVAL_MS = 2 * 60 * 1000;
 
 /**
+ * Debounce of the host status (the stored status is the effective one):
+ *  - a worse status (ok/unknown/stale -> warning/critical, warning ->
+ *    critical) becomes effective after it held for two consecutive passes
+ *    and at least `escalateAfterMs`;
+ *  - back to ok after ok held for `recoverAfterMs`;
+ *  - critical -> warning after warning (or better) held for `deescalateAfterMs`.
+ * `collectorDownAfterMs`: a collector must report 0 for that long (when the
+ * latest window shows when it went down) before `agent.collector_down`.
+ */
+export const HARDWARE_DEBOUNCE = {
+  escalateAfterMs: 3 * 60 * 1000,
+  recoverAfterMs: 10 * 60 * 1000,
+  deescalateAfterMs: 10 * 60 * 1000,
+  collectorDownAfterMs: 3 * 60 * 1000,
+} as const;
+
+/**
  * Health thresholds. Naming: `...Above` means strictly greater than,
  * `...AtLeast` means greater than or equal, `...Below` strictly lower than.
  */

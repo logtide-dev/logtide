@@ -18,6 +18,7 @@
 import {
   HARDWARE_COMPONENT_KEYS,
   HARDWARE_COMPONENT_LABELS,
+  HARDWARE_DEBOUNCE,
   HARDWARE_HISTORY_SERIES,
   HARDWARE_SMART_ATTRIBUTES,
   HARDWARE_STALE_AFTER_MS,
@@ -83,6 +84,11 @@ export interface EvaluateHostInput {
   now: Date;
   /** `last_seen_at` of the host registry row (updated at ingest), if known. */
   lastSeenAt: Date | null;
+  /**
+   * True when the latest window may miss points (truncated load): devices
+   * that look gone and dead collectors are then not reported.
+   */
+  partial?: boolean;
 }
 
 export interface EvaluateHostResult {
@@ -763,6 +769,26 @@ function parseBool(v: string | null): boolean | null {
   return null;
 }
 
+/**
+ * A collector reporting 0 is confirmed down once it has reported 0 for
+ * HARDWARE_DEBOUNCE.collectorDownAfterMs since its last non zero point. When
+ * the window holds no non zero point, when it went down is unknown and the
+ * host status debounce is the only guard.
+ */
+function collectorDownLongEnough(latest: HardwareLatestPoint[], collector: string, now: Date): boolean {
+  const points = latest
+    .filter((p) => p.metric === 'hw.agent.collector.status' && attr(p.attributes, 'collector') === collector && Number.isFinite(p.value))
+    .sort((a, b) => a.time.getTime() - b.time.getTime());
+  let lastUp = -1;
+  points.forEach((p, i) => {
+    if (p.value !== 0) lastUp = i;
+  });
+  if (lastUp === -1) return true;
+  const firstDown = points[lastUp + 1];
+  if (!firstDown) return false;
+  return now.getTime() - firstDown.time.getTime() >= HARDWARE_DEBOUNCE.collectorDownAfterMs;
+}
+
 /** Per-component status map, handy for the host list. */
 export function componentStatuses(components: HardwareComponentSnapshots): Record<HardwareComponentKey, HardwareComponentStatus> {
   const out = {} as Record<HardwareComponentKey, HardwareComponentStatus>;
@@ -804,14 +830,25 @@ export function evaluateHost(input: EvaluateHostInput): EvaluateHostResult {
 
   const stale = lastSeenMs !== null && input.now.getTime() - lastSeenMs > HARDWARE_STALE_AFTER_MS;
 
+  // Gone devices and dead collectors are only judged on a complete, non
+  // empty latest window: no point at all (or a truncated load) is no new
+  // information, not proof that everything vanished.
+  const complete = !input.partial && ctx.points.length > 0;
+
   // Collector reporting 0 now although its component had data in the last 24 h.
   const downComponents = new Set<HardwareComponentKey>();
-  if (lastSeenMs !== null && !stale) {
+  const confirmedDown = new Set<HardwareComponentKey>();
+  if (lastSeenMs !== null && !stale && complete) {
     for (const c of collectors) {
       if (c.ok) continue;
+      const confirmed = collectorDownLongEnough(input.latest, c.collector, input.now);
       for (const comp of COLLECTOR_COMPONENTS[c.collector] ?? []) {
         if (!ctx.hadData(COMPONENT_HISTORY_METRICS[comp])) continue;
+        // Its devices are not "missing" while the collector reports 0, even
+        // before the down state is confirmed.
         downComponents.add(comp);
+        if (!confirmed) continue;
+        confirmedDown.add(comp);
         ctx.add(finding(comp, c.collector, 'warning', 'agent.collector_down', `The ${c.collector} collector of the agent stopped reporting, ${HARDWARE_COMPONENT_LABELS[comp].toLowerCase()} data is missing`));
       }
     }
@@ -837,7 +874,7 @@ export function evaluateHost(input: EvaluateHostInput): EvaluateHostResult {
       if (c.status === 'ok' || c.status === 'unknown') c.status = 'warning';
     };
     for (const comp of HARDWARE_COMPONENT_KEYS) if ((components[comp].missing ?? []).length > 0) raise(comp);
-    downComponents.forEach(raise);
+    confirmedDown.forEach(raise);
   }
 
   const findings = [...ctx.findings].sort((a, b) => {
