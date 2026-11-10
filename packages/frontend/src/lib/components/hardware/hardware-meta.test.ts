@@ -13,6 +13,8 @@ import {
   formatFindingNumbers,
   formatLinkSpeed,
   formatMemorySize,
+  formatUnitValue,
+  isNoSensors,
   hardwareStatusLabel,
   hardwareStatusTone,
   seriesFor,
@@ -106,6 +108,29 @@ describe('hardware-meta', () => {
     expect(seriesFor([{ ...memorySeries, points: [] }], 'memory')).toEqual([]);
     expect(seriesLatest(memorySeries)).toBe('7 errors');
     expect(seriesLatest({ points: [], unit: '' })).toBe('-');
+  });
+
+  it('maps OTLP units for display', () => {
+    expect(formatUnitValue(44, 'Cel')).toBe('44 °C');
+    expect(formatUnitValue(57.25, 'Cel')).toBe('57.3 °C');
+    expect(formatUnitValue(512, 'By')).toBe('512 B');
+    expect(formatUnitValue(1536, 'By')).toBe('1.5 KB');
+    expect(formatUnitValue(8 * 1024 ** 3, 'By')).toBe('8 GB');
+    expect(formatUnitValue(63.5, '%')).toBe('63.5%');
+    expect(formatUnitValue(1200, 'rpm')).toBe('1,200 rpm');
+    expect(formatUnitValue(12.1, 'V')).toBe('12.1 V');
+    expect(formatUnitValue(3, '1')).toBe('3');
+    expect(formatUnitValue(3, '')).toBe('3');
+    expect(formatUnitValue(3, undefined)).toBe('3');
+    expect(formatUnitValue(7, '{errors}')).toBe('7 errors');
+    expect(formatUnitValue(Number.NaN, 'Cel')).toBe('-');
+    expect(seriesLatest({ points: [{ ts: 1, value: 44 }] as never, unit: 'Cel' })).toBe('44 °C');
+  });
+
+  it('flags virtual hosts without sensors', () => {
+    expect(isNoSensors({ status: 'unknown', isVirtual: true })).toBe(true);
+    expect(isNoSensors({ status: 'unknown', isVirtual: false })).toBe(false);
+    expect(isNoSensors({ status: 'ok', isVirtual: true })).toBe(false);
   });
 
   it('builds a logs link for the hardware service and one host', () => {

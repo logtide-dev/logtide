@@ -29,6 +29,13 @@ const STATUS_LABELS: Record<HardwareStatus, string> = {
   stale: 'Stale',
 };
 
+/** A virtual machine that reports no sensors: unknown is expected, not a problem. */
+export function isNoSensors(host: { status: string; isVirtual?: boolean }): boolean {
+  return host.isVirtual === true && host.status === 'unknown';
+}
+
+export const NO_SENSORS_TOOLTIP = 'Virtual machine: hardware sensors are not exposed';
+
 export function hardwareStatusLabel(status: HardwareStatus | string): string {
   return STATUS_LABELS[status as HardwareStatus] ?? 'Unknown';
 }
@@ -169,11 +176,39 @@ export function formatLinkSpeed(mbps: number | null): string {
 }
 
 export function formatCelsius(c: number | null): string {
-  return c === null || !Number.isFinite(c) ? '-' : `${num(c)} °C`;
+  return c === null || !Number.isFinite(c) ? '-' : formatUnitValue(c, 'Cel');
 }
 
 export function formatPercent(p: number | null): string {
   return p === null || !Number.isFinite(p) ? '-' : `${num(p)}%`;
+}
+
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  if (Math.abs(bytes) < 1024) return `${num(bytes, 0)} B`;
+  let i = 0;
+  let v = bytes;
+  while (Math.abs(v) >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${num(v)} ${units[i]}`;
+}
+
+/**
+ * One display formatter for OTLP/UCUM units: Cel -> degrees, By -> human bytes,
+ * 1 or empty -> plain count, {errors} -> errors.
+ */
+export function formatUnitValue(value: number, unit?: string | null): string {
+  if (!Number.isFinite(value)) return '-';
+  const u = (unit ?? '').trim();
+  if (u === '' || u === '1') return num(value, 2);
+  if (u === 'Cel') return `${num(value)} °C`;
+  if (u === '%') return `${num(value)}%`;
+  if (u === 'By') return formatBytes(value);
+  const braced = /^{(.*)}$/.exec(u);
+  const label = braced ? braced[1].trim() : u;
+  return label ? `${num(value, 2)} ${label}` : num(value, 2);
 }
 
 export function formatFindingNumbers(value?: number, threshold?: number): string | null {
@@ -228,8 +263,7 @@ export function seriesFor(series: HardwareSeries[], component: HardwareComponent
 export function seriesLatest(s: Pick<HardwareSeries, 'points' | 'unit'>): string {
   const last = s.points[s.points.length - 1];
   if (!last) return '-';
-  const value = num(last.value, 2);
-  return s.unit ? `${value} ${s.unit}` : value;
+  return formatUnitValue(last.value, s.unit);
 }
 
 // ---------------------------------------------------------------------------
