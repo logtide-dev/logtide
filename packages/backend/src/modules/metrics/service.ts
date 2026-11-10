@@ -2,6 +2,7 @@ import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
 import { metering, recordMetricIngestion } from '../metering/index.js';
 import { createSkewTracker } from '../ingestion/skew.js';
+import { registerHardwareHosts } from '../hardware/registry.js';
 import {
   pickAutoInterval,
   intervalSeconds,
@@ -64,6 +65,12 @@ export class MetricsService {
 
     // Mark the project as having metrics (debounced, fire-and-forget)
     projectsService.markHasData(projectId, 'metrics').catch(() => {});
+
+    // Hardware health: hosts sending hw.* metrics register themselves
+    // (throttled, fire-and-forget, never fails or slows ingestion).
+    if (organizationId) {
+      void registerHardwareHosts(records, projectId, organizationId);
+    }
 
     return result.ingested;
   }
