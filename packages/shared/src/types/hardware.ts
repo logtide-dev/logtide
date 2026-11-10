@@ -407,9 +407,47 @@ export interface HardwareHostDetail extends HardwareHostSummary {
   collectors: HardwareCollectorStatus[];
 }
 
-/** GET /api/v1/hardware/hosts. */
+/** GET /api/v1/hardware/hosts?projectId=. */
 export interface HardwareHostListResponse {
   hosts: HardwareHostSummary[];
+}
+
+/** One 7 day trend line on the host detail page (hourly buckets). */
+export interface HardwareSeries {
+  /** Stable key, e.g. `memory.corrected:mc0` or `disk.reallocated_sector_count:sda`. */
+  key: string;
+  component: HardwareComponentKey;
+  metric: string;
+  hwId: string;
+  label: string;
+  unit: string;
+  points: Array<{ time: string; value: number }>;
+}
+
+/** GET /api/v1/hardware/hosts/:id. */
+export interface HardwareHostDetailResponse {
+  host: HardwareHostDetail;
+  series: HardwareSeries[];
+}
+
+/** One hardware event (log with service `hardware` for this host). */
+export interface HardwareEvent {
+  id: string;
+  time: string;
+  level: string;
+  message: string;
+  eventType: string | null;
+  eventSource: string | null;
+}
+
+/** GET /api/v1/hardware/hosts/:id/events?limit= (last 7 days, newest first). */
+export interface HardwareEventsResponse {
+  events: HardwareEvent[];
+}
+
+/** PATCH /api/v1/hardware/hosts/:id body. */
+export interface HardwareHostUpdateInput {
+  muted: boolean;
 }
 
 // ---------------------------------------------------------------------------
