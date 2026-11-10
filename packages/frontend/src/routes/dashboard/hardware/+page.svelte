@@ -5,6 +5,7 @@
   import { scopeStore } from '$lib/stores/scope';
   import { layoutStore } from '$lib/stores/layout';
   import { toastStore } from '$lib/stores/toast';
+  import { startVisiblePolling } from '$lib/utils/visible-polling';
   import { ProjectsAPI } from '$lib/api/projects';
   import { listHardwareHosts } from '$lib/api/hardware';
   import { getAuthToken } from '$lib/utils/auth';
@@ -113,8 +114,7 @@
       statusFilter = 'all';
       void load(pid, false);
     });
-    const timer = setInterval(() => void load(pid, true), REFRESH_MS);
-    return () => clearInterval(timer);
+    return startVisiblePolling(() => void load(pid, true), REFRESH_MS);
   });
 
   function reload() {

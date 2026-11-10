@@ -1,3 +1,4 @@
+import { get } from 'svelte/store';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 
@@ -9,6 +10,7 @@ const h = vi.hoisted(() => ({
   del: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
+  getProject: vi.fn(),
 }));
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
@@ -17,6 +19,11 @@ vi.mock('$lib/api/hardware', () => ({
   getHardwareHostEvents: h.events,
   updateHardwareHost: h.update,
   deleteHardwareHost: h.del,
+}));
+vi.mock('$lib/api/projects', () => ({
+  ProjectsAPI: class {
+    getProject = h.getProject;
+  },
 }));
 vi.mock('$lib/stores/toast', () => ({
   toastStore: { success: h.success, warning: vi.fn(), error: h.error, info: vi.fn() },
@@ -55,6 +62,7 @@ beforeEach(() => {
   (page as { params: Record<string, string> }).params = { id: 'h-crit' };
   h.get.mockResolvedValue(detailResponse());
   h.events.mockResolvedValue({ events });
+  h.getProject.mockResolvedValue({ project: { id: 'p1', organizationId: 'org-1' } });
   h.update.mockResolvedValue({});
   h.del.mockResolvedValue(null);
   authStore.setAuth({ id: 'user-1', email: 'a@b.c', name: 'Test User' }, 'token-1');
@@ -245,6 +253,21 @@ describe('hardware host detail page', () => {
     }
   });
 
+  it('takes permissions from the host organization and switches to it', async () => {
+    organizationStore.clear();
+    organizationStore.setOrganizations([
+      { ...org, role: 'owner' },
+      { ...org, id: 'org-2', name: 'Other', slug: 'other', role: 'member' },
+    ]);
+    organizationStore.setCurrentOrganization('org-1');
+    h.getProject.mockResolvedValue({ project: { id: 'p1', organizationId: 'org-2' } });
+    await renderPage();
+    await screen.findByTestId('host-header');
+    await waitFor(() => expect(get(organizationStore).currentOrganization?.id).toBe('org-2'));
+    expect(screen.queryByRole('button', { name: /Forget/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Mute/ })).toBeNull();
+  });
+
   it('hides mute and forget from plain members', async () => {
     setRole('member');
     await renderPage();
@@ -278,5 +301,24 @@ describe('hardware host detail page', () => {
     const header = await screen.findByTestId('host-header');
     expect(within(header).getByTestId('hardware-status').textContent).toContain('OK');
     expect(screen.getByTestId('no-findings')).toBeTruthy();
+  });
+  it('pauses polling while the tab is hidden and refreshes when it is visible again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const setVis = (v: string) => {
+      Object.defineProperty(document, 'visibilityState', { value: v, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    try {
+      await renderPage();
+      await waitFor(() => expect(h.get).toHaveBeenCalledTimes(1));
+      setVis('hidden');
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(h.get).toHaveBeenCalledTimes(1);
+      setVis('visible');
+      await waitFor(() => expect(h.get).toHaveBeenCalledTimes(2));
+    } finally {
+      setVis('visible');
+      vi.useRealTimers();
+    }
   });
 });

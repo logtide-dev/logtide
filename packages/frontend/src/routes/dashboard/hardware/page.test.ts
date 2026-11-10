@@ -154,4 +154,23 @@ describe('hardware list page', () => {
     expect(await screen.findByText(/Could not refresh the list: network down/)).toBeTruthy();
     expect(screen.getByText('db-01')).toBeTruthy();
   });
+  it('pauses polling while the tab is hidden and refreshes when it is visible again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const setVis = (v: string) => {
+      Object.defineProperty(document, 'visibilityState', { value: v, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    try {
+      await renderPage();
+      await waitFor(() => expect(h.list).toHaveBeenCalledTimes(1));
+      setVis('hidden');
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(h.list).toHaveBeenCalledTimes(1);
+      setVis('visible');
+      await waitFor(() => expect(h.list).toHaveBeenCalledTimes(2));
+    } finally {
+      setVis('visible');
+      vi.useRealTimers();
+    }
+  });
 });

@@ -2,7 +2,10 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import type { HardwareEvent, HardwareHostDetailResponse } from '@logtide/shared';
-  import { currentOrganization } from '$lib/stores/organization';
+  import { organizationStore, currentOrganization } from '$lib/stores/organization';
+  import { ProjectsAPI } from '$lib/api/projects';
+  import { getAuthToken } from '$lib/utils/auth';
+  import { startVisiblePolling } from '$lib/utils/visible-polling';
   import { toastStore } from '$lib/stores/toast';
   import {
     deleteHardwareHost,
@@ -38,8 +41,17 @@
   const EVENTS_LIMIT = 50;
 
   const hostId = $derived(page.params.id);
-  const org = $derived($currentOrganization);
-  const canManage = $derived(org?.role === 'owner' || org?.role === 'admin');
+  const projectsAPI = new ProjectsAPI(getAuthToken);
+
+  // Permissions come from the organization that owns the host, not whichever one is selected.
+  let hostOrgId = $state<string | null>(null);
+  const hostOrg = $derived(
+    hostOrgId
+      ? ($organizationStore.organizations.find((o) => o.id === hostOrgId) ??
+          ($currentOrganization?.id === hostOrgId ? $currentOrganization : null))
+      : null
+  );
+  const canManage = $derived(hostOrg?.role === 'owner' || hostOrg?.role === 'admin');
 
   let data = $state<HardwareHostDetailResponse | null>(null);
   let events = $state<HardwareEvent[]>([]);
@@ -86,12 +98,37 @@
     data = null;
     events = [];
     error = null;
+    hostOrgId = null;
     void load(id, false);
-    const timer = setInterval(() => void load(id, true), REFRESH_MS);
+    const stopPolling = startVisiblePolling(() => void load(id, true), REFRESH_MS);
     return () => {
-      clearInterval(timer);
+      stopPolling();
       seq++;
     };
+  });
+
+  // Resolve the host's organization from its project (a deep link can point at another one).
+  $effect(() => {
+    const projectId = host?.projectId;
+    if (!projectId) return;
+    let cancelled = false;
+    projectsAPI
+      .getProject(projectId)
+      .then((res) => {
+        if (!cancelled) hostOrgId = res.project.organizationId;
+      })
+      .catch(() => {
+        if (!cancelled) hostOrgId = null;
+      });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // Switch context to the host's organization, like other deep-linked pages.
+  $effect(() => {
+    const id = hostOrgId;
+    if (id && $currentOrganization?.id !== id && hostOrg) organizationStore.setCurrentOrganization(id);
   });
 
   function refresh() {
