@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { sql } from 'kysely';
 import { db } from '../../../database/index.js';
 import { createTestContext } from '../../helpers/factories.js';
 
@@ -79,6 +80,19 @@ describe('migration 079 hardware health', () => {
       .where('organization_id', '=', organizationId)
       .executeTakeFirstOrThrow();
     expect(row.hardware_host_id).toBeNull();
+  });
+
+  it('indexes incidents by hardware host and adds the event type check NOT VALID', async () => {
+    const idx = await sql<{ indexdef: string }>`
+      select indexdef from pg_indexes where indexname = 'idx_incidents_hardware_host'
+    `.execute(db);
+    expect(idx.rows).toHaveLength(1);
+    expect(idx.rows[0].indexdef).toMatch(/\(hardware_host_id\) WHERE \(hardware_host_id IS NOT NULL\)/);
+
+    const check = await sql<{ convalidated: boolean }>`
+      select convalidated from pg_constraint where conname = 'organization_default_channels_event_type_check'
+    `.execute(db);
+    expect(check.rows[0].convalidated).toBe(false);
   });
 
   it('organization_default_channels accepts the hardware event type', async () => {

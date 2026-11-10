@@ -13,7 +13,10 @@
 --     NOT VALID: the column is new, so every existing row is NULL anyway.
 --   * One active incident per host is a database guarantee, mirroring
 --     uq_incidents_active_monitor of 062.
---   * organization_default_channels accepts the 'hardware' event type.
+--   * idx_incidents_hardware_host: lookups by host of incidents of any
+--     status, and the ON DELETE SET NULL of the FK when a host is deleted.
+--   * organization_default_channels accepts the 'hardware' event type; the
+--     check is re-added NOT VALID, like the incidents source check.
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS hardware_hosts (
@@ -61,7 +64,10 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_active_hardware_host ON incidents (source, hardware_host_id)
   WHERE hardware_host_id IS NOT NULL AND status IN ('open', 'investigating');
 
+CREATE INDEX IF NOT EXISTS idx_incidents_hardware_host ON incidents (hardware_host_id)
+  WHERE hardware_host_id IS NOT NULL;
+
 -- Allow 'hardware' as a default channel event type
 ALTER TABLE organization_default_channels DROP CONSTRAINT IF EXISTS organization_default_channels_event_type_check;
 ALTER TABLE organization_default_channels ADD CONSTRAINT organization_default_channels_event_type_check
-  CHECK (event_type IN ('incident', 'error', 'sigma', 'alert', 'monitoring', 'project_health', 'hardware'));
+  CHECK (event_type IN ('incident', 'error', 'sigma', 'alert', 'monitoring', 'project_health', 'hardware')) NOT VALID;
