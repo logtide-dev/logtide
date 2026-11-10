@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Odoo log parser**: new built-in `odoo` parser for pipeline steps. It reads Odoo's default log format (`timestamp pid LEVEL db logger: message`) into `timestamp`, `pid`, `level`, `odoo_level`, `dbname`, `logger` and `message`, and for the `werkzeug` access lines also `client_ip`, `http_method`, `http_path`, `http_status` and the perf info (`query_count`, `query_time`, `remaining_time`, `duration_ms`). ANSI colors are stripped first. Tracebacks span several lines, so join them in the shipper (for example a Fluent Bit multiline parser).
+- **Odoo receiver**: new `odoo` receiver adapter for Odoo 17+ Automated Actions with "Send Webhook Notification". Each call becomes one log (`<model> <name> → <state>`) with the record fields under `metadata.odoo.fields`. Needs migration 078.
+
 ### Changed
 
 - **ClickHouse server log at warning level**: the bundled ClickHouse config now sets the server's own log (`clickhouse-server.log`) to `warning` instead of the image default `trace`. At trace level it was the largest source of disk writes left after 1.6.3, about 2 MiB/s on a busy instance. Needs a ClickHouse restart; to debug ClickHouse itself, raise the level again in `docker/clickhouse-system-logs.xml`.

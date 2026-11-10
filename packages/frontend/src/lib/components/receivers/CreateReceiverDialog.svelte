@@ -36,6 +36,11 @@
       description: 'Downtime and recovery alerts from Uptime Robot or Better Stack.'
     },
     {
+      value: 'odoo',
+      label: 'Odoo',
+      description: 'Record changes from Odoo 17+ Automated Actions (Send Webhook Notification).'
+    },
+    {
       value: 'generic',
       label: 'Generic JSON',
       description: 'Any JSON payload, with optional field mapping to log fields.'
