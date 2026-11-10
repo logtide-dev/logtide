@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { db } from '../../../database/index.js';
 import { createTestContext } from '../../helpers/factories.js';
 import { metricsService } from '../../../modules/metrics/service.js';
+import { HARDWARE_HISTORY_SERIES } from '@logtide/shared';
+import { reservoir } from '../../../database/reservoir.js';
 import { hwRecords, healthyPoints, type HwPoint } from './helpers.js';
 
 const { notifyMock } = vi.hoisted(() => ({ notifyMock: vi.fn() }));
@@ -106,6 +108,64 @@ describe('hardware data loader', () => {
     const result = evaluateHost({ latest: h.latest, history: h.history, now, lastSeenAt: now });
     expect(result.status).toBe('warning');
     expect(result.findings.map((f) => f.code)).toContain('memory.corrected');
+  });
+
+  it('pages the latest window with a time keyset, including many points in one millisecond', async () => {
+    const s = await setup();
+    const now = new Date();
+    const mem = (id: string, v: number): HwPoint => ({ name: 'hw.memory.errors', value: v, hwType: 'memory', hwId: id, attrs: { error_type: 'corrected', scope: 'controller' } });
+    // 7 points in one millisecond, then 2, 1 and 1 points at older times.
+    await s.ingest(Array.from({ length: 7 }, (_, i) => mem(`mc${i}`, i)), new Date(now.getTime() - MIN));
+    await s.ingest([mem('a', 1), mem('b', 1)], new Date(now.getTime() - 3 * MIN));
+    await s.ingest([mem('c', 1)], new Date(now.getTime() - 5 * MIN));
+    await s.ingest([mem('d', 1)], new Date(now.getTime() - 7 * MIN));
+
+    const paged = await loadProjectHardwareData(s.projectId, s.orgId, new Set(['srv-1']), now, { pageSize: 3 });
+    const all = await loadProjectHardwareData(s.projectId, s.orgId, new Set(['srv-1']), now);
+    const ids = (d: typeof paged) => d.hosts.get('srv-1')!.latest.map((p) => String(p.attributes['hw.id'])).sort();
+    expect(ids(paged)).toHaveLength(11);
+    expect(ids(paged)).toEqual(ids(all));
+    expect(paged.truncated).toBe(false);
+    expect(paged.hosts.get('srv-1')!.partial).toBe(false);
+  });
+
+  it('the cap never drops a whole host: hosts left without points are read one by one, all marked partial', async () => {
+    const s = await setup();
+    await db.insertInto('hardware_hosts').values({ organization_id: s.orgId, project_id: s.projectId, host_name: 'quiet' }).execute();
+    const now = new Date();
+    await s.ingest(hostPoints(45), new Date(now.getTime() - MIN));
+    await s.ingest(hostPoints(45), new Date(now.getTime() - 2 * MIN));
+    await s.ingest(hostPoints(97), new Date(now.getTime() - 8 * MIN), 'quiet');
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const data = await loadProjectHardwareData(s.projectId, s.orgId, new Set(['srv-1', 'quiet']), now, { pageSize: 4, maxPoints: 8 });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    expect(data.truncated).toBe(true);
+    expect(data.hosts.get('srv-1')!.partial).toBe(true);
+    expect(data.hosts.get('quiet')!.partial).toBe(true);
+    expect(data.hosts.get('quiet')!.latest.length).toBe(hostPoints(97).length);
+  });
+
+  it('reads history with one hourly min and max aggregate per metric, cached per project for 15 minutes', async () => {
+    const s = await setup();
+    const now = new Date();
+    await s.ingest(hostPoints(45), new Date(now.getTime() - MIN));
+    const spy = vi.spyOn(reservoir, 'aggregateMetrics');
+    try {
+      await loadProjectHardwareData(s.projectId, s.orgId, new Set(['srv-1']), now);
+      const metrics = Object.keys(HARDWARE_HISTORY_SERIES).length;
+      expect(spy).toHaveBeenCalledTimes(2 * metrics);
+      expect(spy.mock.calls.every(([p]) => p.interval === '1h' && p.to.getTime() - p.from.getTime() === 7 * 24 * 60 * MIN)).toBe(true);
+
+      spy.mockClear();
+      await loadProjectHardwareData(s.projectId, s.orgId, new Set(['srv-1']), new Date(now.getTime() + 14 * MIN));
+      expect(spy).not.toHaveBeenCalled();
+      await loadProjectHardwareData(s.projectId, s.orgId, new Set(['srv-1']), new Date(now.getTime() + 15 * MIN));
+      expect(spy).toHaveBeenCalledTimes(2 * metrics);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('does not see another project', async () => {

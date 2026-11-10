@@ -1,17 +1,21 @@
 /**
  * Reads the evaluator input of every host of ONE project with one query set
- * (never one query per host), through reservoir only so it works on every
- * storage engine:
+ * (never one query per host in the normal case), through reservoir only so it
+ * works on every storage engine:
  *  - latest: raw `hw.*` points of the last HARDWARE_LATEST_WINDOW_MS, newest
- *    first, paged and capped at MAX_LATEST_POINTS (when capped, the oldest
- *    points are the ones dropped, and the evaluator keeps the newest point per
- *    series anyway);
+ *    first, paged with a time keyset cursor (never OFFSET over the window) and
+ *    capped at MAX_LATEST_POINTS. When the cap is hit every host is marked
+ *    `partial` (its oldest points may be missing) and each host that got no
+ *    point at all gets one small query of its own, so the cap never drops a
+ *    whole host;
  *  - history: min and max over 24 h and 7 d of every series listed in
- *    HARDWARE_HISTORY_SERIES, grouped by host.name plus that metric's keys
- *    (aggregateMetrics with a 1 d interval; buckets are merged here, so the
- *    windows are exact to the second).
+ *    HARDWARE_HISTORY_SERIES, grouped by host.name plus that metric's keys.
+ *    One hourly aggregate per metric and per function over 7 d; the 24 h
+ *    values come from the buckets that start inside the last 24 h. History
+ *    is cached per project for HISTORY_CACHE_TTL_MS (the latest points are
+ *    read on every pass).
  * Points are split per host in memory by the `host.name` attribute (resource
- * attribute as a fallback).
+ * attribute as a fallback), matched exactly as registered.
  */
 import {
   HARDWARE_HISTORY_SERIES,
@@ -20,22 +24,35 @@ import {
   HARDWARE_WINDOW_24H_MS,
   HARDWARE_WINDOW_7D_MS,
 } from '@logtide/shared';
-import type { MetricAggregationFn } from '@logtide/reservoir';
+import { hub } from '@logtide/core';
+import type { MetricAggregationFn, StoredMetricRecord } from '@logtide/reservoir';
 import { reservoir } from '../../database/reservoir.js';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 import type { HardwareHistoryEntry, HardwareLatestPoint } from './evaluator.js';
 
 export const LATEST_PAGE_SIZE = 5_000;
 export const MAX_LATEST_POINTS = 100_000;
+/** Newest points read for a host that got none before the cap was hit. */
+export const FALLBACK_POINTS_PER_HOST = 2_000;
+export const HISTORY_CACHE_TTL_MS = 15 * 60_000;
+const HISTORY_CACHE_MAX_PROJECTS = 1_000;
 
 export interface HostHardwareData {
   latest: HardwareLatestPoint[];
   history: HardwareHistoryEntry[];
+  /** True when some of the latest points of the window may be missing. */
+  partial: boolean;
 }
 
 export interface ProjectHardwareData {
   hosts: Map<string, HostHardwareData>;
-  /** True when the latest window had more points than MAX_LATEST_POINTS. */
+  /** True when the latest window had more points than the cap. */
   truncated: boolean;
+}
+
+export interface LoaderLimits {
+  pageSize?: number;
+  maxPoints?: number;
 }
 
 function hostOf(attributes: Record<string, unknown> | undefined, resource?: Record<string, unknown>): string | null {
@@ -43,13 +60,23 @@ function hostOf(attributes: Record<string, unknown> | undefined, resource?: Reco
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
-function bucketFor(map: Map<string, HostHardwareData>, host: string): HostHardwareData {
-  let entry = map.get(host);
-  if (!entry) {
-    entry = { latest: [], history: [] };
-    map.set(host, entry);
+const timeOf = (m: StoredMetricRecord): Date => (m.time instanceof Date ? m.time : new Date(m.time));
+
+function toLatest(m: StoredMetricRecord): HardwareLatestPoint {
+  return {
+    metric: m.metricName,
+    attributes: (m.attributes ?? {}) as HardwareLatestPoint['attributes'],
+    value: m.value,
+    time: timeOf(m),
+  };
+}
+
+function logCap(projectId: string, organizationId: string, maxPoints: number, fallbackHosts: number): void {
+  const message = `[Hardware] latest window over ${maxPoints.toLocaleString('en-US')} points, oldest points skipped`;
+  console.warn(`${message} (project ${projectId}, ${fallbackHosts.toLocaleString('en-US')} host(s) read one by one)`);
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('warn', message, { projectId, organizationId, maxPoints, fallbackHosts });
   }
-  return entry;
 }
 
 async function loadLatest(
@@ -57,104 +84,184 @@ async function loadLatest(
   organizationId: string,
   hostNames: ReadonlySet<string>,
   now: Date,
-  out: Map<string, HostHardwareData>
+  out: Map<string, HostHardwareData>,
+  limits: Required<LoaderLimits>
 ): Promise<boolean> {
   const from = new Date(now.getTime() - HARDWARE_LATEST_WINDOW_MS);
-  let offset = 0;
+  const base = { projectId, organizationId, metricName: [...HARDWARE_METRIC_NAMES], from, sortOrder: 'desc' as const };
+  let loaded = 0;
+  const take = (m: StoredMetricRecord) => {
+    loaded++;
+    const host = hostOf(m.attributes, m.resourceAttributes);
+    if (!host || !hostNames.has(host)) return;
+    out.get(host)!.latest.push(toLatest(m));
+  };
+
+  // Keyset on time, newest first. Engines return millisecond times while
+  // storing finer ones, so the cursor works on whole milliseconds: a page
+  // keeps the points newer than its oldest millisecond and the next page
+  // starts before the end of that millisecond (reading it again in full).
+  let to = now;
+  let toExclusive = false;
+  let truncated = false;
   for (;;) {
-    const page = await reservoir.queryMetrics({
-      projectId,
-      organizationId,
-      metricName: [...HARDWARE_METRIC_NAMES],
-      from,
-      to: now,
-      sortOrder: 'desc',
-      limit: LATEST_PAGE_SIZE,
-      offset,
-    });
-    for (const m of page.metrics) {
-      const host = hostOf(m.attributes, m.resourceAttributes);
-      if (!host || !hostNames.has(host)) continue;
-      bucketFor(out, host).latest.push({
-        metric: m.metricName,
-        attributes: (m.attributes ?? {}) as HardwareLatestPoint['attributes'],
-        value: m.value,
-        time: m.time instanceof Date ? m.time : new Date(m.time),
-      });
+    const page = await reservoir.queryMetrics({ ...base, to, toExclusive, limit: limits.pageSize });
+    if (!page.hasMore) {
+      page.metrics.forEach(take);
+      break;
     }
-    offset += page.metrics.length;
-    if (!page.hasMore || page.metrics.length === 0) return false;
-    if (offset >= MAX_LATEST_POINTS) return true;
+    const times = page.metrics.map((m) => timeOf(m).getTime());
+    const oldest = Math.min(...times);
+    if (oldest === Math.max(...times)) {
+      // A whole page inside one millisecond: read that millisecond by offset.
+      for (let offset = 0; ; ) {
+        const group = await reservoir.queryMetrics({
+          ...base,
+          from: new Date(oldest),
+          to: new Date(oldest + 1),
+          toExclusive: true,
+          limit: limits.pageSize,
+          offset,
+        });
+        group.metrics.forEach(take);
+        offset += group.metrics.length;
+        if (!group.hasMore || group.metrics.length === 0 || loaded >= limits.maxPoints) break;
+      }
+      to = new Date(oldest);
+    } else {
+      page.metrics.forEach((m, i) => {
+        if (times[i] > oldest) take(m);
+      });
+      to = new Date(oldest + 1);
+    }
+    toExclusive = true;
+    if (to.getTime() <= from.getTime()) break;
+    if (loaded >= limits.maxPoints) {
+      truncated = true;
+      break;
+    }
   }
+  if (!truncated) return false;
+
+  const empty = [...hostNames].filter((h) => out.get(h)!.latest.length === 0);
+  logCap(projectId, organizationId, limits.maxPoints, empty.length);
+  for (const entry of out.values()) entry.partial = true;
+  for (const host of empty) {
+    const res = await reservoir.queryMetrics({
+      ...base,
+      to: now,
+      attributes: { 'host.name': host },
+      limit: FALLBACK_POINTS_PER_HOST,
+    });
+    for (const m of res.metrics) out.get(host)!.latest.push(toLatest(m));
+  }
+  return true;
 }
 
-type Window = '24h' | '7d';
+type Buckets = Map<string, { labels: Record<string, string>; buckets: Array<{ t: number; v: number }> }>;
 
-async function aggregateSeries(
+async function hourlySeries(
   projectId: string,
   organizationId: string,
   metric: string,
-  keys: readonly string[],
-  window: Window,
+  groupBy: string[],
   fn: Extract<MetricAggregationFn, 'min' | 'max'>,
   now: Date
-): Promise<Map<string, { labels: Record<string, string>; value: number }>> {
-  const span = window === '24h' ? HARDWARE_WINDOW_24H_MS : HARDWARE_WINDOW_7D_MS;
-  const groupBy = ['host.name', ...keys];
+): Promise<Buckets> {
   const result = await reservoir.aggregateMetrics({
     projectId,
     organizationId,
     metricName: metric,
-    from: new Date(now.getTime() - span),
+    from: new Date(now.getTime() - HARDWARE_WINDOW_7D_MS),
     to: now,
-    interval: '1d',
+    interval: '1h',
     aggregation: fn,
     groupBy,
   });
-  // Several day buckets per series: merge them into one value for the window.
-  const merged = new Map<string, { labels: Record<string, string>; value: number }>();
+  const out: Buckets = new Map();
   for (const b of result.timeseries) {
     if (!Number.isFinite(b.value)) continue;
     const labels = b.labels ?? {};
     const k = groupBy.map((g) => labels[g] ?? '').join('\u0001');
-    const cur = merged.get(k);
-    if (!cur) merged.set(k, { labels, value: b.value });
-    else cur.value = fn === 'min' ? Math.min(cur.value, b.value) : Math.max(cur.value, b.value);
+    let series = out.get(k);
+    if (!series) {
+      series = { labels, buckets: [] };
+      out.set(k, series);
+    }
+    series.buckets.push({ t: new Date(b.bucket).getTime(), v: b.value });
   }
-  return merged;
+  return out;
 }
 
-async function loadHistory(
-  projectId: string,
-  organizationId: string,
-  hostNames: ReadonlySet<string>,
-  now: Date,
-  out: Map<string, HostHardwareData>
-): Promise<void> {
-  // Sequential per metric (four aggregate calls in parallel each) to keep
-  // the pass gentle on the database.
+/** min or max of the buckets starting at or after `since` (null when none). */
+function fold(buckets: Array<{ t: number; v: number }> | undefined, since: number, fn: 'min' | 'max'): number | null {
+  let acc: number | null = null;
+  for (const b of buckets ?? []) {
+    if (b.t < since) continue;
+    acc = acc === null ? b.v : fn === 'min' ? Math.min(acc, b.v) : Math.max(acc, b.v);
+  }
+  return acc;
+}
+
+/** History entries of every host of the project, by host name. */
+async function loadHistory(projectId: string, organizationId: string, now: Date): Promise<Map<string, HardwareHistoryEntry[]>> {
+  const byHost = new Map<string, HardwareHistoryEntry[]>();
+  // 24 h = the buckets that start inside the last 24 h (the partial bucket
+  // at the edge is left out, never counted twice).
+  const since24h = now.getTime() - HARDWARE_WINDOW_24H_MS;
+  const since7d = Number.NEGATIVE_INFINITY;
+  // Sequential per metric (min and max in parallel) to keep the pass gentle
+  // on the database.
   for (const [metric, keys] of Object.entries(HARDWARE_HISTORY_SERIES)) {
-    const [min24, max24, min7, max7] = await Promise.all([
-      aggregateSeries(projectId, organizationId, metric, keys, '24h', 'min', now),
-      aggregateSeries(projectId, organizationId, metric, keys, '24h', 'max', now),
-      aggregateSeries(projectId, organizationId, metric, keys, '7d', 'min', now),
-      aggregateSeries(projectId, organizationId, metric, keys, '7d', 'max', now),
+    const groupBy = ['host.name', ...keys];
+    const [mins, maxs] = await Promise.all([
+      hourlySeries(projectId, organizationId, metric, groupBy, 'min', now),
+      hourlySeries(projectId, organizationId, metric, groupBy, 'max', now),
     ]);
-    const seriesKeys = new Set([...min24.keys(), ...max24.keys(), ...min7.keys(), ...max7.keys()]);
-    for (const k of seriesKeys) {
-      const labels = (min7.get(k) ?? max7.get(k) ?? min24.get(k) ?? max24.get(k))!.labels;
+    for (const k of new Set([...mins.keys(), ...maxs.keys()])) {
+      const labels = (mins.get(k) ?? maxs.get(k))!.labels;
       const host = labels['host.name'];
-      if (!host || !hostNames.has(host)) continue;
-      bucketFor(out, host).history.push({
+      if (!host) continue;
+      const list = byHost.get(host) ?? [];
+      list.push({
         metric,
         attributes: labels,
-        min24h: min24.get(k)?.value ?? null,
-        max24h: max24.get(k)?.value ?? null,
-        min7d: min7.get(k)?.value ?? null,
-        max7d: max7.get(k)?.value ?? null,
+        min24h: fold(mins.get(k)?.buckets, since24h, 'min'),
+        max24h: fold(maxs.get(k)?.buckets, since24h, 'max'),
+        min7d: fold(mins.get(k)?.buckets, since7d, 'min'),
+        max7d: fold(maxs.get(k)?.buckets, since7d, 'max'),
       });
+      byHost.set(host, list);
     }
   }
+  return byHost;
+}
+
+const historyCache = new Map<string, { at: number; byHost: Map<string, HardwareHistoryEntry[]> }>();
+
+/** Test hook: drop every cached project history. */
+export function resetHardwareHistoryCache(): void {
+  historyCache.clear();
+}
+
+async function cachedHistory(
+  projectId: string,
+  organizationId: string,
+  now: Date
+): Promise<Map<string, HardwareHistoryEntry[]>> {
+  const key = `${organizationId}\u0000${projectId}`;
+  const hit = historyCache.get(key);
+  const age = hit ? now.getTime() - hit.at : -1;
+  if (hit && age >= 0 && age < HISTORY_CACHE_TTL_MS) return hit.byHost;
+  const byHost = await loadHistory(projectId, organizationId, now);
+  historyCache.delete(key);
+  historyCache.set(key, { at: now.getTime(), byHost });
+  while (historyCache.size > HISTORY_CACHE_MAX_PROJECTS) {
+    const oldest = historyCache.keys().next().value;
+    if (oldest === undefined) break;
+    historyCache.delete(oldest);
+  }
+  return byHost;
 }
 
 /** Evaluator inputs of the given hosts of one project. Hosts without data get an empty entry. */
@@ -162,12 +269,17 @@ export async function loadProjectHardwareData(
   projectId: string,
   organizationId: string,
   hostNames: ReadonlySet<string>,
-  now: Date
+  now: Date,
+  limits: LoaderLimits = {}
 ): Promise<ProjectHardwareData> {
   const hosts = new Map<string, HostHardwareData>();
-  for (const name of hostNames) hosts.set(name, { latest: [], history: [] });
+  for (const name of hostNames) hosts.set(name, { latest: [], history: [], partial: false });
   if (hostNames.size === 0) return { hosts, truncated: false };
-  const truncated = await loadLatest(projectId, organizationId, hostNames, now, hosts);
-  await loadHistory(projectId, organizationId, hostNames, now, hosts);
+  const truncated = await loadLatest(projectId, organizationId, hostNames, now, hosts, {
+    pageSize: limits.pageSize ?? LATEST_PAGE_SIZE,
+    maxPoints: limits.maxPoints ?? MAX_LATEST_POINTS,
+  });
+  const history = await cachedHistory(projectId, organizationId, now);
+  for (const [name, entry] of hosts) entry.history = history.get(name) ?? [];
   return { hosts, truncated };
 }

@@ -207,9 +207,6 @@ export async function runHardwarePass(now: Date = new Date()): Promise<HardwareP
     let data;
     try {
       data = await loadProjectHardwareData(projectId, organizationId, new Set(projectHosts.map((h) => h.hostName)), now);
-      if (data.truncated) {
-        console.warn(`[Hardware] latest window of project ${projectId} truncated, oldest points skipped`);
-      }
     } catch (error) {
       logError('loading hardware data failed', error, { projectId });
       continue;
