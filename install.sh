@@ -200,6 +200,11 @@ INTERNAL_LOGGING_ENABLED=false
 # FLUENT_BIT_API_KEY=
 # Timezone offset in hours for RFC 3164 syslog timestamps (e.g. 2 for CEST, 8 for UTC+8)
 # SYSLOG_TZ_OFFSET=0
+
+# Hardware agent (Optional - SMART, ECC, temperatures, fans, IPMI on bare-metal hosts)
+# Project-scoped ingestion key; falls back to FLUENT_BIT_API_KEY when empty.
+# Start with: docker compose --profile hardware up -d
+# HW_AGENT_API_KEY=
 EOF
 
     echo -e "${GREEN}✓${NC} Environment file created at docker/.env"
@@ -290,6 +295,10 @@ show_completion() {
     echo "   1. Set FLUENT_BIT_API_KEY in docker/.env (project API key from the UI)"
     echo "   2. cd docker && $DOCKER_COMPOSE --profile logging up -d"
     echo "   This starts Fluent Bit: Docker log collection + syslog on port 514 (UDP/TCP)"
+    echo ""
+    echo -e "${BLUE}→${NC} Monitor hardware health (bare-metal hosts: disks, ECC, temperatures, fans):"
+    echo "   1. Set HW_AGENT_API_KEY (or FLUENT_BIT_API_KEY) in docker/.env"
+    echo "   2. cd docker && $DOCKER_COMPOSE --profile hardware up -d"
     echo ""
     echo -e "${BLUE}→${NC} Documentation:"
     echo "   README:           cat README.md"
