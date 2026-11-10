@@ -1,0 +1,12 @@
+3,100,5000000,-;blk_update_request: I/O error, dev sda, sector 123 op 0x0:(READ)
+6,101,5000100,-;ata3: hard resetting link
+4,102,5000200,-;EDAC MC0: 1 CE memory read error on CPU_SrcID#0_Ha#0_Chan#0_DIMM#0
+2,103,5000300,-;mce: [Hardware Error]: Machine check events logged
+4,104,5000400,-;pcieport 0000:00:1c.0: AER: Corrected error received: 0000:01:00.0
+4,105,5000500,-;CPU0: Package temperature above threshold, cpu clock throttled (total events = 1)
+6,106,5000600,-;igb 0000:02:00.0 eth0: igb: eth0 NIC Link is Down
+6,107,5000700,-;eth0: link is not ready
+3,108,5000800,-;nvme nvme0: I/O 12 QID 3 timeout, aborting
+6,109,5000900,-;systemd[1]: Started Daily apt download activities.
+6,110,5001000,-;usb 1-1: new high-speed USB device number 4
+ SUBSYSTEM=block
