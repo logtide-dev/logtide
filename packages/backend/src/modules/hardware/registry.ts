@@ -28,12 +28,17 @@ interface MetricLike {
   resourceAttributes?: Record<string, unknown>;
 }
 
+/**
+ * The host name exactly as sent, never trimmed: the evaluation loader and the
+ * events query match `host.name` (and the log hostname) byte for byte, so a
+ * trimmed registry name would never find its own data. Blank (empty or
+ * whitespace only) and over-long names are rejected.
+ */
 function hostNameOf(record: MetricLike): string | null {
   const raw = record.attributes?.['host.name'] ?? record.resourceAttributes?.['host.name'];
   if (typeof raw !== 'string') return null;
-  const name = raw.trim();
-  if (name.length === 0 || name.length > MAX_HOST_NAME_LENGTH) return null;
-  return name;
+  if (raw.trim().length === 0 || raw.length > MAX_HOST_NAME_LENGTH) return null;
+  return raw;
 }
 
 /** Distinct host names of the `hw.*` points of a batch. */

@@ -70,6 +70,17 @@ describe('hardware host registry', () => {
     ).toEqual(['a', 'b']);
   });
 
+  it('keeps host names exactly as sent (no trim) and rejects blank ones', () => {
+    expect(
+      hardwareHostNames([
+        { metricName: 'hw.temperature', attributes: { 'host.name': ' srv-1 ' } },
+        { metricName: 'hw.temperature', attributes: { 'host.name': 'srv-1' } },
+        { metricName: 'hw.temperature', attributes: { 'host.name': '\t\n' } },
+        { metricName: 'hw.temperature', attributes: { 'host.name': '' } },
+      ]).sort()
+    ).toEqual([' srv-1 ', 'srv-1']);
+  });
+
   it('throttles upserts per project and host for 60 s', async () => {
     const ctx = await createTestContext();
     const records = hwRecords(healthyPoints(), 'srv-t', new Date(), ctx.project.id, ctx.organization.id);
