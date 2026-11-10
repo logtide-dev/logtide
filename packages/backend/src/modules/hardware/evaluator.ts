@@ -836,7 +836,7 @@ export function evaluateHost(input: EvaluateHostInput): EvaluateHostResult {
       const c = components[comp];
       if (c.status === 'ok' || c.status === 'unknown') c.status = 'warning';
     };
-    for (const comp of HARDWARE_COMPONENT_KEYS) if (components[comp].missing.length > 0) raise(comp);
+    for (const comp of HARDWARE_COMPONENT_KEYS) if ((components[comp].missing ?? []).length > 0) raise(comp);
     downComponents.forEach(raise);
   }
 

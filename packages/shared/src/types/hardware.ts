@@ -277,7 +277,8 @@ export interface HardwareMissingDevice {
 export interface HardwareDisksSnapshot {
   status: HardwareComponentStatus;
   disks: HardwareDisk[];
-  missing: HardwareMissingDevice[];
+  /** Always set by the evaluator; absent in snapshots stored before it existed. */
+  missing?: HardwareMissingDevice[];
 }
 
 export interface HardwareMemoryController {
@@ -303,7 +304,8 @@ export interface HardwareMemorySnapshot {
   /** Sum of every reported `hw.memory.size` series. */
   sizeBytes: number | null;
   controllers: HardwareMemoryController[];
-  missing: HardwareMissingDevice[];
+  /** Always set by the evaluator; absent in snapshots stored before it existed. */
+  missing?: HardwareMissingDevice[];
 }
 
 export interface HardwareCpuSensor {
@@ -326,7 +328,8 @@ export interface HardwareCpuSnapshot {
   status: HardwareComponentStatus;
   sensors: HardwareCpuSensor[];
   throttle: HardwareCpuThrottle[];
-  missing: HardwareMissingDevice[];
+  /** Always set by the evaluator; absent in snapshots stored before it existed. */
+  missing?: HardwareMissingDevice[];
 }
 
 export interface HardwareFan {
@@ -355,8 +358,9 @@ export interface HardwareThermalSensor {
 export interface HardwareCoolingSnapshot {
   status: HardwareComponentStatus;
   fans: HardwareFan[];
-  temperatures: HardwareThermalSensor[];
-  missing: HardwareMissingDevice[];
+  temperatures?: HardwareThermalSensor[];
+  /** Always set by the evaluator; absent in snapshots stored before it existed. */
+  missing?: HardwareMissingDevice[];
 }
 
 export interface HardwarePowerSupply {
@@ -372,8 +376,8 @@ export interface HardwareVoltage {
   status: HardwareComponentStatus;
   volts: number;
   /** Warning limits (`low` / `high`). */
-  low: number | null;
-  high: number | null;
+  low?: number | null;
+  high?: number | null;
   /** Critical limits (`low.critical` / `high.critical`). */
   lowCritical: number | null;
   highCritical: number | null;
@@ -383,7 +387,8 @@ export interface HardwarePowerSnapshot {
   status: HardwareComponentStatus;
   supplies: HardwarePowerSupply[];
   voltages: HardwareVoltage[];
-  missing: HardwareMissingDevice[];
+  /** Always set by the evaluator; absent in snapshots stored before it existed. */
+  missing?: HardwareMissingDevice[];
 }
 
 export interface HardwareNetworkInterface {
@@ -404,7 +409,8 @@ export interface HardwareNetworkInterface {
 export interface HardwareNetworkSnapshot {
   status: HardwareComponentStatus;
   interfaces: HardwareNetworkInterface[];
-  missing: HardwareMissingDevice[];
+  /** Always set by the evaluator; absent in snapshots stored before it existed. */
+  missing?: HardwareMissingDevice[];
 }
 
 /** Full per-component snapshot of a host. */
