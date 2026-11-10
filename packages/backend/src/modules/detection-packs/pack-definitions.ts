@@ -819,10 +819,55 @@ const hardwareHealthPack: DetectionPack = {
       detection: {
         condition: 'selection',
         selection: {
-          'message|contains': ['mce: [Hardware Error]', 'Machine check events logged', 'Machine Check Exception', 'Hardware Error:'],
+          'message|contains': ['mce: [Hardware Error]', 'Machine check events logged', 'Machine Check Exception'],
         },
       },
       level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.cpu'],
+    },
+    {
+      id: 'apei-error-corrected',
+      name: 'Corrected Hardware Error (APEI)',
+      description: 'Firmware reported a corrected hardware error through APEI/GHES (memory, PCIe or CPU). Frequent ones point to a degrading component.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains|all': ['Hardware Error]:', 'event severity: corrected'],
+        },
+      },
+      level: 'medium',
+      status: 'stable',
+      tags: ['hardware', 'hardware.cpu'],
+    },
+    {
+      id: 'apei-error-recoverable',
+      name: 'Recoverable Hardware Error (APEI)',
+      description: 'Firmware reported a recoverable (uncorrected) hardware error through APEI/GHES.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains|all': ['Hardware Error]:', 'event severity: recoverable'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.cpu'],
+    },
+    {
+      id: 'apei-error-fatal',
+      name: 'Fatal Hardware Error (APEI)',
+      description: 'Firmware reported a fatal hardware error through APEI/GHES. The machine is likely to crash or reset.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains|all': ['Hardware Error]:', 'event severity: fatal'],
+        },
+      },
+      level: 'critical',
       status: 'stable',
       tags: ['hardware', 'hardware.cpu'],
     },
@@ -926,7 +971,7 @@ const hardwareHealthPack: DetectionPack = {
       detection: {
         condition: 'selection',
         selection: {
-          'message|contains': ['AER: Corrected error', 'severity=Corrected'],
+          'message|contains': ['AER: Corrected error', 'AER: Multiple Corrected', 'severity=Corrected'],
         },
       },
       level: 'low',
@@ -950,13 +995,22 @@ const hardwareHealthPack: DetectionPack = {
     },
     {
       id: 'thermal-critical',
-      name: 'Critical Temperature Reached',
-      description: 'A thermal zone hit its critical trip point, the system may shut down.',
+      name: 'Critical Temperature or Threshold Reached',
+      description: 'A thermal zone hit its critical trip point or the BMC reported an upper critical or non-recoverable threshold, the system may shut down.',
       logsource: { product: 'any' },
       detection: {
-        condition: 'selection',
-        selection: {
+        condition: 'selection_text or selection_sel or (selection_thermal and selection_critical)',
+        selection_text: {
           'message|contains': ['critical temperature reached'],
+        },
+        selection_sel: {
+          'message|contains': ['Upper Critical - going high', 'Upper Critical going high', 'Upper Non-recoverable'],
+        },
+        selection_thermal: {
+          'message|contains': ['thermal'],
+        },
+        selection_critical: {
+          'message|contains': ['critical'],
         },
       },
       level: 'critical',
@@ -971,10 +1025,11 @@ const hardwareHealthPack: DetectionPack = {
       detection: {
         condition: '(selection_psu and selection_fault) or selection_redundancy',
         selection_psu: {
-          'message|contains': ['power supply', 'psu failure', 'psu fault'],
+          // "psu" alone would match words like "capsule", so only PSU followed by a number or surrounded by spaces
+          'message|contains': ['power supply', 'psu1', 'psu2', 'psu3', 'psu4', 'psu 1', 'psu 2', 'psu 3', 'psu 4', ' psu ', 'ps1 status', 'ps2 status'],
         },
         selection_fault: {
-          'message|contains': ['fail', 'AC lost', 'lost', 'predictive', 'non-recoverable', 'critical'],
+          'message|contains': ['fail', 'fault', 'AC lost', 'lost', 'predictive', 'non-recoverable', 'critical'],
         },
         selection_redundancy: {
           'message|contains': ['redundancy lost', 'Non-redundant'],
@@ -983,6 +1038,69 @@ const hardwareHealthPack: DetectionPack = {
       level: 'high',
       status: 'stable',
       tags: ['hardware', 'hardware.power'],
+    },
+    {
+      id: 'power-supply-removed',
+      name: 'Power Supply Removed',
+      description: 'The BMC reports that a power supply is no longer present (removed or dead). This is the one rule that matches a deasserted SEL entry.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection_psu and selection_removed',
+        selection_psu: {
+          'message|contains': ['power supply', 'psu', 'ps1', 'ps2'],
+        },
+        selection_removed: {
+          'message|contains': ['Presence detected | Deasserted'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.power'],
+    },
+    {
+      id: 'cpu-ierr',
+      name: 'CPU Internal Error (IERR)',
+      description: 'The BMC logged a processor internal error (IERR). The CPU or board is faulty.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': [' IERR'],
+        },
+      },
+      level: 'critical',
+      status: 'stable',
+      tags: ['hardware', 'hardware.cpu'],
+    },
+    {
+      id: 'drive-fault',
+      name: 'Drive Fault (BMC)',
+      description: 'The BMC or RAID backplane reported a drive fault.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['Drive Fault'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.disk'],
+    },
+    {
+      id: 'pci-parity-error',
+      name: 'PCI Parity or System Error',
+      description: 'The BMC logged a PCI parity (PERR) or system (SERR) error.',
+      logsource: { product: 'any' },
+      detection: {
+        condition: 'selection',
+        selection: {
+          'message|contains': ['PCI PERR', 'PCI SERR'],
+        },
+      },
+      level: 'high',
+      status: 'stable',
+      tags: ['hardware', 'hardware.pcie'],
     },
     {
       id: 'nic-link-problem',
@@ -1016,6 +1134,22 @@ const hardwareHealthPack: DetectionPack = {
     },
   ],
 };
+
+// BMC (SEL) recoveries are logged as "... | Deasserted". They must never fire a rule,
+// except the one that deliberately looks for a deasserted presence sensor.
+const RECOVERY_EXEMPT_RULES = new Set(['power-supply-removed']);
+hardwareHealthPack.rules = hardwareHealthPack.rules.map((rule) =>
+  RECOVERY_EXEMPT_RULES.has(rule.id)
+    ? rule
+    : {
+        ...rule,
+        detection: {
+          ...rule.detection,
+          condition: `(${rule.detection.condition}) and not recovery_filter`,
+          recovery_filter: { 'message|contains': ['| Deasserted'] },
+        },
+      }
+);
 
 /**
  * All available detection packs

@@ -43,6 +43,9 @@ describe('Hardware Health Pack', () => {
             'memory-corrected-error',
             'memory-uncorrected-error',
             'machine-check-exception',
+            'apei-error-corrected',
+            'apei-error-recoverable',
+            'apei-error-fatal',
             'disk-io-error',
             'ata-command-failed',
             'ata-link-reset',
@@ -52,6 +55,10 @@ describe('Hardware Health Pack', () => {
             'cpu-thermal-throttle',
             'thermal-critical',
             'power-supply-fault',
+            'power-supply-removed',
+            'cpu-ierr',
+            'drive-fault',
+            'pci-parity-error',
             'nic-link-problem',
             'nic-link-not-ready',
         ]);
@@ -84,6 +91,21 @@ describe('Hardware Health Pack', () => {
             ['sel redundancy', 'Power Supply | Redundancy lost | Asserted', 'power-supply-fault'],
             ['nic link down', 'e1000e 0000:00:19.0 eth0: NIC Link is Down', 'nic-link-problem'],
             ['tx hang', 'e1000e 0000:00:19.0 eth0: Detected Tx Unit Hang', 'nic-link-problem'],
+            ['apei corrected', '{1}[Hardware Error]: event severity: corrected', 'apei-error-corrected'],
+            ['apei recoverable', '{2}[Hardware Error]: event severity: recoverable', 'apei-error-recoverable'],
+            ['apei fatal', '{3}[Hardware Error]: event severity: fatal', 'apei-error-fatal'],
+            ['aer multiple corrected', 'pcieport 0000:00:1c.0: AER: Multiple Corrected error received: 0000:03:00.0', 'pcie-aer-corrected'],
+            ['psu 1 failed', 'PSU 1 failed', 'power-supply-fault'],
+            ['psu1 fault detected', 'PSU1 fault detected', 'power-supply-fault'],
+            ['sel ps status', 'PS1 Status | Failure detected | Asserted', 'power-supply-fault'],
+            ['sel psu removed', 'Power Supply #0x57 | Presence detected | Deasserted', 'power-supply-removed'],
+            ['sel upper critical', 'Temp | Upper Critical - going high | Asserted | Reading 96 > Threshold 95 degrees C', 'thermal-critical'],
+            ['sel upper non-recoverable', 'Temp | Upper Non-recoverable - going high | Asserted', 'thermal-critical'],
+            ['thermal critical text', 'thermal: CPU thermal zone reached critical trip point', 'thermal-critical'],
+            ['sel ierr', 'Processor CPU1 Status | IERR | Asserted', 'cpu-ierr'],
+            ['sel drive fault', 'Drive Slot Bay 3 | Drive Fault | Asserted', 'drive-fault'],
+            ['sel pci perr', 'Critical Interrupt #0x33 | PCI PERR | Asserted', 'pci-parity-error'],
+            ['sel pci serr', 'Critical Interrupt #0x33 | PCI SERR | Asserted', 'pci-parity-error'],
             ['link not ready', 'IPv6: ADDRCONF(NETDEV_UP): eth0: link is not ready', 'nic-link-not-ready'],
         ];
 
@@ -111,6 +133,50 @@ describe('Hardware Health Pack', () => {
         });
     });
 
+    describe('severity of the new rules', () => {
+        const levelOf = (id: string) => pack.rules.find((r) => r.id === id)!.level;
+        it('apei corrected medium, recoverable high, fatal critical', () => {
+            expect(levelOf('apei-error-corrected')).toBe('medium');
+            expect(levelOf('apei-error-recoverable')).toBe('high');
+            expect(levelOf('apei-error-fatal')).toBe('critical');
+        });
+        it('removed psu is high, ierr critical', () => {
+            expect(levelOf('power-supply-removed')).toBe('high');
+            expect(levelOf('cpu-ierr')).toBe('critical');
+        });
+    });
+
+    describe('does not fire on BMC recoveries (deasserted SEL entries)', () => {
+        const deasserted = [
+            'Memory | Correctable ECC | Deasserted | DIMM A1',
+            'Memory | Uncorrectable ECC | Deasserted | DIMM A1',
+            'Power Supply #0x57 | Failure detected | Deasserted',
+            'Power Supply | Redundancy lost | Deasserted',
+            'PS1 Status | Failure detected | Deasserted',
+            'Temp | Upper Critical - going high | Deasserted | Reading 80 < Threshold 95 degrees C',
+            'Temp | Upper Non-recoverable - going high | Deasserted',
+            'Processor CPU1 Status | IERR | Deasserted',
+            'Drive Slot Bay 3 | Drive Fault | Deasserted',
+            'Critical Interrupt #0x33 | PCI PERR | Deasserted',
+            'Critical Interrupt #0x33 | PCI SERR | Deasserted',
+        ];
+        for (const line of deasserted) {
+            it(`ignores "${line}"`, () => {
+                expect(matches(line, { service: 'hardware', level: 'info' })).toEqual([]);
+            });
+        }
+
+        it('every rule except power-supply-removed carries the recovery filter', () => {
+            for (const rule of pack.rules) {
+                if (rule.id === 'power-supply-removed') {
+                    expect(rule.detection.condition).not.toContain('not');
+                } else {
+                    expect(rule.detection.condition).toMatch(/and not recovery_filter$/);
+                }
+            }
+        });
+    });
+
     describe('does not match benign lines', () => {
         const benign = [
             'EDAC MC: Ver: 3.0.0',
@@ -133,6 +199,10 @@ describe('Hardware Health Pack', () => {
             'GET /api/users 200 12ms',
             'request failed: connection timeout to upstream',
             'Temperature sensor reading: 45 C',
+            'Capsule update failed to apply',
+            '{1}[Hardware Error]: Hardware error from APEI Generic Hardware Error Source: 1',
+            'Power Supply #0x57 | Presence detected | Asserted',
+            'Drive Slot Bay 3 | Drive Present | Asserted',
         ];
         for (const line of benign) {
             it(`ignores "${line}"`, () => {
