@@ -720,6 +720,96 @@ Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinatio
 }
 
 // ============================================================================
+// HARDWARE HEALTH EMAIL
+// ============================================================================
+
+export interface HardwareHealthEmailData {
+  hostName: string;
+  projectName: string;
+  organizationName: string;
+  kind: 'degraded' | 'recovered';
+  /** New host status. */
+  status: 'ok' | 'warning' | 'critical';
+  previousStatus: string;
+  /** Finding messages, worst first (empty on recovered). */
+  findings: string[];
+  changedAt: string;
+  link: string;
+}
+
+/** Most findings listed in the email body; the host page has them all. */
+const HARDWARE_EMAIL_MAX_FINDINGS = 10;
+
+export function generateHardwareHealthEmail(data: HardwareHealthEmailData): { html: string; text: string } {
+  const frontendUrl = getFrontendUrl();
+  const degraded = data.kind === 'degraded';
+  const badge = degraded ? (data.status === 'critical' ? 'Critical' : 'Warning') : 'Recovered';
+  const tone = !degraded ? 'success' : data.status === 'critical' ? 'error' : 'warning';
+  const heading = degraded ? `Hardware ${data.status}: ${data.hostName}` : `Hardware recovered: ${data.hostName}`;
+  const shown = data.findings.slice(0, HARDWARE_EMAIL_MAX_FINDINGS);
+  const more = data.findings.length - shown.length;
+  const summary = degraded
+    ? `${data.hostName} reports ${data.findings.length.toLocaleString('en-US')} hardware ${data.findings.length === 1 ? 'problem' : 'problems'}.`
+    : `${data.hostName} reports no hardware problems anymore.`;
+
+  const html = renderEmail({
+    title: heading,
+    preheader: `[${badge}] ${heading}`,
+    context: emailContext(data.organizationName, data.projectName),
+    body:
+      ui.pill(badge, tone) +
+      ui.title(heading) +
+      ui.notice(summary, tone) +
+      (shown.length > 0
+        ? ui.logBlock([
+            ...shown.map((m, i) => ({ key: String(i + 1), value: m })),
+            ...(more > 0 ? [{ key: '+', value: `${more.toLocaleString('en-US')} more on the host page` }] : []),
+          ])
+        : '') +
+      ui.logBlock([
+        { key: 'host', value: data.hostName },
+        { key: 'status', value: `${data.previousStatus} -> ${data.status}` },
+        { key: 'changed', value: data.changedAt },
+      ]) +
+      ui.button('View host', data.link),
+    footer: { kind: 'notifications' },
+  });
+
+  const findingLines =
+    shown.length > 0
+      ? [
+          '',
+          ...shown.map((m) => `- ${m}`),
+          ...(more > 0 ? [`- ${more.toLocaleString('en-US')} more on the host page`] : []),
+          '',
+        ].join('\n')
+      : '';
+
+  const text = `
+${heading}
+${'='.repeat(50)}
+
+${summary}
+${findingLines}
+Details
+-------
+Host: ${data.hostName}
+Project: ${data.projectName}
+Organization: ${data.organizationName}
+Status: ${data.previousStatus} -> ${data.status}
+Changed: ${data.changedAt}
+
+View details: ${data.link}
+
+--
+Sent by LogTide
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
+`.trim();
+
+  return { html, text };
+}
+
+// ============================================================================
 // DIGEST REPORT EMAIL (#154)
 // ============================================================================
 

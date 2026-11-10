@@ -860,12 +860,13 @@ export class IncidentsService {
   }
 
   /**
-   * Sets the severity of the active (open or acknowledged) incident of a
-   * source, in both directions (openOrUpdateFromSource only escalates). Used
-   * when a hardware host improves from critical to warning. Writes no
+   * Sets the severity (and optionally the title) of the active (open or
+   * acknowledged) incident of a source, in both directions
+   * (openOrUpdateFromSource only escalates and never retitles). Used when a
+   * hardware host changes between warning and critical. Writes no
    * source_event row; the trigger records the `severity_change` with reason
-   * `source_event` and no user. Returns null when nothing is active or the
-   * severity already matches.
+   * `source_event` and no user. Returns null when nothing is active or
+   * nothing changes.
    */
   async setSeverityFromSource(input: SetSeverityFromSourceInput): Promise<IncidentRow | null> {
     if (!UUID_RE.test(input.sourceId)) return null;
@@ -874,12 +875,16 @@ export class IncidentsService {
     return withIncidentActor(this.db, { userId: null, reason: 'source_event' }, async (trx) => {
       const row = await trx
         .updateTable('incidents')
-        .set({ severity: input.severity })
+        .set({ severity: input.severity, ...(input.title !== undefined && { title: input.title }) })
         .where('organization_id', '=', input.organizationId)
         .where('source', '=', input.source)
         .where(column, '=', input.sourceId)
         .where('status', 'in', ['open', 'investigating'])
-        .where('severity', '!=', input.severity)
+        .where((eb) =>
+          input.title !== undefined
+            ? eb.or([eb('severity', '!=', input.severity), eb('title', '!=', input.title)])
+            : eb('severity', '!=', input.severity)
+        )
         .returningAll()
         .executeTakeFirst();
       return row ? mapIncidentRow(row) : null;

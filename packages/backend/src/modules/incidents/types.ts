@@ -62,6 +62,8 @@ export interface SetSeverityFromSourceInput {
   source: IncidentSourceKind;
   sourceId: string;
   severity: Severity;
+  /** Also replace the title (e.g. `Hardware critical: srv-1` after an escalation). */
+  title?: string;
 }
 
 /** Input of `incidentsService.bulk`. */
