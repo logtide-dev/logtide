@@ -790,6 +790,7 @@ export class NotificationChannelsService {
       error: [],
       monitoring: [],
       project_health: [],
+      hardware: [],
     };
 
     for (const row of rows) {

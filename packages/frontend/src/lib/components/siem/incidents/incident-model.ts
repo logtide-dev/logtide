@@ -29,13 +29,14 @@ export const INCIDENT_SOURCE_LABEL: Record<IncidentSource, string> = {
   alert: 'Alert',
   monitor: 'Uptime',
   manual: 'Manual',
+  hardware: 'Hardware',
 };
 
 export const DEFAULT_STATUS_FILTER: IncidentStatus[] = ['open', 'investigating'];
 
 const ALL_STATUSES: IncidentStatus[] = ['open', 'investigating', 'resolved', 'false_positive'];
 const ALL_SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low', 'informational'];
-const ALL_SOURCES: IncidentSource[] = ['sigma', 'alert', 'monitor', 'manual'];
+const ALL_SOURCES: IncidentSource[] = ['sigma', 'alert', 'monitor', 'manual', 'hardware'];
 
 export interface IncidentActions {
   acknowledge: boolean;
