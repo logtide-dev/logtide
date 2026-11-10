@@ -28,12 +28,15 @@ export interface IncidentListFilters {
   offset?: number;
 }
 
+/** Incident sources with a lifecycle driven by an external object (rule, monitor, hardware host). */
+export type IncidentSourceKind = 'alert' | 'monitor' | 'hardware';
+
 /** Input of `incidentsService.openOrUpdateFromSource` (spec 6.5). */
 export interface OpenOrUpdateFromSourceInput {
   organizationId: string;
   projectId: string | null;
-  source: 'alert' | 'monitor';
-  /** Alert rule id for source alert, monitor id for source monitor. */
+  source: IncidentSourceKind;
+  /** Alert rule id for source alert, monitor id for source monitor, hardware host id for source hardware. */
   sourceId: string;
   title: string;
   description?: string;
@@ -46,11 +49,19 @@ export interface OpenOrUpdateFromSourceInput {
 /** Input of `incidentsService.resolveFromSource` (spec 6.5). */
 export interface ResolveFromSourceInput {
   organizationId: string;
-  source: 'alert' | 'monitor';
+  source: IncidentSourceKind;
   sourceId: string;
   resolvedAt: Date;
-  /** `recovered`: the source is healthy again; `manual`: a user disabled or deleted the rule or monitor. */
+  /** `recovered`: the source is healthy again; `manual`: a user disabled or deleted the rule, monitor or host. */
   reason: 'recovered' | 'manual';
+}
+
+/** Input of `incidentsService.setSeverityFromSource`. */
+export interface SetSeverityFromSourceInput {
+  organizationId: string;
+  source: IncidentSourceKind;
+  sourceId: string;
+  severity: Severity;
 }
 
 /** Input of `incidentsService.bulk`. */

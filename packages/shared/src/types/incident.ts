@@ -40,7 +40,7 @@ export interface IncidentProjectRef {
 }
 
 export interface IncidentSourceRef {
-  kind: 'alert' | 'monitor';
+  kind: 'alert' | 'monitor' | 'hardware';
   id: string;
   name: string;
 }
@@ -48,7 +48,7 @@ export interface IncidentSourceRef {
 export interface IncidentListItem extends Incident {
   assignee: IncidentUserRef | null;
   project: IncidentProjectRef | null;
-  /** null for sigma and manual incidents, or when the rule or monitor was deleted. */
+  /** null for sigma and manual incidents, or when the rule, monitor or hardware host was deleted. */
   sourceRef: IncidentSourceRef | null;
 }
 
@@ -58,13 +58,14 @@ export interface IncidentListResponse {
 }
 
 /**
- * One alert trigger or monitor check behind an alert or uptime incident;
+ * One alert trigger, monitor check or hardware evaluation behind an alert,
+ * uptime or hardware incident;
  * derived from the `created` and `source_event` history rows (empty for sigma
  * and manual).
  */
 export interface IncidentSourceEvent {
   id: string;
-  kind: 'alert_trigger' | 'monitor_check';
+  kind: 'alert_trigger' | 'monitor_check' | 'hardware_check';
   time: string;
   summary: string;
   detail?: Record<string, unknown>;
@@ -124,9 +125,9 @@ export interface IncidentBulkResult {
   skipped: { id: string; reason: 'not_found' | 'invalid_transition' }[];
 }
 
-/** Metadata of the `created` and `source_event` history rows of alert and monitor incidents. */
+/** Metadata of the `created` and `source_event` history rows of alert, monitor and hardware incidents. */
 export interface IncidentSourceEventMetadata {
-  source: 'alert' | 'monitor';
+  source: 'alert' | 'monitor' | 'hardware';
   sourceId: string;
   occurredAt: string;
   data: Record<string, unknown> | null;

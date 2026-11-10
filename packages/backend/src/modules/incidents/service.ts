@@ -1,6 +1,6 @@
 /**
  * Incidents service: the single incident store for every source (sigma,
- * alert, monitor, manual). Imports nothing from `queue/` or Fastify so that
+ * alert, monitor, hardware, manual). Imports nothing from `queue/` or Fastify so that
  * worker code (alert evaluation, monitor checks) can import it directly.
  */
 import {
@@ -34,8 +34,10 @@ import {
   type IncidentCommentInput,
   type IncidentListFilters,
   type IncidentRow,
+  type IncidentSourceKind,
   type OpenOrUpdateFromSourceInput,
   type ResolveFromSourceInput,
+  type SetSeverityFromSourceInput,
 } from './types.js';
 
 type Executor = Kysely<Database> | Transaction<Database>;
@@ -47,6 +49,29 @@ export interface IncidentPatch {
   severity?: Severity;
   title?: string;
   description?: string | null;
+}
+
+/** Link column of each source-driven incident source (partial unique index per column). */
+const SOURCE_COLUMN = {
+  alert: 'alert_rule_id',
+  monitor: 'monitor_id',
+  hardware: 'hardware_host_id',
+} as const satisfies Record<IncidentSourceKind, keyof IncidentsTable>;
+
+const SOURCE_EVENT_KIND = {
+  alert: 'alert_trigger',
+  monitor: 'monitor_check',
+  hardware: 'hardware_check',
+} as const satisfies Record<IncidentSourceKind, IncidentSourceEvent['kind']>;
+
+const SOURCE_EVENT_SUMMARY: Record<IncidentSourceKind, string> = {
+  alert: 'Alert triggered',
+  monitor: 'Monitor check failed',
+  hardware: 'Hardware health changed',
+};
+
+function isSourceKind(value: unknown): value is IncidentSourceKind {
+  return value === 'alert' || value === 'monitor' || value === 'hardware';
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -63,7 +88,7 @@ function isSourceEventMetadata(value: unknown): value is IncidentSourceEventMeta
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const m = value as Record<string, unknown>;
   return (
-    (m.source === 'alert' || m.source === 'monitor') &&
+    isSourceKind(m.source) &&
     typeof m.sourceId === 'string' &&
     typeof m.occurredAt === 'string' &&
     (m.data === null || m.data === undefined || (typeof m.data === 'object' && !Array.isArray(m.data)))
@@ -139,6 +164,11 @@ export class IncidentsService {
           .onRef('monitors.id', '=', 'incidents.monitor_id')
           .onRef('monitors.organization_id', '=', 'incidents.organization_id')
       )
+      .leftJoin('hardware_hosts', (join) =>
+        join
+          .onRef('hardware_hosts.id', '=', 'incidents.hardware_host_id')
+          .onRef('hardware_hosts.organization_id', '=', 'incidents.organization_id')
+      )
       .where('incidents.organization_id', '=', organizationId)
       .selectAll('incidents')
       .select([
@@ -147,6 +177,7 @@ export class IncidentsService {
         'projects.name as project_name',
         'alert_rules.name as alert_rule_name',
         'monitors.name as monitor_name',
+        'hardware_hosts.host_name as hardware_host_name',
       ]);
   }
 
@@ -379,7 +410,7 @@ export class IncidentsService {
   async listSourceEvents(id: string, organizationId: string): Promise<IncidentSourceEvent[] | null> {
     const incident = await this.findScoped(id, organizationId);
     if (!incident) return null;
-    if (incident.source !== 'alert' && incident.source !== 'monitor') return [];
+    if (!isSourceKind(incident.source)) return [];
 
     const rows = await this.db
       .selectFrom('incident_history')
@@ -395,13 +426,9 @@ export class IncidentsService {
       const meta = row.metadata;
       if (!isSourceEventMetadata(meta)) continue;
       const data = meta.data ?? null;
-      const kind = meta.source === 'alert' ? 'alert_trigger' : 'monitor_check';
+      const kind = SOURCE_EVENT_KIND[meta.source];
       const summary =
-        data && typeof data.summary === 'string'
-          ? data.summary
-          : kind === 'alert_trigger'
-            ? 'Alert triggered'
-            : 'Monitor check failed';
+        data && typeof data.summary === 'string' ? data.summary : SOURCE_EVENT_SUMMARY[meta.source];
       events.push({
         event: { id: row.id, kind, time: meta.occurredAt, summary, ...(data && { detail: data }) },
         createdAt: new Date(row.created_at).getTime(),
@@ -719,12 +746,19 @@ export class IncidentsService {
               .where('id', '=', input.sourceId)
               .where('organization_id', '=', input.organizationId)
               .executeTakeFirst()
-          : await trx
-              .selectFrom('monitors')
-              .select('id')
-              .where('id', '=', input.sourceId)
-              .where('organization_id', '=', input.organizationId)
-              .executeTakeFirst();
+          : input.source === 'monitor'
+            ? await trx
+                .selectFrom('monitors')
+                .select('id')
+                .where('id', '=', input.sourceId)
+                .where('organization_id', '=', input.organizationId)
+                .executeTakeFirst()
+            : await trx
+                .selectFrom('hardware_hosts')
+                .select('id')
+                .where('id', '=', input.sourceId)
+                .where('organization_id', '=', input.organizationId)
+                .executeTakeFirst();
       if (!owned) throw notFound();
 
       if (input.projectId !== null) {
@@ -737,7 +771,7 @@ export class IncidentsService {
         if (!project) throw notFound();
       }
 
-      const target = input.source === 'alert' ? 'alert_rule_id' : 'monitor_id';
+      const target = SOURCE_COLUMN[input.source];
       const row = await trx
         .insertInto('incidents')
         .values({
@@ -750,6 +784,7 @@ export class IncidentsService {
           source: input.source,
           alert_rule_id: input.source === 'alert' ? input.sourceId : null,
           monitor_id: input.source === 'monitor' ? input.sourceId : null,
+          hardware_host_id: input.source === 'hardware' ? input.sourceId : null,
           time_window_start: input.occurredAt,
           time_window_end: input.occurredAt,
           last_event_at: input.occurredAt,
@@ -808,7 +843,7 @@ export class IncidentsService {
    */
   async resolveFromSource(input: ResolveFromSourceInput): Promise<IncidentRow | null> {
     if (!UUID_RE.test(input.sourceId)) return null;
-    const column = input.source === 'alert' ? 'alert_rule_id' : 'monitor_id';
+    const column = SOURCE_COLUMN[input.source];
 
     return withIncidentActor(this.db, { userId: null, reason: input.reason }, async (trx) => {
       const row = await trx
@@ -818,6 +853,33 @@ export class IncidentsService {
         .where('source', '=', input.source)
         .where(column, '=', input.sourceId)
         .where('status', 'in', ['open', 'investigating'])
+        .returningAll()
+        .executeTakeFirst();
+      return row ? mapIncidentRow(row) : null;
+    });
+  }
+
+  /**
+   * Sets the severity of the active (open or acknowledged) incident of a
+   * source, in both directions (openOrUpdateFromSource only escalates). Used
+   * when a hardware host improves from critical to warning. Writes no
+   * source_event row; the trigger records the `severity_change` with reason
+   * `source_event` and no user. Returns null when nothing is active or the
+   * severity already matches.
+   */
+  async setSeverityFromSource(input: SetSeverityFromSourceInput): Promise<IncidentRow | null> {
+    if (!UUID_RE.test(input.sourceId)) return null;
+    const column = SOURCE_COLUMN[input.source];
+
+    return withIncidentActor(this.db, { userId: null, reason: 'source_event' }, async (trx) => {
+      const row = await trx
+        .updateTable('incidents')
+        .set({ severity: input.severity })
+        .where('organization_id', '=', input.organizationId)
+        .where('source', '=', input.source)
+        .where(column, '=', input.sourceId)
+        .where('status', 'in', ['open', 'investigating'])
+        .where('severity', '!=', input.severity)
         .returningAll()
         .executeTakeFirst();
       return row ? mapIncidentRow(row) : null;

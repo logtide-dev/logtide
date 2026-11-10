@@ -9,6 +9,7 @@ export type IncidentJoinedRow = Selectable<IncidentsTable> & {
   project_name: string | null;
   alert_rule_name: string | null;
   monitor_name: string | null;
+  hardware_host_name: string | null;
 };
 
 export function mapIncidentRow(row: Selectable<IncidentsTable>): Incident {
@@ -33,6 +34,7 @@ export function mapIncidentRow(row: Selectable<IncidentsTable>): Incident {
     source: (row.source ?? 'sigma') as IncidentSource,
     monitorId: row.monitor_id ?? null,
     alertRuleId: row.alert_rule_id ?? null,
+    hardwareHostId: row.hardware_host_id ?? null,
     acknowledgedAt: row.acknowledged_at ?? null,
     acknowledgedBy: row.acknowledged_by ?? null,
     resolvedBy: row.resolved_by ?? null,
@@ -50,6 +52,9 @@ function sourceRefOf(row: IncidentJoinedRow): IncidentSourceRef | null {
   if (row.source === 'monitor' && row.monitor_id && row.monitor_name !== null) {
     return { kind: 'monitor', id: row.monitor_id, name: row.monitor_name };
   }
+  if (row.source === 'hardware' && row.hardware_host_id && row.hardware_host_name !== null) {
+    return { kind: 'hardware', id: row.hardware_host_id, name: row.hardware_host_name };
+  }
   return null;
 }
 
@@ -60,6 +65,7 @@ export function mapIncidentListRow(row: IncidentJoinedRow): IncidentListItem {
     project_name: projectName,
     alert_rule_name: _alertRuleName,
     monitor_name: _monitorName,
+    hardware_host_name: _hardwareHostName,
     ...incidentRow
   } = row;
 
