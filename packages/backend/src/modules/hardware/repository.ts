@@ -18,6 +18,7 @@ import type {
 } from '@logtide/shared';
 import { HARDWARE_COMPONENT_KEYS, HARDWARE_WINDOW_24H_MS } from '@logtide/shared';
 import { db } from '../../database/index.js';
+import { withIncidentActor } from '../incidents/actor.js';
 import type { HardwareHostsTable } from '../../database/types.js';
 import { componentStatuses, evaluateHost, type EvaluateHostResult } from './evaluator.js';
 
@@ -314,11 +315,43 @@ export async function activeHardwareIncident(
     .executeTakeFirst();
 }
 
-export async function deleteHost(id: string, organizationId: string): Promise<boolean> {
-  const res = await db
-    .deleteFrom('hardware_hosts')
-    .where('id', '=', id)
-    .where('organization_id', '=', organizationId)
-    .executeTakeFirst();
-  return Number(res.numDeletedRows) > 0;
+/**
+ * Forgets a host: deletes it and resolves its active incident in one
+ * transaction, so no open incident is left without its host. Returns the
+ * incidents to resolve on PagerDuty (the active one and the one of the
+ * current episode), or null when the host does not exist.
+ */
+export async function forgetHost(id: string, organizationId: string, now: Date): Promise<{ incidentIds: string[] } | null> {
+  return withIncidentActor(db, { userId: null, reason: 'manual' }, async (trx) => {
+    const host = await trx
+      .selectFrom('hardware_hosts')
+      .select(['id', 'episode_incident_id'])
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!host) return null;
+    const active = await trx
+      .selectFrom('incidents')
+      .select('id')
+      .where('organization_id', '=', organizationId)
+      .where('source', '=', 'hardware')
+      .where('hardware_host_id', '=', id)
+      .where('status', 'in', ['open', 'investigating'])
+      .forUpdate()
+      .executeTakeFirst();
+    await trx.deleteFrom('hardware_hosts').where('id', '=', id).where('organization_id', '=', organizationId).execute();
+    if (active) {
+      await trx
+        .updateTable('incidents')
+        .set({ status: 'resolved', resolved_at: now, resolved_by: null })
+        .where('id', '=', active.id)
+        .where('organization_id', '=', organizationId)
+        .execute();
+    }
+    const ids = new Set<string>();
+    if (active) ids.add(active.id);
+    if (host.episode_incident_id) ids.add(host.episode_incident_id);
+    return { incidentIds: [...ids] };
+  });
 }

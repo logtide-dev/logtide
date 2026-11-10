@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type {
   HardwareEventsResponse,
@@ -13,6 +13,12 @@ import { metricsService } from '../../../modules/metrics/service.js';
 import { incidentsService } from '../../../modules/incidents/service.js';
 import { runHardwarePass } from '../../../modules/hardware/evaluation.js';
 import { healthyPoints, hwRecords, type HwPoint } from './helpers.js';
+
+const { pdResolveMock } = vi.hoisted(() => ({ pdResolveMock: vi.fn(async () => undefined) }));
+vi.mock('../../../modules/hardware/notifier.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../modules/hardware/notifier.js')>();
+  return { ...actual, resolveHardwarePagerDuty: pdResolveMock };
+});
 
 const auth = (token: string) => ({ authorization: `Bearer ${token}` });
 const MIN = 60_000;
@@ -235,6 +241,10 @@ describe('hardware REST API', () => {
     expect(await db.selectFrom('hardware_hosts').select('id').where('id', '=', s.hostId).where('organization_id', '=', s.orgId).executeTakeFirst()).toBeUndefined();
     const inc = await db.selectFrom('incidents').select(['status', 'hardware_host_id']).where('id', '=', incident.id).where('organization_id', '=', s.orgId).executeTakeFirstOrThrow();
     expect(inc).toEqual({ status: 'resolved', hardware_host_id: null });
+    expect(pdResolveMock).toHaveBeenCalledTimes(1);
+    expect(pdResolveMock.mock.calls[0][0]).toMatchObject({ id: s.hostId, hostName: 'srv-1', projectId: s.projectId });
+    expect(pdResolveMock.mock.calls[0][1]).toBe(incident.id);
+    expect(pdResolveMock.mock.calls[0][2]).toBe('forgotten');
     expect((await app.inject({ method: 'GET', url, headers: auth(s.ownerToken) })).statusCode).toBe(404);
   });
 });

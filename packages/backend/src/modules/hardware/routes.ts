@@ -17,9 +17,9 @@ import type {
 } from '@logtide/shared';
 import { authenticate } from '../auth/middleware.js';
 import { db } from '../../database/index.js';
-import { incidentsService } from '../incidents/service.js';
+import { resolveHardwarePagerDuty } from './notifier.js';
 import {
-  deleteHost,
+  forgetHost,
   findHostForUser,
   listHostsByProject,
   setHostMuted,
@@ -120,15 +120,26 @@ export async function hardwareRoutes(fastify: FastifyInstance) {
     if (!isAdminRole(found.role)) {
       return reply.status(403).send({ error: 'Only organization owners and admins can delete hardware hosts' });
     }
-    // Resolve before the delete: the incident keeps its row but loses the host link.
-    await incidentsService.resolveFromSource({
+    // Delete and resolve in one transaction: the incident keeps its row but
+    // loses the host link, and is never left open without its host.
+    const forgotten = await forgetHost(id.data, found.row.organization_id, new Date());
+    if (!forgotten) return reply.status(404).send(NOT_FOUND);
+    const project = await db
+      .selectFrom('projects')
+      .select('name')
+      .where('id', '=', found.row.project_id)
+      .where('organization_id', '=', found.row.organization_id)
+      .executeTakeFirst();
+    const host = {
+      id: found.row.id,
+      hostName: found.row.host_name,
+      projectId: found.row.project_id,
+      projectName: project?.name ?? '',
       organizationId: found.row.organization_id,
-      source: 'hardware',
-      sourceId: id.data,
-      resolvedAt: new Date(),
-      reason: 'manual',
-    });
-    await deleteHost(id.data, found.row.organization_id);
+    };
+    for (const incidentId of forgotten.incidentIds) {
+      await resolveHardwarePagerDuty(host, incidentId, 'forgotten');
+    }
     return reply.status(204).send();
   });
 }
