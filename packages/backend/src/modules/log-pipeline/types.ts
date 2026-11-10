@@ -1,4 +1,4 @@
-export type BuiltinParser = 'nginx' | 'apache' | 'syslog' | 'logfmt' | 'json';
+export type BuiltinParser = 'nginx' | 'apache' | 'syslog' | 'logfmt' | 'odoo' | 'json';
 
 export interface ParserStep {
   type: 'parser';

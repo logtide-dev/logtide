@@ -84,7 +84,7 @@ export const handle = dsn
         dsn,
         service: 'logtide-frontend',
         environment: privateEnv?.NODE_ENV || 'production',
-        release: process.env.npm_package_version || '1.6.3',      }) as unknown as Handle,
+        release: process.env.npm_package_version || '1.6.4',      }) as unknown as Handle,
       requestLogHandle,
       configHandle
     )

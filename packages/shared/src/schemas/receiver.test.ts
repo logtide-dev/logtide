@@ -28,6 +28,6 @@ describe('receiverFieldMappingSchema', () => {
   });
 
   it('exposes the adapter type list', () => {
-    expect(RECEIVER_ADAPTER_TYPES).toEqual(['github', 'uptime', 'generic']);
+    expect(RECEIVER_ADAPTER_TYPES).toEqual(['github', 'uptime', 'odoo', 'generic']);
   });
 });
