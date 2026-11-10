@@ -137,6 +137,11 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Maximum saved log searches per organization',
   },
+  'hardware.max_hosts': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum hardware hosts per organization (hosts beyond it are not registered, ingestion is unaffected)',
+  },
   'quota.grace_percent': {
     kind: 'limit',
     defaultLimit: null,
