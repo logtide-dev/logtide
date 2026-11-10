@@ -38,10 +38,17 @@ describe('hardware health constants', () => {
     }
   });
 
+  it('tracks the identities of devices that can vanish, and DIMMs by scope', () => {
+    for (const m of ['hw.physical_disk.smart_status', 'hw.power_supply.status', 'hw.fan.speed', 'hw.network.up']) {
+      expect(HARDWARE_HISTORY_SERIES).toHaveProperty([m]);
+    }
+    expect(HARDWARE_HISTORY_SERIES['hw.memory.errors']).toEqual(['hw.id', 'scope', 'error_type']);
+  });
+
   it('has unique finding codes prefixed by a component', () => {
     expect(new Set(HARDWARE_FINDING_CODES).size).toBe(HARDWARE_FINDING_CODES.length);
     for (const code of HARDWARE_FINDING_CODES) {
-      expect(['disk', 'memory', 'cpu', 'cooling', 'power', 'network']).toContain(code.split('.')[0]);
+      expect(['disk', 'memory', 'cpu', 'cooling', 'power', 'network', 'agent']).toContain(code.split('.')[0]);
     }
   });
 

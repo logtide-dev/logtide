@@ -77,6 +77,13 @@ export const HARDWARE_FINDING_CODES = [
   'network.crc_errors',
   'network.link_flapping',
   'network.errors',
+  'disk.missing',
+  'power.psu_missing',
+  'cooling.fan_missing',
+  'network.interface_missing',
+  'cooling.temperature_critical',
+  'cooling.temperature_high',
+  'agent.collector_down',
 ] as const;
 export type HardwareFindingCode = (typeof HARDWARE_FINDING_CODES)[number];
 
@@ -136,15 +143,20 @@ export type HardwareCollector = (typeof HARDWARE_COLLECTORS)[number];
  * data-point attributes that distinguish one series from another (in addition
  * to `host.name`). Group `aggregateMetrics` by `host.name` + these attributes,
  * with `min` and `max`, over 24 h and 7 d.
- * `hw.fan.speed` is listed because "stopped fan" needs the 24 h max.
+ * `hw.fan.speed` is listed because "stopped fan" needs the 24 h max, and
+ * `smart_status`, `power_supply.status`, `fan.speed` and `network.up` carry the
+ * identities used to detect devices that vanished from the latest data.
  */
 export const HARDWARE_HISTORY_SERIES: Readonly<Record<string, readonly string[]>> = {
+  'hw.physical_disk.smart_status': ['hw.id'],
   'hw.physical_disk.smart': ['hw.id', 'smart_attribute'],
   'hw.physical_disk.media_errors': ['hw.id'],
-  'hw.memory.errors': ['hw.id', 'error_type'],
+  'hw.memory.errors': ['hw.id', 'scope', 'error_type'],
   'hw.cpu.throttle_count': ['hw.id', 'throttle_type'],
   'hw.network.errors': ['hw.id', 'direction', 'error_type'],
   'hw.network.carrier_changes': ['hw.id'],
+  'hw.network.up': ['hw.id'],
+  'hw.power_supply.status': ['hw.id', 'sensor'],
   'hw.fan.speed': ['hw.id', 'sensor'],
 };
 
@@ -255,9 +267,17 @@ export interface HardwareDisk {
   temperature: number | null;
 }
 
+/** A device present in the 24 h history but absent from the latest data. */
+export interface HardwareMissingDevice {
+  hwId: string;
+  sensor: string | null;
+  metric: string;
+}
+
 export interface HardwareDisksSnapshot {
   status: HardwareComponentStatus;
   disks: HardwareDisk[];
+  missing: HardwareMissingDevice[];
 }
 
 export interface HardwareMemoryController {
@@ -265,7 +285,17 @@ export interface HardwareMemoryController {
   status: HardwareComponentStatus;
   corrected: HardwareCounter;
   uncorrected: HardwareCounter;
+  /**
+   * Host-level memory size is not attributed to a controller or DIMM by the
+   * agent, so this is null unless a `hw.memory.size` series shares the hw.id.
+   * Use `HardwareMemorySnapshot.sizeBytes`.
+   */
   sizeBytes: number | null;
+  /** `dimm` rows replace the `controller` row of the same controller. */
+  scope?: 'controller' | 'dimm';
+  controller?: string | null;
+  /** Silkscreen label of the DIMM, when the agent reports it. */
+  dimmLabel?: string | null;
 }
 
 export interface HardwareMemorySnapshot {
@@ -273,6 +303,7 @@ export interface HardwareMemorySnapshot {
   /** Sum of every reported `hw.memory.size` series. */
   sizeBytes: number | null;
   controllers: HardwareMemoryController[];
+  missing: HardwareMissingDevice[];
 }
 
 export interface HardwareCpuSensor {
@@ -295,6 +326,7 @@ export interface HardwareCpuSnapshot {
   status: HardwareComponentStatus;
   sensors: HardwareCpuSensor[];
   throttle: HardwareCpuThrottle[];
+  missing: HardwareMissingDevice[];
 }
 
 export interface HardwareFan {
@@ -308,9 +340,23 @@ export interface HardwareFan {
   max24h: number | null;
 }
 
+/** Board, memory, GPU and other (non CPU, non disk) temperature sensors. */
+export interface HardwareThermalSensor {
+  hwId: string;
+  sensor: string;
+  /** The `hw.type` of the sensor: board, memory, gpu, other... */
+  type: string;
+  status: HardwareComponentStatus;
+  temperature: number;
+  high: number | null;
+  critical: number | null;
+}
+
 export interface HardwareCoolingSnapshot {
   status: HardwareComponentStatus;
   fans: HardwareFan[];
+  temperatures: HardwareThermalSensor[];
+  missing: HardwareMissingDevice[];
 }
 
 export interface HardwarePowerSupply {
@@ -325,6 +371,10 @@ export interface HardwareVoltage {
   sensor: string;
   status: HardwareComponentStatus;
   volts: number;
+  /** Warning limits (`low` / `high`). */
+  low: number | null;
+  high: number | null;
+  /** Critical limits (`low.critical` / `high.critical`). */
   lowCritical: number | null;
   highCritical: number | null;
 }
@@ -333,6 +383,7 @@ export interface HardwarePowerSnapshot {
   status: HardwareComponentStatus;
   supplies: HardwarePowerSupply[];
   voltages: HardwareVoltage[];
+  missing: HardwareMissingDevice[];
 }
 
 export interface HardwareNetworkInterface {
@@ -353,6 +404,7 @@ export interface HardwareNetworkInterface {
 export interface HardwareNetworkSnapshot {
   status: HardwareComponentStatus;
   interfaces: HardwareNetworkInterface[];
+  missing: HardwareMissingDevice[];
 }
 
 /** Full per-component snapshot of a host. */

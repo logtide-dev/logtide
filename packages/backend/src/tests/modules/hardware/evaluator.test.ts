@@ -296,7 +296,11 @@ describe('disks', () => {
       expect(codes(nvmeTemp(80))).toEqual(['disk.temperature_critical']);
     });
     it('uses the hottest sensor of the disk', () => {
-      const r = run([pt('hw.temperature', 30, nvme({ sensor: 'Sensor 1' })), pt('hw.temperature', 72, nvme({ sensor: 'Composite' }))]);
+      const r = run([
+        pt('hw.physical_disk.smart_status', 1, nvme()),
+        pt('hw.temperature', 30, nvme({ sensor: 'Sensor 1' })),
+        pt('hw.temperature', 72, nvme({ sensor: 'Composite' })),
+      ]);
       expect(r.components.disks.disks[0].temperature).toBe(72);
       expect(codes(r)).toEqual(['disk.temperature_high']);
     });
@@ -477,11 +481,11 @@ describe('cpu', () => {
       expect(codes(r)).toEqual([]);
       expect(r.components.cpu.status).toBe('ok');
     });
-    it('sums core and package throttle types', () => {
+    it('takes the max of core and package throttle types (they overlap)', () => {
       const [p1, h1] = th('core', 3, { min24h: 0, max24h: 3 });
       const [p2, h2] = th('package', 2, { min24h: 0, max24h: 2 });
       const r = run([p1, p2], [h1, h2]);
-      expect(r.components.cpu.throttle).toEqual([{ hwId: 'package0', total: 5, delta24h: 5, delta7d: null }]);
+      expect(r.components.cpu.throttle).toEqual([{ hwId: 'package0', total: 3, delta24h: 3, delta7d: null }]);
     });
     it('is reset-safe', () => {
       // 5000 before reboot, 2 after
@@ -565,14 +569,16 @@ describe('power', () => {
       expect(codes(v(11.4))).toEqual([]);
       expect(codes(v(12.6))).toEqual([]);
     });
-    it('below the low limit is a warning', () => {
+    it('below the low.critical limit is critical', () => {
       const r = v(11.3);
       expect(codes(r)).toEqual(['power.voltage_low']);
-      expect(r.findings[0]).toMatchObject({ severity: 'warning', threshold: 11.4 });
-      expect(r.components.power.status).toBe('warning');
+      expect(r.findings[0]).toMatchObject({ severity: 'critical', threshold: 11.4 });
+      expect(r.components.power.status).toBe('critical');
     });
-    it('above the high limit is a warning', () => {
-      expect(codes(v(12.7))).toEqual(['power.voltage_high']);
+    it('above the high.critical limit is critical', () => {
+      const r = v(12.7);
+      expect(codes(r)).toEqual(['power.voltage_high']);
+      expect(r.findings[0].severity).toBe('critical');
     });
     it('without limits nothing is evaluated', () => {
       expect(codes(run([volt(3)]))).toEqual([]);
@@ -793,5 +799,218 @@ describe('host status', () => {
       psu(0),
     ]);
     for (const f of r.findings) expect(f.message).not.toContain('—');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Contract hardening (agent cross-review)
+// ---------------------------------------------------------------------------
+
+describe('disk identity', () => {
+  it('temperature series without smart data never create a phantom disk', () => {
+    const r = run([
+      pt('hw.temperature', 99, { 'hw.type': 'physical_disk', 'hw.id': 'nvme0', sensor: 'hwmon' }),
+      pt('hw.temperature', 99, { 'hw.type': 'physical_disk', 'hw.id': 'drivetemp-1', sensor: 'temp1' }),
+    ]);
+    expect(r.components.disks.disks).toEqual([]);
+    expect(r.components.disks.status).toBe('unknown');
+    expect(r.findings).toEqual([]);
+  });
+
+  it('a disk identified by serial keeps the device as attribute', () => {
+    const r = run([pt('hw.physical_disk.smart_status', 0, disk({ 'hw.id': 'SER123', serial: 'SER123', device: '/dev/sdb' }))]);
+    expect(r.components.disks.disks[0]).toMatchObject({ hwId: 'SER123', device: '/dev/sdb' });
+    expect(r.findings[0].hwId).toBe('SER123');
+  });
+});
+
+describe('series identity', () => {
+  it('drifting non identity attributes do not split a series, newest wins', () => {
+    const r = run([
+      pt('hw.network.up', 1, { 'hw.type': 'network', 'hw.id': 'eth0', speed_mbps: '1000' }, minutesAgo(5)),
+      pt('hw.network.up', 0, { 'hw.type': 'network', 'hw.id': 'eth0', speed_mbps: '100' }, minutesAgo(1)),
+      pt('hw.physical_disk.smart_status', 1, disk({ model: 'A' }), minutesAgo(5)),
+      pt('hw.physical_disk.smart_status', 0, disk({ model: 'B' }), minutesAgo(1)),
+    ]);
+    expect(r.components.network.interfaces).toHaveLength(1);
+    expect(r.components.network.interfaces[0]).toMatchObject({ up: false, speedMbps: 100 });
+    expect(r.components.disks.disks).toHaveLength(1);
+    expect(r.components.disks.disks[0].smartStatus).toBe(false);
+  });
+
+  it('limit types stay separate series', () => {
+    const r = run([cpuTemp(90), cpuLimit(80, 'high'), cpuLimit(100, 'critical')]);
+    expect(r.components.cpu.sensors[0]).toMatchObject({ high: 80, critical: 100 });
+  });
+});
+
+describe('vanished devices', () => {
+  const alive = [pt('hw.memory.size', 8e9, { 'hw.type': 'memory' })];
+
+  it('disk in the 24h history but not in latest: disk.missing warning, component not ok/unknown', () => {
+    const r = run(alive, [hist('hw.physical_disk.smart_status', { 'hw.id': 'SER1' }, { min24h: 1, max24h: 1 })]);
+    expect(codes(r)).toEqual(['disk.missing']);
+    expect(r.findings[0]).toMatchObject({ component: 'disks', hwId: 'SER1', severity: 'warning' });
+    expect(r.components.disks.status).toBe('warning');
+    expect(r.components.disks.missing).toEqual([{ hwId: 'SER1', sensor: null, metric: 'hw.physical_disk.smart_status' }]);
+    expect(r.status).toBe('warning');
+  });
+
+  it('a remaining healthy disk does not hide the missing one', () => {
+    const r = run(
+      [pt('hw.physical_disk.smart_status', 1, disk({ 'hw.id': 'A' }))],
+      [hist('hw.physical_disk.smart_status', { 'hw.id': 'A' }, { min24h: 1, max24h: 1 }), hist('hw.physical_disk.smart_status', { 'hw.id': 'B' }, { min24h: 1, max24h: 1 })]
+    );
+    expect(codes(r)).toEqual(['disk.missing']);
+    expect(r.components.disks.status).toBe('warning');
+  });
+
+  it('psu_missing', () => {
+    const r = run(alive, [hist('hw.power_supply.status', { 'hw.id': 'bmc', sensor: 'PS2' }, { min24h: 1, max24h: 1 })]);
+    expect(codes(r)).toEqual(['power.psu_missing']);
+    expect(r.components.power.status).toBe('warning');
+  });
+
+  it('fan_missing', () => {
+    const r = run(alive, [fanHist({ min24h: 2000, max24h: 2100 })]);
+    expect(codes(r)).toEqual(['cooling.fan_missing']);
+    expect(r.components.cooling.status).toBe('warning');
+  });
+
+  it('interface_missing', () => {
+    const r = run(alive, [hist('hw.network.up', { 'hw.id': 'eth1' }, { min24h: 1, max24h: 1 })]);
+    expect(codes(r)).toEqual(['network.interface_missing']);
+    expect(r.components.network.status).toBe('warning');
+  });
+
+  it('is not reported when the series is still present', () => {
+    const r = run([psu(1)], [hist('hw.power_supply.status', { 'hw.id': 'bmc', sensor: 'PS1 Status' }, { min24h: 1, max24h: 1 })]);
+    expect(r.findings).toEqual([]);
+  });
+
+  it('is not reported when the history window has no data', () => {
+    const r = run(alive, [hist('hw.power_supply.status', { 'hw.id': 'bmc', sensor: 'PS2' }, { min7d: 1, max7d: 1 })]);
+    expect(r.findings).toEqual([]);
+  });
+
+  it('is not reported while the host is stale', () => {
+    const r = run([], [hist('hw.power_supply.status', { 'hw.id': 'bmc', sensor: 'PS2' }, { min24h: 1, max24h: 1 })], minutesAgo(30));
+    expect(r.status).toBe('stale');
+    expect(r.findings).toEqual([]);
+  });
+});
+
+describe('collector down', () => {
+  const smartDown = pt('hw.agent.collector.status', 0, { 'hw.type': 'agent', collector: 'smart' });
+
+  it('collector 0 with component history: agent.collector_down, replaces the missing findings', () => {
+    const r = run([smartDown], [hist('hw.physical_disk.smart_status', { 'hw.id': 'SER1' }, { min24h: 1, max24h: 1 })]);
+    expect(codes(r)).toEqual(['agent.collector_down']);
+    expect(r.findings[0]).toMatchObject({ component: 'disks', hwId: 'smart', severity: 'warning' });
+    expect(r.components.disks.status).toBe('warning');
+    expect(r.components.disks.missing).toEqual([]);
+  });
+
+  it('collector 0 without history (e.g. a VM) is no finding', () => {
+    const r = run([smartDown]);
+    expect(r.findings).toEqual([]);
+    expect(r.components.disks.status).toBe('unknown');
+  });
+
+  it('collector ok does not raise anything', () => {
+    const r = run([pt('hw.agent.collector.status', 1, { collector: 'smart' }), pt('hw.physical_disk.smart_status', 1, disk())], [
+      hist('hw.physical_disk.smart_status', { 'hw.id': 'sda' }, { min24h: 1, max24h: 1 }),
+    ]);
+    expect(r.findings).toEqual([]);
+  });
+
+  it('ipmi down affects cooling and power', () => {
+    const r = run(
+      [pt('hw.agent.collector.status', 0, { collector: 'ipmi' })],
+      [fanHist({ min24h: 1000, max24h: 2000 }), hist('hw.power_supply.status', { 'hw.id': 'bmc', sensor: 'PS1' }, { min24h: 1, max24h: 1 })]
+    );
+    expect(r.findings.map((f) => f.component).sort()).toEqual(['cooling', 'power']);
+    expect(r.components.cooling.status).toBe('warning');
+    expect(r.components.power.status).toBe('warning');
+  });
+});
+
+describe('memory scopes', () => {
+  const dimm = (hwId: string, type: 'corrected' | 'uncorrected', value: number, extra: Attrs = {}) =>
+    pt('hw.memory.errors', value, { 'hw.type': 'memory', 'hw.id': hwId, error_type: type, scope: 'dimm', controller: hwId.split('/')[0], ...extra });
+  const ctrl = (hwId: string, type: 'corrected' | 'uncorrected', value: number) =>
+    pt('hw.memory.errors', value, { 'hw.type': 'memory', 'hw.id': hwId, error_type: type, scope: 'controller' });
+
+  it('ignores controller points when dimm points exist for that controller', () => {
+    const r = run([ctrl('mc0', 'uncorrected', 3), dimm('mc0/dimm0', 'uncorrected', 0), dimm('mc0/dimm1', 'uncorrected', 0)]);
+    expect(r.findings).toEqual([]);
+    expect(r.components.memory.controllers.map((c) => c.hwId)).toEqual(['mc0/dimm0', 'mc0/dimm1']);
+  });
+
+  it('keeps controller points of controllers without dimm data', () => {
+    const r = run([ctrl('mc1', 'uncorrected', 1), dimm('mc0/dimm0', 'uncorrected', 0)]);
+    expect(codes(r)).toEqual(['memory.uncorrected']);
+    expect(r.findings[0].hwId).toBe('mc1');
+  });
+
+  it('flags the offending dimm with its label and keeps dimms apart in history', () => {
+    const r = run(
+      [
+        dimm('mc0/dimm0', 'corrected', 150, { dimm_label: 'DIMM_A1' }),
+        dimm('mc0/dimm1', 'corrected', 150, { dimm_label: 'DIMM_B1' }),
+      ],
+      [
+        hist('hw.memory.errors', { 'hw.id': 'mc0/dimm0', scope: 'dimm', error_type: 'corrected' }, { min24h: 0, max24h: 150 }),
+        hist('hw.memory.errors', { 'hw.id': 'mc0/dimm1', scope: 'dimm', error_type: 'corrected' }, { min24h: 150, max24h: 150 }),
+      ]
+    );
+    expect(codes(r)).toEqual(['memory.corrected_surge']);
+    expect(r.findings[0].hwId).toBe('mc0/dimm0');
+    expect(r.findings[0].message).toContain('DIMM_A1');
+    const c = r.components.memory.controllers;
+    expect(c[0]).toMatchObject({ scope: 'dimm', controller: 'mc0', dimmLabel: 'DIMM_A1', status: 'critical' });
+    expect(c[1].status).toBe('ok');
+  });
+});
+
+describe('generic temperatures (board, memory, gpu, other)', () => {
+  const board = (v: number, type = 'board') => pt('hw.temperature', v, { 'hw.type': type, 'hw.id': 'acpitz', sensor: 'temp1' });
+  const lim = (v: number, t: 'high' | 'critical') =>
+    pt('hw.temperature.limit', v, { 'hw.type': 'board', 'hw.id': 'acpitz', sensor: 'temp1', limit_type: t });
+
+  it('critical limit reached is critical, high limit reached is a warning', () => {
+    expect(codes(run([board(70), lim(70, 'high'), lim(90, 'critical')]))).toEqual(['cooling.temperature_high']);
+    const r = run([board(90), lim(70, 'high'), lim(90, 'critical')]);
+    expect(codes(r)).toEqual(['cooling.temperature_critical']);
+    expect(r.findings[0].severity).toBe('critical');
+    expect(r.components.cooling.status).toBe('critical');
+  });
+
+  it('below limits is ok and makes cooling known', () => {
+    const r = run([board(40), lim(70, 'high')]);
+    expect(r.findings).toEqual([]);
+    expect(r.components.cooling.status).toBe('ok');
+    expect(r.components.cooling.temperatures[0]).toMatchObject({ type: 'board', temperature: 40, high: 70, critical: null });
+  });
+
+  it('without limits there is no finding', () => {
+    expect(run([board(120)]).findings).toEqual([]);
+  });
+
+  it('works for memory, gpu and other types and ignores cpu/disk temperatures here', () => {
+    const r = run([board(95, 'gpu'), board(10, 'memory'), cpuTemp(50)]);
+    expect(r.components.cooling.temperatures.map((t) => t.type).sort()).toEqual(['gpu', 'memory']);
+  });
+});
+
+describe('voltage warning limits', () => {
+  it('low / high are warnings, low.critical / high.critical are critical', () => {
+    const lim = (v: number, t: string) => pt('hw.voltage.limit', v, { 'hw.type': 'voltage', 'hw.id': 'bmc', sensor: '12V', limit_type: t });
+    const r = run([volt(11.5), lim(11.7, 'low'), lim(11.0, 'low.critical')]);
+    expect(r.findings[0]).toMatchObject({ code: 'power.voltage_low', severity: 'warning', threshold: 11.7 });
+    const r2 = run([volt(10.9), lim(11.7, 'low'), lim(11.0, 'low.critical')]);
+    expect(r2.findings[0]).toMatchObject({ severity: 'critical', threshold: 11 });
+    const r3 = run([volt(12.8), lim(12.6, 'high'), lim(13.0, 'high.critical')]);
+    expect(r3.findings[0]).toMatchObject({ code: 'power.voltage_high', severity: 'warning' });
   });
 });
