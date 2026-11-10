@@ -1009,6 +1009,10 @@ export interface HardwareHostsTable {
   last_seen_at: Timestamp | null;
   last_evaluated_at: Timestamp | null;
   status_changed_at: Generated<Timestamp>;
+  pending_status: 'ok' | 'warning' | 'critical' | null;
+  pending_since: Timestamp | null;
+  episode_started_at: Timestamp | null;
+  episode_incident_id: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }

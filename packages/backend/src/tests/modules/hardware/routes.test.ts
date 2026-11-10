@@ -71,7 +71,9 @@ describe('hardware REST API', () => {
       s.projectId,
       s.orgId
     );
+    // Two passes 3 minutes apart: a worse status is debounced.
     await runHardwarePass(now);
+    await runHardwarePass(new Date(now.getTime() + 3 * MIN));
 
     const res = await app.inject({ method: 'GET', url: `/api/v1/hardware/hosts?projectId=${s.projectId}`, headers: auth(s.memberToken) });
     expect(res.statusCode).toBe(200);
@@ -120,7 +122,9 @@ describe('hardware REST API', () => {
       metricsService.ingestMetrics(hwRecords(points, 'srv-1', t, s.projectId, s.orgId), s.projectId, s.orgId);
     await ingest([memErr(1, 'corrected'), memErr(0, 'uncorrected')], new Date(now.getTime() - 3 * 60 * MIN));
     await ingest([...healthyPoints().filter((p) => p.name !== 'hw.memory.errors'), memErr(7, 'corrected'), memErr(0, 'uncorrected')], new Date(now.getTime() - 30_000));
+    // Two passes 3 minutes apart: a worse status is debounced.
     await runHardwarePass(now);
+    await runHardwarePass(new Date(now.getTime() + 3 * MIN));
 
     const res = await app.inject({ method: 'GET', url: `/api/v1/hardware/hosts/${s.hostId}`, headers: auth(s.memberToken) });
     expect(res.statusCode).toBe(200);

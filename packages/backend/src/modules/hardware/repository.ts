@@ -30,9 +30,26 @@ export interface DueHardwareHost {
   projectId: string;
   projectName: string;
   hostName: string;
+  /** Effective (debounced) status. */
   status: HardwareStatus;
   muted: boolean;
   lastSeenAt: Date | null;
+  lastEvaluatedAt: Date | null;
+  pendingStatus: 'ok' | 'warning' | 'critical' | null;
+  pendingSince: Date | null;
+  episodeStartedAt: Date | null;
+  episodeIncidentId: string | null;
+}
+
+/** What one evaluation pass writes on a host (compare-and-set, see saveHostState). */
+export interface HostStatePatch {
+  status: HardwareStatus;
+  pendingStatus: 'ok' | 'warning' | 'critical' | null;
+  pendingSince: Date | null;
+  episodeStartedAt: Date | null;
+  episodeIncidentId: string | null;
+  /** The new snapshot; omitted when the pass brought no new data (stale or no point). */
+  snapshot?: EvaluateHostResult;
 }
 
 function toIso(d: Date | string | null): string | null {
@@ -117,6 +134,11 @@ export async function listDueHosts(now: Date): Promise<DueHardwareHost[]> {
       'hardware_hosts.status',
       'hardware_hosts.muted',
       'hardware_hosts.last_seen_at',
+      'hardware_hosts.last_evaluated_at',
+      'hardware_hosts.pending_status',
+      'hardware_hosts.pending_since',
+      'hardware_hosts.episode_started_at',
+      'hardware_hosts.episode_incident_id',
       'projects.name as project_name',
     ])
     // tenant-scope-ok: system cron, evaluates the hardware hosts of every organization
@@ -138,42 +160,76 @@ export async function listDueHosts(now: Date): Promise<DueHardwareHost[]> {
     status: r.status,
     muted: r.muted,
     lastSeenAt: r.last_seen_at,
+    lastEvaluatedAt: r.last_evaluated_at,
+    pendingStatus: r.pending_status,
+    pendingSince: r.pending_since,
+    episodeStartedAt: r.episode_started_at,
+    episodeIncidentId: r.episode_incident_id,
   }));
 }
 
 /**
- * Persists an evaluation with a compare-and-set on the stored status: the row
- * is written only when its status is still `expectedStatus`. Returns false
- * when another worker changed it first (the caller then skips every side
- * effect, so a transition is acted on exactly once).
+ * Persists one pass with a compare-and-set on what the pass read (status,
+ * last_evaluated_at, muted and the episode start): the row is written only
+ * when none of them changed meanwhile. Returns false when another worker (or
+ * a mute/unmute) got there first; the caller then skips every side effect,
+ * so a transition is acted on exactly once.
+ * Without `patch.snapshot` (stale host, or no point in the latest window)
+ * the last components, findings, info and collectors are kept.
  */
-export async function saveEvaluation(
-  host: Pick<DueHardwareHost, 'id' | 'organizationId'>,
-  expectedStatus: HardwareStatus,
-  result: EvaluateHostResult,
+export async function saveHostState(
+  host: Pick<DueHardwareHost, 'id' | 'organizationId' | 'status' | 'lastEvaluatedAt' | 'muted' | 'episodeStartedAt'>,
+  patch: HostStatePatch,
   now: Date
 ): Promise<boolean> {
-  const changed = result.status !== expectedStatus;
+  const snap = patch.snapshot;
   const row = await db
     .updateTable('hardware_hosts')
     .set({
-      status: result.status,
-      components: JSON.stringify(result.components),
-      findings: JSON.stringify(result.findings),
-      info: JSON.stringify(result.info),
-      collectors: JSON.stringify(result.collectors),
-      // Keep the last known value when this pass saw no hw.host.info point.
-      is_virtual: result.isVirtual === null ? sql<boolean | null>`hardware_hosts.is_virtual` : result.isVirtual,
+      status: patch.status,
+      pending_status: patch.pendingStatus,
+      pending_since: patch.pendingSince,
+      episode_started_at: patch.episodeStartedAt,
+      episode_incident_id: patch.episodeIncidentId,
+      ...(snap && {
+        components: JSON.stringify(snap.components),
+        findings: JSON.stringify(snap.findings),
+        info: JSON.stringify(snap.info),
+        collectors: JSON.stringify(snap.collectors),
+        // Keep the last known value when this pass saw no hw.host.info point.
+        is_virtual: snap.isVirtual === null ? sql<boolean | null>`hardware_hosts.is_virtual` : snap.isVirtual,
+      }),
       last_evaluated_at: now,
-      ...(changed && { status_changed_at: now }),
+      ...(patch.status !== host.status && { status_changed_at: now }),
       updated_at: now,
     })
     .where('id', '=', host.id)
     .where('organization_id', '=', host.organizationId)
-    .where('status', '=', expectedStatus)
+    .where('status', '=', host.status)
+    .where('muted', '=', host.muted)
+    .where(sql<boolean>`last_evaluated_at is not distinct from ${host.lastEvaluatedAt}`)
+    .where(sql<boolean>`episode_started_at is not distinct from ${host.episodeStartedAt}`)
     .returning('id')
     .executeTakeFirst();
   return row !== undefined;
+}
+
+/**
+ * Links the incident of the current episode to the host. Only while that
+ * episode is still the current one (an unmute starts a new one).
+ */
+export async function setEpisodeIncident(
+  host: Pick<DueHardwareHost, 'id' | 'organizationId'>,
+  episodeStartedAt: Date,
+  incidentId: string
+): Promise<void> {
+  await db
+    .updateTable('hardware_hosts')
+    .set({ episode_incident_id: incidentId })
+    .where('id', '=', host.id)
+    .where('organization_id', '=', host.organizationId)
+    .where('episode_started_at', '=', episodeStartedAt)
+    .execute();
 }
 
 /** Hosts of a project, worst first then by name. The caller checked access to the project. */
@@ -220,13 +276,41 @@ export async function findHostForUser(
   return { row: row as HardwareHostRow, role: member_role };
 }
 
+/**
+ * Mutes or unmutes a host. Unmuting a degraded host starts a new
+ * notification episode: the next pass reconciles it like a fresh
+ * degradation (opens an incident and notifies when none is active).
+ */
 export async function setHostMuted(id: string, organizationId: string, muted: boolean): Promise<HardwareHostRow | undefined> {
+  const now = new Date();
   return db
     .updateTable('hardware_hosts')
-    .set({ muted, updated_at: new Date() })
+    .set({
+      muted,
+      ...(!muted && {
+        episode_started_at: sql<Date | null>`case when hardware_hosts.muted and hardware_hosts.status in ('warning', 'critical') then ${now}::timestamptz else hardware_hosts.episode_started_at end`,
+        episode_incident_id: sql<string | null>`case when hardware_hosts.muted and hardware_hosts.status in ('warning', 'critical') then null else hardware_hosts.episode_incident_id end`,
+      }),
+      updated_at: now,
+    })
     .where('id', '=', id)
     .where('organization_id', '=', organizationId)
     .returningAll()
+    .executeTakeFirst();
+}
+
+/** The active (open or investigating) hardware incident of a host, or undefined. */
+export async function activeHardwareIncident(
+  organizationId: string,
+  hostId: string
+): Promise<{ id: string; severity: string } | undefined> {
+  return db
+    .selectFrom('incidents')
+    .select(['id', 'severity'])
+    .where('organization_id', '=', organizationId)
+    .where('source', '=', 'hardware')
+    .where('hardware_host_id', '=', hostId)
+    .where('status', 'in', ['open', 'investigating'])
     .executeTakeFirst();
 }
 
@@ -237,17 +321,4 @@ export async function deleteHost(id: string, organizationId: string): Promise<bo
     .where('organization_id', '=', organizationId)
     .executeTakeFirst();
   return Number(res.numDeletedRows) > 0;
-}
-
-/** Severity of the active hardware incident of a host, or null. */
-export async function activeIncidentSeverity(organizationId: string, hostId: string): Promise<string | null> {
-  const row = await db
-    .selectFrom('incidents')
-    .select('severity')
-    .where('organization_id', '=', organizationId)
-    .where('source', '=', 'hardware')
-    .where('hardware_host_id', '=', hostId)
-    .where('status', 'in', ['open', 'investigating'])
-    .executeTakeFirst();
-  return row?.severity ?? null;
 }

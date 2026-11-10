@@ -2,17 +2,24 @@
  * Hardware evaluation pass (worker timer, every HARDWARE_EVALUATION_INTERVAL_MS).
  *
  * For every project with due hosts: load the evaluator inputs with one query
- * set, evaluate each host, persist the result with a compare-and-set on the
- * stored status, and act on status transitions:
- *  - ok/unknown -> warning/critical, warning -> critical: open or update the
- *    hardware incident and notify (degraded);
- *  - critical -> warning: lower the incident severity, no notification;
- *  - -> ok: resolve the incident and notify (recovered) when one was active;
- *  - -> stale or unknown: nothing (v1 has no stale incidents);
- *  - stale -> warning/critical: reconciled against the active incident, so a
- *    host that only stopped reporting for a while is not notified twice.
- * Muted hosts are evaluated and persisted but never open incidents or notify;
- * a muted host back to ok still resolves its incident, silently.
+ * set, evaluate each host, debounce the result into the effective status
+ * (transition.ts), persist it with a compare-and-set and act:
+ *  - a host that degrades (effective ok/unknown/stale -> warning/critical)
+ *    starts an episode; a host back to ok ends it;
+ *  - every pass reconciles a non muted warning/critical host with its
+ *    incident: when the episode has none yet (first pass, an earlier pass
+ *    failed, or the host was just unmuted) the active incident of the host
+ *    is adopted, or a new one is opened and notified. An incident of the
+ *    episode resolved by a user is left alone until the host recovers and
+ *    degrades again;
+ *  - warning -> critical escalates the incident (retitled) and notifies;
+ *    critical -> warning lowers it without notification;
+ *  - recovery resolves the active incident and sends the recovered
+ *    notification (not for muted hosts), and always resolves the episode
+ *    incident on PagerDuty, even muted or already resolved by hand.
+ * Stale: only the status moves (the snapshot is kept, the incident stays
+ * open). No point at all in the latest window while not stale is no new
+ * information: the status and snapshot are kept.
  * Only the worker whose compare-and-set wins acts, so two workers never
  * double notify.
  */
@@ -22,8 +29,22 @@ import { incidentsService } from '../incidents/service.js';
 import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 import { evaluateHost } from './evaluator.js';
 import { loadProjectHardwareData } from './loader.js';
-import { notifyHardware, hardwareHostLink, hardwareTitle, type NotifiableHardwareHost } from './notifier.js';
-import { activeIncidentSeverity, listDueHosts, saveEvaluation, type DueHardwareHost } from './repository.js';
+import {
+  notifyHardware,
+  hardwareHostLink,
+  hardwareTitle,
+  resolveHardwarePagerDuty,
+  type NotifiableHardwareHost,
+} from './notifier.js';
+import {
+  activeHardwareIncident,
+  listDueHosts,
+  saveHostState,
+  setEpisodeIncident,
+  type DueHardwareHost,
+  type HostStatePatch,
+} from './repository.js';
+import { debounceStatus, isProblemStatus } from './transition.js';
 
 export interface HardwarePassResult {
   evaluated: number;
@@ -44,12 +65,6 @@ const SEVERITY_BY_STATUS: Record<'warning' | 'critical', Severity> = {
   critical: 'critical',
 };
 
-const SEVERITY_RANK: Record<string, number> = { informational: 1, low: 2, medium: 3, high: 4, critical: 5 };
-
-function isProblem(status: HardwareStatus): status is 'warning' | 'critical' {
-  return status === 'warning' || status === 'critical';
-}
-
 function describeFindings(findings: HardwareFinding[]): string {
   const top = findings.slice(0, DESCRIPTION_FINDINGS).map((f) => `- ${f.message}`);
   const more = findings.length - top.length;
@@ -57,128 +72,126 @@ function describeFindings(findings: HardwareFinding[]): string {
   return top.join('\n');
 }
 
-type Action = 'open' | 'escalate' | 'deescalate' | 'resolve' | 'none';
-
-/** What a status change means for the incident, before looking at the incident itself. */
-export function planTransition(prev: HardwareStatus, next: HardwareStatus): Action | 'reconcile' {
-  if (prev === next) return 'none';
-  if (next === 'ok') return 'resolve';
-  if (!isProblem(next)) return 'none';
-  if (prev === 'ok' || prev === 'unknown') return 'open';
-  if (prev === 'warning' && next === 'critical') return 'escalate';
-  if (prev === 'critical' && next === 'warning') return 'deescalate';
-  return 'reconcile'; // stale -> warning/critical
-}
-
-async function reconcile(host: DueHardwareHost, next: 'warning' | 'critical'): Promise<Action> {
-  const current = await activeIncidentSeverity(host.organizationId, host.id);
-  if (current === null) return 'open';
-  const target = SEVERITY_RANK[SEVERITY_BY_STATUS[next]];
-  const have = SEVERITY_RANK[current] ?? 0;
-  if (have < target) return 'escalate';
-  if (have > target) return 'deescalate';
-  return 'none';
-}
-
-async function act(
-  host: DueHardwareHost,
-  prev: HardwareStatus,
-  next: HardwareStatus,
-  findings: HardwareFinding[],
-  now: Date,
-  result: HardwarePassResult
-): Promise<void> {
-  let action = planTransition(prev, next);
-  if (action === 'none') return;
-  if (action === 'reconcile') action = await reconcile(host, next as 'warning' | 'critical');
-  if (action === 'none') return;
-
-  const notifiable: NotifiableHardwareHost = {
+function notifiableOf(host: DueHardwareHost): NotifiableHardwareHost {
+  return {
     id: host.id,
     hostName: host.hostName,
     projectId: host.projectId,
     projectName: host.projectName,
     organizationId: host.organizationId,
   };
+}
 
-  if (action === 'resolve') {
-    const resolved = await incidentsService.resolveFromSource({
-      organizationId: host.organizationId,
-      source: 'hardware',
-      sourceId: host.id,
-      resolvedAt: now,
-      reason: 'recovered',
-    });
-    if (!resolved) return;
+interface PassOutcome {
+  prev: HardwareStatus;
+  next: HardwareStatus;
+  /** Episode as saved by this pass. */
+  episodeStartedAt: Date | null;
+  episodeIncidentId: string | null;
+  /** The episode this pass closed (recovery), with its incident. */
+  recovered: { incidentId: string | null } | null;
+  findings: HardwareFinding[];
+}
+
+/** Recovery: resolve, notify (unless muted), and always resolve on PagerDuty. */
+async function recover(host: DueHardwareHost, o: PassOutcome, now: Date, result: HardwarePassResult): Promise<void> {
+  const resolved = await incidentsService.resolveFromSource({
+    organizationId: host.organizationId,
+    source: 'hardware',
+    sourceId: host.id,
+    resolvedAt: now,
+    reason: 'recovered',
+  });
+  const toResolve = new Set<string>();
+  if (o.recovered?.incidentId) toResolve.add(o.recovered.incidentId);
+  if (resolved) {
     result.resolved++;
-    if (host.muted) return;
-    await notifyHardware(notifiable, {
-      kind: 'recovered',
-      status: 'ok',
-      previousStatus: prev,
-      findings: [],
-      incidentId: resolved.id,
-      changedAt: now,
-    });
-    return;
+    toResolve.add(resolved.id);
+    if (!host.muted) {
+      // Carries the PagerDuty resolve of this incident.
+      await notifyHardware(notifiableOf(host), {
+        kind: 'recovered',
+        status: 'ok',
+        previousStatus: o.prev,
+        findings: [],
+        incidentId: resolved.id,
+        changedAt: now,
+      });
+      toResolve.delete(resolved.id);
+    }
   }
+  for (const incidentId of toResolve) {
+    await resolveHardwarePagerDuty(notifiableOf(host), incidentId, 'recovered');
+  }
+}
 
-  if (host.muted) return;
-  const status = next as 'warning' | 'critical';
+/** Makes sure a non muted warning/critical host has the incident of its episode. */
+async function reconcile(host: DueHardwareHost, o: PassOutcome, now: Date, result: HardwarePassResult): Promise<void> {
+  const status = o.next as 'warning' | 'critical';
   const severity = SEVERITY_BY_STATUS[status];
   const title = hardwareTitle(status, host.hostName);
-
-  if (action === 'deescalate') {
-    const updated = await incidentsService.setSeverityFromSource({
+  const setSeverity = () =>
+    incidentsService.setSeverityFromSource({
       organizationId: host.organizationId,
       source: 'hardware',
       sourceId: host.id,
       severity,
       title,
     });
-    if (updated) result.deescalated++;
+  const notifyDegraded = (incidentId: string) =>
+    notifyHardware(notifiableOf(host), {
+      kind: 'degraded',
+      status,
+      previousStatus: o.prev,
+      findings: o.findings,
+      incidentId,
+      changedAt: now,
+    });
+
+  if (o.episodeIncidentId) {
+    // Steady state costs nothing: the incident is either still active (then
+    // only a level change matters) or resolved by a user (left alone).
+    if (o.prev === o.next) return;
+    const updated = await setSeverity();
+    if (!updated) return;
+    if (o.prev === 'warning' && o.next === 'critical') {
+      result.escalated++;
+      await notifyDegraded(updated.id);
+    } else if (o.prev === 'critical' && o.next === 'warning') {
+      result.deescalated++;
+    }
     return;
   }
 
-  // open or escalate
+  // No incident in this episode yet (one indexed lookup).
+  const active = await activeHardwareIncident(host.organizationId, host.id);
+  if (active) {
+    // E.g. opened before a mute, or before a stale period: adopt it.
+    await setEpisodeIncident(host, o.episodeStartedAt!, active.id);
+    if (active.severity !== severity) await setSeverity();
+    return;
+  }
   const { incident, created } = await incidentsService.openOrUpdateFromSource({
     organizationId: host.organizationId,
     projectId: host.projectId,
     source: 'hardware',
     sourceId: host.id,
     title,
-    description: describeFindings(findings),
+    description: describeFindings(o.findings),
     severity,
     occurredAt: now,
     metadata: {
-      summary: `Hardware status ${prev} -> ${status}`,
+      summary: `Hardware status ${o.prev} -> ${status}`,
       status,
-      previousStatus: prev,
-      findings: findings.slice(0, METADATA_FINDINGS),
+      previousStatus: o.prev,
+      findings: o.findings.slice(0, METADATA_FINDINGS),
       link: hardwareHostLink(host.id),
     },
   });
-  if (!created) {
-    // Escalation of an active incident: the title follows the new status.
-    await incidentsService.setSeverityFromSource({
-      organizationId: host.organizationId,
-      source: 'hardware',
-      sourceId: host.id,
-      severity,
-      title,
-    });
-  }
-  if (created) result.opened++;
-  else result.escalated++;
-
-  await notifyHardware(notifiable, {
-    kind: 'degraded',
-    status,
-    previousStatus: prev,
-    findings,
-    incidentId: incident.id,
-    changedAt: now,
-  });
+  await setEpisodeIncident(host, o.episodeStartedAt!, incident.id);
+  if (!created) return; // opened by a concurrent caller, which notifies
+  result.opened++;
+  await notifyDegraded(incident.id);
 }
 
 function logError(message: string, error: unknown, meta: Record<string, unknown>): void {
@@ -189,6 +202,69 @@ function logError(message: string, error: unknown, meta: Record<string, unknown>
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function evaluateOne(
+  host: DueHardwareHost,
+  input: { latest: Parameters<typeof evaluateHost>[0]['latest']; history: Parameters<typeof evaluateHost>[0]['history']; partial: boolean },
+  now: Date,
+  result: HardwarePassResult
+): Promise<void> {
+  const evaluation = evaluateHost({
+    latest: input.latest,
+    history: input.history,
+    now,
+    lastSeenAt: host.lastSeenAt,
+    partial: input.partial,
+  });
+  const raw = evaluation.status;
+  // No point in the latest window while not stale: nothing new to judge.
+  const noNews = input.latest.length === 0 && raw !== 'stale';
+  const prev = host.status;
+  const episodeOpen = host.episodeStartedAt !== null;
+
+  const debounced = noNews
+    ? { status: prev, pendingStatus: host.pendingStatus, pendingSince: host.pendingSince }
+    : debounceStatus(
+        { status: prev, pendingStatus: host.pendingStatus, pendingSince: host.pendingSince, episodeOpen },
+        raw,
+        now
+      );
+  const next = debounced.status;
+
+  let episodeStartedAt = host.episodeStartedAt;
+  let episodeIncidentId = host.episodeIncidentId;
+  let recovered: PassOutcome['recovered'] = null;
+  if (isProblemStatus(next) && !episodeStartedAt) {
+    episodeStartedAt = now;
+    episodeIncidentId = null;
+  } else if (next === 'ok' && (episodeOpen || isProblemStatus(prev))) {
+    recovered = { incidentId: episodeIncidentId };
+    episodeStartedAt = null;
+    episodeIncidentId = null;
+  }
+
+  const patch: HostStatePatch = {
+    ...debounced,
+    episodeStartedAt,
+    episodeIncidentId,
+    // Stale or no new point: keep the last snapshot.
+    ...(!noNews && raw !== 'stale' && { snapshot: evaluation }),
+  };
+  const saved = await saveHostState(host, patch, now);
+  result.evaluated++;
+  if (!saved) {
+    result.skipped++;
+    return;
+  }
+
+  const outcome: PassOutcome = { prev, next, episodeStartedAt, episodeIncidentId, recovered, findings: evaluation.findings };
+  if (recovered) {
+    await recover(host, outcome, now, result);
+    return;
+  }
+  if (host.muted || !isProblemStatus(next)) return;
+  await reconcile(host, outcome, now, result);
 }
 
 export async function runHardwarePass(now: Date = new Date()): Promise<HardwarePassResult> {
@@ -215,14 +291,7 @@ export async function runHardwarePass(now: Date = new Date()): Promise<HardwareP
     for (const host of projectHosts) {
       try {
         const input = data.hosts.get(host.hostName) ?? { latest: [], history: [], partial: false };
-        const evaluation = evaluateHost({ latest: input.latest, history: input.history, now, lastSeenAt: host.lastSeenAt, partial: input.partial });
-        const saved = await saveEvaluation(host, host.status, evaluation, now);
-        result.evaluated++;
-        if (!saved) {
-          result.skipped++;
-          continue;
-        }
-        await act(host, host.status, evaluation.status, evaluation.findings, now, result);
+        await evaluateOne(host, input, now, result);
       } catch (error) {
         logError('host evaluation failed', error, { projectId, hostId: host.id });
       }

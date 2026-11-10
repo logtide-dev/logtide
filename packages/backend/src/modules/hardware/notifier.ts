@@ -229,3 +229,38 @@ export async function notifyHardware(host: NotifiableHardwareHost, n: HardwareNo
     });
   }
 }
+
+/**
+ * PagerDuty resolve only, for the incident of a finished episode: sent on
+ * recovery even when the LogTide incident was already resolved by hand or
+ * the host is muted (mute suppresses triggers, never resolves), and when a
+ * host is forgotten. Idempotent on the PagerDuty side (same dedup key as the
+ * trigger). Never throws.
+ */
+export async function resolveHardwarePagerDuty(
+  host: NotifiableHardwareHost,
+  incidentId: string,
+  reason: 'recovered' | 'forgotten'
+): Promise<void> {
+  try {
+    const routing = await resolveChannelsForEvent({
+      organizationId: host.organizationId,
+      eventType: 'hardware',
+      projectId: host.projectId,
+    });
+    const targets = toDeliveryTargets(routing.channels);
+    if (targets.pagerDuty.length === 0) return;
+    await notifyPagerDutyTargets(targets.pagerDuty, {
+      organizationId: host.organizationId,
+      action: 'resolve',
+      dedupKey: `hardware:${incidentId}`,
+      eventType: 'hardware.health.recovered',
+      summary: reason === 'recovered' ? hardwareTitle('ok', host.hostName) : `Hardware host removed: ${host.hostName}`,
+      severity: 'informational',
+      link: `${getFrontendUrl()}${hardwareHostLink(host.id)}`,
+      details: { host: host.hostName, project: host.projectName, reason },
+    });
+  } catch (error) {
+    console.error(`[Hardware] PagerDuty resolve failed for host ${host.id}:`, error);
+  }
+}

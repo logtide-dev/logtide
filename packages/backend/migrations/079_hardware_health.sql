@@ -5,7 +5,11 @@
 --   * hardware_hosts: one row per (project, host.name), registered when a
 --     batch of hw.* metrics is ingested, then evaluated by the worker. The
 --     snapshot (components, findings, info, collectors) is the last
---     evaluation result.
+--     evaluation result. `status` is the effective (debounced) status;
+--     pending_status/pending_since hold a change that has not lasted long
+--     enough yet. episode_started_at/episode_incident_id track the current
+--     degradation episode and its incident, so an incident resolved by hand
+--     is not reopened before the host recovers to ok and degrades again.
 --   * incidents.source gains 'hardware'; the check is re-added NOT VALID,
 --     like in 034 and 062, so the migration never scans historical rows.
 --   * incidents.hardware_host_id links a hardware incident to its host
@@ -36,6 +40,10 @@ CREATE TABLE IF NOT EXISTS hardware_hosts (
   last_seen_at TIMESTAMPTZ NULL,
   last_evaluated_at TIMESTAMPTZ NULL,
   status_changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pending_status VARCHAR(10) NULL CHECK (pending_status IN ('ok', 'warning', 'critical')),
+  pending_since TIMESTAMPTZ NULL,
+  episode_started_at TIMESTAMPTZ NULL,
+  episode_incident_id UUID NULL REFERENCES incidents(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT uq_hardware_hosts_project_host UNIQUE (project_id, host_name)
