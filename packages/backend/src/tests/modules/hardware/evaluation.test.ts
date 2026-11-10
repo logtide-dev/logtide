@@ -12,6 +12,13 @@ vi.mock('../../../modules/hardware/notifier.js', async (importOriginal) => {
   return { ...actual, notifyHardware: notifyMock };
 });
 
+// The tests drive last_seen_at themselves: the fire-and-forget registration
+// of the ingest path (server clock) would race with it.
+vi.mock('../../../modules/hardware/registry.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../modules/hardware/registry.js')>();
+  return { ...actual, registerHardwareHosts: vi.fn(async () => []) };
+});
+
 import { runHardwarePass, planTransition } from '../../../modules/hardware/evaluation.js';
 import { loadProjectHardwareData } from '../../../modules/hardware/loader.js';
 import { saveEvaluation } from '../../../modules/hardware/repository.js';
