@@ -1,7 +1,7 @@
 import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 
-export type ReceiverAdapterType = 'github' | 'uptime' | 'generic';
+export type ReceiverAdapterType = 'github' | 'uptime' | 'odoo' | 'generic';
 export type ReceiverEventStatus = 'pending' | 'processed' | 'skipped' | 'failed';
 
 export interface ReceiverFieldMapping {

@@ -7,6 +7,10 @@
   Here the tables nobody reads are disabled and the others keep a few days of
   data in daily partitions, so expired days are dropped as whole parts.
 
+  The server's own text log is set to warning: at the image default (trace)
+  clickhouse-server.log took more disk writes than everything else together,
+  about 2 MiB/s on a busy instance, rotating 1 GB every few minutes.
+
   Mounted at /etc/clickhouse-server/config.d/. Needs a server restart. On the
   first start with this file ClickHouse renames the existing query_log and
   part_log to query_log_0 / part_log_0 (their layout changed); those copies and
@@ -19,6 +23,10 @@
     DROP TABLE IF EXISTS system.asynchronous_insert_log;
 -->
 <clickhouse>
+    <logger>
+        <level>warning</level>
+    </logger>
+
     <trace_log remove="1"/>
     <metric_log remove="1"/>
     <asynchronous_metric_log remove="1"/>

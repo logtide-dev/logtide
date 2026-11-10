@@ -3,11 +3,13 @@ import type { ReceiverAdapter } from './types.js';
 import { genericAdapter } from './generic.js';
 import { githubAdapter } from './github.js';
 import { uptimeAdapter } from './uptime.js';
+import { odooAdapter } from './odoo.js';
 
 const ADAPTERS: Record<ReceiverAdapterType, ReceiverAdapter> = {
   generic: genericAdapter,
   github: githubAdapter,
   uptime: uptimeAdapter,
+  odoo: odooAdapter,
 };
 
 export function getAdapter(type: ReceiverAdapterType): ReceiverAdapter {

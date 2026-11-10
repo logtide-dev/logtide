@@ -1073,7 +1073,7 @@ export interface ReceiversTable {
   id: Generated<string>;
   project_id: string;
   name: string;
-  adapter_type: string; // 'github' | 'uptime' | 'generic'
+  adapter_type: string; // 'github' | 'uptime' | 'odoo' | 'generic'
   token_hash: string;
   field_mapping: ColumnType<
     Record<string, unknown> | null,

@@ -1,6 +1,6 @@
 {
   "name": "@logtide/frontend",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "private": true,
   "description": "LogTide Frontend Dashboard",
   "type": "module",
