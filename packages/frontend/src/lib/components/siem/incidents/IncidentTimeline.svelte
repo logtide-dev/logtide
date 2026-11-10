@@ -14,6 +14,7 @@
 	import AlertTriangle from '@lucide/svelte/icons/triangle-alert';
 	import Bell from '@lucide/svelte/icons/bell';
 	import Activity from '@lucide/svelte/icons/activity';
+	import Cpu from '@lucide/svelte/icons/cpu';
 	import MessageSquare from '@lucide/svelte/icons/message-square';
 	import History from '@lucide/svelte/icons/history';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -107,6 +108,8 @@
 							<Bell class="size-4" />
 						{:else if entry.kind === 'monitor_check'}
 							<Activity class="size-4" />
+						{:else if entry.kind === 'hardware_check'}
+							<Cpu class="size-4" />
 						{:else if entry.kind === 'comment'}
 							<MessageSquare class="size-4" />
 						{:else}
@@ -172,12 +175,16 @@
 								</div>
 							{/if}
 						</div>
-					{:else if entry.kind === 'alert_trigger' || entry.kind === 'monitor_check'}
+					{:else if entry.kind === 'alert_trigger' || entry.kind === 'monitor_check' || entry.kind === 'hardware_check'}
 						{@const body = describeSourceEvent(entry.event)}
 						<div class="rounded-lg border border-border bg-card p-3">
 							<div class="flex flex-wrap items-center gap-2">
 								<span class="text-sm font-medium">
-									{entry.kind === 'alert_trigger' ? 'Alert triggered' : 'Monitor check failed'}
+									{entry.kind === 'alert_trigger'
+										? 'Alert triggered'
+										: entry.kind === 'hardware_check'
+											? 'Hardware health changed'
+											: 'Monitor check failed'}
 								</span>
 								<span class="ml-auto text-xs text-muted-foreground">
 									<Timestamp value={entry.event.time} showZone />

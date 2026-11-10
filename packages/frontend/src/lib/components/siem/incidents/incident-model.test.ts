@@ -239,6 +239,18 @@ describe('describeSourceEvent', () => {
     ).toBe('42 logs against a threshold of 10 in 5 min');
   });
 
+  it('describes a hardware check from its summary or findings', () => {
+    expect(describeSourceEvent({ ...base, kind: 'hardware_check', summary: 'Hardware health changed' })).toBeNull();
+    expect(
+      describeSourceEvent({
+        ...base,
+        kind: 'hardware_check',
+        summary: 'Hardware health changed',
+        detail: { findings: [{ message: 'Disk sda reallocated 14 sectors' }, { message: 'mc0 corrected 3 errors' }] },
+      })
+    ).toBe('Disk sda reallocated 14 sectors; mc0 corrected 3 errors');
+  });
+
   it('uses an error or message from the detail', () => {
     expect(
       describeSourceEvent({ ...base, kind: 'monitor_check', summary: 'Monitor check failed', detail: { error: 'HTTP 503' } })

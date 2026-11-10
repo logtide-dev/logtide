@@ -1,10 +1,10 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
   import type {
     HardwareComponentKey,
     HardwareComponentSnapshots,
     HardwareComponentStatus,
     HardwareCounter,
+    HardwareMissingDevice,
     HardwareSeries,
   } from '@logtide/shared';
   import { HARDWARE_THRESHOLDS } from '@logtide/shared';
@@ -38,6 +38,14 @@
   const head = 'h-9 whitespace-nowrap px-3 text-xs';
   const cell = 'whitespace-nowrap px-3 py-2 text-sm';
   const num = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const temperatures = $derived(snapshot.cooling.temperatures ?? []);
+
+  function voltLimit(warn: number | null | undefined, crit: number | null): string {
+    const parts: string[] = [];
+    if (warn !== null && warn !== undefined) parts.push(`${num(warn)} V warn`);
+    if (crit !== null) parts.push(`${num(crit)} V crit`);
+    return parts.length > 0 ? parts.join(', ') : '-';
+  }
 </script>
 
 {#snippet counter(c: HardwareCounter | null | undefined, always: boolean = false)}
@@ -64,7 +72,13 @@
   ></span>
 {/snippet}
 
-{#snippet section(key: HardwareComponentKey, status: HardwareComponentStatus, hasData: boolean, body: Snippet)}
+{#snippet section(
+  key: HardwareComponentKey,
+  status: HardwareComponentStatus,
+  hasData: boolean,
+  body: any,
+  missing: HardwareMissingDevice[] = []
+)}
   <section class="rounded-lg border bg-card" aria-labelledby="hw-{key}-title" data-testid="section-{key}">
     <div class="flex items-center justify-between gap-2 px-4 py-3 {hasData ? 'border-b' : ''}">
       <h2 id="hw-{key}-title" class="text-sm font-medium">{componentLabel(key)}</h2>
@@ -76,6 +90,16 @@
     </div>
     {#if hasData}
       {@render body()}
+      {#if missing.length > 0}
+        <div class="border-t px-4 py-3 text-xs" data-testid="missing-{key}">
+          <p class="font-medium {hardwareStatusTone('warning').text}">Seen before, not reporting now</p>
+          <ul class="mt-1 space-y-0.5 text-muted-foreground">
+            {#each missing as m (m.hwId + (m.sensor ?? '') + m.metric)}
+              <li><span class="font-mono">{m.hwId}</span>{#if m.sensor} {m.sensor}{/if}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
       <HardwareTrends series={seriesFor(series, key)} />
     {/if}
   </section>
@@ -144,7 +168,13 @@
       </Table.Body>
     </Table.Root>
   {/snippet}
-  {@render section('disks', snapshot.disks.status, snapshot.disks.disks.length > 0, disksBody)}
+  {@render section(
+    'disks',
+    snapshot.disks.status,
+    snapshot.disks.disks.length > 0 || (snapshot.disks.missing ?? []).length > 0,
+    disksBody,
+    snapshot.disks.missing
+  )}
 
   <!-- Memory -->
   {#snippet memoryBody()}
@@ -155,7 +185,7 @@
       <Table.Root>
         <Table.Header>
           <Table.Row class="hover:bg-transparent">
-            <Table.Head class={head}>Controller</Table.Head>
+            <Table.Head class={head}>Controller or DIMM</Table.Head>
             <Table.Head class={head}>Size</Table.Head>
             <Table.Head class={head}>Corrected errors</Table.Head>
             <Table.Head class={head}>Uncorrected errors</Table.Head>
@@ -167,7 +197,12 @@
               <Table.Cell class={cell}>
                 <div class="flex items-center gap-2">
                   {@render dot(m.status, m.hwId)}
-                  <span class="font-mono text-xs font-medium">{m.hwId}</span>
+                  <div class="min-w-0">
+                    <span class="font-mono text-xs font-medium">{m.dimmLabel ?? m.hwId}</span>
+                    {#if m.scope === 'dimm' && m.controller}
+                      <p class="text-[11px] text-muted-foreground">controller {m.controller}</p>
+                    {/if}
+                  </div>
                 </div>
               </Table.Cell>
               <Table.Cell class={cell}>{formatMemorySize(m.sizeBytes)}</Table.Cell>
@@ -184,8 +219,11 @@
   {@render section(
     'memory',
     snapshot.memory.status,
-    snapshot.memory.sizeBytes !== null || snapshot.memory.controllers.length > 0,
-    memoryBody
+    snapshot.memory.sizeBytes !== null ||
+      snapshot.memory.controllers.length > 0 ||
+      (snapshot.memory.missing ?? []).length > 0,
+    memoryBody,
+    snapshot.memory.missing
   )}
 
   <!-- CPU -->
@@ -252,12 +290,16 @@
   {@render section(
     'cpu',
     snapshot.cpu.status,
-    snapshot.cpu.sensors.length > 0 || snapshot.cpu.throttle.length > 0,
-    cpuBody
+    snapshot.cpu.sensors.length > 0 ||
+      snapshot.cpu.throttle.length > 0 ||
+      (snapshot.cpu.missing ?? []).length > 0,
+    cpuBody,
+    snapshot.cpu.missing
   )}
 
   <!-- Cooling -->
   {#snippet coolingBody()}
+    {#if snapshot.cooling.fans.length > 0}
     <Table.Root>
       <Table.Header>
         <Table.Row class="hover:bg-transparent">
@@ -283,8 +325,46 @@
         {/each}
       </Table.Body>
     </Table.Root>
+    {/if}
+    {#if temperatures.length > 0}
+      <Table.Root>
+        <Table.Header>
+          <Table.Row class="hover:bg-transparent">
+            <Table.Head class={head}>Temperature sensor</Table.Head>
+            <Table.Head class={head}>Type</Table.Head>
+            <Table.Head class={head}>Reading</Table.Head>
+            <Table.Head class={head}>High limit</Table.Head>
+            <Table.Head class={head}>Critical limit</Table.Head>
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {#each temperatures as t (t.hwId + t.sensor)}
+            <Table.Row data-testid="thermal-row" data-status={t.status}>
+              <Table.Cell class={cell}>
+                <div class="flex items-center gap-2">
+                  {@render dot(t.status, t.sensor)}
+                  <span class="text-xs font-medium">{t.sensor}</span>
+                </div>
+              </Table.Cell>
+              <Table.Cell class={cell}>{t.type}</Table.Cell>
+              <Table.Cell class="{cell} font-medium {valueTextClass(t.status)}">{formatCelsius(t.temperature)}</Table.Cell>
+              <Table.Cell class={cell}>{formatCelsius(t.high)}</Table.Cell>
+              <Table.Cell class={cell}>{formatCelsius(t.critical)}</Table.Cell>
+            </Table.Row>
+          {/each}
+        </Table.Body>
+      </Table.Root>
+    {/if}
   {/snippet}
-  {@render section('cooling', snapshot.cooling.status, snapshot.cooling.fans.length > 0, coolingBody)}
+  {@render section(
+    'cooling',
+    snapshot.cooling.status,
+    snapshot.cooling.fans.length > 0 ||
+      temperatures.length > 0 ||
+      (snapshot.cooling.missing ?? []).length > 0,
+    coolingBody,
+    snapshot.cooling.missing
+  )}
 
   <!-- Power -->
   {#snippet powerBody()}
@@ -337,8 +417,8 @@
                 </div>
               </Table.Cell>
               <Table.Cell class="{cell} font-medium tabular-nums {valueTextClass(v.status)}">{num(v.volts)} V</Table.Cell>
-              <Table.Cell class={cell}>{v.lowCritical !== null ? `${num(v.lowCritical)} V` : '-'}</Table.Cell>
-              <Table.Cell class={cell}>{v.highCritical !== null ? `${num(v.highCritical)} V` : '-'}</Table.Cell>
+              <Table.Cell class={cell}>{voltLimit(v.low, v.lowCritical)}</Table.Cell>
+              <Table.Cell class={cell}>{voltLimit(v.high, v.highCritical)}</Table.Cell>
             </Table.Row>
           {/each}
         </Table.Body>
@@ -348,8 +428,11 @@
   {@render section(
     'power',
     snapshot.power.status,
-    snapshot.power.supplies.length > 0 || snapshot.power.voltages.length > 0,
-    powerBody
+    snapshot.power.supplies.length > 0 ||
+      snapshot.power.voltages.length > 0 ||
+      (snapshot.power.missing ?? []).length > 0,
+    powerBody,
+    snapshot.power.missing
   )}
 
   <!-- Network -->
@@ -395,5 +478,11 @@
       </Table.Body>
     </Table.Root>
   {/snippet}
-  {@render section('network', snapshot.network.status, snapshot.network.interfaces.length > 0, networkBody)}
+  {@render section(
+    'network',
+    snapshot.network.status,
+    snapshot.network.interfaces.length > 0 || (snapshot.network.missing ?? []).length > 0,
+    networkBody,
+    snapshot.network.missing
+  )}
 </div>

@@ -22,6 +22,10 @@
 
 	let { incident, members, rule = null, onAssign }: Props = $props();
 
+	// The host is gone (sourceRef null) once it was forgotten, even if the id was kept.
+	const hardwareHostId = $derived(
+		incident.source === 'hardware' ? (incident.sourceRef?.id ?? incident.hardwareHostId ?? null) : null
+	);
 	const tactics = $derived(incident.mitreTactics ?? []);
 	const techniques = $derived(incident.mitreTechniques ?? []);
 	const services = $derived(incident.affectedServices ?? []);
@@ -188,6 +192,28 @@
 					</p>
 				{:else}
 					<p class="text-muted-foreground">Monitor no longer exists</p>
+				{/if}
+			</CardContent>
+		</Card>
+	{:else if incident.source === 'hardware'}
+		<Card>
+			<CardHeader class="pb-3">
+				<CardTitle class="text-base font-semibold">Hardware host</CardTitle>
+			</CardHeader>
+			<CardContent class="space-y-2 text-sm">
+				{#if hardwareHostId}
+					{#if incident.sourceRef?.name}
+						<p class="font-medium">{incident.sourceRef.name}</p>
+					{/if}
+					<p>
+						<a class="text-primary-text hover:underline" href={`/dashboard/hardware/${encodeURIComponent(hardwareHostId)}`}>
+							View host
+						</a>
+					</p>
+				{:else}
+					<p class="text-muted-foreground">
+						{#if incident.sourceRef?.name}{incident.sourceRef.name}: {/if}Host no longer exists
+					</p>
 				{/if}
 			</CardContent>
 		</Card>

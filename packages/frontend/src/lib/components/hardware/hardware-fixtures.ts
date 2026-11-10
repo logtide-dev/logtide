@@ -102,6 +102,7 @@ export function detail(over: Partial<HardwareHostDetail> = {}): HardwareHostDeta
     snapshot: {
       disks: {
         status: 'critical',
+        missing: [{ hwId: 'sdc', sensor: null, metric: 'hw.physical_disk.smart_status' }],
         disks: [
           {
             hwId: 'sda',
@@ -153,8 +154,11 @@ export function detail(over: Partial<HardwareHostDetail> = {}): HardwareHostDeta
             sizeBytes: 32 * 1024 ** 3,
           },
           {
-            hwId: 'mc1',
+            hwId: 'mc1-dimm0',
             status: 'ok',
+            scope: 'dimm',
+            controller: 'mc1',
+            dimmLabel: 'DIMM_B1',
             corrected: zero,
             uncorrected: zero,
             sizeBytes: 32 * 1024 ** 3,
@@ -169,6 +173,9 @@ export function detail(over: Partial<HardwareHostDetail> = {}): HardwareHostDeta
       cooling: {
         status: 'ok',
         fans: [{ hwId: 'ipmi', sensor: 'Fan1', status: 'ok', rpm: 5400, lowCritical: 1200, max24h: 5600 }],
+        temperatures: [
+          { hwId: 'ipmi', sensor: 'Inlet Temp', type: 'board', status: 'ok', temperature: 24, high: 42, critical: 47 },
+        ],
       },
       power: {
         status: 'ok',
@@ -176,7 +183,9 @@ export function detail(over: Partial<HardwareHostDetail> = {}): HardwareHostDeta
           { hwId: 'ipmi', sensor: 'PS1 Status', status: 'ok', ok: true },
           { hwId: 'ipmi', sensor: 'PS2 Status', status: 'ok', ok: true },
         ],
-        voltages: [{ hwId: 'ipmi', sensor: '12V', status: 'ok', volts: 12.06, lowCritical: 10.8, highCritical: 13.2 }],
+        voltages: [
+          { hwId: 'ipmi', sensor: '12V', status: 'ok', volts: 12.06, low: 11.4, high: 12.6, lowCritical: 10.8, highCritical: 13.2 },
+        ],
       },
       network: {
         status: 'ok',

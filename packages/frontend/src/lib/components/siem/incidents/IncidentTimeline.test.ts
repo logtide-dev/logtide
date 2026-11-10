@@ -89,6 +89,21 @@ describe('IncidentTimeline', () => {
     expect(screen.getByText('Monitor check failed')).toBeTruthy();
   });
 
+  it('renders hardware_check entries from sourceEvents', () => {
+    render(IncidentTimeline, {
+      props: props({
+        entries: entries({
+          detections: [],
+          sourceEvents: [
+            { id: 's3', kind: 'hardware_check', time: '2026-10-22T09:30:00.000Z', summary: 'Disk sda is failing' },
+          ],
+        }),
+      }),
+    });
+    expect(screen.getByText('Hardware health changed')).toBeTruthy();
+    expect(screen.getByText('Disk sda is failing')).toBeTruthy();
+  });
+
   it('does not repeat the title as the body of an alert entry', () => {
     render(IncidentTimeline, {
       props: props({

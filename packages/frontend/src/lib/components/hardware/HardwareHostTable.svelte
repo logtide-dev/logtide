@@ -100,5 +100,5 @@
 {/snippet}
 
 <div class="rounded-lg border bg-card">
-  <DataTable {columns} rows={hosts} rowKey={(h: HardwareHostSummary) => h.id} {loading} {mobileRow} />
+  <DataTable {columns} rows={hosts} rowKey={(h: HardwareHostSummary) => h.id} {loading} mobileRow={mobileRow as never} />
 </div>

@@ -117,6 +117,13 @@ describe('hardware host detail page', () => {
     expect(nvme.textContent).toContain('52 °C');
   });
 
+  it('lists devices that vanished from the data', async () => {
+    await renderPage();
+    const missing = await screen.findByTestId('missing-disks');
+    expect(missing.textContent).toContain('sdc');
+    expect(screen.queryByTestId('missing-memory')).toBeNull();
+  });
+
   it('renders memory totals and ECC deltas per controller', async () => {
     await renderPage();
     const rows = await screen.findAllByTestId('memory-row');
@@ -124,6 +131,8 @@ describe('hardware host detail page', () => {
     expect(rows[0].textContent).toContain('mc0');
     expect(rows[0].textContent).toContain('32 GB');
     expect(rows[0].textContent).toContain('+3 in 24 h, +7 in 7 d');
+    expect(rows[1].textContent).toContain('DIMM_B1');
+    expect(rows[1].textContent).toContain('controller mc1');
     expect(rows[1].textContent).toContain('no change');
     expect(within(screen.getByTestId('section-memory')).getByText(/64 GB/)).toBeTruthy();
   });
@@ -142,6 +151,9 @@ describe('hardware host detail page', () => {
 
     expect(screen.getAllByTestId('psu-row')).toHaveLength(2);
     expect(screen.getByTestId('voltage-row').textContent).toContain('12.06 V');
+    expect(screen.getByTestId('voltage-row').textContent).toContain('10.8 V crit');
+    expect(screen.getByTestId('thermal-row').textContent).toContain('Inlet Temp');
+    expect(screen.getByTestId('thermal-row').textContent).toContain('24 °C');
 
     const nics = screen.getAllByTestId('nic-row');
     expect(nics[0].textContent).toContain('Up');
