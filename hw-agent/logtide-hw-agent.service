@@ -1,0 +1,22 @@
+[Unit]
+Description=LogTide hardware agent
+Documentation=https://logtide.dev/docs/hardware-health
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/logtide/hw-agent.env
+ExecStart=/usr/bin/python3 /opt/logtide-hw-agent/logtide_hw_agent.py
+Restart=always
+RestartSec=10
+# Runs as root: smartctl, /dev/kmsg and /dev/ipmi0 need raw device access.
+User=root
+# Becomes /var/lib/logtide-hw-agent, where the BMC event log position is kept.
+StateDirectory=logtide-hw-agent
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
