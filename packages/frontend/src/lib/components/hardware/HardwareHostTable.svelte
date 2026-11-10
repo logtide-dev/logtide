@@ -29,7 +29,7 @@
 </script>
 
 {#snippet statusCell(h: HardwareHostSummary)}
-  <HardwareStatusBadge status={h.status} />
+  <HardwareStatusBadge status={h.status} isVirtual={h.isVirtual} />
 {/snippet}
 
 {#snippet hostName(h: HardwareHostSummary)}
@@ -85,7 +85,7 @@
   <div class="space-y-2">
     <div class="flex items-start justify-between gap-2">
       {@render hostName(h)}
-      <HardwareStatusBadge status={h.status} />
+      <HardwareStatusBadge status={h.status} isVirtual={h.isVirtual} />
     </div>
     <ComponentChips components={h.components} />
     <p class="text-xs text-muted-foreground">

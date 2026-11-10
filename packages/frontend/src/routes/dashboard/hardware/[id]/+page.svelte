@@ -175,7 +175,7 @@
       <!-- Header -->
       <div class="rounded-lg border bg-card p-4" data-testid="host-header">
         <div class="flex flex-wrap items-center gap-2">
-          <HardwareStatusBadge status={host.status} />
+          <HardwareStatusBadge status={host.status} isVirtual={host.isVirtual} />
           {#if host.isVirtual}
             <Badge variant="outline" class="py-0 text-[11px]">VM</Badge>
           {/if}

@@ -84,6 +84,8 @@ describe('hardware list page', () => {
 
     const vmRow = screen.getByRole('link', { name: 'vm-07' }).closest('tr') as HTMLElement;
     expect(within(vmRow).getByText('VM')).toBeTruthy();
+    expect(within(vmRow).getByTestId('hardware-status').textContent).toContain('No sensors');
+    expect(within(vmRow).getByTestId('hardware-status').getAttribute('title')).toContain('sensors are not exposed');
     expect(within(vmRow).getByTestId('chip-cpu').getAttribute('data-status')).toBe('unknown');
 
     const staleRow = screen.getByRole('link', { name: 'old-nas' }).closest('tr') as HTMLElement;
