@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import select
+import shutil
 import signal
 import socket
 import subprocess
@@ -157,6 +158,9 @@ class Context(object):
     def path(self, p):
         return self.config.path(p)
 
+    def smartctl_available(self):
+        return shutil.which("smartctl") is not None
+
     def run(self, args, timeout=60):
         """Run a command, return (returncode, stdout). Raises CollectorUnavailable
         when the binary is missing. A non-zero exit is not an error here: smartctl
@@ -198,8 +202,26 @@ def _num(value):
     return None
 
 
-def parse_smart_device(data):
-    """Turn one `smartctl -a -j` document into metrics. Pure."""
+def disk_ident(data, by_id=None):
+    """Stable disk identity: serial (spaces stripped), else the /dev/disk/by-id
+    name, else the device basename. /dev/sdX letters swap across reboots."""
+    dev = data.get("device") or {}
+    name = dev.get("name") or ""
+    base = os.path.basename(name.rstrip("/")) or name
+    serial = re.sub(r"\s+", "", str(data.get("serial_number") or ""))
+    if serial:
+        return serial
+    if by_id and by_id.get(base):
+        return by_id[base]
+    dtype = str(dev.get("type") or "")
+    if "," in dtype:
+        base = "%s-%s" % (base, dtype.replace(",", ""))
+    return base
+
+
+def parse_smart_device(data, by_id=None):
+    """Turn one `smartctl -a -j` document into metrics. Pure. hw.id is the disk
+    identity (see disk_ident), `device` the current kernel name (sda, nvme0)."""
     dev = data.get("device") or {}
     name = dev.get("name") or ""
     if not name:
@@ -216,12 +238,10 @@ def parse_smart_device(data):
     if not (has_status or nvme or ata or has_scsi):
         return []
 
-    ident = os.path.basename(name.rstrip("/")) or name
-    dtype = str(dev.get("type") or "")
-    if "," in dtype:
-        ident = "%s-%s" % (ident, dtype.replace(",", ""))
+    ident = disk_ident(data, by_id)
+    device = os.path.basename(name.rstrip("/")) or name
 
-    base = {"device": name, "protocol": protocol}
+    base = {"device": device, "protocol": protocol}
     if data.get("model_name"):
         base["model"] = str(data["model_name"])
     if data.get("serial_number"):
@@ -289,6 +309,24 @@ def parse_smart_device(data):
     return out
 
 
+def read_by_id_map(dev_root="/dev/disk/by-id"):
+    """Map kernel device basename (sda, nvme0n1, nvme0) to a by-id name."""
+    mapping = {}
+    for entry in _list_dir(dev_root):
+        if "-part" in entry or entry.startswith(("wwn-", "nvme-eui.", "nvme-nvme.")):
+            continue
+        try:
+            target = os.path.basename(os.path.realpath(os.path.join(dev_root, entry)))
+        except OSError:
+            continue
+        mapping.setdefault(target, entry)
+        # nvme0n1 -> nvme0 (smartctl reports the controller node)
+        m = re.match(r"^(nvme\d+)n\d+$", target)
+        if m:
+            mapping.setdefault(m.group(1), entry)
+    return mapping
+
+
 def collect_smart(ctx):
     _, out = ctx.run(["smartctl", "--scan-open", "-j"])
     try:
@@ -300,6 +338,7 @@ def collect_smart(ctx):
         raise CollectorUnavailable("smartctl found no devices")
     metrics = []
     failed = 0
+    by_id = read_by_id_map()
     for d in devices:
         name = d.get("name")
         if not name:
@@ -309,7 +348,7 @@ def collect_smart(ctx):
             args += ["-d", d["type"]]
         try:
             _, doc = ctx.run(args)
-            metrics.extend(parse_smart_device(json.loads(doc)))
+            metrics.extend(parse_smart_device(json.loads(doc), by_id))
         except CollectorUnavailable:
             raise
         except Exception as e:
@@ -336,18 +375,20 @@ def collect_edac(ctx):
             v = read_int(mc_dir + "/" + fname)
             if v is not None:
                 metrics.append(Metric("hw.memory.errors", v, "memory", mc,
-                                      {"error_type": kind, "scope": "controller"}))
+                                      {"error_type": kind, "scope": "controller", "controller": mc}))
         for dimm in _list_dir(mc_dir):
             if not re.match(r"^dimm\d+$", dimm):
                 continue
             d_dir = mc_dir + "/" + dimm
             label = read_str(d_dir + "/dimm_label")
-            hw_id = label if label else "%s/%s" % (mc, dimm)
+            hw_id = "%s/%s" % (mc, dimm)
             for kind, fname in (("corrected", "dimm_ce_count"), ("uncorrected", "dimm_ue_count")):
                 v = read_int(d_dir + "/" + fname)
                 if v is not None:
-                    metrics.append(Metric("hw.memory.errors", v, "memory", hw_id,
-                                          {"error_type": kind, "scope": "dimm", "controller": mc}))
+                    attrs = {"error_type": kind, "scope": "dimm", "controller": mc}
+                    if label:
+                        attrs["dimm_label"] = label
+                    metrics.append(Metric("hw.memory.errors", v, "memory", hw_id, attrs))
     return metrics
 
 
@@ -370,26 +411,44 @@ def hwmon_type(chip):
     return "board"
 
 
+def _chip_suffix(h_dir):
+    """Stable chip identity from the `device` symlink (e.g. nvme0, coretemp.0)."""
+    link = h_dir + "/device"
+    try:
+        if os.path.islink(link):
+            return os.path.basename(os.path.realpath(link))
+    except OSError:
+        pass
+    return None
+
+
 def collect_hwmon(ctx):
     base = ctx.path("/sys/class/hwmon")
     dirs = [d for d in _list_dir(base) if re.match(r"^hwmon\d+$", d)]
     if not dirs:
         raise CollectorUnavailable("no hwmon devices")
+    # SMART already reports disk temperatures, do not double them up.
+    skip_disks = "smart" in ctx.config.collectors and ctx.smartctl_available()
     chips = []
     for d in dirs:
         name = read_str(base + "/" + d + "/name")
-        if name:
-            chips.append((d, name))
+        if not name or (skip_disks and name in DISK_CHIPS):
+            continue
+        chips.append((d, name))
     counts = {}
     for _, name in chips:
         counts[name] = counts.get(name, 0) + 1
 
     metrics = []
     for d, name in chips:
-        chip_id = name
-        if counts[name] > 1:
-            chip_id = "%s-%s" % (name, d[len("hwmon"):])
         h_dir = base + "/" + d
+        suffix = _chip_suffix(h_dir)
+        chip_id = name
+        if suffix:
+            chip_id = "%s-%s" % (name, suffix)
+        elif counts[name] > 1:
+            chip_id = "%s-%s" % (name, d[len("hwmon"):])
+        is_disk = name in DISK_CHIPS
         entries = _list_dir(h_dir)
         label_of = {}
         for e in entries:
@@ -401,7 +460,7 @@ def collect_hwmon(ctx):
             if not m:
                 continue
             kind, idx, field = m.groups()
-            sensor = label_of.get(kind + idx) or (kind + idx)
+            sensor = "hwmon" if is_disk else (label_of.get(kind + idx) or (kind + idx))
             raw = read_int(h_dir + "/" + e)
             if raw is None:
                 continue
@@ -410,7 +469,7 @@ def collect_hwmon(ctx):
                 if field == "input":
                     metrics.append(Metric("hw.temperature", raw / 1000.0, htype, chip_id,
                                           {"sensor": sensor}))
-                elif field in ("max", "crit"):
+                elif field in ("max", "crit") and raw > 0:
                     metrics.append(Metric("hw.temperature.limit", raw / 1000.0, htype, chip_id,
                                           {"sensor": sensor,
                                            "limit_type": "high" if field == "max" else "critical"}))
@@ -421,11 +480,10 @@ def collect_hwmon(ctx):
                 if field == "input":
                     metrics.append(Metric("hw.voltage", raw / 1000.0, "voltage", chip_id,
                                           {"sensor": sensor}))
-                elif field in ("min", "max"):
+                elif field in ("min", "max") and raw > 0:
                     metrics.append(Metric("hw.voltage.limit", raw / 1000.0, "voltage", chip_id,
                                           {"sensor": sensor,
-                                           "limit_type": "low.critical" if field == "min"
-                                           else "high.critical"}))
+                                           "limit_type": "low" if field == "min" else "high"}))
     return metrics
 
 
@@ -449,7 +507,7 @@ def collect_thermal(ctx):
         pid = read_int(base + "/" + cpu + "/topology/physical_package_id")
         entry = packages.setdefault(pid if pid is not None else 0, {"core": 0, "package": 0})
         if core is not None:
-            entry["core"] += core
+            entry["core"] = max(entry["core"], core)
         if pkg is not None:
             entry["package"] = max(entry["package"], pkg)
     if not found:
@@ -487,51 +545,95 @@ def ipmi_temp_type(name):
     return "board"
 
 
-def parse_ipmi_sensors(text):
-    """Parse `ipmitool sensor` output (temperatures, fans, voltages). Pure.
-    'na' values are skipped. PSU state comes from `sdr type "Power Supply"`."""
-    metrics = []
+ENTITY_TYPES = {3: "cpu", 9: "cpu", 18: "cpu", 8: "memory", 32: "memory"}
+
+
+def parse_sdr_entities(text):
+    """Parse `ipmitool sdr elist full` into {sensor name: [hw.type per occurrence]}
+    using the IPMI entity id (3 processor, 8/32 memory, ...). Pure."""
+    out = {}
+    for line in text.splitlines():
+        cols = [c.strip() for c in line.split("|")]
+        if len(cols) < 4 or not cols[0]:
+            continue
+        try:
+            entity = int(cols[3].split(".")[0])
+        except ValueError:
+            continue
+        out.setdefault(cols[0], []).append(ENTITY_TYPES.get(entity, "board"))
+    return out
+
+
+def _ipmi_rows(text):
+    """Sensor rows with names made unique: repeated names get -2, -3 in order."""
+    rows = []
+    seen = {}
     for line in text.splitlines():
         cols = [c.strip() for c in line.split("|")]
         if len(cols) < 10 or not cols[0]:
             continue
-        name, value, unit, status = cols[0], cols[1], cols[2].lower(), cols[3].lower()
-        lcr, unc, ucr = cols[5], cols[7], cols[8]
+        n = seen.get(cols[0], 0)
+        seen[cols[0]] = n + 1
+        uname = cols[0] if n == 0 else "%s-%d" % (cols[0], n + 1)
+        rows.append((cols[0], n, uname, cols))
+    return rows
+
+
+def ipmi_has_duplicates(text):
+    return any(n > 0 for _, n, _, _ in _ipmi_rows(text))
+
+
+def _valid_limit(raw):
+    v = _float_or_none(raw)
+    return v if v is not None and v > 0 else None
+
+
+def parse_ipmi_sensors(text, entities=None):
+    """Parse `ipmitool sensor` output (temperatures, fans, voltages). Pure.
+    'na' values and zero limits are skipped. Duplicate sensor names get -2, -3
+    suffixes. PSU state comes from `sdr type "Power Supply"`."""
+    metrics = []
+    for orig, occurrence, name, cols in _ipmi_rows(text):
+        value, unit = cols[1], cols[2].lower()
+        lcr, lnc, unc, ucr = cols[5], cols[6], cols[7], cols[8]
+        attrs = {"sensor": name}
+
+        def limits(metric, htype, pairs):
+            for limit_type, raw in pairs:
+                lv = _valid_limit(raw)
+                if lv is not None:
+                    metrics.append(Metric(metric, lv, htype, name,
+                                          {"sensor": name, "limit_type": limit_type}))
+
         if unit == "degrees c":
             v = _float_or_none(value)
             if v is None:
                 continue
-            htype = ipmi_temp_type(name)
-            metrics.append(Metric("hw.temperature", v, htype, name, {"sensor": name}))
-            for limit_type, raw in (("high", unc), ("critical", ucr)):
-                lv = _float_or_none(raw)
-                if lv is not None:
-                    metrics.append(Metric("hw.temperature.limit", lv, htype, name,
-                                          {"sensor": name, "limit_type": limit_type}))
+            htype = ipmi_temp_type(orig)
+            if htype == "board" and entities:
+                types = entities.get(orig) or []
+                if occurrence < len(types):
+                    htype = types[occurrence]
+            metrics.append(Metric("hw.temperature", v, htype, name, attrs))
+            limits("hw.temperature.limit", htype, (("high", unc), ("critical", ucr)))
         elif unit == "rpm":
             v = _float_or_none(value)
             if v is None:
                 continue
-            metrics.append(Metric("hw.fan.speed", v, "fan", name, {"sensor": name}))
-            lv = _float_or_none(lcr)
-            if lv is not None:
-                metrics.append(Metric("hw.fan.speed.limit", lv, "fan", name,
-                                      {"sensor": name, "limit_type": "low.critical"}))
+            metrics.append(Metric("hw.fan.speed", v, "fan", name, attrs))
+            limits("hw.fan.speed.limit", "fan", (("low.critical", lcr),))
         elif unit == "volts":
             v = _float_or_none(value)
             if v is None:
                 continue
-            metrics.append(Metric("hw.voltage", v, "voltage", name, {"sensor": name}))
-            for limit_type, raw in (("low.critical", lcr), ("high.critical", ucr)):
-                lv = _float_or_none(raw)
-                if lv is not None:
-                    metrics.append(Metric("hw.voltage.limit", lv, "voltage", name,
-                                          {"sensor": name, "limit_type": limit_type}))
+            metrics.append(Metric("hw.voltage", v, "voltage", name, attrs))
+            limits("hw.voltage.limit", "voltage", (("low.critical", lcr), ("high.critical", ucr),
+                                                    ("low", lnc), ("high", unc)))
     return metrics
 
 
 PSU_FAIL_RE = re.compile(
-    r"failure detected|predictive failure|power supply ac lost|ac lost or out-of-range|config error",
+    r"failure detected|predictive failure|power supply ac lost|ac lost or out-of-range|config error|input lost|input out-of-range|fan failure|power supply failure",
     re.I)
 
 
@@ -562,7 +664,16 @@ def collect_ipmi(ctx):
     rc, out = ctx.run(["ipmitool", "sensor"])
     if rc != 0 and "|" not in out:
         raise CollectorUnavailable("ipmitool sensor failed (no BMC device?)")
-    metrics = parse_ipmi_sensors(out)
+    entities = None
+    if ipmi_has_duplicates(out):
+        try:  # entity ids tell apart the several sensors that are all called "Temp"
+            _, elist = ctx.run(["ipmitool", "sdr", "elist", "full"])
+            entities = parse_sdr_entities(elist)
+        except CollectorUnavailable:
+            raise
+        except Exception as e:
+            log.warning("ipmi: sdr elist failed: %s", e)
+    metrics = parse_ipmi_sensors(out, entities)
     try:
         rc, sdr = ctx.run(["ipmitool", "sdr", "type", "Power Supply"])
         if "|" in sdr:
@@ -645,11 +756,17 @@ def collect_sel(ctx):
     for rec_id, ts, sensor, event, direction in entries:
         if rec_id <= last:
             continue
-        message = "BMC SEL: %s | %s%s" % (sensor, event, (" | " + direction) if direction else "")
-        level = "critical" if SEL_CRITICAL_RE.search(event) else "warn"
+        deasserted = direction.lower() == "deasserted"
+        show_dir = direction and direction.lower() not in event.lower()
+        message = "BMC SEL: %s | %s%s" % (sensor, event, (" | " + direction) if show_dir else "")
+        if deasserted:
+            level = "info"  # the condition cleared, not a new problem
+        else:
+            level = "critical" if SEL_CRITICAL_RE.search(event) else "warn"
         ctx.events.append(make_event(
             ctx.config.hostname, message, level, "sel", classify_sel(sensor, event),
-            extra={"hw.sel.id": rec_id, "hw.sel.timestamp": ts},
+            extra={"hw.sel.id": rec_id, "hw.sel.timestamp": ts,
+                   "hw.sel.direction": "deasserted" if deasserted else "asserted"},
         ))
     _write_state(ctx, "sel_last_id", max(max_id, last))
     return []
@@ -742,16 +859,17 @@ KMSG_PATTERNS = (
     ("pcie", re.compile(r"AER: (Corrected|Uncorrected|Multiple)|PCIe Bus Error", re.I)),
     ("thermal", re.compile(r"temperature above threshold|cpu clock throttled|"
                            r"thermal.*critical", re.I)),
-    ("network", re.compile(r"NIC Link is Down|Detected Tx Unit Hang|link is not ready", re.I)),
+    ("network", re.compile(r"NIC Link is Down|Detected Tx Unit Hang|link is not ready|NETDEV WATCHDOG", re.I)),
     ("disk", re.compile(
-        r"I/O error, dev|hard resetting link|SATA link down|failed command: (READ|WRITE) FPDMA|"
+        r"I/O error, dev|hard resetting link|SATA link down|failed command: (READ|WRITE) (FPDMA|DMA)|"
+        r"failed command: FLUSH|exception Emask|Unrecovered read error|will reset|probe failure|"
         r"\bUNC\b|nvme\d*.*(I/O .*timeout|controller is down|timeout)|Medium Error|Buffer I/O error",
         re.I)),
-    ("power", re.compile(r"Power supply|redundancy lost|\bPSU\b.*(fail|fault)", re.I)),
+    ("power", re.compile(r"Power supply.*(fail|fault|lost|critical)|redundancy lost|\bPSU\b.*(fail|fault)", re.I)),
     ("cpu", re.compile(r"Machine Check Exception|mce: \[Hardware Error\]: CPU \d+: Machine Check",
                        re.I)),
     ("memory", re.compile(
-        r"EDAC.*\b(CE|UE)\b|EDAC (MC|sbridge|skx|amd64|i\d+)|Hardware Error|"
+        r"EDAC.*\b(CE|UE)\b|EDAC.*\b(corrected|uncorrected|errors?)\b|Hardware Error|"
         r"Machine check events logged|mce: \[Hardware Error\]", re.I)),
 )
 

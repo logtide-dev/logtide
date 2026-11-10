@@ -69,11 +69,11 @@ class SmartParsingTest(unittest.TestCase):
         self.assertEqual(one(m, "hw.physical_disk.smart_status").value, 1)
         status = one(m, "hw.physical_disk.smart_status")
         self.assertEqual(status.hw_type, "physical_disk")
-        self.assertEqual(status.hw_id, "sda")
+        self.assertEqual(status.hw_id, "WD-WCC7K0000001")
         self.assertEqual(status.attrs["protocol"], "ata")
         self.assertEqual(status.attrs["model"], "WDC WD40EFRX-68N32N0")
         self.assertEqual(status.attrs["serial"], "WD-WCC7K0000001")
-        self.assertEqual(status.attrs["device"], "/dev/sda")
+        self.assertEqual(status.attrs["device"], "sda")
         labels = sorted(x.attrs["smart_attribute"] for x in by(m, "hw.physical_disk.smart"))
         self.assertEqual(labels, sorted([
             "reallocated_sector_count", "current_pending_sector", "offline_uncorrectable",
@@ -97,7 +97,8 @@ class SmartParsingTest(unittest.TestCase):
     def test_nvme_healthy(self):
         m = agent.parse_smart_device(fixture_json("smart_nvme_healthy.json"))
         self.assertEqual(one(m, "hw.physical_disk.smart_status").attrs["protocol"], "nvme")
-        self.assertEqual(one(m, "hw.physical_disk.smart_status").hw_id, "nvme0")
+        self.assertEqual(one(m, "hw.physical_disk.smart_status").hw_id, "S5GXNX0R000003")
+        self.assertEqual(one(m, "hw.physical_disk.smart_status").attrs["device"], "nvme0")
         self.assertEqual(one(m, "hw.physical_disk.critical_warning").value, 0)
         self.assertEqual(one(m, "hw.physical_disk.available_spare").value, 100)
         self.assertEqual(one(m, "hw.physical_disk.available_spare_threshold").value, 10)
@@ -112,6 +113,24 @@ class SmartParsingTest(unittest.TestCase):
         self.assertEqual(one(m, "hw.physical_disk.media_errors").value, 12)
         self.assertEqual(one(m, "hw.physical_disk.endurance_utilization").value, 97)
         self.assertEqual(one(m, "hw.temperature").value, 72)
+
+    def test_every_disk_metric_uses_the_same_identity(self):
+        for name in ("smart_ata_healthy.json", "smart_nvme_critical.json"):
+            data = fixture_json(name)
+            serial = data["serial_number"]
+            m = agent.parse_smart_device(data)
+            self.assertTrue(m)
+            self.assertEqual(set(x.hw_id for x in m), {serial})
+            self.assertEqual(set(x.attrs["device"] for x in m), {os.path.basename(data["device"]["name"])})
+
+    def test_identity_sanitizes_and_falls_back(self):
+        data = fixture_json("smart_ata_healthy.json")
+        data["serial_number"] = "  WD WCC 7K  "
+        self.assertEqual(agent.disk_ident(data), "WDWCC7K")
+        del data["serial_number"]
+        self.assertEqual(agent.disk_ident(data, {"sda": "ata-WDC_WD40EFRX_X"}), "ata-WDC_WD40EFRX_X")
+        self.assertEqual(agent.disk_ident(data), "sda")
+        self.assertEqual(agent.disk_ident(data, {"sdb": "x"}), "sda")
 
     def test_no_smart_support_is_skipped(self):
         self.assertEqual(agent.parse_smart_device(fixture_json("smart_unsupported.json")), [])
@@ -137,11 +156,12 @@ class SmartCollectorTest(TmpRootCase):
             return 4, docs[args[3]]  # non-zero exit bitmask must be tolerated
 
         self.ctx.run = run
-        metrics = agent.collect_smart(self.ctx)
+        with mock.patch.object(agent, "read_by_id_map", return_value={}):
+            metrics = agent.collect_smart(self.ctx)
         self.assertEqual(calls[1], ["smartctl", "-a", "-j", "/dev/sda", "-d", "sat"])
         self.assertEqual(calls[2], ["smartctl", "-a", "-j", "/dev/nvme0", "-d", "nvme"])
         ids = sorted(set(m.hw_id for m in metrics))
-        self.assertEqual(ids, ["nvme0", "sda"])
+        self.assertEqual(ids, ["S5GXNX0R000003", "WD-WCC7K0000001"])
 
     def test_smartctl_missing_is_unavailable(self):
         def run(args, timeout=60):
@@ -166,12 +186,14 @@ class EdacTest(TmpRootCase):
         m = agent.collect_edac(self.ctx)
         mc = one(m, "hw.memory.errors", error_type="corrected", scope="controller")
         self.assertEqual((mc.hw_id, mc.value, mc.hw_type), ("mc0", 5, "memory"))
-        dimm = one(m, "hw.memory.errors", error_type="corrected", hw_id="CPU_SrcID#0_Chan#0_DIMM#0") \
-            if False else [x for x in m if x.hw_id == "CPU_SrcID#0_Chan#0_DIMM#0" and
-                           x.attrs["error_type"] == "corrected"][0]
+        dimm = one(m, "hw.memory.errors", error_type="corrected", hw_id="mc0/dimm0")
         self.assertEqual(dimm.value, 5)
-        # empty label falls back to a stable path-like id
-        self.assertTrue(any(x.hw_id == "mc0/dimm1" for x in m))
+        self.assertEqual(dimm.attrs["dimm_label"], "CPU_SrcID#0_Chan#0_DIMM#0")
+        self.assertEqual((dimm.attrs["scope"], dimm.attrs["controller"]), ("dimm", "mc0"))
+        self.assertEqual(mc.attrs["controller"], "mc0")
+        # no label: the id is still mc/dimm, without a dimm_label attribute
+        d1 = one(m, "hw.memory.errors", error_type="corrected", hw_id="mc0/dimm1")
+        self.assertNotIn("dimm_label", d1.attrs)
 
     def test_absent(self):
         with self.assertRaises(agent.CollectorUnavailable):
@@ -179,6 +201,10 @@ class EdacTest(TmpRootCase):
 
 
 class HwmonTest(TmpRootCase):
+    def setUp(self):
+        TmpRootCase.setUp(self)
+        self.ctx.smartctl_available = lambda: False
+
     def test_conversions_and_types(self):
         write(self.root, "sys/class/hwmon/hwmon0/name", "coretemp\n")
         write(self.root, "sys/class/hwmon/hwmon0/temp1_input", "45500\n")
@@ -199,15 +225,49 @@ class HwmonTest(TmpRootCase):
         self.assertEqual((t.value, t.hw_type, t.hw_id), (45.5, "cpu", "coretemp"))
         self.assertEqual(one(m, "hw.temperature.limit", limit_type="high", sensor="Package id 0").value, 100.0)
         self.assertEqual(one(m, "hw.temperature.limit", limit_type="critical", sensor="Package id 0").value, 105.0)
-        nvme = one(m, "hw.temperature", sensor="temp1", hw_id="nvme")
+        nvme = one(m, "hw.temperature", sensor="hwmon", hw_id="nvme")
         self.assertEqual((nvme.value, nvme.hw_type), (38.85, "physical_disk"))
         self.assertEqual(one(m, "hw.temperature", hw_id="nct6798").hw_type, "board")
         fan = one(m, "hw.fan.speed")
         self.assertEqual((fan.value, fan.hw_type, fan.attrs["sensor"]), (1200, "fan", "fan1"))
         v = one(m, "hw.voltage")
         self.assertEqual((v.value, v.attrs["sensor"], v.hw_type), (1.056, "Vcore", "voltage"))
-        self.assertEqual(one(m, "hw.voltage.limit", limit_type="low.critical").value, 0.9)
-        self.assertEqual(one(m, "hw.voltage.limit", limit_type="high.critical").value, 1.3)
+        self.assertEqual(one(m, "hw.voltage.limit", limit_type="low").value, 0.9)
+        self.assertEqual(one(m, "hw.voltage.limit", limit_type="high").value, 1.3)
+
+    def test_zero_limits_are_never_emitted(self):
+        write(self.root, "sys/class/hwmon/hwmon0/name", "nct6798")
+        write(self.root, "sys/class/hwmon/hwmon0/temp1_input", "30000")
+        write(self.root, "sys/class/hwmon/hwmon0/temp1_max", "0")
+        write(self.root, "sys/class/hwmon/hwmon0/temp1_crit", "0")
+        write(self.root, "sys/class/hwmon/hwmon0/in0_input", "1000")
+        write(self.root, "sys/class/hwmon/hwmon0/in0_min", "0")
+        write(self.root, "sys/class/hwmon/hwmon0/in0_max", "0")
+        m = agent.collect_hwmon(self.ctx)
+        self.assertEqual(by(m, "hw.temperature.limit"), [])
+        self.assertEqual(by(m, "hw.voltage.limit"), [])
+        self.assertEqual(len(m), 2)
+
+    def test_disk_chips_skipped_when_smart_covers_them(self):
+        write(self.root, "sys/class/hwmon/hwmon0/name", "nvme")
+        write(self.root, "sys/class/hwmon/hwmon0/temp1_input", "30000")
+        write(self.root, "sys/class/hwmon/hwmon1/name", "drivetemp")
+        write(self.root, "sys/class/hwmon/hwmon1/temp1_input", "31000")
+        write(self.root, "sys/class/hwmon/hwmon2/name", "coretemp")
+        write(self.root, "sys/class/hwmon/hwmon2/temp1_input", "40000")
+        self.ctx.smartctl_available = lambda: True
+        self.assertEqual([m.hw_id for m in agent.collect_hwmon(self.ctx)], ["coretemp"])
+        # smart collector disabled: the disk chips come back
+        self.config.collectors = ["hwmon"]
+        self.assertEqual(len(agent.collect_hwmon(self.ctx)), 3)
+
+    def test_chip_identity_from_device_link(self):
+        write(self.root, "sys/class/hwmon/hwmon0/name", "coretemp")
+        write(self.root, "sys/class/hwmon/hwmon0/temp1_input", "40000")
+        with mock.patch("os.path.islink", lambda p: p.endswith("hwmon0/device")), \
+                mock.patch("os.path.realpath", lambda p: "/sys/devices/platform/coretemp.0"):
+            m = agent.collect_hwmon(self.ctx)
+        self.assertEqual(m[0].hw_id, "coretemp-coretemp.0")
 
     def test_duplicate_chip_names_get_suffix(self):
         for i in (3, 4):
@@ -235,7 +295,7 @@ class ThermalTest(TmpRootCase):
             write(self.root, cpu % i + "thermal_throttle/core_throttle_count", core)
             write(self.root, cpu % i + "thermal_throttle/package_throttle_count", package)
         m = agent.collect_thermal(self.ctx)
-        self.assertEqual(one(m, "hw.cpu.throttle_count", hw_id="package0", throttle_type="core").value, 3)
+        self.assertEqual(one(m, "hw.cpu.throttle_count", hw_id="package0", throttle_type="core").value, 2)
         self.assertEqual(one(m, "hw.cpu.throttle_count", hw_id="package0", throttle_type="package").value, 7)
         self.assertEqual(one(m, "hw.cpu.throttle_count", hw_id="package1", throttle_type="core").value, 4)
         self.assertEqual(one(m, "hw.cpu.throttle_count", hw_id="package1", throttle_type="package").value, 3)
@@ -270,6 +330,27 @@ class IpmiTest(unittest.TestCase):
         self.assertEqual(one(self.m, "hw.voltage", sensor="12V").value, 12.1)
         self.assertEqual(one(self.m, "hw.voltage.limit", sensor="12V", limit_type="low.critical").value, 10.8)
         self.assertEqual(one(self.m, "hw.voltage.limit", sensor="12V", limit_type="high.critical").value, 13.2)
+        self.assertEqual(one(self.m, "hw.voltage.limit", sensor="12V", limit_type="low").value, 11.0)
+        self.assertEqual(one(self.m, "hw.voltage.limit", sensor="12V", limit_type="high").value, 13.0)
+
+    def test_zero_limits_skipped(self):
+        # "Temp-2" has unc/ucr of 0.000: no limit at all
+        self.assertEqual(by(self.m, "hw.temperature.limit", sensor="Temp-2"), [])
+        self.assertTrue(all(x.value > 0 for x in self.m if x.name.endswith(".limit")))
+
+    def test_duplicate_names_get_suffixes(self):
+        temps = {x.hw_id: x.value for x in by(self.m, "hw.temperature") if x.attrs["sensor"].startswith("Temp")}
+        self.assertEqual(temps, {"Temp": 40.0, "Temp-2": 52.0, "Temp-3": 33.0})
+        self.assertEqual(one(self.m, "hw.temperature", sensor="Temp-2").hw_id, "Temp-2")
+        self.assertEqual(one(self.m, "hw.temperature.limit", sensor="Temp", limit_type="critical").value, 90.0)
+
+    def test_entity_ids_type_duplicate_temps(self):
+        m = agent.parse_ipmi_sensors(fixture("ipmitool_sensor.txt"),
+                                     agent.parse_sdr_entities(fixture("sdr_elist_full.txt")))
+        self.assertEqual(one(m, "hw.temperature", sensor="Temp").hw_type, "cpu")
+        self.assertEqual(one(m, "hw.temperature", sensor="Temp-2").hw_type, "cpu")
+        self.assertEqual(one(m, "hw.temperature", sensor="Temp-3").hw_type, "memory")
+        self.assertEqual(one(self.m, "hw.temperature", sensor="Temp-3").hw_type, "board")
 
     def test_discrete_psu_lines_ignored_in_sensor_path(self):
         self.assertEqual(by(self.m, "hw.power_supply.status"), [])
@@ -285,6 +366,12 @@ class PsuSdrTest(TmpRootCase):
         self.assertEqual(m[0].hw_type, "power_supply")
         self.assertEqual(m[0].hw_id, "PS1 Status")
 
+    def test_more_failure_texts(self):
+        for text in ("Presence detected, Power Supply input lost (AC/DC)", "Input out-of-range",
+                     "Presence detected, Fan failure", "Power Supply failure detected"):
+            line = "PS9 Status | 0h | ok | 10.9 | " + text
+            self.assertEqual(agent.parse_psu_sdr(line)[0].value, 0, text)
+
     def test_collect_ipmi_runs_both_commands(self):
         calls = []
 
@@ -292,11 +379,14 @@ class PsuSdrTest(TmpRootCase):
             calls.append(args)
             if args[1] == "sensor":
                 return 0, fixture("ipmitool_sensor.txt")
+            if args[2] == "elist":
+                return 0, fixture("sdr_elist_full.txt")
             return 0, fixture("sdr_power_supply.txt")
 
         self.ctx.run = run
         m = agent.collect_ipmi(self.ctx)
-        self.assertEqual(calls[1], ["ipmitool", "sdr", "type", "Power Supply"])
+        self.assertIn(["ipmitool", "sdr", "elist", "full"], calls)
+        self.assertIn(["ipmitool", "sdr", "type", "Power Supply"], calls)
         self.assertEqual(one(m, "hw.power_supply.status", sensor="PS2 Status").value, 0)
         self.assertEqual(one(m, "hw.temperature", sensor="CPU1 Temp").value, 45.0)
 
@@ -315,7 +405,7 @@ class PsuSdrTest(TmpRootCase):
 class SelTest(TmpRootCase):
     def test_parse(self):
         entries = agent.parse_sel(fixture("sel_elist.txt"))
-        self.assertEqual([e[0] for e in entries], [1, 2, 10])
+        self.assertEqual([e[0] for e in entries], [1, 2, 10, 11, 12])
         self.assertEqual(entries[2][2:4], ("Memory #0x10", "Uncorrectable ECC"))
 
     def test_first_run_records_last_id_and_sends_nothing(self):
@@ -323,14 +413,22 @@ class SelTest(TmpRootCase):
         self.assertEqual(agent.collect_sel(self.ctx), [])
         self.assertEqual(self.ctx.events, [])
         with open(os.path.join(self.state, "sel_last_id")) as f:
-            self.assertEqual(f.read().strip(), "10")
+            self.assertEqual(f.read().strip(), "12")
 
     def test_new_entries_become_events(self):
         write(self.state, "sel_last_id", "1")
         self.ctx.run = lambda args, timeout=60: (0, fixture("sel_elist.txt"))
         agent.collect_sel(self.ctx)
-        self.assertEqual(len(self.ctx.events), 2)
-        temp, mem = self.ctx.events
+        self.assertEqual(len(self.ctx.events), 4)
+        temp, mem, cleared, plain = self.ctx.events
+        self.assertEqual(temp["metadata"]["hw.sel.direction"], "asserted")
+        self.assertEqual(temp["message"].count("Asserted"), 1)
+        self.assertEqual(cleared["level"], "info")
+        self.assertEqual(cleared["metadata"]["hw.sel.direction"], "deasserted")
+        self.assertTrue(cleared["message"].endswith("| Deasserted"))
+        self.assertEqual(cleared["message"].count("Deasserted"), 1)
+        self.assertEqual(plain["level"], "critical")
+        self.assertEqual(plain["metadata"]["hw.sel.direction"], "asserted")
         self.assertEqual(temp["metadata"]["hw.event.type"], "thermal")
         self.assertEqual(temp["level"], "warn")
         self.assertEqual(mem["metadata"]["hw.event.type"], "memory")
@@ -458,6 +556,29 @@ class KmsgTest(unittest.TestCase):
         self.assertEqual(c("EDAC MC0: 1 UE memory read error"), "memory")
         self.assertEqual(c("Power supply redundancy lost"), "power")
         self.assertIsNone(c("systemd[1]: Started Session 4 of user root."))
+
+    def test_new_patterns(self):
+        c = agent.classify_kmsg
+        self.assertEqual(c("NETDEV WATCHDOG: eth0 (e1000e): transmit queue 0 timed out"), "network")
+        for line in ("ata1.00: exception Emask 0x0 SAct 0x0 SErr 0x0 action 0x6 frozen",
+                     "ata1.00: failed command: READ DMA EXT",
+                     "ata1.00: failed command: WRITE FPDMA QUEUED",
+                     "ata1.00: failed command: FLUSH CACHE EXT",
+                     "sd 0:0:0:0: [sda] Unrecovered read error - auto reallocate failed",
+                     "nvme nvme0: Device not ready; aborting reset, will reset",
+                     "ata4: reset failed, probe failure"):
+            self.assertEqual(c(line), "disk", line)
+
+    def test_boot_noise_is_not_shipped(self):
+        c = agent.classify_kmsg
+        self.assertIsNone(c("EDAC MC: Ver: 3.0.0"))
+        self.assertIsNone(c("EDAC sbridge: Giving out device to module sb_edac controller Sandy Bridge SrcID#0_Ha#0"))
+        self.assertIsNone(c("EDAC MC0: Giving out device to module skx_edac controller Skylake Socket#0"))
+        self.assertIsNone(c("ACPI: Power Supply [ADP1] online"))
+        self.assertEqual(c("EDAC MC0: 2 CE memory read error on DIMM_A1"), "memory")
+        self.assertEqual(c("EDAC sbridge MC0: UE memory read error"), "memory")
+        self.assertEqual(c("mce: [Hardware Error]: Machine check events logged"), "memory")
+        self.assertEqual(c("Power supply 1 failure detected"), "power")
 
     def test_levels(self):
         self.assertEqual(agent.kmsg_level(2), "critical")
