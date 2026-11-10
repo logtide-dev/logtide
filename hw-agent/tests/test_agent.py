@@ -812,5 +812,286 @@ class CollectOnceTest(TmpRootCase):
         self.assertIn("hw.host.info", names)
 
 
+class FakeProc(object):
+    """A child that ignores SIGKILL: communicate always times out."""
+    pid = 4242
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def kill(self):
+        pass
+
+    def poll(self):
+        return None
+
+    def communicate(self, timeout=None):
+        import subprocess
+        raise subprocess.TimeoutExpired("x", timeout)
+
+
+class CommandTimeoutTest(TmpRootCase):
+    def test_slow_command_is_killed_and_reaped(self):
+        import time
+        started = time.time()
+        with self.assertRaises(agent.CommandTimeout) as cm:
+            self.ctx.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.5)
+        self.assertIsNone(cm.exception.proc)
+        self.assertLess(time.time() - started, 15)
+
+    def test_stuck_child_is_abandoned_not_waited_on(self):
+        with mock.patch("subprocess.Popen", FakeProc), mock.patch.object(agent, "KILL_WAIT", 0.01):
+            with self.assertRaises(agent.CommandTimeout) as cm:
+                self.ctx.run(["smartctl", "-a"], timeout=0.01)
+        self.assertEqual(cm.exception.proc.pid, 4242)
+
+    def test_too_many_stuck_children_blocks_new_ones(self):
+        for i in range(agent.MAX_STUCK_CHILDREN):
+            self.ctx.abandoned["d%d" % i] = FakeProc()
+        with self.assertRaises(agent.CollectorTimeout):
+            self.ctx.run(["smartctl", "-a"])
+
+
+class SmartBudgetTest(TmpRootCase):
+    def setUp(self):
+        TmpRootCase.setUp(self)
+        patcher = mock.patch.object(agent, "read_by_id_map", return_value={})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_per_device_timeout_is_15s(self):
+        seen = []
+
+        def run(args, timeout=60):
+            seen.append(timeout)
+            if "--scan-open" in args:
+                return 0, fixture("smartctl_scan.json")
+            return 0, fixture("smart_ata_healthy.json")
+
+        self.ctx.run = run
+        agent.collect_smart(self.ctx)
+        self.assertTrue(all(t <= 15 for t in seen), seen)
+        self.assertTrue(all(t > 10 for t in seen), seen)
+
+    def test_stuck_device_is_skipped_while_previous_probe_lives(self):
+        self.ctx.abandoned["/dev/sda"] = FakeProc()
+        probed = []
+
+        def run(args, timeout=60):
+            if "--scan-open" in args:
+                return 0, fixture("smartctl_scan.json")
+            probed.append(args[3])
+            return 0, fixture("smart_nvme_healthy.json")
+
+        self.ctx.run = run
+        metrics = agent.collect_smart(self.ctx)
+        self.assertNotIn("/dev/sda", probed)
+        self.assertIn("/dev/nvme0", probed)
+        self.assertTrue(metrics)
+        self.assertIn("/dev/sda", self.ctx._stuck_logged)
+
+    def test_timeout_with_stuck_child_is_remembered(self):
+        stuck = FakeProc()
+
+        def run(args, timeout=60):
+            if "--scan-open" in args:
+                return 0, fixture("smartctl_scan.json")
+            if args[3] == "/dev/sda":
+                raise agent.CommandTimeout("stuck", stuck)
+            return 0, fixture("smart_nvme_healthy.json")
+
+        self.ctx.run = run
+        agent.collect_smart(self.ctx)
+        self.assertIs(self.ctx.abandoned["/dev/sda"], stuck)
+
+    def test_all_devices_stuck_raises(self):
+        for d in ("/dev/sda", "/dev/nvme0", "/dev/sdc"):
+            self.ctx.abandoned[d] = FakeProc()
+        self.ctx.run = lambda args, timeout=60: (0, fixture("smartctl_scan.json"))
+        with self.assertRaises(RuntimeError):
+            agent.collect_smart(self.ctx)
+
+
+class BackgroundSmartTest(TmpRootCase):
+    def test_slow_smart_does_not_block_or_flap(self):
+        import threading
+        write(self.root, "sys/class/hwmon/hwmon0/name", "coretemp")
+        write(self.root, "sys/class/hwmon/hwmon0/temp1_input", "40000")
+        release = threading.Event()
+        mode = {"slow": False}
+
+        def smart(ctx):
+            if mode["slow"]:
+                release.wait(10)
+            return [agent.Metric("hw.physical_disk.smart_status", 1, "physical_disk", "S1", {})]
+
+        def status(metrics):
+            return {m.attrs["collector"]: m.value for m in by(metrics, "hw.agent.collector.status")}
+
+        self.ctx.background = {"smart"}
+        self.ctx.smartctl_available = lambda: False
+        with mock.patch.dict(agent.COLLECTORS, {"smart": smart}), \
+                mock.patch.dict(agent.COLLECTOR_BUDGET, {"smart": 0.3}):
+            names = ["smart", "hwmon"]
+            m1 = agent.run_collectors(self.ctx, names)
+            self.assertEqual(status(m1)["smart"], 1)
+            self.assertEqual(len(by(m1, "hw.physical_disk.smart_status")), 1)
+            mode["slow"] = True
+            m2 = agent.run_collectors(self.ctx, names)  # late: still OK, no smart data, others present
+            self.assertEqual(status(m2), {"smart": 1, "hwmon": 1})
+            self.assertEqual(by(m2, "hw.physical_disk.smart_status"), [])
+            self.assertEqual(len(by(m2, "hw.temperature")), 1)
+            m3 = agent.run_collectors(self.ctx, names)  # second timeout in a row
+            self.assertEqual(status(m3)["smart"], 0)
+            release.set()
+            self.ctx.runners["smart"].thread.join(5)
+            m4 = agent.run_collectors(self.ctx, names)  # the late result is picked up
+            self.assertEqual(status(m4)["smart"], 1)
+            self.assertEqual(len(by(m4, "hw.physical_disk.smart_status")), 1)
+
+    def test_first_cycle_timeout_without_history_reports_zero(self):
+        import threading
+        release = threading.Event()
+
+        def smart(ctx):
+            release.wait(10)
+            return []
+
+        self.ctx.background = {"smart"}
+        with mock.patch.dict(agent.COLLECTORS, {"smart": smart}), \
+                mock.patch.dict(agent.COLLECTOR_BUDGET, {"smart": 0.1}):
+            m = agent.run_collectors(self.ctx, ["smart"])
+            release.set()
+        self.assertEqual(one(m, "hw.agent.collector.status", collector="smart").value, 0)
+
+    def test_real_failure_reports_zero_immediately(self):
+        def smart(ctx):
+            raise RuntimeError("boom")
+
+        self.ctx.background = {"smart"}
+        self.ctx.last_status["smart"] = 1
+        with mock.patch.dict(agent.COLLECTORS, {"smart": smart}):
+            m = agent.run_collectors(self.ctx, ["smart"])
+        self.assertEqual(one(m, "hw.agent.collector.status", collector="smart").value, 0)
+
+    def test_sync_collector_timeout_has_same_grace(self):
+        def ipmi(ctx):
+            raise agent.CollectorTimeout("slow bmc")
+
+        self.ctx.last_status["ipmi"] = 1
+        with mock.patch.dict(agent.COLLECTORS, {"ipmi": ipmi}):
+            s1 = one(agent.run_collectors(self.ctx, ["ipmi"]), "hw.agent.collector.status").value
+            s2 = one(agent.run_collectors(self.ctx, ["ipmi"]), "hw.agent.collector.status").value
+        self.assertEqual((s1, s2), (1, 0))
+
+
+class KmsgBatchTest(unittest.TestCase):
+    def make(self, **kw):
+        cfg = agent.Config({"LOGTIDE_HOSTNAME": "h", "HOST_ROOT": "/nonexistent"})
+        sent = []
+        reader = agent.KmsgReader(cfg, lambda events: sent.append(list(events)))
+        for k, v in kw.items():
+            setattr(reader, k, v)
+        return reader, sent
+
+    def test_flushes_inside_the_loop_at_500_lines(self):
+        reader, sent = self.make(MIN_FLUSH_GAP=0)
+        for i in range(1200):
+            reader.offer({"i": i})
+        self.assertEqual([len(b) for b in sent], [500, 500])
+        self.assertEqual(len(reader.batch), 200)
+
+    def test_hard_cap_drops_and_counts(self):
+        import time
+        reader, sent = self.make(MIN_FLUSH_GAP=1000)
+        reader.last_flush = time.time()
+        for i in range(agent.KmsgReader.HARD_CAP + 25):
+            reader.offer({"i": i})
+        self.assertEqual(len(reader.batch), agent.KmsgReader.HARD_CAP)
+        self.assertEqual(reader.dropped, 25)
+        with self.assertLogs("logtide-hw-agent", level="WARNING") as logs:
+            reader.maybe_flush(force=True)
+        self.assertIn("dropped 25", logs.output[0])
+        self.assertEqual(reader.dropped, 0)
+        self.assertEqual(len(sent[0]), agent.KmsgReader.HARD_CAP)
+
+    def test_time_based_flush(self):
+        reader, sent = self.make(FLUSH_SECONDS=0, MIN_FLUSH_GAP=0)
+        reader.offer({"i": 1})
+        reader.maybe_flush()
+        self.assertEqual(len(sent), 1)
+
+
+class SenderLockAndSkewTest(unittest.TestCase):
+    def setUp(self):
+        self.cfg = agent.Config({"LOGTIDE_URL": "http://b", "LOGTIDE_API_KEY": "k"})
+
+    def test_lock_not_held_during_http(self):
+        sender = agent.Sender(self.cfg, sleep=lambda s: None)
+        held = []
+
+        def urlopen(req, timeout=0):
+            got = sender._lock.acquire(False)
+            held.append(got)
+            if got:
+                sender._lock.release()
+            raise urllib.error.URLError("down")
+
+        ev = agent.make_event("h", "I/O error, dev sda", "error", "kmsg", "disk")
+        with mock.patch("urllib.request.urlopen", urlopen):
+            self.assertFalse(sender.send_logs([ev]))
+        self.assertTrue(held and all(held))
+        self.assertEqual(sender.pending, 1)
+
+    def test_requeue_respects_cap_and_keeps_newest(self):
+        sender = agent.Sender(self.cfg, sleep=lambda s: None)
+        sender.MAX_PENDING_LOGS = 10
+        with mock.patch("urllib.request.urlopen", mock.Mock(side_effect=urllib.error.URLError("x"))):
+            sender.send_logs([{"message": str(i)} for i in range(8)])
+            self.assertEqual(sender.pending, 8)
+            sender.send_logs([{"message": str(i)} for i in range(8, 14)])
+        self.assertEqual(sender.pending, 10)
+        self.assertEqual(sender._pending_logs[-1]["message"], "13")
+        self.assertEqual(sender._pending_logs[0]["message"], "4")
+
+    def test_skew_warns_once_per_hour(self):
+        import email.utils
+        now = [1700000000.0]
+        sender = agent.Sender(self.cfg, clock=lambda: now[0])
+        far = email.utils.formatdate(now[0] - 900, usegmt=True)
+        with self.assertLogs("logtide-hw-agent", level="WARNING") as logs:
+            sender.check_skew(far)
+            sender.check_skew(far)
+            now[0] += 1800
+            sender.check_skew(far)
+            self.assertEqual(len(logs.output), 1)
+            now[0] += 3600
+            sender.check_skew(far)
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn("ahead of", logs.output[0])
+
+    def test_small_or_missing_skew_is_silent(self):
+        import email.utils
+        now = 1700000000.0
+        sender = agent.Sender(self.cfg, clock=lambda: now)
+        with self.assertRaises(AssertionError):  # assertLogs fails when nothing is logged
+            with self.assertLogs("logtide-hw-agent", level="WARNING"):
+                sender.check_skew(email.utils.formatdate(now - 60, usegmt=True))
+                sender.check_skew(None)
+                sender.check_skew("garbage")
+
+    def test_post_reads_date_header(self):
+        sender = agent.Sender(self.cfg)
+        seen = []
+        sender.check_skew = seen.append
+
+        class Resp(FakeResponse):
+            headers = {"Date": "Tue, 10 Nov 2026 12:00:00 GMT"}
+
+        with mock.patch("urllib.request.urlopen", lambda req, timeout=0: Resp()):
+            self.assertTrue(sender.send_metrics({}))
+        self.assertEqual(seen, ["Tue, 10 Nov 2026 12:00:00 GMT"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,7 @@ Single file, Python 3.8+, standard library only.
 from __future__ import annotations
 
 import argparse
+import email.utils
 import json
 import logging
 import os
@@ -69,6 +70,39 @@ UNITS = {
 
 class CollectorUnavailable(Exception):
     """The data source of a collector is not present on this host."""
+
+
+class CollectorTimeout(RuntimeError):
+    """A collector or one of its commands ran out of its time budget."""
+
+
+class CommandTimeout(CollectorTimeout):
+    """A command timed out. `proc` is set when it could not be reaped (stuck,
+    typically in uninterruptible D-state) and was abandoned."""
+
+    def __init__(self, msg, proc=None):
+        CollectorTimeout.__init__(self, msg)
+        self.proc = proc
+
+
+# Wall-clock budgets (seconds). One collection cycle must never be held up by a
+# dying disk or a hung BMC.
+SMART_DEVICE_TIMEOUT = 15
+COLLECTOR_BUDGET = {"smart": 45, "ipmi": 30, "sel": 30}
+KILL_WAIT = 5
+MAX_STUCK_CHILDREN = 8
+
+
+class Deadline(object):
+    def __init__(self, seconds):
+        self.end = time.time() + seconds
+
+    def timeout(self, cap=None):
+        """Seconds left for the next command; raises when the budget is gone."""
+        left = self.end - time.time()
+        if left <= 1:
+            raise CollectorTimeout("collector budget exhausted")
+        return min(cap, left) if cap else left
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +187,12 @@ class Context(object):
         self.config = config
         self.events = []  # events produced by collectors (sel)
         self.kmsg = None  # KmsgReader, set by the agent loop
+        self.background = set()  # collectors run in a worker thread
+        self.runners = {}
+        self.last_status = {}
+        self.timeouts = {}
+        self.abandoned = {}  # smart device -> stuck child process
+        self._stuck_logged = set()
         self._unavailable_logged = set()
 
     def path(self, p):
@@ -161,19 +201,36 @@ class Context(object):
     def smartctl_available(self):
         return shutil.which("smartctl") is not None
 
+    def live_stuck(self):
+        return [p for p in self.abandoned.values() if p.poll() is None]
+
     def run(self, args, timeout=60):
         """Run a command, return (returncode, stdout). Raises CollectorUnavailable
-        when the binary is missing. A non-zero exit is not an error here: smartctl
-        reports problems through its exit bitmask while still printing valid JSON."""
+        when the binary is missing and CommandTimeout when it runs out of time.
+        A non-zero exit is not an error here: smartctl reports problems through
+        its exit bitmask while still printing valid JSON.
+
+        On timeout the child is killed and reaped with a bounded wait; a child
+        that survives SIGKILL (D-state on a failing disk) is abandoned, never
+        waited on without a timeout."""
+        if len(self.live_stuck()) >= MAX_STUCK_CHILDREN:
+            raise CollectorTimeout("too many stuck child processes, not starting %s" % args[0])
         try:
-            proc = subprocess.run(
-                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,
-            )
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except FileNotFoundError:
             raise CollectorUnavailable("%s not installed" % args[0])
+        try:
+            out, _ = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            raise RuntimeError("%s timed out" % args[0])
-        return proc.returncode, proc.stdout.decode("utf-8", "replace")
+            proc.kill()
+            try:
+                proc.communicate(timeout=KILL_WAIT)
+            except subprocess.TimeoutExpired:
+                log.error("%s (pid %d) is stuck and ignores SIGKILL, abandoning it",
+                          args[0], proc.pid)
+                raise CommandTimeout("%s timed out and is stuck" % args[0], proc)
+            raise CommandTimeout("%s timed out after %ss" % (args[0], timeout))
+        return proc.returncode, out.decode("utf-8", "replace")
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +385,9 @@ def read_by_id_map(dev_root="/dev/disk/by-id"):
 
 
 def collect_smart(ctx):
-    _, out = ctx.run(["smartctl", "--scan-open", "-j"])
+    deadline = Deadline(COLLECTOR_BUDGET["smart"])
+    _, out = ctx.run(["smartctl", "--scan-open", "-j"],
+                     timeout=deadline.timeout(SMART_DEVICE_TIMEOUT))
     try:
         scan = json.loads(out)
     except ValueError:
@@ -337,24 +396,47 @@ def collect_smart(ctx):
     if not devices:
         raise CollectorUnavailable("smartctl found no devices")
     metrics = []
+    probed = 0
     failed = 0
     by_id = read_by_id_map()
     for d in devices:
         name = d.get("name")
         if not name:
             continue
+        previous = ctx.abandoned.get(name)
+        if previous is not None:
+            if previous.poll() is None:
+                # An earlier probe of this device is still stuck: do not pile up
+                # another one, report nothing for it.
+                if name not in ctx._stuck_logged:
+                    ctx._stuck_logged.add(name)
+                    log.error("smart: probe of %s is stuck (pid %d), skipping it until it exits",
+                              name, previous.pid)
+                failed += 1
+                continue
+            del ctx.abandoned[name]
+            ctx._stuck_logged.discard(name)
         args = ["smartctl", "-a", "-j", name]
         if d.get("type"):
             args += ["-d", d["type"]]
         try:
-            _, doc = ctx.run(args)
+            _, doc = ctx.run(args, timeout=deadline.timeout(SMART_DEVICE_TIMEOUT))
             metrics.extend(parse_smart_device(json.loads(doc), by_id))
+            probed += 1
         except CollectorUnavailable:
+            raise
+        except CommandTimeout as e:
+            failed += 1
+            if e.proc is not None:
+                ctx.abandoned[name] = e.proc
+                ctx._stuck_logged.add(name)
+            log.warning("smart: %s: %s", name, e)
+        except CollectorTimeout:
             raise
         except Exception as e:
             failed += 1
             log.warning("smart: %s failed: %s", name, e)
-    if failed == len(devices):
+    if probed == 0:
         raise RuntimeError("smartctl failed on every device")
     return metrics
 
@@ -661,21 +743,22 @@ def parse_psu_sdr(text):
 
 
 def collect_ipmi(ctx):
-    rc, out = ctx.run(["ipmitool", "sensor"])
+    deadline = Deadline(COLLECTOR_BUDGET["ipmi"])
+    rc, out = ctx.run(["ipmitool", "sensor"], timeout=deadline.timeout())
     if rc != 0 and "|" not in out:
         raise CollectorUnavailable("ipmitool sensor failed (no BMC device?)")
     entities = None
     if ipmi_has_duplicates(out):
         try:  # entity ids tell apart the several sensors that are all called "Temp"
-            _, elist = ctx.run(["ipmitool", "sdr", "elist", "full"])
+            _, elist = ctx.run(["ipmitool", "sdr", "elist", "full"], timeout=deadline.timeout())
             entities = parse_sdr_entities(elist)
         except CollectorUnavailable:
             raise
-        except Exception as e:
+        except Exception as e:  # includes timeouts: the sensor data is still good
             log.warning("ipmi: sdr elist failed: %s", e)
     metrics = parse_ipmi_sensors(out, entities)
     try:
-        rc, sdr = ctx.run(["ipmitool", "sdr", "type", "Power Supply"])
+        rc, sdr = ctx.run(["ipmitool", "sdr", "type", "Power Supply"], timeout=deadline.timeout())
         if "|" in sdr:
             metrics.extend(parse_psu_sdr(sdr))
     except CollectorUnavailable:
@@ -741,7 +824,7 @@ def _write_state(ctx, name, value):
 
 
 def collect_sel(ctx):
-    rc, out = ctx.run(["ipmitool", "sel", "elist"])
+    rc, out = ctx.run(["ipmitool", "sel", "elist"], timeout=Deadline(COLLECTOR_BUDGET["sel"]).timeout())
     if rc != 0 and "|" not in out:
         raise CollectorUnavailable("ipmitool sel elist failed (no BMC device?)")
     entries = parse_sel(out)
@@ -939,6 +1022,9 @@ class KmsgReader(object):
     """Background thread: tail /dev/kmsg from the end and forward hardware lines."""
 
     FLUSH_SECONDS = 5
+    FLUSH_LINES = 500      # flush inside the read loop at this many lines
+    HARD_CAP = 2000        # beyond this (flush throttled or failing) lines are dropped and counted
+    MIN_FLUSH_GAP = 1.0    # never flush more often than this, even in a storm
 
     def __init__(self, config, on_events):
         self.config = config
@@ -947,6 +1033,9 @@ class KmsgReader(object):
         self.running = False
         self.fd = None
         self.thread = None
+        self.batch = []
+        self.dropped = 0
+        self.last_flush = time.time()
         self._boot = self._boot_epoch()
 
     def _boot_epoch(self):
@@ -983,9 +1072,30 @@ class KmsgReader(object):
         when = (self._boot + ts / 1e6) if self._boot else None
         return make_event(self.config.hostname, message, kmsg_level(prio), "kmsg", etype, when=when)
 
+    def offer(self, ev):
+        """Add an event to the in-loop batch, flushing when it is due."""
+        if len(self.batch) >= self.HARD_CAP:
+            self.dropped += 1
+            return
+        self.batch.append(ev)
+        if len(self.batch) >= self.FLUSH_LINES:
+            self.maybe_flush()
+
+    def maybe_flush(self, force=False):
+        if not self.batch:
+            return
+        now = time.time()
+        due = len(self.batch) >= self.FLUSH_LINES or now - self.last_flush >= self.FLUSH_SECONDS
+        if not force and (not due or now - self.last_flush < self.MIN_FLUSH_GAP):
+            return
+        batch, self.batch = self.batch, []
+        self.last_flush = now
+        if self.dropped:
+            log.warning("kmsg: dropped %d hardware lines (event storm)", self.dropped)
+            self.dropped = 0
+        self._flush(batch)
+
     def _run(self):
-        batch = []
-        last_flush = time.time()
         try:
             while not self.stop.is_set():
                 try:
@@ -1003,17 +1113,13 @@ class KmsgReader(object):
                             break
                         ev = self.event_from_line(data.decode("utf-8", "replace"))
                         if ev:
-                            batch.append(ev)
+                            self.offer(ev)
                 except Exception as e:  # never let the thread die silently
                     log.error("kmsg reader error: %s", e)
                     time.sleep(5)
-                if batch and (time.time() - last_flush >= self.FLUSH_SECONDS or len(batch) >= 50):
-                    self._flush(batch)
-                    batch = []
-                    last_flush = time.time()
+                self.maybe_flush()
         finally:
-            if batch:
-                self._flush(batch)
+            self.maybe_flush(force=True)
             self.running = False
             try:
                 os.close(self.fd)
@@ -1053,32 +1159,94 @@ COLLECTORS = {
 }
 
 
+class BackgroundRunner(object):
+    """Runs one collector in a worker thread so a slow one cannot hold up the
+    cycle. The result of a run that finishes late is picked up on the next cycle."""
+
+    def __init__(self, fn, ctx, budget):
+        self.fn = fn
+        self.ctx = ctx
+        self.budget = budget
+        self.thread = None
+        self.started = 0.0
+        self.outcome = None  # ("ok", metrics) or ("err", exception)
+
+    def ensure_started(self):
+        if self.thread is None:
+            self.outcome = None
+            self.started = time.time()
+            self.thread = threading.Thread(target=self._work, name="collector", daemon=True)
+            self.thread.start()
+
+    def _work(self):
+        try:
+            self.outcome = ("ok", self.fn(self.ctx))
+        except BaseException as e:  # reported through poll()
+            self.outcome = ("err", e)
+
+    def poll(self):
+        """Wait for the budget, then return metrics, raise the collector's error,
+        or raise CollectorTimeout when it is still running."""
+        self.ensure_started()
+        self.thread.join(max(0.0, self.started + self.budget - time.time()))
+        if self.thread.is_alive():
+            raise CollectorTimeout("still running after %ss" % self.budget)
+        kind, value = self.outcome
+        self.thread = None
+        if kind == "err":
+            raise value
+        return value
+
+
 def run_collectors(ctx, names=None):
     """Run each collector in isolation. Returns all metrics including the
-    per-collector hw.agent.collector.status (1 ok, 0 absent or failed)."""
+    per-collector hw.agent.collector.status (1 ok, 0 absent or failed).
+
+    A collector that merely runs out of time keeps its status at 1 when it was 1
+    on the previous cycle; only a second timeout in a row (or a real failure)
+    reports 0, so one slow disk does not make the status flap."""
     names = ctx.config.collectors if names is None else names
+    background = [n for n in names if n in ctx.background and n in COLLECTORS]
+    for n in background:
+        runner = ctx.runners.get(n)
+        if runner is None:
+            runner = ctx.runners[n] = BackgroundRunner(COLLECTORS[n], ctx, COLLECTOR_BUDGET.get(n, 45))
+        runner.ensure_started()
+    # background collectors last: the others run while they work
+    ordered = [n for n in names if n not in background] + background
     metrics = []
     try:
         metrics.extend(collect_host(ctx))
     except Exception as e:
         log.error("host info failed: %s", e)
-    for name in names:
+    statuses = {}
+    for name in ordered:
         fn = COLLECTORS.get(name)
         if fn is None:
             continue
         status = 1
         try:
-            metrics.extend(fn(ctx))
+            metrics.extend(ctx.runners[name].poll() if name in background else fn(ctx))
             ctx._unavailable_logged.discard(name)
+            ctx.timeouts[name] = 0
         except CollectorUnavailable as e:
             status = 0
+            ctx.timeouts[name] = 0
             if name not in ctx._unavailable_logged:
                 ctx._unavailable_logged.add(name)
                 log.info("collector %s unavailable: %s", name, e)
+        except CollectorTimeout as e:
+            ctx.timeouts[name] = ctx.timeouts.get(name, 0) + 1
+            if ctx.timeouts[name] >= 2 or ctx.last_status.get(name) != 1:
+                status = 0
+            log.warning("collector %s timed out (%d in a row): %s", name, ctx.timeouts[name], e)
         except Exception as e:
             status = 0
+            ctx.timeouts[name] = 0
             log.error("collector %s failed: %s", name, e)
-        metrics.append(Metric("hw.agent.collector.status", status, "agent", name, {"collector": name}))
+        ctx.last_status[name] = status
+        statuses[name] = Metric("hw.agent.collector.status", status, "agent", name, {"collector": name})
+    metrics.extend(statuses[n] for n in names if n in statuses)
     return metrics
 
 
@@ -1142,12 +1310,36 @@ def _chunks(items, n):
 class Sender(object):
     MAX_PENDING_LOGS = 5000
     BATCH = 500
+    SKEW_LIMIT = 300      # seconds
+    SKEW_WARN_EVERY = 3600
 
-    def __init__(self, config, sleep=time.sleep):
+    def __init__(self, config, sleep=time.sleep, clock=time.time):
         self.config = config
         self.sleep = sleep
+        self.clock = clock
         self._lock = threading.Lock()
         self._pending_logs = []
+        self._last_skew_warn = None
+
+    def check_skew(self, date_header):
+        """Warn (at most hourly) when the backend clock differs from ours by more
+        than 5 minutes. Data keeps being sent with local time."""
+        if not date_header:
+            return
+        try:
+            remote = email.utils.parsedate_to_datetime(date_header).timestamp()
+        except (TypeError, ValueError):
+            return
+        now = self.clock()
+        skew = now - remote
+        if abs(skew) <= self.SKEW_LIMIT:
+            return
+        if self._last_skew_warn is not None and now - self._last_skew_warn < self.SKEW_WARN_EVERY:
+            return
+        self._last_skew_warn = now
+        log.warning("clock skew: local time is %d s %s the server's (Date header). Metrics and "
+                    "events carry local timestamps, fix NTP on this host",
+                    abs(int(skew)), "ahead of" if skew > 0 else "behind")
 
     def _post(self, path, payload, retries=3):
         """POST JSON. Returns True on success, False when dropped (4xx),
@@ -1164,6 +1356,9 @@ class Sender(object):
             try:
                 with urllib.request.urlopen(req, timeout=20) as resp:
                     resp.read()
+                    headers = getattr(resp, "headers", None)
+                    date = headers.get("Date") if headers is not None else None
+                self.check_skew(date)
                 return True
             except urllib.error.HTTPError as e:
                 if e.code < 500 and e.code not in (408, 429):
@@ -1191,30 +1386,39 @@ class Sender(object):
             return True
         return self._post("/v1/otlp/metrics", payload) is True
 
+    def _requeue(self, events):
+        with self._lock:
+            self._pending_logs = events + self._pending_logs
+            if len(self._pending_logs) > self.MAX_PENDING_LOGS:
+                dropped = len(self._pending_logs) - self.MAX_PENDING_LOGS
+                self._pending_logs = self._pending_logs[dropped:]
+                log.warning("log buffer full, dropped %d oldest events", dropped)
+
     def send_logs(self, events):
-        """Queue events and try to deliver everything pending. A retriable failure
-        keeps the batch for the next call (bounded), a 4xx drops it."""
+        """Queue events and try to deliver everything pending. The buffer is
+        swapped out under the lock and posted outside it, so retries never block
+        other threads. A retriable failure re-queues the rest (bounded), a 4xx
+        drops it."""
         with self._lock:
             self._pending_logs.extend(events)
             if len(self._pending_logs) > self.MAX_PENDING_LOGS:
                 dropped = len(self._pending_logs) - self.MAX_PENDING_LOGS
                 self._pending_logs = self._pending_logs[dropped:]
                 log.warning("log buffer full, dropped %d oldest events", dropped)
-            if self.config.dry_run:
-                for chunk in _chunks(self._pending_logs, self.BATCH):
-                    print(json.dumps({"logs": chunk}, indent=2))
-                self._pending_logs = []
-                return True
-            ok = True
-            while self._pending_logs:
-                chunk = self._pending_logs[:self.BATCH]
-                result = self._post("/api/v1/ingest", {"logs": chunk})
-                if result is None:
-                    return False  # keep the rest for the next attempt
-                del self._pending_logs[:len(chunk)]
-                if result is False:
-                    ok = False
-            return ok
+            work, self._pending_logs = self._pending_logs, []
+        if self.config.dry_run:
+            for chunk in _chunks(work, self.BATCH):
+                print(json.dumps({"logs": chunk}, indent=2))
+            return True
+        ok = True
+        for i in range(0, len(work), self.BATCH):
+            result = self._post("/api/v1/ingest", {"logs": work[i:i + self.BATCH]})
+            if result is None:
+                self._requeue(work[i:])
+                return False
+            if result is False:
+                ok = False
+        return ok
 
     @property
     def pending(self):
@@ -1253,6 +1457,8 @@ def main(argv=None):
         return 2
 
     ctx = Context(config)
+    if not args.once:
+        ctx.background = {"smart"}
     sender = Sender(config)
     log.info("starting %s %s host=%s interval=%ss collectors=%s%s",
              SERVICE_NAME, AGENT_VERSION, config.hostname, config.interval,

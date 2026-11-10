@@ -93,6 +93,24 @@ journalctl -u logtide-hw-agent -f
 
 `--once` runs one collection, sends it and exits (exit code 1 if delivery failed).
 
+## Troubleshooting
+
+- **Collector status 0.** `hw.agent.collector.status` is 0 for a collector whose source is
+  absent (no `ipmitool`, no `/dev/ipmi0`, no EDAC on the CPU) or that failed. A single slow
+  cycle does not flip it: a collector that only runs out of time keeps its previous status
+  and reports 0 after a second timeout in a row.
+- **Slow or dying disks.** Every `smartctl` call is limited to 15 s and the SMART collector
+  to 45 s in total (IPMI 30 s). SMART runs in its own thread, so the other collectors still
+  report every cycle. A `smartctl` that survives SIGKILL (a disk hung in D-state) is
+  abandoned and logged, and that device is skipped until the process exits.
+- **Clock skew.** The agent compares its clock with the `Date` header of every successful
+  response. If it differs by more than 5 minutes it logs a warning (at most once an hour).
+  Data is still sent with the local timestamps, so fix NTP on the host: points with a wrong
+  time land outside the time window you are looking at, or are rejected as too old or in
+  the future.
+- **Nothing arrives.** Run the `--once` command with `LOGTIDE_HW_DRY_RUN` removed: it exits
+  with code 1 and logs the HTTP status when delivery fails (401 means a wrong API key).
+
 ## Tests
 
 ```bash
