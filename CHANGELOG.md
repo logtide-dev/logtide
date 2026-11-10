@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Hardware health**: a new Monitor > Hardware section (shortcut `g h`) that watches the physical health of bare-metal and homelab hosts and warns before a component fails. It covers disks (SMART for HDD/SSD, NVMe health log: reallocated and pending sectors, uncorrectable errors, media errors, wear, spare, temperature), ECC memory (corrected and uncorrected errors per DIMM from EDAC), CPU (temperatures against their limits, thermal throttling), cooling (fans, board temperatures), power (PSU state and redundancy, voltages) and physical network ports (CRC errors, link flaps). Each host gets a status per component, the findings that explain it and 7 day trends.
+  - **`logtide/hw-agent`**: a small agent (Python, no dependencies, Docker image or systemd unit) reads smartctl, EDAC, hwmon, thermal throttle counters, IPMI sensors and the BMC event log, and sends them as OTLP metrics with the project API key. Hardware lines from the kernel log and BMC events are sent as logs (service `hardware`). New compose profile `hardware` (`HW_AGENT_API_KEY`).
+  - **Health rules** look at trends, not only thresholds: a disk that reallocated 10 sectors in a week or a DIMM that logs corrected errors every day is flagged even when SMART still says "passed". A device that stops reporting (a disk dropping off the bus, a pulled PSU) is a finding too. Changes need to hold for a few minutes before they count, and a recovery for 10 minutes, so a sensor hovering at its limit does not flap.
+  - **Incidents and notifications**: a degraded host opens an incident (new source `hardware`) and notifies through the new `Hardware health` event type in notification routing (channels, email fallback, PagerDuty, webhooks `hardware.health.degraded` / `hardware.health.recovered`). Hosts can be muted or forgotten by owners and admins.
+  - **Hardware Health detection pack**: Sigma rules for kernel and BMC hardware events (ECC and machine check errors, APEI, disk I/O errors and link resets, NVMe timeouts, PCIe AER, thermal and power supply events). It works on any kernel log shipped to LogTide, with or without the agent.
+  - Virtual machines are detected and shown as "No sensors": hardware sensors are not exposed inside a VM.
+  - New capability `hardware.max_hosts` (unlimited by default).
+
 
 ## [1.6.3] - 2026-11-09
 
