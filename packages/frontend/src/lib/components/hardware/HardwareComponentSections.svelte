@@ -186,7 +186,6 @@
         <Table.Header>
           <Table.Row class="hover:bg-transparent">
             <Table.Head class={head}>Controller or DIMM</Table.Head>
-            <Table.Head class={head}>Size</Table.Head>
             <Table.Head class={head}>Corrected errors</Table.Head>
             <Table.Head class={head}>Uncorrected errors</Table.Head>
           </Table.Row>
@@ -205,7 +204,6 @@
                   </div>
                 </div>
               </Table.Cell>
-              <Table.Cell class={cell}>{formatMemorySize(m.sizeBytes)}</Table.Cell>
               <Table.Cell class={cell}>{@render counter(m.corrected, true)}</Table.Cell>
               <Table.Cell class={cell}>{@render counter(m.uncorrected, true)}</Table.Cell>
             </Table.Row>

@@ -129,7 +129,7 @@ describe('hardware host detail page', () => {
     const rows = await screen.findAllByTestId('memory-row');
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain('mc0');
-    expect(rows[0].textContent).toContain('32 GB');
+    expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull();
     expect(rows[0].textContent).toContain('+3 in 24 h, +7 in 7 d');
     expect(rows[1].textContent).toContain('DIMM_B1');
     expect(rows[1].textContent).toContain('controller mc1');
@@ -214,6 +214,7 @@ describe('hardware host detail page', () => {
     await renderPage();
     const banner = await screen.findByTestId('vm-banner');
     expect(banner.textContent).toContain('virtual machine');
+    expect(within(screen.getByTestId('host-header')).getByTestId('hardware-status').textContent).toContain('No sensors');
     for (const key of ['disks', 'memory', 'cpu', 'cooling', 'power']) {
       expect(screen.getByTestId(`no-data-${key}`).textContent).toBe('No data');
     }
