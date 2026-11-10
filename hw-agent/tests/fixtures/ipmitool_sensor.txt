@@ -5,6 +5,4 @@ FAN1             | 5600.000   | RPM        | ok    | na        | 500.000   | 700
 FAN2             | na         | RPM        | na    | na        | na        | na        | na        | na        | na
 12V              | 12.100     | Volts      | ok    | na        | 10.800    | na        | na        | 13.200    | na
 PS1 Status       | 0x1        | discrete   | 0x0100| na        | na        | na        | na        | na        | na
-PS2 Status       | 0x0        | discrete   | cr    | na        | na        | na        | na        | na        | na
-Power Supply 3   | 0x1        | discrete   | ok    | na        | na        | na        | na        | na        | na
 Chassis Intru    | 0x0        | discrete   | 0x0100| na        | na        | na        | na        | na        | na

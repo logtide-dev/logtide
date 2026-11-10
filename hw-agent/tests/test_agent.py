@@ -271,18 +271,45 @@ class IpmiTest(unittest.TestCase):
         self.assertEqual(one(self.m, "hw.voltage.limit", sensor="12V", limit_type="low.critical").value, 10.8)
         self.assertEqual(one(self.m, "hw.voltage.limit", sensor="12V", limit_type="high.critical").value, 13.2)
 
-    def test_power_supply_status(self):
-        self.assertEqual(one(self.m, "hw.power_supply.status", sensor="PS1 Status").value, 1)
-        self.assertEqual(one(self.m, "hw.power_supply.status", sensor="PS2 Status").value, 0)
-        self.assertEqual(one(self.m, "hw.power_supply.status", sensor="Power Supply 3").value, 1)
-        self.assertEqual(one(self.m, "hw.power_supply.status", sensor="PS1 Status").hw_type, "power_supply")
-        self.assertEqual(by(self.m, "hw.power_supply.status", sensor="Chassis Intru"), [])
+    def test_discrete_psu_lines_ignored_in_sensor_path(self):
+        self.assertEqual(by(self.m, "hw.power_supply.status"), [])
 
-    def test_psu_state_words(self):
-        self.assertTrue(agent._psu_ok("0x0", "0x0100"))
-        self.assertFalse(agent._psu_ok("0x0", "0x0200"))
-        self.assertFalse(agent._psu_ok("0x0", "0x0800"))
-        self.assertIsNone(agent._psu_ok("na", "na"))
+
+class PsuSdrTest(TmpRootCase):
+    def test_parse(self):
+        m = agent.parse_psu_sdr(fixture("sdr_power_supply.txt"))
+        st = {x.attrs["sensor"]: x.value for x in m}
+        self.assertEqual(st, {
+            "PS1 Status": 1, "PS2 Status": 0, "PS3 Status": 0, "PS4 Status": 0, "PS5 Status": 0,
+            "PS Redundancy": 1, "PSU Redundancy": 0, "PS Redundancy B": 0})
+        self.assertEqual(m[0].hw_type, "power_supply")
+        self.assertEqual(m[0].hw_id, "PS1 Status")
+
+    def test_collect_ipmi_runs_both_commands(self):
+        calls = []
+
+        def run(args, timeout=60):
+            calls.append(args)
+            if args[1] == "sensor":
+                return 0, fixture("ipmitool_sensor.txt")
+            return 0, fixture("sdr_power_supply.txt")
+
+        self.ctx.run = run
+        m = agent.collect_ipmi(self.ctx)
+        self.assertEqual(calls[1], ["ipmitool", "sdr", "type", "Power Supply"])
+        self.assertEqual(one(m, "hw.power_supply.status", sensor="PS2 Status").value, 0)
+        self.assertEqual(one(m, "hw.temperature", sensor="CPU1 Temp").value, 45.0)
+
+    def test_sdr_failure_keeps_sensors(self):
+        def run(args, timeout=60):
+            if args[1] == "sensor":
+                return 0, fixture("ipmitool_sensor.txt")
+            raise RuntimeError("timed out")
+
+        self.ctx.run = run
+        m = agent.collect_ipmi(self.ctx)
+        self.assertEqual(by(m, "hw.power_supply.status"), [])
+        self.assertTrue(by(m, "hw.fan.speed"))
 
 
 class SelTest(TmpRootCase):

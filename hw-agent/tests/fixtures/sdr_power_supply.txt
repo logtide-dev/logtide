@@ -1,0 +1,10 @@
+PS1 Status       | C8h | ok  | 10.1 | Presence detected
+PS2 Status       | C9h | ok  | 10.2 | Presence detected, Failure detected
+PS3 Status       | CAh | ok  | 10.3 | Presence detected, Power Supply AC lost
+PS4 Status       | CBh | ok  | 10.4 | Presence detected, Predictive failure
+PS5 Status       | CCh | ok  | 10.5 | Presence detected, Config Error
+PS6 Status       | CDh | ns  | 10.6 | Presence not detected
+PS7 Status       | CEh | ns  | 10.7 | No Reading
+PS Redundancy    | CFh | ok  | 21.1 | Fully Redundant
+PSU Redundancy   | D0h | ok  | 21.2 | Redundancy Lost
+PS Redundancy B  | D1h | ok  | 21.3 | Non-redundant: Sufficient from redundant

@@ -466,10 +466,6 @@ def collect_thermal(ctx):
 # ipmi sensors
 # ---------------------------------------------------------------------------
 
-PSU_RE = re.compile(r"\b(ps\d*|psu\d*|power supply)\b", re.I)
-IPMI_FAIL_STATUS = ("cr", "nr", "lnr", "lcr", "ucr", "unr", "nc", "lnc", "unc")
-
-
 def _float_or_none(s):
     s = s.strip()
     if not s or s.lower() in ("na", "n/a"):
@@ -478,13 +474,6 @@ def _float_or_none(s):
         return float(s)
     except ValueError:
         return None
-
-
-def _hex_or_none(s):
-    s = s.strip().lower()
-    if re.match(r"^0x[0-9a-f]+$", s):
-        return int(s, 16)
-    return None
 
 
 def ipmi_temp_type(name):
@@ -498,24 +487,9 @@ def ipmi_temp_type(name):
     return "board"
 
 
-def _psu_ok(value, status):
-    """True/False/None for a discrete PSU sensor. The status column is 'ok' or a
-    threshold code; some BMCs print the raw state word instead (0x0100 is
-    presence only, anything else such as 0x0200 failure or 0x0800 AC lost is a
-    problem)."""
-    if status == "ok":
-        return True
-    if status in IPMI_FAIL_STATUS:
-        return False
-    for raw in (status, value):
-        word = _hex_or_none(raw)
-        if word is not None:
-            return (word & ~0x0101) == 0
-    return None
-
-
 def parse_ipmi_sensors(text):
-    """Parse `ipmitool sensor` output. Pure. 'na' values are skipped."""
+    """Parse `ipmitool sensor` output (temperatures, fans, voltages). Pure.
+    'na' values are skipped. PSU state comes from `sdr type "Power Supply"`."""
     metrics = []
     for line in text.splitlines():
         cols = [c.strip() for c in line.split("|")]
@@ -553,13 +527,34 @@ def parse_ipmi_sensors(text):
                 if lv is not None:
                     metrics.append(Metric("hw.voltage.limit", lv, "voltage", name,
                                           {"sensor": name, "limit_type": limit_type}))
-        elif unit == "discrete" and PSU_RE.search(name):
-            if value.strip().lower() == "na":
-                continue
-            ok = _psu_ok(value, status)
-            if ok is not None:
-                metrics.append(Metric("hw.power_supply.status", 1 if ok else 0, "power_supply", name,
-                                      {"sensor": name}))
+    return metrics
+
+
+PSU_FAIL_RE = re.compile(
+    r"failure detected|predictive failure|power supply ac lost|ac lost or out-of-range|config error",
+    re.I)
+
+
+def parse_psu_sdr(text):
+    """Parse `ipmitool sdr type "Power Supply"` (name | id | status | entity | event
+    text). Returns hw.power_supply.status metrics: 0 on failure or lost
+    redundancy, 1 when present and healthy or fully redundant. Empty slots and
+    unreadable sensors are skipped. Pure."""
+    metrics = []
+    for line in text.splitlines():
+        cols = [c.strip() for c in line.split("|")]
+        if len(cols) < 5 or not cols[0]:
+            continue
+        name, event = cols[0], cols[4].lower()
+        if not event or "not detected" in event:
+            continue
+        if PSU_FAIL_RE.search(event) or "redundancy lost" in event or "non-redundant" in event:
+            ok = 0
+        elif "fully redundant" in event or "presence detected" in event:
+            ok = 1
+        else:
+            continue
+        metrics.append(Metric("hw.power_supply.status", ok, "power_supply", name, {"sensor": name}))
     return metrics
 
 
@@ -567,7 +562,16 @@ def collect_ipmi(ctx):
     rc, out = ctx.run(["ipmitool", "sensor"])
     if rc != 0 and "|" not in out:
         raise CollectorUnavailable("ipmitool sensor failed (no BMC device?)")
-    return parse_ipmi_sensors(out)
+    metrics = parse_ipmi_sensors(out)
+    try:
+        rc, sdr = ctx.run(["ipmitool", "sdr", "type", "Power Supply"])
+        if "|" in sdr:
+            metrics.extend(parse_psu_sdr(sdr))
+    except CollectorUnavailable:
+        raise
+    except Exception as e:
+        log.warning("ipmi: power supply query failed: %s", e)
+    return metrics
 
 
 # ---------------------------------------------------------------------------
