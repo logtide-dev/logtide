@@ -12,7 +12,7 @@ export type NotificationChannelType = 'email' | 'webhook' | 'pagerduty';
 /**
  * Event types that can be associated with notification channels
  */
-export type NotificationEventType = 'alert' | 'sigma' | 'incident' | 'error' | 'monitoring' | 'project_health';
+export type NotificationEventType = 'alert' | 'sigma' | 'incident' | 'error' | 'monitoring' | 'project_health' | 'hardware';
 
 /**
  * Event types in display order (routing page, previews)
@@ -24,6 +24,7 @@ export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
   'monitoring',
   'error',
   'project_health',
+  'hardware',
 ];
 
 export const NOTIFICATION_EVENT_LABELS: Record<NotificationEventType, string> = {
@@ -33,6 +34,7 @@ export const NOTIFICATION_EVENT_LABELS: Record<NotificationEventType, string> = 
   monitoring: 'Uptime',
   error: 'Errors',
   project_health: 'Project health',
+  hardware: 'Hardware health',
 };
 
 /**
