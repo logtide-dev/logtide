@@ -1,5 +1,0 @@
-   1 | 11/09/2026 | 08:00:01 | Power Supply #0x50 | Presence detected | Asserted
-   2 | 11/09/2026 | 08:10:10 | Temperature #0x01 | Upper Critical going high | Asserted
-   a | 11/10/2026 | 09:00:00 | Memory #0x10 | Uncorrectable ECC | Asserted
-   b | 11/10/2026 | 09:05:00 | Power Supply #0x50 | Failure detected | Deasserted
-   c | 11/10/2026 | 09:06:00 | Power Supply #0x51 | Failure detected

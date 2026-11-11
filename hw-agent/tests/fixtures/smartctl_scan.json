@@ -1,1 +1,0 @@
-{"devices":[{"name":"/dev/sda","info_name":"/dev/sda [SAT]","type":"sat","protocol":"ATA"},{"name":"/dev/nvme0","info_name":"/dev/nvme0","type":"nvme","protocol":"NVMe"},{"name":"/dev/sdc","info_name":"/dev/sdc","type":"scsi","protocol":"SCSI"}]}

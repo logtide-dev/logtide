@@ -1,4 +1,0 @@
-Temp             | 0Eh | ok  |  3.1 | 40 degrees C
-Temp             | 0Fh | ok  |  3.2 | 52 degrees C
-Temp             | 10h | ok  | 32.1 | 33 degrees C
-CPU1 Temp        | 01h | ok  |  3.1 | 45 degrees C

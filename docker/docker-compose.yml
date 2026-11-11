@@ -315,8 +315,9 @@ services:
     networks:
       - logtide-network
 
+  # Hardware agent, source: https://github.com/logtide-dev/logtide-hw-agent
   hw-agent:
-    image: ${HW_AGENT_IMAGE:-logtide/hw-agent:latest}
+    image: ${HW_AGENT_IMAGE:-logtide/hw-agent:1}
     container_name: logtide-hw-agent
     profiles:
       - hardware

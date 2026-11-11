@@ -1,8 +1,0 @@
-{"device":{"name":"/dev/sdb","info_name":"/dev/sdb [SAT]","type":"sat","protocol":"ATA"},"model_name":"Samsung SSD 860 EVO 500GB","serial_number":"S3Z9NB0K000002","smart_support":{"available":true,"enabled":true},"smart_status":{"passed":false},"temperature":{"current":41},"ata_smart_attributes":{"table":[
-{"id":5,"name":"Reallocated_Sector_Ct","value":90,"worst":90,"thresh":10,"raw":{"value":24,"string":"24"}},
-{"id":9,"name":"Power_On_Hours","value":90,"worst":90,"thresh":0,"raw":{"value":9000,"string":"9000"}},
-{"id":177,"name":"Wear_Leveling_Count","value":72,"worst":72,"thresh":0,"raw":{"value":280,"string":"280"}},
-{"id":197,"name":"Current_Pending_Sector","value":100,"worst":100,"thresh":0,"raw":{"value":3,"string":"3"}},
-{"id":198,"name":"Offline_Uncorrectable","value":100,"worst":100,"thresh":0,"raw":{"value":2,"string":"2"}},
-{"id":199,"name":"UDMA_CRC_Error_Count","value":100,"worst":100,"thresh":0,"raw":{"value":7,"string":"7"}}
-]}}

@@ -114,18 +114,6 @@ jobs:
           build-args: |
             PUBLIC_API_URL=http://localhost:8080
 
-      - name: Build and push hw-agent image
-        uses: docker/build-push-action@v5
-        with:
-          context: hw-agent
-          push: true
-          tags: |
-            logtide/hw-agent:${{ needs.prepare.outputs.version }}-${{ matrix.suffix }}
-            ghcr.io/${{ github.repository_owner }}/logtide-hw-agent:${{ needs.prepare.outputs.version }}-${{ matrix.suffix }}
-          cache-from: type=gha,scope=hw-agent-${{ matrix.suffix }}
-          cache-to: type=gha,mode=max,scope=hw-agent-${{ matrix.suffix }}
-          platforms: ${{ matrix.platform }}
-
   # Merge architecture-specific images into multi-arch manifests
   merge:
     name: Create Multi-Arch Manifests
@@ -201,24 +189,6 @@ jobs:
               ghcr.io/${{ github.repository_owner }}/logtide-frontend:${VERSION}-arm64
           fi
 
-      - name: Create and push hw-agent manifests
-        run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          IS_STABLE="${{ needs.prepare.outputs.is_stable }}"
-
-          # Docker Hub
-          docker buildx imagetools create -t logtide/hw-agent:${VERSION}             logtide/hw-agent:${VERSION}-amd64             logtide/hw-agent:${VERSION}-arm64
-
-          # GHCR
-          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/logtide-hw-agent:${VERSION}             ghcr.io/${{ github.repository_owner }}/logtide-hw-agent:${VERSION}-amd64             ghcr.io/${{ github.repository_owner }}/logtide-hw-agent:${VERSION}-arm64
-
-          # Latest tag for stable releases
-          if [ "$IS_STABLE" = "true" ]; then
-            docker buildx imagetools create -t logtide/hw-agent:latest               logtide/hw-agent:${VERSION}-amd64               logtide/hw-agent:${VERSION}-arm64
-
-            docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/logtide-hw-agent:latest               ghcr.io/${{ github.repository_owner }}/logtide-hw-agent:${VERSION}-amd64               ghcr.io/${{ github.repository_owner }}/logtide-hw-agent:${VERSION}-arm64
-          fi
-
       - name: Create release summary
         run: |
           echo "## Docker Images Published" >> $GITHUB_STEP_SUMMARY
@@ -233,12 +203,6 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "docker pull logtide/frontend:${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "docker pull ghcr.io/${{ github.repository_owner }}/logtide-frontend:${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Hardware agent" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "docker pull logtide/hw-agent:${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/${{ github.repository_owner }}/logtide-hw-agent:${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
   helm-update:

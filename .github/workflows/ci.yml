@@ -474,25 +474,6 @@ jobs:
         run: test "${{ needs.e2e-test.result }}" = "success"
 
   # ====================
-  # Hardware agent tests (stdlib only, no dependencies)
-  # ====================
-  hw-agent:
-    name: Hardware Agent Tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Run tests
-        run: python -m unittest discover -s hw-agent/tests -v
-
-  # ====================
   # Build Docker Images
   # ====================
   build:
@@ -527,10 +508,3 @@ jobs:
           tags: logtide/frontend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Build hw-agent image
-        uses: docker/build-push-action@v5
-        with:
-          context: hw-agent
-          push: false
-          tags: logtide/hw-agent:${{ github.sha }}
