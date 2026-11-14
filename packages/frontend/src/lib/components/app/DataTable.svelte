@@ -7,6 +7,7 @@
   import { SelectField } from '$lib/components/ui/select';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Skeleton } from '$lib/components/ui/skeleton';
+  import { goto } from '$app/navigation';
   import { isMobile } from '$lib/stores/media-query';
   import type { DataTableColumn, DataTableSort } from './data-table';
 
@@ -23,6 +24,8 @@
     mobileRow?: Snippet<[T]>;
     /** Accessible name of a row's checkbox in the phone layout. */
     rowLabel?: (row: T) => string;
+    /** Makes the whole row open this URL (links and controls inside keep their own click). */
+    rowHref?: (row: T) => string;
   }
 
   let {
@@ -36,7 +39,23 @@
     empty,
     mobileRow,
     rowLabel,
+    rowHref,
   }: Props = $props();
+
+  const INTERACTIVE = 'a, button, input, select, textarea, label, [role="checkbox"], [role="button"], [role="menuitem"]';
+
+  function openRow(event: MouseEvent, row: T) {
+    if (!rowHref) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest(INTERACTIVE)) return;
+    if (window.getSelection()?.toString()) return;
+    const href = rowHref(row);
+    if (event.ctrlKey || event.metaKey || event.button === 1) {
+      window.open(href, '_blank', 'noopener');
+    } else {
+      void goto(href);
+    }
+  }
 
   const SKELETON_ROWS = 5;
 
@@ -146,7 +165,12 @@
       <ul data-testid="data-table-list" class="overflow-hidden rounded-lg border bg-card">
         {#each rows as row (rowKey(row))}
           {@const key = rowKey(row)}
-          <li class="flex items-start gap-3 border-b px-3 py-3 last:border-b-0 {selectedSet.has(key) ? 'bg-muted/50' : ''}">
+          <!-- The row click is a mouse shortcut; keyboard users reach the same page through the link inside the row. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+          <li
+            class="flex items-start gap-3 border-b px-3 py-3 last:border-b-0 {selectedSet.has(key) ? 'bg-muted/50' : ''} {rowHref ? 'cursor-pointer active:bg-muted/50' : ''}"
+            onclick={(e) => openRow(e, row)}
+          >
             {#if selectable}
               <Checkbox
                 class="mt-0.5"
@@ -226,7 +250,12 @@
     {:else}
       {#each rows as row (rowKey(row))}
         {@const key = rowKey(row)}
-        <Table.Row data-state={selectedSet.has(key) ? 'selected' : undefined}>
+        <Table.Row
+          data-state={selectedSet.has(key) ? 'selected' : undefined}
+          class={rowHref ? 'cursor-pointer' : undefined}
+          onclick={(e: MouseEvent) => openRow(e, row)}
+          onauxclick={(e: MouseEvent) => openRow(e, row)}
+        >
           {#if selectable}
             <Table.Cell class="w-10">
               <Checkbox

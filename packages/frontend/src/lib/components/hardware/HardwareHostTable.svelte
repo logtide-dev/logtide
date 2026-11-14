@@ -5,6 +5,7 @@
   import type { DataTableColumn } from '$lib/components/app/data-table';
   import { Badge } from '$lib/components/ui/badge';
   import BellOff from '@lucide/svelte/icons/bell-off';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import ComponentChips from './ComponentChips.svelte';
   import HardwareStatusBadge from './HardwareStatusBadge.svelte';
 
@@ -23,7 +24,10 @@
     { key: 'components', header: 'Components', class: 'min-w-[16rem]', cell: componentsCell as unknown as Cell },
     { key: 'findings', header: 'Findings', class: 'hidden sm:table-cell', cell: findingsCell as unknown as Cell },
     { key: 'seen', header: 'Last seen', class: 'hidden md:table-cell', cell: seenCell as unknown as Cell },
+    { key: 'open', header: '', class: 'w-8 pr-3 text-right', cell: openCell as unknown as Cell },
   ];
+
+  const hostHref = (h: HardwareHostSummary) => `/dashboard/hardware/${encodeURIComponent(h.id)}`;
 
   const plural = (n: number) => `${n.toLocaleString('en-US')} ${n === 1 ? 'finding' : 'findings'}`;
 </script>
@@ -34,7 +38,7 @@
 
 {#snippet hostName(h: HardwareHostSummary)}
   <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-    <a href="/dashboard/hardware/{encodeURIComponent(h.id)}" class="font-medium hover:text-primary hover:underline">
+    <a href={hostHref(h)} class="font-medium text-foreground underline-offset-4 hover:text-primary hover:underline">
       {h.hostName}
     </a>
     {#if h.isVirtual}
@@ -81,11 +85,18 @@
   </span>
 {/snippet}
 
+{#snippet openCell(_h: HardwareHostSummary)}
+  <ChevronRight class="ml-auto h-4 w-4 text-muted-foreground" aria-hidden="true" />
+{/snippet}
+
 {#snippet mobileRow(h: HardwareHostSummary)}
   <div class="space-y-2">
     <div class="flex items-start justify-between gap-2">
       {@render hostName(h)}
-      <HardwareStatusBadge status={h.status} isVirtual={h.isVirtual} />
+      <div class="flex shrink-0 items-center gap-1">
+        <HardwareStatusBadge status={h.status} isVirtual={h.isVirtual} />
+        <ChevronRight class="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+      </div>
     </div>
     <ComponentChips components={h.components} />
     <p class="text-xs text-muted-foreground">
@@ -100,5 +111,5 @@
 {/snippet}
 
 <div class="rounded-lg border bg-card">
-  <DataTable {columns} rows={hosts} rowKey={(h: HardwareHostSummary) => h.id} {loading} mobileRow={mobileRow as never} />
+  <DataTable {columns} rows={hosts} rowKey={(h: HardwareHostSummary) => h.id} rowHref={hostHref} {loading} mobileRow={mobileRow as never} />
 </div>
