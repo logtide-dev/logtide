@@ -28,6 +28,7 @@
           <SelectItem value="apache">apache</SelectItem>
           <SelectItem value="syslog">syslog</SelectItem>
           <SelectItem value="logfmt">logfmt</SelectItem>
+          <SelectItem value="odoo">odoo</SelectItem>
           <SelectItem value="json">json</SelectItem>
         </SelectContent>
       </Select>

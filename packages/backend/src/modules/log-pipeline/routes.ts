@@ -11,7 +11,7 @@ const organizationsService = new OrganizationsService();
 const stepSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('parser'),
-    parser: z.enum(['nginx', 'apache', 'syslog', 'logfmt', 'json']),
+    parser: z.enum(['nginx', 'apache', 'syslog', 'logfmt', 'odoo', 'json']),
   }),
   z.object({
     type: z.literal('grok'),

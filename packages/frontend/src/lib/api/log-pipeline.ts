@@ -3,7 +3,7 @@ import { getAuthToken } from '$lib/utils/auth';
 
 export interface PipelineStep {
   type: 'parser' | 'grok' | 'geoip';
-  parser?: 'nginx' | 'apache' | 'syslog' | 'logfmt' | 'json';
+  parser?: 'nginx' | 'apache' | 'syslog' | 'logfmt' | 'odoo' | 'json';
   pattern?: string;
   source?: string;
   field?: string;
