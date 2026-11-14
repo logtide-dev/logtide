@@ -33,6 +33,7 @@ export const NOTIFICATION_TYPES = [
   'project_update',
   'monitoring',
   'project_health',
+  'hardware',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

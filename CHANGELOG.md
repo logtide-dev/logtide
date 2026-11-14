@@ -6,7 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.7.0] - 2026-11-14
+
+### Added
+
+- **Hardware health**: a new Monitor > Hardware section (shortcut `g h`) that watches the physical health of bare-metal and homelab hosts and warns before a component fails. It covers disks (SMART for HDD/SSD, NVMe health log: reallocated and pending sectors, uncorrectable errors, media errors, wear, spare, temperature), ECC memory (corrected and uncorrected errors per DIMM from EDAC), CPU (temperatures against their limits, thermal throttling), cooling (fans, board temperatures), power (PSU state and redundancy, voltages) and physical network ports (CRC errors, link flaps). Each host gets a status per component, the findings that explain it and 7 day trends.
+  - **Hardware agent** ([logtide-dev/logtide-hw-agent](https://github.com/logtide-dev/logtide-hw-agent), MIT, image `logtide/hw-agent`, released separately starting at 1.0.0): a small agent (Python, no dependencies, Docker image or systemd unit) reads smartctl, EDAC, hwmon, thermal throttle counters, IPMI sensors and the BMC event log, and sends them as OTLP metrics with the project API key. Hardware lines from the kernel log and BMC events are sent as logs (service `hardware`). New compose profile `hardware` (`HW_AGENT_API_KEY`).
+  - **Health rules** look at trends, not only thresholds: a disk that reallocated 10 sectors in a week or a DIMM that logs corrected errors every day is flagged even when SMART still says "passed". A device that stops reporting (a disk dropping off the bus, a pulled PSU) is a finding too. Changes need to hold for a few minutes before they count, and a recovery for 10 minutes, so a sensor hovering at its limit does not flap.
+  - **Incidents and notifications**: a degraded host opens an incident (new source `hardware`) and notifies through the new `Hardware health` event type in notification routing (channels, email fallback, PagerDuty, webhooks `hardware.health.degraded` / `hardware.health.recovered`). Hosts can be muted or forgotten by owners and admins.
+  - **Hardware Health detection pack**: Sigma rules for kernel and BMC hardware events (ECC and machine check errors, APEI, disk I/O errors and link resets, NVMe timeouts, PCIe AER, thermal and power supply events). It works on any kernel log shipped to LogTide, with or without the agent.
+  - Virtual machines are detected and shown as "No sensors": hardware sensors are not exposed inside a VM.
+  - New capability `hardware.max_hosts` (unlimited by default).
+
+### Changed
+
+- **Clickable rows in traces**: in /traces a click anywhere on an Operations row filters on that operation, and a click anywhere on a trace row opens the trace (Ctrl or middle click opens it in a new tab).
+- **Shorter operations list**: the Operations card shows the 8 slowest operations with a "Show all" toggle, so the trace list is no longer pushed far down the page. A selected operation stays visible.
+
+### Fixed
+
+- **Login page while signed in**: opening `/login` or `/register` with an active session now goes to the dashboard instead of showing the sign-in form, which looked like being logged out.
 
 
 ## [1.6.4] - 2026-11-10

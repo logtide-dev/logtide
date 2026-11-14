@@ -12,6 +12,9 @@
 # With system metrics (CPU, memory, disk, network):
 #   docker compose --profile metrics up -d
 #
+# With hardware health (SMART, ECC, temperatures, fans, IPMI) for bare-metal hosts:
+#   docker compose --profile hardware up -d
+#
 # With MongoDB (alternative storage backend):
 #   docker compose --profile mongodb up -d
 #
@@ -312,6 +315,31 @@ services:
     networks:
       - logtide-network
 
+  # Hardware agent, source: https://github.com/logtide-dev/logtide-hw-agent
+  hw-agent:
+    image: ${HW_AGENT_IMAGE:-logtide/hw-agent:1}
+    container_name: logtide-hw-agent
+    profiles:
+      - hardware
+    # Privileged: SMART, /dev/kmsg and /dev/ipmi0 need raw device access.
+    # /sys and /proc are mounted under /host (HOST_ROOT) so the agent sees the
+    # host's NICs and sensors, not the container's network namespace.
+    privileged: true
+    environment:
+      LOGTIDE_URL: http://backend:8080
+      LOGTIDE_API_KEY: ${HW_AGENT_API_KEY:-${FLUENT_BIT_API_KEY:-}}
+      HOST_ROOT: /host
+    volumes:
+      - /sys:/host/sys:ro
+      - /proc:/host/proc:ro
+      - /etc/hostname:/host/etc/hostname:ro
+      - hw_agent_state:/var/lib/logtide-hw-agent
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - logtide-network
+
 volumes:
   postgres_data:
     driver: local
@@ -320,6 +348,8 @@ volumes:
   clickhouse_data:
     driver: local
   mongodb_data:
+    driver: local
+  hw_agent_state:
     driver: local
 
 networks:

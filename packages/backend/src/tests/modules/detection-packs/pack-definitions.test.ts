@@ -14,6 +14,7 @@ describe('Detection Pack Definitions', () => {
             expect(packIds).toContain('antivirus-malware');
             expect(packIds).toContain('rootkit-detection');
             expect(packIds).toContain('file-integrity');
+            expect(packIds).toContain('hardware-health');
         });
 
         it('should have valid structure for all packs', () => {
@@ -26,7 +27,7 @@ describe('Detection Pack Definitions', () => {
                 expect(pack.description).toBeDefined();
                 expect(typeof pack.description).toBe('string');
                 expect(pack.category).toBeDefined();
-                expect(['reliability', 'security', 'database', 'business']).toContain(pack.category);
+                expect(['reliability', 'security', 'database', 'business', 'hardware']).toContain(pack.category);
                 expect(pack.icon).toBeDefined();
                 expect(pack.rules).toBeDefined();
                 expect(Array.isArray(pack.rules)).toBe(true);

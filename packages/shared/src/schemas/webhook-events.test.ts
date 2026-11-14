@@ -510,3 +510,37 @@ describe('alert.triggered 1.6 optional fields', () => {
     expect(() => alertTriggeredDataSchema.parse({ ...legacyTriggered, firing_since: 'soon' })).toThrow();
   });
 });
+
+describe('hardwareHealthDataSchema', () => {
+  const data = {
+    host_id: PROJ_ID,
+    host_name: 'srv-1',
+    project_id: PROJ_ID,
+    project_name: 'Homelab',
+    status: 'critical',
+    previous_status: 'ok',
+    severity: 'critical',
+    title: 'Hardware critical: srv-1',
+    message: 'Disk sda failed its SMART self assessment',
+    findings: [
+      { component: 'disks', hw_id: 'sda', severity: 'critical', code: 'disk.smart_failed', message: 'Disk sda failed', value: 0 },
+    ],
+    incident_id: null,
+    changed_at: '2026-11-10T10:00:00.000Z',
+    link: 'https://logtide.example/dashboard/hardware/x',
+  };
+
+  it('parses degraded and recovered envelopes', () => {
+    for (const type of ['hardware.health.degraded', 'hardware.health.recovered'] as const) {
+      expect(parseWebhookEvent({ ...baseEnvelope, type, data }).type).toBe(type);
+    }
+    expect(webhookEventTypeSchema.options).toContain('hardware.health.degraded');
+    expect(Object.keys(WEBHOOK_EVENT_DATA_SCHEMAS)).toContain('hardware.health.recovered');
+  });
+
+  it('rejects an unknown status and a missing host_name', () => {
+    expect(() => parseWebhookEvent({ ...baseEnvelope, type: 'hardware.health.degraded', data: { ...data, status: 'stale' } })).toThrow();
+    const { host_name: _omit, ...rest } = data;
+    expect(() => parseWebhookEvent({ ...baseEnvelope, type: 'hardware.health.degraded', data: rest })).toThrow();
+  });
+});

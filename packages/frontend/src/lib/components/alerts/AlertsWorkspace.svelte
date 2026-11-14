@@ -122,7 +122,7 @@
 				getRecentDetections({
 					organizationId: id,
 					...(pid ? { projectId: pid } : {}),
-					category: ['reliability', 'database', 'business'],
+					category: ['reliability', 'database', 'business', 'hardware'],
 					limit: HISTORY_PAGE,
 				}),
 				projectsAPI.getProjects(id),
@@ -168,7 +168,7 @@
 			getRecentDetections({
 				organizationId: id,
 				...(pid ? { projectId: pid } : {}),
-				category: ['reliability', 'database', 'business'],
+				category: ['reliability', 'database', 'business', 'hardware'],
 				limit: HISTORY_PAGE,
 			}),
 		]);

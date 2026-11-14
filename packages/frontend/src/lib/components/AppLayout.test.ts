@@ -32,7 +32,7 @@ import { organizationStore } from '$lib/stores/organization';
 import { goto } from '$app/navigation';
 import { page } from '$app/state';
 
-const SECTION_LABELS = ['Dashboards', 'Logs', 'Traces', 'Metrics', 'Errors', 'Sessions', 'Web vitals', 'Incidents', 'Alerts', 'Uptime', 'Overview', 'Rules', 'Projects', 'Settings', 'Docs', 'GitHub'];
+const SECTION_LABELS = ['Dashboards', 'Logs', 'Traces', 'Metrics', 'Errors', 'Sessions', 'Web vitals', 'Incidents', 'Alerts', 'Uptime', 'Hardware', 'Overview', 'Rules', 'Projects', 'Settings', 'Docs', 'GitHub'];
 
 function navLabels(root: Element): string[] {
   return Array.from(root.querySelectorAll('[data-nav-item]')).map((a) => a.textContent!.trim());

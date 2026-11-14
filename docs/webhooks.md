@@ -79,6 +79,8 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `monitor.status_changed` | An uptime monitor changed status (e.g. up → down). |
 | `project.health.opened` | A project health check found a problem (project stopped sending data, records rejected by PII masking, out-of-range timestamps, data sent with a revoked API key). Sent once when the issue opens. |
 | `project.health.resolved` | A project health issue cleared. Same `data` shape as `project.health.opened`, with `resolved_at` set. |
+| `hardware.health.degraded` | A hardware host got worse: from ok to warning or critical, or from warning to critical. Not sent for muted hosts. |
+| `hardware.health.recovered` | A hardware host that had an open hardware incident is healthy again. Same `data` shape as `hardware.health.degraded`. |
 | `channel.test` | A test delivery sent when verifying a notification channel. |
 
 ### Per-type `data` fields
@@ -176,6 +178,24 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `resolved_at` | yes | `string (ISO 8601) | null` | When the issue cleared; `null` on `project.health.opened`. |
 | `details` | yes | `object` | Check-specific numbers (counts, thresholds, time offsets). |
 | `link` | yes | `string` | URL to the project page. |
+
+**`hardware.health.degraded` / `hardware.health.recovered`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `host_id` | yes | `string (UUID)` | Hardware host id. |
+| `host_name` | yes | `string` | Host name reported by the agent (`host.name`). |
+| `project_id` | yes | `string (UUID)` | Project the host sends to. |
+| `project_name` | yes | `string` | Project name. |
+| `status` | yes | `string` | New host status: `warning`, `critical` or `ok`. |
+| `previous_status` | yes | `string` | Status before the change (`ok`, `warning`, `critical`, `unknown`, `stale`). |
+| `severity` | yes | `string` | `critical`, `warning` or `ok`. |
+| `title` | yes | `string` | Short notification title. |
+| `message` | yes | `string` | Human-readable summary (the worst findings). |
+| `findings` | yes | `array` | Findings at the time of the change, worst first: `{ component, hw_id, severity, code, message, value?, threshold? }`. Empty on `recovered`. |
+| `incident_id` | yes | `string (UUID) \| null` | The hardware incident opened, updated or resolved. |
+| `changed_at` | yes | `string (ISO 8601)` | When the change was detected. |
+| `link` | yes | `string` | URL to the host page. |
 
 
 **`channel.test`**

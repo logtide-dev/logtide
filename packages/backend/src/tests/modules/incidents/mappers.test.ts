@@ -32,6 +32,7 @@ function row(overrides: Partial<Selectable<IncidentsTable>> = {}): Selectable<In
     source: 'alert',
     monitor_id: null,
     alert_rule_id: null,
+    hardware_host_id: null,
     acknowledged_at: null,
     acknowledged_by: null,
     resolved_by: null,
@@ -51,6 +52,7 @@ function joined(overrides: Partial<IncidentJoinedRow> = {}): IncidentJoinedRow {
     project_name: 'Web',
     alert_rule_name: null,
     monitor_name: null,
+    hardware_host_name: null,
     ...overrides,
   };
 }
@@ -118,6 +120,13 @@ describe('incident mappers', () => {
     expect(mapIncidentListRow(joined({ source: 'alert', alert_rule_id: null })).sourceRef).toBeNull();
   });
 
+  it('builds a hardware sourceRef from the joined host name', () => {
+    const item = mapIncidentListRow(joined({ source: 'hardware', hardware_host_id: 'h1', hardware_host_name: 'srv-1' }));
+    expect(item.sourceRef).toEqual({ kind: 'hardware', id: 'h1', name: 'srv-1' });
+    expect(item.hardwareHostId).toBe('h1');
+    expect(mapIncidentListRow(joined({ source: 'hardware', hardware_host_id: 'h1', hardware_host_name: null })).sourceRef).toBeNull();
+  });
+
   it('never builds a sourceRef for sigma or manual incidents', () => {
     for (const source of ['sigma', 'manual']) {
       const item = mapIncidentListRow(
@@ -135,7 +144,7 @@ describe('incident mappers', () => {
 
   it('does not leak the join columns into the item', () => {
     const item = mapIncidentListRow(joined({ alert_rule_name: 'x' })) as unknown as Record<string, unknown>;
-    for (const key of ['assignee_name', 'assignee_email', 'project_name', 'alert_rule_name', 'monitor_name']) {
+    for (const key of ['assignee_name', 'assignee_email', 'project_name', 'alert_rule_name', 'monitor_name', 'hardware_host_name']) {
       expect(key in item).toBe(false);
     }
   });

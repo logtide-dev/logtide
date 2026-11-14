@@ -10,6 +10,8 @@ export function packCategoryBadge(category: PackCategory | string): string {
       return severityTone('critical').badge;
     case 'business':
       return stateTone('ok').badge;
+    case 'hardware':
+      return severityTone('medium').badge;
     case 'reliability':
       return levelTone('info').badge;
     default:

@@ -22,6 +22,7 @@
 	import Shield from "@lucide/svelte/icons/shield";
 	import Database from "@lucide/svelte/icons/database";
 	import CreditCard from "@lucide/svelte/icons/credit-card";
+	import Cpu from "@lucide/svelte/icons/cpu";
 	import CheckCircle from "@lucide/svelte/icons/check-circle";
 	import XCircle from "@lucide/svelte/icons/x-circle";
 	import ExternalLink from "@lucide/svelte/icons/external-link";
@@ -53,6 +54,7 @@
 		shield: Shield,
 		database: Database,
 		"credit-card": CreditCard,
+		cpu: Cpu,
 	};
 
 	const levelOptions: { value: SigmaLevel; label: string }[] = [

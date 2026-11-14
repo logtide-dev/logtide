@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { get } from 'svelte/store';
   import { authStore } from '$lib/stores/auth';
   import { organizationStore } from '$lib/stores/organization';
   import { toastStore } from '$lib/stores/toast';
@@ -53,6 +54,12 @@
 
   // Check auth mode on mount - redirect if auth-free mode
   onMount(async () => {
+    // Already signed in (e.g. the website's "Sign in" link): go to the app
+    // instead of showing the form, which reads as being logged out.
+    if (get(authStore).token) {
+      goto(safeRedirect(redirectUrl), { replaceState: true });
+      return;
+    }
     try {
       const config = await authAPI.getAuthConfig();
       if (config.authMode === 'none') {

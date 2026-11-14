@@ -153,6 +153,23 @@ function describe(envelope: Envelope): EventView {
       push(fields, field('Resolved', data.resolved_at));
       break;
     }
+    case 'hardware.health.degraded':
+    case 'hardware.health.recovered': {
+      if (envelope.type === 'hardware.health.recovered') {
+        tone = 'success';
+      } else if (str(data.severity) === 'warning') {
+        tone = 'medium';
+      }
+      push(fields, field('Host', data.host_name));
+      push(fields, field('Project', data.project_name));
+      push(fields, field('Status', data.status));
+      push(fields, field('Previous status', data.previous_status));
+      const findings = data.findings;
+      if (Array.isArray(findings) && findings.length > 0) {
+        push(fields, field('Findings', findings.length));
+      }
+      break;
+    }
     case 'error.detected': {
       const project = data.project as { name?: string } | undefined;
       push(fields, field('Project', project?.name));

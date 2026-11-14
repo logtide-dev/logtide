@@ -15,6 +15,7 @@ import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import Settings from '@lucide/svelte/icons/settings';
 import Book from '@lucide/svelte/icons/book';
 import Github from '@lucide/svelte/icons/github';
+import Cpu from '@lucide/svelte/icons/cpu';
 import ServerCog from '@lucide/svelte/icons/server-cog';
 
 const ICONS: Record<string, Component<any>> = {
@@ -28,6 +29,7 @@ const ICONS: Record<string, Component<any>> = {
   incidents: Siren as unknown as Component<any>,
   alerts: AlertTriangle as unknown as Component<any>,
   uptime: Activity as unknown as Component<any>,
+  hardware: Cpu as unknown as Component<any>,
   'security-overview': Shield as unknown as Component<any>,
   'security-rules': ShieldCheck as unknown as Component<any>,
   projects: FolderKanban as unknown as Component<any>,

@@ -29,7 +29,7 @@
 
 	const STATUS_ORDER: IncidentStatus[] = ['open', 'investigating', 'resolved', 'false_positive'];
 	const statusOptions = STATUS_ORDER.map((s) => ({ value: s, label: INCIDENT_STATUS_LABEL[s] }));
-	const sourceOptions = (['sigma', 'alert', 'monitor', 'manual'] as IncidentSource[]).map((s) => ({
+	const sourceOptions = (['sigma', 'alert', 'monitor', 'manual', 'hardware'] as IncidentSource[]).map((s) => ({
 		value: s,
 		label: INCIDENT_SOURCE_LABEL[s],
 	}));

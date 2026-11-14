@@ -17,5 +17,5 @@ export const SIGMA_STATUSES = [
 export type SigmaStatus = (typeof SIGMA_STATUSES)[number];
 
 // Detection pack categories
-export const PACK_CATEGORIES = ['reliability', 'security', 'database', 'business'] as const;
+export const PACK_CATEGORIES = ['reliability', 'security', 'database', 'business', 'hardware'] as const;
 export type PackCategory = (typeof PACK_CATEGORIES)[number];

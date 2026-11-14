@@ -78,6 +78,8 @@ export function getIncidentSourceLabel(source: IncidentSource): string {
       return 'Uptime';
     case 'manual':
       return 'Manual';
+    case 'hardware':
+      return 'Hardware';
     default:
       return source;
   }

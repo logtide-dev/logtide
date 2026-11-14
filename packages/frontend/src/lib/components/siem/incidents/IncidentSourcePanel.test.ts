@@ -91,6 +91,43 @@ describe('IncidentSourcePanel', () => {
     );
   });
 
+  it('hardware links to the host page from the source ref', () => {
+    render(IncidentSourcePanel, {
+      props: {
+        incident: incident({
+          source: 'hardware',
+          hardwareHostId: 'h1',
+          sourceRef: { kind: 'hardware', id: 'h1', name: 'db-01' },
+        }),
+        members,
+        onAssign: vi.fn(),
+      },
+    });
+    expect(screen.getByText('Hardware host')).toBeTruthy();
+    expect(screen.getByText('db-01')).toBeTruthy();
+    expect((screen.getByRole('link', { name: 'View host' }) as HTMLAnchorElement).getAttribute('href')).toBe(
+      '/dashboard/hardware/h1'
+    );
+    expect(screen.queryByText('Affected services')).toBeNull();
+  });
+
+  it('hardware falls back to hardwareHostId when the source ref is missing', () => {
+    render(IncidentSourcePanel, {
+      props: { incident: incident({ source: 'hardware', hardwareHostId: 'h 2' }), members, onAssign: vi.fn() },
+    });
+    expect((screen.getByRole('link', { name: 'View host' }) as HTMLAnchorElement).getAttribute('href')).toBe(
+      '/dashboard/hardware/h%202'
+    );
+  });
+
+  it('hardware says the host no longer exists after it was forgotten', () => {
+    render(IncidentSourcePanel, {
+      props: { incident: incident({ source: 'hardware', hardwareHostId: null }), members, onAssign: vi.fn() },
+    });
+    expect(screen.getByText(/Host no longer exists/)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'View host' })).toBeNull();
+  });
+
   it('shows All projects when the incident has no project', () => {
     render(IncidentSourcePanel, {
       props: { incident: incident({ project: null, projectId: null }), members, onAssign: vi.fn() },

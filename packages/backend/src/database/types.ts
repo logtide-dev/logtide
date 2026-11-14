@@ -517,6 +517,8 @@ export interface IncidentsTable {
   resolved_by: string | null;
   last_event_at: Generated<Timestamp>;
   // --- end F4 ---
+  /** Host behind a `hardware` incident (migration 079); null for every other source or after the host was deleted. */
+  hardware_host_id: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   resolved_at: Timestamp | null;
@@ -991,6 +993,30 @@ export interface ProjectHealthIssuesTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface HardwareHostsTable {
+  id: Generated<string>;
+  organization_id: string;
+  project_id: string;
+  host_name: string;
+  status: Generated<'ok' | 'warning' | 'critical' | 'unknown' | 'stale'>;
+  components: ColumnType<Record<string, unknown>, string | Record<string, unknown> | undefined, string | Record<string, unknown>>;
+  findings: ColumnType<unknown[], string | undefined, string>;
+  info: ColumnType<Record<string, unknown>, string | Record<string, unknown> | undefined, string | Record<string, unknown>>;
+  collectors: ColumnType<unknown[], string | undefined, string>;
+  is_virtual: boolean | null;
+  muted: Generated<boolean>;
+  first_seen_at: Generated<Timestamp>;
+  last_seen_at: Timestamp | null;
+  last_evaluated_at: Timestamp | null;
+  status_changed_at: Generated<Timestamp>;
+  pending_status: 'ok' | 'warning' | 'critical' | null;
+  pending_since: Timestamp | null;
+  episode_started_at: Timestamp | null;
+  episode_incident_id: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ProjectHealthStateTable {
   project_id: string;
   organization_id: string;
@@ -1378,6 +1404,8 @@ export interface Database {
   project_health_issues: ProjectHealthIssuesTable;
   project_notification_settings: ProjectNotificationSettingsTable;
   project_health_state: ProjectHealthStateTable;
+  // Hardware health (migration 079)
+  hardware_hosts: HardwareHostsTable;
   // PII masking
   pii_masking_rules: PiiMaskingRulesTable;
   organization_pii_salts: OrganizationPiiSaltsTable;

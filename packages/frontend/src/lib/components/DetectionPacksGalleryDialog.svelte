@@ -18,6 +18,7 @@
 	import Shield from "@lucide/svelte/icons/shield";
 	import Database from "@lucide/svelte/icons/database";
 	import CreditCard from "@lucide/svelte/icons/credit-card";
+	import Cpu from "@lucide/svelte/icons/cpu";
 	import CheckCircle from "@lucide/svelte/icons/check-circle";
 	import MessageSquarePlus from "@lucide/svelte/icons/message-square-plus";
 
@@ -48,6 +49,7 @@
 		shield: Shield,
 		database: Database,
 		"credit-card": CreditCard,
+		cpu: Cpu,
 	};
 
 	async function loadPacks() {
