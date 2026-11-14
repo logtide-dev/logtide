@@ -19,7 +19,7 @@ export type {
   IncidentSourceEvent,
 } from '@logtide/shared';
 
-export type IncidentSource = 'sigma' | 'alert' | 'monitor' | 'manual';
+export type IncidentSource = 'sigma' | 'alert' | 'monitor' | 'manual' | 'hardware';
 
 export type BulkAction = 'acknowledge' | 'resolve' | 'assign';
 

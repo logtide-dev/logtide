@@ -16,14 +16,14 @@
   <a href="https://codecov.io/gh/logtide-dev/logtide"><img src="https://codecov.io/gh/logtide-dev/logtide/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://hub.docker.com/r/logtide/backend"><img src="https://img.shields.io/docker/v/logtide/backend?label=docker&logo=docker" alt="Docker"></a>
   <a href="https://artifacthub.io/packages/helm/logtide/logtide"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logtide" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-1.6.4-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.7.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/status-stable-success.svg" alt="Status">
 </div>
 
 <br />
 
-> **🌊 LogTide 1.6.4:** unified **Logs, Traces & Metrics** with a built-in **SIEM**, multi-engine storage (TimescaleDB / ClickHouse / MongoDB), uptime monitoring, parsing pipelines, and custom dashboards.
+> **🌊 LogTide 1.7.0:** unified **Logs, Traces & Metrics** with a built-in **SIEM**, multi-engine storage (TimescaleDB / ClickHouse / MongoDB), uptime monitoring, hardware health, parsing pipelines, and custom dashboards.
 
 ---
 
@@ -134,10 +134,11 @@ We host it for you. Perfect for testing. [**Sign up at logtide.dev**](https://lo
 
 ---
 
-## ✨ Core Features (v1.6.4)
+## ✨ Core Features (v1.7.0)
 
 ### Monitoring, Pipelines & Dashboards
 * 🩺 **Uptime Monitoring & Status Pages:** HTTP/TCP/heartbeat monitors with configurable thresholds, auto-created SIEM incidents on failure, scheduled maintenances, and public Uptime-Kuma-style status pages per project.
+* 🖥️ **Hardware Health:** Watches disks (SMART, NVMe), ECC memory, CPU temperature and throttling, fans, power supplies and NICs on bare-metal hosts, flags trends before a part fails, and opens incidents. Data comes from the [hardware agent](https://github.com/logtide-dev/logtide-hw-agent).
 * 🔧 **Log Parsing Pipelines:** Async enrichment with 5 built-in parsers (nginx, apache, syslog, logfmt, JSON), custom **grok** patterns (`%{PATTERN:field}`), and **GeoIP** enrichment from any IP field. YAML import/export.
 * 📊 **Custom Dashboards:** Drag-and-drop panels with 9 types (time series, top-N, live stream, metric charts, trace latency, detection events, monitor status, and more). Per-user or shared, with YAML round-trip.
 

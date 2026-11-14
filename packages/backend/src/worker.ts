@@ -35,6 +35,8 @@ import { hub } from '@logtide/core';
 import { reservoir, reservoirReady } from './database/reservoir.js';
 import { db } from './database/connection.js';
 import { runProjectHealthPass } from './modules/project-health/index.js';
+import { runHardwarePass } from './modules/hardware/evaluation.js';
+import { HARDWARE_EVALUATION_INTERVAL_MS } from '@logtide/shared';
 
 // Initialize internal logging via @logtide/core hub
 await initializeWorkerLogging();
@@ -973,6 +975,44 @@ async function runProjectHealth() {
 
 setInterval(runProjectHealth, 5 * 60 * 1000);
 setTimeout(runProjectHealth, 60 * 1000);
+
+// ============================================================================
+// Hardware health evaluation (every 2 minutes, first run 45s after start)
+// ============================================================================
+// Several workers may run it: each status transition is claimed with a
+// compare-and-set on hardware_hosts.status, so nothing is notified twice.
+
+let isRunningHardware = false;
+
+async function runHardware() {
+  await context.runAsSystem('cron:hardware-health', async () => {
+    if (isRunningHardware) {
+      console.warn('[Worker] Hardware health pass already in progress, skipping...');
+      return;
+    }
+    isRunningHardware = true;
+    try {
+      const result = await runHardwarePass();
+      if (result.opened + result.escalated + result.deescalated + result.resolved > 0) {
+        console.log(
+          `[Worker] Hardware health: ${result.evaluated} evaluated, ${result.opened} opened, ${result.escalated} escalated, ${result.deescalated} de-escalated, ${result.resolved} resolved`
+        );
+      }
+    } catch (error) {
+      console.error('[Worker] Hardware health pass failed:', error);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', `Hardware health pass failed: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
+      }
+    } finally {
+      isRunningHardware = false;
+    }
+  });
+}
+
+setInterval(runHardware, HARDWARE_EVALUATION_INTERVAL_MS);
+setTimeout(runHardware, 45 * 1000);
 
 // ============================================================================
 // Log volume aggregate refresh (every minute)

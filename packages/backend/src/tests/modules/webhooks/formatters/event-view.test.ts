@@ -109,4 +109,24 @@ describe('rawJsonFallback', () => {
     expect(resolved.title).toBe('Resolved: Logs with out-of-range timestamp');
     expect(resolved.fields.map((f) => f.name)).toContain('Resolved');
   });
+  it('describes hardware health events', () => {
+    const data = {
+      host_name: 'srv-1',
+      project_name: 'homelab',
+      status: 'warning',
+      previous_status: 'ok',
+      severity: 'warning',
+      title: 'Hardware warning: srv-1',
+      message: 'Disk sda has 8 reallocated sectors',
+      findings: [{ component: 'disks', hw_id: 'sda', severity: 'warning', code: 'disk.reallocated', message: 'x' }],
+      link: 'https://app.logtide.dev/dashboard/hardware/h1',
+    };
+    const degraded = describeEvent(envelope('hardware.health.degraded', data))!;
+    expect(degraded.tone).toBe('medium');
+    expect(degraded.title).toBe('Hardware warning: srv-1');
+    expect(degraded.fields.map((f) => f.name)).toEqual(['Host', 'Project', 'Status', 'Previous status', 'Findings']);
+    expect(describeEvent(envelope('hardware.health.degraded', { ...data, severity: 'critical' }))!.tone).toBe('critical');
+    const recovered = describeEvent(envelope('hardware.health.recovered', { ...data, status: 'ok', severity: 'ok', findings: [] }))!;
+    expect(recovered.tone).toBe('success');
+  });
 });

@@ -8,6 +8,7 @@ export const NOTIFICATION_ROUTING_EVENT_TYPES: readonly NotificationEventType[] 
   'error',
   'monitoring',
   'project_health',
+  'hardware',
 ] as const;
 
 /** One destination in the GET /api/v1/notification-routing/preview response. */

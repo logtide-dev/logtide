@@ -29,13 +29,14 @@ export const INCIDENT_SOURCE_LABEL: Record<IncidentSource, string> = {
   alert: 'Alert',
   monitor: 'Uptime',
   manual: 'Manual',
+  hardware: 'Hardware',
 };
 
 export const DEFAULT_STATUS_FILTER: IncidentStatus[] = ['open', 'investigating'];
 
 const ALL_STATUSES: IncidentStatus[] = ['open', 'investigating', 'resolved', 'false_positive'];
 const ALL_SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low', 'informational'];
-const ALL_SOURCES: IncidentSource[] = ['sigma', 'alert', 'monitor', 'manual'];
+const ALL_SOURCES: IncidentSource[] = ['sigma', 'alert', 'monitor', 'manual', 'hardware'];
 
 export interface IncidentActions {
   acknowledge: boolean;
@@ -192,7 +193,12 @@ export function incidentLastEventAt(
 
 export type TimelineEntry =
   | { kind: 'detection'; id: string; time: string | Date; detection: DetectionEvent }
-  | { kind: 'alert_trigger' | 'monitor_check'; id: string; time: string | Date; event: IncidentSourceEvent }
+  | {
+      kind: 'alert_trigger' | 'monitor_check' | 'hardware_check';
+      id: string;
+      time: string | Date;
+      event: IncidentSourceEvent;
+    }
   | { kind: 'comment'; id: string; time: string | Date; comment: IncidentComment }
   | { kind: 'history'; id: string; time: string | Date; entry: IncidentHistoryEntry };
 
@@ -353,10 +359,11 @@ export function formatIncidentDuration(start: string | Date, end: string | Date 
 const SOURCE_EVENT_TITLE: Record<IncidentSourceEvent['kind'], string> = {
   alert_trigger: 'Alert triggered',
   monitor_check: 'Monitor check failed',
+  hardware_check: 'Hardware health changed',
 };
 
 /**
- * Body line of an alert or monitor timeline entry, or null when there is
+ * Body line of an alert, monitor or hardware timeline entry, or null when there is
  * nothing to add beyond the entry title (the server falls back to the title
  * itself when an event carries no summary).
  */
@@ -370,6 +377,12 @@ export function describeSourceEvent(event: IncidentSourceEvent): string | null {
   if (event.kind === 'alert_trigger' && typeof d.logCount === 'number' && typeof d.threshold === 'number') {
     const window = typeof d.timeWindow === 'number' ? ` in ${d.timeWindow} min` : '';
     return `${d.logCount.toLocaleString('en-US')} ${d.logCount === 1 ? 'log' : 'logs'} against a threshold of ${d.threshold.toLocaleString('en-US')}${window}`;
+  }
+  if (event.kind === 'hardware_check' && Array.isArray(d.findings)) {
+    const messages = d.findings
+      .map((f) => (f && typeof f === 'object' ? (f as { message?: unknown }).message : null))
+      .filter((m): m is string => typeof m === 'string' && m.trim() !== '');
+    if (messages.length > 0) return messages.slice(0, 3).join('; ');
   }
   for (const key of ['error', 'message']) {
     const v = d[key];

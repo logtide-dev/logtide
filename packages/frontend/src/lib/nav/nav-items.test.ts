@@ -14,7 +14,7 @@ describe('nav-items', () => {
     const ids = (section: string) =>
       NAV_SECTIONS.find((s) => s.id === section)!.items.map((i) => i.id);
     expect(ids('explore')).toEqual(['logs', 'traces', 'metrics', 'errors', 'sessions', 'web-vitals']);
-    expect(ids('monitor')).toEqual(['incidents', 'alerts', 'uptime']);
+    expect(ids('monitor')).toEqual(['incidents', 'alerts', 'uptime', 'hardware']);
     expect(ids('security')).toEqual(['security-overview', 'security-rules']);
     expect(ids('manage')).toEqual(['projects', 'settings']);
   });
@@ -31,6 +31,7 @@ describe('nav-items', () => {
       'Incidents',
       'Alerts',
       'Uptime',
+      'Hardware',
       'Overview',
       'Rules',
       'Projects',
@@ -51,7 +52,7 @@ describe('nav-items', () => {
     expect(new Set(shortcuts).size).toBe(shortcuts.length);
   });
 
-  it('registers the twelve spec shortcuts', () => {
+  it('registers the spec shortcuts', () => {
     const expected: Record<string, string> = {
       d: '/dashboard',
       l: '/dashboard/logs',
@@ -63,6 +64,7 @@ describe('nav-items', () => {
       i: '/dashboard/incidents',
       a: '/dashboard/alerts',
       u: '/dashboard/uptime',
+      h: '/dashboard/hardware',
       r: '/dashboard/security',
       p: '/dashboard/projects',
     };
@@ -98,6 +100,14 @@ describe('nav-items', () => {
       expect(isNavItemActive(settings, path)).toBe(true);
     }
     expect(isNavItemActive(settings, '/dashboard/projects')).toBe(false);
+  });
+
+  it('marks Hardware active on its detail pages', () => {
+    const items = flatNavItems();
+    const activeIds = (pathname: string) =>
+      items.filter((i) => isNavItemActive(i, pathname)).map((i) => i.id);
+    expect(activeIds('/dashboard/hardware')).toEqual(['hardware']);
+    expect(activeIds('/dashboard/hardware/h1')).toEqual(['hardware']);
   });
 
   it('never marks external links active', () => {

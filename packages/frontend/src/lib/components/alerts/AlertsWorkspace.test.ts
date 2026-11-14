@@ -368,7 +368,7 @@ describe('AlertsWorkspace', () => {
     await fireEvent.mouseDown(tab);
     await fireEvent.click(tab);
     await waitFor(() => expect(screen.getByText('Slow queries detected')).toBeTruthy());
-    expect(h.detections.mock.calls[0][0].category).toEqual(['reliability', 'database', 'business']);
+    expect(h.detections.mock.calls[0][0].category).toEqual(['reliability', 'database', 'business', 'hardware']);
   });
 
   it('fetch error shows EmptyState error with Retry', async () => {

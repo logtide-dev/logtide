@@ -11,7 +11,7 @@ import * as shared from '../index.js';
 
 describe('incident types', () => {
   it('lists alert as an incident source', () => {
-    expect(INCIDENT_SOURCES).toEqual(['sigma', 'alert', 'monitor', 'manual']);
+    expect(INCIDENT_SOURCES).toEqual(['sigma', 'alert', 'monitor', 'manual', 'hardware']);
   });
 
   it('treats open and investigating as active', () => {
@@ -27,8 +27,8 @@ describe('incident types', () => {
 
   it('labels sources', () => {
     expect(
-      ['sigma', 'alert', 'monitor', 'manual'].map((s) => getIncidentSourceLabel(s as IncidentSource))
-    ).toEqual(['Security', 'Alert', 'Uptime', 'Manual']);
+      ['sigma', 'alert', 'monitor', 'manual', 'hardware'].map((s) => getIncidentSourceLabel(s as IncidentSource))
+    ).toEqual(['Security', 'Alert', 'Uptime', 'Manual', 'Hardware']);
   });
 
   it('caps bulk at 100 ids', () => expect(INCIDENT_BULK_MAX_IDS).toBe(100));

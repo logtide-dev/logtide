@@ -64,6 +64,8 @@ export interface Incident {
   monitorId: string | null;
   /** Alert rule behind an `alert` incident; null for every other source or after the rule was deleted. */
   alertRuleId: string | null;
+  /** Host behind a `hardware` incident; null for every other source or after the host was deleted. Optional for pre-1.7 payloads. */
+  hardwareHostId?: string | null;
   acknowledgedAt: Date | string | null;
   acknowledgedBy: string | null;
   resolvedBy: string | null;

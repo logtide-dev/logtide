@@ -11,7 +11,7 @@ describe('packDestinationCopy', () => {
   });
 
   it('non security copy says Alerts history and no incidents', () => {
-    for (const category of ['reliability', 'database', 'business'] as const) {
+    for (const category of ['reliability', 'database', 'business', 'hardware'] as const) {
       const c = packDestinationCopy(category);
       expect(c.where).toBe('Alerts history');
       expect(c.createsIncidents).toBe(false);

@@ -205,6 +205,8 @@
         {columns}
         rows={traces}
         rowKey={(t: TraceRecord) => t.trace_id}
+        rowHref={(t: TraceRecord) => traceDetailUrl(t.trace_id, projectId)}
+        onRowOpen={(t: TraceRecord) => onOpen(t.trace_id)}
         {loading}
         bind:sort={getSort, setSort}
         empty={emptySnippet}
