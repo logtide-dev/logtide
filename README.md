@@ -64,6 +64,11 @@ Designed for teams that need **GDPR compliance**, **full data ownership**, and *
 ### Uptime and status pages
 ![LogTide Uptime](docs/images/uptime.png)
 
+### Hardware health
+![LogTide Hardware](docs/images/hardware.png)
+
+![LogTide Hardware host](docs/images/hardware-host.png)
+
 ---
 
 ## 🚀 Quick Start
