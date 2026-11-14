@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.7.0] - 2026-11-14
 
 ### Added
 
@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Hardware Health detection pack**: Sigma rules for kernel and BMC hardware events (ECC and machine check errors, APEI, disk I/O errors and link resets, NVMe timeouts, PCIe AER, thermal and power supply events). It works on any kernel log shipped to LogTide, with or without the agent.
   - Virtual machines are detected and shown as "No sensors": hardware sensors are not exposed inside a VM.
   - New capability `hardware.max_hosts` (unlimited by default).
+
+### Changed
+
+- **Clickable rows in traces**: in /traces a click anywhere on an Operations row filters on that operation, and a click anywhere on a trace row opens the trace (Ctrl or middle click opens it in a new tab).
+- **Shorter operations list**: the Operations card shows the 8 slowest operations with a "Show all" toggle, so the trace list is no longer pushed far down the page. A selected operation stays visible.
+
+### Fixed
+
+- **Login page while signed in**: opening `/login` or `/register` with an active session now goes to the dashboard instead of showing the sign-in form, which looked like being logged out.
 
 
 ## [1.6.4] - 2026-11-10
