@@ -72,6 +72,21 @@
     });
   });
 
+  // Long lists push the trace list far down: show the top rows and let the user expand.
+  const COLLAPSED_ROWS = 8;
+  let expanded = $state(false);
+
+  const visible = $derived.by(() => {
+    if (expanded || sorted.length <= COLLAPSED_ROWS) return sorted;
+    const top = sorted.slice(0, COLLAPSED_ROWS);
+    // Keep the selected operation on screen even when it ranks lower.
+    if (selectedOperation && !top.some((r) => r.operation === selectedOperation)) {
+      const picked = sorted.find((r) => r.operation === selectedOperation);
+      if (picked) top.push(picked);
+    }
+    return top;
+  });
+
   function toggle(operation: string) {
     onSelect(selectedOperation === operation ? null : operation);
   }
@@ -157,8 +172,8 @@
     {:else if sorted.length === 0}
       {@render emptyRows()}
     {:else}
-      <ul data-testid="operations-list" class="max-h-60 overflow-y-auto border-t">
-        {#each sorted as r (`${r.service}::${r.operation}`)}
+      <ul data-testid="operations-list" class="border-t">
+        {#each visible as r (`${r.service}::${r.operation}`)}
           {@const selected = selectedOperation === r.operation}
           <li class="border-b last:border-b-0">
             <button
@@ -187,11 +202,20 @@
   {:else}
     <DataTable
       {columns}
-      rows={sorted}
+      rows={visible}
       rowKey={(r: OperationRow) => `${r.service}::${r.operation}`}
+      onRowClick={(r: OperationRow) => toggle(r.operation)}
+      rowActive={(r: OperationRow) => selectedOperation === r.operation}
       {loading}
       bind:sort
       empty={emptySnippet}
     />
+  {/if}
+  {#if !loading && sorted.length > COLLAPSED_ROWS}
+    <div class="flex justify-center border-t pt-2 max-md:pb-2">
+      <Button variant="ghost" size="sm" class="text-muted-foreground" onclick={() => (expanded = !expanded)}>
+        {expanded ? 'Show fewer' : `Show all ${sorted.length.toLocaleString('en-US')} operations`}
+      </Button>
+    </div>
   {/if}
 {/if}

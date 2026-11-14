@@ -48,6 +48,25 @@ describe('OperationsTable', () => {
     expect(onSelect).toHaveBeenLastCalledWith(null);
   });
 
+  it('clicking anywhere on a row selects its operation', async () => {
+    const onSelect = vi.fn();
+    render(OperationsTable, { ...base, onSelect });
+    await fireEvent.click(screen.getByText('1,234'));
+    expect(onSelect).toHaveBeenLastCalledWith('slow');
+  });
+
+  it('shows the top 8 operations, keeps the selected one visible and expands on demand', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => row({ operation: `op${i}`, p95Ms: 1000 - i }));
+    render(OperationsTable, { ...base, rows: many, selectedOperation: 'op11' });
+    const names = () => screen.getAllByRole('button', { name: /^op\d+$/ }).map((b) => b.textContent?.trim());
+    expect(names()).toHaveLength(9);
+    expect(names()).toContain('op11');
+    await fireEvent.click(screen.getByRole('button', { name: 'Show all 12 operations' }));
+    expect(names()).toHaveLength(12);
+    await fireEvent.click(screen.getByRole('button', { name: 'Show fewer' }));
+    expect(names()).toHaveLength(9);
+  });
+
   it('hides the service column when showService is false', () => {
     const { unmount } = render(OperationsTable, base);
     expect(screen.getByRole('columnheader', { name: /Service/ })).toBeInTheDocument();
