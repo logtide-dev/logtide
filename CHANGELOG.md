@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Second IP reputation source: the NetAPI honeypot list** (#333): SIEM enrichment now also checks the [NetAPI honeypot feed](https://netapi.com/compromised-ips/), the IPv4 addresses that attacked NetAPI's sensor network in the last 48 hours. An address on it is marked malicious with source `NetAPI` (the IPsum score is kept when IPsum lists it too); everything else gets the IPsum verdict as before. The list (about 0.4 MB) is refreshed hourly with `If-Modified-Since`, so an unchanged list costs a 304; the API server re-reads the file when the worker has replaced it. The data is CC BY 4.0: the IP reputation card shows "Listed by NetAPI honeypot feed (CC BY 4.0)" with a link on every NetAPI hit, and the attribution is part of the reputation data. Turn it off with `NETAPI_REPUTATION_ENABLED=false` (nothing is downloaded or looked up then). The enrichment update job now runs hourly; GeoLite2 and IPsum still refresh once a day.
+
 
 ## [1.7.0] - 2026-11-14
 

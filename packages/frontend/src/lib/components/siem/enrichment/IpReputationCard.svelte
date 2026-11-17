@@ -19,6 +19,7 @@
 		domain?: string;
 		usageType?: string;
 		source: string;
+		attribution?: { name: string; license: string; url: string };
 		lastChecked: string;
 	}
 
@@ -145,6 +146,20 @@
 							<ChevronDown class="w-4 h-4 text-muted-foreground shrink-0" />
 						{/if}
 					</button>
+
+					{#if data.attribution}
+						<!-- licence notice of the source (NetAPI: CC BY 4.0), outside the button so the link works -->
+						<p class="mt-2 text-xs text-muted-foreground">
+							Listed by
+							<a
+								href={data.attribution.url}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="underline hover:text-foreground">{data.attribution.name}</a
+							>
+							({data.attribution.license})
+						</p>
+					{/if}
 
 					{#if isExpanded}
 						<div class="mt-3 pt-3 border-t space-y-2 text-sm">
