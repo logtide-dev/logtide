@@ -228,6 +228,10 @@ const configSchema = z.object({
       .optional()
   ),
 
+  // SIEM IP reputation: the NetAPI honeypot attackers list (CC BY 4.0, https://netapi.com/compromised-ips/),
+  // a second source next to IPsum, refreshed hourly. Set to false to turn it off: nothing is downloaded or looked up.
+  NETAPI_REPUTATION_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+
   // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
   STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   STORAGE_SNAPSHOT_INTERVAL_MS: z.string().default('86400000').transform(Number),

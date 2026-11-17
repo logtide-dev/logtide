@@ -152,7 +152,7 @@ We host it for you. Perfect for testing. [**Sign up at logtide.dev**](https://lo
 * 🌐 **Browser SDK:** Automatic collection of **Web Vitals** (LCP, INP, CLS), user session tracking, and click/network breadcrumbs.
 * 📈 **Golden Signals:** Automated P50/P95/P99 latency, error rates, and throughput charts.
 * 🔍 **Smart Search:** Combined **Full-text** and **Substring** search modes with sub-100ms response times.
-* 🛡️ **SIEM & Incident Management:** Sigma rules engine, MITRE ATT&CK mapping, and collaborative incident workflows.
+* 🛡️ **SIEM & Incident Management:** Sigma rules engine, MITRE ATT&CK mapping, and collaborative incident workflows. IP reputation from [IPsum](https://github.com/stamparm/ipsum) and the [NetAPI honeypot feed](https://netapi.com/compromised-ips/) (CC BY 4.0, turn off with `NETAPI_REPUTATION_ENABLED=false`).
 * 🕵️ **PII Masking:** Detect and redact sensitive data (emails, credit cards, IPs) at ingestion time.
 * 📜 **Audit Logs:** Track all user and system actions for SOC2/GDPR compliance.
 * 🔗 **Event Correlation:** Trace logs across services using `trace_id`, `session_id`, or custom correlation keys.

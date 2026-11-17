@@ -61,3 +61,32 @@ describe('IpReputationCard colours', () => {
     expect(bar.className).not.toMatch(/-(red|green|yellow)-500/);
   });
 });
+
+describe('IpReputationCard attribution', () => {
+  it('shows the licence notice of the source under a hit, linked and visible without expanding', () => {
+    render(IpReputationCard, {
+      props: {
+        ipReputation: {
+          a: {
+            ...entry('malicious', 0),
+            source: 'NetAPI',
+            attribution: {
+              name: 'NetAPI honeypot feed',
+              license: 'CC BY 4.0',
+              url: 'https://netapi.com/compromised-ips/',
+            },
+          },
+        },
+      },
+    });
+    const link = screen.getByRole('link', { name: 'NetAPI honeypot feed' });
+    expect(link.getAttribute('href')).toBe('https://netapi.com/compromised-ips/');
+    expect(link.getAttribute('rel')).toContain('noopener');
+    expect(screen.getByText(/CC BY 4\.0/)).toBeTruthy();
+  });
+
+  it('shows no notice for a source without attribution', () => {
+    render(IpReputationCard, { props: { ipReputation: { a: entry('clean', 0) } } });
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+});
