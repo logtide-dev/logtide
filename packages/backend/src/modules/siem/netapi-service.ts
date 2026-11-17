@@ -143,7 +143,8 @@ class NetapiReputationService {
     }
 
     this.isUpdating = true;
-    const tempPath = path.join(NETAPI_DATA_DIR, 'netapi.tmp');
+    // per-process temp name: the API server and the worker may both download at startup
+    const tempPath = path.join(NETAPI_DATA_DIR, `netapi.${process.pid}.tmp`);
 
     try {
       const headers: Record<string, string> = { 'User-Agent': 'LogTide/1.0' };
@@ -173,6 +174,18 @@ class NetapiReputationService {
       fs.mkdirSync(NETAPI_DATA_DIR, { recursive: true });
       fs.writeFileSync(tempPath, content, 'utf-8');
       fs.renameSync(tempPath, NETAPI_FILE_PATH);
+
+      // give the file the server's Last-Modified as mtime, so the next If-Modified-Since
+      // echoes the server's own timestamp and does not depend on the local clock
+      const lastModified = response.headers?.get?.('last-modified');
+      const lastModifiedDate = lastModified ? new Date(lastModified) : null;
+      if (lastModifiedDate && !Number.isNaN(lastModifiedDate.getTime())) {
+        try {
+          fs.utimesSync(NETAPI_FILE_PATH, lastModifiedDate, lastModifiedDate);
+        } catch (error) {
+          console.warn('[NetAPI] Could not set list file mtime:', error);
+        }
+      }
 
       const sizeKB = (Buffer.byteLength(content, 'utf-8') / 1024).toFixed(2);
       console.log(`[NetAPI] Downloaded ${sizeKB} KB`);
@@ -218,7 +231,11 @@ class NetapiReputationService {
    * Whether the list is loaded and the source is turned on
    */
   ready(): boolean {
-    return this.isReady && this.enabled();
+    if (!this.enabled()) return false;
+    // a process whose own download failed (e.g. the API server at startup) picks up
+    // the file once the worker has written it
+    if (!this.isReady) this.reloadIfChanged();
+    return this.isReady;
   }
 
   /**
