@@ -122,11 +122,11 @@ export function buildAgentRunCommand(apiUrl: string, apiKey: string | null = nul
 
 const COLLECTOR_HINTS: Record<string, string> = {
   smart: 'smartctl is missing or cannot open the disks (needs --privileged)',
-  edac: 'No EDAC memory controller (virtual machine or unsupported platform)',
+  edac: 'No EDAC memory controller (no ECC memory, EDAC module not loaded, or virtual machine)',
   hwmon: 'No hwmon sensors exposed by the kernel',
   ipmi: 'No BMC or ipmitool',
   net: 'Cannot read network interface statistics',
-  thermal: 'No thermal zones exposed by the kernel',
+  thermal: 'No CPU thermal throttle counters (not exposed on AMD CPUs)',
   kmsg: 'Cannot read the kernel log (/dev/kmsg)',
   sel: 'No BMC system event log or ipmitool',
 };
