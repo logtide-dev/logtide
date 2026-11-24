@@ -7,6 +7,12 @@
   import Spinner from './Spinner.svelte';
   import Plus from '@lucide/svelte/icons/plus';
   import { checklistStore } from '$lib/stores/checklist';
+  import { organizationsAPI } from '$lib/api/organizations';
+  import {
+    organizationLimitLines,
+    organizationLimitMessage,
+    type UserOrganizationLimits,
+  } from '$lib/utils/limits';
 
   interface Props {
     onSubmit: (data: { name: string; description?: string }) => Promise<void>;
@@ -48,6 +54,30 @@
       error = '';
     }
   });
+
+  // Where the user stands against their organization limits, loaded each
+  // time the dialog opens. Advisory: when it cannot be loaded the form works
+  // as before and the server still enforces the limits.
+  let limits = $state<UserOrganizationLimits | null>(null);
+
+  $effect(() => {
+    if (!open) return;
+    let cancelled = false;
+    organizationsAPI
+      .getLimits()
+      .then((res) => {
+        if (!cancelled) limits = res?.limits ?? null;
+      })
+      .catch(() => {
+        if (!cancelled) limits = null;
+      });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  const limitLines = $derived(organizationLimitLines(limits));
+  const blockedMessage = $derived(organizationLimitMessage(limits));
 </script>
 
 <Dialog bind:open>
@@ -87,6 +117,20 @@
         />
       </div>
 
+      {#if blockedMessage}
+        <div
+          class="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"
+          role="status"
+          data-testid="org-limit-reached"
+        >
+          {blockedMessage}
+        </div>
+      {:else if limitLines.length > 0}
+        <p class="text-xs text-muted-foreground" data-testid="org-limit-usage">
+          {limitLines.join(' ')}
+        </p>
+      {/if}
+
       {#if error}
         <div class="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
           {error}
@@ -104,7 +148,7 @@
         </Button>
         <Button
           type="submit"
-          disabled={submitting || !name.trim()}
+          disabled={submitting || !name.trim() || blockedMessage !== null}
           class="gap-2"
         >
           {#if submitting}

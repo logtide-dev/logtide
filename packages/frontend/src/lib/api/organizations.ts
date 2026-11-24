@@ -2,6 +2,7 @@ import type { Organization, OrganizationWithRole, OrganizationMemberWithUser, Or
 import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 import { apiErrorMessage } from '$lib/utils/email-verification';
+import type { UserOrganizationLimits } from '$lib/utils/limits';
 
 export type { OrganizationMemberWithUser } from '@logtide/shared';
 
@@ -36,7 +37,13 @@ export class OrganizationsAPI {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(apiErrorMessage(error.error, `HTTP ${response.status}`));
+      // Limit denials carry a code in `error` and the sentence in `message`.
+      const code = typeof error.error === 'string' ? error.error : undefined;
+      const sentence =
+        code && /^organization_(creation_)?limit_reached$/.test(code) && typeof error.message === 'string'
+          ? error.message
+          : code;
+      throw new Error(apiErrorMessage(sentence, `HTTP ${response.status}`));
     }
 
     if (response.status === 204) {
@@ -56,6 +63,11 @@ export class OrganizationsAPI {
 
   async getOrganizationBySlug(slug: string): Promise<{ organization: OrganizationWithRole }> {
     return this.request(`/organizations/slug/${slug}`);
+  }
+
+  /** The signed-in user's organization limits and current counts. */
+  async getLimits(): Promise<{ limits: UserOrganizationLimits }> {
+    return this.request('/organizations/limits');
   }
 
   async createOrganization(input: CreateOrganizationInput): Promise<{ organization: Organization }> {
