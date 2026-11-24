@@ -7,6 +7,7 @@ import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
 import { streamTicketService } from '../streaming/stream-ticket-service.js';
 import { matchesServiceToken } from './middleware.js';
+import { isAllowedByAllowlist, normalizeIp } from './origin-allowlist.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -16,51 +17,6 @@ declare module 'fastify' {
     apiKeyId?: string;
     apiKeyType?: ApiKeyType;
   }
-}
-
-/**
- * Check whether the request origin or IP is in the allowlist.
- * Returns true if the request is allowed, false if it must be rejected.
- *
- * - allowedOrigins null/empty → always allowed
- * - Origin header matched against list (browser requests)
- * - If no Origin header, request.ip is matched (server-side requests)
- */
-function checkOriginAllowlist(
-  request: FastifyRequest,
-  allowedOrigins: string[] | null
-): boolean {
-  if (!allowedOrigins || allowedOrigins.length === 0) return true;
-
-  const origin = request.headers['origin'] as string | undefined;
-
-  if (origin) {
-    // Browser request: extract hostname from Origin and match
-    let hostname: string;
-    try {
-      hostname = new URL(origin).hostname;
-    } catch {
-      return false;
-    }
-
-    return allowedOrigins.some((allowed) => {
-      const pattern = allowed.trim();
-      if (pattern.startsWith('*.')) {
-        const domainSuffix = pattern.slice(2); // "example.com"
-        return hostname === domainSuffix || hostname.endsWith('.' + domainSuffix);
-      }
-      // Allow both exact origin match (https://example.com) and hostname-only match (example.com)
-      return origin === pattern || hostname === pattern;
-    });
-  }
-
-  // Server-side request: match IP
-  const ip = request.ip;
-  if (ip) {
-    return allowedOrigins.some((allowed) => allowed.trim() === ip);
-  }
-
-  return false;
 }
 
 /**
@@ -164,10 +120,14 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       }
 
       // Origin/IP allowlist check
-      if (!checkOriginAllowlist(request, result.allowedOrigins)) {
+      const origin = request.headers['origin'] as string | undefined;
+      if (!isAllowedByAllowlist(result.allowedOrigins, origin, request.ip)) {
+        // Name the address we matched: behind a reverse proxy it is the
+        // proxy's own address until TRUST_PROXY is set, and the caller (who
+        // holds a valid key) has no other way to see that.
         reply.code(403).send({
           error: 'Forbidden',
-          message: 'Request origin or IP not in API key allowlist',
+          message: `Request origin or IP not in API key allowlist (request IP: ${request.ip ? normalizeIp(request.ip) : 'unknown'})`,
         });
         return;
       }

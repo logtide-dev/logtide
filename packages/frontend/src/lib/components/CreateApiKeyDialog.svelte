@@ -159,14 +159,15 @@
           </Label>
           <Textarea
             id="allowed-origins"
-            placeholder={"https://app.example.com\n192.168.1.0\n*.mycompany.com"}
+            placeholder={"https://app.example.com\n*.mycompany.com\n203.0.113.7\n203.0.113.0/24"}
             bind:value={originsRaw}
             disabled={submitting}
             rows={3}
           />
           <p class="text-xs text-muted-foreground">
             One per line or comma-separated. Leave empty for no restriction.
-            Matches Origin header (browsers) or request IP (servers).
+            Matches the Origin header (browsers) or the client IP (servers).
+            IPs can be single addresses or CIDR ranges, IPv4 or IPv6.
           </p>
         </div>
 
