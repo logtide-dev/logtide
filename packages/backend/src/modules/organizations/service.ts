@@ -6,6 +6,12 @@ import { withLimitLock } from '../../capabilities/limit-lock.js';
 import { validateSlug } from '../../utils/slug.js';
 import { CacheManager } from '../../utils/cache.js';
 import { capabilities } from '../../capabilities/facade.js';
+import { startOfUtcMonth } from '../../capabilities/month.js';
+import {
+  effectiveUserLimit,
+  summarizeUserOrganizationLimits,
+  type UserOrganizationLimits,
+} from './user-limits.js';
 import type { Organization, OrganizationMember, OrganizationMemberWithUser, OrganizationWithRole, OrgRole } from '@logtide/shared';
 
 export interface CreateOrganizationInput {
@@ -20,7 +26,7 @@ export interface UpdateOrganizationInput {
   description?: string;
 }
 
-/** Thrown when a transfer would exceed MAX_ORGANIZATIONS_PER_USER for the receiver. */
+/** Thrown when a transfer would exceed the receiver's organization limit. */
 export class OrganizationLimitError extends Error {
   constructor(public readonly max: number) {
     super('organization_limit_reached');
@@ -75,6 +81,37 @@ export class OrganizationsService {
       .where('role', '=', 'owner')
       .executeTakeFirst();
     return Number(row?.count ?? 0);
+  }
+
+  /**
+   * The organization limits in force for a user: the instance settings unless
+   * an administrator set an override on the user. null = unlimited.
+   */
+  async getUserOrganizationCaps(
+    userId: string
+  ): Promise<{ maxOwned: number | null; maxCreationsPerMonth: number | null }> {
+    const row = await db
+      .selectFrom('users')
+      .select(['max_organizations', 'max_organization_creations_per_month'])
+      .where('id', '=', userId)
+      .executeTakeFirst();
+    return {
+      maxOwned: effectiveUserLimit(row?.max_organizations, config.MAX_ORGANIZATIONS_PER_USER),
+      maxCreationsPerMonth: effectiveUserLimit(
+        row?.max_organization_creations_per_month,
+        config.MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH
+      ),
+    };
+  }
+
+  /** Limits and current counts for a user, as shown in the UI and checked at creation. */
+  async getUserOrganizationLimits(userId: string, now: Date = new Date()): Promise<UserOrganizationLimits> {
+    const [caps, owned, createdThisMonth] = await Promise.all([
+      this.getUserOrganizationCaps(userId),
+      this.countOwnedOrganizations(userId),
+      this.countCreationsSince(userId, startOfUtcMonth(now)),
+    ]);
+    return summarizeUserOrganizationLimits({ ...caps, owned, createdThisMonth });
   }
 
   /** Count organizations the user created since `since` (survives org deletion). */
@@ -755,8 +792,8 @@ export class OrganizationsService {
           throw new Error('The new owner must be a member of this organization');
         }
 
-        const maxOwned = config.MAX_ORGANIZATIONS_PER_USER;
-        if (maxOwned !== undefined) {
+        const { maxOwned } = await this.getUserOrganizationCaps(newOwnerUserId);
+        if (maxOwned !== null) {
           const owned = await this.countOwnedOrganizations(newOwnerUserId);
           if (owned >= maxOwned) {
             throw new OrganizationLimitError(maxOwned);
@@ -799,8 +836,11 @@ export class OrganizationsService {
         return org.name;
       });
 
+    // The receiver's limit can come from the instance setting or from a
+    // per-user override, so the lock is taken whenever one is in force.
+    const receiverCaps = await this.getUserOrganizationCaps(newOwnerUserId);
     const orgName =
-      config.MAX_ORGANIZATIONS_PER_USER !== undefined
+      receiverCaps.maxOwned !== null
         ? await withLimitLock(`user:${newOwnerUserId}`, 'organizations.create', run)
         : await run();
 

@@ -23,7 +23,11 @@
   import { formatDateShort } from "$lib/utils/datetime";
   import Plus from "@lucide/svelte/icons/plus";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
+  import Gauge from "@lucide/svelte/icons/gauge";
+  import { Alert, AlertDescription } from "$lib/components/ui/alert";
   import { layoutStore } from "$lib/stores/layout";
+  import { getCapabilityUsage } from "$lib/api/usage";
+  import { isAtLimit, projectLimitMessage, usageOfLimit } from "$lib/utils/limits";
 
   // Deleted projects are purged this many days after deletion.
   const HARD_DELETE_GRACE_DAYS = 30;
@@ -60,7 +64,35 @@
   // null means "not loaded / failed" and the cells render a dash.
   let stats = $state<Record<string, ProjectStats> | null>(null);
 
+  // The organization's projects.max limit (null = unlimited or not loaded).
+  // Shown next to the count and used to explain why "New project" is off;
+  // the server enforces it either way.
+  let projectLimit = $state<number | null>(null);
+
+  async function loadProjectLimit(orgId: string) {
+    projectLimit = null;
+    try {
+      const res = await getCapabilityUsage(orgId);
+      if ($currentOrganization?.id !== orgId) return;
+      const cap = res?.capabilities?.find((c) => c.capability === "projects.max");
+      projectLimit = cap?.limit ?? null;
+    } catch {
+      if ($currentOrganization?.id === orgId) projectLimit = null;
+    }
+  }
+
   let activeProjects = $derived(allProjects.filter((p) => !p.deletedAt));
+  let canManageOrg = $derived(
+    $currentOrganization?.role === "owner" || $currentOrganization?.role === "admin",
+  );
+  let atProjectLimit = $derived(isAtLimit(activeProjects.length, projectLimit));
+  let projectLimitNotice = $derived(
+    atProjectLimit && projectLimit !== null ? projectLimitMessage(projectLimit, canManageOrg) : "",
+  );
+  let projectCountLabel = $derived(
+    usageOfLimit(activeProjects.length, projectLimit, "project") ??
+      `${activeProjects.length} ${activeProjects.length === 1 ? "project" : "projects"}`,
+  );
   let deletedProjects = $derived(allProjects.filter((p) => !!p.deletedAt));
 
   function matches(p: Project, q: string): boolean {
@@ -114,6 +146,7 @@
     // Last event, health and stats never block the table; cells degrade without them.
     void orgProjectsStore.load(orgId);
     void projectHealthStore.load(orgId);
+    void loadProjectLimit(orgId);
     stats = null;
     projectsAPI
       .getStats(orgId)
@@ -204,11 +237,15 @@
   <PageHeader
     title="Projects"
     description={browser && $currentOrganization
-      ? `${$currentOrganization.name} - ${activeProjects.length} ${activeProjects.length === 1 ? "project" : "projects"}${deletedProjects.length > 0 ? `, ${deletedProjects.length} deleted` : ""}`
+      ? `${$currentOrganization.name} - ${projectCountLabel}${deletedProjects.length > 0 ? `, ${deletedProjects.length} deleted` : ""}`
       : undefined}
   >
     {#snippet actions()}
-      <Button onclick={() => (showCreateProjectDialog = true)}>
+      <Button
+        onclick={() => (showCreateProjectDialog = true)}
+        disabled={atProjectLimit}
+        title={atProjectLimit ? projectLimitNotice : undefined}
+      >
         <Plus class="w-4 h-4 mr-2" />
         New project
       </Button>
@@ -216,6 +253,25 @@
   </PageHeader>
 
   <div class="space-y-6">
+    {#if atProjectLimit}
+      <Alert data-testid="project-limit-reached" class="border-warning/40 bg-warning/10">
+        <Gauge class="size-4 text-warning-text" />
+        <AlertDescription>
+          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <span>{projectLimitNotice}</span>
+            {#if canManageOrg}
+              <a
+                href="/dashboard/settings/usage"
+                class="text-sm font-medium underline underline-offset-4 hover:text-foreground"
+              >
+                View plan and usage
+              </a>
+            {/if}
+          </div>
+        </AlertDescription>
+      </Alert>
+    {/if}
+
     {#if $currentOrganization}
       <QuotaNearLimitBanner organizationId={$currentOrganization.id} role={$currentOrganization.role} />
     {/if}
@@ -268,7 +324,7 @@
         description="A project holds the logs, traces and metrics of one application. Create one, then connect your app to start sending data."
       >
         {#snippet actions()}
-          <Button onclick={() => (showCreateProjectDialog = true)}>
+          <Button onclick={() => (showCreateProjectDialog = true)} disabled={atProjectLimit}>
             <Plus class="w-4 h-4 mr-2" />
             Create project
           </Button>
@@ -332,7 +388,8 @@
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={restoringProjectId === project.id}
+                        disabled={restoringProjectId === project.id || atProjectLimit}
+                        title={atProjectLimit ? projectLimitNotice : undefined}
                         onclick={() => restoreProject(project.id)}
                         class="gap-1"
                       >

@@ -13,6 +13,7 @@ const {
   mockWriteFileSync,
   mockRenameSync,
   mockRmSync,
+  mockUtimesSync,
   mockConfig,
 } = vi.hoisted(() => ({
   mockExistsSync: vi.fn(),
@@ -22,6 +23,7 @@ const {
   mockWriteFileSync: vi.fn(),
   mockRenameSync: vi.fn(),
   mockRmSync: vi.fn(),
+  mockUtimesSync: vi.fn(),
   mockConfig: { NETAPI_REPUTATION_ENABLED: true },
 }));
 
@@ -34,6 +36,7 @@ vi.mock('fs', () => ({
     writeFileSync: mockWriteFileSync,
     renameSync: mockRenameSync,
     rmSync: mockRmSync,
+    utimesSync: mockUtimesSync,
   },
   existsSync: mockExistsSync,
   mkdirSync: mockMkdirSync,
@@ -42,6 +45,7 @@ vi.mock('fs', () => ({
   writeFileSync: mockWriteFileSync,
   renameSync: mockRenameSync,
   rmSync: mockRmSync,
+  utimesSync: mockUtimesSync,
 }));
 
 vi.mock('../../../config/index.js', () => ({ config: mockConfig }));
@@ -198,6 +202,48 @@ describe('NetapiReputationService (real module)', () => {
       expect(mockRmSync).toHaveBeenCalled();
     });
 
+    it('stamps the file with the server Last-Modified', async () => {
+      mockExistsSync.mockReturnValue(true);
+      const lastModified = 'Tue, 17 Nov 2026 04:00:00 GMT';
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ...okResponse(SAMPLE_LIST),
+          headers: new Headers({ 'Last-Modified': lastModified }),
+        })
+      );
+
+      expect(await netapiReputationService.downloadDatabase()).toBe(true);
+      const when = new Date(lastModified);
+      expect(mockUtimesSync).toHaveBeenCalledWith(expect.stringContaining('netapi.txt'), when, when);
+    });
+
+    it('keeps the list when the mtime cannot be set or Last-Modified is missing/invalid', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockUtimesSync.mockImplementationOnce(() => {
+        throw new Error('EPERM');
+      });
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ...okResponse(SAMPLE_LIST),
+        headers: new Headers({ 'Last-Modified': 'Tue, 17 Nov 2026 04:00:00 GMT' }),
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+      expect(await netapiReputationService.downloadDatabase()).toBe(true);
+
+      mockUtimesSync.mockClear();
+      fetchSpy.mockResolvedValue({ ...okResponse(SAMPLE_LIST), headers: new Headers({ 'Last-Modified': 'garbage' }) });
+      expect(await netapiReputationService.downloadDatabase()).toBe(true);
+      expect(mockUtimesSync).not.toHaveBeenCalled();
+    });
+
+    it('uses a per-process temp file', async () => {
+      mockExistsSync.mockReturnValue(true);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(okResponse(SAMPLE_LIST)));
+
+      await netapiReputationService.downloadDatabase();
+      expect(mockWriteFileSync.mock.calls[0][0]).toContain(`netapi.${process.pid}.tmp`);
+    });
+
     it('skips a second download while one is running', async () => {
       mockExistsSync.mockReturnValue(true);
       let release: (v: unknown) => void = () => {};
@@ -245,6 +291,20 @@ describe('NetapiReputationService (real module)', () => {
       netapiReputationService.checkIp('1.2.3.4');
       netapiReputationService.checkIp('5.6.7.8');
       expect(mockStatSync).not.toHaveBeenCalled();
+    });
+
+    it('becomes ready once another process wrote the file after a failed start', async () => {
+      mockExistsSync.mockReturnValue(false);
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, statusText: 'Service Unavailable' }));
+      expect(await netapiReputationService.initialize()).toBe(false);
+      expect(netapiReputationService.ready()).toBe(false);
+
+      // the worker downloaded the list
+      mockExistsSync.mockReturnValue(true);
+      (netapiReputationService as unknown as Record<string, unknown>)['lastReloadCheck'] = 0;
+
+      expect(netapiReputationService.ready()).toBe(true);
+      expect(netapiReputationService.checkIp('1.2.3.4').listed).toBe(true);
     });
 
     it('keeps the list when the file check fails', async () => {

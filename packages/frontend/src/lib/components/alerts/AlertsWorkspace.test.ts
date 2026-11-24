@@ -269,13 +269,13 @@ describe('AlertsWorkspace', () => {
     expect(document.querySelector('tr[data-state="selected"]')).toBeNull();
   });
 
-  it('Detection packs opens the gallery with the reliability, database and business categories', async () => {
+  it('Detection packs opens the gallery with the reliability, database, business and hardware categories', async () => {
     mount();
     await screen.findByText('Rule p1-rule');
     expect(screen.queryByTestId('packs-dialog')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Detection packs' }));
     const dialog = await screen.findByTestId('packs-dialog');
-    expect(dialog.getAttribute('data-categories')).toBe('reliability,database,business');
+    expect(dialog.getAttribute('data-categories')).toBe('reliability,database,business,hardware');
   });
 
   it('toggle patches one row without reloading', async () => {

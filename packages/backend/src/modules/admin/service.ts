@@ -12,6 +12,12 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { projectsService } from '../projects/service.js';
 import { OrganizationsService } from '../organizations/service.js';
+import { config } from '../../config/index.js';
+import {
+    fromStoredUserLimit,
+    toStoredUserLimit,
+    type UserLimitOverride,
+} from '../organizations/user-limits.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf-8'));
@@ -1452,6 +1458,72 @@ export class AdminService {
             ...user,
             organizations,
             activeSessions: Number(sessionsCount.count),
+            organizationLimits: await this.getUserOrganizationLimits(userId),
+        };
+    }
+
+    /**
+     * A user's organization limits for the admin page: what is in force and
+     * the current counts, the override stored on the user and the instance
+     * settings it replaces (null = unlimited).
+     */
+    async getUserOrganizationLimits(userId: string) {
+        const row = await db
+            .selectFrom('users')
+            .select(['max_organizations', 'max_organization_creations_per_month'])
+            .where('id', '=', userId)
+            .executeTakeFirst();
+        if (!row) {
+            throw new AdminNotFoundError('User not found');
+        }
+        return {
+            effective: await new OrganizationsService().getUserOrganizationLimits(userId),
+            overrides: {
+                maxOwned: fromStoredUserLimit(row.max_organizations),
+                maxCreationsPerMonth: fromStoredUserLimit(row.max_organization_creations_per_month),
+            },
+            instance: {
+                maxOwned: config.MAX_ORGANIZATIONS_PER_USER ?? null,
+                maxCreationsPerMonth: config.MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH ?? null,
+            },
+        };
+    }
+
+    /**
+     * Set or clear the per-user organization limits. Only the fields present
+     * in `changes` are touched. Lowering a limit below what the user already
+     * owns removes nothing: it only blocks new organizations.
+     */
+    async updateUserOrganizationLimits(
+        userId: string,
+        changes: { maxOwned?: UserLimitOverride; maxCreationsPerMonth?: UserLimitOverride }
+    ) {
+        const set: { max_organizations?: number | null; max_organization_creations_per_month?: number | null } = {};
+        if (changes.maxOwned !== undefined) set.max_organizations = toStoredUserLimit(changes.maxOwned);
+        if (changes.maxCreationsPerMonth !== undefined) {
+            set.max_organization_creations_per_month = toStoredUserLimit(changes.maxCreationsPerMonth);
+        }
+
+        const user = await db
+            .selectFrom('users')
+            .select(['id', 'email', 'max_organizations', 'max_organization_creations_per_month'])
+            .where('id', '=', userId)
+            .executeTakeFirst();
+        if (!user) {
+            throw new AdminNotFoundError('User not found');
+        }
+
+        if (Object.keys(set).length > 0) {
+            await db.updateTable('users').set(set).where('id', '=', userId).execute();
+        }
+
+        return {
+            email: user.email,
+            previous: {
+                maxOwned: fromStoredUserLimit(user.max_organizations),
+                maxCreationsPerMonth: fromStoredUserLimit(user.max_organization_creations_per_month),
+            },
+            organizationLimits: await this.getUserOrganizationLimits(userId),
         };
     }
 

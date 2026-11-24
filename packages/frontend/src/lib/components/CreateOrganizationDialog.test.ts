@@ -4,13 +4,32 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 const completeItem = vi.fn();
 vi.mock('$lib/stores/checklist', () => ({ checklistStore: { completeItem: (...a: unknown[]) => completeItem(...a) } }));
 
+const getLimits = vi.hoisted(() => vi.fn());
+vi.mock('$lib/api/organizations', () => ({ organizationsAPI: { getLimits: (...a: unknown[]) => getLimits(...a) } }));
+
 import CreateOrganizationDialog from './CreateOrganizationDialog.svelte';
+
+const limits = (over: Record<string, unknown> = {}) => ({
+  limits: {
+    owned: 1,
+    maxOwned: 3,
+    createdThisMonth: 1,
+    maxCreationsPerMonth: null,
+    canCreate: true,
+    blockedBy: null,
+    ...over,
+  },
+});
 
 function renderDialog(onSubmit: (d: { name: string; description?: string }) => Promise<void>) {
   return render(CreateOrganizationDialog, { props: { onSubmit, open: true } });
 }
 
-beforeEach(() => completeItem.mockReset());
+beforeEach(() => {
+  completeItem.mockReset();
+  getLimits.mockReset();
+  getLimits.mockResolvedValue(limits({ maxOwned: null }));
+});
 
 describe('CreateOrganizationDialog', () => {
   it('uses sentence case copy', () => {
@@ -46,6 +65,37 @@ describe('CreateOrganizationDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create organization' }));
     expect(await screen.findByText('Slug in use')).toBeInTheDocument();
     expect(completeItem).not.toHaveBeenCalled();
+  });
+
+  it('says nothing about limits when the instance has none', async () => {
+    renderDialog(vi.fn());
+    await waitFor(() => expect(getLimits).toHaveBeenCalled());
+    expect(screen.queryByTestId('org-limit-usage')).toBeNull();
+    expect(screen.queryByTestId('org-limit-reached')).toBeNull();
+  });
+
+  it('shows how many organizations the user owns against the limit', async () => {
+    getLimits.mockResolvedValue(limits());
+    renderDialog(vi.fn());
+    expect(await screen.findByTestId('org-limit-usage')).toHaveTextContent('You own 1 of 3 organizations.');
+  });
+
+  it('explains a reached limit and blocks the submit', async () => {
+    getLimits.mockResolvedValue(limits({ owned: 3, canCreate: false, blockedBy: 'owned' }));
+    renderDialog(vi.fn());
+    expect(await screen.findByTestId('org-limit-reached')).toHaveTextContent(
+      'You already own 3 organizations, the most your account can own (3).',
+    );
+    await fireEvent.input(screen.getByLabelText('Organization name'), { target: { value: 'Acme' } });
+    expect(screen.getByRole('button', { name: 'Create organization' })).toBeDisabled();
+  });
+
+  it('keeps the form usable when the limits cannot be loaded', async () => {
+    getLimits.mockRejectedValue(new Error('offline'));
+    renderDialog(vi.fn());
+    await fireEvent.input(screen.getByLabelText('Organization name'), { target: { value: 'Acme' } });
+    await waitFor(() => expect(getLimits).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: 'Create organization' })).toBeEnabled();
   });
 
   it('shows Creating... only while submitting', async () => {

@@ -20,6 +20,8 @@ vi.mock('$lib/api/organizations', () => ({
       return createOrganization(...a);
     }
   },
+  // The create dialog reads the user's organization limits when it opens.
+  organizationsAPI: { getLimits: () => Promise.resolve({ limits: null }) },
 }));
 
 const toastSuccess = vi.fn();

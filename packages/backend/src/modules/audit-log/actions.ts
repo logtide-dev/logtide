@@ -40,6 +40,7 @@ export const AUDIT_ACTIONS = {
   'user.invite_resent': 'user_management',
   'user.removed': 'user_management',
   'user.role_changed': 'user_management',
+  'user.organization_limits_changed': 'user_management',
   'user.left': 'user_management',
   'user.disabled': 'user_management',
   'user.enabled': 'user_management',

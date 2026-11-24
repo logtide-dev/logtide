@@ -110,6 +110,48 @@ describe('projects page', () => {
     expect(orgLoad).toHaveBeenCalledWith('org-1');
   });
 
+  it('shows the project count against the limit of the organization', async () => {
+    getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
+    getCapabilityUsage.mockResolvedValue({
+      capabilities: [{ capability: 'projects.max', kind: 'limit', current: 1, limit: 2, description: 'Projects' }],
+    });
+    render(ProjectsPage);
+    expect(await screen.findByText('Acme - 1 of 2 projects')).toBeInTheDocument();
+    expect(screen.queryByTestId('project-limit-reached')).toBeNull();
+    expect(screen.getByRole('button', { name: 'New project' })).toBeEnabled();
+  });
+
+  it('at the limit it explains why and turns off New project and Restore', async () => {
+    getProjects.mockResolvedValue({
+      projects: [
+        project('p-1', 'Alpha'),
+        project('p-2', 'Beta'),
+        project('p-3', 'Old', { deletedAt: '2026-09-10T10:00:00.000Z' }),
+      ],
+    });
+    getCapabilityUsage.mockResolvedValue({
+      capabilities: [{ capability: 'projects.max', kind: 'limit', current: 2, limit: 2, description: 'Projects' }],
+    });
+    render(ProjectsPage);
+    const notice = await screen.findByTestId('project-limit-reached');
+    expect(notice).toHaveTextContent('This organization has reached its limit of 2 projects.');
+    expect(notice.querySelector('a')?.getAttribute('href')).toBe('/dashboard/settings/usage');
+    expect(screen.getByRole('button', { name: 'New project' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeDisabled();
+  });
+
+  it('members are told to ask an owner or admin, without the usage link', async () => {
+    organizationStore.setCurrentOrganization({ ...(org as object), role: 'member' } as typeof org);
+    getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
+    getCapabilityUsage.mockResolvedValue({
+      capabilities: [{ capability: 'projects.max', kind: 'limit', current: 1, limit: 1, description: 'Projects' }],
+    });
+    render(ProjectsPage);
+    const notice = await screen.findByTestId('project-limit-reached');
+    expect(notice).toHaveTextContent('Ask an owner or admin of the organization to raise it.');
+    expect(notice.querySelector('a')).toBeNull();
+  });
+
   it('opens the create dialog when ?create=1', async () => {
     getProjects.mockResolvedValue({ projects: [project('p-1', 'Alpha')] });
     (page as { url: URL }).url = new URL('http://localhost/dashboard/projects?create=1');

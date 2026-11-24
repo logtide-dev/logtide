@@ -6,7 +6,6 @@ import type { OrgRole } from '@logtide/shared';
 import { auditLogService } from '../audit-log/index.js';
 import { config } from '../../config/index.js';
 import { withLimitLock } from '../../capabilities/limit-lock.js';
-import { startOfUtcMonth } from '../../capabilities/month.js';
 import { isUpgradeHandoffActive, signUpgradeToken, buildUpgradeUrl } from './upgrade-handoff.js';
 import { termsAcceptanceService } from '../users/terms.js';
 
@@ -84,6 +83,14 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
     const organizations = await organizationsService.getUserOrganizations(request.user.id);
 
     return reply.send({ organizations });
+  });
+
+  // How many organizations the current user owns and created this month,
+  // against the limits in force for them (null = unlimited). The UI shows it
+  // before the user tries to create one. A static path, so it wins over /:id.
+  fastify.get('/limits', async (request: any, reply) => {
+    const limits = await organizationsService.getUserOrganizationLimits(request.user.id);
+    return reply.send({ limits });
   });
 
   // Get a single organization by ID
@@ -364,33 +371,27 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
       // One lock per user: the cap counts and the insert must not interleave
       // across parallel POSTs, otherwise both caps can be overshot.
       const outcome = await withLimitLock(`user:${request.user.id}`, 'organizations.create', async () => {
-        const maxOwned = config.MAX_ORGANIZATIONS_PER_USER;
-        if (maxOwned !== undefined) {
-          const owned = await organizationsService.countOwnedOrganizations(request.user.id);
-          if (owned >= maxOwned) {
-            return {
-              denied: {
-                error: 'organization_limit_reached',
-                message: `You can own at most ${maxOwned.toLocaleString('en-US')} organization${maxOwned === 1 ? '' : 's'}`,
-              },
-            };
-          }
+        // Instance settings, or the override an administrator set on this user.
+        const limits = await organizationsService.getUserOrganizationLimits(request.user.id);
+        if (limits.blockedBy === 'owned') {
+          const maxOwned = limits.maxOwned ?? 0;
+          return {
+            denied: {
+              error: 'organization_limit_reached',
+              message: `You can own at most ${maxOwned.toLocaleString('en-US')} organization${maxOwned === 1 ? '' : 's'}`,
+              limits,
+            },
+          };
         }
-
-        const maxCreations = config.MAX_ORGANIZATION_CREATIONS_PER_USER_PER_MONTH;
-        if (maxCreations !== undefined) {
-          const createdThisMonth = await organizationsService.countCreationsSince(
-            request.user.id,
-            startOfUtcMonth(new Date()),
-          );
-          if (createdThisMonth >= maxCreations) {
-            return {
-              denied: {
-                error: 'organization_creation_limit_reached',
-                message: `You can create at most ${maxCreations.toLocaleString('en-US')} organization${maxCreations === 1 ? '' : 's'} per month`,
-              },
-            };
-          }
+        if (limits.blockedBy === 'monthly') {
+          const maxCreations = limits.maxCreationsPerMonth ?? 0;
+          return {
+            denied: {
+              error: 'organization_creation_limit_reached',
+              message: `You can create at most ${maxCreations.toLocaleString('en-US')} organization${maxCreations === 1 ? '' : 's'} per month`,
+              limits,
+            },
+          };
         }
 
         const created = await organizationsService.createOrganization({
