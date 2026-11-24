@@ -4,6 +4,7 @@ import { API_KEY_TYPES } from '@logtide/shared';
 import { context } from '@logtide/shared/context';
 import { apiKeysService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
+import { isValidAllowlistEntry } from '../auth/origin-allowlist.js';
 import { projectsService } from '../projects/service.js';
 import { auditLogService } from '../audit-log/index.js';
 import { emailVerificationService } from '../users/email-verification.js';
@@ -15,7 +16,13 @@ const createApiKeySchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
   type: z.enum(API_KEY_TYPES).default('write'),
   allowedOrigins: z
-    .array(z.string().min(1).max(253))
+    .array(
+      z
+        .string()
+        .min(1)
+        .max(253)
+        .refine(isValidAllowlistEntry, 'Invalid IP range: use CIDR notation such as 203.0.113.0/24'),
+    )
     .max(50, 'Maximum 50 allowed origins')
     .optional()
     .nullable(),

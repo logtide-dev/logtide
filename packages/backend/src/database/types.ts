@@ -104,6 +104,10 @@ export interface UsersTable {
   // when the LOGTIDE_TERMS_* hosting seam is configured.
   terms_accepted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   terms_version: ColumnType<string | null, string | null | undefined, string | null>;
+  // Per-user organization limits (migration 080). NULL = instance setting,
+  // -1 = unlimited, n >= 0 = this user's limit. See organizations/user-limits.ts.
+  max_organizations: ColumnType<number | null, number | null | undefined, number | null>;
+  max_organization_creations_per_month: ColumnType<number | null, number | null | undefined, number | null>;
 }
 
 export interface EmailVerificationTokensTable {

@@ -3,6 +3,7 @@ import { goto } from '$app/navigation';
 import { get } from 'svelte/store';
 import { authStore } from '$lib/stores/auth';
 import { getApiBaseUrl } from '$lib/config';
+import type { UserOrganizationLimits } from '$lib/utils/limits';
 
 export interface SystemStats {
     users: {
@@ -170,6 +171,18 @@ export interface UserDetails extends UserBasic {
         created_at: string;
     }>;
     activeSessions: number;
+    organizationLimits?: UserOrganizationLimitsAdmin;
+}
+
+/** 'default' = the instance setting, 'unlimited' = no limit for this user. */
+export type UserLimitOverride = 'default' | 'unlimited' | number;
+
+export interface UserOrganizationLimitsAdmin {
+    /** What is in force for the user, with the current counts. */
+    effective: UserOrganizationLimits;
+    overrides: { maxOwned: UserLimitOverride; maxCreationsPerMonth: UserLimitOverride };
+    /** The instance settings (null = unlimited). */
+    instance: { maxOwned: number | null; maxCreationsPerMonth: number | null };
 }
 
 export interface UsersListResponse {
@@ -677,6 +690,18 @@ export class AdminAPI {
 
     async updateUserRole(userId: string, isAdmin: boolean): Promise<{ message: string; user: UserBasic }> {
         return this.send('PATCH', `/users/${userId}/role`, { is_admin: isAdmin }, 'Failed to update user role');
+    }
+
+    async updateUserOrganizationLimits(
+        userId: string,
+        limits: { maxOwned?: UserLimitOverride; maxCreationsPerMonth?: UserLimitOverride },
+    ): Promise<{ organizationLimits: UserOrganizationLimitsAdmin }> {
+        return this.send(
+            'PATCH',
+            `/users/${userId}/organization-limits`,
+            limits,
+            'Failed to update organization limits',
+        );
     }
 
     async resetUserPassword(userId: string, newPassword: string): Promise<{ message: string; user: UserBasic }> {

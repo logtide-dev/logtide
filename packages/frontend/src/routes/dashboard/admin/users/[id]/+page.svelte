@@ -25,6 +25,7 @@
     import { generatePassword } from "$lib/components/admin/admin-list-url";
     import { Shield, ShieldOff, Key } from "@lucide/svelte";
     import { formatCount } from "$lib/utils/format-number";
+    import UserOrganizationLimitsCard from "$lib/components/admin/UserOrganizationLimitsCard.svelte";
 
     type Membership = UserDetails["organizations"][number];
 
@@ -259,6 +260,16 @@
                 {/snippet}
             </DataTable>
         </SettingsSection>
+
+        {#if user.organizationLimits}
+            <UserOrganizationLimitsCard
+                userId={user.id}
+                limits={user.organizationLimits}
+                onSaved={(organizationLimits) => {
+                    if (user) user = { ...user, organizationLimits };
+                }}
+            />
+        {/if}
 
         <SettingsSection
             title="Role"

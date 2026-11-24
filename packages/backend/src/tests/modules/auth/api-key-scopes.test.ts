@@ -416,10 +416,11 @@ describe('API Key Scopes', () => {
         });
 
         it('should allow IP-based requests when IP is in allowlist', async () => {
-            // supertest connects via IPv6-mapped address ::ffff:127.0.0.1
+            // supertest connects via the IPv6-mapped address ::ffff:127.0.0.1,
+            // which must match the plain IPv4 entry (and a range around it)
             const key = await createTestApiKey({
                 type: 'write',
-                allowedOrigins: ['::ffff:127.0.0.1'],
+                allowedOrigins: ['127.0.0.0/8'],
             });
 
             // Request without Origin header (server-side), IP will be checked

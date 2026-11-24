@@ -481,7 +481,7 @@
 	<DetectionPacksGalleryDialog
 		bind:open={showPacks}
 		organizationId={orgId}
-		categories={['reliability', 'database', 'business']}
+		categories={['reliability', 'database', 'business', 'hardware']}
 	/>
 	<CreateAlertDialog
 		bind:open={showCreate}

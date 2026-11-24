@@ -1,5 +1,6 @@
 import { geoLite2Service } from './geolite2-service.js';
 import { ipsumService } from './ipsum-service.js';
+import { netapiReputationService, NETAPI_ATTRIBUTION } from './netapi-service.js';
 import type { IpReputationData, GeoIpData } from './types';
 
 export class EnrichmentService {
@@ -28,13 +29,24 @@ export class EnrichmentService {
     } else {
       console.warn('[EnrichmentService] IPsum not available - check network connection');
     }
+
+    // Initialize the NetAPI honeypot list (skipped when NETAPI_REPUTATION_ENABLED=false)
+    if (netapiReputationService.enabled()) {
+      const netapiReady = await netapiReputationService.initialize();
+      if (netapiReady) {
+        console.log('[EnrichmentService] NetAPI honeypot list ready');
+      } else {
+        console.warn('[EnrichmentService] NetAPI honeypot list not available - check network connection');
+      }
+    }
   }
 
   /**
-   * Update databases if needed (call daily from worker)
+   * Update databases if needed (called hourly from the worker; GeoLite2 and IPsum
+   * still refresh once a day, the NetAPI list every hour)
    */
-  async updateDatabasesIfNeeded(): Promise<{ geoLite2: boolean; ipsum: boolean }> {
-    const results = { geoLite2: false, ipsum: false };
+  async updateDatabasesIfNeeded(): Promise<{ geoLite2: boolean; ipsum: boolean; netapi: boolean }> {
+    const results = { geoLite2: false, ipsum: false, netapi: false };
 
     if (geoLite2Service.needsUpdate()) {
       console.log('[EnrichmentService] GeoLite2 database needs update');
@@ -50,20 +62,47 @@ export class EnrichmentService {
       }
     }
 
+    if (netapiReputationService.needsUpdate()) {
+      results.netapi = await netapiReputationService.downloadDatabase();
+    }
+
     return results;
   }
 
   /**
-   * Check IP reputation using local IPsum database
-   * No API calls - instant local lookup
+   * Check IP reputation using the local IPsum database and the NetAPI honeypot list
+   * No API calls - instant local lookups
    */
   checkIpReputation(ip: string): IpReputationData | null {
-    if (!ipsumService.ready()) {
-      if (!this.warnedIpsumNotReady) {
-        this.warnedIpsumNotReady = true;
-        console.warn('[EnrichmentService] IPsum not ready - IP reputation checks disabled until reload');
-      }
-      return null;
+    const ipsumReady = ipsumService.ready();
+    const netapiReady = netapiReputationService.ready();
+
+    if (!ipsumReady && !this.warnedIpsumNotReady) {
+      this.warnedIpsumNotReady = true;
+      console.warn(
+        netapiReady
+          ? '[EnrichmentService] IPsum not ready - IP reputation uses the NetAPI list only until reload'
+          : '[EnrichmentService] IPsum not ready - IP reputation checks disabled until reload'
+      );
+    }
+
+    // An address on the NetAPI list attacked honeypot sensors within the last 48 hours
+    if (netapiReady && netapiReputationService.checkIp(ip).listed) {
+      const ipsum = ipsumReady ? ipsumService.checkIp(ip) : null;
+      return {
+        ip,
+        reputation: 'malicious',
+        // keep the IPsum score when IPsum also lists the address
+        ...(ipsum && ipsum.score > 0 ? { abuseConfidenceScore: Math.min(100, ipsum.score * 10) } : {}),
+        source: 'NetAPI',
+        attribution: { ...NETAPI_ATTRIBUTION },
+        lastChecked: new Date(),
+      };
+    }
+
+    if (!ipsumReady) {
+      if (!netapiReady) return null;
+      return { ip, reputation: 'clean', source: 'NetAPI', lastChecked: new Date() };
     }
 
     const result = ipsumService.checkIp(ip);
@@ -181,7 +220,7 @@ export class EnrichmentService {
     geoIp: boolean;
   } {
     return {
-      ipReputation: ipsumService.ready(),
+      ipReputation: ipsumService.ready() || netapiReputationService.ready(),
       geoIp: geoLite2Service.isReady(),
     };
   }
@@ -206,14 +245,17 @@ export class EnrichmentService {
   } {
     const geoInfo = geoLite2Service.getInfo();
     const ipsumInfo = ipsumService.getInfo();
+    const netapiInfo = netapiReputationService.getInfo();
 
     return {
       ipReputation: {
         configured: true, // No API key needed
-        ready: ipsumInfo.ready,
-        totalIps: ipsumInfo.totalIps,
+        ready: ipsumInfo.ready || netapiInfo.ready,
+        totalIps: ipsumInfo.totalIps + (netapiInfo.ready ? netapiInfo.totalIps : 0),
         lastUpdate: ipsumInfo.lastUpdate,
-        source: 'IPsum (30+ threat intel feeds)',
+        source: netapiInfo.ready
+          ? 'IPsum (30+ threat intel feeds) + NetAPI honeypot feed (CC BY 4.0)'
+          : 'IPsum (30+ threat intel feeds)',
       },
       geoIp: {
         configured: true, // No API key needed

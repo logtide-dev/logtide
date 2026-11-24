@@ -209,7 +209,13 @@ export interface IpReputationData {
   isp?: string;
   domain?: string;
   usageType?: string;
-  source: 'IPsum' | 'AbuseIPDB' | 'manual';
+  source: 'IPsum' | 'NetAPI' | 'AbuseIPDB' | 'manual';
+  // Licence notice of the source that produced the verdict (NetAPI: CC BY 4.0)
+  attribution?: {
+    name: string;
+    license: string;
+    url: string;
+  };
   lastChecked: Date | string;
 }
 

@@ -522,7 +522,7 @@ setInterval(runAutoGrouping, 5 * 60 * 1000);
 setTimeout(runAutoGrouping, 10000);
 
 // ============================================================================
-// Enrichment Databases Daily Update (GeoLite2 + IPsum)
+// Enrichment Databases Update (GeoLite2 + IPsum daily, NetAPI honeypot list hourly)
 // ============================================================================
 
 async function updateEnrichmentDatabases() {
@@ -543,6 +543,10 @@ async function updateEnrichmentDatabases() {
           hub.captureLog('info', 'IPsum database updated successfully');
         }
       }
+
+      if (results.netapi) {
+        console.log('[Worker] NetAPI honeypot list checked');
+      }
     } catch (error) {
       console.error('Error updating enrichment databases:', error);
       if (isInternalLoggingEnabled()) {
@@ -554,8 +558,9 @@ async function updateEnrichmentDatabases() {
   });
 }
 
-// Run database updates every 24 hours
-setInterval(updateEnrichmentDatabases, 24 * 60 * 60 * 1000);
+// Check every hour: each source decides whether it is due (GeoLite2 and IPsum after
+// 24 hours, the NetAPI honeypot list every hour with a conditional request)
+setInterval(updateEnrichmentDatabases, 60 * 60 * 1000);
 
 // Check for updates on start (after 30 seconds delay)
 setTimeout(updateEnrichmentDatabases, 30000);
