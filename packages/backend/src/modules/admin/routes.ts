@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { z } from 'zod';
 import { adminService, AdminConflictError, AdminNotFoundError } from './service.js';
 import { validateUuidParams } from './params.js';
 import {
@@ -15,6 +16,19 @@ import { requireAdmin } from './middleware.js';
 import { auditLogService } from '../audit-log/index.js';
 import { db } from '../../database/connection.js';
 import { assertStrongPassword, WeakPasswordError } from '../../lib/password-policy.js';
+
+const userLimitOverrideSchema = z.union([
+    z.literal('default'),
+    z.literal('unlimited'),
+    z.number().int().min(0).max(100000),
+]);
+
+const userOrganizationLimitsSchema = z
+    .object({
+        maxOwned: userLimitOverrideSchema.optional(),
+        maxCreationsPerMonth: userLimitOverrideSchema.optional(),
+    })
+    .strict();
 
 /** Map typed service errors to 404/409; anything else is a 500 with `fallback`. */
 function sendServiceError(reply: FastifyReply, error: unknown, fallback: string) {
@@ -420,6 +434,46 @@ export async function adminRoutes(fastify: FastifyInstance) {
             } catch (error) {
                 console.error('Error updating user role:', error);
                 return sendServiceError(reply, error, 'Failed to update user role');
+            }
+        }
+    );
+
+    // PATCH /api/v1/admin/users/:id/organization-limits - Per-user organization limits
+    // Each field is 'default' (instance setting), 'unlimited' or a number >= 0.
+    fastify.patch(
+        '/users/:id/organization-limits',
+        {
+            config: {
+                rateLimit: rateLimitConfig,
+            },
+        },
+        async (request, reply) => {
+            const { id } = request.params as { id: string };
+            const parsed = userOrganizationLimitsSchema.safeParse(request.body);
+            if (!parsed.success) {
+                return reply.status(400).send({
+                    error: "Each limit must be 'default', 'unlimited' or a whole number from 0 to 100000",
+                });
+            }
+
+            try {
+                const result = await adminService.updateUserOrganizationLimits(id, parsed.data);
+
+                await auditLogService.record({
+                    action: 'user.organization_limits_changed',
+                    target: { type: 'user', id },
+                    organizationId: null,
+                    metadata: {
+                        targetEmail: result.email,
+                        previous: result.previous,
+                        current: result.organizationLimits.overrides,
+                    },
+                });
+
+                return reply.send({ organizationLimits: result.organizationLimits });
+            } catch (error) {
+                console.error('Error updating user organization limits:', error);
+                return sendServiceError(reply, error, 'Failed to update organization limits');
             }
         }
     );
