@@ -117,6 +117,12 @@ Positive integer; unset = unlimited; anything else aborts startup. It counts org
 
 Positive integer; unset = unlimited; anything else aborts startup. Monthly quotas are per organization and `MAX_ORGANIZATIONS_PER_USER` only counts organizations the user owns right now, so without this cap a user at the limit could delete an organization (a hard delete) and create a fresh one with zero month-to-date usage, resetting the free quota as often as they like. This cap counts creations instead of ownership: every `POST /api/v1/organizations` appends a row to `organization_creation_log` (always, even when the variable is unset, so turning the cap on later already has history), and the row survives the organization being deleted. When the number of rows for the user since the start of the current UTC calendar month (the same boundary the monthly quotas use) reaches the limit, the endpoint answers `403 { "error": "organization_creation_limit_reached", "message": ... }`. `MAX_ORGANIZATIONS_PER_USER` is checked first. The count and the insert run under a per-user lock, so parallel requests cannot overshoot either cap. There is no backfill: only creations made after migration 060 count.
 
+### Per-user organization limits
+
+Both limits above apply to every user. An instance administrator can replace either one for a single user from **Admin > Users > (user) > Organization limits**, or with `PATCH /api/v1/admin/users/:id/organization-limits` and a body such as `{ "maxOwned": 10, "maxCreationsPerMonth": "unlimited" }`. Each field is optional and takes `"default"` (the instance setting), `"unlimited"` or a whole number from 0 to 100000; `0` means the user cannot own or create organizations. The override also applies on an instance that sets no limit, and to ownership transfers. Lowering a limit removes nothing, it only blocks new organizations. Every change is recorded in the audit log as `user.organization_limits_changed` (migration 080).
+
+Users see where they stand before they try: `GET /api/v1/organizations/limits` returns `{ "limits": { "owned", "maxOwned", "createdThisMonth", "maxCreationsPerMonth", "canCreate", "blockedBy" } }` for the signed-in user (`null` = unlimited), and the "Create organization" dialog shows it. The two `403` denials carry the same object in `limits`.
+
 ### REQUIRE_EMAIL_VERIFICATION
 
 `true` or `false` (default `false`); any other value aborts startup. **`true` requires `SMTP_HOST`**, otherwise startup fails, because no verification email could be sent.
