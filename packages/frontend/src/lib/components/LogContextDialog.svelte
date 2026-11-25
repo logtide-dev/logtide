@@ -226,7 +226,7 @@
 		{#if expandedJson.has(key)}
 			<pre
 				aria-label="Log as JSON"
-				class="scrollbar-thin mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-2 font-mono text-xs leading-relaxed">{#each jsonSegments(prettyJson(log)).map(breakEscapedNewlines) as seg, i (i)}<span class={jsonClass[seg.kind]}>{seg.text}</span>{/each}</pre>
+				class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-2 font-mono text-xs leading-relaxed">{#each jsonSegments(prettyJson(log)).map(breakEscapedNewlines) as seg, i (i)}<span class={jsonClass[seg.kind]}>{seg.text}</span>{/each}</pre>
 		{/if}
 	</details>
 {/snippet}
@@ -281,7 +281,7 @@
 {/snippet}
 
 <Dialog.Root {open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-	<Dialog.Content class="scrollbar-thin max-h-[80vh] max-w-4xl overflow-y-auto">
+	<Dialog.Content class="max-h-[80vh] max-w-4xl overflow-y-auto">
 		<Dialog.Header>
 			<Dialog.Title>Log context</Dialog.Title>
 			<Dialog.Description>
@@ -402,7 +402,7 @@
 									{/if}
 								</button>
 								{#if breadcrumbsOpen}
-									<div class="scrollbar-thin mt-2 max-h-64 overflow-auto">
+									<div class="mt-2 max-h-64 overflow-auto">
 										<BreadcrumbTimeline {breadcrumbs} eventTime={selectedLog.time} />
 									</div>
 								{/if}

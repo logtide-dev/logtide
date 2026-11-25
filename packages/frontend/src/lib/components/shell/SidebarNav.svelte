@@ -44,7 +44,7 @@
   </a>
 {/snippet}
 
-<nav class="flex-1 p-4 space-y-1 overflow-y-auto scrollbar-thin" aria-label="Main">
+<nav class="flex-1 p-4 space-y-1 overflow-y-auto" aria-label="Main">
   {#each NAV_SECTIONS as section, sectionIdx (section.id)}
     {#if sectionIdx > 0}
       <Separator class="my-2" />
