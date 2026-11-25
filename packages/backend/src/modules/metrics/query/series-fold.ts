@@ -77,6 +77,19 @@ export function applyRate(series: GridSeries[], grid: number[], stepMs: number, 
   });
 }
 
+/**
+ * Rates of a delta counter: the engine `sum` of each bucket divided by the
+ * bucket length in seconds. A bucket still open at `openAfterMs` is partial
+ * and dropped.
+ */
+export function applyDeltaRate(series: GridSeries[], grid: number[], stepMs: number, openAfterMs: number): GridSeries[] {
+  const seconds = stepMs / 1000;
+  return series.map((s) => ({
+    labels: s.labels,
+    values: s.values.map((v, i) => (v === null || grid[i] + stepMs > openAfterMs ? null : v / seconds)),
+  }));
+}
+
 /** Combine values with a space aggregation; null when there is nothing to combine. */
 export function combine(values: number[], agg: MetricSpaceAggregation): number | null {
   if (values.length === 0) return null;
