@@ -47,9 +47,10 @@ const aggregateMetrics = vi.fn(async (p: MetricAggregateParams) => {
         histogram = hs[hs.length - 1];
       } else {
         const first = hs[0];
-        const same = hs.filter((h) => h.bounds.length === first.bounds.length);
+        const same = hs.filter((h) => h.grid === first.grid && h.counts.length === first.counts.length);
         histogram = {
           bounds: first.bounds,
+          ...(first.grid !== undefined ? { grid: first.grid } : {}),
           counts: first.counts.map((_, i) => same.reduce((a, h) => a + h.counts[i], 0)),
           sum: same.reduce((a, h) => a + h.sum, 0),
           count: same.reduce((a, h) => a + h.count, 0),
@@ -89,6 +90,7 @@ vi.mock('../../../../modules/metrics/query/units.js', async (importOriginal) => 
 });
 
 import { runMetricQuery, type ResolvedMetricQuery } from '../../../../modules/metrics/query/service.js';
+import { EXP_CANONICAL_BOUNDS, EXP_GRID_ID, EXP_GRID_MIN_INDEX } from '../../../../modules/otlp/exp-histogram-grid.js';
 import type { MetricQuerySpec } from '@logtide/shared';
 
 const T0 = Date.parse('2026-11-25T00:00:00.000Z');
@@ -226,6 +228,46 @@ describe('histogram queries', () => {
     const res = await run(base([q({ metricName: 'rpc.latency', aggregation: 'p50' })]));
     expect(aggregateMetrics.mock.calls[0][0].aggregation).toBe('hist_sum');
     expect(values(res.series[0])[0]).toBeCloseTo(3);
+  });
+
+  it('grid points (exp histograms) are expanded, and continue a series stored with explicit bounds', async () => {
+    catalog.entries.set('rpc.grid', { unit: 's', type: 'exp_histogram', temporality: 'cumulative' });
+    // Canonical slot of bucket index i, i.e. (2^(i/4), 2^((i+1)/4)].
+    const slot = (i: number) => 2 + i - EXP_GRID_MIN_INDEX;
+    const counts = (entries: Record<number, number>) => {
+      const out = new Array<number>(EXP_CANONICAL_BOUNDS.length + 1).fill(0);
+      for (const [k, v] of Object.entries(entries)) out[slot(Number(k))] = v;
+      return out;
+    };
+    const total = (c: number[]) => c.reduce((a, b) => a + b, 0);
+    const grid = (c: number[], sum: number): MetricHistogramValue => ({ bounds: [], grid: EXP_GRID_ID, counts: c, sum, count: total(c) });
+    // Minute 0 was stored before 1.8 fix wave 2: explicit bounds, same grid.
+    push(0, hist(counts({ 0: 10 }), 11, [...EXP_CANONICAL_BOUNDS]), 'a', '/x', 'rpc.grid');
+    push(1, grid(counts({ 0: 10, 4: 10 }), 33), 'a', '/x', 'rpc.grid');
+    push(2, grid(counts({ 0: 14, 4: 10 }), 37.4), 'a', '/x', 'rpc.grid');
+
+    const res = await run(base([q({ metricName: 'rpc.grid', aggregation: 'p50' }), q({ id: 'B', metricName: 'rpc.grid', aggregation: 'count' })]));
+    expect(aggregateMetrics.mock.calls[0][0].aggregation).toBe('hist_last');
+    const p50 = values(res.series.find((s) => s.queryId === 'A')!);
+    expect(p50[0]).toBeNull();
+    // Not a reset across the explicit -> grid change: the delta is the 10 new values in (2, 2^1.25].
+    expect(p50[1]).toBeCloseTo(2 + (2 ** 1.25 - 2) * 0.5, 9);
+    expect(p50[2]).toBeCloseTo(1 + (2 ** 0.25 - 1) * 0.5, 9);
+    expect(values(res.series.find((s) => s.queryId === 'B')!)).toEqual([null, 10, 4, null, null]);
+  });
+
+  it('delta grid points merge with explicit-bounds points of other series', async () => {
+    catalog.entries.set('rpc.grid', { unit: 's', type: 'exp_histogram', temporality: 'delta' });
+    const c = new Array<number>(EXP_CANONICAL_BOUNDS.length + 1).fill(0);
+    c[2 + 0 - EXP_GRID_MIN_INDEX] = 10; // (1, 2^0.25]
+    push(0, { bounds: [], grid: EXP_GRID_ID, counts: c, sum: 11, count: 10 }, 'a', '/x', 'rpc.grid');
+    push(0, hist([10, 0], 5, [0.5]), 'b', '/x', 'rpc.grid');
+    // An unknown grid id is dropped, never read as bounds [].
+    push(0, { bounds: [], grid: 'exp2-s9-v9', counts: [1, 2, 3], sum: 1, count: 6 }, 'c', '/x', 'rpc.grid');
+    const res = await run(base([q({ metricName: 'rpc.grid', aggregation: 'count' }), q({ id: 'B', metricName: 'rpc.grid', aggregation: 'p50' })]));
+    expect(values(res.series.find((s) => s.queryId === 'A')!)[0]).toBe(20);
+    // union: 10 values <= 0.5 then 10 in (1, 2^0.25]: rank 10 ends the 0.5 bucket
+    expect(values(res.series.find((s) => s.queryId === 'B')!)[0]).toBeCloseTo(0.5, 9);
   });
 
   it('merges histograms with different bounds into the union', async () => {

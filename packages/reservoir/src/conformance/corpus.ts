@@ -458,6 +458,45 @@ const HISTOGRAM_ROWS: HistogramRow[] = [
   { id: 'HA4', t: 31, route: '/a', service: 'api', histogram: hist([4, 4, 2], 600, 10) },
 ];
 
+/** 1.8 histogram metric whose points mostly carry a grid id, only in PROJECT_E. */
+export const METRIC_GRID_LATENCY = 'rpc.server.duration';
+
+/** Grid ids used by the conformance rows (opaque to the engines). */
+export const GRID_G1 = 'conf-grid-1';
+export const GRID_G2 = 'conf-grid-2';
+
+const gridHist = (grid: string, counts: number[], sum: number, count: number): MetricRecord['histogramData'] => ({
+  grid,
+  bucket_counts: counts,
+  sum,
+  count,
+});
+
+// Grid points (grid id + counts, no explicit_bounds) mixed with points stored
+// with explicit bounds, over 5m buckets. The merge class of a grid point is
+// (grid id, counts length); an explicit-bounds point is its own class family
+// (identical bounds), so the two never add up. GA4 has one count more than
+// the other g1 points (other class). GB5 carries a grid AND explicit_bounds:
+// the grid wins. GN1 has an empty grid id and no bounds: ignored.
+const GRID_HISTOGRAM_ROWS: HistogramRow[] = [
+  // bucket 0
+  { id: 'GA1', t: 1, route: '/a', service: 'api', histogram: gridHist(GRID_G1, [1, 2, 0], 10, 3) },
+  { id: 'GB1', t: 2, route: '/b', service: 'web', histogram: hist([1, 1, 1], 100, 3) },
+  { id: 'GA2', t: 3, route: '/a', service: 'api', histogram: gridHist(GRID_G1, [0, 1, 4], 50, 5) },
+  // bucket 5
+  { id: 'GB2', t: 6, route: '/b', service: 'web', histogram: gridHist(GRID_G1, [2, 0, 0], 4, 2) },
+  { id: 'GA3', t: 7, route: '/a', service: 'api', histogram: gridHist(GRID_G2, [1, 1, 1], 30, 3) },
+  { id: 'GB3', t: 8, route: '/b', service: 'web', histogram: hist([0, 0, 1], 500, 1) },
+  { id: 'GN1', t: 9, route: '/b', service: 'web', histogram: { grid: '', bucket_counts: [9, 9, 9], sum: 1, count: 27 } },
+  // bucket 10
+  { id: 'GA4', t: 11, route: '/a', service: 'api', histogram: gridHist(GRID_G1, [1, 0, 0, 0], 1, 1) },
+  { id: 'GA5', t: 12, route: '/a', service: 'api', histogram: gridHist(GRID_G1, [0, 1, 0], 5, 1) },
+  { id: 'GB4', t: 13, route: '/b', service: 'web', histogram: gridHist(GRID_G1, [0, 0, 2], 40, 2) },
+  // bucket 15
+  { id: 'GB5', t: 16, route: '/b', service: 'web', histogram: { ...gridHist(GRID_G1, [3, 0, 0], 3, 3), explicit_bounds: [1, 2] } },
+  { id: 'GA6', t: 17, route: '/a', service: 'api', histogram: gridHist(GRID_G1, [1, 0, 0], 1, 1) },
+];
+
 const serviceOf = (row: SourceRow): string => {
   const name = row.resource['service.name'];
   return typeof name === 'string' ? name : 'unknown';
@@ -501,6 +540,21 @@ export const CORPUS_METRICS: readonly { readonly id: string; readonly record: Me
       metricName: METRIC_LATENCY,
       metricType: 'histogram',
       value: row.histogram?.count ?? 7,
+      serviceName: row.service,
+      attributes: { 'http.route': row.route },
+      resourceAttributes: { 'service.name': row.service },
+      ...(row.histogram ? { histogramData: structuredClone(row.histogram) } : {}),
+    } satisfies MetricRecord,
+  })),
+  ...GRID_HISTOGRAM_ROWS.map((row) => Object.freeze({
+    id: row.id,
+    record: {
+      time: minutes(row.t),
+      organizationId: ORG_ID,
+      projectId: PROJECT_E,
+      metricName: METRIC_GRID_LATENCY,
+      metricType: 'exp_histogram',
+      value: row.histogram?.count ?? 0,
       serviceName: row.service,
       attributes: { 'http.route': row.route },
       resourceAttributes: { 'service.name': row.service },

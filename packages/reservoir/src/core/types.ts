@@ -509,6 +509,15 @@ export interface HistogramData {
   /** Histogram: bucket counts per explicit bound */
   bucket_counts?: number[];
   explicit_bounds?: number[];
+  /**
+   * 1.8: id of a canonical bucket grid (e.g. "exp2-s2-v1", exponential
+   * histograms re-bucketed at ingest). When set, bucket_counts are the counts
+   * on that grid and explicit_bounds is omitted: the engines treat the id as
+   * opaque (merge class key, returned as MetricHistogramValue.grid) and the
+   * backend expands it to explicit bounds. Takes precedence over
+   * explicit_bounds when both are present.
+   */
+  grid?: string;
   /** ExponentialHistogram fields */
   scale?: number;
   zero_count?: number;
@@ -594,10 +603,14 @@ export interface MetricQueryResult {
  * - hist_sum: element-wise sum of bucket_counts, sum of sum and count, over
  *   every point in the bucket (per group). For delta temporality.
  * Merge classes: only points with IDENTICAL explicit_bounds (same length and
- * same values in order) are added together. The pick is the class of the
- * latest point of the bucket (per group); its bounds are returned and points
- * with other bounds are skipped (ties on time: engine-defined). Points without
- * histogram_data or buckets are ignored. MetricTimeBucket.value = count.
+ * same values in order) are added together. A point with a `grid` id
+ * (HistogramData.grid) is valid when bucket_counts is a non-empty array; its
+ * merge class key is the grid id plus the bucket_counts length (never its
+ * bounds), so grid points and explicit-bounds points are separate classes.
+ * The pick is the class of the latest point of the bucket (per group); its
+ * bounds (or grid id, with bounds []) are returned and points of other classes
+ * are skipped (ties on time: engine-defined). Points without histogram_data or
+ * buckets are ignored. MetricTimeBucket.value = count.
  */
 export type MetricAggregationFn =
   | 'avg'
@@ -614,8 +627,18 @@ export type MetricAggregationFn =
 
 /** 1.8: a histogram value returned by hist_last / hist_sum. */
 export interface MetricHistogramValue {
-  /** Explicit upper bounds (length n); counts has n + 1 entries (last is +Inf). */
+  /**
+   * Explicit upper bounds (length n); counts has n + 1 entries (last is +Inf).
+   * Empty when `grid` is set.
+   */
   bounds: number[];
+  /**
+   * 1.8: the canonical grid id of the merge class (HistogramData.grid), set
+   * for points stored with a grid instead of explicit bounds. The engines do
+   * not know the grid's bounds: `bounds` is then [] and the caller expands
+   * the id (counts are the counts on that grid).
+   */
+  grid?: string;
   counts: number[];
   sum: number;
   count: number;

@@ -1938,21 +1938,24 @@ export class ClickHouseEngine extends StorageEngine {
     const histogram = params.aggregation === 'hist_last' || params.aggregation === 'hist_sum';
     let query: string;
     if (histogram) {
-      // hist_last / hist_sum: points with explicit buckets only. The inner
-      // level aggregates per bucket, group and explicit_bounds: a merge class
-      // is the points whose bounds are identical (element-wise sumForEach for
-      // hist_sum, argMax by time for hist_last). The outer level keeps the
-      // class of the latest point (the pick); points with other bounds, even
-      // of the same length, are never added together.
+      // hist_last / hist_sum: points with buckets only. The inner level
+      // aggregates per bucket, group and merge class (element-wise
+      // sumForEach for hist_sum, argMax by time for hist_last): a class is
+      // the points whose explicit_bounds are identical or, for points stored
+      // on a canonical grid (histogram_data.grid), the same grid id and
+      // bucket_counts length (bounds []). The outer level keeps the class of
+      // the latest point (the pick); points of other classes, even of the
+      // same length, are never added together.
       // histogram_data is Nullable(String); arrays cannot be Nullable.
       const hd = `ifNull(histogram_data, '')`;
       const counts = `JSONExtract(${hd}, 'bucket_counts', 'Array(Float64)')`;
       const bounds = `JSONExtract(${hd}, 'explicit_bounds', 'Array(Float64)')`;
+      // '' when missing or not a string.
+      const grid = `JSONExtractString(${hd}, 'grid')`;
       const valid = [
         `JSONHas(${hd}, 'bucket_counts')`,
-        `JSONHas(${hd}, 'explicit_bounds')`,
         `length(${counts}) > 0`,
-        `length(${counts}) = length(${bounds}) + 1`,
+        `(${grid} != '' OR (JSONHas(${hd}, 'explicit_bounds') AND length(${counts}) = length(${bounds}) + 1))`,
       ];
       const histWhere = `${where} AND ${valid.join(' AND ')}`;
       const keys = groupByColumns.join(', ');
@@ -1961,24 +1964,26 @@ export class ClickHouseEngine extends StorageEngine {
         `toStartOfInterval(time, INTERVAL ${interval}) AS bucket`,
         ...selectExtra,
         'time',
-        `${bounds} AS h_bounds`,
+        `${grid} AS h_grid`,
+        `if(h_grid != '', emptyArrayFloat64(), ${bounds}) AS h_bounds`,
         `${counts} AS h_counts`,
         `JSONExtract(${hd}, 'sum', 'Float64') AS h_sum`,
         `JSONExtract(${hd}, 'count', 'Float64') AS h_count`,
       ].join(', ');
       const classValue = params.aggregation === 'hist_last'
-        ? 'argMax(tuple(h_bounds, h_counts, h_sum, h_count), time)'
-        : 'tuple(argMax(h_bounds, time), sumForEach(h_counts), sum(h_sum), sum(h_count))';
+        ? 'argMax(tuple(h_bounds, h_counts, h_sum, h_count, h_grid), time)'
+        : 'tuple(any(h_bounds), sumForEach(h_counts), sum(h_sum), sum(h_count), any(h_grid))';
       query = `SELECT ${['bucket', ...labelCols].join(', ')},
           argMax(h_class, last_t) AS picked,
           tupleElement(picked, 1) AS h_bounds,
           tupleElement(picked, 2) AS h_counts,
           tupleElement(picked, 3) AS h_sum,
-          tupleElement(picked, 4) AS h_count
+          tupleElement(picked, 4) AS h_count,
+          tupleElement(picked, 5) AS h_grid
         FROM (
           SELECT ${keys}, max(time) AS last_t, ${classValue} AS h_class
           FROM (SELECT ${inner} FROM metrics ${histWhere})
-          GROUP BY ${keys}, h_bounds
+          GROUP BY ${keys}, h_grid, h_bounds, length(h_counts)
         )
         GROUP BY ${keys}
         ORDER BY bucket ASC`;
@@ -2010,6 +2015,7 @@ export class ClickHouseEngine extends StorageEngine {
           sum: Number(row.h_sum),
           count: Number(row.h_count),
         };
+        if (typeof row.h_grid === 'string' && row.h_grid !== '') bucket.histogram.grid = row.h_grid;
         bucket.value = bucket.histogram.count;
       }
 

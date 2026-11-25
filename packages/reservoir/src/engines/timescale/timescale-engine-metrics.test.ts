@@ -1196,6 +1196,18 @@ describe('TimescaleEngine - Metrics', () => {
       }]);
     });
 
+    it('grid points come back with their grid id and empty bounds', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...row, label_0: undefined, h_bounds: [], h_grid: 'exp2-s2-v1' }] });
+      await engine.connect();
+
+      const result = await engine.aggregateMetrics({ ...histParams, aggregation: 'hist_last' });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      expect(sql).toContain(`CASE WHEN (jsonb_typeof(histogram_data->'grid') = 'string' AND histogram_data->>'grid' <> '') THEN '[]'::jsonb`);
+      expect(sql).toContain('h_bounds, h_grid, h_counts, h_sum, h_count FROM picked');
+      expect(result.timeseries[0].histogram).toEqual({ bounds: [], grid: 'exp2-s2-v1', counts: [3, 5, 1], sum: 350, count: 9 });
+    });
+
     it('hist_sum adds up bucket_counts by ordinality over points of the pick length', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ ...row, label_0: undefined }] });
       await engine.connect();
@@ -1210,7 +1222,9 @@ describe('TimescaleEngine - Metrics', () => {
       const params = mockQuery.mock.calls[0][1] as unknown[];
       expect(sql).not.toContain('_stats');
       expect(sql).toContain('DISTINCT ON (bucket)');
-      expect(sql).toContain('WHERE p.h_bounds = k.h_bounds');
+      expect(sql).toContain('WHERE p.h_key = k.h_key');
+      expect(sql).toContain(`jsonb_build_array('grid', histogram_data->'grid', jsonb_array_length(histogram_data->'bucket_counts'))`);
+      expect(sql).toContain(`ELSE jsonb_build_array('bounds', histogram_data->'explicit_bounds') END AS h_key`);
       expect(sql).not.toContain('jsonb_array_length(p.h_counts)');
       expect(sql).toContain('WITH ORDINALITY AS e(val, ord)');
       expect(sql).toContain('array_agg(v ORDER BY ord)');

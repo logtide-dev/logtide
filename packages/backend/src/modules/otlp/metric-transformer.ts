@@ -11,6 +11,21 @@ import type { MetricRecord, HistogramData, MetricExemplar } from '@logtide/reser
 import { attributesToRecord, sanitizeForPostgres, extractServiceName, nanosToIso, type OtlpKeyValue } from './transformer.js';
 import { isGzipCompressed, decompressGzip } from './parser.js';
 import { createRequire } from 'module';
+import {
+  EXP_CANONICAL_BOUNDS,
+  EXP_CANONICAL_SCALE,
+  EXP_GRID_ID,
+  EXP_GRID_MAX_INDEX,
+  EXP_GRID_MIN_INDEX,
+} from './exp-histogram-grid.js';
+
+export {
+  EXP_CANONICAL_BOUNDS,
+  EXP_CANONICAL_SCALE,
+  EXP_GRID_ID,
+  EXP_GRID_MAX_INDEX,
+  EXP_GRID_MIN_INDEX,
+} from './exp-histogram-grid.js';
 
 // Import the generated protobuf definitions from @opentelemetry/otlp-transformer
 const require = createRequire(import.meta.url);
@@ -381,10 +396,10 @@ function transformExpHistogramDataPoints(
       count: toNumber(dp.count),
       min: dp.min,
       max: dp.max,
-      // Explicit buckets on the fixed canonical grid (EXP_CANONICAL_BOUNDS), so
-      // the histogram aggregations (hist_last / hist_sum) read every histogram
-      // the same way and every point of a series has identical bounds.
-      ...expToExplicitBuckets(dp),
+      // Counts on the fixed canonical grid (grid id + counts, no explicit
+      // bounds: readers expand the id), so every point of a series is in the
+      // same merge class for hist_last / hist_sum.
+      ...expToCanonicalBuckets(dp),
       scale: dp.scale,
       zero_count: toNumber(dp.zeroCount),
       positive: dp.positive ? {
@@ -482,73 +497,62 @@ export function toTemporality(v: unknown): 'cumulative' | 'delta' | undefined {
 }
 
 /**
- * Canonical grid for exponential histograms converted to explicit buckets.
- *
- * Every exponential histogram point is re-bucketed onto ONE fixed set of
- * explicit bounds, whatever its scale, offset or populated range, so every
- * point of a series (and every series of a metric) carries identical bounds:
- * the histogram aggregations merge only points with identical bounds, and a
- * cumulative series diffs cleanly snapshot to snapshot. Nothing is trimmed.
- *
- * Grid (OTLP explicit layout: counts has bounds.length + 1 entries, bucket i
- * holds (bounds[i-1], bounds[i]], the last one is +Inf):
- * - scale EXP_CANONICAL_SCALE = 2, base = 2^(2^-2) = 2^(1/4) ~ 1.1892;
- * - canonical bucket index i holds (base^i, base^(i+1)], for i from
- *   EXP_GRID_MIN_INDEX (-80) to EXP_GRID_MAX_INDEX (159): positive values
- *   from 2^-20 (~9.5e-7) to 2^40 (~1.1e12), 60 octaves of 4 buckets;
- * - bounds = [0, base^-80, base^-79, ..., base^160] (242 bounds, 243 counts):
- *   counts[0] = (-Inf, 0] holds zero_count and the negative buckets (folded
- *   for simplicity: percentiles read negative values as 0), counts[1] =
- *   (0, 2^-20] the positive values below the grid, then one count per
- *   canonical bucket, and the last one (2^40, +Inf) the values above it.
- *
- * Precision: neighbouring bounds differ by a factor 2^(1/4), so a bucket is
- * ~18.9% wide relative to its lower edge and a percentile interpolated inside
- * it is off by less than that (usually far less). Values outside
- * [2^-20, 2^40] only keep their side (underflow / overflow bucket).
+ * Most buckets an exponential histogram point may carry per side (positive or
+ * negative). OTel SDKs default to 160; anything far above that is
+ * pathological and the whole request is rejected with a clear error, so the
+ * work per point stays bounded.
+ */
+export const EXP_MAX_BUCKETS_PER_SIDE = 16384;
+
+/** Raised for an exponential histogram point with too many buckets. */
+export class ExpHistogramTooLargeError extends Error {
+  constructor(side: 'positive' | 'negative', length: number) {
+    super(
+      `exponential histogram data point has ${length} ${side} buckets (max ${EXP_MAX_BUCKETS_PER_SIDE})`
+    );
+    this.name = 'ExpHistogramTooLargeError';
+  }
+}
+
+function checkBucketCount(side: 'positive' | 'negative', counts: unknown): void {
+  if (Array.isArray(counts) && counts.length > EXP_MAX_BUCKETS_PER_SIDE) {
+    throw new ExpHistogramTooLargeError(side, counts.length);
+  }
+}
+
+/** Position in bucket_counts of canonical bucket index i (in the grid). */
+function gridSlot(index: number): number {
+  return 2 + index - EXP_GRID_MIN_INDEX;
+}
+const UNDERFLOW_SLOT = 1;
+const OVERFLOW_SLOT = EXP_CANONICAL_BOUNDS.length;
+
+/**
+ * Convert an exponential histogram data point to counts on the canonical grid
+ * (exp-histogram-grid.ts): `grid` is EXP_GRID_ID, bucket_counts has
+ * EXP_CANONICAL_BOUNDS.length + 1 entries. Stored as is (no explicit bounds):
+ * readers expand the grid id to its bounds.
  *
  * Conversion of a source point at scale s (clamped to the OTLP range -10..20):
  * - s >= 2: source bucket j lies entirely inside canonical bucket
  *   floor(j / 2^(s - 2)) (the OTLP downscale), so the counts are exact;
  * - s < 2: source bucket j spans the n = 2^(2 - s) canonical buckets
  *   j * n .. (j + 1) * n - 1 and its count c is split evenly across them:
- *   sub-bucket k gets ceil((c - k) / n), which adds up to c and never
- *   decreases when c grows, so a cumulative series never looks like a reset
- *   because of the split.
+ *   sub-bucket k gets ceil((c - k) / n), i.e. with c = q * n + r the first r
+ *   sub-buckets get q + 1 and the others q, which adds up to c and never
+ *   decreases when c grows (a cumulative series never looks like a reset
+ *   because of the split). Non-integer counts split as c / n.
+ *   Only the sub-buckets inside the grid are visited; the mass of the ones
+ *   below / above it goes to the underflow / overflow bucket in closed form,
+ *   so a point costs O(source buckets + grid slots) whatever the scale.
+ *
+ * Throws ExpHistogramTooLargeError above EXP_MAX_BUCKETS_PER_SIDE buckets.
  */
-export const EXP_CANONICAL_SCALE = 2;
-export const EXP_GRID_MIN_INDEX = -80;
-export const EXP_GRID_MAX_INDEX = 159;
-
-/** base^i at the canonical scale, i.e. 2^(i / 4) (exact for multiples of 4). */
-function canonicalBound(index: number): number {
-  return Math.pow(2, index / Math.pow(2, EXP_CANONICAL_SCALE));
-}
-
-/** The canonical explicit bounds (always the same doubles). */
-export const EXP_CANONICAL_BOUNDS: readonly number[] = Object.freeze([
-  0,
-  ...Array.from(
-    { length: EXP_GRID_MAX_INDEX - EXP_GRID_MIN_INDEX + 2 },
-    (_, k) => canonicalBound(EXP_GRID_MIN_INDEX + k),
-  ),
-]);
-
-/** Position in bucket_counts of canonical bucket index i (clamped to underflow / overflow). */
-function canonicalSlot(index: number): number {
-  if (index < EXP_GRID_MIN_INDEX) return 1;
-  if (index > EXP_GRID_MAX_INDEX) return EXP_CANONICAL_BOUNDS.length;
-  return 2 + index - EXP_GRID_MIN_INDEX;
-}
-
-/**
- * Convert an exponential histogram data point to explicit buckets on the
- * canonical grid: explicit_bounds is always EXP_CANONICAL_BOUNDS, bucket_counts
- * its counts (see the grid comment above).
- */
-export function expToExplicitBuckets(
+export function expToCanonicalBuckets(
   dp: Pick<OtlpExponentialHistogramDataPoint, 'scale' | 'zeroCount' | 'positive' | 'negative'>
-): { explicit_bounds: number[]; bucket_counts: number[] } {
+): { grid: string; bucket_counts: number[] } {
+  checkBucketCount('positive', dp.positive?.bucketCounts);
+  checkBucketCount('negative', dp.negative?.bucketCounts);
   const rawScale = typeof dp.scale === 'number' && Number.isFinite(dp.scale) ? Math.trunc(dp.scale) : 0;
   const scale = Math.min(Math.max(rawScale, -10), 20);
   const rawOffset = dp.positive?.offset;
@@ -562,22 +566,46 @@ export function expToExplicitBuckets(
   if (scale >= EXP_CANONICAL_SCALE) {
     const width = Math.pow(2, scale - EXP_CANONICAL_SCALE);
     for (let j = 0; j < positive.length; j++) {
-      if (positive[j] === 0) continue;
-      counts[canonicalSlot(Math.floor((offset + j) / width))] += positive[j];
+      const c = positive[j];
+      if (!(c > 0) || !Number.isFinite(c)) continue;
+      const index = Math.floor((offset + j) / width);
+      const slot = index < EXP_GRID_MIN_INDEX ? UNDERFLOW_SLOT : index > EXP_GRID_MAX_INDEX ? OVERFLOW_SLOT : gridSlot(index);
+      counts[slot] += c;
     }
   } else {
     const n = Math.pow(2, EXP_CANONICAL_SCALE - scale);
     for (let j = 0; j < positive.length; j++) {
       const c = positive[j];
-      if (c === 0) continue;
+      if (!(c > 0) || !Number.isFinite(c)) continue;
+      const integer = Number.isInteger(c);
+      const q = integer ? Math.floor(c / n) : 0;
+      const r = integer ? c - q * n : 0;
+      /** Mass of sub-buckets 0 .. a - 1. */
+      const massBefore = (a: number): number => (integer ? a * q + Math.min(a, r) : (a * c) / n);
       const first = (offset + j) * n;
-      for (let k = 0; k < n; k++) {
-        const part = Number.isInteger(c) ? Math.max(Math.ceil((c - k) / n), 0) : c / n;
-        if (part !== 0) counts[canonicalSlot(first + k)] += part;
+      const last = first + n - 1;
+      if (last < EXP_GRID_MIN_INDEX) {
+        counts[UNDERFLOW_SLOT] += c;
+        continue;
+      }
+      if (first > EXP_GRID_MAX_INDEX) {
+        counts[OVERFLOW_SLOT] += c;
+        continue;
+      }
+      const lo = Math.max(first, EXP_GRID_MIN_INDEX);
+      const hi = Math.min(last, EXP_GRID_MAX_INDEX);
+      const below = massBefore(lo - first);
+      const upToHi = massBefore(hi - first + 1);
+      if (below > 0) counts[UNDERFLOW_SLOT] += below;
+      if (c - upToHi > 0) counts[OVERFLOW_SLOT] += c - upToHi;
+      for (let index = lo; index <= hi; index++) {
+        const k = index - first;
+        const part = integer ? (k < r ? q + 1 : q) : c / n;
+        if (part !== 0) counts[gridSlot(index)] += part;
       }
     }
   }
-  return { explicit_bounds: [...EXP_CANONICAL_BOUNDS], bucket_counts: counts };
+  return { grid: EXP_GRID_ID, bucket_counts: counts };
 }
 
 /**

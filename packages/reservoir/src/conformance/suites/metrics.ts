@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { metricAttrLabel, type MetricAggregateParams, type MetricAggregationFn, type MetricAttrFilter, type MetricAttrRef, type MetricSourcesParams } from '../../core/types.js';
 import type { ConformanceContext } from '../harness.js';
-import { METRIC_CPU, METRIC_LATENCY, METRIC_QUEUE, METRIC_REQUESTS, minutes, PROJECT_A, PROJECT_B, PROJECT_C, PROJECT_E, WINDOW } from '../corpus.js';
+import { GRID_G1, GRID_G2, METRIC_CPU, METRIC_GRID_LATENCY, METRIC_LATENCY, METRIC_QUEUE, METRIC_REQUESTS, minutes, PROJECT_A, PROJECT_B, PROJECT_C, PROJECT_E, WINDOW } from '../corpus.js';
 
 const METHOD = 'http.request.method';
 const ADDRESS = 'server.address';
@@ -206,6 +206,82 @@ function describeMetricHistogramConformance(ctx: ConformanceContext): void {
     // HB5 and HB6 alone ([20,200]) add up; HB4 before them ([10,100]) does not.
     expect(await hist('hist_sum', { interval: '5m', from: minutes(20), to: minutes(23) })).toEqual([
       `${at(20)} 5 [20,200] [1,3,1] 360 5`,
+    ]);
+  });
+
+  // Grid points (HistogramData.grid, no explicit_bounds) mixed with explicit
+  // bounds points. Corpus rows: GRID_HISTOGRAM_ROWS. Lines end with the grid
+  // id of the returned class ('-' for explicit bounds, whose grid is unset).
+  const gridHist = async (aggregation: 'hist_last' | 'hist_sum', extra: Partial<MetricAggregateParams> = {}): Promise<string[]> => {
+    const { timeseries } = await ctx.subject().aggregateMetrics({
+      projectId: PROJECT_E,
+      metricName: METRIC_GRID_LATENCY,
+      from: WINDOW.from,
+      to: WINDOW.to,
+      interval: '5m',
+      aggregation,
+      ...extra,
+    });
+    const labelKeys = extra.groupBy ?? [];
+    return timeseries.map((b) => {
+      const h = b.histogram;
+      expect(h, 'histogram of every bucket').toBeDefined();
+      return [
+        new Date(b.bucket).toISOString(),
+        ...labelKeys.map((k) => b.labels?.[k]),
+        Number(b.value),
+        `[${h!.bounds.map(Number).join(',')}]`,
+        `[${h!.counts.map(Number).join(',')}]`,
+        Number(h!.sum),
+        Number(h!.count),
+        h!.grid ?? '-',
+      ].join(' ');
+    }).sort();
+  };
+
+  it('MT32 grid points: the grid id is the merge class key, returned with empty bounds', async () => {
+    expect(await gridHist('hist_last')).toEqual(sorted([
+      `${at(0)} 5 [] [0,1,4] 50 5 ${GRID_G1}`,
+      // GN1 (empty grid id, no bounds) is ignored: GB3 is the latest point.
+      `${at(5)} 1 [10,100] [0,0,1] 500 1 -`,
+      `${at(10)} 2 [] [0,0,2] 40 2 ${GRID_G1}`,
+      `${at(15)} 1 [] [1,0,0] 1 1 ${GRID_G1}`,
+    ]));
+    expect(await gridHist('hist_sum')).toEqual(sorted([
+      // GA1 + GA2 (g1); GB1 (explicit [10,100], same length) is not added.
+      `${at(0)} 8 [] [1,3,4] 60 8 ${GRID_G1}`,
+      // GB3 (explicit) is the pick: GB2 (g1) and GA3 (g2) are skipped.
+      `${at(5)} 1 [10,100] [0,0,1] 500 1 -`,
+      // GA5 + GB4 (g1, three counts); GA4 (g1, four counts) is another class.
+      `${at(10)} 3 [] [0,1,2] 45 3 ${GRID_G1}`,
+      // GB5 has a grid and explicit_bounds: the grid wins, it adds to GA6.
+      `${at(15)} 4 [] [4,0,0] 4 4 ${GRID_G1}`,
+    ]));
+  });
+
+  it('MT33 grid and explicit-bounds points per group and across classes', async () => {
+    expect(await gridHist('hist_sum', { groupBy: ['http.route'] })).toEqual(sorted([
+      `${at(0)} /a 8 [] [1,3,4] 60 8 ${GRID_G1}`,
+      `${at(0)} /b 3 [10,100] [1,1,1] 100 3 -`,
+      `${at(5)} /a 3 [] [1,1,1] 30 3 ${GRID_G2}`,
+      `${at(5)} /b 1 [10,100] [0,0,1] 500 1 -`,
+      `${at(10)} /a 1 [] [0,1,0] 5 1 ${GRID_G1}`,
+      `${at(10)} /b 2 [] [0,0,2] 40 2 ${GRID_G1}`,
+      `${at(15)} /a 1 [] [1,0,0] 1 1 ${GRID_G1}`,
+      `${at(15)} /b 3 [] [3,0,0] 3 3 ${GRID_G1}`,
+    ]));
+    const b = [f(met('http.route'), 'eq', '/b')];
+    // Hourly, /b only. Up to GB2 the latest point is a grid point: its class
+    // alone (GB1 has explicit bounds).
+    expect(await gridHist('hist_sum', { interval: '1h', to: minutes(6.5), filters: b })).toEqual([
+      `${at(0)} 2 [] [2,0,0] 4 2 ${GRID_G1}`,
+    ]);
+    // Up to GB3 the latest point has explicit bounds: GB1 + GB3, GB2 skipped.
+    expect(await gridHist('hist_sum', { interval: '1h', to: minutes(8.5), filters: b })).toEqual([
+      `${at(0)} 4 [10,100] [1,1,2] 600 4 -`,
+    ]);
+    expect(await gridHist('hist_last', { interval: '1h', to: minutes(6.5), filters: b })).toEqual([
+      `${at(0)} 2 [] [2,0,0] 4 2 ${GRID_G1}`,
     ]);
   });
 }
