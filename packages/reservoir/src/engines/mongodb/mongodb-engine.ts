@@ -61,6 +61,10 @@ import type {
   MetricOverviewItem,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  MetricSourcesParams,
+  MetricSourcesResult,
+  MetricAttrRef,
+  MetricAttrFilter,
   LogHistogramParams,
   LogHistogramResult,
   LogFacetsParams,
@@ -75,10 +79,12 @@ import type {
   ListSessionsResult,
   HasSessionsParams,
 } from '../../core/types.js';
-import { GLOBAL_SCOPE, type LogFilterParams } from '../../core/types.js';
+import { GLOBAL_SCOPE, metricAttrLabel, type LogFilterParams } from '../../core/types.js';
 import { isVolumeOnlyFilter, splitByStaleMinutes } from '../../core/log-volume.js';
-import { zeroFillHistogram } from '../../core/aggregation-helpers.js';
+import { compareByteOrder, zeroFillHistogram } from '../../core/aggregation-helpers.js';
 import { MongoLogVolume, type WriteToken } from './log-volume.js';
+import { scalarTextExpr } from './json-path.js';
+import { escapeRegex } from './text-query.js';
 import {
   assertTimeRange,
   normalizeDiscoverParams,
@@ -1414,6 +1420,11 @@ export class MongoDBEngine extends StorageEngine {
         groupId[`label_${i}`] = metricLabelExpr(key);
       });
     }
+    const attrRefs = params.groupByAttrs ?? [];
+    attrRefs.forEach((ref, i) => {
+      groupId[`attr_${i}`] = metricAttrTextExpr(ref);
+    });
+    const grouped = (params.groupBy?.length ?? 0) > 0 || attrRefs.length > 0;
 
     const aggExpr = AGG_ACCUMULATORS[params.aggregation] ?? AGG_ACCUMULATORS.avg;
 
@@ -1462,10 +1473,13 @@ export class MongoDBEngine extends StorageEngine {
         value: Number(row.agg_value),
       };
 
-      if (params.groupBy && params.groupBy.length > 0) {
+      if (grouped) {
         const labels: Record<string, string> = {};
-        params.groupBy.forEach((key, i) => {
+        (params.groupBy ?? []).forEach((key, i) => {
           labels[key] = String(row._id[`label_${i}`] ?? '');
+        });
+        attrRefs.forEach((ref, i) => {
+          labels[metricAttrLabel(ref)] = String(row._id[`attr_${i}`] ?? '');
         });
         bucket.labels = labels;
       }
@@ -1531,7 +1545,16 @@ export class MongoDBEngine extends StorageEngine {
 
     const pipeline: Document[] = [
       { $match: filter },
-      { $project: { keys: { $objectToArray: { $ifNull: ['$attributes', {}] } } } },
+      {
+        $project: {
+          keys: {
+            $let: {
+              vars: { o: params.scope === 'resource' ? '$resource_attributes' : '$attributes' },
+              in: { $cond: [{ $eq: [{ $type: '$$o' }, 'object'] }, { $objectToArray: '$$o' }, []] },
+            },
+          },
+        },
+      },
       { $unwind: '$keys' },
       { $group: { _id: '$keys.k' } },
       { $sort: { _id: 1 } },
@@ -1556,7 +1579,13 @@ export class MongoDBEngine extends StorageEngine {
 
     const pipeline: Document[] = [
       { $match: filter },
-      { $group: { _id: metricLabelExpr(labelKey) } },
+      {
+        $group: {
+          _id: params.scope === 'resource'
+            ? metricAttrTextExpr({ scope: 'resource', key: labelKey })
+            : metricLabelExpr(labelKey),
+        },
+      },
       { $match: { _id: { $nin: [null, ''] } } },
       { $sort: { _id: 1 } },
       { $limit: limit },
@@ -1617,6 +1646,73 @@ export class MongoDBEngine extends StorageEngine {
     }
 
     return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
+  }
+
+  async getMetricSources(params: MetricSourcesParams): Promise<MetricSourcesResult> {
+    const start = Date.now();
+    const db = this.getDb();
+    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
+    const limit = params.limit ?? 500;
+    const coKeys = params.coKeys ?? [];
+
+    const match: Document = {
+      project_id: pids.length === 1 ? pids[0] : { $in: pids },
+      time: { $gte: params.from, $lte: params.to },
+    };
+    if (params.organizationId) {
+      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
+      match.organization_id = oids.length === 1 ? oids[0] : { $in: oids };
+    }
+    const names = metricPrefixClause(params.includeMetricPrefixes, params.excludeMetricPrefixes);
+    if (names) match.metric_name = names;
+
+    const projection: Document = {
+      _id: 0,
+      src: metricAttrTextExpr({ scope: 'resource', key: params.key }),
+      project_id: 1,
+      time: 1,
+      metric_name: 1,
+    };
+    const group: Document = {
+      _id: '$src',
+      projects: { $addToSet: '$project_id' },
+      last_seen: { $max: '$time' },
+      names: { $addToSet: '$metric_name' },
+      points: { $sum: 1 },
+    };
+    coKeys.forEach((key, i) => {
+      projection[`co_${i}`] = metricAttrTextExpr({ scope: 'resource', key });
+      group[`co_${i}`] = { $addToSet: `$co_${i}` };
+    });
+
+    const pipeline: Document[] = [
+      { $match: match },
+      { $project: projection },
+      { $match: { src: { $nin: [null, ''] } } },
+      { $group: group },
+      { $sort: { _id: 1 } },
+      { $limit: limit },
+      { $addFields: { names: { $size: '$names' } } },
+    ];
+
+    const rows = await db.collection('metrics').aggregate(pipeline, { ...ctxOpts(), allowDiskUse: true }).toArray();
+
+    const texts = (values: unknown): string[] =>
+      (Array.isArray(values) ? values : [])
+        .filter((v): v is string => typeof v === 'string' && v !== '')
+        .sort(compareByteOrder);
+
+    return {
+      sources: rows.map((row) => ({
+        value: String(row._id),
+        projectIds: texts(row.projects),
+        lastSeen: row.last_seen instanceof Date ? row.last_seen : new Date(row.last_seen),
+        metricCount: Number(row.names),
+        pointCount: Number(row.points),
+        co: Object.fromEntries(coKeys.map((key, i) => [key, texts(row[`co_${i}`]).slice(0, 20)])),
+      })),
+      executionTimeMs: Date.now() - start,
+    };
   }
 
   async getMetricsOverview(params: MetricsOverviewParams): Promise<MetricsOverviewResult> {
@@ -1892,6 +1988,7 @@ export class MongoDBEngine extends StorageEngine {
     if (params.attributes) {
       addMetricLabelFilters(filter, params.attributes);
     }
+    addMetricAttrFilters(filter, params.filters);
 
     return filter;
   }
@@ -1924,8 +2021,11 @@ export class MongoDBEngine extends StorageEngine {
     const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
     const filter: Document = {
       project_id: pids.length === 1 ? pids[0] : { $in: pids },
-      metric_name: params.metricName,
     };
+    // With resource scope an empty metric name means every metric.
+    if (params.scope !== 'resource' || params.metricName !== '') {
+      filter.metric_name = params.metricName;
+    }
 
     if (params.organizationId) {
       const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
@@ -1970,6 +2070,123 @@ export function addMetricLabelFilters(filter: Document, attributes: Record<strin
     }
   }
   if (exprs.length > 0) filter.$and = [...((filter.$and as Document[] | undefined) ?? []), ...exprs];
+}
+
+// =============================================================================
+// Metric attribute refs and filters (1.8)
+// =============================================================================
+// A ref reads one literal key (dots included) of `attributes` (metric scope)
+// or `resource_attributes` (resource scope). The value is missing when the
+// key is absent or the map is not an object. Comparisons use the text form
+// (strings as they are, numbers and booleans as JSON scalars, anything else
+// none); gte/lt convert that text to a number (strings that do not parse,
+// booleans, null, objects and arrays never match).
+
+const NUMBER_TYPES = ['int', 'long', 'double', 'decimal'];
+
+/** Plain decimal numbers only: `$convert` alone would also accept "Infinity" or "NaN". */
+const NUMERIC_TEXT_RE = /^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/;
+
+/** The raw value of `ref` (missing when the key is absent). */
+export function metricAttrValueExpr(ref: MetricAttrRef): Document {
+  const root = ref.scope === 'resource' ? '$resource_attributes' : '$attributes';
+  return {
+    $let: {
+      vars: { o: root },
+      in: {
+        $cond: [
+          { $eq: [{ $type: '$$o' }, 'object'] },
+          { $getField: { field: { $literal: ref.key }, input: '$$o' } },
+          '$$REMOVE',
+        ],
+      },
+    },
+  };
+}
+
+/** The text form of `ref` (null when missing or not a scalar). */
+export function metricAttrTextExpr(ref: MetricAttrRef): Document {
+  return scalarTextExpr(metricAttrValueExpr(ref));
+}
+
+/** The numeric value of `ref` (null when missing or not numeric). */
+export function metricAttrNumberExpr(ref: MetricAttrRef): Document {
+  return {
+    $let: {
+      vars: { v: metricAttrValueExpr(ref) },
+      in: {
+        $switch: {
+          branches: [
+            { case: { $in: [{ $type: '$$v' }, NUMBER_TYPES] }, then: { $toDouble: '$$v' } },
+            {
+              case: { $eq: [{ $type: '$$v' }, 'string'] },
+              then: {
+                $cond: [
+                  { $regexMatch: { input: '$$v', regex: NUMERIC_TEXT_RE.source } },
+                  { $convert: { input: '$$v', to: 'double', onError: null, onNull: null } },
+                  null,
+                ],
+              },
+            },
+          ],
+          default: null,
+        },
+      },
+    },
+  };
+}
+
+const NEVER: Document = { $expr: { $literal: false } };
+
+/** One `$match` clause for a metric attribute filter. */
+export function metricAttrFilterClause(filter: MetricAttrFilter): Document {
+  const values = filter.values ?? [];
+  const text = () => metricAttrTextExpr(filter);
+  switch (filter.op) {
+    case 'eq':
+      return values.length > 0 ? { $expr: { $eq: [text(), { $literal: values[0] }] } } : NEVER;
+    case 'neq':
+      return values.length > 0 ? { $expr: { $ne: [text(), { $literal: values[0] }] } } : {};
+    case 'in':
+      return { $expr: { $in: [text(), { $literal: values }] } };
+    case 'nin':
+      return { $expr: { $not: [{ $in: [text(), { $literal: values }] }] } };
+    case 'exists':
+      return { $expr: { $ne: [{ $type: metricAttrValueExpr(filter) }, 'missing'] } };
+    case 'notExists':
+      return { $expr: { $eq: [{ $type: metricAttrValueExpr(filter) }, 'missing'] } };
+    case 'gte':
+    case 'lt': {
+      const raw = values[0];
+      const threshold = raw !== undefined && NUMERIC_TEXT_RE.test(raw) ? Number(raw) : NaN;
+      if (!Number.isFinite(threshold)) return NEVER;
+      return {
+        $expr: {
+          $let: {
+            vars: { n: metricAttrNumberExpr(filter) },
+            in: { $and: [{ $ne: ['$$n', null] }, { [filter.op === 'gte' ? '$gte' : '$lt']: ['$$n', threshold] }] },
+          },
+        },
+      };
+    }
+    default:
+      throw new Error(`Unsupported metric attribute filter op: ${String((filter as MetricAttrFilter).op)}`);
+  }
+}
+
+/** ANDs the attribute filters into `filter`. */
+export function addMetricAttrFilters(filter: Document, filters: MetricAttrFilter[] | undefined): void {
+  const clauses = (filters ?? []).map(metricAttrFilterClause).filter((c) => Object.keys(c).length > 0);
+  if (clauses.length > 0) filter.$and = [...((filter.$and as Document[] | undefined) ?? []), ...clauses];
+}
+
+/** A `metric_name` clause for prefix include/exclude lists (undefined when neither applies). */
+function metricPrefixClause(include: string[] | undefined, exclude: string[] | undefined): Document | undefined {
+  const re = (p: string) => new RegExp(`^${escapeRegex(p)}`);
+  const clause: Document = {};
+  if (include && include.length > 0) clause.$in = include.map(re);
+  if (exclude && exclude.length > 0) clause.$nin = exclude.map(re);
+  return Object.keys(clause).length > 0 ? clause : undefined;
 }
 
 // =============================================================================
