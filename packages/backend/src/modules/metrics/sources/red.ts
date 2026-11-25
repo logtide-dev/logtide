@@ -94,11 +94,28 @@ export interface OperationLatency {
   p99Ms: number;
 }
 
+/**
+ * p50, p95 and p99 of an operation, monotonic and finite. An engine can omit a
+ * quantile (undefined, NaN): a missing one takes the next lower known value
+ * (a missing p50 takes the next higher one), so no NaN reaches the mixture.
+ * null when no quantile is usable.
+ */
+function quantilesOf(op: Partial<OperationLatency>): [number, number, number] | null {
+  const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const raw = [op.p50Ms, op.p95Ms, op.p99Ms];
+  const known = raw.find(ok);
+  if (known === undefined) return null;
+  const p50 = Math.max(0, ok(raw[0]) ? raw[0] : known);
+  const p95 = Math.max(p50, ok(raw[1]) ? raw[1] : p50);
+  const p99 = Math.max(p95, ok(raw[2]) ? raw[2] : p95);
+  return [p50, p95, p99];
+}
+
 /** Share of the mixture that lies below `x` for one operation (piecewise linear through its known quantiles). */
 function operationCdf(op: OperationLatency, x: number): number {
-  const p50 = Math.max(0, op.p50Ms);
-  const p95 = Math.max(p50, op.p95Ms);
-  const p99 = Math.max(p95, op.p99Ms);
+  const quantiles = quantilesOf(op);
+  if (!quantiles) return 0;
+  const [p50, p95, p99] = quantiles;
   // The tail above p99 is unknown: assume it is as long as p95 -> p99 (at least 1 ms).
   const top = p99 + Math.max(p99 - p95, 1);
   const knots: Array<[number, number]> = [
@@ -129,13 +146,17 @@ function operationCdf(op: OperationLatency, x: number): number {
  * for mixtures. null without calls.
  */
 export function mixturePercentile(ops: OperationLatency[], q: number): number | null {
-  const used = ops.filter((o) => o.count > 0 && Number.isFinite(o.p95Ms));
+  // Operations with a usable count and at least one usable quantile, quantiles made finite and monotonic.
+  const used: OperationLatency[] = [];
+  for (const o of ops) {
+    if (!(Number.isFinite(o.count) && o.count > 0)) continue;
+    const quantiles = quantilesOf(o);
+    if (!quantiles) continue;
+    used.push({ count: o.count, p50Ms: quantiles[0], p95Ms: quantiles[1], p99Ms: quantiles[2] });
+  }
   const total = used.reduce((a, o) => a + o.count, 0);
   if (total <= 0) return null;
-  if (used.length === 1) {
-    const o = used[0];
-    if (q === 0.95) return o.p95Ms;
-  }
+  if (used.length === 1 && q === 0.95) return used[0].p95Ms;
   const cdf = (x: number): number => used.reduce((a, o) => a + (o.count / total) * operationCdf(o, x), 0);
   let lo = 0;
   let hi = Math.max(...used.map((o) => Math.max(o.p99Ms, o.p95Ms) * 2 + 1));

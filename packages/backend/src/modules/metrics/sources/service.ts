@@ -56,6 +56,27 @@ const LAST_SPAN_BATCH = 100;
 /** Rounds of the newest-span lookup per project; keeps the call count constant. */
 const LAST_SPAN_ROUNDS = 5;
 
+/** Hosts or services per grouped query (MAX_INTERNAL_SERIES_LIMIT is 2000, one series each). */
+const SOURCE_CHUNK = 500;
+/** Raw series one internal query may read before space aggregation is skipped (query service internal.maxRawSeries, up to 20000). */
+const SOURCE_MAX_RAW_SERIES = 20_000;
+/** Spans looked up one by one per project once the batched rounds left services unresolved. */
+const LAST_SPAN_SINGLE_LOOKUPS = 100;
+
+type SourceInternal = NonNullable<ResolvedMetricQuery['internal']> & { maxRawSeries?: number };
+
+/** Internal options of a grouped query over `limit` sources: every source its own series, no raw series cap. */
+function sourceInternal(limit: number): ResolvedMetricQuery['internal'] {
+  const internal: SourceInternal = { maxSeries: limit, maxRawSeries: SOURCE_MAX_RAW_SERIES };
+  return internal;
+}
+
+function chunked<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 const EMPTY_SIGNAL = (unit: string | null): SourceSignalValue => ({ value: null, unit, spark: [] });
 
 /** Run `fn` over `items` with a bounded number of calls in flight. */
@@ -129,38 +150,45 @@ async function runSignal(
   const out: SignalMap = new Map();
   const interval = pickInterval(ctx.to.getTime() - ctx.from.getTime(), SOURCE_SPARK_POINTS);
   const label = 'resource.host.name';
+  const chunks = chunked(hostNames, SOURCE_CHUNK);
 
-  // One grouped query for every host: the request count does not depend on how many hosts there are.
-  const query: ResolvedMetricQuery = {
-    organizationId: ctx.organizationId,
-    projectIds: ctx.projectIds,
-    from: ctx.from.toISOString(),
-    to: ctx.to.toISOString(),
-    interval,
-    compareTo: 'none',
-    display: 'lines',
-    formulas: [],
-    queries: [
-      {
-        id: 'A',
-        metricName: def.metricName,
-        aggregation: def.aggregation,
-        spaceAggregation: def.spaceAggregation,
-        filters: [...(def.filters ?? [])],
-        groupBy: [{ scope: 'resource', key: 'host.name' }],
-        limit: hostNames.length,
-      },
-    ],
-    // Every host is its own series (the public cap of 50 would fold the rest).
-    internal: { maxSeries: hostNames.length },
-  };
-  const res = await metricQueryService.run(query);
-  for (const s of res.series) {
-    const host = s.labels[label];
-    if (!host || s.comparison || s.queryId !== 'A') continue;
-    const spark = s.points.map((p) => p.v);
-    out.set(host, { value: lastNonNull(spark), unit: def.unit, spark });
-  }
+  // One grouped query per chunk of hosts (a single one up to SOURCE_CHUNK hosts).
+  await mapLimit(chunks, 2, async (chunk) => {
+    const query: ResolvedMetricQuery = {
+      organizationId: ctx.organizationId,
+      projectIds: ctx.projectIds,
+      from: ctx.from.toISOString(),
+      to: ctx.to.toISOString(),
+      interval,
+      compareTo: 'none',
+      display: 'lines',
+      formulas: [],
+      queries: [
+        {
+          id: 'A',
+          metricName: def.metricName,
+          aggregation: def.aggregation,
+          spaceAggregation: def.spaceAggregation,
+          filters: [
+            ...(def.filters ?? []),
+            ...(chunks.length > 1 ? [{ scope: 'resource' as const, key: 'host.name', op: 'in' as const, values: chunk }] : []),
+          ],
+          groupBy: [{ scope: 'resource', key: 'host.name' }],
+          limit: chunk.length,
+        },
+      ],
+      // Every host is its own series and every raw series (hosts x mountpoints, interfaces) is read,
+      // so the space aggregation (max of disks, sum of interfaces) is never skipped.
+      internal: sourceInternal(chunk.length),
+    };
+    const res = await metricQueryService.run(query);
+    for (const s of res.series) {
+      const host = s.labels[label];
+      if (!host || s.comparison || s.queryId !== 'A') continue;
+      const spark = s.points.map((p) => p.v);
+      out.set(host, { value: lastNonNull(spark), unit: def.unit, spark });
+    }
+  });
   return out;
 }
 
@@ -359,9 +387,10 @@ interface Acc {
   ops: OperationStat[];
 }
 
-function accumulate(into: Map<string, Acc>, rows: OperationStat[], only?: string): void {
+function accumulate(into: Map<string, Acc>, rows: OperationStat[], only?: string, skip?: Set<string>): void {
   for (const r of rows) {
     if (only !== undefined && r.service !== only) continue;
+    if (skip?.has(r.service)) continue;
     const cur = into.get(r.service) ?? { calls: 0, errors: 0, ops: [] };
     cur.calls += r.count;
     cur.errors += r.errorCount;
@@ -371,12 +400,13 @@ function accumulate(into: Map<string, Acc>, rows: OperationStat[], only?: string
 }
 
 /**
- * Newest span time per service. The reservoir has no "max start time per
- * service" call, so each project is asked for its newest spans of the services
- * still unresolved, a few rounds at most (a round resolves every service that
- * shows up in the newest LAST_SPAN_BATCH spans). A service still unresolved
- * after the rounds is reported at the start of its newest active slice, which
- * can only make it look older, never fresher.
+ * Newest span time per service (spans are observed on end_time). The reservoir
+ * has no "max end time per service" call, so each project is asked for its
+ * newest spans of the services still unresolved, a few rounds at most (a round
+ * resolves every service that shows up in the newest LAST_SPAN_BATCH spans).
+ * Services the rounds did not resolve are looked up one by one (a bounded
+ * number per project). Only past that bound a service is reported at the start
+ * of its newest active slice, which can only make it look older, never fresher.
  */
 async function loadLastSeen(
   ctx: SourcesContext,
@@ -386,18 +416,20 @@ async function loadLastSeen(
   const out = new Map<string, number>();
   await mapLimit([...perProject.entries()], CONCURRENCY, async ([projectId, services]) => {
     const remaining = new Set(services);
+    const newest = (serviceNames: string[], limit: number) =>
+      reservoir.querySpans({
+        projectId,
+        serviceName: serviceNames,
+        from: ctx.from,
+        to: ctx.to,
+        sortBy: 'end_time',
+        sortOrder: 'desc',
+        limit,
+      });
     for (let round = 0; round < LAST_SPAN_ROUNDS && remaining.size > 0; round++) {
       let rows;
       try {
-        rows = await reservoir.querySpans({
-          projectId,
-          serviceName: [...remaining],
-          from: ctx.from,
-          to: ctx.to,
-          sortBy: 'start_time',
-          sortOrder: 'desc',
-          limit: LAST_SPAN_BATCH,
-        });
+        rows = await newest([...remaining], LAST_SPAN_BATCH);
       } catch {
         break;
       }
@@ -405,12 +437,25 @@ async function loadLastSeen(
       for (const span of rows.spans) {
         if (!remaining.has(span.serviceName)) continue;
         // Sorted newest first: the first span of a service is its newest.
-        out.set(span.serviceName, Math.max(out.get(span.serviceName) ?? 0, span.startTime.getTime()));
+        out.set(span.serviceName, Math.max(out.get(span.serviceName) ?? 0, span.endTime.getTime()));
         remaining.delete(span.serviceName);
         progressed = true;
       }
       if (!progressed) break;
     }
+    // Quiet services the newest-span rounds never reached: one bounded lookup each.
+    await mapLimit([...remaining].slice(0, LAST_SPAN_SINGLE_LOOKUPS), CONCURRENCY, async (svc) => {
+      try {
+        const rows = await newest([svc], 1);
+        const span = rows.spans.find((x) => x.serviceName === svc);
+        if (span) {
+          out.set(svc, Math.max(out.get(svc) ?? 0, span.endTime.getTime()));
+          remaining.delete(svc);
+        }
+      } catch {
+        // Stays unresolved: falls back to the slice start below.
+      }
+    });
     for (const svc of remaining) {
       const f = fallback.get(svc);
       if (f !== undefined) out.set(svc, Math.max(out.get(svc) ?? 0, f));
@@ -458,13 +503,38 @@ async function loadSpanData(ctx: SourcesContext, only?: string): Promise<SpanDat
   });
 
   // Headline: entry spans over the whole window, one call per project.
+  // The entry-span scope (and its root span fallback) is the whole project call, so a project that has
+  // server spans for some services returns nothing for the others, and a project with more than the
+  // operation limit truncates. Those services are computed one by one (same call as the detail view,
+  // so list and detail agree).
   const entry = new Map<string, Acc>();
+  const perService = new Map<string, Set<string>>();
   await mapLimit(activeProjects, CONCURRENCY, async (projectId) => {
+    let rows: OperationStat[];
     try {
-      accumulate(entry, await reservoir.getOperationStats(opParams(projectId, ctx.from, ctx.to)), only);
+      rows = await reservoir.getOperationStats(opParams(projectId, ctx.from, ctx.to));
     } catch {
       // Engine without entry-span stats: its services fall back to every span below.
+      return;
     }
+    const names = perProject.get(projectId) ?? [];
+    const seen = new Set(rows.map((r) => r.service));
+    const truncated = rows.length >= OPERATION_STATS_MAX_LIMIT;
+    // With a service filter the project call already is the per service call.
+    const need = new Set(only !== undefined ? [] : names.filter((n) => truncated || !seen.has(n)));
+    perService.set(projectId, need);
+    accumulate(entry, rows, only, need);
+    await mapLimit([...need], CONCURRENCY, async (svc) => {
+      try {
+        accumulate(
+          entry,
+          await reservoir.getOperationStats({ projectId, service: svc, from: ctx.from, to: ctx.to, limit: OPERATION_STATS_MAX_LIMIT }),
+          svc,
+        );
+      } catch {
+        // This service falls back to every span.
+      }
+    });
   });
   for (const [svc, h] of health) {
     const e = entry.get(svc);
@@ -485,9 +555,28 @@ async function loadSpanData(ctx: SourcesContext, only?: string): Promise<SpanDat
         const rows = await reservoir.getOperationStats(
           opParams(projectId, new Date(slices[slice].from), new Date(slices[slice].to)),
         );
-        accumulate(perSlice[slice], rows, only);
+        accumulate(perSlice[slice], rows, only, perService.get(projectId));
       } catch {
         // A slice that fails stays empty: the spark shows a gap, the headline is unaffected.
+      }
+    });
+    // Services computed one by one for the headline get their spark the same way.
+    const singles: Array<{ projectId: string; svc: string; slice: number }> = [];
+    for (const [projectId, need] of perService) {
+      for (const svc of need) for (let i = 0; i < slices.length; i++) singles.push({ projectId, svc, slice: i });
+    }
+    await mapLimit(singles, CONCURRENCY, async ({ projectId, svc, slice }) => {
+      try {
+        const rows = await reservoir.getOperationStats({
+          projectId,
+          service: svc,
+          from: new Date(slices[slice].from),
+          to: new Date(slices[slice].to),
+          limit: OPERATION_STATS_MAX_LIMIT,
+        });
+        accumulate(perSlice[slice], rows, svc);
+      } catch {
+        // Gap in the spark.
       }
     });
   }
@@ -524,42 +613,44 @@ async function loadMetricRed(ctx: SourcesContext, candidates: string[]): Promise
   const interval = pickInterval(ctx.to.getTime() - ctx.from.getTime(), SOURCE_SPARK_POINTS);
   for (const variant of HTTP_SERVER_METRICS) {
     if (remaining.length === 0) break;
-    // One query per semconv variant for every remaining service.
-    const svc = { scope: 'resource' as const, key: 'service.name', op: 'in' as const, values: remaining };
-    const groupBy = [{ scope: 'resource' as const, key: 'service.name' }];
-    const limit = remaining.length;
-    try {
-      const res = await metricQueryService.run({
-        organizationId: ctx.organizationId,
-        projectIds: ctx.projectIds,
-        from: ctx.from.toISOString(),
-        to: ctx.to.toISOString(),
-        interval,
-        compareTo: 'none',
-        display: 'lines',
-        formulas: [],
-        queries: [
-          { id: 'A', metricName: variant.metricName, aggregation: 'rate', spaceAggregation: 'sum', filters: [svc], groupBy, limit },
-          {
-            id: 'B',
-            metricName: variant.metricName,
-            aggregation: 'rate',
-            spaceAggregation: 'sum',
-            filters: [svc, { scope: 'metric', key: variant.statusKey, op: 'gte', values: ['500'] }],
-            groupBy,
-            limit,
-          },
-          { id: 'C', metricName: variant.metricName, aggregation: 'p95', spaceAggregation: 'avg', filters: [svc], groupBy, limit },
-        ],
-        internal: { maxSeries: limit },
-      });
-      for (const name of remaining) {
-        const red = redFromSeries(res.series, name, variant.defaultUnit);
-        if (red) out.set(name, red);
+    // One query per semconv variant and chunk of remaining services.
+    await mapLimit(chunked(remaining, SOURCE_CHUNK), 2, async (chunk) => {
+      const svc = { scope: 'resource' as const, key: 'service.name', op: 'in' as const, values: chunk };
+      const groupBy = [{ scope: 'resource' as const, key: 'service.name' }];
+      const limit = chunk.length;
+      try {
+        const res = await metricQueryService.run({
+          organizationId: ctx.organizationId,
+          projectIds: ctx.projectIds,
+          from: ctx.from.toISOString(),
+          to: ctx.to.toISOString(),
+          interval,
+          compareTo: 'none',
+          display: 'lines',
+          formulas: [],
+          queries: [
+            { id: 'A', metricName: variant.metricName, aggregation: 'rate', spaceAggregation: 'sum', filters: [svc], groupBy, limit },
+            {
+              id: 'B',
+              metricName: variant.metricName,
+              aggregation: 'rate',
+              spaceAggregation: 'sum',
+              filters: [svc, { scope: 'metric', key: variant.statusKey, op: 'gte', values: ['500'] }],
+              groupBy,
+              limit,
+            },
+            { id: 'C', metricName: variant.metricName, aggregation: 'p95', spaceAggregation: 'avg', filters: [svc], groupBy, limit },
+          ],
+          internal: sourceInternal(limit),
+        });
+        for (const name of chunk) {
+          const red = redFromSeries(res.series, name, variant.defaultUnit);
+          if (red) out.set(name, red);
+        }
+      } catch {
+        // Best effort: a failing query leaves these services without RED.
       }
-    } catch {
-      // Best effort: a failing query leaves these services without RED.
-    }
+    });
     remaining = remaining.filter((n) => !out.has(n));
   }
   return out;
