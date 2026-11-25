@@ -19,6 +19,26 @@ export type WebhookEventType = z.infer<typeof webhookEventTypeSchema>;
 
 const organizationRefSchema = z.object({ id: z.string().guid(), name: z.string() });
 
+/**
+ * Metric alert instance (1.8, alert_type 'metric'): the watched query or
+ * formula, the window value of the group and its labels. Absent on log rules.
+ */
+export const metricAlertInstanceDataSchema = z
+  .object({
+    query_id: z.string(),
+    source: z.string(),
+    condition: z.enum(['above', 'below']),
+    threshold: z.number(),
+    value: z.number().nullable(),
+    unit: z.string().nullable(),
+    window: z.enum(['1m', '5m', '15m', '1h']),
+    for_evaluations: z.number().int().min(1),
+    labels: z.record(z.string(), z.string()),
+    group_key: z.string(),
+  })
+  .passthrough();
+export type MetricAlertInstanceData = z.infer<typeof metricAlertInstanceDataSchema>;
+
 export const alertTriggeredDataSchema = z
   .object({
     alert_name: z.string(),
@@ -41,6 +61,9 @@ export const alertTriggeredDataSchema = z
     renotify: z.boolean().optional(),
     firing_since: z.string().datetime().optional(),
     incident_id: z.string().guid().nullable().optional(),
+    // 1.8 metric alert rules only.
+    alert_type: z.enum(['threshold', 'rate_of_change', 'metric']).optional(),
+    metric: metricAlertInstanceDataSchema.optional(),
   })
   .passthrough();
 
@@ -52,7 +75,7 @@ export const alertResolvedDataSchema = z
   .object({
     alert_rule_id: z.string().guid(),
     alert_name: z.string(),
-    alert_type: z.enum(['threshold', 'rate_of_change']),
+    alert_type: z.enum(['threshold', 'rate_of_change', 'metric']),
     title: z.string(),
     message: z.string(),
     log_count: z.number(),
@@ -63,6 +86,8 @@ export const alertResolvedDataSchema = z
     duration_seconds: z.number().int().min(0),
     incident_id: z.string().guid().nullable(),
     link: z.string(),
+    // 1.8 metric alert rules only: the instance that resolved.
+    metric: metricAlertInstanceDataSchema.optional(),
   })
   .passthrough();
 export type AlertResolvedData = z.infer<typeof alertResolvedDataSchema>;

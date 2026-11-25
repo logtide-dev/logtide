@@ -31,6 +31,9 @@ export * from './dashboard.js';
 export * from './dashboard-migrations.js';
 export * from './time-range.js';
 
+// Re-export metric alert rule types (1.8)
+export * from './metric-alert.js';
+
 // Re-export schema types
 export type { LogInput, IngestRequest, AlertRuleInput } from '../schemas/index.js';
 export type { MetadataFilter, MetadataFilterInput, MetadataFilterOp } from '../schemas/metadata-filter.js';
