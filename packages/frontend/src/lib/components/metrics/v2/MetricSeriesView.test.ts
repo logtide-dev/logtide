@@ -217,3 +217,56 @@ describe('MetricSeriesView threshold', () => {
     expect(option.yAxis[0].max).toBeUndefined();
   });
 });
+
+describe('MetricSeriesView y axes', () => {
+  const load1 = mk('A|x', 'x', 1.5, { queryId: 'A', unit: '1' });
+  const load5 = mk('B|x', 'x', 2.5, { queryId: 'B', unit: '1' });
+  const bytes = mk('C|x', 'x', 2048, { queryId: 'C', unit: 'By/s' });
+  const names = { A: 'system.cpu.load_average.1m', B: 'system.cpu.load_average.5m', C: 'net.io' };
+
+  it.each(['lines', 'area', 'bars'] as const)('shares one axis for same-unit series of different queries in %s', (display) => {
+    render(MetricSeriesView, { response: resp([load1, load5]), display, metricNames: names });
+    const option = chart.setOption.mock.calls[0][0];
+    expect(option.yAxis).toHaveLength(1);
+    expect(option.series.map((s: any) => s.yAxisIndex)).toEqual([0, 0]);
+  });
+
+  it('uses a second axis only for a distinct unit, with per-unit formatters and no tiny unit name', () => {
+    render(MetricSeriesView, { response: resp([load1, load5, bytes]), display: 'lines', metricNames: names });
+    const option = chart.setOption.mock.calls[0][0];
+    expect(option.yAxis).toHaveLength(2);
+    expect(option.series.map((s: any) => s.yAxisIndex)).toEqual([0, 0, 1]);
+    expect(option.yAxis[0].name).toBeUndefined();
+    expect(option.yAxis[1].name).toBeUndefined();
+    expect(option.yAxis[0].axisLabel.formatter(1.5)).not.toBe(option.yAxis[1].axisLabel.formatter(1.5));
+    expect(option.yAxis[1].axisLabel.formatter(2048)).toContain('/s');
+  });
+
+  it('never draws more than two axes', () => {
+    const pct = mk('D|x', 'x', 5, { queryId: 'D', unit: '%' });
+    render(MetricSeriesView, { response: resp([load1, bytes, pct]), display: 'lines', metricNames: names });
+    expect(chart.setOption.mock.calls[0][0].yAxis).toHaveLength(2);
+  });
+
+  it('split cards each get a single axis', () => {
+    render(MetricSeriesView, { response: resp([load1, bytes]), display: 'split', metricNames: names });
+    for (const call of chart.setOption.mock.calls) expect(call[0].yAxis).toHaveLength(1);
+  });
+
+  it('stat mode draws no chart', () => {
+    render(MetricSeriesView, { response: resp([load1, bytes]), display: 'stat', metricNames: names });
+    expect(chart.setOption).not.toHaveBeenCalled();
+  });
+
+  it('table mode draws no chart', () => {
+    render(MetricSeriesView, { response: resp([load1, bytes]), display: 'table', metricNames: names });
+    expect(chart.setOption).not.toHaveBeenCalled();
+  });
+
+  it('keeps the threshold mark line on the first axis with several units', () => {
+    render(MetricSeriesView, { response: resp([bytes, load1]), threshold: 3, metricNames: names });
+    const option = chart.setOption.mock.calls[0][0];
+    expect(option.series[0].markLine).toMatchObject({ data: [{ yAxis: 3 }] });
+    expect(option.yAxis[0].max({ max: 1 })).toBe(3);
+  });
+});
