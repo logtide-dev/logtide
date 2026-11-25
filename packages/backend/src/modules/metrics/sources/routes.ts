@@ -1,11 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { MetricSourceKind, MetricSourcesResponse } from '@logtide/shared';
-import { context } from '@logtide/shared/context';
 import { authenticate } from '../../auth/middleware.js';
 import { OrganizationsService } from '../../organizations/service.js';
-import { assertWithinLimit, withLimitLock } from '../../../capabilities/index.js';
-import { customDashboardsService } from '../../custom-dashboards/service.js';
+import { createWithinLimit } from '../../custom-dashboards/routes.js';
 import { auditLogService } from '../../audit-log/service.js';
 import { resolveProjectScope, MetricScopeError } from '../query/service.js';
 import {
@@ -48,19 +46,6 @@ const customizeBodySchema = z.object({
 async function isMember(userId: string, organizationId: string): Promise<boolean> {
   const orgs = await organizationsService.getUserOrganizations(userId);
   return orgs.some((o) => o.id === organizationId);
-}
-
-/** Same guard every dashboard-creating endpoint uses: dashboards.max_custom under the per-org lock. */
-async function createWithinLimit<T>(organizationId: string, create: () => Promise<T>): Promise<T> {
-  return withLimitLock(organizationId, 'dashboards.max_custom', async () => {
-    await context.runAsSystem('dashboards:create-limit-check', async () => {
-      await context.with({ organizationId }, async () => {
-        const count = await customDashboardsService.countForOrg(organizationId);
-        await assertWithinLimit('dashboards.max_custom', count);
-      });
-    });
-    return create();
-  });
 }
 
 function parseWindow(q: { from?: string; to?: string }): { from: Date; to: Date } | null {
