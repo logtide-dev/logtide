@@ -10,7 +10,7 @@ import type { MetricAlertConfig, MetricQueryResponse, MetricSeries } from '@logt
 import { db } from '../../../database/index.js';
 import { alertsService } from '../../../modules/alerts/service.js';
 import { incidentsService } from '../../../modules/incidents/service.js';
-import { metricQueryService } from '../../../modules/metrics/query/service.js';
+import { MAX_INTERNAL_RAW_SERIES, metricQueryService, PARTIAL_RESULT_NOTE } from '../../../modules/metrics/query/service.js';
 import type { AlertEvaluationResult } from '../../../modules/alerts/types.js';
 import { createTestContext, createTestProject } from '../../helpers/factories.js';
 import { getRuleRow } from './lifecycle-test-helpers.js';
@@ -28,6 +28,8 @@ let retitleSpy: ReturnType<typeof vi.spyOn>;
 
 /** Values per group for the next query runs: { 'web-1': 0.95 } or { '': 0.95 } when ungrouped. */
 let values: Record<string, number | null> = {};
+/** Warnings of the next query responses. */
+let warnings: string[] = [];
 
 /** One point per minute of the queried range (the lead step included). */
 function series(host: string, value: number | null, from: number, to: number): MetricSeries {
@@ -51,7 +53,7 @@ function response(req?: { from: string; to: string }): MetricQueryResponse {
   const from = req ? Date.parse(req.from) : to - 2 * 60_000;
   return {
     interval: '1m',
-    warnings: [],
+    warnings,
     queries: [{ id: 'A', seriesTotal: 1, seriesShown: 1, metricType: 'gauge', unit: '1' }],
     series: Object.entries(values).map(([host, v]) => series(host, v, from, to)),
   };
@@ -125,6 +127,7 @@ beforeEach(() => {
   d.setSeconds(30, 0);
   NOW = d;
   values = {};
+  warnings = [];
   add.mockReset().mockResolvedValue(undefined);
   runSpy = vi.spyOn(metricQueryService, 'run').mockImplementation(async (req) => response(req));
   openSpy = vi
@@ -215,6 +218,7 @@ describe('metric rule evaluation (ungrouped)', () => {
       }),
     ]);
     expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect(resolveSpy).toHaveBeenCalledWith(expect.objectContaining({ reason: 'recovered' }));
     expect((await getRuleRow(rule.id)).state).toBe('ok');
     expect(await instances(rule.id, organization.id)).toEqual([]);
   });
@@ -276,6 +280,8 @@ describe('metric rule evaluation (ungrouped)', () => {
       }),
     ]);
     expect(resolveSpy).toHaveBeenCalledTimes(1);
+    // The incident records the same reason as the notification (N10).
+    expect(resolveSpy).toHaveBeenCalledWith(expect.objectContaining({ sourceId: rule.id, reason: 'no_data' }));
     expect((await getRuleRow(rule.id)).state).toBe('ok');
     expect(await instances(rule.id, organization.id)).toEqual([]);
   });
@@ -438,6 +444,43 @@ describe('metric rule evaluation (grouped)', () => {
       ['h00', 'h01', 'h02', 'h03', 'h04'].map((h) => `host.name=${h}`)
     );
     expect(await instances(rule.id, organization.id)).toHaveLength(5);
+  });
+
+  it('asks the query service to rank by the alert direction with the raised raw series cap', async () => {
+    await metricRule(config({ condition: 'below', threshold: 0.05 }, true));
+    values = { a: 0.5 };
+    await run(NOW);
+    const req = runSpy.mock.calls[0][0] as Record<string, any>;
+    const to = Math.floor(NOW.getTime() / 60_000) * 60_000;
+    expect(req.internal).toEqual({
+      unfoldedGroups: true,
+      maxRawSeries: MAX_INTERNAL_RAW_SERIES,
+      rank: { direction: 'lowest', from: new Date(to - 5 * 60_000).toISOString() },
+    });
+  });
+
+  it('groups dropped by a cap (partial result) are held, not counted as no data (N4)', async () => {
+    const { rule, organization } = await metricRule(config({}, true));
+    values = { 'web-1': 0.95, 'web-2': 0.97 };
+    expect(await run(NOW)).toHaveLength(2);
+
+    // web-1 is dropped by a cap for 90 minutes: never resolved, no streak.
+    values = { 'web-2': 0.97 };
+    warnings = [`Query A: more than 500 series, only the 1 highest groups are evaluated ${PARTIAL_RESULT_NOTE}`];
+    for (let i = 1; i <= 15; i++) expect(await run(plus(NOW, i * 6))).toEqual([]);
+    expect(await instances(rule.id, organization.id)).toMatchObject([
+      { group_key: 'host.name=web-1', state: 'firing', no_data_evaluations: 0, no_data_since: null },
+      { group_key: 'host.name=web-2', state: 'firing' },
+    ]);
+    expect(resolveSpy).not.toHaveBeenCalled();
+
+    // Without the partial warning the same absence is no data again.
+    warnings = [];
+    await run(plus(NOW, 96));
+    expect(await instances(rule.id, organization.id)).toMatchObject([
+      { group_key: 'host.name=web-1', no_data_evaluations: 1 },
+      { group_key: 'host.name=web-2', no_data_evaluations: 0 },
+    ]);
   });
 
   it('a disable while the query runs: the run applies nothing and opens no incident', async () => {

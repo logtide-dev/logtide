@@ -175,16 +175,29 @@ function isBroadcast(series: GridSeries[]): boolean {
   return series.length === 1 && Object.keys(series[0].labels).length === 0;
 }
 
+/**
+ * Combine two aligned series bucket by bucket. With `missingAsZero`, a null
+ * bucket of one side reads as 0 when the other side has a value there (an
+ * error counter without points in a minute had zero errors); a bucket null
+ * on both sides stays null.
+ */
 function zip(
   op: '+' | '-' | '*' | '/',
   labels: Record<string, string>,
   left: (i: number) => number | null,
   right: (i: number) => number | null,
   length: number,
+  missingAsZero = false,
 ): GridSeries {
   const values: Array<number | null> = new Array(length);
   for (let i = 0; i < length; i++) {
-    const v = applyOp(op, left(i), right(i));
+    let a = left(i);
+    let b = right(i);
+    if (missingAsZero && (a === null) !== (b === null)) {
+      a ??= 0;
+      b ??= 0;
+    }
+    const v = applyOp(op, a, b);
     values[i] = v !== null && Number.isFinite(v) ? v : null;
   }
   return { labels, values };
@@ -206,32 +219,41 @@ function binary(op: '+' | '-' | '*' | '/', a: Value, b: Value, length: number, m
   }
   const left = (a as { series: GridSeries[] }).series;
   const right = (b as { series: GridSeries[] }).series;
+  // Series against series: missing buckets read as 0 against a value when
+  // missingAsZero (scalars always have a value, so they never fill gaps).
   if (isBroadcast(left) && !isBroadcast(right)) {
     const l = left[0];
-    return { kind: 'set', series: right.map((s) => zip(op, s.labels, (i) => l.values[i], (i) => s.values[i], length)) };
+    return {
+      kind: 'set',
+      series: right.map((s) => zip(op, s.labels, (i) => l.values[i], (i) => s.values[i], length, missingAsZero)),
+    };
   }
   if (isBroadcast(right) && !isBroadcast(left)) {
     const r = right[0];
-    return { kind: 'set', series: left.map((s) => zip(op, s.labels, (i) => s.values[i], (i) => r.values[i], length)) };
+    return {
+      kind: 'set',
+      series: left.map((s) => zip(op, s.labels, (i) => s.values[i], (i) => r.values[i], length, missingAsZero)),
+    };
   }
   // Join on identical label sets; series without a partner are dropped, or
-  // joined with 0 when missing operands count as zero.
+  // joined with an all-missing partner (0 where they have a value) when
+  // missing operands count as zero.
   const byKey = new Map<string, GridSeries>();
   for (const s of right) byKey.set(labelKey(s.labels), s);
   const out: GridSeries[] = [];
-  const zero = (): number => 0;
+  const none = (): null => null;
   for (const s of left) {
     const key = labelKey(s.labels);
     const partner = byKey.get(key);
     if (partner) {
-      out.push(zip(op, s.labels, (i) => s.values[i], (i) => partner.values[i], length));
+      out.push(zip(op, s.labels, (i) => s.values[i], (i) => partner.values[i], length, missingAsZero));
       byKey.delete(key);
     } else if (missingAsZero) {
-      out.push(zip(op, s.labels, (i) => s.values[i], zero, length));
+      out.push(zip(op, s.labels, (i) => s.values[i], none, length, true));
     }
   }
   if (missingAsZero) {
-    for (const s of byKey.values()) out.push(zip(op, s.labels, zero, (i) => s.values[i], length));
+    for (const s of byKey.values()) out.push(zip(op, s.labels, none, (i) => s.values[i], length, true));
   }
   return { kind: 'set', series: out };
 }

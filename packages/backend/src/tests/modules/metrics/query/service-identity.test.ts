@@ -106,10 +106,23 @@ const getMetricLabelKeys = vi.fn(async (p: MetricLabelParams) => {
   return { keys: p.limit ? sorted.slice(0, p.limit) : sorted };
 });
 
+// Engine calls in flight (N7): every call yields to the event loop first.
+const engineLoad = { inFlight: 0, max: 0 };
+async function tracked<T>(fn: () => Promise<T>): Promise<T> {
+  engineLoad.inFlight++;
+  engineLoad.max = Math.max(engineLoad.max, engineLoad.inFlight);
+  try {
+    await new Promise((r) => setTimeout(r, 1));
+    return await fn();
+  } finally {
+    engineLoad.inFlight--;
+  }
+}
+
 vi.mock('../../../../database/reservoir.js', () => ({
   reservoir: {
-    aggregateMetrics: (p: MetricAggregateParams) => aggregateMetrics(p),
-    getMetricLabelKeys: (p: MetricLabelParams) => getMetricLabelKeys(p),
+    aggregateMetrics: (p: MetricAggregateParams) => tracked(() => aggregateMetrics(p)),
+    getMetricLabelKeys: (p: MetricLabelParams) => tracked(() => getMetricLabelKeys(p)),
   },
 }));
 
@@ -135,6 +148,12 @@ import {
   KEY_DISCOVERY_WINDOW_MS,
   MetricQueryValidationError,
   seriesLimitCap,
+  rawSeriesCap,
+  createLimiter,
+  isPartialResultWarning,
+  PARTIAL_RESULT_NOTE,
+  MAX_INTERNAL_RAW_SERIES,
+  MAX_ENGINE_CONCURRENCY,
   type ResolvedMetricQuery,
 } from '../../../../modules/metrics/query/service.js';
 
@@ -188,6 +207,8 @@ beforeEach(() => {
   catalog.entries = new Map();
   aggregateMetrics.mockClear();
   getMetricLabelKeys.mockClear();
+  engineLoad.inFlight = 0;
+  engineLoad.max = 0;
 });
 
 describe('series identity (item 3)', () => {
@@ -306,21 +327,50 @@ describe('single-level reads and key discovery (item 4)', () => {
     expect(getMetricLabelKeys).toHaveBeenCalled();
   });
 
-  it('discovers identity keys over the recent part of the window, the whole window as fallback', async () => {
+  it('discovers identity keys over the recent part and the earlier part of a long window', async () => {
     const from = T0;
     const to = T0 + 24 * HOUR;
+    const recentFrom = to - KEY_DISCOVERY_WINDOW_MS;
     points.push({ project: 'p1', metric: 'g', t: to - HOUR, v: 1, resource: { 'host.name': 'a' } });
     await run(base([q({ metricName: 'g', aggregation: 'avg' })], { from: new Date(from).toISOString(), to: new Date(to).toISOString(), interval: 'auto' }));
-    for (const c of getMetricLabelKeys.mock.calls) expect(c[0].from!.getTime()).toBe(to - KEY_DISCOVERY_WINDOW_MS);
+    const ranges = getMetricLabelKeys.mock.calls.map((c) => `${c[0].scope}:${c[0].from!.getTime()}-${c[0].to!.getTime()}`).sort();
+    // Two disjoint reads per scope cover the whole window.
+    expect(ranges).toEqual(
+      [`metric:${from}-${recentFrom}`, `metric:${recentFrom}-${to}`, `resource:${from}-${recentFrom}`, `resource:${recentFrom}-${to}`].sort(),
+    );
 
     getMetricLabelKeys.mockClear();
+    aggregateMetrics.mockClear();
     points = [{ project: 'p1', metric: 'g', t: from + HOUR, v: 1, resource: { 'host.name': 'a' } }];
     const res = await run(base([q({ metricName: 'g', aggregation: 'avg' })], { from: new Date(from).toISOString(), to: new Date(to).toISOString(), interval: 'auto' }));
-    const starts = getMetricLabelKeys.mock.calls.map((c) => c[0].from!.getTime());
-    expect(starts).toContain(to - KEY_DISCOVERY_WINDOW_MS);
-    expect(starts).toContain(from);
     expect(aggregateMetrics.mock.calls[0][0].groupByAttrs).toEqual([{ scope: 'resource', key: 'host.name' }]);
     expect(res.series).toHaveLength(1);
+  });
+
+  it('unions keys seen only early in a long window with the recent ones, so series are not merged (N8)', async () => {
+    const from = T0;
+    const to = T0 + 24 * HOUR;
+    // Early: two pods on host a (pod key only then). Recent: host a alone.
+    points.push({ project: 'p1', metric: 'g', t: from + HOUR, v: 2, resource: { 'host.name': 'a', 'k8s.pod.name': 'p-1' } });
+    points.push({ project: 'p1', metric: 'g', t: from + HOUR, v: 8, resource: { 'host.name': 'a', 'k8s.pod.name': 'p-2' } });
+    points.push({ project: 'p1', metric: 'g', t: to - HOUR, v: 4, resource: { 'host.name': 'a' } });
+    const res = await run(
+      base([q({ metricName: 'g', aggregation: 'max', spaceAggregation: 'sum' })], {
+        from: new Date(from).toISOString(),
+        to: new Date(to).toISOString(),
+        interval: '1h',
+      }),
+    );
+    const refs = aggregateMetrics.mock.calls[0][0].groupByAttrs!.map((r) => r.key);
+    expect(refs).toEqual(['host.name', 'k8s.pod.name']);
+    // max per pod summed: 2 + 8 (merged they would read max 8).
+    expect(values(res.series[0])[1]).toBe(10);
+  });
+
+  it('short windows read keys once over the window', async () => {
+    counter('p1', 0, 1, { 'host.name': 'a' });
+    await run(base([q({ aggregation: 'avg' })]));
+    expect(getMetricLabelKeys.mock.calls.map((c) => c[0].from!.getTime())).toEqual([T0, T0]);
   });
 
   it('refuses windows longer than 90 days', async () => {
@@ -424,8 +474,53 @@ describe('unfolded groups cap', () => {
     expect(a.some((s) => s.labels['resource.host.name'] === `h${n - 1}`)).toBe(false);
     expect(res.queries[0]).toMatchObject({ seriesTotal: n, seriesShown: MAX_UNFOLDED_GROUPS });
     expect(res.queries[1]).toMatchObject({ seriesTotal: n, seriesShown: MAX_UNFOLDED_GROUPS });
-    expect(res.warnings).toContain(`Query A: more than ${MAX_UNFOLDED_GROUPS} groups, only the first ${MAX_UNFOLDED_GROUPS} are evaluated`);
-    expect(res.warnings).toContain(`Formula F1: more than ${MAX_UNFOLDED_GROUPS} groups, only the first ${MAX_UNFOLDED_GROUPS} are evaluated`);
+    expect(res.warnings).toContain(
+      `Query A: more than ${MAX_UNFOLDED_GROUPS} groups, only the first ${MAX_UNFOLDED_GROUPS} are evaluated ${PARTIAL_RESULT_NOTE}`,
+    );
+    expect(res.warnings).toContain(
+      `Formula F1: more than ${MAX_UNFOLDED_GROUPS} groups, only the first ${MAX_UNFOLDED_GROUPS} are evaluated ${PARTIAL_RESULT_NOTE}`,
+    );
+    expect(res.warnings.some((w) => isPartialResultWarning(w, 'A'))).toBe(true);
+    expect(res.warnings.some((w) => isPartialResultWarning(w, 'F1'))).toBe(true);
+  });
+
+  it('with a rank, keeps the most extreme groups in that direction (N4)', async () => {
+    const n = MAX_UNFOLDED_GROUPS + 5;
+    for (let i = 0; i < n; i++) {
+      points.push({ project: 'p1', metric: 'g', t: T0, v: i, resource: { 'host.name': `h${String(i).padStart(4, '0')}` } });
+    }
+    const spec = q({ metricName: 'g', aggregation: 'max', spaceAggregation: 'max', groupBy: [hostRef] });
+    const high = await run(base([spec], { internal: { unfoldedGroups: true, rank: { direction: 'highest' } } }));
+    const hosts = (r: typeof high) => new Set(r.series.map((s) => s.labels['resource.host.name']));
+    expect(hosts(high).has(`h${n - 1}`)).toBe(true);
+    expect(hosts(high).has('h0000')).toBe(false);
+    expect(high.warnings).toContain(
+      `Query A: more than ${MAX_UNFOLDED_GROUPS} groups, only the ${MAX_UNFOLDED_GROUPS} highest are evaluated ${PARTIAL_RESULT_NOTE}`,
+    );
+
+    const low = await run(base([spec], { internal: { unfoldedGroups: true, rank: { direction: 'lowest' } } }));
+    expect(hosts(low).has('h0000')).toBe(true);
+    expect(hosts(low).has(`h${n - 1}`)).toBe(false);
+    expect(low.series).toHaveLength(MAX_UNFOLDED_GROUPS);
+  });
+
+  it('ranks by the mean from rank.from on (the alert window, not the lead step)', async () => {
+    // Lead minute: h-a is huge, h-b small; in the window it is the other way round.
+    const n = MAX_UNFOLDED_GROUPS + 1;
+    for (let i = 0; i < n; i++) {
+      const host = `h${String(i).padStart(4, '0')}`;
+      points.push({ project: 'p1', metric: 'g', t: T0, v: i === 0 ? 1e9 : 5, resource: { 'host.name': host } });
+      points.push({ project: 'p1', metric: 'g', t: T0 + MIN, v: i === 0 ? 0 : 5, resource: { 'host.name': host } });
+    }
+    const spec = q({ metricName: 'g', aggregation: 'max', spaceAggregation: 'max', groupBy: [hostRef] });
+    const res = await run(
+      base([spec], {
+        to: new Date(T0 + 2 * MIN).toISOString(),
+        internal: { unfoldedGroups: true, rank: { direction: 'highest', from: new Date(T0 + MIN).toISOString() } },
+      }),
+    );
+    // h0000 is the lowest in the window: the one dropped.
+    expect(res.series.some((s) => s.labels['resource.host.name'] === 'h0000')).toBe(false);
   });
 });
 
@@ -449,5 +544,185 @@ describe('internal series cap', () => {
     expect(seriesLimitCap({ maxSeries: 10 })).toBe(50);
     expect(seriesLimitCap({ maxSeries: 1e9 })).toBe(MAX_INTERNAL_SERIES_LIMIT);
     expect(seriesLimitCap({ maxSeries: Number.NaN })).toBe(50);
+  });
+});
+
+describe('internal raw series cap (N1)', () => {
+  const instances = (n: number) => Array.from({ length: n }, (_, i) => `i${String(i).padStart(4, '0')}`);
+
+  it('clamps internal.maxRawSeries between MAX_RAW_SERIES and MAX_INTERNAL_RAW_SERIES', () => {
+    expect(rawSeriesCap(undefined)).toBe(MAX_RAW_SERIES);
+    expect(rawSeriesCap({ maxRawSeries: 10 })).toBe(MAX_RAW_SERIES);
+    expect(rawSeriesCap({ maxRawSeries: 1200.7 })).toBe(1200);
+    expect(rawSeriesCap({ maxRawSeries: 1e9 })).toBe(MAX_INTERNAL_RAW_SERIES);
+    expect(rawSeriesCap({ maxRawSeries: Number.NaN })).toBe(MAX_RAW_SERIES);
+  });
+
+  it('counter rates cover every series up to the raised cap', async () => {
+    const ids = instances(MAX_RAW_SERIES + 100);
+    for (const id of ids) for (let m = 0; m < 3; m++) counter('p1', m, 1000 + m * 60, { 'service.instance.id': id });
+    catalog.entries.set('requests', { unit: null, type: 'sum', temporality: 'cumulative' });
+    const capped = await run(base([q({ spaceAggregation: 'sum' })]));
+    expect(values(capped.series[0])[1]).toBe(MAX_RAW_SERIES);
+    expect(capped.warnings.some((w) => isPartialResultWarning(w, 'A'))).toBe(true);
+
+    const raised = await run(base([q({ spaceAggregation: 'sum' })], { internal: { maxRawSeries: ids.length } }));
+    expect(values(raised.series[0]).slice(1, 3)).toEqual([ids.length, ids.length]);
+    expect(raised.warnings).toEqual([]);
+  });
+
+  it('keeps the space aggregation instead of the one-step fallback up to the raised cap', async () => {
+    // 600 disks over 10 hosts: the fullest disk per host is the max of the per-disk avgs.
+    const ids = instances(600);
+    ids.forEach((id, i) => {
+      points.push({ project: 'p1', metric: 'disk', t: T0, v: i, resource: { 'host.name': `h${i % 10}`, 'container.id': id } });
+    });
+    const spec = q({ metricName: 'disk', aggregation: 'avg', spaceAggregation: 'max', groupBy: [hostRef] });
+    const fallback = await run(base([spec]));
+    expect(fallback.warnings.some((w) => w.includes('aggregated in one step'))).toBe(true);
+    expect(aggregateMetrics).toHaveBeenCalledTimes(2);
+
+    aggregateMetrics.mockClear();
+    const raised = await run(base([spec], { internal: { maxRawSeries: 600, maxSeries: 10 } }));
+    expect(aggregateMetrics).toHaveBeenCalledTimes(1);
+    expect(raised.warnings).toEqual([]);
+    const h9 = raised.series.find((s) => s.labels['resource.host.name'] === 'h9')!;
+    expect(values(h9)[0]).toBe(599);
+  });
+
+  it('cumulative histograms keep every series up to the raised cap', async () => {
+    const ids = instances(MAX_RAW_SERIES + 10);
+    for (const id of ids) for (let m = 0; m < 3; m++) hist('p1', m, 10 * (m + 1), { 'service.instance.id': id });
+    catalog.entries.set('latency', { unit: 's', type: 'histogram', temporality: 'cumulative' });
+    const res = await run(base([q({ metricName: 'latency', aggregation: 'count' })], { internal: { maxRawSeries: 1000 } }));
+    expect(values(res.series[0]).slice(1, 3)).toEqual([ids.length * 10, ids.length * 10]);
+    expect(res.warnings).toEqual([]);
+  });
+
+  it('delta histograms stay per series (no engine one-step) up to the raised cap', async () => {
+    const ids = instances(MAX_RAW_SERIES + 10);
+    for (const id of ids) hist('p1', 0, 2, { 'service.instance.id': id });
+    catalog.entries.set('latency', { unit: 's', type: 'histogram', temporality: 'delta' });
+    const res = await run(base([q({ metricName: 'latency', aggregation: 'count' })], { internal: { maxRawSeries: 1000 } }));
+    expect(aggregateMetrics).toHaveBeenCalledTimes(1);
+    expect(values(res.series[0])[0]).toBe(ids.length * 2);
+  });
+});
+
+describe('ranked (alert) queries above the raw series cap (N4)', () => {
+  it('never drops counter series by recent value: the one group keeps all its series', async () => {
+    const n = MAX_RAW_SERIES + 1;
+    for (let i = 0; i < n; i++) {
+      const start = i === n - 1 ? 0 : 1000 + i;
+      for (let m = 0; m < 3; m++) counter('p1', m, start + m * 60, { 'service.instance.id': `i${i}` });
+    }
+    catalog.entries.set('requests', { unit: null, type: 'sum', temporality: 'cumulative' });
+    const res = await run(base([q({ spaceAggregation: 'sum' })], { internal: { unfoldedGroups: true, rank: { direction: 'lowest' } } }));
+    expect(aggregateMetrics).toHaveBeenCalledTimes(1);
+    expect(values(res.series[0]).slice(1, 3)).toEqual([n, n]);
+    expect(res.warnings.some((w) => isPartialResultWarning(w, 'A'))).toBe(false);
+  });
+
+  it('keeps the most extreme groups in the alert direction and reports the rest as partial', async () => {
+    // 501 hosts, one instance each; host i counts i + 1 per second.
+    const n = MAX_RAW_SERIES + 1;
+    const host = (i: number) => `h${String(i).padStart(4, '0')}`;
+    for (let i = 0; i < n; i++) {
+      for (let m = 0; m < 3; m++) counter('p1', m, m * 60 * (i + 1), { 'host.name': host(i), 'service.instance.id': `i${i}` });
+    }
+    catalog.entries.set('requests', { unit: null, type: 'sum', temporality: 'cumulative' });
+    const spec = q({ spaceAggregation: 'sum', groupBy: [hostRef] });
+    const low = await run(base([spec], { internal: { unfoldedGroups: true, rank: { direction: 'lowest' } } }));
+    const lowHosts = new Set(low.series.map((s) => s.labels['resource.host.name']));
+    expect(lowHosts.size).toBe(MAX_RAW_SERIES);
+    expect(lowHosts.has(host(0))).toBe(true);
+    expect(lowHosts.has(host(n - 1))).toBe(false);
+    expect(values(low.series.find((s) => s.labels['resource.host.name'] === host(0))!)[1]).toBe(1);
+    expect(low.warnings.some((w) => isPartialResultWarning(w, 'A'))).toBe(true);
+    expect(aggregateMetrics).toHaveBeenCalledTimes(1);
+
+    const high = await run(base([spec], { internal: { unfoldedGroups: true, rank: { direction: 'highest' } } }));
+    const highHosts = new Set(high.series.map((s) => s.labels['resource.host.name']));
+    expect(highHosts.has(host(n - 1))).toBe(true);
+    expect(highHosts.has(host(0))).toBe(false);
+  });
+
+  it('never switches to the one-step aggregation', async () => {
+    for (let i = 0; i < MAX_RAW_SERIES + 1; i++) {
+      points.push({ project: 'p1', metric: 'g', t: T0, v: 1, resource: { 'container.id': `c${i}` } });
+    }
+    const res = await run(
+      base([q({ metricName: 'g', aggregation: 'avg', spaceAggregation: 'sum' })], {
+        internal: { unfoldedGroups: true, rank: { direction: 'highest' } },
+      }),
+    );
+    expect(aggregateMetrics).toHaveBeenCalledTimes(1);
+    expect(values(res.series[0])[0]).toBe(MAX_RAW_SERIES + 1);
+    expect(res.warnings.some((w) => w.includes('one step'))).toBe(false);
+  });
+
+  it('cumulative histograms of a ranked query keep every series of a kept group', async () => {
+    const n = MAX_RAW_SERIES + 1;
+    for (let i = 0; i < n; i++) {
+      const per = i === n - 1 ? 0 : 10;
+      for (let m = 0; m < 3; m++) hist('p1', m, per * (m + 1), { 'service.instance.id': `i${i}` });
+    }
+    catalog.entries.set('latency', { unit: 's', type: 'histogram', temporality: 'cumulative' });
+    const res = await run(
+      base([q({ metricName: 'latency', aggregation: 'count' })], { internal: { unfoldedGroups: true, rank: { direction: 'highest' } } }),
+    );
+    expect(values(res.series[0]).slice(1, 3)).toEqual([(n - 1) * 10, (n - 1) * 10]);
+    expect(res.warnings.some((w) => w.includes('highest recent count'))).toBe(false);
+  });
+
+  it('a formula over a partial query is partial too', async () => {
+    for (let i = 0; i < MAX_RAW_SERIES + 1; i++) {
+      const host = `h${String(i).padStart(4, '0')}`;
+      points.push({ project: 'p1', metric: 'g', t: T0, v: i, resource: { 'host.name': host, 'container.id': `c${i}` } });
+    }
+    const res = await run(
+      base([q({ metricName: 'g', aggregation: 'avg', spaceAggregation: 'avg', groupBy: [hostRef], hidden: true })], {
+        formulas: [{ id: 'F1', expression: 'A * 2' }],
+        internal: { unfoldedGroups: true, rank: { direction: 'highest' } },
+      }),
+    );
+    expect(res.warnings.some((w) => isPartialResultWarning(w, 'F1'))).toBe(true);
+    expect(res.series.filter((s) => s.queryId === 'F1')).toHaveLength(MAX_RAW_SERIES);
+  });
+});
+
+describe('engine concurrency (N7)', () => {
+  it('createLimiter never runs more than its bound and releases slots on errors', async () => {
+    const limit = createLimiter(3);
+    let inFlight = 0;
+    let max = 0;
+    const task = (i: number) =>
+      limit(async () => {
+        inFlight++;
+        max = Math.max(max, inFlight);
+        await new Promise((r) => setTimeout(r, 2));
+        inFlight--;
+        if (i % 4 === 0) throw new Error(`boom ${i}`);
+        return i;
+      });
+    const settled = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => task(i)));
+    expect(max).toBe(3);
+    expect(settled.filter((s) => s.status === 'rejected')).toHaveLength(5);
+    expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(15);
+  });
+
+  it('bounds engine calls across partitions, queries, key discovery and compareTo', async () => {
+    const projects = Array.from({ length: 6 }, (_, i) => `p${i + 1}`);
+    const names = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'];
+    for (const p of projects) {
+      for (const name of names) points.push({ project: p, metric: name, t: T0, v: 1, resource: { 'host.name': p } });
+    }
+    for (const name of names) catalog.entries.set(name, { unit: null, type: 'gauge', projectIds: projects });
+    const ids = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
+    await run(base(ids.map((id, i) => q({ id, metricName: names[i], aggregation: 'avg' })), { projectIds: projects, compareTo: '1h' }));
+    // 6 queries x (2 key reads + 6 partitions) x 2 windows.
+    expect(aggregateMetrics.mock.calls.length + getMetricLabelKeys.mock.calls.length).toBe(96);
+    expect(engineLoad.max).toBeLessThanOrEqual(MAX_ENGINE_CONCURRENCY);
+    expect(engineLoad.max).toBeGreaterThan(1);
   });
 });

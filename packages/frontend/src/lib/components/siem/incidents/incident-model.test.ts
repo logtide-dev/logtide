@@ -205,6 +205,14 @@ describe('detail view helpers', () => {
     expect(describeHistoryEntry({ ...row, action: 'assignment_change', newValue: null })).toBe('Assignee removed');
   });
 
+  it('describeHistoryEntry names why a source resolved an incident', async () => {
+    const { describeHistoryEntry } = await import('./incident-model');
+    const row = { action: 'status_change', fieldName: null, oldValue: 'open', newValue: 'resolved' };
+    expect(describeHistoryEntry({ ...row, metadata: { reason: 'recovered' } })).toBe('Status changed from Open to Resolved (recovered)');
+    expect(describeHistoryEntry({ ...row, metadata: { reason: 'no_data' } })).toBe('Status changed from Open to Resolved (no data)');
+    expect(describeHistoryEntry({ ...row, metadata: { reason: 'manual' } })).toBe('Status changed from Open to Resolved');
+  });
+
   it('formatIncidentDuration picks the largest unit and handles ongoing', async () => {
     const { formatIncidentDuration } = await import('./incident-model');
     expect(formatIncidentDuration('2026-10-22T10:00:00Z', null)).toBe('Ongoing');

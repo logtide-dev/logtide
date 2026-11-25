@@ -217,7 +217,6 @@ describe('schema', () => {
       { ...base, formulas: [{ id: 'F5', expression: 'A' }] },
       { ...base, from: base.to, to: base.from },
       { ...base, projectIds: ['not-a-uuid'] },
-      { ...base, projectIds: [] },
       { ...base, organizationId: 'x' },
       { ...base, variables: { 'Bad-Name': 'x' } },
     ];

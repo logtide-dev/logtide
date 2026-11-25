@@ -140,4 +140,48 @@ describe('missingAsZero', () => {
     const total: GridSeries[] = [{ labels: {}, values: [10, 20] }];
     expect(evaluateFormula(parseFormula('A / B'), new Map(Object.entries({ A: [], B: total })), 2)).toEqual([]);
   });
+
+  describe('per bucket (N5)', () => {
+    it('reads a null bucket of one operand as 0 when the other has a value there', () => {
+      // 5xx counter missing in buckets 0 and 2; total present everywhere but bucket 3.
+      const A: GridSeries[] = [{ labels: {}, values: [null, 2, null, null] }];
+      const B: GridSeries[] = [{ labels: {}, values: [10, 20, 40, null] }];
+      expect(zeroEval('A / B * 100', { A, B }, 4)[0].values).toEqual([0, 10, 0, null]);
+      // Without the option a missing bucket stays a gap.
+      expect(ev('A / B * 100', { A, B }, 4)[0].values).toEqual([null, 10, null, null]);
+    });
+
+    it('works on joined groups and both sides', () => {
+      const A: GridSeries[] = [{ labels: { route: '/a' }, values: [null, 5, 1] }];
+      const B: GridSeries[] = [{ labels: { route: '/a' }, values: [10, null, 2] }];
+      expect(zeroEval('A + B', { A, B }, 3)[0].values).toEqual([10, 5, 3]);
+      // Dividing by a bucket read as 0 gives no value, never Infinity.
+      expect(zeroEval('A / B', { A, B }, 3)[0].values).toEqual([0, null, 0.5]);
+    });
+
+    it('fills buckets against a broadcast operand too', () => {
+      const A: GridSeries[] = [
+        { labels: { host: 'a' }, values: [null, 4] },
+        { labels: { host: 'b' }, values: [2, null] },
+      ];
+      const total: GridSeries[] = [{ labels: {}, values: [8, 8] }];
+      expect(zeroEval('A / B * 100', { A, B: total }).map((s) => s.values)).toEqual([
+        [0, 50],
+        [25, 0],
+      ]);
+    });
+
+    it('a scalar never fills a gap: A * 100 keeps the null buckets', () => {
+      const A: GridSeries[] = [{ labels: { host: 'a' }, values: [null, 3] }];
+      expect(zeroEval('A * 100', { A })[0].values).toEqual([null, 300]);
+    });
+
+    it('nested expressions apply it at every step', () => {
+      const A: GridSeries[] = [{ labels: {}, values: [null, 1] }];
+      const B: GridSeries[] = [{ labels: {}, values: [3, null] }];
+      const C: GridSeries[] = [{ labels: {}, values: [3, 1] }];
+      // (A + B) / C: bucket 0 = (0 + 3) / 3, bucket 1 = (1 + 0) / 1.
+      expect(zeroEval('(A + B) / C', { A, B, C })[0].values).toEqual([1, 1]);
+    });
+  });
 });

@@ -14,7 +14,7 @@ import {
 } from '@logtide/shared';
 import { db } from '../../database/connection.js';
 import type { AlertRulesTable, AlertRuleState } from '../../database/types.js';
-import { metricQueryService } from '../metrics/query/service.js';
+import { isPartialResultWarning, MAX_INTERNAL_RAW_SERIES, metricQueryService } from '../metrics/query/service.js';
 import { hooks } from '../../hooks/index.js';
 import { decideThreshold, type LifecycleDecision, type LifecycleSnapshot } from './lifecycle.js';
 import { evaluationQuery } from './metric-config.js';
@@ -94,6 +94,12 @@ export interface MetricWindowResult {
   /** Metric name of a query, expression of a formula. */
   source: string;
   unit: string | null;
+  /**
+   * The query service dropped groups of the watched item (a cap, see
+   * isPartialResultWarning): instances absent from `groups` are held as
+   * they are instead of counting as no data.
+   */
+  partial?: boolean;
 }
 
 /** No-data streak bounds: both must be reached before an instance is closed. */
@@ -153,7 +159,8 @@ export async function metricRuleProjects(organizationId: string, projectIds: str
     .where('deleted_at', 'is', null)
     .execute();
   const live = rows.map((r) => r.id).sort();
-  if (projectIds === null) return live;
+  // [] (rules saved earlier in 1.8) means every project, like null.
+  if (projectIds === null || projectIds.length === 0) return live;
   const wanted = new Set(projectIds);
   return live.filter((id) => wanted.has(id));
 }
@@ -176,6 +183,10 @@ export function groupsFromResponse(
     throw new Error(`Metric alert query ${target.id} failed: ${info.error}`);
   }
 
+  // Groups the query service had to drop (caps) are missing from this
+  // response without having lost their data.
+  const partial = response.warnings.some((w) => isPartialResultWarning(w, target.id));
+
   const groups: MetricGroupValue[] = [];
   for (const s of response.series) {
     if (s.queryId !== target.id || s.comparison || s.labels.__other__ === 'true') continue;
@@ -192,7 +203,7 @@ export function groupsFromResponse(
       ? (config.query.queries.find((q) => q.id === target.id)?.metricName ?? target.id)
       : (config.query.formulas.find((f) => f.id === target.id)?.expression ?? target.id);
 
-  return { groups, queryId: target.id, source, unit: info?.unit ?? null };
+  return { groups, queryId: target.id, source, unit: info?.unit ?? null, partial };
 }
 
 /** Run the rule's query over its window and return the value of every group. */
@@ -210,8 +221,15 @@ export async function computeMetricWindow(
     projectIds,
     from: from.toISOString(),
     to: to.toISOString(),
-    // Every group: breaches are evaluated here, before any ranking.
-    internal: { unfoldedGroups: true },
+    // Every group: breaches are evaluated here, before any ranking. Every
+    // raw series up to the internal cap goes through the per-series path;
+    // whatever a cap still drops is chosen by the alert direction (the most
+    // extreme groups are kept) and reported as a partial result.
+    internal: {
+      unfoldedGroups: true,
+      maxRawSeries: MAX_INTERNAL_RAW_SERIES,
+      rank: { direction: config.condition === 'below' ? 'lowest' : 'highest', from: window.from.toISOString() },
+    },
   });
   return groupsFromResponse(config, response, window.from);
 }
@@ -251,28 +269,38 @@ export function selectAlertGroups(
  * Pure per-instance lifecycle: consecutive breach counting and the shared
  * threshold state machine (T1-T10), with the rule's snooze and re-notify.
  * Instances known from the database but absent from this run have no data,
- * and no data holds an instance as it is (see the module comment).
+ * and no data holds an instance as it is (see the module comment). When the
+ * response was partial (`options.partial`: the query service dropped groups
+ * at a cap), an absent instance was not seen at all: it is held unchanged,
+ * without counting toward the no-data bound.
  */
 export function planMetricInstances(
   config: MetricAlertConfig,
   groups: MetricGroupValue[],
   instances: MetricInstanceRow[],
   rule: { snoozedUntil: Date | null; renotifyMinutes: number | null },
-  now: Date
+  now: Date,
+  options: { partial?: boolean } = {}
 ): MetricInstancePlan[] {
-  const byKey = new Map<string, { labels: Record<string, string>; value: number | null }>();
-  for (const g of groups) byKey.set(g.groupKey, { labels: g.labels, value: g.value });
+  const byKey = new Map<string, { labels: Record<string, string>; value: number | null; absent: boolean }>();
+  for (const g of groups) byKey.set(g.groupKey, { labels: g.labels, value: g.value, absent: false });
   for (const i of instances) {
-    if (!byKey.has(i.group_key)) byKey.set(i.group_key, { labels: i.labels, value: null });
+    if (!byKey.has(i.group_key)) byKey.set(i.group_key, { labels: i.labels, value: null, absent: true });
   }
   const previousByKey = new Map(instances.map((i) => [i.group_key, i]));
 
   const plans: MetricInstancePlan[] = [];
-  for (const [groupKey, { labels, value }] of byKey) {
+  for (const [groupKey, { labels, value, absent }] of byKey) {
     const previous = previousByKey.get(groupKey) ?? null;
     if (value === null) {
       if (!previous) {
         plans.push({ groupKey, labels, value: null, decision: { type: 'none' }, previous, next: null });
+        continue;
+      }
+      if (absent && options.partial) {
+        // Dropped by a cap, not missing: hold exactly as it is.
+        const { group_key: _key, labels: _labels, ...held } = previous;
+        plans.push({ groupKey, labels, value: null, decision: { type: 'none' }, previous, next: held });
         continue;
       }
       const evaluations = previous.no_data_evaluations + 1;
@@ -580,7 +608,9 @@ export async function evaluateMetricRule(
 
     const instances = await loadInstances(trx, rule);
     const groups = selectAlertGroups(config, window.groups, instances);
-    const plans = planMetricInstances(config, groups, instances, { snoozedUntil, renotifyMinutes }, now);
+    const plans = planMetricInstances(config, groups, instances, { snoozedUntil, renotifyMinutes }, now, {
+      partial: window.partial === true,
+    });
 
     for (const plan of plans) {
       if (!instanceChanged(plan)) continue;
@@ -690,7 +720,7 @@ export async function evaluateMetricRule(
 
     let resolved: string | null = null;
     if (wasFiring && !anyFiring) {
-      resolved = await resolveAlertIncident(rule, 'recovered', now);
+      resolved = await resolveAlertIncident(rule, ruleResolveReason(resolving), now);
     } else if (resolving.length > 0) {
       resolved = opened ?? (await activeIncidentId(rule));
     }
@@ -764,6 +794,15 @@ export async function evaluateMetricRule(
   }
 
   return results;
+}
+
+/**
+ * Why the rule's incident resolves when its last firing instance does: `no_data`
+ * when every instance resolving in this run closed on the no-data bound (the
+ * same reason their notifications carry), `recovered` otherwise.
+ */
+export function ruleResolveReason(resolving: Array<Pick<MetricInstancePlan, 'reason'>>): MetricAlertResolveReason {
+  return resolving.length > 0 && resolving.every((p) => p.reason === 'no_data') ? 'no_data' : 'recovered';
 }
 
 function notificationKind(decision: LifecycleDecision): AlertNotificationKind | 'resolved' | null {

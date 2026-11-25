@@ -52,8 +52,12 @@ export interface ResolveFromSourceInput {
   source: IncidentSourceKind;
   sourceId: string;
   resolvedAt: Date;
-  /** `recovered`: the source is healthy again; `manual`: a user disabled or deleted the rule, monitor or host. */
-  reason: 'recovered' | 'manual';
+  /**
+   * `recovered`: the source is healthy again; `no_data`: a metric alert
+   * closed after its data stayed missing past the no-data bound; `manual`: a
+   * user disabled or deleted the rule, monitor or host.
+   */
+  reason: 'recovered' | 'no_data' | 'manual';
 }
 
 /** Input of `incidentsService.setSeverityFromSource`. */
