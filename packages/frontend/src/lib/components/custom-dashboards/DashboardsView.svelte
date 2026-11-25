@@ -628,6 +628,7 @@
         values={$variableValuesMap}
         organizationId={$currentOrganization.id}
         projectId={$activeDashboard.projectId}
+        panels={displayedPanels}
         onChange={handleVariableChange}
       />
     {/if}
