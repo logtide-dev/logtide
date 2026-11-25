@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { IQueueAdapter } from '../abstractions/types.js';
 import type { AlertEvaluationResult, AlertNotificationJobData } from '../../modules/alerts/types.js';
 
@@ -9,11 +10,14 @@ import type { AlertEvaluationResult, AlertNotificationJobData } from '../../modu
  * pending job with the same key):
  * - `triggered` / `renotify`: `alert-notif-<alert_history id>`
  * - `resolved`: `alert-resolved-<rule id>-<firing since, epoch ms>` (one per
- *   firing episode)
+ *   firing episode), plus `-<sha1 of the group key, 16 hex>` for a grouped
+ *   metric rule instance (several instances of a rule resolve independently)
  */
 export function alertNotificationJobKey(result: AlertEvaluationResult): string {
   if (result.kind === 'resolved') {
-    return `alert-resolved-${result.rule_id}-${Date.parse(result.firing_since)}`;
+    const base = `alert-resolved-${result.rule_id}-${Date.parse(result.firing_since)}`;
+    const groupKey = result.metric?.group_key;
+    return groupKey ? `${base}-${createHash('sha1').update(groupKey).digest('hex').slice(0, 16)}` : base;
   }
   return `alert-notif-${result.historyId}`;
 }

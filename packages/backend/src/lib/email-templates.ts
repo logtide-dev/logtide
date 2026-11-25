@@ -161,6 +161,75 @@ Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinatio
 }
 
 // ============================================================================
+// METRIC ALERT EMAIL (1.8)
+// ============================================================================
+
+export interface MetricAlertEmailData {
+  /** Rule name, plus the group labels of a grouped rule. */
+  ruleName: string;
+  /** Metric name or formula expression. */
+  source: string;
+  /** Formatted window value and threshold (with units). */
+  value: string;
+  threshold: string;
+  condition: 'above' | 'below';
+  /** "5 minutes" */
+  window: string;
+  /** "host.name=web-1" or '' when ungrouped. */
+  labels: string;
+  organizationName?: string;
+  projectName?: string | null;
+  link: string;
+}
+
+export function generateMetricAlertEmail(data: MetricAlertEmailData): { html: string; text: string } {
+  const frontendUrl = getFrontendUrl();
+  const rows = [
+    { key: 'metric', value: data.source },
+    { key: 'condition', value: `${data.condition} ${data.threshold}` },
+    { key: 'window', value: data.window },
+    ...(data.labels ? [{ key: 'group', value: data.labels }] : []),
+  ];
+
+  const html = renderEmail({
+    title: `Alert: ${data.ruleName}`,
+    preheader: `${data.source} is ${data.value}, ${data.condition} ${data.threshold}`,
+    context: emailContext(data.organizationName, data.projectName),
+    body:
+      ui.pill('Alert triggered', 'error') +
+      ui.title(data.ruleName) +
+      ui.bigNumber(data.value, `${data.source}, averaged over the last ${data.window}`, 'error') +
+      ui.logBlock(rows) +
+      ui.button('View alert', data.link),
+    footer: { kind: 'notifications' },
+  });
+
+  const text = `
+Alert triggered: ${data.ruleName}
+${'='.repeat(50)}
+
+${data.source} is ${data.value} averaged over the last ${data.window}, ${data.condition} the threshold of ${data.threshold}.
+
+Details
+-------
+Rule Name: ${data.ruleName}
+${data.labels ? `Group: ${data.labels}` : ''}
+${data.organizationName ? `Organization: ${data.organizationName}` : ''}
+${data.projectName ? `Project: ${data.projectName}` : ''}
+
+Triggered: ${formatEmailDate()}
+
+View details: ${data.link}
+
+--
+Sent by LogTide
+Manage notifications: ${frontendUrl}/dashboard/settings/notifications/destinations
+`.trim();
+
+  return { html, text };
+}
+
+// ============================================================================
 // ERROR NOTIFICATION EMAIL
 // ============================================================================
 

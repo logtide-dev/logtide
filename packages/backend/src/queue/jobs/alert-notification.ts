@@ -11,9 +11,15 @@ import { notifyPagerDutyTargets, hostOf } from '../../modules/notification-chann
 import { db } from '../../database/connection.js';
 import nodemailer, { type Transporter, type TransportOptions } from 'nodemailer';
 import { config } from '../../config/index.js';
-import { generateAlertEmail, generateSigmaDetectionEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import {
+  generateAlertEmail,
+  generateMetricAlertEmail,
+  generateSigmaDetectionEmail,
+  getFrontendUrl,
+} from '../../lib/email-templates.js';
 import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
-import type { NotificationChannel, WebhookEnvelope } from '@logtide/shared';
+import type { MetricAlertInstancePayload, NotificationChannel, WebhookEnvelope } from '@logtide/shared';
+import { formatMetricAlertLabels, formatMetricValue, METRIC_ALERT_WINDOW_MINUTES } from '@logtide/shared';
 import type {
   AlertNotificationData,
   AlertNotificationJobData,
@@ -80,6 +86,24 @@ function formatMinutes(minutes: number): string {
   return `${formatNumber(minutes)} minute${minutes === 1 ? '' : 's'}`;
 }
 
+/** "web-1 cpu at 95% (above 90%)" pieces of a metric alert instance. */
+function metricCopy(metric: MetricAlertInstancePayload): { labels: string; value: string; threshold: string; window: string } {
+  const minutes = METRIC_ALERT_WINDOW_MINUTES[metric.window] ?? 0;
+  return {
+    labels: formatMetricAlertLabels(metric.labels),
+    value: formatMetricValue(metric.value, metric.unit, metric.source),
+    threshold: formatMetricValue(metric.threshold, metric.unit, metric.source),
+    window: formatMinutes(minutes),
+  };
+}
+
+/** Rule name plus the group labels of a metric instance. */
+function instanceName(ruleName: string, metric: MetricAlertInstancePayload | undefined): string {
+  if (!metric) return ruleName;
+  const labels = formatMetricAlertLabels(metric.labels);
+  return labels ? `${ruleName} (${labels})` : ruleName;
+}
+
 function alertLink(incidentId: string | null | undefined, sigmaRuleId?: string): string {
   const frontendUrl = getFrontendUrl();
   if (sigmaRuleId) return `${frontendUrl}/dashboard/security/rules/${sigmaRuleId}`;
@@ -128,8 +152,13 @@ export async function resolveAlertChannels(data: AlertNotificationJobData): Prom
 
 function pagerDutySummary(data: Record<string, unknown>, resolved: boolean): string {
   const name = String(data.alert_name ?? 'Alert');
-  if (resolved) return `Alert resolved: ${name}`;
+  if (resolved) return `Alert resolved: ${instanceName(name, data.metric as MetricAlertInstancePayload | undefined)}`;
   const prefix = data.renotify ? 'Alert still firing' : 'Alert triggered';
+  const metric = data.metric as MetricAlertInstancePayload | undefined;
+  if (metric) {
+    const c = metricCopy(metric);
+    return `${prefix}: ${instanceName(name, metric)} (${metric.source} ${c.value}, ${metric.condition} ${c.threshold})`;
+  }
   const bm = data.baseline_metadata as { deviation_ratio?: number } | null | undefined;
   if (bm && typeof bm.deviation_ratio === 'number') {
     return `${prefix}: ${name} (${formatNumber(bm.deviation_ratio)}x above baseline)`;
@@ -166,7 +195,10 @@ export async function dispatchAlertEnvelope(
     await notifyPagerDutyTargets(targets.pagerDuty, {
       organizationId: envelope.organizationId,
       action: resolved ? 'resolve' : 'trigger',
-      dedupKey: `alert:${alertRuleId}`,
+      // One PagerDuty incident per metric instance, so groups resolve independently.
+      dedupKey: (data.metric as MetricAlertInstancePayload | undefined)?.group_key
+        ? `alert:${alertRuleId}:${(data.metric as MetricAlertInstancePayload).group_key}`
+        : `alert:${alertRuleId}`,
       eventType: envelope.type,
       summary: pagerDutySummary(data, resolved),
       severity: 'high',
@@ -177,6 +209,7 @@ export async function dispatchAlertEnvelope(
         threshold: data.threshold,
         time_window: data.time_window,
         incident_id: data.incident_id ?? null,
+        ...(data.metric ? { metric: data.metric } : {}),
       },
       ruleId: ids.ruleId,
     });
@@ -320,10 +353,11 @@ async function processResolvedNotification(data: AlertResolvedNotificationData) 
     Math.round((Date.parse(data.resolved_at) - Date.parse(data.firing_since)) / 1000)
   );
   const duration = formatMinutes(Math.round(durationSeconds / 60));
+  const name = instanceName(data.rule_name, data.metric);
   const message =
     data.alert_type === 'rate_of_change'
       ? `${data.rule_name} log volume is back to its baseline after ${duration}`
-      : `${data.rule_name} is back to normal after ${duration}`;
+      : `${name} is back to normal after ${duration}`;
 
   // Wrap in the unified envelope; data matches alertResolvedDataSchema.
   const envelope = buildEnvelope({
@@ -334,7 +368,7 @@ async function processResolvedNotification(data: AlertResolvedNotificationData) 
       alert_rule_id: data.rule_id,
       alert_name: data.rule_name,
       alert_type: data.alert_type,
-      title: `Alert resolved: ${data.rule_name}`,
+      title: `Alert resolved: ${name}`,
       message,
       log_count: data.log_count,
       threshold: data.threshold,
@@ -344,12 +378,14 @@ async function processResolvedNotification(data: AlertResolvedNotificationData) 
       duration_seconds: durationSeconds,
       incident_id: data.incident_id,
       link: alertLink(data.incident_id),
+      ...(data.metric ? { metric: data.metric } : {}),
     },
   });
 
+  const groupSuffix = data.metric?.group_key ? `:${data.metric.group_key}` : '';
   const errors = await dispatchAlertEnvelope(envelope, channels, {
     ruleId: data.rule_id,
-    eventIdPrefix: `${data.rule_id}:${data.firing_since}:resolved`,
+    eventIdPrefix: `${data.rule_id}:${data.firing_since}${groupSuffix}:resolved`,
   });
   if (errors.length > 0) {
     console.error(`Alert resolution partially failed: ${data.rule_name}: ${errors.join('; ')}`);
@@ -393,6 +429,7 @@ function buildTriggeredEnvelope(data: AlertNotificationData): WebhookEnvelope {
       baseline_metadata: data.baseline_metadata || null,
       link: alertLink(data.incident_id, data.event_type === 'sigma' ? data.rule_id : undefined),
       ...lifecycle,
+      ...(data.metric ? { alert_type: 'metric' as const, metric: data.metric } : {}),
     },
   });
 }
@@ -431,6 +468,34 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
 
   const isRateOfChange = !!data.baseline_metadata;
   const renotify = data.kind === 'renotify';
+
+  if (data.metric) {
+    const c = metricCopy(data.metric);
+    const name = instanceName(data.rule_name, data.metric);
+    const { html, text } = generateMetricAlertEmail({
+      ruleName: name,
+      source: data.metric.source,
+      value: c.value,
+      threshold: c.threshold,
+      condition: data.metric.condition,
+      window: c.window,
+      labels: c.labels,
+      organizationName: data.organizationName,
+      projectName: data.projectName,
+      link: alertLink(data.incident_id),
+    });
+    await transporter.sendMail({
+      from: `"LogTide" <${config.SMTP_FROM || config.SMTP_USER}>`,
+      to: data.email_recipients.join(', '),
+      subject: renotify
+        ? `[Alert] Still firing: ${name} - ${c.value}`
+        : `[Alert] ${name} - ${data.metric.source} ${c.value} ${data.metric.condition} ${c.threshold}`,
+      text,
+      html,
+    });
+    console.log(`Email sent to: ${data.email_recipients.join(', ')}`);
+    return;
+  }
 
   const { html, text } = generateAlertEmail({
     ruleName: data.rule_name,
@@ -472,6 +537,17 @@ function inAppCopy(data: AlertNotificationData, projectName: string | null): { t
   const projectSuffix = projectName ? ` for project ${projectName}` : '';
   const firingMinutes = renotify ? minutesSince(data.firing_since) : null;
   const firingFor = firingMinutes !== null ? `, firing for ${formatMinutes(firingMinutes)}` : '';
+
+  if (data.metric) {
+    const c = metricCopy(data.metric);
+    const name = instanceName(data.rule_name, data.metric);
+    return {
+      title: renotify ? `Alert still firing: ${name}` : `Alert triggered: ${name}`,
+      message:
+        `${data.metric.source} is ${c.value}, ${data.metric.condition} the threshold of ${c.threshold} ` +
+        `over the last ${c.window}${projectSuffix}${firingFor}.`,
+    };
+  }
 
   if (data.baseline_metadata) {
     const bm = data.baseline_metadata;
@@ -524,6 +600,7 @@ async function createInAppNotifications(data: AlertNotificationData, projectName
         timeWindow: data.time_window,
         kind: data.kind ?? 'triggered',
         incidentId: data.incident_id ?? null,
+        ...(data.metric ? { metric: data.metric } : {}),
       },
     })
   );
