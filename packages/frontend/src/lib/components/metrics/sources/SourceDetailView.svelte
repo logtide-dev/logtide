@@ -287,7 +287,7 @@
         { id: 'errors', label: 'Errors', value: service.redSource ? fmt(service.errorRate) : 'n/a', tone: service.redSource ? percentTone(service.errorRate.value, SERVICE_ERROR_THRESHOLDS) : undefined },
         { id: 'p95', label: 'p95 latency', value: service.redSource ? fmt(service.p95) : 'n/a' },
         { id: 'hosts', label: 'Hosts', value: String(service.hosts.length) },
-        { id: 'metrics', label: 'Metrics', value: service.metricCount.toLocaleString('en-US') },
+        { id: 'metrics', label: 'Metrics', value: service.metricNames.length.toLocaleString('en-US') },
       ];
     }
     return [];

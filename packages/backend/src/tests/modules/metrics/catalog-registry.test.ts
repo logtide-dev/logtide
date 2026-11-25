@@ -129,7 +129,7 @@ describe('metric catalog registry', () => {
 
   it('throttles repeats inside the window but writes a changed unit or description at once', async () => {
     expect(await registerMetricCatalog([rec({ unit: 'By' })], projectId, 0)).toBe(1);
-    expect(await registerMetricCatalog([rec({ unit: 'By', time: T2 })], projectId, 1000)).toBe(0);
+    expect(await registerMetricCatalog([rec({ unit: 'By', time: new Date('2026-11-01T10:01:00Z') })], projectId, 1000)).toBe(0);
     expect((await rows(projectId))[0].last_seen_at).toEqual(T0);
 
     expect(await registerMetricCatalog([rec({ unit: 'KiBy' })], projectId, 2000)).toBe(1);
@@ -141,6 +141,15 @@ describe('metric catalog registry', () => {
     // a record without unit never counts as a change
     expect(await registerMetricCatalog([rec()], projectId, 4000)).toBe(0);
     expect(metricCatalogThrottleSize()).toBe(1);
+  });
+
+  it('writes inside the throttle window when the data moved well past the stored last_seen (backfill)', async () => {
+    expect(await registerMetricCatalog([rec({ time: T0 })], projectId, 0)).toBe(1);
+    // live data 1h newer than the backfill start, a second later in wall time
+    expect(await registerMetricCatalog([rec({ time: T2 })], projectId, 1000)).toBe(1);
+    expect((await rows(projectId))[0].last_seen_at).toEqual(T2);
+    // a few seconds of newer data is still throttled
+    expect(await registerMetricCatalog([rec({ time: new Date(T2.getTime() + 30_000) })], projectId, 2000)).toBe(0);
   });
 
   it('never throws and lets the next batch retry when the database fails', async () => {

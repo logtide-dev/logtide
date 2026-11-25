@@ -190,7 +190,7 @@ function zip(
   return { labels, values };
 }
 
-function binary(op: '+' | '-' | '*' | '/', a: Value, b: Value, length: number): Value {
+function binary(op: '+' | '-' | '*' | '/', a: Value, b: Value, length: number, missingAsZero = false): Value {
   if (a.kind === 'scalar' && b.kind === 'scalar') {
     const v = applyOp(op, a.value, b.value);
     if (v === null || !Number.isFinite(v)) {
@@ -214,13 +214,24 @@ function binary(op: '+' | '-' | '*' | '/', a: Value, b: Value, length: number): 
     const r = right[0];
     return { kind: 'set', series: left.map((s) => zip(op, s.labels, (i) => s.values[i], (i) => r.values[i], length)) };
   }
-  // Join on identical label sets; series without a partner are dropped.
+  // Join on identical label sets; series without a partner are dropped, or
+  // joined with 0 when missing operands count as zero.
   const byKey = new Map<string, GridSeries>();
   for (const s of right) byKey.set(labelKey(s.labels), s);
   const out: GridSeries[] = [];
+  const zero = (): number => 0;
   for (const s of left) {
-    const partner = byKey.get(labelKey(s.labels));
-    if (partner) out.push(zip(op, s.labels, (i) => s.values[i], (i) => partner.values[i], length));
+    const key = labelKey(s.labels);
+    const partner = byKey.get(key);
+    if (partner) {
+      out.push(zip(op, s.labels, (i) => s.values[i], (i) => partner.values[i], length));
+      byKey.delete(key);
+    } else if (missingAsZero) {
+      out.push(zip(op, s.labels, (i) => s.values[i], zero, length));
+    }
+  }
+  if (missingAsZero) {
+    for (const s of byKey.values()) out.push(zip(op, s.labels, zero, (i) => s.values[i], length));
   }
   return { kind: 'set', series: out };
 }
@@ -230,7 +241,12 @@ function binary(op: '+' | '-' | '*' | '/', a: Value, b: Value, length: number): 
  * folded) series; every referenced id must be present. A formula made only of
  * numbers yields one ungrouped constant series.
  */
-export function evaluateFormula(node: FormulaNode, operands: Map<string, GridSeries[]>, length: number): GridSeries[] {
+export function evaluateFormula(
+  node: FormulaNode,
+  operands: Map<string, GridSeries[]>,
+  length: number,
+  missingAsZero = false,
+): GridSeries[] {
   const evaluate = (n: FormulaNode): Value => {
     switch (n.kind) {
       case 'num':
@@ -238,12 +254,14 @@ export function evaluateFormula(node: FormulaNode, operands: Map<string, GridSer
       case 'ref': {
         const series = operands.get(n.id);
         if (!series) throw new FormulaError(`Query ${n.id} is not available`);
+        // No series at all: 0 when missing counts as zero, else no data.
+        if (series.length === 0 && missingAsZero) return { kind: 'scalar', value: 0 };
         return { kind: 'set', series };
       }
       case 'neg':
-        return binary('*', { kind: 'scalar', value: -1 }, evaluate(n.operand), length);
+        return binary('*', { kind: 'scalar', value: -1 }, evaluate(n.operand), length, missingAsZero);
       default:
-        return binary(n.op, evaluate(n.left), evaluate(n.right), length);
+        return binary(n.op, evaluate(n.left), evaluate(n.right), length, missingAsZero);
     }
   };
   const result = evaluate(node);
@@ -270,10 +288,11 @@ export function evaluateFormulaFolded(
   operands: Map<string, FormulaOperand>,
   limit: number,
   length: number,
+  missingAsZero = false,
 ): FoldResult {
   const groups = new Map<string, GridSeries[]>();
   for (const [id, op] of operands) groups.set(id, op.groups);
-  const result = evaluateFormula(node, groups, length);
+  const result = evaluateFormula(node, groups, length, missingAsZero);
   const seriesTotal = result.length;
   const grouped = result.some((s) => Object.keys(s.labels).length > 0);
   if (!grouped || seriesTotal <= limit) return { series: result, seriesTotal, seriesShown: seriesTotal };
@@ -291,7 +310,7 @@ export function evaluateFormulaFolded(
     const members = op.groups.filter((g) => restKeys.has(labelKey(g.labels)));
     folded.set(id, [{ labels: otherLabels, values: op.combine(members).values }]);
   }
-  const other = evaluateFormula(node, folded, length).find((s) => s.labels[OTHER_LABEL] === 'true');
+  const other = evaluateFormula(node, folded, length, missingAsZero).find((s) => s.labels[OTHER_LABEL] === 'true');
   return {
     series: [...kept, other ?? { labels: otherLabels, values: new Array(length).fill(null) }],
     seriesTotal,

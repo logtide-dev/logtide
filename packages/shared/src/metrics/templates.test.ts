@@ -70,3 +70,24 @@ describe('service template traces and error rate', () => {
     }
   });
 });
+
+describe('HTTP panels across semconv generations', () => {
+  const httpKeys = (names: string[]) =>
+    applicableTemplatePanels(SERVICE_TEMPLATE, names, { hasTraces: false })
+      .flatMap((s) => s.panels.map((p) => p.key))
+      .filter((k) => k.startsWith('http'));
+
+  it('shows the legacy set when only http.server.duration is sent', () => {
+    expect(httpKeys(['http.server.duration'])).toEqual(['http-legacy-rate', 'http-legacy-error-rate', 'http-legacy-latency']);
+  });
+
+  it('hides the legacy set when the current metric is also sent', () => {
+    expect(httpKeys(['http.server.duration', 'http.server.request.duration'])).toEqual(['http-rate', 'http-error-rate', 'http-latency']);
+  });
+
+  it('counts missing 5xx series as 0% errors', () => {
+    const panel = SERVICE_TEMPLATE.sections.flatMap((s) => s.panels).find((p) => p.key === 'http-error-rate');
+    const config = panel?.config as { query: { formulas: Array<{ missingAsZero?: boolean }> } };
+    expect(config.query.formulas[0].missingAsZero).toBe(true);
+  });
+});

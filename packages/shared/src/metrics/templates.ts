@@ -22,6 +22,8 @@ export interface SourceTemplatePanel {
   requires: string[];
   /** Trace panels: shown only when the source has spans (see applicableTemplatePanels). */
   requiresTraces?: boolean;
+  /** Hidden when the source sends any of these metrics (e.g. a legacy set superseded by a newer one). */
+  hiddenWhen?: string[];
 }
 
 export interface SourceTemplateSection {
@@ -242,7 +244,12 @@ const serviceFilter = (): MetricAttrFilter => ({ scope: 'resource', key: 'servic
  * (milliseconds, status in `http.status_code`). Each gets its own panel set,
  * shown only when that metric is present.
  */
-function httpPanels(metricName: string, statusKey: string, keyPrefix: string): SourceTemplatePanel[] {
+function httpPanels(
+  metricName: string,
+  statusKey: string,
+  keyPrefix: string,
+  hiddenWhen: string[] = [],
+): SourceTemplatePanel[] {
   const status5xx: MetricAttrFilter = { scope: 'metric', key: statusKey, op: 'gte', values: ['500'] };
   const latency = (id: string, aggregation: 'p50' | 'p95' | 'p99'): MetricQuerySpec => ({
     id,
@@ -258,6 +265,7 @@ function httpPanels(metricName: string, statusKey: string, keyPrefix: string): S
       w: 6,
       h: 4,
       requires: [metricName],
+      hiddenWhen,
       config: metricsPanel(
         'Requests per second by route',
         q([{ id: 'A', metricName, aggregation: 'rate', filters: [serviceFilter()], groupBy: [{ scope: 'metric', key: 'http.route' }], limit: 10 }], 'lines'),
@@ -268,6 +276,7 @@ function httpPanels(metricName: string, statusKey: string, keyPrefix: string): S
       w: 6,
       h: 4,
       requires: [metricName],
+      hiddenWhen,
       config: metricsPanel(
         'Error rate (5xx)',
         q(
@@ -276,7 +285,7 @@ function httpPanels(metricName: string, statusKey: string, keyPrefix: string): S
             { id: 'B', metricName, aggregation: 'rate', filters: [serviceFilter()], groupBy: [], hidden: true },
           ],
           'lines',
-          { formulas: [{ id: 'F1', expression: 'A / B * 100', label: 'Error rate %' }], unitOverride: '%' },
+          { formulas: [{ id: 'F1', expression: 'A / B * 100', label: 'Error rate %', missingAsZero: true }], unitOverride: '%' },
         ),
       ),
     },
@@ -285,6 +294,7 @@ function httpPanels(metricName: string, statusKey: string, keyPrefix: string): S
       w: 12,
       h: 4,
       requires: [metricName],
+      hiddenWhen,
       config: metricsPanel('Request latency', q([latency('A', 'p50'), latency('B', 'p95'), latency('C', 'p99')], 'lines')),
     },
   ];
@@ -321,7 +331,7 @@ export const SERVICE_TEMPLATE: SourceTemplate = {
       title: 'HTTP (from metrics)',
       panels: [
         ...httpPanels('http.server.request.duration', 'http.response.status_code', 'http'),
-        ...httpPanels('http.server.duration', 'http.status_code', 'http-legacy'),
+        ...httpPanels('http.server.duration', 'http.status_code', 'http-legacy', ['http.server.request.duration']),
       ],
     },
     {
@@ -413,7 +423,10 @@ export function applicableTemplatePanels(
     .map((section) => ({
       ...section,
       panels: section.panels.filter(
-        (p) => (hasTraces || !p.requiresTraces) && (p.requires.length === 0 || p.requires.some((m) => have.has(m))),
+        (p) =>
+          (hasTraces || !p.requiresTraces) &&
+          (p.requires.length === 0 || p.requires.some((m) => have.has(m))) &&
+          !(p.hiddenWhen ?? []).some((m) => have.has(m)),
       ),
     }))
     .filter((section) => section.panels.length > 0);

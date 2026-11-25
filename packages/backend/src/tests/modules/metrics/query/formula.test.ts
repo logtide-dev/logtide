@@ -109,3 +109,35 @@ describe('formula evaluation', () => {
     expect(formulaUnit([], units)).toBeNull();
   });
 });
+
+describe('missingAsZero', () => {
+  const zeroEval = (expr: string, ops: Record<string, GridSeries[]>, n = 2) =>
+    evaluateFormula(parseFormula(expr), new Map(Object.entries(ops)), n, true);
+
+  it('reads a query with no series as 0 (no 5xx series means 0% errors)', () => {
+    const total: GridSeries[] = [{ labels: {}, values: [10, 20] }];
+    expect(zeroEval('A / B * 100', { A: [], B: total })).toEqual([{ labels: {}, values: [0, 0] }]);
+  });
+
+  it('still gives null when dividing by a missing total', () => {
+    const errors: GridSeries[] = [{ labels: {}, values: [1, 2] }];
+    expect(zeroEval('A / B', { A: errors, B: [] })[0].values).toEqual([null, null]);
+  });
+
+  it('joins a group present in one operand only with 0', () => {
+    const A: GridSeries[] = [{ labels: { route: '/a' }, values: [1, 1] }];
+    const B: GridSeries[] = [
+      { labels: { route: '/a' }, values: [10, 10] },
+      { labels: { route: '/b' }, values: [5, 5] },
+    ];
+    const out = zeroEval('A / B * 100', { A, B });
+    expect(out).toHaveLength(2);
+    expect(out.find((s) => s.labels.route === '/a')?.values).toEqual([10, 10]);
+    expect(out.find((s) => s.labels.route === '/b')?.values).toEqual([0, 0]);
+  });
+
+  it('keeps the default behaviour without the option', () => {
+    const total: GridSeries[] = [{ labels: {}, values: [10, 20] }];
+    expect(evaluateFormula(parseFormula('A / B'), new Map(Object.entries({ A: [], B: total })), 2)).toEqual([]);
+  });
+});

@@ -587,12 +587,12 @@ async function evaluateWindow(
         if (r.grouped) limit = Math.max(limit, r.limit);
       }
       if (ctx.unfoldedGroups) {
-        const all = evaluateFormulaFolded(f.ast, operands, Number.MAX_SAFE_INTEGER, ctx.grid.length);
+        const all = evaluateFormulaFolded(f.ast, operands, Number.MAX_SAFE_INTEGER, ctx.grid.length, f.spec.missingAsZero === true);
         out.formulas.set(f.spec.id, unfoldGroups(all.series, `Formula ${f.spec.id}`, out.warnings));
       } else {
         out.formulas.set(
           f.spec.id,
-          evaluateFormulaFolded(f.ast, operands, limit || METRIC_DEFAULT_SERIES_LIMIT, ctx.grid.length),
+          evaluateFormulaFolded(f.ast, operands, limit || METRIC_DEFAULT_SERIES_LIMIT, ctx.grid.length, f.spec.missingAsZero === true),
         );
       }
     } catch (err) {

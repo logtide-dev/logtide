@@ -15,6 +15,12 @@ import { db } from '../../../database/index.js';
 import { isInternalLoggingEnabled } from '../../../utils/internal-logger.js';
 
 export const CATALOG_THROTTLE_MS = 10 * 60_000;
+/**
+ * A batch whose data is this much newer than the last written last_seen is
+ * written even inside the throttle window, so a backfill (old data first)
+ * does not leave last_seen hours behind live data.
+ */
+export const CATALOG_LAST_SEEN_STEP_MS = 5 * 60_000;
 /** Upper bound of the throttle map; the oldest entries are dropped first. */
 export const CATALOG_THROTTLE_MAX_ENTRIES = 50_000;
 const UPSERT_CHUNK = 500;
@@ -47,6 +53,8 @@ interface Remembered {
   at: number;
   unit: string | null;
   description: string | null;
+  /** last_seen written by the last upsert (data time, ms). */
+  lastSeen: number;
 }
 
 const remembered = new Map<string, Remembered>();
@@ -178,6 +186,7 @@ export async function registerMetricCatalog(
     due = rows.filter((r) => {
       const last = remembered.get(keyOf(projectId, r.name, r.type));
       if (last === undefined || now - last.at >= CATALOG_THROTTLE_MS) return true;
+      if (r.lastSeen.getTime() - last.lastSeen >= CATALOG_LAST_SEEN_STEP_MS) return true;
       return (r.unit !== null && r.unit !== last.unit) || (r.description !== null && r.description !== last.description);
     });
     if (due.length === 0) return 0;
@@ -186,7 +195,12 @@ export async function registerMetricCatalog(
       const key = keyOf(projectId, r.name, r.type);
       const last = remembered.get(key);
       previous.set(key, last);
-      remember(key, { at: now, unit: r.unit ?? last?.unit ?? null, description: r.description ?? last?.description ?? null });
+      remember(key, {
+        at: now,
+        unit: r.unit ?? last?.unit ?? null,
+        description: r.description ?? last?.description ?? null,
+        lastSeen: Math.max(r.lastSeen.getTime(), last?.lastSeen ?? 0),
+      });
     }
     await upsertRows(due, projectId);
     return due.length;

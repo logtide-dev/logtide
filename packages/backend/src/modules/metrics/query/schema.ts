@@ -104,6 +104,7 @@ export const metricFormulaSpecSchema = z.object({
   expression: z.string().min(1).max(METRIC_FORMULA_MAX),
   label: z.string().max(METRIC_LABEL_MAX).optional(),
   hidden: z.boolean().optional(),
+  missingAsZero: z.boolean().optional(),
 });
 
 const explorerQueryShape = {

@@ -138,6 +138,13 @@ export interface MetricFormulaSpec {
   expression: string;
   label?: string;
   hidden?: boolean;
+  /**
+   * Treat a missing operand as 0 instead of "no data": a query with no
+   * series reads as 0, and a group present in only one operand joins with 0.
+   * Right for counts and rates (no 5xx series means 0 errors), wrong for
+   * gauges, so it is opt-in.
+   */
+  missingAsZero?: boolean;
 }
 
 export type MetricCompareTo = 'none' | '1h' | '1d' | '1w';
