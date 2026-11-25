@@ -66,20 +66,35 @@ describe('MetricsConfigForm', () => {
     expect(screen.getByRole('combobox', { name: 'Metric A' })).toBeInTheDocument();
   });
 
-  it('scopes the query to one project through query.projectIds', async () => {
+  it('scopes the query to several projects and back to all (null)', async () => {
+    getProjects.mockResolvedValue({
+      projects: [
+        { id: 'proj-1', name: 'Edge' },
+        { id: 'proj-2', name: 'Core' },
+      ],
+    });
     const onChange = vi.fn();
-    render(MetricsConfigForm, { props: { config: base, onChange } });
+    const { rerender } = render(MetricsConfigForm, { props: { config: base, onChange } });
     await waitFor(() => expect(getProjects).toHaveBeenCalled());
-    const trigger = screen.getByText('Project', { selector: 'label' });
-    const select = document.getElementById(trigger.getAttribute('for') as string) as HTMLElement;
-    select.focus();
-    await fireEvent.keyDown(select, { key: 'ArrowDown' });
-    const option = await screen.findByRole('option', { name: 'Edge' });
-    await fireEvent.pointerUp(option, { pointerType: 'mouse', button: 0 });
-    await waitFor(() =>
-      expect(onChange).toHaveBeenCalledWith(
-        expect.objectContaining({ query: expect.objectContaining({ projectIds: ['proj-1'] }) })
-      )
+    const label = screen.getByText('Projects', { selector: 'label' });
+    const trigger = document.getElementById(label.getAttribute('for') as string) as HTMLElement;
+    expect(trigger).toHaveTextContent('All projects');
+    await fireEvent.click(trigger);
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Edge' }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ query: expect.objectContaining({ projectIds: ['proj-1'] }) })
+    );
+
+    const one = { ...base, query: { ...base.query, projectIds: ['proj-1'] } };
+    await rerender({ config: one, onChange });
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Core' }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ query: expect.objectContaining({ projectIds: ['proj-1', 'proj-2'] }) })
+    );
+
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Edge' }));
+    expect(onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ query: expect.objectContaining({ projectIds: null }) })
     );
   });
 });

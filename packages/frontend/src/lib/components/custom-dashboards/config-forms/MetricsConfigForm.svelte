@@ -7,7 +7,7 @@
   import { SelectField } from '$lib/components/ui/select';
   import MetricQueryBuilder from '$lib/components/metrics/v2/MetricQueryBuilder.svelte';
   import { organizationStore } from '$lib/stores/organization';
-  import ProjectSelect from '../pickers/ProjectSelect.svelte';
+  import ProjectMultiSelect from '../pickers/ProjectMultiSelect.svelte';
   import { dashboardVariables } from '$lib/stores/custom-dashboards';
   import { TIME_RANGE_OPTIONS } from '../time-range-options';
 
@@ -37,11 +37,11 @@
   </div>
 
   <div class="space-y-1.5">
-    <Label for="mp-project">Project</Label>
-    <ProjectSelect
+    <Label for="mp-project">Projects</Label>
+    <ProjectMultiSelect
       id="mp-project"
-      value={config.query.projectIds && config.query.projectIds.length === 1 ? config.query.projectIds[0] : null}
-      onChange={(projectId) => setQuery({ ...config.query, projectIds: projectId ? [projectId] : null })}
+      value={config.query.projectIds}
+      onChange={(projectIds) => setQuery({ ...config.query, projectIds })}
     />
   </div>
 
