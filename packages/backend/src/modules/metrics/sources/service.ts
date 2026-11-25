@@ -63,12 +63,9 @@ const SOURCE_MAX_RAW_SERIES = 20_000;
 /** Spans looked up one by one per project once the batched rounds left services unresolved. */
 const LAST_SPAN_SINGLE_LOOKUPS = 100;
 
-type SourceInternal = NonNullable<ResolvedMetricQuery['internal']> & { maxRawSeries?: number };
-
 /** Internal options of a grouped query over `limit` sources: every source its own series, no raw series cap. */
 function sourceInternal(limit: number): ResolvedMetricQuery['internal'] {
-  const internal: SourceInternal = { maxSeries: limit, maxRawSeries: SOURCE_MAX_RAW_SERIES };
-  return internal;
+  return { maxSeries: limit, maxRawSeries: SOURCE_MAX_RAW_SERIES };
 }
 
 function chunked<T>(items: T[], size: number): T[][] {
