@@ -28,20 +28,37 @@ import type { AlertEvaluationResult, AlertNotificationKind } from './types.js';
  *   with `to` = the start of the current minute, queried through the metrics
  *   query service at a 1 minute interval (multi-engine through the
  *   reservoir). The current, still filling minute is never read.
+ * - Lead step: the query reads ONE extra minute before the window and that
+ *   bucket is dropped before the value is computed. Rates of cumulative
+ *   counters and cumulative histograms are differences between consecutive
+ *   buckets, so the first bucket of a window has no value of its own; without
+ *   the lead step a 1 minute window could never produce a rate.
  * - Value per group: the AVERAGE of the non-null 1 minute buckets of the
- *   watched query or formula in the window (the series `stats.avg`). The
- *   time aggregation of the query (avg, max, p95, rate...) applies inside
- *   each bucket; averaging the buckets smooths one late or partial bucket
- *   instead of letting the last bucket alone decide. A group without any
- *   point in the window has no value.
- * - Groups: one alert instance per series of the watched item (up to
- *   METRIC_ALERT_MAX_GROUPS; the folded "other" series is ignored). An
- *   ungrouped query is a single instance with group key ''.
+ *   watched query or formula in the window. The time aggregation of the
+ *   query (avg, max, p95, rate...) applies inside each bucket; averaging the
+ *   buckets smooths one late or partial bucket instead of letting the last
+ *   bucket alone decide. A group without any point in the window has no
+ *   value (no data).
+ * - Groups: the query service returns EVERY group (unfoldedGroups, no top-N
+ *   fold), so breaches are evaluated before any ranking. Groups that already
+ *   have an instance are always evaluated. New breaching groups get an
+ *   instance ranked by the alert direction (highest first for `above`,
+ *   lowest first for `below`) while the rule has fewer than
+ *   METRIC_ALERT_MAX_GROUPS instances. An ungrouped query is a single
+ *   instance with group key ''.
  * - Breach: value strictly above (or below) the threshold. An ok instance
  *   fires after `forEvaluations` consecutive breaching runs; a firing
- *   instance resolves on the first run that does not breach (including no
- *   data). Snooze and re-notify are the rule's own and apply per instance,
- *   through the same state machine as threshold rules (lifecycle.ts).
+ *   instance resolves on the first run whose value is evaluated and does
+ *   not breach. Snooze and re-notify are the rule's own and apply per
+ *   instance, through the same state machine as threshold rules
+ *   (lifecycle.ts).
+ * - No data policy (HOLD): a run where a group has no value (no point in the
+ *   window, the group or the metric disappeared, the rule's projects are
+ *   gone) is neither a breach nor a recovery. The instance keeps its state,
+ *   its breach counter and its last value, and nothing is notified (no fire,
+ *   no re-notify, no resolve). Missing data never resolves a firing instance
+ *   by itself: it resolves when data comes back on the good side of the
+ *   threshold, or when a user disables or deletes the rule.
  *
  * State: one alert_metric_instances row per instance that is firing or
  * counting breaches; ok instances without breaches have no row. The rule's
@@ -49,6 +66,11 @@ import type { AlertEvaluationResult, AlertNotificationKind } from './types.js';
  * Incidents: one per rule (the incidents model allows one active incident per
  * source), opened by the first firing instance, retitled with the firing
  * groups and resolved when the last instance resolves.
+ *
+ * Disable / delete (alerts service) take the same rule row lock as the
+ * evaluation and flip `enabled` first. The incident phase of an evaluation
+ * runs under a share lock of the rule row that requires it to be enabled, so
+ * a disabled or deleted rule never gets an incident (re)opened afterwards.
  */
 
 export interface MetricGroupValue {
@@ -95,6 +117,15 @@ export function metricAlertWindowRange(window: MetricAlertWindow, now: Date): { 
 }
 
 /**
+ * [from, to) actually queried: the window plus one lead step before it (see
+ * the module comment). groupsFromResponse drops the lead bucket.
+ */
+export function metricAlertQueryRange(window: MetricAlertWindow, now: Date): { from: Date; to: Date } {
+  const { from, to } = metricAlertWindowRange(window, now);
+  return { from: new Date(from.getTime() - MINUTE_MS), to };
+}
+
+/**
  * Projects a metric rule reads: the query's explicit projects that are still
  * live projects of the organization, or every live project when it has none.
  */
@@ -111,8 +142,15 @@ export async function metricRuleProjects(organizationId: string, projectIds: str
   return live.filter((id) => wanted.has(id));
 }
 
-/** Window value of every group of the watched item, from one query service response. */
-export function groupsFromResponse(config: MetricAlertConfig, response: MetricQueryResponse): MetricWindowResult {
+/**
+ * Window value of every group of the watched item, from one query service
+ * response. Points before `windowFrom` (the lead step) are ignored.
+ */
+export function groupsFromResponse(
+  config: MetricAlertConfig,
+  response: MetricQueryResponse,
+  windowFrom?: Date
+): MetricWindowResult {
   const target = metricAlertTarget(config.query);
   if (!target) throw new Error('Metric alert query has no single visible query or formula');
 
@@ -125,7 +163,10 @@ export function groupsFromResponse(config: MetricAlertConfig, response: MetricQu
   const groups: MetricGroupValue[] = [];
   for (const s of response.series) {
     if (s.queryId !== target.id || s.comparison || s.labels.__other__ === 'true') continue;
-    const values = s.points.map((p) => p.v).filter((v): v is number => v !== null && Number.isFinite(v));
+    const values = s.points
+      .filter((p) => windowFrom === undefined || Date.parse(p.t) >= windowFrom.getTime())
+      .map((p) => p.v)
+      .filter((v): v is number => v !== null && Number.isFinite(v));
     const value = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null;
     groups.push({ groupKey: metricAlertGroupKey(s.labels), labels: { ...s.labels }, value });
   }
@@ -145,23 +186,56 @@ export async function computeMetricWindow(
   projectIds: string[],
   now: Date
 ): Promise<MetricWindowResult> {
-  const { from, to } = metricAlertWindowRange(config.window, now);
-  const query = evaluationQuery(config.query);
+  const window = metricAlertWindowRange(config.window, now);
+  const { from, to } = metricAlertQueryRange(config.window, now);
   const response = await metricQueryService.run({
-    ...query,
-    queries: query.queries.map((q) => ({ ...q, limit: METRIC_ALERT_MAX_GROUPS })),
+    ...evaluationQuery(config.query),
     organizationId,
     projectIds,
     from: from.toISOString(),
     to: to.toISOString(),
+    // Every group: breaches are evaluated here, before any ranking.
+    unfoldedGroups: true,
   });
-  return groupsFromResponse(config, response);
+  return groupsFromResponse(config, response, window.from);
+}
+
+/**
+ * Groups this run evaluates: every group that already has an instance (with
+ * its value, or no data when it is absent), plus the new breaching groups,
+ * most severe first in the alert direction, while the rule has fewer than
+ * `maxGroups` instances. Non breaching groups without an instance need no
+ * row and are left out.
+ */
+export function selectAlertGroups(
+  config: Pick<MetricAlertConfig, 'condition' | 'threshold'>,
+  groups: MetricGroupValue[],
+  instances: Array<Pick<MetricInstanceRow, 'group_key'>>,
+  maxGroups: number = METRIC_ALERT_MAX_GROUPS
+): MetricGroupValue[] {
+  const known = new Set(instances.map((i) => i.group_key));
+  const kept: MetricGroupValue[] = [];
+  const candidates: Array<{ group: MetricGroupValue; value: number }> = [];
+  for (const g of groups) {
+    if (known.has(g.groupKey)) kept.push(g);
+    else if (g.value !== null && metricAlertBreaches(config.condition, g.value, config.threshold)) {
+      candidates.push({ group: g, value: g.value });
+    }
+  }
+  const direction = config.condition === 'above' ? -1 : 1;
+  candidates.sort((a, b) => {
+    if (a.value !== b.value) return direction * (a.value - b.value);
+    return a.group.groupKey < b.group.groupKey ? -1 : a.group.groupKey > b.group.groupKey ? 1 : 0;
+  });
+  const room = Math.max(0, maxGroups - known.size);
+  return [...kept, ...candidates.slice(0, room).map((c) => c.group)];
 }
 
 /**
  * Pure per-instance lifecycle: consecutive breach counting and the shared
  * threshold state machine (T1-T10), with the rule's snooze and re-notify.
- * Instances known from the database but absent from this run have no data.
+ * Instances known from the database but absent from this run have no data,
+ * and no data holds an instance as it is (see the module comment).
  */
 export function planMetricInstances(
   config: MetricAlertConfig,
@@ -180,7 +254,27 @@ export function planMetricInstances(
   const plans: MetricInstancePlan[] = [];
   for (const [groupKey, { labels, value }] of byKey) {
     const previous = previousByKey.get(groupKey) ?? null;
-    const breachingNow = value !== null && metricAlertBreaches(config.condition, value, config.threshold);
+    if (value === null) {
+      // No data: hold. Not a breach, not a recovery, nothing notified.
+      plans.push({
+        groupKey,
+        labels,
+        value: null,
+        decision: { type: 'none' },
+        previous,
+        next: previous
+          ? {
+              state: previous.state,
+              consecutive_breaches: previous.consecutive_breaches,
+              last_value: previous.last_value,
+              last_triggered_at: previous.last_triggered_at,
+              last_notified_at: previous.last_notified_at,
+            }
+          : null,
+      });
+      continue;
+    }
+    const breachingNow = metricAlertBreaches(config.condition, value, config.threshold);
     const consecutive = breachingNow ? (previous?.consecutive_breaches ?? 0) + 1 : 0;
     const state: AlertRuleState = previous?.state ?? 'ok';
     const snapshot: LifecycleSnapshot = {
@@ -251,7 +345,7 @@ function instanceChanged(plan: MetricInstancePlan): boolean {
   );
 }
 
-async function loadInstances(
+export async function loadInstances(
   executor: Pick<typeof db, 'selectFrom'>,
   rule: { id: string; organization_id: string }
 ): Promise<MetricInstanceRow[]> {
@@ -280,18 +374,49 @@ async function loadInstances(
   }));
 }
 
-/** Firing instances of a rule (disable / delete while firing). */
-export async function firingMetricInstances(rule: { id: string; organization_id: string }): Promise<MetricInstanceRow[]> {
-  return (await loadInstances(db, rule)).filter((i) => i.state === 'firing');
+/**
+ * Forget every instance of a rule (it stops being evaluated) and return the
+ * ones that were firing. Disable / delete call it inside the transaction that
+ * holds the rule row lock, so no evaluation can write instances in between.
+ */
+export async function takeMetricInstances(
+  executor: Pick<typeof db, 'selectFrom' | 'deleteFrom'>,
+  rule: { id: string; organization_id: string }
+): Promise<MetricInstanceRow[]> {
+  const rows = await loadInstances(executor, rule);
+  if (rows.length > 0) {
+    await executor
+      .deleteFrom('alert_metric_instances')
+      .where('rule_id', '=', rule.id)
+      .where('organization_id', '=', rule.organization_id)
+      .execute();
+  }
+  return rows.filter((i) => i.state === 'firing');
 }
 
-/** Forget every instance of a rule (it stops being evaluated). */
-export async function clearMetricInstances(rule: { id: string; organization_id: string }): Promise<void> {
-  await db
-    .deleteFrom('alert_metric_instances')
-    .where('rule_id', '=', rule.id)
-    .where('organization_id', '=', rule.organization_id)
-    .execute();
+/**
+ * Run `fn` while holding a share lock on the rule row, only when the rule is
+ * still enabled; null otherwise. Disable / delete need the exclusive lock, so
+ * they wait for `fn` and, once they ran, `fn` is skipped. Incident writes in
+ * `fn` (other connections) only need a key share lock on the rule row, which
+ * the share lock does not block.
+ */
+async function whileRuleEnabled<T>(
+  rule: { id: string; organization_id: string },
+  fn: () => Promise<T>
+): Promise<T | null> {
+  return db.transaction().execute(async (trx) => {
+    const row = await trx
+      .selectFrom('alert_rules')
+      .select('id')
+      .where('id', '=', rule.id)
+      .where('organization_id', '=', rule.organization_id)
+      .where('enabled', '=', true)
+      .forShare()
+      .executeTakeFirst();
+    if (!row) return null;
+    return fn();
+  });
 }
 
 /** Notification / webhook payload of one instance. */
@@ -389,7 +514,8 @@ export async function evaluateMetricRule(
     if (!locked || !sameTime(toDate(locked.last_evaluated_at), readEvaluatedAt)) return null;
 
     const instances = await loadInstances(trx, rule);
-    const plans = planMetricInstances(config, window.groups, instances, { snoozedUntil, renotifyMinutes }, now);
+    const groups = selectAlertGroups(config, window.groups, instances);
+    const plans = planMetricInstances(config, groups, instances, { snoozedUntil, renotifyMinutes }, now);
 
     for (const plan of plans) {
       if (!instanceChanged(plan)) continue;
@@ -472,30 +598,39 @@ export async function evaluateMetricRule(
   const timeWindow = METRIC_ALERT_WINDOW_MINUTES[config.window];
 
   // Incident: opened or updated by every firing transition / notification.
-  let incidentId: string | null = null;
+  // Under a share lock of the still enabled rule: a disable or delete that
+  // committed meanwhile already resolved the incident and must not see it
+  // reopened. The notifications of this run still go out (the disable sends
+  // the matching resolves), only without an incident.
   const firingPlans = plans.filter((p) => p.decision.type === 'fire' || p.decision.type === 'notify');
-  for (const plan of firingPlans) {
-    const payload = metricInstancePayload(config, window, plan);
-    incidentId = await openMetricAlertIncident(rule, config, {
-      now,
-      historyId: histories.get(plan.groupKey) ?? null,
-      notification: notificationKind(plan.decision) as AlertNotificationKind | null,
-      metric: payload,
-      title: metricIncidentTitle(rule.name, firingLabels),
-    });
-  }
   const resolving = plans.filter((p) => p.decision.type === 'resolve');
-  const grouped = plans.some((p) => Object.keys(p.labels).length > 0);
-  if (anyFiring && grouped && (firingPlans.length > 0 || resolving.length > 0)) {
-    await retitleMetricAlertIncident(rule, config, metricIncidentTitle(rule.name, firingLabels));
-  }
+  const incidents = await whileRuleEnabled(rule, async () => {
+    let opened: string | null = null;
+    for (const plan of firingPlans) {
+      const payload = metricInstancePayload(config, window, plan);
+      opened = await openMetricAlertIncident(rule, config, {
+        now,
+        historyId: histories.get(plan.groupKey) ?? null,
+        notification: notificationKind(plan.decision) as AlertNotificationKind | null,
+        metric: payload,
+        title: metricIncidentTitle(rule.name, firingLabels),
+      });
+    }
+    const grouped = plans.some((p) => Object.keys(p.labels).length > 0);
+    if (anyFiring && grouped && (firingPlans.length > 0 || resolving.length > 0)) {
+      await retitleMetricAlertIncident(rule, config, metricIncidentTitle(rule.name, firingLabels));
+    }
 
-  let resolvedIncidentId: string | null = null;
-  if (wasFiring && !anyFiring) {
-    resolvedIncidentId = await resolveAlertIncident(rule, 'recovered', now);
-  } else if (resolving.length > 0) {
-    resolvedIncidentId = incidentId ?? (await activeIncidentId(rule));
-  }
+    let resolved: string | null = null;
+    if (wasFiring && !anyFiring) {
+      resolved = await resolveAlertIncident(rule, 'recovered', now);
+    } else if (resolving.length > 0) {
+      resolved = opened ?? (await activeIncidentId(rule));
+    }
+    return { opened, resolved };
+  });
+  const incidentId = incidents?.opened ?? null;
+  const resolvedIncidentId = incidents?.resolved ?? null;
 
   for (const plan of plans) {
     const kind = notificationKind(plan.decision);

@@ -58,7 +58,11 @@ export interface MetricAlertInstancePayload {
   source: string;
   condition: MetricAlertCondition;
   threshold: number;
-  /** Window aggregated value; null when the group has no data (resolve only). */
+  /**
+   * Window aggregated value (raw). Missing data never fires nor resolves an
+   * instance (it holds), so this is the last evaluated value; null only when
+   * none is known.
+   */
   value: number | null;
   unit: string | null;
   window: MetricAlertWindow;

@@ -136,6 +136,31 @@ describe('explore page', () => {
     expect(h.query.mock.calls[0][1]).toBeInstanceOf(AbortSignal);
   });
 
+  it('an explicit project param decides the scope from the first run over the remembered one', async () => {
+    scopeStore.set({ projectIds: ['p1'], range: { kind: 'preset', preset: '1h' } });
+    visit(cpuQuery(), 'project=p2&from=2026-11-25T09:00:00.000Z&to=2026-11-25T10:00:00.000Z');
+    render(ExplorePage);
+    await waitFor(() => expect(h.query).toHaveBeenCalled());
+    expect(h.query.mock.calls[0][0].projectIds).toEqual(['p2']);
+    expect(h.query.mock.calls[0][0].from).toBe('2026-11-25T09:00:00.000Z');
+
+    vi.clearAllMocks();
+    h.query.mockResolvedValue(response);
+    scopeStore.set({ projectIds: ['p1'], range: { kind: 'preset', preset: '1h' } });
+    visit(cpuQuery(), 'project=all');
+    render(ExplorePage);
+    await waitFor(() => expect(h.query).toHaveBeenCalled());
+    expect(h.query.mock.calls[0][0].projectIds).toBeNull();
+  });
+
+  it('an older link without a project param uses the projects stored in its query', async () => {
+    scopeStore.set({ projectIds: ['p1'], range: { kind: 'preset', preset: '1h' } });
+    visit({ ...cpuQuery(), projectIds: ['p2'] });
+    render(ExplorePage);
+    await waitFor(() => expect(h.query).toHaveBeenCalled());
+    expect(h.query.mock.calls[0][0].projectIds).toEqual(['p2']);
+  });
+
   it('follows the scope projects and reruns when the range changes, aborting the first request', async () => {
     let first!: AbortSignal;
     h.query.mockImplementationOnce((_req: unknown, signal: AbortSignal) => {

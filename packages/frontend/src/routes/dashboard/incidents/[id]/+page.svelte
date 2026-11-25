@@ -7,6 +7,7 @@
 		IncidentComment,
 		IncidentHistoryEntry,
 		IncidentListItem,
+		IncidentMetricAlertDetail,
 		OrganizationMemberWithUser,
 	} from '@logtide/shared';
 	import { currentOrganization } from '$lib/stores/organization';
@@ -50,6 +51,7 @@
 	let comments = $state<IncidentComment[]>([]);
 	let history = $state<IncidentHistoryEntry[]>([]);
 	let sourceEvents = $state<IncidentSourceEvent[]>([]);
+	let metricAlert = $state<IncidentMetricAlertDetail | null>(null);
 	let members = $state<OrganizationMemberWithUser[]>([]);
 	let rule = $state<AlertRule | null>(null);
 	let loading = $state(true);
@@ -117,6 +119,7 @@
 			comments = detail.comments;
 			history = detail.history;
 			sourceEvents = detail.sourceEvents;
+			metricAlert = detail.metricAlert;
 			siemStore.seedIncidents([detail.incident]);
 			if (!opts.silent && detail.incident.source === 'alert') {
 				await loadRule(org, detail.incident.alertRuleId);
@@ -330,7 +333,7 @@
 					onCommentAdded={commentAdded}
 				/>
 			</div>
-			<IncidentSourcePanel {incident} {members} {rule} onAssign={assign} />
+			<IncidentSourcePanel {incident} {members} {rule} {metricAlert} onAssign={assign} />
 		</div>
 	{/if}
 </div>

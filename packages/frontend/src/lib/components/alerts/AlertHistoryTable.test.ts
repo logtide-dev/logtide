@@ -240,8 +240,39 @@ describe('AlertHistoryTable', () => {
     expect(screen.getByText('CPU high (host.name=web-1)')).toBeInTheDocument();
     expect(screen.getByTestId('metric-value')).toHaveTextContent('95.3% (above 90%)');
     const links = hrefs();
-    expect(links.some((h) => h.startsWith('/dashboard/metrics/explore?q='))).toBe(true);
+    const explore = links.find((h) => h.startsWith('/dashboard/metrics/explore?'));
+    expect(explore).toBeDefined();
+    const params = new URL(explore!, 'http://x').searchParams;
+    // The rule reads every project: an explicit "all" beats the remembered scope.
+    expect(params.get('project')).toBe('all');
+    expect(params.get('q')).toBeTruthy();
+    expect(params.get('from')).toBeTruthy();
+    expect(params.get('to')).toBeTruthy();
     expect(links.some((h) => h.startsWith('/dashboard/logs'))).toBe(false);
     expect(links).toContain('/dashboard/alerts?edit=r1');
+  });
+
+  it('the explorer link of a metric row carries the rule projects as the scope', () => {
+    const metricConfig = {
+      query: {
+        projectIds: ['p1', 'p2'],
+        queries: [{ id: 'A', metricName: 'system.cpu.utilization', aggregation: 'avg' as const, filters: [], groupBy: [] }],
+        formulas: [],
+        interval: 'auto' as const,
+        compareTo: 'none' as const,
+        display: 'lines' as const,
+      },
+      condition: 'above' as const,
+      threshold: 0.9,
+      window: '5m' as const,
+      forEvaluations: 1,
+      severity: 'high' as const,
+    };
+    mount({
+      alerts: [hist({ alertType: 'metric', ruleName: 'CPU high', logCount: 0 })],
+      rules: [rule({ alertType: 'metric', metricConfig })],
+    });
+    const explore = hrefs().find((h) => h.startsWith('/dashboard/metrics/explore?'))!;
+    expect(new URL(explore, 'http://x').searchParams.get('project')).toBe('p1,p2');
   });
 });

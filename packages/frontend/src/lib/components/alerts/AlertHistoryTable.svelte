@@ -7,9 +7,12 @@
 	import SeverityBadge from '$lib/components/app/SeverityBadge.svelte';
 	import type { DataTableColumn } from '$lib/components/app/data-table';
 	import { buildMatchedLogsUrl } from '$lib/components/alerts/alert-model';
-	import { instanceLabels } from '$lib/components/alerts/metric/metric-alert-model';
-	import { formatMetricValue } from '@logtide/shared';
-	import { encodeExplorerQuery, EXPLORER_URL_PARAM } from '$lib/utils/metrics-explorer-url';
+	import {
+		instanceLabels,
+		metricAlertExploreHref,
+		metricAlertRangeAround,
+	} from '$lib/components/alerts/metric/metric-alert-model';
+	import { formatMetricValue, METRIC_ALERT_WINDOW_MINUTES } from '@logtide/shared';
 	import { buildTraceUrl } from '$lib/components/siem/incidents/incident-model';
 	import { stateTone } from '$lib/utils/severity';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -79,11 +82,15 @@
 		return `${formatMetricValue(m.value, m.unit, name)} (${m.condition} ${formatMetricValue(m.threshold, m.unit, name)})`;
 	}
 
-	/** Explorer link of a metric rule's query, when the rule still exists. */
+	/**
+	 * Explorer link of a metric rule's query, when the rule still exists: the
+	 * rule's projects as the explicit scope, around the time of the notification.
+	 */
 	function exploreHref(h: AlertHistory): string | null {
 		const config = ruleById.get(h.ruleId)?.metricConfig;
 		if (!config) return null;
-		return `/dashboard/metrics/explore?${EXPLORER_URL_PARAM}=${encodeURIComponent(encodeExplorerQuery(config.query))}`;
+		const minutes = METRIC_ALERT_WINDOW_MINUTES[config.window] ?? h.timeWindow;
+		return metricAlertExploreHref(config.query, metricAlertRangeAround(h.triggeredAt, minutes));
 	}
 
 	function projectOf(r: Row): string {

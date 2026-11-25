@@ -6,6 +6,7 @@ import type {
   IncidentHistoryEntry,
   IncidentListItem,
   IncidentListResponse,
+  IncidentMetricAlertDetail,
   IncidentSourceEvent,
   IncidentStatus,
   DetectionEvent,
@@ -51,6 +52,8 @@ export interface IncidentDetail {
   comments: IncidentComment[];
   history: IncidentHistoryEntry[];
   sourceEvents: IncidentSourceEvent[];
+  /** Metric alert incidents only. */
+  metricAlert: IncidentMetricAlertDetail | null;
 }
 
 export interface IncidentPatch {
@@ -132,6 +135,7 @@ export const incidentsAPI = {
       comments: data.comments ?? [],
       history: data.history ?? [],
       sourceEvents: data.sourceEvents ?? [],
+      metricAlert: data.metricAlert ?? null,
     };
   },
 

@@ -75,6 +75,13 @@ export { MetricScopeError, MetricQueryValidationError, resolveProjectScope };
 /** A query whose project scope is already resolved and authorized. */
 export interface ResolvedMetricQuery extends Omit<MetricQueryRequest, 'projectIds'> {
   projectIds: string[];
+  /**
+   * Internal callers only (never set from a request body): return every group
+   * of a grouped query, with no top-N cap and no folded "Other" series. Metric
+   * alerts use it to evaluate every group before ranking them by the alert
+   * direction. Default false (top N per query `limit`).
+   */
+  unfoldedGroups?: boolean;
 }
 
 /** Above this many raw series a query is aggregated by the engine in one step. */
@@ -98,6 +105,8 @@ interface WindowContext {
   shiftMs: number;
   /** Grid buckets ending after this are still open (partial). */
   openAfterMs: number;
+  /** Keep every group (no top-N fold). */
+  unfoldedGroups?: boolean;
 }
 
 interface QueryResult {
@@ -180,7 +189,8 @@ async function seriesIdentity(
   return { groupRefs, groupLabels, identityRefs };
 }
 
-function seriesLimit(spec: MetricQuerySpec): number {
+function seriesLimit(spec: MetricQuerySpec, ctx: WindowContext): number {
+  if (ctx.unfoldedGroups) return Number.MAX_SAFE_INTEGER;
   return Math.min(Math.max(1, spec.limit ?? METRIC_DEFAULT_SERIES_LIMIT), METRIC_MAX_SERIES_LIMIT);
 }
 
@@ -225,7 +235,7 @@ async function evaluateHistogramQuery(
     const spaceAgg = spec.spaceAggregation ?? defaultSpaceAggregation('rate');
     const groups = spaceAggregate(histSeriesToScalar(series, 'rate'), groupLabels, spaceAgg, len);
     if (groupLabels.length === 0) return { series: groups, seriesTotal: 1, seriesShown: 1, metricType, warnings };
-    return { ...foldTopN(groups, seriesLimit(spec), spaceAgg, len), metricType, warnings };
+    return { ...foldTopN(groups, seriesLimit(spec, ctx), spaceAgg, len), metricType, warnings };
   }
 
   const merged = mergeHistSeries(series, groupLabels, len);
@@ -233,7 +243,7 @@ async function evaluateHistogramQuery(
     const folded = foldTopNHistograms(merged, 1, spec.aggregation, len);
     return { series: folded.series, seriesTotal: 1, seriesShown: 1, metricType, warnings };
   }
-  return { ...foldTopNHistograms(merged, seriesLimit(spec), spec.aggregation, len), metricType, warnings };
+  return { ...foldTopNHistograms(merged, seriesLimit(spec, ctx), spec.aggregation, len), metricType, warnings };
 }
 
 async function evaluateQuery(
@@ -280,7 +290,7 @@ async function evaluateQuery(
   if (series.length === 0) return { series: [], seriesTotal: 0, seriesShown: 0, metricType, warnings };
   if (groupLabels.length === 0) return { series: groups, seriesTotal: 1, seriesShown: 1, metricType, warnings };
 
-  const folded = foldTopN(groups, seriesLimit(spec), spaceAgg, ctx.grid.length);
+  const folded = foldTopN(groups, seriesLimit(spec, ctx), spaceAgg, ctx.grid.length);
   return { ...folded, metricType, warnings };
 }
 
@@ -413,6 +423,7 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
     interval,
     shiftMs: 0,
     openAfterMs: now.getTime(),
+    unfoldedGroups: query.unfoldedGroups === true,
   };
 
   const offset = compareOffsetMs(query.compareTo);

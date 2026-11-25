@@ -23,6 +23,7 @@ import { auditLogService } from '../audit-log/service.js';
 import type { AuditAction } from '../audit-log/actions.js';
 import { SiemService } from '../siem/service.js';
 import { incidentsService } from './service.js';
+import { metricIncidentDetail } from '../alerts/incident-detail.js';
 import { listParam } from './query-params.js';
 import { IncidentError, type IncidentListFilters } from './types.js';
 
@@ -220,12 +221,24 @@ export function registerIncidentRoutes(fastify: FastifyInstance, opts: IncidentR
         return reply.status(404).send({ error: 'Incident not found' });
       }
 
+      const metricAlert = await metricIncidentDetail(
+        {
+          organizationId,
+          source: incident.source,
+          status: incident.status,
+          alertRuleId: incident.alertRuleId,
+          title: incident.sourceRef?.name ?? incident.title,
+        },
+        sourceEvents ?? []
+      );
+
       const response: IncidentDetailResponse = {
         incident,
         detections,
         comments: comments ?? [],
         history: history ?? [],
         sourceEvents: sourceEvents ?? [],
+        ...(metricAlert && { metricAlert }),
       };
       return reply.send(response);
     } catch (error) {

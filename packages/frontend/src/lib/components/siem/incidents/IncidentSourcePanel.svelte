@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { IncidentListItem, OrganizationMemberWithUser } from '@logtide/shared';
+	import type { IncidentListItem, IncidentMetricAlertDetail, OrganizationMemberWithUser } from '@logtide/shared';
 	import type { AlertRule } from '$lib/api/alerts';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import { Badge } from '$lib/components/ui/badge';
@@ -10,6 +10,7 @@
 	import GeoIpCard from '$lib/components/siem/enrichment/GeoIpCard.svelte';
 	import GeoIpMap from '$lib/components/siem/enrichment/GeoIpMap.svelte';
 	import { buildMatchedLogsUrl, summarizeRule } from '$lib/components/alerts/alert-model';
+	import MetricIncidentSource from '$lib/components/alerts/metric/MetricIncidentSource.svelte';
 	import AssigneePicker from './AssigneePicker.svelte';
 	import { buildTraceUrl, formatIncidentDuration } from './incident-model';
 
@@ -17,10 +18,12 @@
 		incident: IncidentListItem;
 		members: OrganizationMemberWithUser[];
 		rule?: AlertRule | null;
+		/** Metric alert incidents: the metric view from the incident detail payload. */
+		metricAlert?: IncidentMetricAlertDetail | null;
 		onAssign: (userId: string | null) => void;
 	}
 
-	let { incident, members, rule = null, onAssign }: Props = $props();
+	let { incident, members, rule = null, metricAlert = null, onAssign }: Props = $props();
 
 	// The host is gone (sourceRef null) once it was forgotten, even if the id was kept.
 	const hardwareHostId = $derived(
@@ -153,6 +156,13 @@
 			<GeoIpCard geoData={incident.geoData as never} />
 			<GeoIpMap geoData={incident.geoData as never} />
 		{/if}
+	{:else if incident.source === 'alert' && metricAlert}
+		<MetricIncidentSource
+			{metricAlert}
+			organizationId={incident.organizationId}
+			createdAt={incident.createdAt}
+			resolvedAt={incident.resolvedAt}
+		/>
 	{:else if incident.source === 'alert'}
 		<Card>
 			<CardHeader class="pb-3">
