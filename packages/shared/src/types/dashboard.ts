@@ -12,9 +12,17 @@
 // incompatible way, we bump CURRENT_SCHEMA_VERSION and add a migration
 // function in dashboard-migrations.ts.
 
-export const CURRENT_SCHEMA_VERSION = 1;
+import type { MetricAttrRef, MetricExplorerQuery } from '../metrics/query.js';
+
+/**
+ * v2 (1.8): metric_chart and metric_stat become the `metrics` panel (the
+ * explorer query model) and documents gain `variables`. The v1 types stay in
+ * the unions so old documents can be read and migrated.
+ */
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export type PanelType =
+  | 'metrics'
   | 'time_series'
   | 'single_stat'
   | 'top_n_table'
@@ -318,7 +326,21 @@ export interface LogTableConfig {
   wrapCells: boolean; // wrap cell content instead of single-line ellipsis
 }
 
+/**
+ * 1.8 metrics panel: any explorer query (several metrics, formulas, group by,
+ * resource filters, several projects) rendered as lines/area/bars/split/stat/table.
+ * Replaces metric_chart and metric_stat (migrated by schema v2).
+ */
+export interface MetricsPanelConfig {
+  type: 'metrics';
+  title: string;
+  source: 'metrics';
+  query: MetricExplorerQuery;
+  timeRange: PanelTimeRange;
+}
+
 export type PanelConfig =
+  | MetricsPanelConfig
   | TimeSeriesConfig
   | SingleStatConfig
   | TopNTableConfig
@@ -345,9 +367,31 @@ export interface PanelInstance {
 
 // ─── Dashboard document (the JSON stored in DB) ─────────────────────────────
 
+/**
+ * Dashboard variable (1.8): a selector at the top of a dashboard, e.g. "host".
+ * Metrics panel filters whose value is "$<name>" take the selected value;
+ * with nothing selected (All) those filters are dropped.
+ */
+export interface DashboardVariable {
+  /** /^[a-z][a-z0-9_]{0,31}$/, unique in the dashboard. */
+  name: string;
+  label: string;
+  /** The attribute whose distinct values fill the selector. */
+  attr: MetricAttrRef;
+  /** Read values only from this metric (optional; resource scope may omit it). */
+  metricName?: string | null;
+  /** Initial selection; null = All. */
+  default: string | null;
+}
+
+export const DASHBOARD_VARIABLE_NAME_RE = /^[a-z][a-z0-9_]{0,31}$/;
+export const DASHBOARD_MAX_VARIABLES = 5;
+
 export interface DashboardDocument {
   schema_version: number;
   panels: PanelInstance[];
+  /** v2+. Absent means none. */
+  variables?: DashboardVariable[];
 }
 
 // ─── Dashboard DTO returned by the API ──────────────────────────────────────
@@ -363,6 +407,8 @@ export interface CustomDashboard {
   createdBy: string | null;
   schemaVersion: number;
   panels: PanelInstance[];
+  /** 1.8; [] when none. */
+  variables: DashboardVariable[];
   createdAt: string;
   updatedAt: string;
 }

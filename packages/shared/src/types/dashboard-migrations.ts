@@ -13,15 +13,63 @@
 //   3. The function does not need to set schema_version itself -
 //      migrateDashboard handles that.
 
-import type { DashboardDocument } from './dashboard.js';
+import type {
+  DashboardDocument,
+  MetricChartConfig,
+  MetricStatConfig,
+  MetricsPanelConfig,
+  PanelConfig,
+  PanelInstance,
+} from './dashboard.js';
+import type { MetricAttrFilter, MetricQueryInterval, MetricTimeAggregation } from '../metrics/query.js';
 
 export type SchemaMigration = (doc: DashboardDocument) => DashboardDocument;
 
 export type MigrationMap = Record<number, SchemaMigration>;
 
+function legacyMetricFilters(serviceName: string | null): MetricAttrFilter[] {
+  return serviceName ? [{ scope: 'resource', key: 'service.name', op: 'eq', values: [serviceName] }] : [];
+}
+
+/** v1 metric_chart / metric_stat to the v2 `metrics` panel (same metric, aggregation, window). */
+export function migrateLegacyMetricPanel(config: MetricChartConfig | MetricStatConfig): MetricsPanelConfig {
+  const isChart = config.type === 'metric_chart';
+  return {
+    type: 'metrics',
+    title: config.title,
+    source: 'metrics',
+    timeRange: config.timeRange,
+    query: {
+      projectIds: config.projectId ? [config.projectId] : null,
+      queries: [
+        {
+          id: 'A',
+          metricName: config.metricName,
+          aggregation: config.aggregation as MetricTimeAggregation,
+          filters: legacyMetricFilters(config.serviceName),
+          groupBy: isChart ? (config.groupBy ?? []).map((key) => ({ scope: 'metric' as const, key })) : [],
+        },
+      ],
+      formulas: [],
+      interval: isChart ? (config.interval as MetricQueryInterval) : 'auto',
+      compareTo: 'none',
+      display: isChart ? 'lines' : 'stat',
+      unitOverride: isChart ? null : (config.unit ?? null),
+    },
+  };
+}
+
+function migratePanelV2(panel: PanelInstance): PanelInstance {
+  const config = panel.config as PanelConfig;
+  if (config.type === 'metric_chart' || config.type === 'metric_stat') {
+    return { ...panel, config: migrateLegacyMetricPanel(config) };
+  }
+  return panel;
+}
+
 export const dashboardMigrations: MigrationMap = {
-  // No migrations yet - v1 is the only version. Future entries:
-  // 2: (doc) => ({ ...doc, panels: doc.panels.map(addNewField) }),
+  // 1.8: metric_chart/metric_stat -> metrics panel; documents gain variables.
+  2: (doc) => ({ ...doc, panels: doc.panels.map(migratePanelV2), variables: doc.variables ?? [] }),
 };
 
 /**
