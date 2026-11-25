@@ -6,7 +6,7 @@ import type { QueryParams, LogRecord, SpanRecord, TraceRecord, MetricRecord, Sto
 const TEST_CONFIG: StorageConfig = {
   host: 'localhost',
   port: 27017,
-  database: 'logtide_integration_test',
+  database: process.env.RESERVOIR_MG_INTEGRATION_DATABASE ?? 'logtide_integration_test',
   username: '',
   password: '',
 };
@@ -1319,6 +1319,55 @@ describe('MongoDBEngine (integration)', () => {
       });
 
       expect(result.timeseries.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('aggregateMetrics hist_last / hist_sum', () => {
+    const histogram = (counts: number[], sum: number, count: number, bounds = [10, 100]) => ({
+      explicit_bounds: bounds,
+      bucket_counts: counts,
+      sum,
+      count,
+    });
+    const params = {
+      projectId: 'proj-1',
+      metricName: 'http.duration',
+      from: new Date('2025-01-15T00:00:00Z'),
+      to: new Date('2025-01-16T00:00:00Z'),
+      interval: '1h' as const,
+      groupBy: ['route'],
+    };
+
+    beforeEach(async () => {
+      const at = (min: number) => new Date(Date.UTC(2025, 0, 15, 10, min));
+      await engine.ingestMetrics([
+        makeMetric({ time: at(1), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' }, histogramData: histogram([1, 2, 0], 50, 3) }),
+        makeMetric({ time: at(2), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' }, histogramData: histogram([0.5, 1.5, 2], 400.5, 4) }),
+        makeMetric({ time: at(3), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' }, histogramData: histogram([9, 9], 1, 18, [5]) }),
+        makeMetric({ time: at(4), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' }, histogramData: histogram([1, 1, 1], 10, 3) }),
+        makeMetric({ time: at(5), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' } }),
+        makeMetric({ time: at(6), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/b' }, histogramData: { sum: 1, count: 1 } }),
+      ]);
+    });
+
+    it('hist_last returns the latest point with explicit buckets per group', async () => {
+      const result = await engine.aggregateMetrics({ ...params, aggregation: 'hist_last' });
+      expect(result.timeseries).toEqual([{
+        bucket: new Date('2025-01-15T10:00:00Z'),
+        value: 3,
+        labels: { route: '/a' },
+        histogram: { bounds: [10, 100], counts: [1, 1, 1], sum: 10, count: 3 },
+      }]);
+    });
+
+    it('hist_sum adds up the points of the pick length element-wise', async () => {
+      const result = await engine.aggregateMetrics({ ...params, aggregation: 'hist_sum' });
+      expect(result.timeseries).toEqual([{
+        bucket: new Date('2025-01-15T10:00:00Z'),
+        value: 10,
+        labels: { route: '/a' },
+        histogram: { bounds: [10, 100], counts: [2.5, 4.5, 3], sum: 460.5, count: 10 },
+      }]);
     });
   });
 
