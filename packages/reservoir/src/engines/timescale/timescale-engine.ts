@@ -1781,6 +1781,11 @@ export class TimescaleEngine extends StorageEngine {
       conditions.push(`time <= $${idx++}`);
       values.push(params.to);
     }
+    // 1.8: only names with at least one point matching every filter.
+    if (params.filters && params.filters.length > 0) {
+      conditions.push(...metricAttrFiltersSql(params.filters, new SqlParams(values)));
+      idx = values.length + 1;
+    }
 
     const where = `WHERE ${conditions.join(' AND ')}`;
     const limitClause = params.limit ? `LIMIT $${idx++}` : '';

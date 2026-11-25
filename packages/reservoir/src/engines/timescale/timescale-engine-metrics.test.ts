@@ -1154,6 +1154,26 @@ describe('TimescaleEngine - Metrics', () => {
     });
   });
 
+  describe('getMetricNames with filters (1.8)', () => {
+    it('adds bound filter conditions before the limit', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ metric_name: 'cpu', metric_type: 'gauge' }] });
+      await engine.connect();
+
+      await engine.getMetricNames({
+        projectId: 'p1',
+        limit: 10,
+        filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['host-a'] }],
+      });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toContain('(resource_attributes->>$2) = $3');
+      expect(sql).toContain('LIMIT $4');
+      expect(sql).not.toContain('host.name');
+      expect(params).toEqual([['p1'], 'host.name', 'host-a', 10]);
+    });
+  });
+
   describe('label discovery with resource scope (1.8)', () => {
     it('reads resource_attributes keys and drops the metric filter for an empty name', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ key: 'host.name' }] });

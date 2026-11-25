@@ -213,6 +213,31 @@ describe('timescale metric attributes and sources (1.8)', () => {
     });
   });
 
+  describe('getMetricNames with filters', () => {
+    it('lists only names with a point matching every filter', async () => {
+      const hostA = await e().getMetricNames({
+        projectId: [P1, P2],
+        ...WINDOW,
+        filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['host-a'] }],
+      });
+      expect(hostA.names.map((n) => n.name)).toEqual(['app_orders', 'http.server.duration', 'hw.host.info', 'system.cpu.utilization']);
+
+      const both = await e().getMetricNames({
+        projectId: [P1, P2],
+        ...WINDOW,
+        limit: 5,
+        filters: [
+          { scope: 'resource', key: 'host.name', op: 'eq', values: ['host-a'] },
+          { scope: 'metric', key: 'status', op: 'gte', values: ['200'] },
+        ],
+      });
+      expect(both.names.map((n) => n.name)).toEqual(['http.server.duration', 'system.cpu.utilization']);
+
+      const none = await e().getMetricNames({ projectId: [P1, P2], ...WINDOW, filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['nope'] }] });
+      expect(none.names).toEqual([]);
+    });
+  });
+
   describe('getMetricSources', () => {
     it('returns one row per non-empty value with projects, counts and co-keys', async () => {
       const { sources } = await e().getMetricSources({ projectId: [P1, P2], ...WINDOW, key: 'host.name', coKeys: ['service.name', 'os.kernel'] });
