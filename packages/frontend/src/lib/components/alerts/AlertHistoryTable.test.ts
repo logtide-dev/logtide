@@ -197,4 +197,51 @@ describe('AlertHistoryTable', () => {
     expect(q).toContain('service:"api & core (v2)"');
     expect(parseLogQuery(q).ok).toBe(true);
   });
+
+  it('metric rows show the group, the value against the threshold and an explorer link', () => {
+    const metricConfig = {
+      query: {
+        projectIds: null,
+        queries: [{ id: 'A', metricName: 'system.cpu.utilization', aggregation: 'avg' as const, filters: [], groupBy: [] }],
+        formulas: [],
+        interval: 'auto' as const,
+        compareTo: 'none' as const,
+        display: 'lines' as const,
+      },
+      condition: 'above' as const,
+      threshold: 0.9,
+      window: '5m' as const,
+      forEvaluations: 1,
+      severity: 'high' as const,
+    };
+    mount({
+      alerts: [
+        hist({
+          alertType: 'metric',
+          ruleName: 'CPU high',
+          logCount: 0,
+          metricMetadata: {
+            query_id: 'A',
+            source: 'system.cpu.utilization',
+            condition: 'above',
+            threshold: 0.9,
+            value: 0.953,
+            unit: '1',
+            window: '5m',
+            for_evaluations: 1,
+            labels: { 'host.name': 'web-1' },
+            group_key: 'host.name=web-1',
+          },
+        }),
+      ],
+      rules: [rule({ alertType: 'metric', metricConfig })],
+    });
+    expect(screen.getByText('Metric')).toBeInTheDocument();
+    expect(screen.getByText('CPU high (host.name=web-1)')).toBeInTheDocument();
+    expect(screen.getByTestId('metric-value')).toHaveTextContent('95.3% (above 90%)');
+    const links = hrefs();
+    expect(links.some((h) => h.startsWith('/dashboard/metrics/explore?q='))).toBe(true);
+    expect(links.some((h) => h.startsWith('/dashboard/logs'))).toBe(false);
+    expect(links).toContain('/dashboard/alerts?edit=r1');
+  });
 });

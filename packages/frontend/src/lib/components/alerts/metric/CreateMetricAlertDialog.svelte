@@ -93,9 +93,10 @@
   let targetId = $state('');
   let name = $state('');
   let condition = $state<string>('above');
-  let thresholdText = $state('');
+  // bind:value on a number input yields a number (or null when empty).
+  let thresholdText = $state<string | number | null>('');
   let windowValue = $state<string>('5m');
-  let forText = $state('2');
+  let forText = $state<string | number | null>('2');
   let severity = $state<string>('high');
   let renotify = $state('');
   let channelIds = $state<string[]>([]);
@@ -118,7 +119,9 @@
   );
   const unitLabel = $derived(thresholdUnitLabel(unit, metricName));
   const builtQuery = $derived(source && targetId ? buildMetricAlertQuery(source, targetId) : null);
-  const thresholdDisplay = $derived(thresholdText.trim() === '' ? NaN : Number(thresholdText));
+  const thresholdDisplay = $derived(
+    thresholdText === null || String(thresholdText).trim() === '' ? NaN : Number(thresholdText)
+  );
   const thresholdRaw = $derived(
     Number.isFinite(thresholdDisplay) ? thresholdFromDisplay(thresholdDisplay, unit, metricName) : null
   );
