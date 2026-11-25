@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
@@ -172,27 +172,31 @@
     return '';
   }
 
+  // Snippets are typed by their own parameter; the table wants Snippet<[Row]>.
+  const hostCell = (s: unknown) => s as Snippet<[HostSourceSummary]>;
+  const svcCell = (s: unknown) => s as Snippet<[ServiceSourceSummary]>;
+
   const hostColumns: DataTableColumn<HostSourceSummary>[] = [
-    { key: 'status', header: 'Status', sortable: true, class: 'w-16', cell: hostStatusCell },
-    { key: 'name', header: 'Host', sortable: true, cell: hostNameCell },
-    { key: 'cpu', header: 'CPU', sortable: true, cell: hostCpuCell },
-    { key: 'memory', header: 'Memory', sortable: true, cell: hostMemoryCell },
-    { key: 'disk', header: 'Disk', sortable: true, cell: hostDiskCell },
-    { key: 'network', header: 'Network', sortable: true, cell: hostNetworkCell },
-    { key: 'load', header: 'Load 5m', sortable: true, cell: hostLoadCell },
-    { key: 'trend', header: 'CPU trend', cell: hostTrendCell },
-    { key: 'services', header: 'Services', sortable: true, cell: hostServicesCell },
-    { key: 'lastSeen', header: 'Last seen', sortable: true, cell: lastSeenCell },
+    { key: 'status', header: 'Status', sortable: true, class: 'w-16', cell: hostCell(hostStatusCell) },
+    { key: 'name', header: 'Host', sortable: true, cell: hostCell(hostNameCell) },
+    { key: 'cpu', header: 'CPU', sortable: true, cell: hostCell(hostCpuCell) },
+    { key: 'memory', header: 'Memory', sortable: true, cell: hostCell(hostMemoryCell) },
+    { key: 'disk', header: 'Disk', sortable: true, cell: hostCell(hostDiskCell) },
+    { key: 'network', header: 'Network', sortable: true, cell: hostCell(hostNetworkCell) },
+    { key: 'load', header: 'Load 5m', sortable: true, cell: hostCell(hostLoadCell) },
+    { key: 'trend', header: 'CPU trend', cell: hostCell(hostTrendCell) },
+    { key: 'services', header: 'Services', sortable: true, cell: hostCell(hostServicesCell) },
+    { key: 'lastSeen', header: 'Last seen', sortable: true, cell: hostCell(lastSeenCell) },
   ];
 
   const serviceColumns: DataTableColumn<ServiceSourceSummary>[] = [
-    { key: 'status', header: 'Status', sortable: true, class: 'w-16', cell: serviceStatusCell },
-    { key: 'name', header: 'Service', sortable: true, cell: serviceNameCell },
-    { key: 'requestRate', header: 'Requests/s', sortable: true, cell: requestRateCell },
-    { key: 'errorRate', header: 'Errors', sortable: true, cell: errorRateCell },
-    { key: 'p95', header: 'p95', sortable: true, cell: p95Cell },
-    { key: 'hosts', header: 'Hosts', sortable: true, cell: serviceHostsCell },
-    { key: 'lastSeen', header: 'Last seen', sortable: true, cell: lastSeenCell },
+    { key: 'status', header: 'Status', sortable: true, class: 'w-16', cell: svcCell(serviceStatusCell) },
+    { key: 'name', header: 'Service', sortable: true, cell: svcCell(serviceNameCell) },
+    { key: 'requestRate', header: 'Requests/s', sortable: true, cell: svcCell(requestRateCell) },
+    { key: 'errorRate', header: 'Errors', sortable: true, cell: svcCell(errorRateCell) },
+    { key: 'p95', header: 'p95', sortable: true, cell: svcCell(p95Cell) },
+    { key: 'hosts', header: 'Hosts', sortable: true, cell: svcCell(serviceHostsCell) },
+    { key: 'lastSeen', header: 'Last seen', sortable: true, cell: svcCell(lastSeenCell) },
   ];
 
   const hostKey = (h: HostSourceSummary) => `host:${h.name}`;
@@ -407,7 +411,7 @@
             rowKey={hostKey}
             rowHref={hostHref}
             bind:sort={hostSort}
-            mobileRow={hostMobile}
+            mobileRow={hostCell(hostMobile)}
           />
         </section>
       {/if}
@@ -422,7 +426,7 @@
             rowKey={serviceKey}
             rowHref={serviceHref}
             bind:sort={serviceSort}
-            mobileRow={serviceMobile}
+            mobileRow={svcCell(serviceMobile)}
           />
         </section>
       {/if}

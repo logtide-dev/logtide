@@ -133,7 +133,7 @@ describe('links', () => {
   });
 
   it('builds Logs and Traces links', () => {
-    const scope = { projectIds: ['p1'], range: { kind: 'preset', preset: '6h' } } as const;
+    const scope = { projectIds: ['p1'], range: { kind: 'preset' as const, preset: '6h' as const } };
     const logs = new URL(buildSourceLogsHref('host', 'vps app', scope), 'http://x');
     expect(logs.pathname).toBe('/dashboard/logs');
     expect(logs.searchParams.get('q')).toBe('host:"vps app"');
