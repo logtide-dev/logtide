@@ -143,7 +143,7 @@ describe('buildDashboardPanels', () => {
     expect(metrics).toHaveLength(1);
     expect((metrics[0].config as any).query.projectIds).toEqual(projects);
     // Template itself is not mutated.
-    const tpl = SOURCE_TEMPLATES.service.sections[1].panels.find((p) => p.key === 'process-cpu')!;
+    const tpl = SOURCE_TEMPLATES.service.sections.flatMap((s) => s.panels).find((p) => p.key === 'process-cpu')!;
     expect((tpl.config as any).query.projectIds).toBeNull();
   });
 
