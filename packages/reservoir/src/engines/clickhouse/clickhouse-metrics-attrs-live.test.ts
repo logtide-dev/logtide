@@ -229,6 +229,13 @@ describe('clickhouse 1.8 resource labels (live)', () => {
     expect([...res.values].sort()).toEqual(['7', 'web-1', 'web-2']);
   });
 
+  live('metric scope with an empty metric name covers every metric', async (r) => {
+    const keys = await r.getMetricLabelKeys({ projectId: [PA, PB], metricName: '', from: FROM, to: TO });
+    expect([...keys.keys].sort()).toEqual(['code', 'cpu', 'state']);
+    const values = await r.getMetricLabelValues({ projectId: [PA, PB], metricName: '', from: FROM, to: TO }, 'state');
+    expect([...values.values].sort()).toEqual(['idle', 'user']);
+  });
+
   live('metric scope values include numbers as text', async (r) => {
     const res = await r.getMetricLabelValues({ projectId: [PA, PB], metricName: 'system.cpu.utilization', from: FROM, to: TO }, 'cpu');
     expect([...res.values].sort()).toEqual(['0', '1']);

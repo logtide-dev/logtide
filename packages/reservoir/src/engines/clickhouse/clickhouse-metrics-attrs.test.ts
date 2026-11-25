@@ -215,11 +215,12 @@ describe('ClickHouseEngine 1.8 metric attributes (unit)', () => {
       expect(lastCall().query).toContain('WHERE metric_name = {p_name:String}');
     });
 
-    it('metric scope keeps the metric name filter even when empty', async () => {
+    it('metric scope with an empty metric name also means every metric', async () => {
       mockQuery.mockResolvedValueOnce(rows([]));
       await engine.getMetricLabelKeys({ projectId: 'proj-1', metricName: '' });
       expect(lastCall().query).toContain('JSONExtractKeys(attributes)');
-      expect(lastCall().query).toContain('metric_name = {p_name:String}');
+      expect(lastCall().query).not.toContain('metric_name');
+      expect(lastCall().query_params.p_name).toBeUndefined();
     });
 
     it('values read resource_attributes by literal key', async () => {
