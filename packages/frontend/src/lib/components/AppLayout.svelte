@@ -276,7 +276,6 @@
       </a>
     </div>
 
-
     <SidebarNav pathname={page.url.pathname} isAdmin={!!user?.is_admin} />
 
     <!-- Onboarding Checklist -->
