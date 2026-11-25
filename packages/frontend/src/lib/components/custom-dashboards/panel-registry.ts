@@ -25,7 +25,6 @@ import List from '@lucide/svelte/icons/list';
 import Radio from '@lucide/svelte/icons/radio';
 import Bell from '@lucide/svelte/icons/bell';
 import Activity from '@lucide/svelte/icons/activity';
-import Gauge from '@lucide/svelte/icons/gauge';
 import Network from '@lucide/svelte/icons/network';
 import Waves from '@lucide/svelte/icons/waves';
 import Shield from '@lucide/svelte/icons/shield';
@@ -44,8 +43,7 @@ import type {
   TopNTableConfig,
   LiveLogStreamConfig,
   AlertStatusConfig,
-  MetricChartConfig,
-  MetricStatConfig,
+  MetricsPanelConfig,
   TraceLatencyConfig,
   TraceVolumeConfig,
   DetectionEventsConfig,
@@ -62,8 +60,8 @@ import SingleStatPanel from './panels/SingleStatPanel.svelte';
 import TopNTablePanel from './panels/TopNTablePanel.svelte';
 import LiveLogStreamPanel from './panels/LiveLogStreamPanel.svelte';
 import AlertStatusPanel from './panels/AlertStatusPanel.svelte';
-import MetricChartPanel from './panels/MetricChartPanel.svelte';
-import MetricStatPanel from './panels/MetricStatPanel.svelte';
+import MetricsPanel from './panels/MetricsPanel.svelte';
+import LegacyPanel from './panels/LegacyPanel.svelte';
 import TraceLatencyPanel from './panels/TraceLatencyPanel.svelte';
 import TraceVolumePanel from './panels/TraceVolumePanel.svelte';
 import DetectionEventsPanel from './panels/DetectionEventsPanel.svelte';
@@ -78,8 +76,8 @@ import SingleStatConfigForm from './config-forms/SingleStatConfigForm.svelte';
 import TopNTableConfigForm from './config-forms/TopNTableConfigForm.svelte';
 import LiveLogStreamConfigForm from './config-forms/LiveLogStreamConfigForm.svelte';
 import AlertStatusConfigForm from './config-forms/AlertStatusConfigForm.svelte';
-import MetricChartConfigForm from './config-forms/MetricChartConfigForm.svelte';
-import MetricStatConfigForm from './config-forms/MetricStatConfigForm.svelte';
+import MetricsConfigForm from './config-forms/MetricsConfigForm.svelte';
+import LegacyConfigForm from './config-forms/LegacyConfigForm.svelte';
 import TraceLatencyConfigForm from './config-forms/TraceLatencyConfigForm.svelte';
 import TraceVolumeConfigForm from './config-forms/TraceVolumeConfigForm.svelte';
 import DetectionEventsConfigForm from './config-forms/DetectionEventsConfigForm.svelte';
@@ -119,8 +117,35 @@ export interface FrontendPanelDefinition<
   readonly minH: number;
 }
 
-const registry: Record<PanelType, FrontendPanelDefinition> = {
-  // 1.8 placeholder: replaced by the metrics panel (explorer query model).
+/** Panel types that were replaced by `metrics` in schema v2. The backend migrates them on read. */
+export type LegacyPanelType = 'metric_chart' | 'metric_stat';
+export type CreatablePanelType = Exclude<PanelType, LegacyPanelType>;
+
+export function isLegacyPanelType(type: PanelType): type is LegacyPanelType {
+  return type === 'metric_chart' || type === 'metric_stat';
+}
+
+/** Typed fallback for a legacy panel that was never migrated; not creatable. */
+const legacyDefinition: FrontendPanelDefinition = {
+  type: 'metric_chart',
+  label: 'Legacy panel',
+  description: 'Legacy panel, open and save to upgrade.',
+  icon: Activity,
+  defaultLayout: { x: 0, y: 0, w: 4, h: 3 },
+  defaultConfig: {
+    type: 'metrics',
+    title: 'Legacy panel',
+    source: 'metrics',
+    timeRange: '24h',
+    query: { projectIds: null, queries: [], formulas: [], interval: 'auto', compareTo: 'none', display: 'lines' },
+  } as MetricsPanelConfig,
+  component: LegacyPanel as Component<PanelComponentProps>,
+  configForm: LegacyConfigForm as Component<ConfigFormProps>,
+  minW: 2,
+  minH: 2,
+};
+
+const registry: Record<CreatablePanelType, FrontendPanelDefinition> = {
   metrics: {
     type: 'metrics',
     label: 'Metrics',
@@ -133,11 +158,11 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
       source: 'metrics',
       timeRange: '24h',
       query: { projectIds: null, queries: [], formulas: [], interval: 'auto', compareTo: 'none', display: 'lines' },
-    } as PanelConfig,
-    component: MetricChartPanel as Component<PanelComponentProps>,
-    configForm: MetricChartConfigForm as Component<ConfigFormProps>,
-    minW: 4,
-    minH: 3,
+    } as MetricsPanelConfig,
+    component: MetricsPanel as Component<PanelComponentProps>,
+    configForm: MetricsConfigForm as Component<ConfigFormProps>,
+    minW: 3,
+    minH: 2,
   },
   time_series: {
     type: 'time_series',
@@ -240,50 +265,6 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
     component: AlertStatusPanel as Component<PanelComponentProps>,
     configForm: AlertStatusConfigForm as Component<ConfigFormProps>,
     minW: 3,
-    minH: 2,
-  },
-  metric_chart: {
-    type: 'metric_chart',
-    label: 'Metric chart',
-    description: 'OTLP metric over time with aggregation (avg, p95, sum...).',
-    icon: Activity,
-    defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
-    defaultConfig: {
-      type: 'metric_chart',
-      title: 'Metric',
-      source: 'metrics',
-      projectId: null,
-      metricName: '',
-      aggregation: 'avg',
-      interval: '5m',
-      timeRange: '24h',
-      serviceName: null,
-    } as MetricChartConfig,
-    component: MetricChartPanel as Component<PanelComponentProps>,
-    configForm: MetricChartConfigForm as Component<ConfigFormProps>,
-    minW: 4,
-    minH: 3,
-  },
-  metric_stat: {
-    type: 'metric_stat',
-    label: 'Metric stat',
-    description: 'Single OTLP metric value with aggregation.',
-    icon: Gauge,
-    defaultLayout: { x: 0, y: 0, w: 3, h: 2 },
-    defaultConfig: {
-      type: 'metric_stat',
-      title: 'Metric value',
-      source: 'metrics',
-      projectId: null,
-      metricName: '',
-      aggregation: 'last',
-      timeRange: '1h',
-      serviceName: null,
-      unit: null,
-    } as MetricStatConfig,
-    component: MetricStatPanel as Component<PanelComponentProps>,
-    configForm: MetricStatConfigForm as Component<ConfigFormProps>,
-    minW: 2,
     minH: 2,
   },
   trace_latency: {
@@ -453,20 +434,22 @@ const registry: Record<PanelType, FrontendPanelDefinition> = {
 };
 
 export function getPanelDefinition(type: PanelType): FrontendPanelDefinition {
+  if (isLegacyPanelType(type)) return legacyDefinition;
   const def = registry[type];
   if (!def) throw new Error(`Unknown panel type: ${type}`);
   return def;
 }
 
-export function getAllPanelDefinitions(): FrontendPanelDefinition[] {
-  return Object.values(registry);
+/** Creatable panels only: legacy types never appear in the add dialog. */
+export function getAllPanelDefinitions(): Array<FrontendPanelDefinition & { type: CreatablePanelType }> {
+  return Object.values(registry) as Array<FrontendPanelDefinition & { type: CreatablePanelType }>;
 }
 
 /**
  * Build a fresh PanelInstance for a given panel type, with its default config
  * and a generated id. The caller assigns the layout slot.
  */
-export function createPanelInstance(type: PanelType): PanelInstance {
+export function createPanelInstance(type: CreatablePanelType): PanelInstance {
   const def = getPanelDefinition(type);
   return {
     id: `panel-${uuid()}`,

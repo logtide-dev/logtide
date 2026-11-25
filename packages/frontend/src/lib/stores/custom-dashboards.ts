@@ -10,6 +10,7 @@
 import { writable, derived, get } from 'svelte/store';
 import type {
   CustomDashboard,
+  DashboardVariable,
   PanelInstance,
   PanelConfig,
   PanelLayout,
@@ -49,8 +50,13 @@ interface DashboardStoreState {
   timeRangeOverride: PanelTimeRange | null;
   // Inline edit mode
   editMode: boolean;
+  // Current variable selections by name (null = All). Ephemeral view state
+  // like the time range override: lives in the URL, never saved.
+  variableValues: Record<string, string | null>;
   // Pending edit snapshot - null when not editing
   pendingPanels: PanelInstance[] | null;
+  // Pending variables while editing - null when not editing
+  pendingVariables: DashboardVariable[] | null;
   // Snapshot of original panels for cancel
   originalPanels: PanelInstance[] | null;
 }
@@ -68,9 +74,50 @@ const initialState: DashboardStoreState = {
   pausedPanels: new Set<string>(),
   timeRangeOverride: null,
   editMode: false,
+  variableValues: {},
   pendingPanels: null,
+  pendingVariables: null,
   originalPanels: null,
 };
+
+/** Defaults of the dashboard variables, overlaid with the requested values for known names. */
+export function resolveVariableValues(
+  variables: DashboardVariable[] | undefined,
+  requested: Record<string, string | null> = {}
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const v of variables ?? []) {
+    out[v.name] = Object.prototype.hasOwnProperty.call(requested, v.name)
+      ? requested[v.name]
+      : v.default;
+  }
+  return out;
+}
+
+/** Variable selections sent to the batch endpoint; undefined when the dashboard has none. */
+function variablesPayload(
+  dashboard: CustomDashboard,
+  values: Record<string, string | null>
+): Record<string, string | null> | undefined {
+  const vars = dashboard.variables ?? [];
+  if (vars.length === 0) return undefined;
+  const out: Record<string, string | null> = {};
+  for (const v of vars) out[v.name] = values[v.name] ?? null;
+  return out;
+}
+
+/** The 5th argument is only sent when the dashboard has variables. */
+function fetchBatch(
+  dashboard: CustomDashboard,
+  panelIds: string[] | undefined,
+  range: PanelTimeRange | undefined,
+  values: Record<string, string | null>
+) {
+  const variables = variablesPayload(dashboard, values);
+  return variables
+    ? customDashboardsAPI.fetchPanelData(dashboard.id, dashboard.organizationId, panelIds, range, variables)
+    : customDashboardsAPI.fetchPanelData(dashboard.id, dashboard.organizationId, panelIds, range);
+}
 
 function createDashboardStore() {
   const { subscribe, set, update } = writable<DashboardStoreState>(initialState);
@@ -137,6 +184,7 @@ function createDashboardStore() {
           loadingActive: false,
           pausedPanels: new Set<string>(),
           timeRangeOverride: null,
+          variableValues: resolveVariableValues(dashboard.variables),
         }));
         await this.fetchAllPanelData();
       } catch (e) {
@@ -159,7 +207,11 @@ function createDashboardStore() {
      */
     async initialize(
       organizationId: string,
-      opts: { dashboardId?: string | null; range?: PanelTimeRange | null } = {}
+      opts: {
+        dashboardId?: string | null;
+        range?: PanelTimeRange | null;
+        variables?: Record<string, string | null>;
+      } = {}
     ): Promise<{ fellBack: boolean }> {
       const seq = ++activationSeq;
       const requestedId = opts.dashboardId ?? null;
@@ -173,6 +225,7 @@ function createDashboardStore() {
         activeError: null,
         editMode: false,
         pendingPanels: null,
+        pendingVariables: null,
         originalPanels: null,
       }));
 
@@ -227,6 +280,7 @@ function createDashboardStore() {
         panelData: {},
         pausedPanels: new Set<string>(),
         timeRangeOverride: range,
+        variableValues: resolveVariableValues(active.variables, opts.variables),
         loadingActive: false,
       }));
       await this.fetchAllPanelData();
@@ -252,6 +306,7 @@ function createDashboardStore() {
           panelData: {},
           pausedPanels: new Set<string>(),
           timeRangeOverride: null,
+          variableValues: resolveVariableValues(fromList.variables),
           activeError: null,
         }));
         await this.fetchAllPanelData();
@@ -272,6 +327,7 @@ function createDashboardStore() {
           panelData: {},
           pausedPanels: new Set<string>(),
           timeRangeOverride: null,
+          variableValues: resolveVariableValues(dashboard.variables),
           loadingActive: false,
         }));
         await this.fetchAllPanelData();
@@ -319,13 +375,13 @@ function createDashboardStore() {
       });
 
       try {
-        const result = await customDashboardsAPI.fetchPanelData(
-          dashboard.id,
-          dashboard.organizationId,
+        const result = await fetchBatch(
+          dashboard,
           // Undefined keeps the "all panels" request the API already sends
           // when nothing is paused.
           somePaused ? targetIds : undefined,
-          state.timeRangeOverride ?? undefined
+          state.timeRangeOverride ?? undefined,
+          state.variableValues
         );
         const now = Date.now();
         update((s) => {
@@ -373,13 +429,13 @@ function createDashboardStore() {
       setPanelData(panelId, { loading: true, error: null });
 
       try {
-        const result = await customDashboardsAPI.fetchPanelData(
-          dashboard.id,
-          dashboard.organizationId,
+        const result = await fetchBatch(
+          dashboard,
           [panelId],
           // A manual refresh must not silently revert one panel to its
           // configured window while the dashboard override is active.
-          state.timeRangeOverride ?? undefined
+          state.timeRangeOverride ?? undefined,
+          state.variableValues
         );
         const entry = result.panels[panelId];
         if (entry) {
@@ -425,6 +481,12 @@ function createDashboardStore() {
       await this.fetchAllPanelData();
     },
 
+    /** Select a variable value (null = All) and refetch every non-paused panel. */
+    async setVariable(name: string, value: string | null): Promise<void> {
+      update((s) => ({ ...s, variableValues: { ...s.variableValues, [name]: value } }));
+      await this.fetchAllPanelData();
+    },
+
     // ─── Edit mode ──────────────────────────────────────────────────────
 
     enterEditMode(): void {
@@ -434,6 +496,7 @@ function createDashboardStore() {
           ...s,
           editMode: true,
           pendingPanels: [...s.activeDashboard.panels],
+          pendingVariables: [...(s.activeDashboard.variables ?? [])],
           originalPanels: [...s.activeDashboard.panels],
           saveError: null,
         };
@@ -445,9 +508,14 @@ function createDashboardStore() {
         ...s,
         editMode: false,
         pendingPanels: null,
+        pendingVariables: null,
         originalPanels: null,
         saveError: null,
       }));
+    },
+
+    setPendingVariables(variables: DashboardVariable[]): void {
+      update((s) => ({ ...s, pendingVariables: variables }));
     },
 
     setPendingPanels(panels: PanelInstance[]): void {
@@ -490,6 +558,7 @@ function createDashboardStore() {
       const state = getState();
       const dashboard = state.activeDashboard;
       const pending = state.pendingPanels;
+      const pendingVars = state.pendingVariables;
       if (!dashboard || pending === null) return;
 
       update((s) => ({ ...s, saving: true, saveError: null }));
@@ -498,7 +567,7 @@ function createDashboardStore() {
         const updated = await customDashboardsAPI.update(
           dashboard.id,
           dashboard.organizationId,
-          { panels: pending }
+          { panels: pending, ...(pendingVars ? { variables: pendingVars } : {}) }
         );
         update((s) => ({
           ...s,
@@ -506,7 +575,10 @@ function createDashboardStore() {
           dashboards: mergeDashboardIntoList(s.dashboards, updated),
           editMode: false,
           pendingPanels: null,
+          pendingVariables: null,
           originalPanels: null,
+          // Keep the selections that still match a variable, defaults for new ones.
+          variableValues: resolveVariableValues(updated.variables, s.variableValues),
           saving: false,
         }));
         await this.fetchAllPanelData();
@@ -738,6 +810,13 @@ export const dashboardError = derived(customDashboardsStore, (s) => s.activeErro
 export const dashboardListError = derived(customDashboardsStore, (s) => s.listError);
 export const editMode = derived(customDashboardsStore, (s) => s.editMode);
 export const pendingPanels = derived(customDashboardsStore, (s) => s.pendingPanels);
+export const variableValuesMap = derived(customDashboardsStore, (s) => s.variableValues);
+/** Variables in force: the draft while editing, else the saved ones. */
+export const dashboardVariables = derived(customDashboardsStore, (s): DashboardVariable[] =>
+  s.editMode && s.pendingVariables !== null
+    ? s.pendingVariables
+    : (s.activeDashboard?.variables ?? [])
+);
 export const dashboardSaving = derived(customDashboardsStore, (s) => s.saving);
 export const dashboardSaveError = derived(customDashboardsStore, (s) => s.saveError);
 export const panelDataMap = derived(customDashboardsStore, (s) => s.panelData);

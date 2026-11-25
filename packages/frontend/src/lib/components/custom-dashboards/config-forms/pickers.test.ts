@@ -29,22 +29,13 @@ vi.mock('$lib/stores/organization', async () => {
 });
 
 import { getPanelDefinition } from '../panel-registry';
-import type { MetricChartConfig, TopNTableConfig } from '@logtide/shared';
+import type { TopNTableConfig } from '@logtide/shared';
 
 // jsdom lacks these; bits-ui Select calls them when opening an option list.
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.scrollIntoView ??= () => {};
-
-function metricConfig(overrides: Partial<MetricChartConfig> = {}): MetricChartConfig {
-  return {
-    ...(getPanelDefinition('metric_chart').defaultConfig as MetricChartConfig),
-    projectId: 'proj-1',
-    metricName: '',
-    ...overrides,
-  };
-}
 
 function renderForm(
   type: Parameters<typeof getPanelDefinition>[0],
@@ -82,41 +73,6 @@ beforeEach(() => {
 });
 
 describe('panel form pickers', () => {
-  it('metric chart metric name suggests names for the selected project', async () => {
-    loadPickerOptions.mockImplementation(async (p: { kind: string }) =>
-      p.kind === 'metric-names' ? ['cpu_usage', 'memory_used'] : []
-    );
-    renderForm('metric_chart', metricConfig());
-
-    await waitFor(() =>
-      expect(loadPickerOptions).toHaveBeenCalledWith({
-        organizationId: 'org-1',
-        kind: 'metric-names',
-        projectId: 'proj-1',
-      })
-    );
-    const input = screen.getByPlaceholderText('e.g. http.server.request.duration');
-    await fireEvent.focus(input);
-    expect(await screen.findByText('cpu_usage')).toBeInTheDocument();
-    expect(screen.getByText('memory_used')).toBeInTheDocument();
-  });
-
-  it('typing a metric not in the list still emits onChange', async () => {
-    loadPickerOptions.mockResolvedValue(['cpu_usage']);
-    const onChange = renderForm('metric_chart', metricConfig());
-    const input = screen.getByPlaceholderText('e.g. http.server.request.duration');
-    await fireEvent.input(input, { target: { value: 'my.own.metric' } });
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ metricName: 'my.own.metric' }));
-  });
-
-  it('form stays usable when options resolve empty', async () => {
-    const onChange = renderForm('metric_chart', metricConfig());
-    await waitFor(() => expect(loadPickerOptions).toHaveBeenCalled());
-    const svc = screen.getByPlaceholderText('Leave empty for all services');
-    await fireEvent.input(svc, { target: { value: 'checkout' } });
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ serviceName: 'checkout' }));
-  });
-
   it.each(['trace_latency', 'trace_volume'] as const)(
     '%s form requests services with source traces',
     async (type) => {
@@ -142,48 +98,6 @@ describe('panel form pickers', () => {
         projectId: null,
       })
     );
-  });
-
-  it('group by accepts at most 2 keys', async () => {
-    const onChange = renderForm('metric_chart', metricConfig({ groupBy: ['host'] }));
-    const input = screen.getByPlaceholderText('e.g. host');
-    await fireEvent.input(input, { target: { value: 'region' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add group by label' }));
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ groupBy: ['host', 'region'] }));
-  });
-
-  it('group by hides the input once two keys are set', () => {
-    renderForm('metric_chart', metricConfig({ groupBy: ['host', 'region'] }));
-    expect(screen.queryByPlaceholderText('e.g. host')).not.toBeInTheDocument();
-  });
-
-  it('group by rejects invalid keys', async () => {
-    const onChange = renderForm('metric_chart', metricConfig());
-    const input = screen.getByPlaceholderText('e.g. host');
-    await fireEvent.input(input, { target: { value: 'bad key; drop' } });
-    expect(screen.getByRole('button', { name: 'Add group by label' })).toBeDisabled();
-    expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ groupBy: expect.anything() }));
-  });
-
-  it('group by omitted from config when cleared', async () => {
-    const onChange = renderForm('metric_chart', metricConfig({ groupBy: ['host'] }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove group by host' }));
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange.mock.calls[0][0]).not.toHaveProperty('groupBy');
-  });
-
-  it('group by suggests label keys only with a project and a metric', async () => {
-    loadMetricLabelKeys.mockResolvedValue(['host', 'region']);
-    renderForm('metric_chart', metricConfig({ metricName: 'cpu_usage' }));
-    await waitFor(() => expect(loadMetricLabelKeys).toHaveBeenCalledWith('proj-1', 'cpu_usage'));
-    await fireEvent.focus(screen.getByPlaceholderText('e.g. host'));
-    expect(await screen.findByText('region')).toBeInTheDocument();
-  });
-
-  it('group by does not request label keys without a metric name', async () => {
-    renderForm('metric_chart', metricConfig({ metricName: '' }));
-    await waitFor(() => expect(loadPickerOptions).toHaveBeenCalled());
-    expect(loadMetricLabelKeys).not.toHaveBeenCalled();
   });
 
   it('top_n metadata field suggests keys from loadMetadataKeys', async () => {

@@ -6,6 +6,7 @@ import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 import type {
   CustomDashboard,
+  DashboardVariable,
   PanelConfig,
   PanelInstance,
   PanelTimeRange,
@@ -21,6 +22,7 @@ export interface CreateDashboardPayload {
   description?: string | null;
   isPersonal?: boolean;
   panels?: PanelInstance[];
+  variables?: DashboardVariable[];
 }
 
 export interface UpdateDashboardPayload {
@@ -28,6 +30,7 @@ export interface UpdateDashboardPayload {
   description?: string | null;
   isPersonal?: boolean;
   panels?: PanelInstance[];
+  variables?: DashboardVariable[];
 }
 
 /** Mirror of the backend DashboardTemplateSummary. */
@@ -210,13 +213,14 @@ class CustomDashboardsAPI {
     dashboardId: string,
     organizationId: string,
     panelIds?: string[],
-    timeRange?: PanelTimeRange
+    timeRange?: PanelTimeRange,
+    variables?: Record<string, string | null>
   ): Promise<PanelDataBatchResponse> {
     return this.request<PanelDataBatchResponse>(
       `/${dashboardId}/panels/data`,
       {
         method: 'POST',
-        body: JSON.stringify({ organizationId, panelIds, timeRange }),
+        body: JSON.stringify({ organizationId, panelIds, timeRange, variables }),
       }
     );
   }

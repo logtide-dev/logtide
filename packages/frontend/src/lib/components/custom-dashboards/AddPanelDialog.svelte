@@ -2,7 +2,8 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import Button from '$lib/components/ui/button/button.svelte';
   import { getAllPanelDefinitions, createPanelInstance } from './panel-registry';
-  import type { PanelInstance, PanelType } from '@logtide/shared';
+  import type { PanelInstance } from '@logtide/shared';
+  import type { CreatablePanelType } from './panel-registry';
 
   interface Props {
     open: boolean;
@@ -12,7 +13,7 @@
 
   let { open = $bindable(), onAdd, onOpenChange }: Props = $props();
 
-  let selected = $state<PanelType | null>(null);
+  let selected = $state<CreatablePanelType | null>(null);
 
   const definitions = getAllPanelDefinitions();
 

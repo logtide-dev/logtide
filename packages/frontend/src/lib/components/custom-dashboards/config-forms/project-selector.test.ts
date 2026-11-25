@@ -41,7 +41,8 @@ beforeEach(() => {
   });
 });
 
-describe.each(getAllPanelDefinitions().map((d) => [d.type, d] as const))('%s form', (_type, def) => {
+// the metrics panel scopes by query.projectIds, covered in MetricsConfigForm.test.ts
+describe.each(getAllPanelDefinitions().filter((d) => d.type !== 'metrics').map((d) => [d.type, d] as const))('%s form', (_type, def) => {
   // live log tables require a project, everything else starts org-wide
   const config = { ...def.defaultConfig, projectId: null };
 
