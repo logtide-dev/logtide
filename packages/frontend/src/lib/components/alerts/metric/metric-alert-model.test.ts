@@ -6,6 +6,8 @@ import {
   defaultAlertTarget,
   formulaQueryRefs,
   instanceLabels,
+  metricAlertExploreHref,
+  metricAlertRangeAround,
   suggestThreshold,
   summarizeMetricRule,
   targetUnit,
@@ -13,6 +15,7 @@ import {
   thresholdToDisplay,
   thresholdUnitLabel,
 } from './metric-alert-model';
+import { decodeExplorerQuery } from '$lib/utils/metrics-explorer-url';
 
 const q = (id: string, metricName: string, extra: Record<string, unknown> = {}) => ({
   id,
@@ -169,5 +172,41 @@ describe('summaries', () => {
     expect(instanceLabels({ 'host.name': 'web-1' })).toBe('host.name=web-1');
     expect(instanceLabels({})).toBe('');
     expect(instanceLabels(null)).toBe('');
+  });
+});
+
+describe('metricAlertExploreHref', () => {
+  it('carries the rule projects as the explicit scope, the range and the query', () => {
+    const href = metricAlertExploreHref(explorer({ projectIds: ['p1', 'p2'] }), {
+      from: '2026-11-25T09:00:00.000Z',
+      to: '2026-11-25T10:00:00.000Z',
+    });
+    const url = new URL(href, 'http://x');
+    expect(url.pathname).toBe('/dashboard/metrics/explore');
+    expect(url.searchParams.get('project')).toBe('p1,p2');
+    expect(url.searchParams.get('from')).toBe('2026-11-25T09:00:00.000Z');
+    expect(url.searchParams.get('to')).toBe('2026-11-25T10:00:00.000Z');
+    expect(decodeExplorerQuery(url.searchParams.get('q'))?.projectIds).toEqual(['p1', 'p2']);
+  });
+
+  it('writes project=all for a rule over every project and skips a bad range', () => {
+    const url = new URL(metricAlertExploreHref(explorer({ projectIds: null }), { from: 'x', to: 'y' }), 'http://x');
+    expect(url.searchParams.get('project')).toBe('all');
+    expect(url.searchParams.has('from')).toBe(false);
+  });
+});
+
+describe('metricAlertRangeAround', () => {
+  const at = '2026-11-25T10:00:00.000Z';
+  it('covers the hour before (at least four windows) and 15 minutes after, capped at now', () => {
+    const later = new Date('2026-11-26T00:00:00.000Z');
+    expect(metricAlertRangeAround(at, 5, later)).toEqual({
+      from: new Date('2026-11-25T09:00:00.000Z'),
+      to: new Date('2026-11-25T10:15:00.000Z'),
+    });
+    expect(metricAlertRangeAround(at, 60, later).from).toEqual(new Date('2026-11-25T06:00:00.000Z'));
+    expect(metricAlertRangeAround(at, 5, new Date('2026-11-25T10:05:00.000Z')).to).toEqual(
+      new Date('2026-11-25T10:05:00.000Z'),
+    );
   });
 });
