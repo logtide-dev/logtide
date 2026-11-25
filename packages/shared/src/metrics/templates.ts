@@ -231,6 +231,63 @@ export const HOST_TEMPLATE: SourceTemplate = {
   ],
 };
 
+const serviceFilter = (): MetricAttrFilter => ({ scope: 'resource', key: 'service.name', op: 'eq', values: ['$service'] });
+
+/**
+ * HTTP server panels read from an OTel HTTP server duration histogram. Two
+ * semconv generations exist: `http.server.request.duration` (seconds, status in
+ * `http.response.status_code`) and the older `http.server.duration`
+ * (milliseconds, status in `http.status_code`). Each gets its own panel set,
+ * shown only when that metric is present.
+ */
+function httpPanels(metricName: string, statusKey: string, keyPrefix: string): SourceTemplatePanel[] {
+  const status5xx: MetricAttrFilter = { scope: 'metric', key: statusKey, op: 'gte', values: ['500'] };
+  const latency = (id: string, aggregation: 'p50' | 'p95' | 'p99'): MetricQuerySpec => ({
+    id,
+    metricName,
+    aggregation,
+    filters: [serviceFilter()],
+    groupBy: [],
+    label: aggregation,
+  });
+  return [
+    {
+      key: `${keyPrefix}-rate`,
+      w: 6,
+      h: 4,
+      requires: [metricName],
+      config: metricsPanel(
+        'Requests per second by route',
+        q([{ id: 'A', metricName, aggregation: 'rate', filters: [serviceFilter()], groupBy: [{ scope: 'metric', key: 'http.route' }], limit: 10 }], 'lines'),
+      ),
+    },
+    {
+      key: `${keyPrefix}-error-rate`,
+      w: 6,
+      h: 4,
+      requires: [metricName],
+      config: metricsPanel(
+        'Error rate (5xx)',
+        q(
+          [
+            { id: 'A', metricName, aggregation: 'rate', filters: [serviceFilter(), status5xx], groupBy: [], hidden: true },
+            { id: 'B', metricName, aggregation: 'rate', filters: [serviceFilter()], groupBy: [], hidden: true },
+          ],
+          'lines',
+          { formulas: [{ id: 'F1', expression: 'A / B * 100', label: 'Error rate %' }] },
+        ),
+      ),
+    },
+    {
+      key: `${keyPrefix}-latency`,
+      w: 12,
+      h: 4,
+      requires: [metricName],
+      config: metricsPanel('Request latency', q([latency('A', 'p50'), latency('B', 'p95'), latency('C', 'p99')], 'lines')),
+    },
+  ];
+}
+
 export const SERVICE_TEMPLATE: SourceTemplate = {
   kind: 'service',
   dashboardName: '{name} overview',
@@ -254,6 +311,13 @@ export const SERVICE_TEMPLATE: SourceTemplate = {
           requires: [],
           config: { type: 'trace_latency', title: 'Latency', source: 'traces', projectId: null, serviceName: '$service', timeRange: DEFAULT_RANGE, showPercentiles: ['p50', 'p95', 'p99'] },
         },
+      ],
+    },
+    {
+      title: 'HTTP (from metrics)',
+      panels: [
+        ...httpPanels('http.server.request.duration', 'http.response.status_code', 'http'),
+        ...httpPanels('http.server.duration', 'http.status_code', 'http-legacy'),
       ],
     },
     {

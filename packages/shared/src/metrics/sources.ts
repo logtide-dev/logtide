@@ -70,11 +70,17 @@ export interface ServiceSourceSummary {
   lastSeen: string;
   status: MetricSourceStatus;
   statusReason: string | null;
-  /** Requests per second, from server/consumer spans (null without traces). */
+  /**
+   * Where the three RED signals below come from: entry spans when the service
+   * has spans in the window, else the HTTP server duration histogram, else null
+   * (the signals are then empty).
+   */
+  redSource: 'traces' | 'metrics' | null;
+  /** Requests per second (null value when redSource is null). */
   requestRate: SourceSignalValue;
-  /** Error %, from spans (null without traces). */
+  /** Error % (5xx or error spans over all requests). */
   errorRate: SourceSignalValue;
-  /** p95 duration in ms, from spans (null without traces). */
+  /** p95 duration in ms. */
   p95: SourceSignalValue;
   /** Hosts (host.name) the service runs on. */
   hosts: string[];
