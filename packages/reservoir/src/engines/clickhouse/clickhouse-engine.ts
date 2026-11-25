@@ -1939,9 +1939,11 @@ export class ClickHouseEngine extends StorageEngine {
     let query: string;
     if (histogram) {
       // hist_last / hist_sum: points with explicit buckets only. The inner
-      // level aggregates per bucket, group and bucket_counts length (element-
-      // wise sumForEach for hist_sum, argMax by time for hist_last); the outer
-      // level keeps the length class of the latest point (the pick).
+      // level aggregates per bucket, group and explicit_bounds: a merge class
+      // is the points whose bounds are identical (element-wise sumForEach for
+      // hist_sum, argMax by time for hist_last). The outer level keeps the
+      // class of the latest point (the pick); points with other bounds, even
+      // of the same length, are never added together.
       // histogram_data is Nullable(String); arrays cannot be Nullable.
       const hd = `ifNull(histogram_data, '')`;
       const counts = `JSONExtract(${hd}, 'bucket_counts', 'Array(Float64)')`;
@@ -1974,9 +1976,9 @@ export class ClickHouseEngine extends StorageEngine {
           tupleElement(picked, 3) AS h_sum,
           tupleElement(picked, 4) AS h_count
         FROM (
-          SELECT ${keys}, length(h_counts) AS h_len, max(time) AS last_t, ${classValue} AS h_class
+          SELECT ${keys}, max(time) AS last_t, ${classValue} AS h_class
           FROM (SELECT ${inner} FROM metrics ${histWhere})
-          GROUP BY ${keys}, h_len
+          GROUP BY ${keys}, h_bounds
         )
         GROUP BY ${keys}
         ORDER BY bucket ASC`;

@@ -272,8 +272,9 @@ function explicitHistogram(p: StoredMetricRecord): MetricHistogramValue | undefi
 
 /**
  * hist_last / hist_sum over the points of one bucket and group. The pick is
- * the latest point (by time); hist_sum adds up the points whose bucket_counts
- * length equals the pick's and skips the rest.
+ * the latest point (by time); hist_sum adds up the points whose explicit
+ * bounds are identical to the pick's (same length and same values in order:
+ * the pick's merge class) and skips the rest.
  */
 function aggregateHistograms(points: StoredMetricRecord[], aggregation: 'hist_last' | 'hist_sum'): MetricHistogramValue {
   const hs = points
@@ -281,7 +282,9 @@ function aggregateHistograms(points: StoredMetricRecord[], aggregation: 'hist_la
     .sort((a, b) => a.time - b.time);
   const pick = hs[hs.length - 1].h;
   if (aggregation === 'hist_last') return structuredClone(pick);
-  const same = hs.filter((x) => x.h.counts.length === pick.counts.length).map((x) => x.h);
+  const sameBounds = (bounds: number[]) =>
+    bounds.length === pick.bounds.length && bounds.every((b, i) => b === pick.bounds[i]);
+  const same = hs.filter((x) => sameBounds(x.h.bounds)).map((x) => x.h);
   return {
     bounds: [...pick.bounds],
     counts: pick.counts.map((_, i) => same.reduce((acc, h) => acc + h.counts[i], 0)),

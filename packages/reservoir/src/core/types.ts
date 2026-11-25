@@ -593,8 +593,10 @@ export interface MetricQueryResult {
  *   For cumulative temporality, where each point is a running total.
  * - hist_sum: element-wise sum of bucket_counts, sum of sum and count, over
  *   every point in the bucket (per group). For delta temporality.
- * bounds come from one point of the bucket; points whose bounds differ in
- * length from that point are skipped (engine-defined pick). Points without
+ * Merge classes: only points with IDENTICAL explicit_bounds (same length and
+ * same values in order) are added together. The pick is the class of the
+ * latest point of the bucket (per group); its bounds are returned and points
+ * with other bounds are skipped (ties on time: engine-defined). Points without
  * histogram_data or buckets are ignored. MetricTimeBucket.value = count.
  */
 export type MetricAggregationFn =
