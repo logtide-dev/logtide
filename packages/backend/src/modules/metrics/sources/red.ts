@@ -85,3 +85,75 @@ export function redFromSeries(series: MetricSeries[], service: string, defaultUn
     p95: { value: scale(dur?.stats.avg ?? null), unit: 'ms', spark: (dur?.points ?? []).map((p) => scale(p.v)) },
   };
 }
+
+/** Per-operation latency summary as the engines report it (ms). */
+export interface OperationLatency {
+  count: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+}
+
+/** Share of the mixture that lies below `x` for one operation (piecewise linear through its known quantiles). */
+function operationCdf(op: OperationLatency, x: number): number {
+  const p50 = Math.max(0, op.p50Ms);
+  const p95 = Math.max(p50, op.p95Ms);
+  const p99 = Math.max(p95, op.p99Ms);
+  // The tail above p99 is unknown: assume it is as long as p95 -> p99 (at least 1 ms).
+  const top = p99 + Math.max(p99 - p95, 1);
+  const knots: Array<[number, number]> = [
+    [0, 0],
+    [p50, 0.5],
+    [p95, 0.95],
+    [p99, 0.99],
+    [top, 1],
+  ];
+  if (x <= 0) return 0;
+  if (x >= top) return 1;
+  for (let i = 1; i < knots.length; i++) {
+    const [x1, y1] = knots[i];
+    if (x <= x1) {
+      const [x0, y0] = knots[i - 1];
+      return x1 === x0 ? y1 : y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+    }
+  }
+  return 1;
+}
+
+/**
+ * Percentile of the spans of several operations when only each operation's
+ * p50/p95/p99 is known (the batched stats call cannot give one histogram per
+ * service). Every operation is modeled as a piecewise linear distribution
+ * through its quantiles and the call-weighted mixture is inverted by
+ * bisection. Exact for a single operation at p50/p95/p99, an approximation
+ * for mixtures. null without calls.
+ */
+export function mixturePercentile(ops: OperationLatency[], q: number): number | null {
+  const used = ops.filter((o) => o.count > 0 && Number.isFinite(o.p95Ms));
+  const total = used.reduce((a, o) => a + o.count, 0);
+  if (total <= 0) return null;
+  if (used.length === 1) {
+    const o = used[0];
+    if (q === 0.95) return o.p95Ms;
+  }
+  const cdf = (x: number): number => used.reduce((a, o) => a + (o.count / total) * operationCdf(o, x), 0);
+  let lo = 0;
+  let hi = Math.max(...used.map((o) => Math.max(o.p99Ms, o.p95Ms) * 2 + 1));
+  for (let i = 0; i < 50; i++) {
+    const mid = (lo + hi) / 2;
+    if (cdf(mid) < q) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/** `count` equal, non overlapping slices of [from, to] (ms). The last slice ends exactly at `to`. */
+export function sliceWindow(from: number, to: number, count: number): Array<{ from: number; to: number }> {
+  const n = Math.max(1, count);
+  const step = (to - from) / n;
+  return Array.from({ length: n }, (_, i) => ({
+    from: Math.round(from + i * step),
+    // Engines filter inclusively on both ends: stop 1 ms before the next slice.
+    to: i === n - 1 ? to : Math.round(from + (i + 1) * step) - 1,
+  }));
+}

@@ -8,8 +8,7 @@ const mocks = vi.hoisted(() => ({
   getMetricSources: vi.fn(),
   getServiceHealthStats: vi.fn(),
   getOperationStats: vi.fn(),
-  getLatencyHistogram: vi.fn(),
-  getSpanTimeseries: vi.fn(),
+  querySpans: vi.fn(),
 }));
 
 vi.mock('../../../../modules/metrics/query/service.js', () => ({
@@ -20,14 +19,13 @@ vi.mock('../../../../database/reservoir.js', () => ({
     getMetricSources: mocks.getMetricSources,
     getServiceHealthStats: mocks.getServiceHealthStats,
     getOperationStats: mocks.getOperationStats,
-    getLatencyHistogram: mocks.getLatencyHistogram,
-    getSpanTimeseries: mocks.getSpanTimeseries,
+    querySpans: mocks.querySpans,
   },
 }));
 vi.mock('../../../../database/index.js', () => ({ db: {} }));
 vi.mock('../../../../modules/custom-dashboards/service.js', () => ({ customDashboardsService: {} }));
 
-import { histogramPercentile, msFactor, redFromSeries } from '../../../../modules/metrics/sources/red.js';
+import { histogramPercentile, mixturePercentile, msFactor, redFromSeries, sliceWindow } from '../../../../modules/metrics/sources/red.js';
 import { listServices } from '../../../../modules/metrics/sources/service.js';
 
 const from = new Date(Date.now() - 3_600_000);
@@ -111,11 +109,10 @@ describe('listServices RED source', () => {
       { serviceName: 'traced', totalCalls: 1000, totalErrors: 500, avgLatencyMs: 1, p95LatencyMs: 999 },
     ]);
     mocks.getOperationStats.mockResolvedValue([
-      { service: 'traced', operation: 'GET /a', count: 300, errorCount: 3, avgMs: 1, p50Ms: 1, p95Ms: 1, p99Ms: 1 },
-      { service: 'traced', operation: 'POST /b', count: 300, errorCount: 3, avgMs: 1, p50Ms: 1, p95Ms: 1, p99Ms: 1 },
+      { service: 'traced', operation: 'GET /a', count: 300, errorCount: 3, avgMs: 1, p50Ms: 5, p95Ms: 20, p99Ms: 30 },
+      { service: 'traced', operation: 'POST /b', count: 300, errorCount: 3, avgMs: 1, p50Ms: 5, p95Ms: 20, p99Ms: 30 },
     ]);
-    mocks.getLatencyHistogram.mockResolvedValue({ bounds: [10, 20], counts: [50, 50, 0] });
-    mocks.getSpanTimeseries.mockResolvedValue([]);
+    mocks.querySpans.mockResolvedValue({ spans: [], total: 0, hasMore: false, limit: 100, offset: 0 });
     mocks.run.mockImplementation(async (q: any) => {
       const metric = q.queries[0].metricName as string;
       if (metric === 'http.server.request.duration') {
@@ -144,7 +141,7 @@ describe('listServices RED source', () => {
     // entry spans only: 600 calls, 6 errors (not the 1000/500 of every span)
     expect(by.traced.errorRate.value).toBeCloseTo(1);
     expect(by.traced.requestRate.value).toBeCloseTo(600 / 3600, 3);
-    expect(by.traced.p95.value).toBeCloseTo(19);
+    expect(by.traced.p95.value).toBeCloseTo(20);
 
     expect(by['http-new'].redSource).toBe('metrics');
     expect(by['http-new'].hasTraces).toBe(false);

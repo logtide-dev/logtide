@@ -11,7 +11,8 @@ const mocks = vi.hoisted(() => ({
   getMetricSources: vi.fn(),
   getMetricNames: vi.fn(),
   getServiceHealthStats: vi.fn(),
-  getSpanTimeseries: vi.fn(),
+  getOperationStats: vi.fn(),
+  querySpans: vi.fn(),
   create: vi.fn(),
   assertWithinLimit: vi.fn(),
   hardwareRows: [] as any[],
@@ -41,7 +42,8 @@ vi.mock('../../../../database/reservoir.js', () => ({
     getMetricSources: mocks.getMetricSources,
     getMetricNames: mocks.getMetricNames,
     getServiceHealthStats: mocks.getServiceHealthStats,
-    getSpanTimeseries: mocks.getSpanTimeseries,
+    getOperationStats: mocks.getOperationStats,
+    querySpans: mocks.querySpans,
   },
 }));
 vi.mock('../../../../database/index.js', () => {
@@ -121,9 +123,21 @@ beforeEach(() => {
     { serviceName: 'api', totalCalls: 600, totalErrors: 60, avgLatencyMs: 10, p95LatencyMs: 120 },
     { serviceName: 'batch', totalCalls: 100, totalErrors: 0, avgLatencyMs: 10, p95LatencyMs: 40 },
   ]);
-  mocks.getSpanTimeseries.mockResolvedValue([
-    { time: new Date(Date.now() - 3_600_000), spanCount: 360, errorCount: 36, p50: 1, p95: 100, p99: 200 },
+  // Entry spans: api has 3 operations, batch is not reported (falls back to health stats).
+  mocks.getOperationStats.mockResolvedValue([
+    { service: 'api', operation: 'GET /a', count: 400, errorCount: 40, avgMs: 20, p50Ms: 10, p95Ms: 100, p99Ms: 150 },
+    { service: 'api', operation: 'GET /b', count: 200, errorCount: 20, avgMs: 20, p50Ms: 10, p95Ms: 100, p99Ms: 150 },
   ]);
+  mocks.querySpans.mockImplementation(async (p: any) => ({
+    spans: (p.serviceName as string[]).map((serviceName, i) => ({
+      serviceName,
+      startTime: new Date(seen.getTime() - i * 1000),
+    })),
+    total: 0,
+    hasMore: false,
+    limit: 100,
+    offset: 0,
+  }));
   mocks.getMetricNames.mockResolvedValue({
     names: [
       { name: 'system.cpu.utilization', type: 'gauge' },
@@ -159,7 +173,7 @@ describe('GET /sources', () => {
     expect(api.hasTraces).toBe(true);
     expect(api.errorRate.value).toBeCloseTo(10);
     expect(api.status).toBe('critical');
-    expect(api.p95.value).toBe(120);
+    expect(api.p95.value).toBeCloseTo(100, 1);
     expect(api.hosts).toEqual(['web-1']);
     // Span-only service is included
     const batch = body.services.find((s: any) => s.name === 'batch');
@@ -244,7 +258,7 @@ describe('GET /sources', () => {
 });
 
 describe('detail endpoints', () => {
-  it('host detail: info and metric names (prefix probes exclude longer names)', async () => {
+  it('host detail: info and metric names (one filtered reservoir call)', async () => {
     mocks.hardwareRows = [
       { id: 'hw-1', project_id: P1, host_name: 'web-1', status: 'ok', is_virtual: true, info: { kernel: '6.1', vendor: 'Dell', model: 'R1', agentVersion: '1.1.0' }, findings: [] },
     ];
@@ -260,24 +274,16 @@ describe('detail endpoints', () => {
       }
       return { series: [], interval: '15m', queries: [], warnings: [] };
     });
-    // The source only has the "system." family and v8js is absent.
-    mocks.getMetricSources.mockImplementation(async (p: any) => {
-      if (p.key !== 'host.name') return { sources: [] };
-      const inc: string[] | undefined = p.includeMetricPrefixes;
-      if (!inc) return { sources: [source('web-1')] };
-      if (inc[0] === 'v8js.') return { sources: [] };
-      if (inc[0] === 'system.cpu.utilization') {
-        // longer sibling excluded: web-1 only sent the .total one
-        return p.excludeMetricPrefixes?.includes('system.cpu.utilization.total') ? { sources: [] } : { sources: [source('web-1')] };
-      }
-      return { sources: [source('web-1')] };
-    });
+    // The reservoir filters names by the host's resource attribute.
+    mocks.getMetricNames.mockResolvedValue({ names: [{ name: 'system.cpu.utilization.total', type: 'gauge' }] });
+    mocks.getMetricSources.mockResolvedValue({ sources: [source('web-1')] });
     const f = await app();
     const res = await f.inject({ method: 'GET', url: `/sources/host/web-1${q()}` });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.info).toMatchObject({ kernel: '6.1', vendor: 'Dell', model: 'R1', agentVersion: '1.1.0', virtual: true, memoryBytes: 8e9, uptimeSeconds: 3600 });
     expect(body.metricNames).toEqual(['system.cpu.utilization.total']);
+    expect(mocks.getMetricNames.mock.calls[0][0].filters).toEqual([{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] }]);
   });
 
   it('host detail 404 when unknown', async () => {

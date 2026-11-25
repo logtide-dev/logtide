@@ -1,5 +1,7 @@
 import {
   SOURCE_STATUS_RANK,
+  formatMetricValue,
+  formatPlainNumber,
   quoteFieldValue,
   type HostSourceSummary,
   type MetricCatalogEntry,
@@ -26,6 +28,21 @@ export const SETUP_DOCS = {
 /** `?kind=host|service`; anything else shows every kind. */
 export function parseKind(value: string | null | undefined): KindFilter {
   return value === 'host' || value === 'service' ? value : 'all';
+}
+
+/**
+ * Requests per second for people: a quiet service handles a few requests an
+ * hour, which "/s" with two decimals would show as "0/s". Below one request
+ * every 10 seconds the value switches to per minute, then per hour.
+ */
+export function formatRequestRate(perSecond: number | null | undefined): string {
+  if (perSecond === null || perSecond === undefined || !Number.isFinite(perSecond)) return 'n/a';
+  if (perSecond <= 0) return '0/s';
+  if (perSecond >= 0.1) return formatMetricValue(perSecond, 'req/s');
+  const perMinute = perSecond * 60;
+  if (perMinute >= 0.1) return `${formatPlainNumber(perMinute, 1)}/min`;
+  const perHour = perSecond * 3600;
+  return perHour >= 0.1 ? `${formatPlainNumber(perHour, 1)}/h` : '<0.1/h';
 }
 
 /** Where a service's RED numbers come from, as shown in the UI. */
