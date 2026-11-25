@@ -16,7 +16,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import * as echarts from 'echarts';
-  import { formatMetricValue, metricUnitLabel, type MetricSeries } from '@logtide/shared';
+  import { formatMetricValue, isRatioPercentMetric, type MetricSeries } from '@logtide/shared';
   import { getAxisStyle, getTooltipStyle } from '$lib/utils/echarts-theme';
   import { themeStore } from '$lib/stores/theme';
   import { formatTimestamp } from '$lib/utils/datetime';
@@ -57,27 +57,27 @@
     const axisStyle = getAxisStyle();
     const tooltipStyle = getTooltipStyle();
 
-    // First two distinct units get their own y axis; the rest share the first.
+    // One y axis per distinct display unit (series of different queries that
+    // share a unit share the axis). At most two axes: the first two units get
+    // their own, any further unit shares the first.
+    const unitKeyOf = (s: MetricSeries) =>
+      `${s.unit ?? ''}|${isRatioPercentMetric(metricNames[s.queryId], s.unit) ? 'pct' : ''}`;
     const unitKeys: string[] = [];
     for (const s of series) {
-      const key = `${s.unit ?? ''}|${metricNames[s.queryId] ?? ''}`;
+      const key = unitKeyOf(s);
       if (!unitKeys.includes(key)) unitKeys.push(key);
     }
-    const axisIndexOf = (s: MetricSeries) => {
-      const i = unitKeys.indexOf(`${s.unit ?? ''}|${metricNames[s.queryId] ?? ''}`);
-      return i === 1 ? 1 : 0;
-    };
+    const axisIndexOf = (s: MetricSeries) => (unitKeys.indexOf(unitKeyOf(s)) === 1 ? 1 : 0);
     const axisSeries = (idx: number) => series.find((s) => axisIndexOf(s) === idx);
 
     const hasThreshold = typeof threshold === 'number' && Number.isFinite(threshold);
     const yAxes: echarts.YAXisComponentOption[] = [0, ...(unitKeys.length > 1 ? [1] : [])].map((idx) => {
       const ref = axisSeries(idx)!;
-      const unitText = metricUnitLabel(ref.unit, metricNames[ref.queryId]);
       return {
         type: 'value',
         ...axisStyle,
         position: idx === 0 ? 'left' : 'right',
-        name: compact ? undefined : (unitText ?? undefined),
+        // No axis name: the tick labels already carry the unit ("%", "MB/s").
         splitLine: idx === 0 ? axisStyle.splitLine : { show: false },
         min: yRange && idx === 0 ? yRange.min : undefined,
         // Keep the threshold line in view when the data stays below it.

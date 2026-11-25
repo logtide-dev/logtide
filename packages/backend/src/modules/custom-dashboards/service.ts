@@ -288,8 +288,10 @@ export class CustomDashboardsService {
       const panels = this.validatePanels(input.panels ?? existing!.panels, variables);
       if (input.panels !== undefined) {
         await this.assertMetricsProjectsInOrg(panels, organizationId);
-        updates.panels = JSON.stringify(panels);
       }
+      // schema_version is bumped below, so the (possibly migrated) panels must
+      // always be written with it, even when only variables changed.
+      updates.panels = JSON.stringify(panels);
       if (input.variables !== undefined) updates.variables = JSON.stringify(variables);
       updates.schema_version = CURRENT_SCHEMA_VERSION;
     }

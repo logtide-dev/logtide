@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/svelte';
-import type { DashboardVariable } from '@logtide/shared';
+import type { DashboardVariable, PanelInstance } from '@logtide/shared';
 import DashboardVariablesBar from './DashboardVariablesBar.svelte';
 import { chooseSelectOption, openSelect } from '$lib/test-utils/select-field';
 
@@ -42,6 +42,45 @@ describe('DashboardVariablesBar', () => {
         key: 'host.name',
         metricName: 'system.cpu.utilization.total',
       })
+    );
+  });
+
+  function metricsPanel(id: string, projectIds: string[] | null): PanelInstance {
+    return {
+      id,
+      config: { type: 'metrics', title: id, source: 'metrics', query: { projectIds, queries: [] } },
+    } as unknown as PanelInstance;
+  }
+
+  it('looks values up across the union of the metrics panels projects', async () => {
+    const api = { getAttributeValues: vi.fn().mockResolvedValue([]) };
+    render(DashboardVariablesBar, {
+      variables: [host],
+      values: {},
+      organizationId: 'org-1',
+      projectId: 'dash-proj',
+      panels: [metricsPanel('a', ['p2', 'p1']), metricsPanel('b', ['p1', 'p3'])],
+      onChange: vi.fn(),
+      api,
+    });
+    await waitFor(() =>
+      expect(api.getAttributeValues).toHaveBeenCalledWith(expect.objectContaining({ projectIds: ['p1', 'p2', 'p3'] }))
+    );
+  });
+
+  it('looks across all projects when any metrics panel is unscoped', async () => {
+    const api = { getAttributeValues: vi.fn().mockResolvedValue([]) };
+    render(DashboardVariablesBar, {
+      variables: [host],
+      values: {},
+      organizationId: 'org-1',
+      projectId: 'dash-proj',
+      panels: [metricsPanel('a', ['p1']), metricsPanel('b', null)],
+      onChange: vi.fn(),
+      api,
+    });
+    await waitFor(() =>
+      expect(api.getAttributeValues).toHaveBeenCalledWith(expect.objectContaining({ projectIds: null }))
     );
   });
 

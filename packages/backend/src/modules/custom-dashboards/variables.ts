@@ -24,7 +24,11 @@ export const dashboardVariableSchema = z
     metricName: z.string().min(1).max(255).nullable().optional(),
     default: z.string().max(200).nullable(),
   })
-  .strict();
+  .strict()
+  .refine((v) => v.attr.scope !== 'metric' || !!v.metricName, {
+    message: 'A metric-scope variable must name a metric (metricName)',
+    path: ['metricName'],
+  });
 
 export const dashboardVariablesSchema = z
   .array(dashboardVariableSchema)
