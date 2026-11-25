@@ -26,6 +26,9 @@ vi.mock('$lib/components/CreateAlertDialog.svelte', async () => ({
 vi.mock('$lib/components/EditAlertDialog.svelte', async () => ({
   default: (await import('../../../test-stubs/EditAlertDialog.stub.svelte')).default,
 }));
+vi.mock('$lib/components/alerts/metric/CreateMetricAlertDialog.svelte', async () => ({
+  default: (await import('../../../test-stubs/CreateMetricAlertDialog.stub.svelte')).default,
+}));
 vi.mock('$lib/components/DetectionPacksGalleryDialog.svelte', async () => ({
   default: (await import('../../../test-stubs/DetectionPacksGalleryDialog.stub.svelte')).default,
 }));
@@ -239,6 +242,52 @@ describe('AlertsWorkspace', () => {
     const dialog = await screen.findByTestId('edit-dialog');
     expect(dialog.getAttribute('data-rule')).toBe('p1-rule');
     expect(h.goto).toHaveBeenCalled();
+  });
+
+  it('metric rules show the Metric badge and open the metric dialog to edit and duplicate', async () => {
+    const metricConfig = {
+      query: {
+        projectIds: null,
+        queries: [{ id: 'A', metricName: 'system.cpu.utilization', aggregation: 'avg', filters: [], groupBy: [] }],
+        formulas: [],
+        interval: 'auto',
+        compareTo: 'none',
+        display: 'lines',
+      },
+      condition: 'above',
+      threshold: 0.9,
+      window: '5m',
+      forEvaluations: 2,
+      severity: 'high',
+      unit: '1',
+    };
+    h.getRules.mockResolvedValue({
+      alertRules: [rule('m1', { name: 'CPU high', alertType: 'metric', level: [], threshold: 0, metricConfig })],
+    });
+    mount();
+    expect(await screen.findByTestId('metric-badge')).toHaveTextContent('Metric');
+    expect(screen.getByTestId('metric-summary')).toHaveTextContent('system.cpu.utilization above 90% (avg over 5 minutes, 2 checks)');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit alert CPU high' }));
+    let dialog = await screen.findByTestId('metric-dialog');
+    expect(dialog.getAttribute('data-mode')).toBe('edit');
+    expect(dialog.getAttribute('data-rule')).toBe('m1');
+    expect(screen.queryByTestId('edit-dialog')).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Duplicate alert CPU high' }));
+    dialog = await screen.findByTestId('metric-dialog');
+    expect(dialog.getAttribute('data-mode')).toBe('create');
+  });
+
+  it('?edit=<id> of a metric rule opens the metric dialog', async () => {
+    h.getRules.mockResolvedValue({
+      alertRules: [rule('m1', { alertType: 'metric', metricConfig: null })],
+    });
+    setUrl('?edit=m1');
+    mount();
+    const dialog = await screen.findByTestId('metric-dialog');
+    expect(dialog.getAttribute('data-rule')).toBe('m1');
+    expect(screen.queryByTestId('edit-dialog')).toBeNull();
   });
 
   it('?edit with an unknown id toasts and opens nothing', async () => {

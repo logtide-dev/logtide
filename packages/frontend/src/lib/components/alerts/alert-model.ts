@@ -1,5 +1,6 @@
 import { isValidFieldKey, parseLogQuery, quoteFieldValue } from '@logtide/shared';
 import type { MetadataFilter } from '@logtide/shared';
+import { summarizeMetricRule } from './metric/metric-alert-model';
 import { writeScopeToUrl } from '$lib/stores/scope-url';
 import type { AlertBuilderPrefill, AlertHistory, AlertRule } from '$lib/api/alerts';
 
@@ -76,8 +77,12 @@ export function summarizeRule(
   rule: Pick<
     AlertRule,
     'alertType' | 'threshold' | 'timeWindow' | 'deviationMultiplier' | 'baselineType'
-  >
+  > &
+    Partial<Pick<AlertRule, 'metricConfig'>>
 ): string {
+  if (rule.alertType === 'metric') {
+    return rule.metricConfig ? summarizeMetricRule(rule.metricConfig) : 'Metric threshold';
+  }
   if (rule.alertType === 'rate_of_change') {
     const mult = rule.deviationMultiplier ?? 3;
     const baseline = BASELINE_TEXT[rule.baselineType ?? 'rolling_7d_avg'] ?? 'baseline';

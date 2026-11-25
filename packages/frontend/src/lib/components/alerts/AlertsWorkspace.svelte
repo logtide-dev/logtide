@@ -27,6 +27,7 @@
 	import EditAlertDialog from '$lib/components/EditAlertDialog.svelte';
 	import AlertRulesTable from '$lib/components/alerts/AlertRulesTable.svelte';
 	import AlertHistoryTable from '$lib/components/alerts/AlertHistoryTable.svelte';
+	import CreateMetricAlertDialog from '$lib/components/alerts/metric/CreateMetricAlertDialog.svelte';
 	import Package from '@lucide/svelte/icons/package';
 	import Plus from '@lucide/svelte/icons/plus';
 
@@ -57,6 +58,16 @@
 	let showEdit = $state(false);
 	let ruleToEdit = $state<AlertRule | null>(null);
 	let showPacks = $state(false);
+	// Metric rules (1.8) open their own dialog for edit and duplicate.
+	let showMetric = $state(false);
+	let metricRule = $state<AlertRule | null>(null);
+	let metricMode = $state<'create' | 'edit'>('edit');
+
+	function openMetric(rule: AlertRule, mode: 'create' | 'edit') {
+		metricRule = rule;
+		metricMode = mode;
+		showMetric = true;
+	}
 	let showDelete = $state(false);
 	let ruleToDelete = $state<AlertRule | null>(null);
 
@@ -251,7 +262,9 @@
 				showCreate = true;
 			} else if (parsed.editRuleId) {
 				const rule = rules.find((r) => r.id === parsed.editRuleId);
-				if (rule) {
+				if (rule?.alertType === 'metric') {
+					openMetric(rule, 'edit');
+				} else if (rule) {
 					ruleToEdit = rule;
 					showEdit = true;
 				} else {
@@ -268,6 +281,10 @@
 	}
 
 	function duplicate(rule: AlertRule) {
+		if (rule.alertType === 'metric') {
+			openMetric(rule, 'create');
+			return;
+		}
 		createPrefill = {
 			name: `${rule.name} (copy)`,
 			projectId: lockedProjectId ?? rule.projectId,
@@ -290,6 +307,10 @@
 	}
 
 	function edit(rule: AlertRule) {
+		if (rule.alertType === 'metric') {
+			openMetric(rule, 'edit');
+			return;
+		}
 		ruleToEdit = rule;
 		showEdit = true;
 	}
@@ -497,6 +518,13 @@
 		alert={ruleToEdit}
 		{projects}
 		onSuccess={reloadRules}
+	/>
+	<CreateMetricAlertDialog
+		bind:open={showMetric}
+		organizationId={orgId}
+		rule={metricRule}
+		mode={metricMode}
+		onSaved={reloadRules}
 	/>
 {/if}
 
