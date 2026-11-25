@@ -5,6 +5,7 @@ import { verifyProjectAccess } from '../auth/verify-project-access.js';
 import type { AggregationInterval, MetricAggregationFn } from '@logtide/reservoir';
 import { TooManyFilterValuesError } from './aggregate-options.js';
 import { metricCatalogRoutes } from './catalog/routes.js';
+import { sourcesRoutes } from './sources/index.js';
 
 /**
  * Resolve the effective projectId for the request.
@@ -58,6 +59,8 @@ export function parseAttributeFilters(query: Record<string, unknown>): Record<st
 
 const metricsRoutes: FastifyPluginAsync = async (fastify) => {
   await fastify.register(metricCatalogRoutes);
+  // 1.8 sources (session auth, its own encapsulated hook)
+  await fastify.register(sourcesRoutes, { prefix: '/sources' });
 
   // GET /api/v1/metrics/names
   fastify.get('/names', {
