@@ -107,8 +107,19 @@ export const metricFormulaSpecSchema = z.object({
   missingAsZero: z.boolean().optional(),
 });
 
+/**
+ * Project scope: null = every project of the organization. An empty list
+ * means the same and is normalized to null (panels and alert rules saved
+ * earlier in 1.8 with [] stay valid, and saving only a dashboard's variables
+ * never fails on them).
+ */
+export const metricProjectIdsSchema = z.preprocess(
+  (v) => (Array.isArray(v) && v.length === 0 ? null : v),
+  z.array(z.string().guid()).min(1).max(METRIC_MAX_PROJECTS).nullable(),
+);
+
 const explorerQueryShape = {
-  projectIds: z.array(z.string().guid()).min(1).max(METRIC_MAX_PROJECTS).nullable(),
+  projectIds: metricProjectIdsSchema,
   queries: z.array(metricQuerySpecSchema).min(1).max(METRIC_MAX_QUERIES),
   formulas: z.array(metricFormulaSpecSchema).max(METRIC_MAX_FORMULAS).default([]),
   interval: z.enum(['auto', '1m', '5m', '15m', '1h', '6h', '1d']).default('auto'),

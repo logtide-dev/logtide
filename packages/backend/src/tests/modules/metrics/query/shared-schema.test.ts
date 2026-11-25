@@ -79,7 +79,20 @@ describe('one explorer query schema (item 10)', () => {
     expect(everywhere(explorer({}, { unitOverride: 'u'.repeat(33) }))).toEqual(all(false));
     expect(everywhere(explorer({}, { formulas: [{ id: 'F1', expression: 'A'.padEnd(500, ' ') }] }))).toEqual(all(true));
     expect(everywhere(explorer({}, { formulas: [{ id: 'F1', expression: 'A'.padEnd(501, ' ') }] }))).toEqual(all(false));
-    expect(everywhere(explorer({}, { projectIds: [] }))).toEqual(all(false));
+  });
+
+  it('normalizes an empty project list to null (every project) everywhere (N12)', () => {
+    expect(everywhere(explorer({}, { projectIds: [] }))).toEqual(all(true));
+    expect((metricExplorerQuerySchema.parse(explorer({}, { projectIds: [] })) as { projectIds: unknown }).projectIds).toBeNull();
+    const parsedPanel = panelConfigSchema.parse(panel(explorer({}, { projectIds: [] }))) as PanelConfig & {
+      query: Record<string, unknown>;
+    };
+    expect(parsedPanel.query.projectIds).toBeNull();
+    const parsedAlert = metricAlertConfigSchema.parse(alert(explorer({}, { projectIds: [] }))) as { query: { projectIds: unknown } };
+    expect(parsedAlert.query.projectIds).toBeNull();
+    // Still required, and ids are still checked.
+    expect(everywhere(explorer({}, { projectIds: undefined }))).toEqual(all(false));
+    expect(everywhere(explorer({}, { projectIds: ['not-a-uuid'] }))).toEqual(all(false));
   });
 
   it('strips unknown keys instead of storing them', () => {

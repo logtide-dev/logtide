@@ -33,10 +33,13 @@ export async function fetchMetricsPanelData(
   ctx: MetricsPanelContext,
 ): Promise<MetricQueryResponse> {
   const { query } = config;
+  // A panel saved earlier in 1.8 may carry [] for "every project" (the
+  // schema now normalizes it to null on save).
+  const projectIds = query.projectIds && query.projectIds.length > 0 ? query.projectIds : null;
   // Projects deleted since the panel was saved are skipped with a warning.
   const scope = ctx.userId
-    ? await resolveProjectScopeDetailed(ctx.organizationId, ctx.userId, query.projectIds)
-    : await resolveOrgProjectScope(ctx.organizationId, query.projectIds);
+    ? await resolveProjectScopeDetailed(ctx.organizationId, ctx.userId, projectIds)
+    : await resolveOrgProjectScope(ctx.organizationId, projectIds);
   const response = await metricQueryService.run({
     ...query,
     projectIds: scope.projectIds,
