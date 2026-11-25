@@ -4,6 +4,7 @@ import { requireFullAccess } from '../auth/guards.js';
 import { verifyProjectAccess } from '../auth/verify-project-access.js';
 import type { AggregationInterval, MetricAggregationFn } from '@logtide/reservoir';
 import { TooManyFilterValuesError } from './aggregate-options.js';
+import metricQueryRoutes from './query/routes.js';
 
 /**
  * Resolve the effective projectId for the request.
@@ -56,6 +57,9 @@ export function parseAttributeFilters(query: Record<string, unknown>): Record<st
 }
 
 const metricsRoutes: FastifyPluginAsync = async (fastify) => {
+  // 1.8 query service: POST /query and POST /panels/data
+  await fastify.register(metricQueryRoutes);
+
   // GET /api/v1/metrics/names
   fastify.get('/names', {
     schema: {
