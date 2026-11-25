@@ -35,6 +35,7 @@ import {
   buildCustomizeInput,
   listHosts,
   listServices,
+  getServiceDetail,
   sourceMetricNames,
 } from '../../../../modules/metrics/sources/service.js';
 
@@ -137,7 +138,7 @@ describe('services fan-out and RED', () => {
     mocks.querySpans.mockImplementation(async (p: any) => ({
       spans: (p.serviceName as string[]).map((serviceName, i) => ({
         serviceName,
-        startTime: new Date(to.getTime() - 5 * 60_000 - i * 1000),
+        endTime: new Date(to.getTime() - 5 * 60_000 - i * 1000),
       })),
       total: 0,
       hasMore: false,
@@ -192,7 +193,7 @@ describe('services fan-out and RED', () => {
     const newest = new Date(to.getTime() - 4 * 60_000 - 17_000);
     mocks.getMetricSources.mockResolvedValue({ sources: [] });
     mocks.querySpans.mockResolvedValue({
-      spans: [{ serviceName: 'svc-0', startTime: newest }, { serviceName: 'svc-0', startTime: new Date(newest.getTime() - 1000) }],
+      spans: [{ serviceName: 'svc-0', endTime: newest }, { serviceName: 'svc-0', endTime: new Date(newest.getTime() - 1000) }],
       total: 2,
       hasMore: false,
       limit: 100,
@@ -202,7 +203,7 @@ describe('services fan-out and RED', () => {
     expect(svc.lastSeen).toBe(newest.toISOString());
     expect(svc.status).toBe('ok');
     const call = mocks.querySpans.mock.calls[0][0];
-    expect(call).toMatchObject({ sortBy: 'start_time', sortOrder: 'desc', projectId: P1 });
+    expect(call).toMatchObject({ sortBy: 'end_time', sortOrder: 'desc', projectId: P1 });
   });
 
   it('a service missing from the newest spans is looked up again, bounded rounds', async () => {
@@ -214,7 +215,7 @@ describe('services fan-out and RED', () => {
       const wanted: string[] = p.serviceName;
       const first = wanted.includes('svc-0') ? 'svc-0' : wanted.includes('svc-1') ? 'svc-1' : null;
       return {
-        spans: first ? [{ serviceName: first, startTime: t(first === 'svc-0' ? 1 : 20) }] : [],
+        spans: first ? [{ serviceName: first, endTime: t(first === 'svc-0' ? 1 : 20) }] : [],
         total: 0,
         hasMore: false,
         limit: 100,
@@ -239,6 +240,171 @@ describe('services fan-out and RED', () => {
     expect(mocks.run).toHaveBeenCalledTimes(2);
     expect(mocks.run.mock.calls[0][0].queries[0].filters[0].values).toHaveLength(120);
     expect(mocks.run.mock.calls[0][0].queries[0].limit).toBe(120);
+  });
+});
+
+describe('large fleets (N1)', () => {
+  const hostsOf = (n: number) => Array.from({ length: n }, (_, i) => `host-${i}`);
+
+  it('200 hosts x 10 mountpoints: raw series cap raised, every host gets every signal', async () => {
+    const hosts = hostsOf(200);
+    mocks.getMetricSources.mockResolvedValue({ sources: hosts.map((h) => metricSource(h)) });
+    // The query service returns one series per host (the space aggregation already folded the 10 mounts).
+    mocks.run.mockImplementation(async (q: any) => ({
+      series: hosts.map((h, i) => ({
+        queryId: 'A',
+        labels: { 'resource.host.name': h },
+        points: [{ t: 1, v: i }, { t: 2, v: i + 1 }],
+        stats: {},
+      })),
+      interval: '15m',
+      queries: [],
+      warnings: [],
+    }));
+    const list = await listHosts(ctx);
+    expect(list).toHaveLength(200);
+    expect(mocks.run).toHaveBeenCalledTimes(5);
+    for (const [q] of mocks.run.mock.calls) {
+      expect(q.internal.maxSeries).toBe(200);
+      expect(q.internal.maxRawSeries).toBeGreaterThanOrEqual(2000);
+      expect(q.queries[0].limit).toBe(200);
+    }
+    for (const [i, h] of list.entries()) {
+      expect(h.cpu.value).toBe(i + 1);
+      expect(h.disk.value).toBe(i + 1);
+      expect(h.network.value).toBe(i + 1);
+    }
+  });
+
+  it('chunks hosts above the per query series limit and merges the results', async () => {
+    const hosts = hostsOf(1200);
+    mocks.getMetricSources.mockResolvedValue({ sources: hosts.map((h) => metricSource(h)) });
+    mocks.run.mockImplementation(async (q: any) => {
+      const filter = q.queries[0].filters.find((f: any) => f.op === 'in' && f.key === 'host.name');
+      return {
+        series: (filter.values as string[]).map((h) => ({
+          queryId: 'A',
+          labels: { 'resource.host.name': h },
+          points: [{ t: 1, v: 7 }],
+          stats: {},
+        })),
+        interval: '15m',
+        queries: [],
+        warnings: [],
+      };
+    });
+    const list = await listHosts(ctx);
+    expect(mocks.run).toHaveBeenCalledTimes(15);
+    for (const [q] of mocks.run.mock.calls) expect(q.internal.maxSeries).toBeLessThanOrEqual(500);
+    expect(list.every((h) => h.cpu.value === 7)).toBe(true);
+  });
+
+  it('service metric RED asks for the raw series cap too', async () => {
+    const names = Array.from({ length: 80 }, (_, i) => `http-${i}`);
+    mocks.getMetricSources.mockResolvedValue({ sources: names.map((n) => metricSource(n)) });
+    mocks.getServiceHealthStats.mockResolvedValue([]);
+    await listServices(ctx);
+    for (const [q] of mocks.run.mock.calls) {
+      expect(q.internal.maxSeries).toBe(80);
+      expect(q.internal.maxRawSeries).toBeGreaterThanOrEqual(2000);
+    }
+  });
+});
+
+describe('entry span stats per service (N3)', () => {
+  it('a service without entry spans in a project that has some gets its own call', async () => {
+    mocks.getMetricSources.mockResolvedValue({ sources: [] });
+    mocks.getServiceHealthStats.mockResolvedValue([
+      { serviceName: 'api', totalCalls: 100, totalErrors: 0, avgLatencyMs: 1, p95LatencyMs: 5 },
+      { serviceName: 'worker', totalCalls: 50, totalErrors: 5, avgLatencyMs: 1, p95LatencyMs: 5 },
+    ]);
+    mocks.getOperationStats.mockImplementation(async (p: any) => {
+      if (p.service === 'worker') return [op('worker', 50, 5)];
+      return [op('api', 100, 0)];
+    });
+    const list = await listServices(ctx);
+    const worker = list.find((s) => s.name === 'worker')!;
+    expect(worker.requestRate.value).toBeCloseTo(50 / (6 * 3600), 6);
+    expect(worker.requestRate.spark).toHaveLength(24);
+    expect(worker.requestRate.spark.some((v) => v !== null && v > 0)).toBe(true);
+    expect(worker.errorRate.value).toBeCloseTo(10, 5);
+    const perService = mocks.getOperationStats.mock.calls.filter(([p]) => p.service === 'worker');
+    expect(perService.length).toBe(1 + 24);
+    // list and detail share the computation
+    const [detail] = [await getServiceDetail(ctx, 'worker')];
+    expect(detail!.requestRate.value).toBe(worker.requestRate.value);
+  });
+
+  it('a project that hits the operation limit is computed per service', async () => {
+    mocks.getMetricSources.mockResolvedValue({ sources: [] });
+    mocks.getServiceHealthStats.mockResolvedValue([
+      { serviceName: 'a', totalCalls: 10, totalErrors: 0, avgLatencyMs: 1, p95LatencyMs: 5 },
+      { serviceName: 'b', totalCalls: 10, totalErrors: 0, avgLatencyMs: 1, p95LatencyMs: 5 },
+    ]);
+    mocks.getOperationStats.mockImplementation(async (p: any) => {
+      if (p.service) return [op(p.service, 77, 0)];
+      return Array.from({ length: 500 }, () => op('a', 1, 0));
+    });
+    const list = await listServices(ctx);
+    const calls = (n: string) => list.find((s) => s.name === n)!.requestRate.value! * 6 * 3600;
+    expect(calls('a')).toBeCloseTo(77, 3);
+    expect(calls('b')).toBeCloseTo(77, 3);
+  });
+});
+
+describe('lastSeen without a newest-span hit (N9)', () => {
+  it('resolves an unresolved service with its own bounded query on end_time', async () => {
+    mocks.getMetricSources.mockResolvedValue({ sources: [] });
+    const names = Array.from({ length: 8 }, (_, i) => `svc-${i}`);
+    mocks.getServiceHealthStats.mockResolvedValue(
+      names.map((n) => ({ serviceName: n, totalCalls: 10, totalErrors: 0, avgLatencyMs: 1, p95LatencyMs: 5 })),
+    );
+    mocks.getOperationStats.mockResolvedValue(names.map((n) => op(n, 10)));
+    const quietEnd = new Date(to.getTime() - 3 * 3_600_000);
+    mocks.querySpans.mockImplementation(async (p: any) => {
+      const wanted: string[] = p.serviceName;
+      if (p.limit === 1) {
+        return { spans: [{ serviceName: wanted[0], endTime: quietEnd }], total: 1, hasMore: false, limit: 1, offset: 0 };
+      }
+      // each batched round only shows the first still wanted service
+      return {
+        spans: [{ serviceName: wanted[0], endTime: new Date(to.getTime() - 1000) }],
+        total: 1,
+        hasMore: false,
+        limit: 100,
+        offset: 0,
+      };
+    });
+    const list = await listServices(ctx);
+    // 5 rounds resolve svc-0..4, the other three are looked up one by one
+    for (const n of ['svc-5', 'svc-6', 'svc-7']) {
+      expect(list.find((s) => s.name === n)!.lastSeen).toBe(quietEnd.toISOString());
+    }
+    const singles = mocks.querySpans.mock.calls.filter(([p]) => p.limit === 1);
+    expect(singles).toHaveLength(3);
+    expect(singles[0][0]).toMatchObject({ sortBy: 'end_time', sortOrder: 'desc' });
+  });
+});
+
+describe('mixturePercentile missing quantiles (N11)', () => {
+  it('never returns NaN when an engine omits p99 or p50', () => {
+    const noP99 = { count: 10, p50Ms: 5, p95Ms: 40 } as any;
+    const noP50 = { count: 10, p95Ms: 40, p99Ms: 80 } as any;
+    const nan = { count: 10, p50Ms: NaN, p95Ms: 40, p99Ms: NaN };
+    for (const o of [[noP99], [noP50], [nan], [noP99, noP50, nan]]) {
+      for (const q of [0.5, 0.95, 0.99]) {
+        const v = mixturePercentile(o, q);
+        expect(v).not.toBeNull();
+        expect(Number.isFinite(v!)).toBe(true);
+      }
+    }
+    expect(mixturePercentile([noP99], 0.95)).toBe(40);
+  });
+
+  it('ignores operations with no usable quantile or count', () => {
+    expect(mixturePercentile([{ count: 5 } as any], 0.95)).toBeNull();
+    expect(mixturePercentile([{ count: NaN, p95Ms: 3 } as any], 0.95)).toBeNull();
+    expect(mixturePercentile([{ count: 5 } as any, { count: 5, p50Ms: 1, p95Ms: 2, p99Ms: 3 }], 0.95)).toBe(2);
   });
 });
 

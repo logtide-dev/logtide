@@ -131,7 +131,7 @@ beforeEach(() => {
   mocks.querySpans.mockImplementation(async (p: any) => ({
     spans: (p.serviceName as string[]).map((serviceName, i) => ({
       serviceName,
-      startTime: new Date(seen.getTime() - i * 1000),
+      endTime: new Date(seen.getTime() - i * 1000),
     })),
     total: 0,
     hasMore: false,
