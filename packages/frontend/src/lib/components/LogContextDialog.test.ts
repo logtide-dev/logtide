@@ -117,7 +117,8 @@ describe('LogContextDialog', () => {
     }
     expect(screen.queryByRole('button', { name: 'Load 25 earlier' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Load 25 later' })).toBeInTheDocument();
-  });
+    // Three loads re-render up to 125 rows: about 1.5 s alone, past 5 s under full-suite load.
+  }, 15_000);
 
   it('Load 25 later grows the after side', async () => {
     echo();
