@@ -30,9 +30,11 @@
   import MetricSeriesView from '$lib/components/metrics/v2/MetricSeriesView.svelte';
   import BreakdownSuggestions from '$lib/components/metrics/v2/BreakdownSuggestions.svelte';
   import AddToDashboardDialog from '$lib/components/metrics/AddToDashboardDialog.svelte';
+  import CreateMetricAlertDialog from '$lib/components/alerts/metric/CreateMetricAlertDialog.svelte';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Link from '@lucide/svelte/icons/link';
   import ChartColumn from '@lucide/svelte/icons/chart-column';
+  import BellPlus from '@lucide/svelte/icons/bell-plus';
 
   const maxWidthClass = layoutStore.maxWidthClass;
   const containerPadding = layoutStore.containerPadding;
@@ -188,6 +190,7 @@
   }
 
   let addOpen = $state(false);
+  let alertOpen = $state(false);
   const lookupRange = $derived.by(() => {
     const { from, to } = resolveRange($scopeStore.range);
     return { from: from.toISOString(), to: to.toISOString() };
@@ -234,6 +237,10 @@
             <Link class="h-4 w-4" aria-hidden="true" />
             Copy link
           </Button>
+          <Button type="button" variant="outline" size="sm" class="gap-2" disabled={!hasMetric} onclick={() => (alertOpen = true)}>
+            <BellPlus class="h-4 w-4" aria-hidden="true" />
+            Create alert
+          </Button>
           <Button type="button" size="sm" class="gap-2" disabled={!hasMetric} onclick={() => (addOpen = true)}>
             <ChartColumn class="h-4 w-4" aria-hidden="true" />
             Add to dashboard
@@ -277,6 +284,13 @@
         organizationId={$currentOrganization.id}
         query={effective}
         range={$scopeStore.range}
+      />
+
+      <CreateMetricAlertDialog
+        bind:open={alertOpen}
+        organizationId={$currentOrganization.id}
+        query={effective}
+        {response}
       />
     {/if}
   {/if}
