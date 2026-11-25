@@ -1042,6 +1042,235 @@ describe('TimescaleEngine - Metrics', () => {
   });
 
   // =========================================================================
+  // 1.8: attribute groups, filters, resource scope, sources
+  // =========================================================================
+
+  describe('aggregateMetrics with groupByAttrs and filters (1.8)', () => {
+    const baseParams = {
+      projectId: 'proj-1' as string | string[],
+      metricName: 'cpu.usage',
+      from: new Date('2024-01-01'),
+      to: new Date('2024-01-02'),
+      interval: '5m' as const,
+      aggregation: 'avg' as const,
+    };
+
+    it('labels groups by metricAttrLabel after legacy groupBy, keys bound', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [{ bucket: new Date('2024-01-01T00:00:00Z'), agg_value: 1, label_0: '200', label_1: 'host-a', label_2: '' }],
+      });
+      await engine.connect();
+
+      const result = await engine.aggregateMetrics({
+        ...baseParams,
+        groupBy: ['status'],
+        groupByAttrs: [{ scope: 'resource', key: 'host.name' }, { scope: 'metric', key: 'route' }],
+      });
+
+      expect(result.timeseries[0].labels).toEqual({ status: '200', 'resource.host.name': 'host-a', route: '' });
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toMatch(/COALESCE\(\(attributes->>\$\d+\), ''\) AS label_0/);
+      expect(sql).toMatch(/COALESCE\(\(resource_attributes->>\$\d+\), ''\) AS label_1/);
+      expect(sql).toContain('GROUP BY bucket, label_0, label_1, label_2');
+      expect(sql).not.toContain('host.name');
+      expect(params).toEqual(expect.arrayContaining(['status', 'host.name', 'route']));
+    });
+
+    it('builds one bound condition per filter op', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.aggregateMetrics({
+        ...baseParams,
+        filters: [
+          { scope: 'resource', key: 'host.name', op: 'eq', values: ['a'] },
+          { scope: 'metric', key: 'k1', op: 'neq', values: ['b'] },
+          { scope: 'metric', key: 'k2', op: 'in', values: ['c', 'd'] },
+          { scope: 'metric', key: 'k3', op: 'nin', values: ['e'] },
+          { scope: 'resource', key: 'k4', op: 'exists' },
+          { scope: 'resource', key: 'k5', op: 'notExists' },
+          { scope: 'metric', key: 'k6', op: 'gte', values: ['10'] },
+          { scope: 'metric', key: 'k7', op: 'lt', values: ['2.5'] },
+        ],
+      });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toMatch(/\(resource_attributes->>\$\d+\) = \$\d+/);
+      expect(sql).toMatch(/\(attributes->>\$\d+\) IS DISTINCT FROM \$\d+/);
+      expect(sql).toMatch(/\(attributes->>\$\d+\) = ANY\(\$\d+::text\[\]\)/);
+      expect(sql).toMatch(/\(\(attributes->>\$\d+\) IS NULL OR NOT/);
+      expect(sql).toMatch(/\(resource_attributes->>\$\d+\) IS NOT NULL/);
+      expect(sql).toMatch(/\(resource_attributes->>\$\d+\) IS NULL/);
+      expect(sql).toMatch(/::numeric END\) >= \$\d+::numeric/);
+      expect(sql).toMatch(/::numeric END\) < \$\d+::numeric/);
+      for (const key of ['host.name', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7']) {
+        expect(params).toContain(key);
+        expect(sql).not.toContain(key);
+      }
+      expect(params).toContainEqual(['c', 'd']);
+      // Every placeholder in the SQL is bound, and every bound value is used.
+      const used = new Set([...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+      expect(Math.max(...used)).toBe(params.length);
+      expect(used.size).toBe(params.length);
+    });
+
+    it('turns degenerate filters into constants without binding them', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      await engine.aggregateMetrics({
+        ...baseParams,
+        filters: [
+          { scope: 'metric', key: 'a', op: 'gte', values: ['abc'] },
+          { scope: 'metric', key: 'b', op: 'in', values: [] },
+          { scope: 'metric', key: 'c', op: 'nin', values: [] },
+        ],
+      });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toContain('AND FALSE AND FALSE AND TRUE');
+      expect(params).not.toContain('a');
+      expect(params).not.toContain('abc');
+    });
+
+    it('skips the rollup when groupByAttrs or filters are present', async () => {
+      mockQuery.mockResolvedValue({ rows: [] });
+      await engine.connect();
+
+      await engine.aggregateMetrics({ ...baseParams, interval: '1h', groupByAttrs: [{ scope: 'resource', key: 'host.name' }] });
+      await engine.aggregateMetrics({ ...baseParams, interval: '1d', filters: [{ scope: 'metric', key: 'x', op: 'exists' }] });
+      for (const call of mockQuery.mock.calls) {
+        expect(call[0] as string).not.toContain('_stats');
+        expect(call[0] as string).toContain('FROM public.metrics');
+      }
+
+      mockQuery.mockClear();
+      await engine.aggregateMetrics({ ...baseParams, interval: '1h', groupByAttrs: [], filters: [] });
+      expect(mockQuery.mock.calls[0][0] as string).toContain('metrics_hourly_stats');
+      mockQuery.mockReset();
+    });
+  });
+
+  describe('getMetricNames with filters (1.8)', () => {
+    it('adds bound filter conditions before the limit', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ metric_name: 'cpu', metric_type: 'gauge' }] });
+      await engine.connect();
+
+      await engine.getMetricNames({
+        projectId: 'p1',
+        limit: 10,
+        filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['host-a'] }],
+      });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toContain('(resource_attributes->>$2) = $3');
+      expect(sql).toContain('LIMIT $4');
+      expect(sql).not.toContain('host.name');
+      expect(params).toEqual([['p1'], 'host.name', 'host-a', 10]);
+    });
+  });
+
+  describe('label discovery with resource scope (1.8)', () => {
+    it('reads resource_attributes keys and drops the metric filter for an empty name', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ key: 'host.name' }] });
+      await engine.connect();
+
+      const result = await engine.getMetricLabelKeys({ projectId: ['p1', 'p2'], metricName: '', scope: 'resource', limit: 5 });
+
+      expect(result.keys).toEqual(['host.name']);
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toContain('jsonb_object_keys(resource_attributes)');
+      expect(sql).toContain('resource_attributes IS NOT NULL');
+      expect(sql).not.toContain('metric_name');
+      expect(sql).toContain('LIMIT $2');
+      expect(params).toEqual([['p1', 'p2'], 5]);
+    });
+
+    it('reads resource_attributes values with the key bound', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ value: 'host-a' }, { value: '' }] });
+      await engine.connect();
+
+      const result = await engine.getMetricLabelValues(
+        { projectId: 'p1', metricName: 'cpu', scope: 'resource' },
+        'host.name',
+      );
+
+      expect(result.values).toEqual(['host-a']);
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toContain('SELECT DISTINCT resource_attributes->>$3 AS value');
+      expect(sql).toContain('resource_attributes ? $3');
+      expect(sql).toContain("resource_attributes->>$3 <> ''");
+      expect(sql).toContain('metric_name = $2');
+      expect(params).toEqual([['p1'], 'cpu', 'host.name']);
+    });
+  });
+
+  describe('getMetricSources (1.8)', () => {
+    it('aggregates per source in one statement with bound keys and prefixes', async () => {
+      const lastSeen = new Date('2024-01-01T00:10:00Z');
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          { value: 'host-a', project_ids: ['p1', 'p2'], last_seen: lastSeen, metric_count: 3, point_count: '42', co_0: ['api'], co_1: null },
+        ],
+      });
+      await engine.connect();
+
+      const result = await engine.getMetricSources({
+        organizationId: 'org-1',
+        projectId: ['p1', 'p2'],
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+        key: 'host.name',
+        includeMetricPrefixes: ['system.', 'a_b%'],
+        excludeMetricPrefixes: ['hw.'],
+        coKeys: ['service.name', 'os.kernel', 'service.name'],
+      });
+
+      expect(result.sources).toEqual([
+        { value: 'host-a', projectIds: ['p1', 'p2'], lastSeen, metricCount: 3, pointCount: 42, co: { 'service.name': ['api'], 'os.kernel': [] } },
+      ]);
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).toContain('FROM public.metrics');
+      expect(sql).toContain('project_id = ANY($2)');
+      expect(sql).toContain('organization_id = ANY(');
+      expect(sql).toMatch(/metric_name LIKE ANY\(\$\d+::text\[\]\)/);
+      expect(sql).toMatch(/NOT \(metric_name LIKE ANY\(\$\d+::text\[\]\)\)/);
+      expect(sql).toContain('[1:20] AS co_0');
+      expect(sql).toContain('[1:20] AS co_1');
+      expect(sql).not.toContain('co_2');
+      expect(sql).toContain('GROUP BY 1');
+      expect(sql).toContain('ORDER BY 1 ASC');
+      expect(sql).not.toContain('host.name');
+      expect(params[0]).toBe('host.name');
+      expect(params).toContainEqual(['system.%', 'a\\_b\\%%']);
+      expect(params).toContainEqual(['hw.%']);
+      expect(params[params.length - 1]).toBe(500);
+    });
+
+    it('honors an explicit limit and returns no co-keys when none are asked', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+
+      const result = await engine.getMetricSources({ projectId: 'p1', from: new Date(0), to: new Date(1), key: 'service.name', limit: 7 });
+
+      expect(result.sources).toEqual([]);
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).not.toContain('co_0');
+      expect(sql).not.toContain('LIKE');
+      expect(params).toEqual(['service.name', ['p1'], new Date(0), new Date(1), 7]);
+    });
+  });
+
+  // =========================================================================
   // deleteMetricsByTimeRange
   // =========================================================================
 
