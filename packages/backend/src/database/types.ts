@@ -997,6 +997,17 @@ export interface ProjectHealthIssuesTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface MetricCatalogTable {
+  project_id: string;
+  metric_name: string;
+  metric_type: string;
+  unit: string | null;
+  description: string | null;
+  is_monotonic: boolean | null;
+  first_seen_at: Timestamp;
+  last_seen_at: Timestamp;
+}
+
 export interface HardwareHostsTable {
   id: Generated<string>;
   organization_id: string;
@@ -1410,6 +1421,8 @@ export interface Database {
   project_health_state: ProjectHealthStateTable;
   // Hardware health (migration 079)
   hardware_hosts: HardwareHostsTable;
+  // Metric catalog (migration 081)
+  metric_catalog: MetricCatalogTable;
   // PII masking
   pii_masking_rules: PiiMaskingRulesTable;
   organization_pii_salts: OrganizationPiiSaltsTable;

@@ -491,6 +491,64 @@ describe('OTLP Metric Transformer', () => {
   // Gauge data points
   // ==========================================================================
 
+  describe('unit and description (1.8 catalog)', () => {
+    it('copies unit and description onto every record of every metric type', () => {
+      const dp = { timeUnixNano: FIXED_NANOS, asDouble: 1 };
+      const request = singleMetricRequest({
+        name: 'system.memory.usage',
+        unit: 'By',
+        description: 'Memory in use',
+        gauge: { dataPoints: [dp, { ...dp, asDouble: 2 }] },
+      });
+      const records = transformOtlpToMetrics(request);
+      expect(records).toHaveLength(2);
+      for (const r of records) {
+        expect(r.unit).toBe('By');
+        expect(r.description).toBe('Memory in use');
+      }
+
+      const sum = transformOtlpToMetrics(
+        singleMetricRequest({ name: 'c', unit: '1', description: 'd', sum: { isMonotonic: true, dataPoints: [dp] } })
+      );
+      expect(sum[0].unit).toBe('1');
+      const hist = transformOtlpToMetrics(
+        singleMetricRequest({ name: 'h', unit: 's', histogram: { dataPoints: [{ timeUnixNano: FIXED_NANOS, sum: 3, count: 1 }] } })
+      );
+      expect(hist[0].unit).toBe('s');
+      expect(hist[0].description).toBeUndefined();
+    });
+
+    it('does not leak the unit of one metric onto the next', () => {
+      const dp = { timeUnixNano: FIXED_NANOS, asDouble: 1 };
+      const request: OtlpExportMetricsRequest = {
+        resourceMetrics: [
+          {
+            resource: { attributes: [] },
+            scopeMetrics: [
+              {
+                metrics: [
+                  { name: 'a', unit: 'ms', gauge: { dataPoints: [dp] } },
+                  { name: 'b', gauge: { dataPoints: [dp] } },
+                ] as never[],
+              },
+            ],
+          },
+        ],
+      };
+      const records = transformOtlpToMetrics(request);
+      expect(records.find((r) => r.metricName === 'a')?.unit).toBe('ms');
+      expect(records.find((r) => r.metricName === 'b')?.unit).toBeUndefined();
+    });
+
+    it('leaves unit and description unset when empty', () => {
+      const records = transformOtlpToMetrics(
+        singleMetricRequest({ name: 'x', unit: '', description: '', gauge: { dataPoints: [{ timeUnixNano: FIXED_NANOS, asDouble: 1 }] } })
+      );
+      expect(records[0].unit).toBeUndefined();
+      expect(records[0].description).toBeUndefined();
+    });
+  });
+
   describe('gauge data points', () => {
     it('should use asDouble for value', () => {
       const request = singleMetricRequest({
