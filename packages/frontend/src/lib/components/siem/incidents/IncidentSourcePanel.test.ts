@@ -74,6 +74,34 @@ describe('IncidentSourcePanel', () => {
     );
   });
 
+  it('metric alert shows the metric view instead of the log rule card', () => {
+    const metricAlert = {
+      ruleId: 'r2',
+      ruleName: 'CPU high',
+      config: null,
+      queryId: 'A',
+      source: 'system.cpu.utilization',
+      condition: 'above',
+      threshold: 0.9,
+      unit: '1',
+      window: '5m',
+      groups: [{ groupKey: '', labels: {}, value: 0.95, state: 'firing', firingSince: null }],
+    } as never;
+    render(IncidentSourcePanel, {
+      props: {
+        incident: incident({ source: 'alert', alertRuleId: 'r2', organizationId: 'org1' }),
+        members,
+        rule: null,
+        metricAlert,
+        onAssign: vi.fn(),
+      },
+    });
+    expect(screen.getByTestId('metric-incident-source')).toBeTruthy();
+    expect(screen.getByText('Metric alert')).toBeTruthy();
+    expect(screen.queryByText('Alert rule')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Show matched logs' })).toBeNull();
+  });
+
   it('alert with missing rule shows the fallback', () => {
     render(IncidentSourcePanel, {
       props: { incident: incident({ source: 'alert' }), members, rule: null, onAssign: vi.fn() },
