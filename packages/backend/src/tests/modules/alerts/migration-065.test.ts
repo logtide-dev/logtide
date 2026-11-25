@@ -12,6 +12,13 @@ const MIGRATION_065 = resolve(
   '../../../../migrations/065_alert_rule_lifecycle.sql'
 );
 
+// Re-applied after 065 so the newer constraints (083 widens the 065 ones for
+// metric rules) are back for the other test files sharing this database.
+const MIGRATION_083 = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../../migrations/083_metric_alert_rules.sql'
+);
+
 const MINUTE = 60_000;
 
 function minutesAgo(n: number): Date {
@@ -28,6 +35,7 @@ async function insertHistory(ruleId: string, triggeredAt: Date): Promise<void> {
 
 async function runMigration(): Promise<void> {
   await sql.raw(readFileSync(MIGRATION_065, 'utf8')).execute(db);
+  await sql.raw(readFileSync(MIGRATION_083, 'utf8')).execute(db);
 }
 
 describe('migration 065: alert rule lifecycle', () => {

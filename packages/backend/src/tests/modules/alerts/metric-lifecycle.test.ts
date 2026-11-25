@@ -1,0 +1,353 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+const { add } = vi.hoisted(() => ({ add: vi.fn() }));
+vi.mock('../../../queue/connection.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../queue/connection.js')>();
+  return { ...actual, createQueue: vi.fn(() => ({ add })) };
+});
+
+import type { MetricAlertConfig, MetricQueryResponse, MetricSeries } from '@logtide/shared';
+import { db } from '../../../database/index.js';
+import { alertsService } from '../../../modules/alerts/service.js';
+import { incidentsService } from '../../../modules/incidents/service.js';
+import { metricQueryService } from '../../../modules/metrics/query/service.js';
+import type { AlertEvaluationResult } from '../../../modules/alerts/types.js';
+import { createTestContext, createTestProject } from '../../helpers/factories.js';
+import { getRuleRow } from './lifecycle-test-helpers.js';
+
+const INCIDENT_ID = '11111111-1111-4111-8111-111111111111';
+
+let NOW: Date;
+const plus = (t: Date, minutes: number) => new Date(t.getTime() + minutes * 60_000);
+const run = (t: Date): Promise<AlertEvaluationResult[]> => alertsService.checkAlertRules({ now: t });
+
+let runSpy: ReturnType<typeof vi.spyOn>;
+let openSpy: ReturnType<typeof vi.spyOn>;
+let resolveSpy: ReturnType<typeof vi.spyOn>;
+let retitleSpy: ReturnType<typeof vi.spyOn>;
+
+/** Values per group for the next query runs: { 'web-1': 0.95 } or { '': 0.95 } when ungrouped. */
+let values: Record<string, number | null> = {};
+
+function series(host: string, value: number | null): MetricSeries {
+  const labels: Record<string, string> = host ? { 'host.name': host } : {};
+  return {
+    id: `A|${host}`,
+    queryId: 'A',
+    labels,
+    name: host || 'cpu',
+    unit: '1',
+    comparison: false,
+    points: [
+      { t: '2026-11-25T10:00:00.000Z', v: value },
+      { t: '2026-11-25T10:01:00.000Z', v: value },
+    ],
+    stats: { min: value, avg: value, max: value, last: value },
+  };
+}
+
+function response(): MetricQueryResponse {
+  return {
+    interval: '1m',
+    warnings: [],
+    queries: [{ id: 'A', seriesTotal: 1, seriesShown: 1, metricType: 'gauge', unit: '1' }],
+    series: Object.entries(values).map(([host, v]) => series(host, v)),
+  };
+}
+
+function config(o: Partial<MetricAlertConfig> = {}, grouped = false, projectIds: string[] | null = null): MetricAlertConfig {
+  return {
+    query: {
+      projectIds,
+      queries: [
+        {
+          id: 'A',
+          metricName: 'system.cpu.utilization',
+          aggregation: 'avg',
+          filters: [],
+          groupBy: grouped ? [{ scope: 'resource', key: 'host.name' }] : [],
+        },
+      ],
+      formulas: [],
+      interval: 'auto',
+      compareTo: 'none',
+      display: 'lines',
+    },
+    condition: 'above',
+    threshold: 0.9,
+    window: '5m',
+    forEvaluations: 1,
+    severity: 'critical',
+    ...o,
+  };
+}
+
+async function metricRule(cfg: MetricAlertConfig, o: { renotifyMinutes?: number | null } = {}) {
+  const ctx = await createTestContext();
+  const rule = await alertsService.createAlertRule({
+    organizationId: ctx.organization.id,
+    name: 'CPU high',
+    level: [],
+    threshold: 0,
+    timeWindow: 0,
+    alertType: 'metric',
+    emailRecipients: [],
+    metricConfig: cfg,
+    renotifyMinutes: o.renotifyMinutes ?? null,
+  });
+  return { ...ctx, rule };
+}
+
+async function instances(ruleId: string, organizationId: string) {
+  return db
+    .selectFrom('alert_metric_instances')
+    .selectAll()
+    .where('rule_id', '=', ruleId)
+    .where('organization_id', '=', organizationId)
+    .orderBy('group_key')
+    .execute();
+}
+
+async function history(ruleId: string) {
+  return db
+    .selectFrom('alert_history')
+    .innerJoin('alert_rules', 'alert_rules.id', 'alert_history.rule_id')
+    .select(['alert_history.id', 'alert_history.metric_metadata', 'alert_history.log_count'])
+    .where('alert_history.rule_id', '=', ruleId)
+    .orderBy('alert_history.triggered_at')
+    .execute();
+}
+
+beforeEach(() => {
+  const d = new Date();
+  d.setSeconds(30, 0);
+  NOW = d;
+  values = {};
+  add.mockReset().mockResolvedValue(undefined);
+  runSpy = vi.spyOn(metricQueryService, 'run').mockImplementation(async () => response());
+  openSpy = vi
+    .spyOn(incidentsService, 'openOrUpdateFromSource')
+    .mockResolvedValue({ incident: { id: INCIDENT_ID } as never, created: true });
+  resolveSpy = vi.spyOn(incidentsService, 'resolveFromSource').mockResolvedValue({ id: INCIDENT_ID } as never);
+  retitleSpy = vi.spyOn(incidentsService, 'setSeverityFromSource').mockResolvedValue(null);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('metric rule creation', () => {
+  it('stores the definition with neutral log columns', async () => {
+    const { rule, project } = await metricRule(config({}, false, null));
+    expect(rule).toMatchObject({ alertType: 'metric', level: [], threshold: 0, timeWindow: 5, projectId: null });
+    expect(rule.metricConfig).toMatchObject({ threshold: 0.9, window: '5m', severity: 'critical' });
+    void project;
+  });
+});
+
+describe('metric rule evaluation (ungrouped)', () => {
+  it('queries the last full minutes of the window at 1 minute through the query service', async () => {
+    const { rule, organization, project } = await metricRule(config());
+    values = { '': 0.5 };
+    await run(NOW);
+    expect(runSpy).toHaveBeenCalledTimes(1);
+    const req = runSpy.mock.calls[0][0] as Record<string, any>;
+    const to = Math.floor(NOW.getTime() / 60_000) * 60_000;
+    expect(req).toMatchObject({
+      organizationId: organization.id,
+      projectIds: [project.id],
+      interval: '1m',
+      compareTo: 'none',
+      from: new Date(to - 5 * 60_000).toISOString(),
+      to: new Date(to).toISOString(),
+    });
+    expect(req.queries[0].limit).toBe(50);
+    expect((await getRuleRow(rule.id)).state).toBe('ok');
+  });
+
+  it('fires after N breaching runs, stays quiet while firing, resolves once', async () => {
+    const { rule, organization } = await metricRule(config({ forEvaluations: 2 }));
+    values = { '': 0.95 };
+
+    expect(await run(NOW)).toEqual([]);
+    expect(await instances(rule.id, organization.id)).toMatchObject([{ state: 'ok', consecutive_breaches: 1 }]);
+
+    const fired = await run(plus(NOW, 1));
+    expect(fired).toHaveLength(1);
+    expect(fired[0]).toMatchObject({
+      kind: 'triggered',
+      rule_id: rule.id,
+      alert_type: 'metric',
+      threshold: 0.9,
+      time_window: 5,
+      incident_id: INCIDENT_ID,
+      metric: {
+        query_id: 'A',
+        source: 'system.cpu.utilization',
+        value: 0.95,
+        unit: '1',
+        condition: 'above',
+        labels: {},
+        group_key: '',
+      },
+    });
+    const rows = await history(rule.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].metric_metadata).toMatchObject({ value: 0.95, window: '5m' });
+    expect(openSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'CPU high', severity: 'critical', sourceId: rule.id })
+    );
+    expect((await getRuleRow(rule.id)).state).toBe('firing');
+
+    expect(await run(plus(NOW, 2))).toEqual([]);
+
+    values = { '': 0.3 };
+    const resolved = await run(plus(NOW, 3));
+    expect(resolved).toEqual([
+      expect.objectContaining({
+        kind: 'resolved',
+        alert_type: 'metric',
+        incident_id: INCIDENT_ID,
+        firing_since: plus(NOW, 1).toISOString(),
+        metric: expect.objectContaining({ value: 0.3 }),
+      }),
+    ]);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect((await getRuleRow(rule.id)).state).toBe('ok');
+    expect(await instances(rule.id, organization.id)).toEqual([]);
+  });
+
+  it('a missing series counts as no data and resets the counter', async () => {
+    const { rule, organization } = await metricRule(config({ forEvaluations: 2 }));
+    values = { '': 0.95 };
+    await run(NOW);
+    values = {};
+    expect(await run(plus(NOW, 1))).toEqual([]);
+    expect(await instances(rule.id, organization.id)).toEqual([]);
+  });
+
+  it('re-notifies on the rule interval', async () => {
+    const { rule } = await metricRule(config(), { renotifyMinutes: 10 });
+    values = { '': 0.95 };
+    await run(NOW);
+    expect(await run(plus(NOW, 5))).toEqual([]);
+    const again = await run(plus(NOW, 10));
+    expect(again).toEqual([expect.objectContaining({ kind: 'renotify', rule_id: rule.id })]);
+    expect(await history(rule.id)).toHaveLength(2);
+  });
+
+  it('snoozed: fires silently, never suppresses the resolve of a notified episode', async () => {
+    const { rule, organization } = await metricRule(config());
+    values = { '': 0.95 };
+    await alertsService.snoozeAlertRule(rule.id, organization.id, plus(NOW, 60));
+    expect(await run(NOW)).toEqual([]);
+    expect((await getRuleRow(rule.id)).state).toBe('firing');
+    expect(await history(rule.id)).toHaveLength(0);
+
+    // Not notified episode: resolves without a notification.
+    values = { '': 0.1 };
+    expect(await run(plus(NOW, 1))).toEqual([]);
+    expect((await getRuleRow(rule.id)).state).toBe('ok');
+  });
+
+  it('two concurrent evaluators apply a run only once', async () => {
+    const { rule } = await metricRule(config());
+    values = { '': 0.95 };
+    const [a, b] = await Promise.all([run(NOW), run(NOW)]);
+    expect([...a, ...b].filter((r) => r.rule_id === rule.id)).toHaveLength(1);
+    expect(await history(rule.id)).toHaveLength(1);
+  });
+
+  it('a failing query skips the rule and keeps its state', async () => {
+    const { rule } = await metricRule(config());
+    runSpy.mockRejectedValueOnce(new Error('engine down'));
+    expect(await run(NOW)).toEqual([]);
+    const row = await getRuleRow(rule.id);
+    expect(row.state).toBe('ok');
+    expect(row.last_evaluated_at).toBeNull();
+  });
+
+  it('a query whose projects are all gone reads nothing and resolves', async () => {
+    const ctx = await createTestContext();
+    const other = await createTestProject({ organizationId: ctx.organization.id, userId: ctx.user.id });
+    const rule = await alertsService.createAlertRule({
+      organizationId: ctx.organization.id,
+      name: 'Gone',
+      level: [],
+      threshold: 0,
+      timeWindow: 0,
+      alertType: 'metric',
+      emailRecipients: [],
+      metricConfig: config({}, false, [other.id]),
+    });
+    expect(rule.projectId).toBe(other.id);
+    await db
+      .updateTable('projects')
+      .set({ deleted_at: new Date() })
+      .where('id', '=', other.id)
+      .where('organization_id', '=', ctx.organization.id)
+      .execute();
+    values = { '': 0.95 };
+    expect(await run(NOW)).toEqual([]);
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('metric rule evaluation (grouped)', () => {
+  it('each group is its own instance, labelled in the payload and the incident title', async () => {
+    const { rule, organization } = await metricRule(config({}, true));
+    values = { 'web-1': 0.95, 'web-2': 0.2 };
+
+    const first = await run(NOW);
+    expect(first).toEqual([
+      expect.objectContaining({
+        kind: 'triggered',
+        metric: expect.objectContaining({ labels: { 'host.name': 'web-1' }, group_key: 'host.name=web-1' }),
+      }),
+    ]);
+    expect(openSpy).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'CPU high (host.name=web-1)' }));
+
+    values = { 'web-1': 0.95, 'web-2': 0.97 };
+    const second = await run(plus(NOW, 1));
+    expect(second).toEqual([
+      expect.objectContaining({ kind: 'triggered', metric: expect.objectContaining({ group_key: 'host.name=web-2' }) }),
+    ]);
+    expect(retitleSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: 'CPU high (host.name=web-1; host.name=web-2)', severity: 'critical' })
+    );
+    expect((await instances(rule.id, organization.id)).map((i) => i.state)).toEqual(['firing', 'firing']);
+
+    // web-1 recovers: its own resolve, the incident stays open with web-2.
+    values = { 'web-1': 0.1, 'web-2': 0.97 };
+    const third = await run(plus(NOW, 2));
+    expect(third).toEqual([
+      expect.objectContaining({ kind: 'resolved', metric: expect.objectContaining({ group_key: 'host.name=web-1' }) }),
+    ]);
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(retitleSpy).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'CPU high (host.name=web-2)' }));
+    expect((await getRuleRow(rule.id)).state).toBe('firing');
+
+    // web-2 disappears (no data): last instance resolves, so does the incident.
+    values = { 'web-1': 0.1 };
+    const fourth = await run(plus(NOW, 3));
+    expect(fourth).toEqual([
+      expect.objectContaining({ kind: 'resolved', metric: expect.objectContaining({ group_key: 'host.name=web-2', value: null }) }),
+    ]);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect((await getRuleRow(rule.id)).state).toBe('ok');
+  });
+
+  it('disabling a firing rule queues one resolve per notified instance and forgets them', async () => {
+    const { rule, organization } = await metricRule(config({}, true));
+    values = { 'web-1': 0.95, 'web-2': 0.96 };
+    await run(NOW);
+    await alertsService.updateAlertRule(rule.id, organization.id, { enabled: false });
+
+    expect(add).toHaveBeenCalledTimes(2);
+    const jobs = add.mock.calls.map((c) => c[1]);
+    expect(jobs.map((j) => j.metric.group_key).sort()).toEqual(['host.name=web-1', 'host.name=web-2']);
+    expect(new Set(add.mock.calls.map((c) => c[2].jobKey)).size).toBe(2);
+    expect(await instances(rule.id, organization.id)).toEqual([]);
+    expect((await getRuleRow(rule.id)).state).toBe('ok');
+  });
+});
