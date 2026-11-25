@@ -11,6 +11,7 @@
     compact       small multiple: no legend, few axis labels
     yRange        fixed { min, max } for a shared y axis, or null for auto
     onSeriesClick called with the series when a line/bar is clicked
+    threshold     optional raw value drawn as a dashed line on the first y axis
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
@@ -30,6 +31,7 @@
     compact?: boolean;
     yRange?: { min: number; max: number } | null;
     onSeriesClick?: (series: MetricSeries) => void;
+    threshold?: number | null;
   }
 
   let {
@@ -41,6 +43,7 @@
     compact = false,
     yRange = null,
     onSeriesClick,
+    threshold = null,
   }: Props = $props();
 
   let container = $state<HTMLDivElement | undefined>(undefined);
@@ -66,6 +69,7 @@
     };
     const axisSeries = (idx: number) => series.find((s) => axisIndexOf(s) === idx);
 
+    const hasThreshold = typeof threshold === 'number' && Number.isFinite(threshold);
     const yAxes: echarts.YAXisComponentOption[] = [0, ...(unitKeys.length > 1 ? [1] : [])].map((idx) => {
       const ref = axisSeries(idx)!;
       const unitText = metricUnitLabel(ref.unit, metricNames[ref.queryId]);
@@ -76,7 +80,13 @@
         name: compact ? undefined : (unitText ?? undefined),
         splitLine: idx === 0 ? axisStyle.splitLine : { show: false },
         min: yRange && idx === 0 ? yRange.min : undefined,
-        max: yRange && idx === 0 ? yRange.max : undefined,
+        // Keep the threshold line in view when the data stays below it.
+        max:
+          yRange && idx === 0
+            ? yRange.max
+            : idx === 0 && hasThreshold
+              ? (extent: { max: number }) => Math.max(extent.max, threshold as number)
+              : undefined,
         axisLabel: {
           ...axisStyle.axisLabel,
           formatter: (value: number) => formatMetricValue(value, ref.unit, metricNames[ref.queryId]),
@@ -108,6 +118,21 @@
         areaStyle: mode === 'area' && !s.comparison ? { color, opacity: 0.15 } : undefined,
       } as echarts.SeriesOption;
     });
+
+    const firstOnAxis0 = echartsSeries.findIndex((_, i) => axisIndexOf(series[i]) === 0);
+    if (hasThreshold && firstOnAxis0 >= 0) {
+      const ref = series[firstOnAxis0];
+      (echartsSeries[firstOnAxis0] as Record<string, unknown>).markLine = {
+        silent: true,
+        symbol: 'none',
+        lineStyle: { type: 'dashed', color: '#ef4444', width: 1.5 },
+        label: {
+          position: 'insideEndTop',
+          formatter: () => `Threshold ${formatMetricValue(threshold as number, ref.unit, metricNames[ref.queryId])}`,
+        },
+        data: [{ yAxis: threshold }],
+      };
+    }
 
     return {
       animation: false,
@@ -182,6 +207,7 @@
     void yRange;
     void metricNames;
     void colors;
+    void threshold;
     render();
   });
 </script>

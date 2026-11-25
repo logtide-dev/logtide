@@ -1,8 +1,14 @@
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
-import type { LogLevel, MetadataFilter, MetadataFilterInput } from '@logtide/shared';
+import type {
+  LogLevel,
+  MetadataFilter,
+  MetadataFilterInput,
+  MetricAlertConfig,
+  MetricAlertInstancePayload,
+} from '@logtide/shared';
 
-export type AlertType = 'threshold' | 'rate_of_change';
+export type AlertType = 'threshold' | 'rate_of_change' | 'metric';
 export type BaselineType = 'same_time_yesterday' | 'same_day_last_week' | 'rolling_7d_avg' | 'percentile_p95';
 
 /** Optional values to prefill the alert builder (create-from-error, duplicate). */
@@ -53,6 +59,8 @@ export interface AlertRule {
   lastEvaluatedAt?: string | null;
   snoozedUntil?: string | null;
   renotifyMinutes?: number | null;
+  /** Metric rules (alertType 'metric', 1.8): the rule definition. */
+  metricConfig?: MetricAlertConfig | null;
   triggersLast24h?: number;
   createdAt: string;
   updatedAt: string;
@@ -64,9 +72,10 @@ export interface CreateAlertRuleInput {
   name: string;
   enabled?: boolean;
   service?: string | null;
-  level: LogLevel[];
-  threshold: number;
-  timeWindow: number;
+  /** Log rules: required. Metric rules: omitted. */
+  level?: LogLevel[];
+  threshold?: number;
+  timeWindow?: number;
   alertType?: AlertType;
   baselineType?: BaselineType | null;
   deviationMultiplier?: number | null;
@@ -79,6 +88,8 @@ export interface CreateAlertRuleInput {
   metadataFilters?: MetadataFilterInput[];
   query?: string | null;
   renotifyMinutes?: number | null;
+  /** Required on metric rules. */
+  metricConfig?: MetricAlertConfig;
 }
 
 export interface UpdateAlertRuleInput {
@@ -100,6 +111,7 @@ export interface UpdateAlertRuleInput {
   metadataFilters?: MetadataFilterInput[];
   query?: string | null;
   renotifyMinutes?: number | null;
+  metricConfig?: MetricAlertConfig;
 }
 
 export interface GetAlertsOptions {
@@ -125,6 +137,8 @@ export interface AlertHistory {
   alertType: AlertType;
   query?: string | null;
   metadataFilters?: MetadataFilter[];
+  /** Metric rules: the instance (value, labels, unit) the notification was about. */
+  metricMetadata?: MetricAlertInstancePayload | null;
   baselineMetadata: {
     baseline_value: number;
     current_value: number;

@@ -1,4 +1,4 @@
-import type { LogLevel, MetadataFilter } from '@logtide/shared';
+import type { LogLevel, MetadataFilter, MetricAlertInstancePayload } from '@logtide/shared';
 import type { AlertType, BaselineMetadata } from '../../database/types.js';
 
 /** Notification kinds that carry an alert_history row. */
@@ -41,6 +41,9 @@ export interface AlertNotificationData {
   /** ISO start of the firing episode (the rule's last_triggered_at). */
   firing_since?: string;
   incident_id?: string | null;
+  /** 1.8 metric rules: the rule kind and the instance (labels, value) this notification is about. */
+  alert_type?: AlertType;
+  metric?: MetricAlertInstancePayload;
 }
 
 /** Job data of a resolution: sends only the `alert.resolved` webhook event. */
@@ -63,6 +66,8 @@ export interface AlertResolvedNotificationData {
    * the time the job runs.
    */
   channel_ids?: string[];
+  /** 1.8 metric rules: the instance that resolved. */
+  metric?: MetricAlertInstancePayload;
 }
 
 export type AlertNotificationJobData = AlertNotificationData | AlertResolvedNotificationData;
@@ -98,4 +103,6 @@ export interface AlertIncidentMetadata {
   /** ISO, the evaluation time */
   windowTo: string;
   baselineMetadata: BaselineMetadata | null;
+  /** 1.8 metric rules: the instance of this event. */
+  metric?: MetricAlertInstancePayload;
 }

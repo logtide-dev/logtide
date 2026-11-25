@@ -10,11 +10,13 @@ import { projectsService } from '../projects/service.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { auditLogService } from '../audit-log/index.js';
 import { assertWithinLimit, withLimitLock } from '../../capabilities/index.js';
+import { metricAlertConfigSchema, assertValidMetricConfig } from './metric-config.js';
+import type { MetricAlertConfig } from '@logtide/shared';
 
 const organizationsService = new OrganizationsService();
 
 const levelEnum = z.enum(LOG_LEVELS);
-const alertTypeEnum = z.enum(['threshold', 'rate_of_change']);
+const alertTypeEnum = z.enum(['threshold', 'rate_of_change', 'metric']);
 const baselineTypeEnum = z.enum(['same_time_yesterday', 'same_day_last_week', 'rolling_7d_avg', 'percentile_p95']);
 
 const createAlertRuleSchema = z.object({
@@ -23,9 +25,10 @@ const createAlertRuleSchema = z.object({
   name: z.string().min(1).max(200),
   enabled: z.boolean().optional(),
   service: z.string().max(100).optional().nullable(),
-  level: z.array(levelEnum).min(1),
-  threshold: z.number().int().min(1),
-  timeWindow: z.number().int().min(1),
+  // Log rules only (threshold, rate_of_change): required there, ignored on metric rules.
+  level: z.array(levelEnum).optional(),
+  threshold: z.number().int().min(1).optional(),
+  timeWindow: z.number().int().min(1).optional(),
   alertType: alertTypeEnum.optional(),
   baselineType: baselineTypeEnum.optional().nullable(),
   deviationMultiplier: z.number().min(1.5).max(20).optional().nullable(),
@@ -38,6 +41,7 @@ const createAlertRuleSchema = z.object({
   metadataFilters: metadataFiltersSchema,
   query: z.string().max(2000).optional().nullable(),
   renotifyMinutes: z.number().int().min(5).max(1440).optional().nullable(),
+  metricConfig: metricAlertConfigSchema.optional(),
 }).refine(
   (data) => {
     if (data.alertType === 'rate_of_change') {
@@ -46,7 +50,26 @@ const createAlertRuleSchema = z.object({
     return true;
   },
   { message: 'Rate-of-change alerts require baselineType and deviationMultiplier' }
-);
+).superRefine((data, ctx) => {
+  if (data.alertType === 'metric') {
+    if (!data.metricConfig) {
+      ctx.addIssue({ code: 'custom', message: 'Metric alerts require metricConfig', path: ['metricConfig'] });
+    }
+    return;
+  }
+  if (data.metricConfig !== undefined) {
+    ctx.addIssue({ code: 'custom', message: 'metricConfig is only supported on metric alerts', path: ['metricConfig'] });
+  }
+  if (!data.level || data.level.length === 0) {
+    ctx.addIssue({ code: 'custom', message: 'At least one level is required', path: ['level'] });
+  }
+  if (data.threshold === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'threshold is required', path: ['threshold'] });
+  }
+  if (data.timeWindow === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'timeWindow is required', path: ['timeWindow'] });
+  }
+});
 
 const updateAlertRuleSchema = z.object({
   name: z.string().min(1).max(200).optional(),
@@ -67,6 +90,7 @@ const updateAlertRuleSchema = z.object({
   metadataFilters: metadataFiltersSchema.optional(),
   query: z.string().max(2000).optional().nullable(),
   renotifyMinutes: z.number().int().min(5).max(1440).optional().nullable(),
+  metricConfig: metricAlertConfigSchema.optional(),
 }).refine(
   (data) => {
     if (data.alertType === 'rate_of_change') {
@@ -220,6 +244,17 @@ async function setSnooze(
   return reply.send({ alertRule: enrichedRule });
 }
 
+/**
+ * Every explicit project of a metric alert query must be a project of the
+ * organization (null = every project of it, resolved at evaluation).
+ */
+async function metricProjectsBelongToOrg(config: MetricAlertConfig, organizationId: string): Promise<boolean> {
+  for (const projectId of config.query.projectIds ?? []) {
+    if (!(await projectsService.projectBelongsToOrg(projectId, organizationId))) return false;
+  }
+  return true;
+}
+
 function inputErrorBody(error: AlertRuleInputError): { error: string; position?: number } {
   return error.position !== undefined
     ? { error: error.message, position: error.position }
@@ -251,13 +286,24 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Lifecycle criteria: query and renotify on threshold rules only, and
-      // the query must parse (AlertRuleInputError -> 400 below).
+      const metricConfig = body.metricConfig as MetricAlertConfig | undefined;
+      if (metricConfig) {
+        assertValidMetricConfig(metricConfig);
+        if (!(await metricProjectsBelongToOrg(metricConfig, body.organizationId))) {
+          return reply.status(403).send({
+            error: 'Project does not belong to this organization',
+          });
+        }
+      }
+
+      // Lifecycle criteria: query on threshold rules only, renotify on
+      // threshold and metric rules, and the query must parse
+      // (AlertRuleInputError -> 400 below).
       assertValidRuleCriteria({
         alertType: body.alertType ?? 'threshold',
         query: body.query ?? null,
         renotifyMinutes: body.renotifyMinutes ?? null,
-        level: body.level,
+        level: body.level ?? [],
         service: body.service ?? null,
         metadataFilters: body.metadataFilters ?? [],
       });
@@ -268,7 +314,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       // validated body. Same pattern as otlp/trace-routes.ts.
       // The count -> insert is serialized per org via withLimitLock so concurrent
       // creates can't race past the cap.
-      const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...alertData } = body;
+      const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, metricConfig: _metricConfig, level, threshold, timeWindow, ...alertData } = body;
       const alertRule = await withLimitLock(body.organizationId, 'alerts.max_rules', async () => {
         await context.runAsSystem('alerts:create-limit-check', async () => {
           await context.with({ organizationId: body.organizationId }, async () => {
@@ -278,6 +324,10 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         });
         return alertsService.createAlertRule({
           ...alertData,
+          level: level ?? [],
+          threshold: threshold ?? 0,
+          timeWindow: timeWindow ?? 0,
+          metricConfig: metricConfig ?? null,
           alertType: alertType || 'threshold',
           baselineType: baselineType || null,
           deviationMultiplier: deviationMultiplier ?? null,
@@ -300,7 +350,11 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         action: 'rule.created',
         target: { type: 'alert_rule', id: alertRule.id },
         organizationId: body.organizationId,
-        metadata: { name: alertRule.name, threshold: alertRule.threshold },
+        metadata: {
+          name: alertRule.name,
+          threshold: alertRule.metricConfig ? alertRule.metricConfig.threshold : alertRule.threshold,
+          alertType: alertRule.alertType,
+        },
       });
 
       // A new rule has no history yet.
@@ -542,6 +596,22 @@ export async function alertsRoutes(fastify: FastifyInstance) {
           error: 'Alert rule not found',
         });
       }
+      const nextType = body.alertType ?? existing.alertType;
+      if ((existing.alertType === 'metric') !== (nextType === 'metric')) {
+        return reply.status(400).send({ error: 'A rule cannot be changed to or from a metric alert' });
+      }
+      if (body.metricConfig !== undefined && nextType !== 'metric') {
+        return reply.status(400).send({ error: 'metricConfig is only supported on metric alerts' });
+      }
+      const metricConfig = body.metricConfig as MetricAlertConfig | undefined;
+      if (metricConfig) {
+        assertValidMetricConfig(metricConfig);
+        if (!(await metricProjectsBelongToOrg(metricConfig, organizationId))) {
+          return reply.status(403).send({
+            error: 'Project does not belong to this organization',
+          });
+        }
+      }
       assertValidRuleCriteria({
         alertType: body.alertType ?? existing.alertType,
         query: body.query !== undefined ? body.query : existing.query,
@@ -551,7 +621,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         metadataFilters: body.metadataFilters !== undefined ? (body.metadataFilters ?? []) : existing.metadataFilters,
       });
 
-      const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...updateData } = body;
+      const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, metricConfig: _metricConfig, ...updateData } = body;
       const rateOfChangeFields: Record<string, unknown> = {};
       if (alertType !== undefined) rateOfChangeFields.alertType = alertType;
       if (baselineType !== undefined) rateOfChangeFields.baselineType = baselineType;
@@ -560,6 +630,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (cooldownMinutes !== undefined) rateOfChangeFields.cooldownMinutes = cooldownMinutes;
       if (sustainedMinutes !== undefined) rateOfChangeFields.sustainedMinutes = sustainedMinutes;
       if (metadataFilters !== undefined) rateOfChangeFields.metadataFilters = metadataFilters;
+      if (metricConfig !== undefined) rateOfChangeFields.metricConfig = metricConfig;
 
       const alertRule = await alertsService.updateAlertRule(id, organizationId, {
         ...updateData,

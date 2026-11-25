@@ -7,6 +7,9 @@
 	import SeverityBadge from '$lib/components/app/SeverityBadge.svelte';
 	import type { DataTableColumn } from '$lib/components/app/data-table';
 	import { buildMatchedLogsUrl } from '$lib/components/alerts/alert-model';
+	import { instanceLabels } from '$lib/components/alerts/metric/metric-alert-model';
+	import { formatMetricValue } from '@logtide/shared';
+	import { encodeExplorerQuery, EXPLORER_URL_PARAM } from '$lib/utils/metrics-explorer-url';
 	import { buildTraceUrl } from '$lib/components/siem/incidents/incident-model';
 	import { stateTone } from '$lib/utils/severity';
 	import Button from '$lib/components/ui/button/button.svelte';
@@ -58,11 +61,29 @@
 
 	function sourceLabel(r: Row): string {
 		if (r.kind === 'detection') return capitalize(r.data.category);
+		if (r.data.alertType === 'metric') return 'Metric';
 		return r.data.alertType === 'rate_of_change' ? 'Anomaly' : 'Alert';
 	}
 
 	function nameOf(r: Row): string {
-		return r.kind === 'alert' ? r.data.ruleName : r.data.ruleTitle;
+		if (r.kind !== 'alert') return r.data.ruleTitle;
+		const labels = instanceLabels(r.data.metricMetadata?.labels);
+		return labels ? `${r.data.ruleName} (${labels})` : r.data.ruleName;
+	}
+
+	/** "95.3% (above 90%)" for a metric notification, '' otherwise. */
+	function metricValueOf(h: AlertHistory): string {
+		const m = h.metricMetadata;
+		if (!m) return '';
+		const name = m.source;
+		return `${formatMetricValue(m.value, m.unit, name)} (${m.condition} ${formatMetricValue(m.threshold, m.unit, name)})`;
+	}
+
+	/** Explorer link of a metric rule's query, when the rule still exists. */
+	function exploreHref(h: AlertHistory): string | null {
+		const config = ruleById.get(h.ruleId)?.metricConfig;
+		if (!config) return null;
+		return `/dashboard/metrics/explore?${EXPLORER_URL_PARAM}=${encodeURIComponent(encodeExplorerQuery(config.query))}`;
 	}
 
 	function projectOf(r: Row): string {
@@ -114,6 +135,9 @@
 
 {#snippet nameCell(r: Row)}
 	<span class="font-medium">{nameOf(r)}</span>
+	{#if r.kind === 'alert' && r.data.metricMetadata}
+		<span class="block text-xs text-muted-foreground tabular-nums" data-testid="metric-value">{metricValueOf(r.data)}</span>
+	{/if}
 {/snippet}
 
 {#snippet projectCell(r: Row)}
@@ -159,7 +183,15 @@
 
 {#snippet linksCell(r: Row)}
 	<span class="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-		{#if r.kind === 'alert'}
+		{#if r.kind === 'alert' && r.data.alertType === 'metric'}
+			{@const href = exploreHref(r.data)}
+			{#if href}
+				<a class="text-primary hover:underline" href={href}>Open in Explore</a>
+			{/if}
+			{#if ruleById.has(r.data.ruleId)}
+				<a class="text-primary hover:underline" href="/dashboard/alerts?edit={encodeURIComponent(r.data.ruleId)}">View rule</a>
+			{/if}
+		{:else if r.kind === 'alert'}
 			<a class="text-primary hover:underline" href={matchedLogsHref(r.data)}>Show matched logs</a>
 			{#if ruleById.has(r.data.ruleId)}
 				<a class="text-primary hover:underline" href="/dashboard/alerts?edit={encodeURIComponent(r.data.ruleId)}">View rule</a>

@@ -132,7 +132,7 @@ describe('Alerts routes: lifecycle fields', () => {
     it('create rejects renotifyMinutes on a rate-of-change rule', async () => {
       const res = await post({ ...rocRule, renotifyMinutes: 30 });
       expect(res.statusCode).toBe(400);
-      expect(res.json()).toEqual({ error: 'Re-notify interval is only supported on threshold rules' });
+      expect(res.json()).toEqual({ error: 'Re-notify interval is only supported on threshold and metric rules' });
     });
 
     it('create accepts a blank query and a null renotifyMinutes on a rate-of-change rule', async () => {
@@ -183,7 +183,7 @@ describe('Alerts routes: lifecycle fields', () => {
     it('update rejects switching a rule with renotifyMinutes to rate-of-change', async () => {
       const created = (await post({ ...validRule, renotifyMinutes: 60 })).json().alertRule;
       const res = await put(created.id, { alertType: 'rate_of_change', baselineType: 'rolling_7d_avg', deviationMultiplier: 3 });
-      expect(res.json()).toEqual({ error: 'Re-notify interval is only supported on threshold rules' });
+      expect(res.json()).toEqual({ error: 'Re-notify interval is only supported on threshold and metric rules' });
       expect((await getRuleRow(created.id)).renotify_minutes).toBe(60);
     });
 
@@ -193,7 +193,7 @@ describe('Alerts routes: lifecycle fields', () => {
         error: 'Text queries are only supported on threshold rules',
       });
       expect((await put(roc.id, { renotifyMinutes: 30 })).json()).toEqual({
-        error: 'Re-notify interval is only supported on threshold rules',
+        error: 'Re-notify interval is only supported on threshold and metric rules',
       });
 
       const threshold = (await post(validRule)).json().alertRule;

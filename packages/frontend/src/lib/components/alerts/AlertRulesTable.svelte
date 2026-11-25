@@ -8,6 +8,7 @@
 	import WillNotify from '$lib/components/notification-channels/WillNotify.svelte';
 	import SnoozeMenu from '$lib/components/alerts/SnoozeMenu.svelte';
 	import { countTriggers24h, deriveRuleState } from '$lib/components/alerts/alert-model';
+	import { summarizeMetricRule } from '$lib/components/alerts/metric/metric-alert-model';
 	import Button from '$lib/components/ui/button/button.svelte';
 	import { Switch } from '$lib/components/ui/switch';
 	import Pencil from '@lucide/svelte/icons/pencil';
@@ -84,8 +85,13 @@
 		<span class="font-medium" data-rule-id={r.id}>{r.name}</span>
 		{#if r.alertType === 'rate_of_change'}
 			<span class="rounded border bg-secondary px-1.5 py-0.5 text-xs text-secondary-foreground">Anomaly</span>
+		{:else if r.alertType === 'metric'}
+			<span class="rounded border bg-secondary px-1.5 py-0.5 text-xs text-secondary-foreground" data-testid="metric-badge">Metric</span>
 		{/if}
 	</span>
+	{#if r.alertType === 'metric' && r.metricConfig}
+		<span class="block text-xs text-muted-foreground" data-testid="metric-summary">{summarizeMetricRule(r.metricConfig)}</span>
+	{/if}
 {/snippet}
 
 {#snippet scopeCell(r: AlertRule)}

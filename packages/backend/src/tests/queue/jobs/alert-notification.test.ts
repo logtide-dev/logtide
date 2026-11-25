@@ -1039,6 +1039,72 @@ describe('Alert Notification Job', () => {
             expect(sendMailMock).not.toHaveBeenCalled();
         });
 
+        describe('metric alert rules (1.8)', () => {
+            const metric = {
+                query_id: 'A',
+                source: 'system.cpu.utilization',
+                condition: 'above' as const,
+                threshold: 0.9,
+                value: 0.953,
+                unit: '1',
+                window: '5m' as const,
+                for_evaluations: 2,
+                labels: { 'host.name': 'web-1' },
+                group_key: 'host.name=web-1',
+            };
+
+            it('triggered metric jobs carry the instance in-app, by email and in the webhook', async () => {
+                const { organization, project, user } = await createTestContext();
+                mockGetAlertRuleChannels.mockResolvedValueOnce([emailChannel, webhookChannel]);
+
+                await processAlertNotification({
+                    data: firingJob(organization.id, project.id, {
+                        log_count: 0,
+                        threshold: 0.9,
+                        alert_type: 'metric',
+                        metric,
+                        incident_id: INCIDENT_ID,
+                    }),
+                });
+
+                const [notification] = await notificationsOf(user.id);
+                expect(notification.title).toBe('Alert triggered: Test Alert Rule (host.name=web-1)');
+                expect(notification.message).toContain('system.cpu.utilization is 95.3%, above the threshold of 90%');
+                expect(notification.metadata).toMatchObject({ metric: { group_key: 'host.name=web-1' } });
+
+                expect(sendMailMock).toHaveBeenCalledTimes(1);
+                expect(sendMailMock.mock.calls[0][0].subject).toBe(
+                    '[Alert] Test Alert Rule (host.name=web-1) - system.cpu.utilization 95.3% above 90%'
+                );
+
+                const call = enqueueMock.mock.calls.map((c) => c[0]).find((c) => c.url === WEBHOOK_URL);
+                const envelope = parseWebhookEvent(call.payload);
+                expect(envelope.type).toBe('alert.triggered');
+                expect(envelope.data).toMatchObject({ alert_type: 'metric', alert_rule_id: RULE_ID, metric });
+            });
+
+            it('resolved metric jobs name the group and keep one event id per group', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetAlertRuleChannels.mockResolvedValueOnce([webhookChannel]);
+                const job = resolvedJob(organization.id, project.id, {
+                    alert_type: 'metric',
+                    metric: { ...metric, value: 0.2 },
+                });
+
+                await processAlertNotification({ data: job });
+
+                const call = enqueueMock.mock.calls[0][0];
+                expect(call.eventId).toBe(`${RULE_ID}:${job.firing_since}:host.name=web-1:resolved:${WEBHOOK_URL}`);
+                const envelope = parseWebhookEvent(call.payload);
+                expect(envelope.data).toMatchObject({
+                    alert_type: 'metric',
+                    title: 'Alert resolved: Test Alert Rule (host.name=web-1)',
+                    message: 'Test Alert Rule (host.name=web-1) is back to normal after 43 minutes',
+                    metric: { group_key: 'host.name=web-1', value: 0.2 },
+                });
+            });
+        });
+
         describe('PagerDuty destinations', () => {
             const PD_ROUTING_KEY = 'r'.repeat(32);
             const pagerDutyChannel = {
