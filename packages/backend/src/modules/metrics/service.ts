@@ -3,6 +3,7 @@ import { projectsService } from '../projects/service.js';
 import { metering, recordMetricIngestion } from '../metering/index.js';
 import { createSkewTracker } from '../ingestion/skew.js';
 import { registerHardwareHosts } from '../hardware/registry.js';
+import { registerMetricCatalog } from './catalog/registry.js';
 import {
   pickAutoInterval,
   intervalSeconds,
@@ -71,6 +72,10 @@ export class MetricsService {
     if (organizationId) {
       void registerHardwareHosts(records, projectId, organizationId);
     }
+
+    // Metric catalog: type, unit and description per (project, name, type)
+    // (throttled, fire-and-forget, never fails or slows ingestion).
+    void registerMetricCatalog(records, projectId);
 
     return result.ingested;
   }
