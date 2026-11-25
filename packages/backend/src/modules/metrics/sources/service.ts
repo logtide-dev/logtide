@@ -24,7 +24,7 @@ import {
   type SourceSignalValue,
   type SourceSignalDef,
 } from '@logtide/shared';
-import type { MetricSource } from '@logtide/reservoir';
+import { OPERATION_STATS_MAX_LIMIT, type MetricSource } from '@logtide/reservoir';
 import { db } from '../../../database/index.js';
 import { reservoir } from '../../../database/reservoir.js';
 import { customDashboardsService } from '../../custom-dashboards/service.js';
@@ -37,6 +37,7 @@ import {
   pickInterval,
   type HardwareStatusInput,
 } from './status.js';
+import { HTTP_SERVER_METRICS, histogramPercentile, redFromSeries, type MetricRed } from './red.js';
 
 export interface SourcesContext {
   organizationId: string;
@@ -384,17 +385,54 @@ interface SpanStats {
   p95: number | null;
 }
 
+/**
+ * RED from traces counts entry spans only (server/consumer kinds, roots when a
+ * scope has none) through getOperationStats and getLatencyHistogram. Services
+ * are discovered with getServiceHealthStats (every span), which is also the
+ * fallback when an engine cannot answer the entry-span calls.
+ */
 async function loadSpanStats(ctx: SourcesContext): Promise<Map<string, SpanStats>> {
-  const out = new Map<string, SpanStats>();
+  const health = new Map<string, SpanStats>();
   await mapLimit(ctx.projectIds, CONCURRENCY, async (projectId) => {
     const rows = await reservoir.getServiceHealthStats(projectId, ctx.from, ctx.to);
     for (const r of rows) {
-      const cur = out.get(r.serviceName) ?? { calls: 0, errors: 0, p95: null };
+      const cur = health.get(r.serviceName) ?? { calls: 0, errors: 0, p95: null };
       cur.calls += r.totalCalls;
       cur.errors += r.totalErrors;
       // Percentiles do not add across projects: keep the worst one.
       if (r.p95LatencyMs !== null && (cur.p95 === null || r.p95LatencyMs > cur.p95)) cur.p95 = r.p95LatencyMs;
-      out.set(r.serviceName, cur);
+      health.set(r.serviceName, cur);
+    }
+  });
+
+  const out = new Map<string, SpanStats>();
+  await mapLimit([...health.keys()], CONCURRENCY, async (service) => {
+    try {
+      let calls = 0;
+      let errors = 0;
+      let bounds: number[] = [];
+      let counts: number[] = [];
+      for (const projectId of ctx.projectIds) {
+        const ops = await reservoir.getOperationStats({
+          projectId,
+          service,
+          from: ctx.from,
+          to: ctx.to,
+          limit: OPERATION_STATS_MAX_LIMIT,
+        });
+        if (ops.length === 0) continue;
+        for (const o of ops) {
+          calls += o.count;
+          errors += o.errorCount;
+        }
+        const h = await reservoir.getLatencyHistogram({ projectId, service, from: ctx.from, to: ctx.to });
+        bounds = h.bounds;
+        counts = counts.length === 0 ? [...h.counts] : counts.map((c, i) => c + (h.counts[i] ?? 0));
+      }
+      out.set(service, { calls, errors, p95: histogramPercentile(bounds, counts, 0.95) });
+    } catch {
+      // Engine without entry-span stats: fall back to every span of the service.
+      out.set(service, health.get(service) as SpanStats);
     }
   });
   return out;
@@ -408,6 +446,8 @@ interface SpanTrend {
   lastSeen: number | null;
 }
 
+// The spark comes from getSpanTimeseries, which has no span kind filter: it
+// counts every span of the service while the headline values count entry spans.
 async function loadSpanTrend(ctx: SourcesContext, service: string): Promise<SpanTrend> {
   const windowMs = ctx.to.getTime() - ctx.from.getTime();
   const bucket = windowMs <= 7 * 86_400_000 ? 'hour' : 'day';
@@ -431,6 +471,55 @@ async function loadSpanTrend(ctx: SourcesContext, service: string): Promise<Span
   };
 }
 
+/** RED from HTTP server metrics for services without spans (newest semconv first, legacy name for the rest). */
+async function loadMetricRed(ctx: SourcesContext, candidates: string[]): Promise<Map<string, MetricRed>> {
+  const out = new Map<string, MetricRed>();
+  let remaining = candidates;
+  const interval = pickInterval(ctx.to.getTime() - ctx.from.getTime(), SOURCE_SPARK_POINTS);
+  for (const variant of HTTP_SERVER_METRICS) {
+    if (remaining.length === 0) break;
+    const chunks: string[][] = [];
+    for (let i = 0; i < remaining.length; i += SERIES_CHUNK) chunks.push(remaining.slice(i, i + SERIES_CHUNK));
+    await mapLimit(chunks, CONCURRENCY, async (chunk) => {
+      const svc = { scope: 'resource' as const, key: 'service.name', op: 'in' as const, values: chunk };
+      const groupBy = [{ scope: 'resource' as const, key: 'service.name' }];
+      try {
+        const res = await metricQueryService.run({
+          organizationId: ctx.organizationId,
+          projectIds: ctx.projectIds,
+          from: ctx.from.toISOString(),
+          to: ctx.to.toISOString(),
+          interval,
+          compareTo: 'none',
+          display: 'lines',
+          formulas: [],
+          queries: [
+            { id: 'A', metricName: variant.metricName, aggregation: 'rate', spaceAggregation: 'sum', filters: [svc], groupBy, limit: SERIES_CHUNK },
+            {
+              id: 'B',
+              metricName: variant.metricName,
+              aggregation: 'rate',
+              spaceAggregation: 'sum',
+              filters: [svc, { scope: 'metric', key: variant.statusKey, op: 'gte', values: ['500'] }],
+              groupBy,
+              limit: SERIES_CHUNK,
+            },
+            { id: 'C', metricName: variant.metricName, aggregation: 'p95', spaceAggregation: 'avg', filters: [svc], groupBy, limit: SERIES_CHUNK },
+          ],
+        });
+        for (const name of chunk) {
+          const red = redFromSeries(res.series, name, variant.defaultUnit);
+          if (red) out.set(name, red);
+        }
+      } catch {
+        // Best effort: a failing query leaves these services without RED.
+      }
+    });
+    remaining = remaining.filter((n) => !out.has(n));
+  }
+  return out;
+}
+
 export async function listServices(ctx: SourcesContext, only?: string): Promise<ServiceSourceSummary[]> {
   const [metricSources, spanStats] = await Promise.all([
     fetchSources(ctx, 'service.name', { coKeys: ['host.name'], excludeMetricPrefixes: [...HOST_METRIC_PREFIXES] }),
@@ -451,12 +540,19 @@ export async function listServices(ctx: SourcesContext, only?: string): Promise<
     },
   );
 
+  const metricRed = await loadMetricRed(
+    ctx,
+    names.filter((n) => (spanStats.get(n)?.calls ?? 0) === 0 && (byName.get(n)?.metricCount ?? 0) > 0),
+  );
+
   return names.map((name): ServiceSourceSummary => {
     const m = byName.get(name);
     const st = spanStats.get(name);
     const trend = trends.get(name);
     const hasTraces = !!st && st.calls > 0;
-    const errorPct = hasTraces ? (st.errors / st.calls) * 100 : null;
+    const red = hasTraces ? null : (metricRed.get(name) ?? null);
+    const redSource: ServiceSourceSummary['redSource'] = hasTraces ? 'traces' : red ? 'metrics' : null;
+    const errorPct = hasTraces ? (st.errors / st.calls) * 100 : (red?.errorRate.value ?? null);
     const lastSeenMs = Math.max(m?.lastSeen.getTime() ?? 0, trend?.lastSeen ?? 0) || ctx.from.getTime();
     const { status, reason } = computeServiceStatus({ now, lastSeen: lastSeenMs, errorRate: errorPct });
     return {
@@ -466,11 +562,12 @@ export async function listServices(ctx: SourcesContext, only?: string): Promise<
       lastSeen: new Date(lastSeenMs).toISOString(),
       status,
       statusReason: reason,
+      redSource,
       requestRate: hasTraces
         ? { value: st.calls / windowSec, unit: 'req/s', spark: trend?.rate ?? [] }
-        : EMPTY_SIGNAL('req/s'),
-      errorRate: hasTraces ? { value: errorPct, unit: '%', spark: trend?.errors ?? [] } : EMPTY_SIGNAL('%'),
-      p95: hasTraces ? { value: st.p95, unit: 'ms', spark: trend?.p95 ?? [] } : EMPTY_SIGNAL('ms'),
+        : (red?.requestRate ?? EMPTY_SIGNAL('req/s')),
+      errorRate: hasTraces ? { value: errorPct, unit: '%', spark: trend?.errors ?? [] } : (red?.errorRate ?? EMPTY_SIGNAL('%')),
+      p95: hasTraces ? { value: st.p95, unit: 'ms', spark: trend?.p95 ?? [] } : (red?.p95 ?? EMPTY_SIGNAL('ms')),
       hosts: m?.co['host.name'] ?? [],
       metricCount: m?.metricCount ?? 0,
       hasTraces,

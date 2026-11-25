@@ -78,6 +78,7 @@ function service(name: string, status: ServiceSourceSummary['status'], extra: Pa
     hosts: ['alpha'],
     metricCount: 3,
     hasTraces: true,
+    redSource: 'traces',
     ...extra,
   };
 }
@@ -125,6 +126,22 @@ describe('metrics sources page', () => {
     const hosts = await screen.findByTestId('hosts-section');
     expect(names(hosts)).toEqual(['bravo', 'charlie', 'alpha', 'delta']);
     expect(names(screen.getByTestId('services-section'))).toEqual(['checkout', 'api']);
+  });
+
+  it('shows where each service RED comes from', async () => {
+    h.getSources.mockResolvedValue({
+      hosts: [],
+      services: [
+        service('api', 'ok'),
+        service('web', 'ok', { hasTraces: false, redSource: 'metrics' }),
+        service('lonely', 'ok', { hasTraces: false, redSource: null, requestRate: sig(null, 'req/s'), errorRate: sig(null), p95: sig(null, 'ms') }),
+      ],
+    });
+    render(Page);
+    const section = await screen.findByTestId('services-section');
+    const labels = within(section).getAllByTestId('red-source').map((e) => e.textContent?.trim());
+    expect(labels.sort()).toEqual(['-', 'From HTTP metrics', 'From traces']);
+    expect(within(section).getByText('No request data')).toBeTruthy();
   });
 
   it('sorts by a column header and reverses on a second click', async () => {

@@ -95,10 +95,10 @@
             <SourceSignalCell signal={h.disk} label="Disk" thresholds={HOST_THRESHOLDS.disk} />
           {:else if s}
             <span class="text-sm tabular-nums text-muted-foreground">
-              {#if s.hasTraces}
+              {#if s.redSource}
                 {formatMetricValue(s.requestRate.value, s.requestRate.unit)}, {formatMetricValue(s.errorRate.value, s.errorRate.unit)} errors, p95 {formatMetricValue(s.p95.value, s.p95.unit)}
               {:else}
-                No traces
+                No request data
               {/if}
             </span>
           {/if}

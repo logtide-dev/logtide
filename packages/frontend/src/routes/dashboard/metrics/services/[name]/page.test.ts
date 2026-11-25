@@ -72,6 +72,7 @@ const detail: ServiceSourceDetail = {
   hosts: ['vps-app'],
   metricCount: 2,
   hasTraces: true,
+  redSource: 'traces',
   metricNames: ['process.cpu.utilization', 'v8js.memory.heap.used'],
 };
 
@@ -126,6 +127,27 @@ describe('service page', () => {
     render(Page);
     expect((await screen.findByTestId('kpi-errors')).textContent).toContain('6.2');
     expect(screen.getByTestId('kpi-p95')).toBeTruthy();
+  });
+
+  it('shows the RED source on the requests KPI', async () => {
+    render(Page);
+    expect((await screen.findByTestId('kpi-rate')).textContent).toContain('From traces');
+    expect(screen.queryByTestId('red-hint')).toBeNull();
+  });
+
+  it('labels RED from HTTP metrics', async () => {
+    h.getServiceSource.mockResolvedValue({ ...detail, hasTraces: false, redSource: 'metrics' });
+    render(Page);
+    expect((await screen.findByTestId('kpi-rate')).textContent).toContain('From HTTP metrics');
+  });
+
+  it('explains how to get RED when there is none', async () => {
+    h.getServiceSource.mockResolvedValue({ ...detail, hasTraces: false, redSource: null, requestRate: sig(null, 'req/s'), errorRate: sig(null), p95: sig(null, 'ms') });
+    render(Page);
+    const hint = await screen.findByTestId('red-hint');
+    expect(hint.textContent).toContain('traces');
+    expect(hint.textContent).toContain('http.server.request.duration');
+    expect((await screen.findByTestId('kpi-rate')).textContent).toContain('n/a');
   });
 
   it('customize opens the new dashboard', async () => {
