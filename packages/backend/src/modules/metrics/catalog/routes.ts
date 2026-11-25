@@ -24,11 +24,22 @@ import { db } from '../../../database/index.js';
 import { reservoir } from '../../../database/reservoir.js';
 import { resolveProjectScope, MetricScopeError } from '../query/service.js';
 
-const ATTRIBUTE_KEYS_CAP = 30;
+/**
+ * /catalog/entry reservoir call budget: label keys are fetched once per scope
+ * (2 calls), values for at most ATTRIBUTE_KEYS_CAP keys per scope with
+ * ENTRY_VALUES_CONCURRENCY in flight, and host.name / service.name values come
+ * from one call each (SOURCE_VALUES_CAP) that is reused for the attribute list
+ * when the key is one of the listed attributes. Worst case:
+ * 2 + 2 * ATTRIBUTE_KEYS_CAP + 2 = 44 calls, never more than 4 at a time.
+ */
+const ATTRIBUTE_KEYS_CAP = 20;
 const ATTRIBUTE_VALUES_CAP = 20;
 const SOURCE_VALUES_CAP = 200;
+const ENTRY_VALUES_CONCURRENCY = 4;
 const LIST_ROW_CAP = 5000;
 const DEFAULT_WINDOW_MS = 24 * 3600_000;
+/** Longest window /attributes and /attribute-values accept. */
+export const MAX_ATTRIBUTE_WINDOW_MS = 31 * 24 * 3600_000;
 const DETAIL_PAD_MS = 3600_000;
 
 const guid = z.string().guid();
@@ -205,15 +216,19 @@ async function attributesWithValues(
   metricName: string,
   attrScope: 'metric' | 'resource',
   from: Date,
-  to: Date
+  to: Date,
+  known: ReadonlyMap<string, string[]> = new Map()
 ): Promise<MetricCatalogAttribute[]> {
   const keys = (await attributeKeys(scope, metricName, attrScope, from, to)).slice(0, ATTRIBUTE_KEYS_CAP);
-  return Promise.all(
-    keys.map(async (key) => ({
+  return mapLimit(keys, ENTRY_VALUES_CONCURRENCY, async (key) => {
+    const reuse = known.get(key);
+    return {
       key,
-      values: await attributeValues(scope, metricName, attrScope, key, from, to, ATTRIBUTE_VALUES_CAP),
-    }))
-  );
+      values: reuse
+        ? reuse.slice(0, ATTRIBUTE_VALUES_CAP)
+        : await attributeValues(scope, metricName, attrScope, key, from, to, ATTRIBUTE_VALUES_CAP),
+    };
+  });
 }
 
 async function dashboardsUsing(
@@ -239,10 +254,29 @@ async function dashboardsUsing(
   return rows.map((r) => ({ id: r.id, name: r.name }));
 }
 
-function windowOf(from?: string, to?: string): { from: Date; to: Date } {
+/** Resolve the discovery window (default: last 24h). Returns an error message when it is invalid. */
+function windowOf(from?: string, to?: string): { from: Date; to: Date } | { error: string } {
   const end = to ? new Date(to) : new Date();
   const start = from ? new Date(from) : new Date(end.getTime() - DEFAULT_WINDOW_MS);
+  if (!(start.getTime() < end.getTime())) return { error: 'from must be before to' };
+  if (end.getTime() - start.getTime() > MAX_ATTRIBUTE_WINDOW_MS) {
+    return { error: 'The time range cannot exceed 31 days' };
+  }
   return { from: start, to: end };
+}
+
+/** Run fn over items with at most `limit` in flight, keeping the order of results. */
+async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
 }
 
 export async function metricCatalogRoutes(fastify: FastifyInstance) {
@@ -292,16 +326,21 @@ export async function metricCatalogRoutes(fastify: FastifyInstance) {
     const entries = mergeEntries(rows as CatalogDbRow[]).sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
     const entry = entries[0];
     const lastSeen = new Date(entry.lastSeen).getTime();
-    const from = new Date(lastSeen - DEFAULT_WINDOW_MS);
-    const to = new Date(Math.max(lastSeen + DETAIL_PAD_MS, Date.now()));
+    const to = new Date(Math.min(lastSeen + DETAIL_PAD_MS, Date.now()));
+    const from = new Date(to.getTime() - DEFAULT_WINDOW_MS);
 
-    const [metricAttrs, resourceAttrs, hosts, services, dashboards] = await Promise.all([
-      attributesWithValues(scope, name, 'metric', from, to),
-      attributesWithValues(scope, name, 'resource', from, to),
+    // host.name / service.name are fetched once (large cap) and reused below.
+    const [hosts, services, dashboards] = await Promise.all([
       attributeValues(scope, name, 'resource', 'host.name', from, to, SOURCE_VALUES_CAP),
       attributeValues(scope, name, 'resource', 'service.name', from, to, SOURCE_VALUES_CAP),
       dashboardsUsing(scope.organizationId, scope.userId, name),
     ]);
+    const known = new Map<string, string[]>([
+      ['host.name', hosts],
+      ['service.name', services],
+    ]);
+    const metricAttrs = await attributesWithValues(scope, name, 'metric', from, to);
+    const resourceAttrs = await attributesWithValues(scope, name, 'resource', from, to, known);
 
     const body: MetricCatalogDetail = {
       entry,
@@ -317,13 +356,12 @@ export async function metricCatalogRoutes(fastify: FastifyInstance) {
     const parsed = attributesQuery.safeParse(request.query);
     if (!parsed.success) return badRequest(reply, parsed.error);
     const { metricName, scope: attrScope, from, to } = parsed.data;
-    if (attrScope === 'metric' && !metricName) {
-      return reply.code(400).send({ error: 'metricName is required for the metric scope' });
-    }
+    // metricName '' (or absent) means every metric, for both scopes.
+    const window = windowOf(from, to);
+    if ('error' in window) return reply.code(400).send({ error: window.error });
     const scope = await authorize(request, reply, parsed.data);
     if (!scope) return;
     if (scope.projectIds.length === 0) return { keys: [] };
-    const window = windowOf(from, to);
     return { keys: await attributeKeys(scope, metricName ?? '', attrScope, window.from, window.to) };
   });
 
@@ -332,13 +370,11 @@ export async function metricCatalogRoutes(fastify: FastifyInstance) {
     const parsed = valuesQuery.safeParse(request.query);
     if (!parsed.success) return badRequest(reply, parsed.error);
     const { metricName, scope: attrScope, key, from, to } = parsed.data;
-    if (attrScope === 'metric' && !metricName) {
-      return reply.code(400).send({ error: 'metricName is required for the metric scope' });
-    }
+    const window = windowOf(from, to);
+    if ('error' in window) return reply.code(400).send({ error: window.error });
     const scope = await authorize(request, reply, parsed.data);
     if (!scope) return;
     if (scope.projectIds.length === 0) return { values: [] };
-    const window = windowOf(from, to);
     return {
       values: await attributeValues(scope, metricName ?? '', attrScope, key, window.from, window.to, 100),
     };

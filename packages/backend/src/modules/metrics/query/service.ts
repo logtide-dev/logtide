@@ -98,17 +98,25 @@ export { MetricScopeError, MetricQueryValidationError, resolveProjectScope };
 
 /** Highest per-query series limit an internal caller may ask for. */
 export const MAX_INTERNAL_SERIES_LIMIT = 2000;
+/** Most groups an unfolded query or formula returns; the rest are dropped with a warning. */
+export const MAX_UNFOLDED_GROUPS = 1000;
 
 /** A query whose project scope is already resolved and authorized. */
 export interface ResolvedMetricQuery extends Omit<MetricQueryRequest, 'projectIds'> {
   projectIds: string[];
   /**
-   * Server-side callers only (sources signals, alerts): never accepted from
-   * an HTTP body (the request schemas strip it). maxSeries raises the
-   * per-query series limit cap from METRIC_MAX_SERIES_LIMIT up to
-   * MAX_INTERNAL_SERIES_LIMIT, so `limit` can cover every host or service.
+   * Server-side callers only (sources signals, metric alerts): never
+   * accepted from an HTTP body (the request schemas strip it).
+   * - maxSeries raises the per-query series limit cap from
+   *   METRIC_MAX_SERIES_LIMIT up to MAX_INTERNAL_SERIES_LIMIT, so `limit`
+   *   can cover every host or service.
+   * - unfoldedGroups returns every group of a grouped query or formula, with
+   *   no top-N cap and no folded "Other" series (metric alerts evaluate every
+   *   group before ranking them by the alert direction). At most
+   *   MAX_UNFOLDED_GROUPS groups are returned (first ones by labels), the
+   *   rest are dropped with a warning.
    */
-  internal?: { maxSeries?: number };
+  internal?: { maxSeries?: number; unfoldedGroups?: boolean };
 }
 
 /** Above this many raw series a query is capped or aggregated by the engine in one step. */
@@ -154,6 +162,8 @@ interface WindowContext {
   openAfterMs: number;
   /** Cap of a query's series limit. */
   maxSeries: number;
+  /** Keep every group (no top-N fold), up to MAX_UNFOLDED_GROUPS. */
+  unfoldedGroups: boolean;
 }
 
 /** One query evaluated: its groups before the top-N fold. */
@@ -506,9 +516,25 @@ async function evaluateQuery(
   return done(series, metricType);
 }
 
-/** Top-N fold of a query's groups for display. */
-function foldQuery(r: QueryResult): FoldResult {
+/**
+ * Every group, capped at MAX_UNFOLDED_GROUPS. The kept ones are the first by
+ * labels (byte order): a ranking by value would favor one alert direction.
+ */
+function unfoldGroups(groups: GridSeries[], id: string, warnings: string[]): FoldResult {
+  if (groups.length <= MAX_UNFOLDED_GROUPS) return { series: groups, seriesTotal: groups.length, seriesShown: groups.length };
+  warnings.push(`${id}: more than ${MAX_UNFOLDED_GROUPS} groups, only the first ${MAX_UNFOLDED_GROUPS} are evaluated`);
+  const kept = groups
+    .map((g) => ({ g, key: labelKey(g.labels) }))
+    .sort((a, b) => byteOrder(a.key, b.key))
+    .slice(0, MAX_UNFOLDED_GROUPS)
+    .map((x) => x.g);
+  return { series: kept, seriesTotal: groups.length, seriesShown: kept.length };
+}
+
+/** Top-N fold of a query's groups for display (or every group when unfolded). */
+function foldQuery(r: QueryResult, id: string, unfolded: boolean, warnings: string[]): FoldResult {
   if (!r.grouped) return { series: r.groups, seriesTotal: r.groups.length, seriesShown: r.groups.length };
+  if (unfolded) return unfoldGroups(r.groups, `Query ${id}`, warnings);
   return foldTopNWith(r.groups, r.limit, r.combine);
 }
 
@@ -517,6 +543,7 @@ interface Evaluated {
   queryErrors: Map<string, string>;
   formulas: Map<string, FoldResult>;
   formulaErrors: Map<string, string>;
+  warnings: string[];
 }
 
 async function evaluateWindow(
@@ -531,6 +558,7 @@ async function evaluateWindow(
     queryErrors: new Map(),
     formulas: new Map(),
     formulaErrors: new Map(),
+    warnings: [],
   };
   const settled = await Promise.allSettled(
     queries.map((q) => evaluateQuery(ctx, q, filtersById.get(q.id) ?? [], catalog?.entries.get(q.metricName))),
@@ -558,10 +586,15 @@ async function evaluateWindow(
         operands.set(id, { groups: r.groups, combine: r.combine });
         if (r.grouped) limit = Math.max(limit, r.limit);
       }
-      out.formulas.set(
-        f.spec.id,
-        evaluateFormulaFolded(f.ast, operands, limit || METRIC_DEFAULT_SERIES_LIMIT, ctx.grid.length),
-      );
+      if (ctx.unfoldedGroups) {
+        const all = evaluateFormulaFolded(f.ast, operands, Number.MAX_SAFE_INTEGER, ctx.grid.length);
+        out.formulas.set(f.spec.id, unfoldGroups(all.series, `Formula ${f.spec.id}`, out.warnings));
+      } else {
+        out.formulas.set(
+          f.spec.id,
+          evaluateFormulaFolded(f.ast, operands, limit || METRIC_DEFAULT_SERIES_LIMIT, ctx.grid.length),
+        );
+      }
     } catch (err) {
       out.formulaErrors.set(f.spec.id, err instanceof Error ? err.message : 'Formula failed');
     }
@@ -649,6 +682,7 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
     shiftMs: 0,
     openAfterMs: now.getTime(),
     maxSeries: seriesLimitCap(query.internal),
+    unfoldedGroups: query.internal?.unfoldedGroups === true,
   };
 
   const offset = compareOffsetMs(query.compareTo);
@@ -687,7 +721,7 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
   for (const q of queries) {
     const unit = unitOf(queryUnits.get(q.id) ?? null);
     const r = current.queries.get(q.id);
-    const folded = r ? foldQuery(r) : null;
+    const folded = r ? foldQuery(r, q.id, baseCtx.unfoldedGroups, warnings) : null;
     const info: MetricQueryInfo = {
       id: q.id,
       seriesTotal: folded?.seriesTotal ?? 0,
@@ -706,9 +740,10 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
     const name = q.label || q.metricName;
     for (const s of folded.series) series.push(toSeries(q.id, s, grid, name, unit, false));
     const cmp = previous?.queries.get(q.id);
-    if (cmp) for (const s of foldQuery(cmp).series) series.push(toSeries(q.id, s, grid, name, unit, true));
+    if (cmp) for (const s of foldQuery(cmp, q.id, baseCtx.unfoldedGroups, warnings).series) series.push(toSeries(q.id, s, grid, name, unit, true));
   }
 
+  warnings.push(...current.warnings);
   for (const f of formulas) {
     const refs = f.ast ? formulaRefs(f.ast) : [];
     const unit = unitOf(formulaUnit(refs, queryUnits));

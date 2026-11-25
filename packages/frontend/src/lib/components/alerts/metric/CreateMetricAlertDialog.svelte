@@ -344,7 +344,8 @@
         </div>
         <p class="text-xs text-muted-foreground">
           The value is the average over the window, checked every minute. The alert fires after the condition holds for
-          the given number of checks in a row and resolves on the first check where it does not.
+          the given number of checks in a row and resolves on the first check where it does not. A check without data
+          changes nothing: a firing alert keeps firing until data comes back.
         </p>
 
         <div class="space-y-1">

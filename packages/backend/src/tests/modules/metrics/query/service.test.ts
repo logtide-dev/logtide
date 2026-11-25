@@ -196,6 +196,21 @@ describe('metricQueryService.run', () => {
     expect(res.queries[0]).toMatchObject({ seriesTotal: 4, seriesShown: 2 });
   });
 
+  it('returns every group with no Other series when unfoldedGroups is set', async () => {
+    ['a', 'b', 'c', 'd'].forEach((h, i) => cpu(h, '0', 0, i + 1));
+    const res = await run(
+      base({
+        internal: { unfoldedGroups: true },
+        queries: [{ id: 'A', metricName: 'system.cpu.utilization', aggregation: 'avg', filters: [], groupBy: [{ scope: 'resource', key: 'host.name' }], limit: 2 }],
+        formulas: [{ id: 'F1', expression: 'A * 2' }],
+      }),
+    );
+    const names = (id: string) => res.series.filter((s) => s.queryId === id).map((s) => s.name).sort();
+    expect(names('A')).toEqual(['a', 'b', 'c', 'd']);
+    expect(names('F1')).toEqual(['a', 'b', 'c', 'd']);
+    expect(res.queries[0]).toMatchObject({ seriesTotal: 4, seriesShown: 4 });
+  });
+
   it('applies filters and resolves variables', async () => {
     cpu('a', '0', 0, 1);
     cpu('b', '0', 0, 5);

@@ -10,6 +10,7 @@ import {
   type MetricExplorerQuery,
   type MetricQueryResponse,
 } from '@logtide/shared';
+import { encodeExplorerQuery, EXPLORER_URL_PARAM } from '$lib/utils/metrics-explorer-url';
 
 // Pure helpers of the metric alert dialog and the metric rows of the Alerts
 // page. No component imports so everything is unit tested without rendering.
@@ -162,4 +163,44 @@ export function summarizeMetricRule(config: MetricAlertConfig): string {
 /** Group labels of a metric instance for tables ("host.name=web-1"), '' when ungrouped. */
 export function instanceLabels(labels: Record<string, string> | null | undefined): string {
   return labels ? formatMetricAlertLabels(labels) : '';
+}
+
+/**
+ * Explorer link of a metric rule's query. The rule's projects travel as the
+ * explicit `project` scope param (`all` when the rule reads every project), so
+ * the explorer shows what the rule evaluates instead of the viewer's
+ * remembered scope. With `range`, the link opens on that custom time range.
+ */
+export function metricAlertExploreHref(
+  query: MetricExplorerQuery,
+  range?: { from: Date | string; to: Date | string } | null,
+): string {
+  const params = new URLSearchParams();
+  const ids = query.projectIds ?? [];
+  params.set('project', ids.length > 0 ? ids.join(',') : 'all');
+  if (range) {
+    const from = new Date(range.from);
+    const to = new Date(range.to);
+    if (Number.isFinite(from.getTime()) && Number.isFinite(to.getTime()) && from < to) {
+      params.set('from', from.toISOString());
+      params.set('to', to.toISOString());
+    }
+  }
+  params.set(EXPLORER_URL_PARAM, encodeExplorerQuery(query));
+  return `/dashboard/metrics/explore?${params.toString()}`;
+}
+
+/**
+ * Time range around one alert evaluation: the hour before it (never less than
+ * four rule windows) and a quarter of an hour after, capped at `now`.
+ */
+export function metricAlertRangeAround(
+  at: Date | string,
+  windowMinutes: number,
+  now: Date = new Date(),
+): { from: Date; to: Date } {
+  const t = new Date(at).getTime();
+  const before = Math.max(60, windowMinutes * 4) * 60_000;
+  const to = Math.max(Math.min(t + 15 * 60_000, now.getTime()), t);
+  return { from: new Date(t - before), to: new Date(to) };
 }

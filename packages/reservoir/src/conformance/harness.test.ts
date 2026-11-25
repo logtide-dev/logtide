@@ -39,7 +39,7 @@ describe('corpus', () => {
       'MQ1', 'MQ2', 'MQ3', 'MQ4', 'MQ5', 'MQ6', 'MQ7', 'MQ8',
     ]);
     expect(metricIds.slice(19, 23)).toEqual(['MJ1', 'MJ2', 'MJ3', 'MJ4']);
-    expect(metricIds.slice(23)).toEqual(['HA1', 'HB1', 'HA2', 'HB2', 'HB3', 'HN1', 'HN2', 'HA3', 'HB4', 'HA4']);
+    expect(metricIds.slice(23)).toEqual(['HA1', 'HB1', 'HA5', 'HA2', 'HB2', 'HB3', 'HN1', 'HN2', 'HA3', 'HB4', 'HB5', 'HB6', 'HA4']);
     expect(new Set(metricIds).size).toBe(metricIds.length);
     const logKeys = new Set(CORPUS_LOGS.map((l) => `${l.record.projectId}|${l.record.time.toISOString()}|${l.record.message}`));
     expect(logKeys.size).toBe(40);

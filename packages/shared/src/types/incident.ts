@@ -6,6 +6,7 @@
 import type { Severity, IncidentStatus } from '../constants/siem-constants.js';
 import type { IncidentSource } from '../constants/monitoring-constants.js';
 import type { DetectionEvent, Incident, IncidentComment, IncidentHistoryEntry } from './siem.js';
+import type { MetricAlertCondition, MetricAlertConfig, MetricAlertWindow } from './metric-alert.js';
 
 /** Statuses that count as an active incident ("investigating" is shown as Acknowledged). */
 export const INCIDENT_ACTIVE_STATUSES = ['open', 'investigating'] as const satisfies readonly IncidentStatus[];
@@ -71,6 +72,41 @@ export interface IncidentSourceEvent {
   detail?: Record<string, unknown>;
 }
 
+/** One group (alert instance) of a metric alert incident. */
+export interface IncidentMetricAlertGroup {
+  /** Stable instance key ('' when the rule is ungrouped). */
+  groupKey: string;
+  labels: Record<string, string>;
+  /** Last evaluated window value, raw (null when unknown). */
+  value: number | null;
+  /**
+   * `firing`: the instance fires now (active incidents only). `resolved`: it
+   * fired during this incident and no longer does.
+   */
+  state: 'firing' | 'resolved';
+  /** When the instance started firing (ISO), when known. */
+  firingSince: string | null;
+}
+
+/** Metric alert incidents: what the rule watches and which groups fired. */
+export interface IncidentMetricAlertDetail {
+  ruleId: string | null;
+  ruleName: string;
+  /** Current rule definition (query for the chart); null when the rule was deleted. */
+  config: MetricAlertConfig | null;
+  /** Query or formula id watched by the rule. */
+  queryId: string;
+  /** Metric name of a query, expression of a formula. */
+  source: string;
+  condition: MetricAlertCondition;
+  /** Raw threshold (same scale as the values). */
+  threshold: number;
+  unit: string | null;
+  window: MetricAlertWindow;
+  /** Firing groups first. */
+  groups: IncidentMetricAlertGroup[];
+}
+
 export interface IncidentDetailResponse {
   incident: IncidentListItem;
   detections: DetectionEvent[];
@@ -78,6 +114,8 @@ export interface IncidentDetailResponse {
   history: IncidentHistoryEntry[];
   /** Always present, newest first; merged into the detail timeline by the UI. */
   sourceEvents: IncidentSourceEvent[];
+  /** Incidents of metric alert rules only (absent or null otherwise). */
+  metricAlert?: IncidentMetricAlertDetail | null;
 }
 
 export interface IncidentListQuery {

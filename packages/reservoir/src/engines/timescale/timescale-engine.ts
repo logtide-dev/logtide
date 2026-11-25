@@ -1684,7 +1684,9 @@ export class TimescaleEngine extends StorageEngine {
    * hist_last / hist_sum over histogram_data (explicit buckets). The pick of
    * a bucket and group is its latest valid point (DISTINCT ON); hist_sum adds
    * up bucket_counts element-wise (by ordinality), sum and count over the
-   * points whose bucket_counts length equals the pick's.
+   * points whose explicit_bounds are identical to the pick's (jsonb equality:
+   * same length, same values in order). Points with other bounds form other
+   * merge classes and are skipped.
    */
   private async aggregateMetricHistograms(
     params: MetricAggregateParams,
@@ -1724,7 +1726,7 @@ export class TimescaleEngine extends StorageEngine {
       : `WITH ${pts},
       matched AS (
         SELECT p.* FROM pts p JOIN picked k USING (${keyList})
-        WHERE jsonb_array_length(p.h_counts) = jsonb_array_length(k.h_counts)
+        WHERE p.h_bounds = k.h_bounds
       ),
       elems AS (
         SELECT ${keyList}, e.ord, SUM(e.val::float8) AS v

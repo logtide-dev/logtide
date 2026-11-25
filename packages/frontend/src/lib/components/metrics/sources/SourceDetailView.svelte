@@ -43,7 +43,7 @@
   import SourceMetricsGrid from './SourceMetricsGrid.svelte';
   import SourceRelatedList from './SourceRelatedList.svelte';
   import SourceLogsTab from './SourceLogsTab.svelte';
-  import { RED_MISSING_HINT, buildExploreHref, buildServiceTracesHref, buildSourceLogsHref, redSourceLabel } from './source-model';
+  import { RED_MISSING_HINT, formatRequestRate, buildExploreHref, buildServiceTracesHref, buildSourceLogsHref, redSourceLabel } from './source-model';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import ExternalLink from '@lucide/svelte/icons/external-link';
@@ -283,7 +283,7 @@
     }
     if (service) {
       return [
-        { id: 'rate', label: 'Requests', value: service.redSource ? fmt(service.requestRate) : 'n/a', hint: redSourceLabel(service.redSource) ?? undefined },
+        { id: 'rate', label: 'Requests', value: service.redSource ? formatRequestRate(service.requestRate.value) : 'n/a', hint: redSourceLabel(service.redSource) ?? undefined },
         { id: 'errors', label: 'Errors', value: service.redSource ? fmt(service.errorRate) : 'n/a', tone: service.redSource ? percentTone(service.errorRate.value, SERVICE_ERROR_THRESHOLDS) : undefined },
         { id: 'p95', label: 'p95 latency', value: service.redSource ? fmt(service.p95) : 'n/a' },
         { id: 'hosts', label: 'Hosts', value: String(service.hosts.length) },
@@ -385,6 +385,7 @@
           {kind}
           {name}
           metricNames={detail.metricNames}
+          hasTraces={service ? service.hasTraces : true}
           organizationId={org.id}
           projectIds={effectiveProjectIds}
           from={win.from}

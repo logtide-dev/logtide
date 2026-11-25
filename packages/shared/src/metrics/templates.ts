@@ -20,6 +20,8 @@ export interface SourceTemplatePanel {
   config: PanelConfig;
   /** The panel shows only when the source sends at least one of these metrics. Empty: always. */
   requires: string[];
+  /** Trace panels: shown only when the source has spans (see applicableTemplatePanels). */
+  requiresTraces?: boolean;
 }
 
 export interface SourceTemplateSection {
@@ -274,7 +276,7 @@ function httpPanels(metricName: string, statusKey: string, keyPrefix: string): S
             { id: 'B', metricName, aggregation: 'rate', filters: [serviceFilter()], groupBy: [], hidden: true },
           ],
           'lines',
-          { formulas: [{ id: 'F1', expression: 'A / B * 100', label: 'Error rate %' }] },
+          { formulas: [{ id: 'F1', expression: 'A / B * 100', label: 'Error rate %' }], unitOverride: '%' },
         ),
       ),
     },
@@ -301,6 +303,7 @@ export const SERVICE_TEMPLATE: SourceTemplate = {
           w: 6,
           h: 4,
           requires: [],
+          requiresTraces: true,
           // serviceName "$service" is resolved like a metrics filter variable.
           config: { type: 'trace_volume', title: 'Requests and errors', source: 'traces', projectId: null, serviceName: '$service', timeRange: DEFAULT_RANGE, showErrors: true },
         },
@@ -309,6 +312,7 @@ export const SERVICE_TEMPLATE: SourceTemplate = {
           w: 6,
           h: 4,
           requires: [],
+          requiresTraces: true,
           config: { type: 'trace_latency', title: 'Latency', source: 'traces', projectId: null, serviceName: '$service', timeRange: DEFAULT_RANGE, showPercentiles: ['p50', 'p95', 'p99'] },
         },
       ],
@@ -393,10 +397,24 @@ export const SOURCE_TEMPLATES: Record<MetricSourceKind, SourceTemplate> = {
   service: SERVICE_TEMPLATE,
 };
 
-/** Panels of a template the source can fill: `requires` empty or one of them in `metricNames`. */
-export function applicableTemplatePanels(template: SourceTemplate, metricNames: Iterable<string>): SourceTemplateSection[] {
+/**
+ * Panels of a template the source can fill: `requires` empty or one of them in
+ * `metricNames`, and trace panels only unless `hasTraces` is false (default
+ * true: a saved dashboard keeps them, spans may arrive later).
+ */
+export function applicableTemplatePanels(
+  template: SourceTemplate,
+  metricNames: Iterable<string>,
+  opts: { hasTraces?: boolean } = {},
+): SourceTemplateSection[] {
   const have = new Set(metricNames);
+  const hasTraces = opts.hasTraces ?? true;
   return template.sections
-    .map((section) => ({ ...section, panels: section.panels.filter((p) => p.requires.length === 0 || p.requires.some((m) => have.has(m))) }))
+    .map((section) => ({
+      ...section,
+      panels: section.panels.filter(
+        (p) => (hasTraces || !p.requiresTraces) && (p.requires.length === 0 || p.requires.some((m) => have.has(m))),
+      ),
+    }))
     .filter((section) => section.panels.length > 0);
 }

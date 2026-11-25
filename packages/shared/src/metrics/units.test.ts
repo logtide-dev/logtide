@@ -49,6 +49,12 @@ describe('formatMetricValue', () => {
     expect(formatMetricValue(1200, 'rpm')).toBe('1,200 rpm');
   });
 
+  it('keeps small values readable', () => {
+    expect(formatMetricValue(0.004, '{request}/s')).toBe('0.004/s');
+    expect(formatMetricValue(0.00123, '%')).toBe('0.0012%');
+    expect(formatMetricValue(0, '%')).toBe('0%');
+  });
+
   it('shows n/a for missing values', () => {
     expect(formatMetricValue(null, '%')).toBe('n/a');
     expect(formatMetricValue(Number.NaN, 'By')).toBe('n/a');

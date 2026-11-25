@@ -153,6 +153,22 @@ describe('service page', () => {
     expect((await screen.findByTestId('kpi-rate')).textContent).toContain('n/a');
   });
 
+  it('leaves the trace panels out when the service has no traces', async () => {
+    h.getServiceSource.mockResolvedValue({ ...detail, hasTraces: false, redSource: 'metrics' });
+    render(Page);
+    await screen.findByTestId('kpi-rate');
+    await waitFor(() => expect(screen.queryByTestId('template-panel-trace-volume')).toBeNull());
+    expect(screen.queryByTestId('template-panel-trace-latency')).toBeNull();
+    expect(screen.queryAllByTestId('trace-panel').length).toBe(0);
+  });
+
+  it('shows a quiet service rate per minute instead of 0/s', async () => {
+    h.getServiceSource.mockResolvedValue({ ...detail, requestRate: sig(0.004, 'req/s') });
+    render(Page);
+    expect((await screen.findByTestId('kpi-rate')).textContent).toContain('/min');
+    expect(screen.getByTestId('kpi-rate').textContent).not.toContain('0/s');
+  });
+
   it('customize opens the new dashboard', async () => {
     render(Page);
     await fireEvent.click(await screen.findByRole('button', { name: 'Customize' }));

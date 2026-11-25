@@ -171,6 +171,13 @@ describe('variables CRUD', () => {
     expect((await create([{ ...hostVar, name: 'Not Valid' }])).statusCode).toBe(400);
     expect((await create([hostVar, hostVar])).statusCode).toBe(400);
     expect((await create([{ ...hostVar, attr: { scope: 'resource', key: "x'; --" } }])).statusCode).toBe(400);
+    // A metric-scope variable must name a metric.
+    const metricVar = { ...hostVar, name: 'route', attr: { scope: 'metric', key: 'http.route' } };
+    const noMetric = await create([metricVar]);
+    expect(noMetric.statusCode).toBe(400);
+    expect(noMetric.payload).toContain('must name a metric');
+    expect((await create([{ ...metricVar, metricName: '' }])).statusCode).toBe(400);
+    expect((await create([{ ...metricVar, metricName: 'http.server.request.duration' }])).statusCode).toBe(201);
     const six = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => ({ ...hostVar, name }));
     expect((await create(six)).statusCode).toBe(400);
   });

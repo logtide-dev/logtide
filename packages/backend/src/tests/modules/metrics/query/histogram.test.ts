@@ -112,10 +112,110 @@ describe('diffHistogram (cumulative snapshots)', () => {
     expect(diffHistogram(h([1, 2], [5, 1, 1], 9), cur)).toBe(cur);
   });
 
-  it('changed bounds are a reset', () => {
-    const cur = h([1, 5], [3, 3, 3], 9);
-    expect(diffHistogram(h([1, 2], [1, 1, 1], 3), cur)).toBe(cur);
-    expect(diffHistogram(h([1], [1, 1], 3), cur)).toBe(cur);
+  it('same bounds keep the snapshot bounds', () => {
+    const cur = h([1, 2], [2, 4, 3], 25);
+    expect(diffHistogram(h([1, 2], [1, 2, 3], 10), cur).bounds).toBe(cur.bounds);
+  });
+});
+
+describe('diffHistogram with changed bounds (union re-bucketing)', () => {
+  it('is not a reset: both snapshots go onto the union of the bounds', () => {
+    // union [1,2,5]; prev -> [1, 1, 0, 1], cur -> [3, 0, 3, 3]; common bound 1.
+    // (-Inf,1]: 3 - 1 = 2. (1,+Inf): old mass 2 taken from the top: +Inf 3 -> 1.
+    expect(diffHistogram(h([1, 2], [1, 1, 1], 3), h([1, 5], [3, 3, 3], 9))).toEqual(h([1, 2, 5], [2, 0, 3, 1], 6, 6));
+  });
+
+  it('a coarser previous snapshot (bound added)', () => {
+    // union [1,5]; prev -> [1, 0, 1]; cur [3, 3, 3]
+    expect(diffHistogram(h([1], [1, 1], 2), h([1, 5], [3, 3, 3], 9))).toEqual(h([1, 5], [2, 3, 2], 7, 7));
+  });
+
+  it('a finer previous snapshot (bound removed)', () => {
+    // union [1,2,5]; prev [1,1,1,0]; cur -> [2, 0, 4, 0]; common 1 and 5.
+    // (1,5]: old mass 2 taken from (2,5] first.
+    expect(diffHistogram(h([1, 2, 5], [1, 1, 1, 0], 3), h([1, 5], [2, 4, 0], 9))).toEqual(h([1, 2, 5], [1, 0, 2, 0], 6, 3));
+  });
+
+  it('old mass spills into lower union buckets when the top one is not enough', () => {
+    // union [1,2,5]; prev [1,2] -> [0, 0, 0, 4] (all above 2); cur [1,5] ->
+    // [0, 0, 3, 2]; one segment above 1 (common bound 1): old 4 -> +Inf 2 -> 0,
+    // then (2,5] 3 -> 1.
+    expect(diffHistogram(h([1, 2], [0, 0, 4], 40), h([1, 5], [0, 3, 2], 50))).toEqual(h([1, 2, 5], [0, 0, 1, 0], 10, 1));
+  });
+
+  it('no common bound: one segment over the whole range', () => {
+    // union [2,3]; prev [2] -> [1, 0, 1]; cur [3] -> [0, 2, 2]; old 2 from the top.
+    expect(diffHistogram(h([2], [1, 1], 2), h([3], [2, 2], 6))).toEqual(h([2, 3], [0, 2, 0], 4, 2));
+  });
+
+  it('a count decrease with other bounds is a reset', () => {
+    const cur = h([1, 5], [1, 0, 0], 1);
+    expect(diffHistogram(h([1, 2], [5, 5, 5], 50), cur)).toBe(cur);
+  });
+
+  it('a lower total in a segment of common bounds is a reset even when the count grows', () => {
+    // (-Inf,1] is exact in both: 5 -> 1 can only be a restart.
+    const cur = h([1, 5], [1, 9, 0], 30);
+    expect(diffHistogram(h([1, 2], [5, 0, 0], 5), cur)).toBe(cur);
+  });
+
+  it('an empty previous snapshot with other bounds: the delta is the new one on the union', () => {
+    expect(diffHistogram(h([10], [0, 0], 0), h([1, 5], [1, 2, 3], 20))).toEqual(h([1, 5, 10], [1, 2, 0, 3], 20, 6));
+  });
+
+  it('property: exact per segment, never negative, adds up to the new observations', () => {
+    let seed = 12345;
+    const rand = () => {
+      seed = (seed * 48271) % 2147483647;
+      return seed / 2147483647;
+    };
+    const grid = [0.5, 1, 2, 3, 5, 8, 13, 21];
+    const pickBounds = () => grid.filter(() => rand() < 0.5);
+    const toHist = (bounds: number[], obs: number[]): Histogram => {
+      const counts = new Array<number>(bounds.length + 1).fill(0);
+      for (const v of obs) {
+        const i = bounds.findIndex((b) => v <= b);
+        counts[i === -1 ? bounds.length : i]++;
+      }
+      return h(bounds, counts, obs.reduce((a, b) => a + b, 0), obs.length);
+    };
+    const below = (hist: Histogram, bound: number) =>
+      hist.counts.slice(0, hist.bounds.indexOf(bound) + 1).reduce((a, b) => a + b, 0);
+    for (let round = 0; round < 300; round++) {
+      const before = Array.from({ length: Math.floor(rand() * 30) }, () => rand() * 25);
+      const added = Array.from({ length: Math.floor(rand() * 30) }, () => rand() * 25);
+      const prev = toHist(pickBounds(), before);
+      const cur = toHist(pickBounds(), [...before, ...added]);
+      const d = diffHistogram(prev, cur);
+      expect(d).not.toBe(cur);
+      expect(d.counts.every((c) => c >= 0)).toBe(true);
+      expect(d.counts.reduce((a, b) => a + b, 0)).toBe(added.length);
+      expect(d.count).toBe(added.length);
+      expect(d.counts).toHaveLength(d.bounds.length + 1);
+      expect(d.bounds).toEqual([...new Set([...prev.bounds, ...cur.bounds])].sort((a, b) => a - b));
+      // At every bound present in both snapshots the delta CDF is exact.
+      for (const b of prev.bounds.filter((x) => cur.bounds.includes(x))) {
+        expect(below(d, b)).toBe(added.filter((v) => v <= b).length);
+      }
+    }
+  });
+
+  it('cumulativeToDelta keeps diffing across a bound change', () => {
+    const grid = [0, MIN, 2 * MIN, 3 * MIN];
+    const s: HistSeries = {
+      labels: {},
+      values: [h([1], [1, 0], 1), h([1, 5], [2, 1, 0], 4), h([1, 5], [2, 3, 0], 10), h([1, 5], [3, 3, 1], 20)],
+      seconds: [60, 60, 60, 60],
+    };
+    const [out] = cumulativeToDelta([s], grid);
+    expect(out.values[1]).toEqual(h([1, 5], [1, 1, 0], 3, 2));
+    expect(out.values[2]).toEqual(h([1, 5], [0, 2, 0], 6, 2));
+    expect(out.values[3]).toEqual(h([1, 5], [1, 0, 1], 10, 2));
+  });
+
+  it('canonical grid snapshots (identical bounds) diff bucket by bucket', () => {
+    const bounds = [0, 0.5, 1, 2];
+    expect(diffHistogram(h(bounds, [0, 1, 2, 0, 0], 2), h(bounds, [1, 1, 4, 1, 0], 7))).toEqual(h(bounds, [1, 0, 2, 1, 0], 5, 4));
   });
 });
 

@@ -73,19 +73,85 @@ function sameBounds(a: number[], b: number[]): boolean {
   return true;
 }
 
+/** Sorted, de-duplicated union of bound sets. */
+function unionBounds(sets: number[][]): number[] {
+  return [...new Set(sets.flat())].sort((a, b) => a - b);
+}
+
 /**
- * Delta between two cumulative snapshots. A reset (different bounds, a lower
- * count or any lower bucket) makes the new snapshot the delta.
+ * Counts of `h` re-bucketed onto `bounds` (a superset of h.bounds): each
+ * source bucket lands in the target bucket with the same upper bound (+Inf
+ * with +Inf), so the cumulative count at every original bound is kept and the
+ * target buckets that split a source bucket get its count in the top one.
+ */
+function rebucket(h: Histogram, bounds: number[]): number[] {
+  const position = new Map<number, number>();
+  bounds.forEach((b, i) => position.set(b, i));
+  const counts = new Array<number>(bounds.length + 1).fill(0);
+  for (let i = 0; i < h.counts.length; i++) {
+    const target = i < h.bounds.length ? (position.get(h.bounds[i]) as number) : bounds.length;
+    counts[target] += h.counts[i];
+  }
+  return counts;
+}
+
+/**
+ * Delta between two cumulative snapshots.
+ *
+ * Same bounds: bucket by bucket; a lower count or any lower bucket is a reset
+ * and the new snapshot is the delta.
+ *
+ * Different bounds (a series whose bucket layout changed): not a reset by
+ * itself. Both snapshots are re-bucketed onto the union of the bounds. Only
+ * the bounds present in BOTH snapshots split the range into intervals where
+ * both counts are exact (segments); inside a segment the earlier snapshot's
+ * mass is unknown in detail. Per segment:
+ * - the delta total (new minus old) is exact; a negative one is a reset (the
+ *   new snapshot, with its own bounds, is the delta), as is a lower count;
+ * - the old mass is taken out of the new snapshot's union buckets from the
+ *   top down (consistent with re-bucketing, which puts a source bucket's
+ *   count at its upper bound), so every delta bucket is >= 0 and the segment
+ *   adds up to the exact delta.
+ * The result carries the union bounds; sum and count are the plain
+ * differences.
  */
 export function diffHistogram(prev: Histogram, cur: Histogram): Histogram {
-  if (!sameBounds(prev.bounds, cur.bounds) || cur.count < prev.count) return cur;
-  const counts = new Array<number>(cur.counts.length);
-  for (let i = 0; i < cur.counts.length; i++) {
-    const d = cur.counts[i] - prev.counts[i];
-    if (d < 0) return cur;
-    counts[i] = d;
+  if (cur.count < prev.count) return cur;
+  if (sameBounds(prev.bounds, cur.bounds)) {
+    const counts = new Array<number>(cur.counts.length);
+    for (let i = 0; i < cur.counts.length; i++) {
+      const d = cur.counts[i] - prev.counts[i];
+      if (d < 0) return cur;
+      counts[i] = d;
+    }
+    return { bounds: cur.bounds, counts, sum: cur.sum - prev.sum, count: cur.count - prev.count };
   }
-  return { bounds: cur.bounds, counts, sum: cur.sum - prev.sum, count: cur.count - prev.count };
+
+  const bounds = unionBounds([prev.bounds, cur.bounds]);
+  const p = rebucket(prev, bounds);
+  const c = rebucket(cur, bounds);
+  const inCur = new Set(cur.bounds);
+  const common = new Set(prev.bounds.filter((b) => inCur.has(b)));
+  const counts = new Array<number>(bounds.length + 1).fill(0);
+  let start = 0;
+  for (let i = 0; i <= bounds.length; i++) {
+    // A segment ends at a common bound or at +Inf.
+    if (i < bounds.length && !common.has(bounds[i])) continue;
+    let remaining = 0;
+    let total = 0;
+    for (let j = start; j <= i; j++) {
+      remaining += p[j];
+      total += c[j];
+    }
+    if (total < remaining) return cur;
+    for (let j = i; j >= start; j--) {
+      const take = Math.min(c[j], remaining);
+      counts[j] = c[j] - take;
+      remaining -= take;
+    }
+    start = i + 1;
+  }
+  return { bounds, counts, sum: cur.sum - prev.sum, count: cur.count - prev.count };
 }
 
 /**
@@ -122,24 +188,20 @@ export function mergeHistograms(list: Array<Histogram | null | undefined>): Hist
   if (present.length === 0) return null;
   if (present.length === 1) return { ...present[0], bounds: [...present[0].bounds], counts: [...present[0].counts] };
   const first = present[0];
-  let bounds = first.bounds;
-  if (!present.every((h) => sameBounds(h.bounds, first.bounds))) {
-    bounds = [...new Set(present.flatMap((h) => h.bounds))].sort((a, b) => a - b);
-  }
-  const position = new Map<number, number>();
-  bounds.forEach((b, i) => position.set(b, i));
+  const bounds = present.every((h) => sameBounds(h.bounds, first.bounds))
+    ? [...first.bounds]
+    : unionBounds(present.map((h) => h.bounds));
   const counts = new Array<number>(bounds.length + 1).fill(0);
   let sum = 0;
   let count = 0;
   for (const h of present) {
-    for (let i = 0; i < h.counts.length; i++) {
-      const target = i < h.bounds.length ? (position.get(h.bounds[i]) as number) : bounds.length;
-      counts[target] += h.counts[i];
-    }
+    rebucket(h, bounds).forEach((c, i) => {
+      counts[i] += c;
+    });
     sum += h.sum;
     count += h.count;
   }
-  return { bounds: [...bounds], counts, sum, count };
+  return { bounds, counts, sum, count };
 }
 
 /**

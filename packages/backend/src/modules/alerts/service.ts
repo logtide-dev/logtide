@@ -26,11 +26,11 @@ import {
 } from './lifecycle.js';
 import { openAlertIncident, resolveAlertIncident } from './incident-sync.js';
 import {
-  clearMetricInstances,
   evaluateMetricRule,
-  firingMetricInstances,
   metricInstancePayload,
   metricWindowFromConfig,
+  takeMetricInstances,
+  type MetricInstanceRow,
 } from './metric-evaluator.js';
 import type { AlertEvaluationResult, AlertNotificationJobData, AlertNotificationKind } from './types.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
@@ -379,18 +379,15 @@ export class AlertsService {
     }
 
     if (input.enabled === false) {
-      // A disabled rule is no longer evaluated: it leaves the firing state in
-      // the same UPDATE (no alert.resolved is sent), and its incident is
-      // resolved as manual first (row A1).
-      const current = await this.getLifecycleState(id, organizationId);
-      if (!current) return null;
-      if (current.state === 'firing') {
-        await this.resolveFiringRule(current);
-      } else if (current.alert_type === 'metric') {
-        // Pending breach counters of a disabled rule start over when re-enabled.
-        await clearMetricInstances(current);
+      // A disabled rule is no longer evaluated (row A1): it is flipped to
+      // disabled and ok under the rule row lock, then its incident is
+      // resolved as manual and the resolve notifications are queued.
+      const stopped = await this.stopRule(id, organizationId, updateData);
+      if (!stopped) return null;
+      if (stopped.previous.state === 'firing') {
+        await this.resolveFiringRule(stopped.previous, stopped.firingInstances);
       }
-      updateData.state = 'ok';
+      return this.mapAlertRule(stopped.row);
     }
 
     const rule = await db
@@ -410,10 +407,13 @@ export class AlertsService {
    * afterwards the incident could no longer be found by its rule.
    */
   async deleteAlertRule(id: string, organizationId: string): Promise<boolean> {
-    const current = await this.getLifecycleState(id, organizationId);
-    if (!current) return false;
-    if (current.state === 'firing') {
-      await this.resolveFiringRule(current);
+    // Disabled first under the rule row lock, so a running evaluation can no
+    // longer apply a run or (re)open the incident; then the incident is
+    // resolved while the rule still exists, then the row goes.
+    const stopped = await this.stopRule(id, organizationId, { updated_at: new Date() });
+    if (!stopped) return false;
+    if (stopped.previous.state === 'firing') {
+      await this.resolveFiringRule(stopped.previous, stopped.firingInstances);
     }
 
     const result = await db
@@ -453,12 +453,13 @@ export class AlertsService {
     rule: Pick<
       Selectable<AlertRulesTable>,
       'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'last_triggered_at' | 'last_notified_at' | 'metric_config'
-    >
+    >,
+    firingInstances: MetricInstanceRow[]
   ): Promise<void> {
     const now = new Date();
     const incidentId = await resolveAlertIncident(rule, 'manual', now);
     if (rule.alert_type === 'metric') {
-      await this.resolveFiringMetricInstances(rule, incidentId, now);
+      await this.resolveFiringMetricInstances(rule, firingInstances, incidentId, now);
       return;
     }
 
@@ -495,17 +496,18 @@ export class AlertsService {
 
   /**
    * Metric rule disabled or deleted while firing: one `resolved` job per
-   * firing instance whose episode notified anyone (same as a recovery), then
-   * the instances are forgotten (a re-enabled rule starts from scratch).
+   * firing instance whose episode notified anyone (same as a recovery). The
+   * instances were already forgotten by stopRule (a re-enabled rule starts
+   * from scratch).
    */
   private async resolveFiringMetricInstances(
     rule: Pick<Selectable<AlertRulesTable>, 'id' | 'organization_id' | 'project_id' | 'name' | 'metric_config'>,
+    firing: MetricInstanceRow[],
     incidentId: string | null,
     now: Date
   ): Promise<void> {
     const config = rule.metric_config as MetricAlertConfig | null;
     try {
-      const firing = await firingMetricInstances(rule);
       const notified = firing.filter(
         (i) =>
           i.last_notified_at !== null &&
@@ -537,25 +539,51 @@ export class AlertsService {
     } catch (error) {
       console.error(`[Alerts] Failed to queue the resolve of metric rule ${rule.id}:`, error);
     }
-    await clearMetricInstances(rule);
   }
 
-  private async getLifecycleState(
+  /**
+   * Disable a rule under its row lock (SELECT ... FOR UPDATE, the lock the
+   * evaluation takes before applying a run): `enabled = false`, state ok,
+   * plus `set`, and the metric instances are forgotten in the same
+   * transaction. An evaluation that already holds the lock finishes first; one
+   * that comes later finds the rule disabled and applies nothing. Returns the
+   * lifecycle state before the change, the firing metric instances and the
+   * updated row, or null when the rule is not in the organization.
+   */
+  private async stopRule(
     id: string,
-    organizationId: string
-  ): Promise<
-    | Pick<
-        Selectable<AlertRulesTable>,
-        'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'state' | 'last_triggered_at' | 'last_notified_at' | 'metric_config'
-      >
-    | undefined
-  > {
-    return db
-      .selectFrom('alert_rules')
-      .select(['id', 'organization_id', 'project_id', 'name', 'alert_type', 'threshold', 'time_window', 'state', 'last_triggered_at', 'last_notified_at', 'metric_config'])
-      .where('id', '=', id)
-      .where('organization_id', '=', organizationId)
-      .executeTakeFirst();
+    organizationId: string,
+    set: Record<string, unknown>
+  ): Promise<{
+    previous: Pick<
+      Selectable<AlertRulesTable>,
+      'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'state' | 'last_triggered_at' | 'last_notified_at' | 'metric_config'
+    >;
+    firingInstances: MetricInstanceRow[];
+    row: Selectable<AlertRulesTable>;
+  } | null> {
+    return db.transaction().execute(async (trx) => {
+      const previous = await trx
+        .selectFrom('alert_rules')
+        .select(['id', 'organization_id', 'project_id', 'name', 'alert_type', 'threshold', 'time_window', 'state', 'last_triggered_at', 'last_notified_at', 'metric_config'])
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!previous) return null;
+
+      // Pending breach counters of a disabled rule start over when re-enabled.
+      const firingInstances = previous.alert_type === 'metric' ? await takeMetricInstances(trx, previous) : [];
+
+      const row = await trx
+        .updateTable('alert_rules')
+        .set({ ...set, enabled: false, state: 'ok' })
+        .where('id', '=', id)
+        .where('organization_id', '=', organizationId)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return { previous, firingInstances, row };
+    });
   }
 
   /**

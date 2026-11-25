@@ -123,7 +123,7 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 
 **Metric alert instance (`data.metric`)**
 
-Metric alert rules watch one query or formula of a metrics query. When the query is grouped, every group is its own alert instance: it fires, re-notifies and resolves on its own, so one rule can send several `alert.triggered` and `alert.resolved` events, one per group. On these events `log_count` is `0`, `threshold` is the metric threshold and `time_window` is the evaluation window in minutes.
+Metric alert rules watch one query or formula of a metrics query. When the query is grouped, every group is its own alert instance: it fires, re-notifies and resolves on its own, so one rule can send several `alert.triggered` and `alert.resolved` events, one per group. Missing data never fires or resolves an instance: a check without data keeps the instance as it is (firing instances keep firing, without re-notifying) until data comes back or the rule is disabled or deleted. On these events `log_count` is `0`, `threshold` is the metric threshold and `time_window` is the evaluation window in minutes.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -131,7 +131,7 @@ Metric alert rules watch one query or formula of a metrics query. When the query
 | `source` | `string` | Metric name of a query, expression of a formula. |
 | `condition` | `string` | `above` or `below` (strict comparison). |
 | `threshold` | `number` | Threshold in the metric's raw unit (0-1 ratios stay 0-1). |
-| `value` | `number \| null` | Average of the 1 minute buckets of the window; `null` on a resolve caused by missing data. |
+| `value` | `number \| null` | Average of the 1 minute buckets of the window (for a resolve sent because the rule was disabled or deleted, the last evaluated value); `null` only when no value is known. |
 | `unit` | `string \| null` | Unit of the value (UCUM style, from the metric catalog). |
 | `window` | `string` | `1m`, `5m`, `15m` or `1h`. |
 | `for_evaluations` | `number` | Consecutive breaching checks needed to fire. |

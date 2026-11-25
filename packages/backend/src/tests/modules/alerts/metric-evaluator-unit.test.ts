@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import type { MetricAlertConfig, MetricQueryResponse } from '@logtide/shared';
 import {
   groupsFromResponse,
+  metricAlertQueryRange,
   metricAlertWindowRange,
+  selectAlertGroups,
   metricIncidentTitle,
   metricInstanceTitle,
   planMetricInstances,
@@ -66,6 +68,12 @@ describe('metricAlertWindowRange', () => {
     expect(from.toISOString()).toBe('2026-11-25T10:02:00.000Z');
     expect(metricAlertWindowRange('1h', NOW).from.toISOString()).toBe('2026-11-25T09:07:00.000Z');
   });
+
+  it('queries one lead step before the window', () => {
+    const { from, to } = metricAlertQueryRange('1m', NOW);
+    expect(to.toISOString()).toBe('2026-11-25T10:07:00.000Z');
+    expect(from.toISOString()).toBe('2026-11-25T10:05:00.000Z');
+  });
 });
 
 describe('groupsFromResponse', () => {
@@ -118,6 +126,45 @@ describe('groupsFromResponse', () => {
     expect(result.groups).toEqual([
       { groupKey: 'host.name=web-1', labels: { 'host.name': 'web-1' }, value: 0.9 },
       { groupKey: 'host.name=web-2', labels: { 'host.name': 'web-2' }, value: null },
+    ]);
+  });
+
+  it('drops the lead step before averaging', () => {
+    const lead = response({
+      series: [
+        {
+          id: 'A|host.name=web-1',
+          queryId: 'A',
+          labels: { 'host.name': 'web-1' },
+          name: 'web-1',
+          unit: '1',
+          comparison: false,
+          points: [
+            { t: '2026-11-25T10:05:00.000Z', v: 100 },
+            { t: '2026-11-25T10:06:00.000Z', v: 2 },
+          ],
+          stats: { min: 2, avg: 51, max: 100, last: 2 },
+        },
+        {
+          id: 'A|host.name=web-2',
+          queryId: 'A',
+          labels: { 'host.name': 'web-2' },
+          name: 'web-2',
+          unit: '1',
+          comparison: false,
+          points: [
+            { t: '2026-11-25T10:05:00.000Z', v: 7 },
+            { t: '2026-11-25T10:06:00.000Z', v: null },
+          ],
+          stats: { min: 7, avg: 7, max: 7, last: 7 },
+        },
+      ],
+    });
+    const result = groupsFromResponse(config(), lead, new Date('2026-11-25T10:06:00.000Z'));
+    expect(result.groups.map((g) => [g.groupKey, g.value])).toEqual([
+      ['host.name=web-1', 2],
+      // Only the lead bucket had data: no data in the window.
+      ['host.name=web-2', null],
     ]);
   });
 
@@ -179,10 +226,33 @@ describe('planMetricInstances', () => {
     expect(resolved.next).toBeNull();
   });
 
-  it('resolves a firing group that has no data any more', () => {
-    const firing = instance({ state: 'firing', consecutive_breaches: 3, last_triggered_at: NOW, last_notified_at: NOW });
-    const [plan] = planMetricInstances(config(), [], [firing], RULE, plus(1));
-    expect(plan).toMatchObject({ groupKey: 'host.name=web-1', value: null, decision: { type: 'resolve', notification: 'resolved' } });
+  it('holds a firing group that has no data (no resolve, no re-notify)', () => {
+    const firing = instance({ state: 'firing', consecutive_breaches: 3, last_value: 0.97, last_triggered_at: NOW, last_notified_at: NOW });
+    const rule = { snoozedUntil: null, renotifyMinutes: 5 };
+    for (const groups of [[], [web1(null)]]) {
+      const [plan] = planMetricInstances(config(), groups, [firing], rule, plus(30));
+      expect(plan).toMatchObject({ groupKey: 'host.name=web-1', value: null, decision: { type: 'none' } });
+      expect(plan.next).toEqual({
+        state: 'firing',
+        consecutive_breaches: 3,
+        last_value: 0.97,
+        last_triggered_at: NOW,
+        last_notified_at: NOW,
+      });
+    }
+    // Data comes back on the good side: resolves.
+    const [back] = planMetricInstances(config(), [web1(0.1)], [firing], rule, plus(31));
+    expect(back.decision).toEqual({ type: 'resolve', notification: 'resolved' });
+  });
+
+  it('no data neither counts nor resets a pending breach count', () => {
+    const pending = instance({ consecutive_breaches: 1, last_value: 0.95 });
+    const [held] = planMetricInstances(config(), [web1(null)], [pending], RULE, NOW);
+    expect(held.decision).toEqual({ type: 'none' });
+    expect(held.next).toMatchObject({ state: 'ok', consecutive_breaches: 1, last_value: 0.95 });
+    // A group without a row and without data needs no row.
+    const [none] = planMetricInstances(config(), [web1(null)], [], RULE, NOW);
+    expect(none.next).toBeNull();
   });
 
   it('fires silently while snoozed and notifies once the snooze ends', () => {
@@ -218,6 +288,35 @@ describe('planMetricInstances', () => {
       ['host.name=web-1', 'fire'],
       ['host.name=web-2', 'none'],
     ]);
+  });
+});
+
+describe('selectAlertGroups', () => {
+  const g = (host: string, value: number | null) => ({
+    groupKey: `host.name=${host}`,
+    labels: { 'host.name': host },
+    value,
+  });
+  const hosts = Array.from({ length: 80 }, (_, i) => g(`h${String(i).padStart(2, '0')}`, i));
+
+  it('ranks new breaching groups by the alert direction up to the cap', () => {
+    const below = selectAlertGroups({ condition: 'below', threshold: 10 }, hosts, [], 3);
+    expect(below.map((x) => x.value)).toEqual([0, 1, 2]);
+    const above = selectAlertGroups({ condition: 'above', threshold: 10 }, hosts, [], 3);
+    expect(above.map((x) => x.value)).toEqual([79, 78, 77]);
+    // Non breaching groups without an instance are left out.
+    expect(selectAlertGroups({ condition: 'above', threshold: 100 }, hosts, [])).toEqual([]);
+  });
+
+  it('always keeps the groups that have an instance, whatever their rank or value', () => {
+    const instances = [{ group_key: 'host.name=h40' }, { group_key: 'host.name=gone' }];
+    const picked = selectAlertGroups({ condition: 'below', threshold: 10 }, [...hosts, g('null', null)], instances, 4);
+    expect(picked.map((x) => x.groupKey)).toEqual(['host.name=h40', 'host.name=h00', 'host.name=h01']);
+  });
+
+  it('a full rule admits no new group', () => {
+    const instances = Array.from({ length: 50 }, (_, i) => ({ group_key: `k${i}` }));
+    expect(selectAlertGroups({ condition: 'below', threshold: 10 }, hosts, instances)).toEqual([]);
   });
 });
 

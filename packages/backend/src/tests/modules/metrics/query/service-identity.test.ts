@@ -131,6 +131,7 @@ import {
   MAX_RAW_SERIES,
   MAX_IDENTITY_METRIC_KEYS,
   MAX_INTERNAL_SERIES_LIMIT,
+  MAX_UNFOLDED_GROUPS,
   KEY_DISCOVERY_WINDOW_MS,
   MetricQueryValidationError,
   seriesLimitCap,
@@ -401,6 +402,33 @@ describe('formula fold (item 21)', () => {
   });
 });
 
+describe('unfolded groups cap', () => {
+  it('returns at most MAX_UNFOLDED_GROUPS groups for queries and formulas, first by labels, with a warning', async () => {
+    const n = MAX_UNFOLDED_GROUPS + 5;
+    for (let i = 0; i < n; i++) {
+      points.push({ project: 'p1', metric: 'g', t: T0, v: i, resource: { 'host.name': `h${String(i).padStart(4, '0')}` } });
+    }
+    const res = await run(
+      base([q({ metricName: 'g', aggregation: 'max', spaceAggregation: 'max', groupBy: [hostRef] })], {
+        formulas: [{ id: 'F1', expression: 'A * 2' }],
+        internal: { unfoldedGroups: true },
+      }),
+    );
+    const a = res.series.filter((s) => s.queryId === 'A');
+    const f = res.series.filter((s) => s.queryId === 'F1');
+    expect(a).toHaveLength(MAX_UNFOLDED_GROUPS);
+    expect(f).toHaveLength(MAX_UNFOLDED_GROUPS);
+    expect(a.some((s) => s.labels.__other__)).toBe(false);
+    // The lowest values are kept too (no ranking by value): h0000 is in, h1004 is out.
+    expect(a.some((s) => s.labels['resource.host.name'] === 'h0000')).toBe(true);
+    expect(a.some((s) => s.labels['resource.host.name'] === `h${n - 1}`)).toBe(false);
+    expect(res.queries[0]).toMatchObject({ seriesTotal: n, seriesShown: MAX_UNFOLDED_GROUPS });
+    expect(res.queries[1]).toMatchObject({ seriesTotal: n, seriesShown: MAX_UNFOLDED_GROUPS });
+    expect(res.warnings).toContain(`Query A: more than ${MAX_UNFOLDED_GROUPS} groups, only the first ${MAX_UNFOLDED_GROUPS} are evaluated`);
+    expect(res.warnings).toContain(`Formula F1: more than ${MAX_UNFOLDED_GROUPS} groups, only the first ${MAX_UNFOLDED_GROUPS} are evaluated`);
+  });
+});
+
 describe('internal series cap', () => {
   it('raises the series limit cap for internal callers only, up to the internal max', async () => {
     for (let i = 0; i < 60; i++) points.push({ project: 'p1', metric: 'g', t: T0, v: i, resource: { 'host.name': `h${String(i).padStart(2, '0')}` } });
@@ -412,6 +440,10 @@ describe('internal series cap', () => {
     const internal = await run(base([spec], { internal: { maxSeries: 60 } }));
     expect(internal.queries[0].seriesShown).toBe(60);
     expect(internal.series.some((s) => s.labels.__other__ === 'true')).toBe(false);
+
+    // Both internal options together: unfolded wins over the limit.
+    const both = await run(base([{ ...spec, limit: 5 }], { internal: { maxSeries: 60, unfoldedGroups: true } }));
+    expect(both.queries[0].seriesShown).toBe(60);
 
     expect(seriesLimitCap(undefined)).toBe(50);
     expect(seriesLimitCap({ maxSeries: 10 })).toBe(50);

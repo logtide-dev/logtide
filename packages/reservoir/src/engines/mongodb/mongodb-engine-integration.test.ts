@@ -1341,6 +1341,8 @@ describe('MongoDBEngine (integration)', () => {
     beforeEach(async () => {
       const at = (min: number) => new Date(Date.UTC(2025, 0, 15, 10, min));
       await engine.ingestMetrics([
+        // Same length as the pick, other bounds: another merge class, skipped.
+        makeMetric({ time: at(0), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' }, histogramData: histogram([7, 0, 0], 5, 7, [10, 50]) }),
         makeMetric({ time: at(1), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' }, histogramData: histogram([1, 2, 0], 50, 3) }),
         makeMetric({ time: at(2), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' }, histogramData: histogram([0.5, 1.5, 2], 400.5, 4) }),
         makeMetric({ time: at(3), metricName: 'http.duration', metricType: 'histogram', attributes: { route: '/a' }, histogramData: histogram([9, 9], 1, 18, [5]) }),
@@ -1360,7 +1362,7 @@ describe('MongoDBEngine (integration)', () => {
       }]);
     });
 
-    it('hist_sum adds up the points of the pick length element-wise', async () => {
+    it('hist_sum adds up the points with the pick bounds element-wise', async () => {
       const result = await engine.aggregateMetrics({ ...params, aggregation: 'hist_sum' });
       expect(result.timeseries).toEqual([{
         bucket: new Date('2025-01-15T10:00:00Z'),

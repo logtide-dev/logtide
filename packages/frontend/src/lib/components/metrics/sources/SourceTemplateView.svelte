@@ -38,6 +38,8 @@
     kind: MetricSourceKind;
     name: string;
     metricNames: string[];
+    /** false hides the panels that only read spans (services without traces). */
+    hasTraces?: boolean;
     organizationId: string;
     projectIds: string[] | null;
     from: string;
@@ -45,10 +47,10 @@
     tick?: number;
   }
 
-  let { kind, name, metricNames, organizationId, projectIds, from, to, tick = 0 }: Props = $props();
+  let { kind, name, metricNames, hasTraces = true, organizationId, projectIds, from, to, tick = 0 }: Props = $props();
 
   const template = $derived(SOURCE_TEMPLATES[kind]);
-  const sections = $derived(applicableTemplatePanels(template, metricNames));
+  const sections = $derived(applicableTemplatePanels(template, metricNames, { hasTraces }));
 
   /** Smallest preset that covers the window, so trace panels (which read their own range) follow the page. */
   function presetFor(fromIso: string, toIso: string): PanelTimeRange {

@@ -5,7 +5,10 @@
     variables       DashboardVariable[]
     values          current selection by name (null or missing = All)
     organizationId  scope of the option lookup
-    projectId       dashboard project scope (null = every project)
+    projectId       dashboard project scope (null = every project), used when
+                    the dashboard has no metrics panels
+    panels          dashboard panels; values are looked up across the union of
+                    the metrics panels' projectIds (any null = every project)
     onChange        (name, value | null) => void
     api             lookup client, defaults to metricsV2API (injectable for tests)
 
@@ -14,7 +17,7 @@
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { DashboardVariable } from '@logtide/shared';
+  import type { DashboardVariable, PanelInstance } from '@logtide/shared';
   import { SelectField } from '$lib/components/ui/select';
   import { metricsV2API, type MetricsV2API } from '$lib/api/metrics-v2';
 
@@ -25,19 +28,36 @@
     values: Record<string, string | null>;
     organizationId: string;
     projectId?: string | null;
+    panels?: PanelInstance[];
     onChange: (name: string, value: string | null) => void;
     api?: LookupApi;
   }
 
-  let { variables, values, organizationId, projectId = null, onChange, api = metricsV2API }: Props = $props();
+  let { variables, values, organizationId, projectId = null, panels = [], onChange, api = metricsV2API }: Props = $props();
 
   let options = $state<Record<string, string[]>>({});
   let loading = $state<Record<string, boolean>>({});
 
+  // Variables filter the metrics panels, so the selector must look up values
+  // where those panels read: the union of their projectIds, null = all.
+  const lookupProjectIds = $derived.by((): string[] | null => {
+    const ids = new Set<string>();
+    let hasMetrics = false;
+    for (const p of panels) {
+      if (p.config.type !== 'metrics') continue;
+      hasMetrics = true;
+      const pids = p.config.query.projectIds;
+      if (pids === null || pids === undefined) return null;
+      for (const id of pids) ids.add(id);
+    }
+    if (!hasMetrics) return projectId ? [projectId] : null;
+    return [...ids].sort();
+  });
+
   // Reload the options when the variable definitions or the scope change, not
   // when a selection changes.
   const loadKey = $derived(
-    JSON.stringify([organizationId, projectId, variables.map((v) => [v.name, v.attr, v.metricName ?? null])])
+    JSON.stringify([organizationId, lookupProjectIds, variables.map((v) => [v.name, v.attr, v.metricName ?? null])])
   );
 
   $effect(() => {
@@ -48,7 +68,7 @@
       api
         .getAttributeValues({
           organizationId,
-          projectIds: projectId ? [projectId] : null,
+          projectIds: lookupProjectIds,
           scope: v.attr.scope,
           key: v.attr.key,
           metricName: v.metricName ?? undefined,

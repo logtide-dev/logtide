@@ -24,7 +24,7 @@ import {
   type SourceSignalValue,
   type SourceSignalDef,
 } from '@logtide/shared';
-import { OPERATION_STATS_MAX_LIMIT, type MetricSource } from '@logtide/reservoir';
+import { OPERATION_STATS_MAX_LIMIT, type MetricSource, type OperationStat } from '@logtide/reservoir';
 import { db } from '../../../database/index.js';
 import { reservoir } from '../../../database/reservoir.js';
 import { customDashboardsService } from '../../custom-dashboards/service.js';
@@ -37,7 +37,7 @@ import {
   pickInterval,
   type HardwareStatusInput,
 } from './status.js';
-import { HTTP_SERVER_METRICS, histogramPercentile, redFromSeries, type MetricRed } from './red.js';
+import { HTTP_SERVER_METRICS, mixturePercentile, redFromSeries, sliceWindow, type MetricRed } from './red.js';
 
 export interface SourcesContext {
   organizationId: string;
@@ -48,10 +48,13 @@ export interface SourcesContext {
 }
 
 const SOURCE_LIMIT = 5000;
-const SERIES_CHUNK = 50;
 const CONCURRENCY = 6;
-const PROBE_CONCURRENCY = 8;
-const MAX_METRIC_NAMES = 1000;
+/** Names one source can send; far above anything real, there is no pagination in the engines. */
+const MAX_METRIC_NAMES = 10_000;
+/** Spans read per round when looking for the newest span of each service. */
+const LAST_SPAN_BATCH = 100;
+/** Rounds of the newest-span lookup per project; keeps the call count constant. */
+const LAST_SPAN_ROUNDS = 5;
 
 const EMPTY_SIGNAL = (unit: string | null): SourceSignalValue => ({ value: null, unit, spark: [] });
 
@@ -96,65 +99,20 @@ async function fetchSources(
 }
 
 /**
- * Metric names a source sent in the window.
- *
- * The reservoir has no "names of one source" call, so: take every metric name
- * of the projects (getMetricNames), then probe getMetricSources with a prefix
- * filter. A first-segment family probe ("system.") discards whole families the
- * source never sent; inside a present family each name is probed alone, with
- * the longer names that share its prefix excluded so a prefix match cannot
- * leak ("system.cpu.utilization" vs "system.cpu.utilization.total").
+ * Metric names a source sent in the window: one reservoir call that keeps the
+ * names with at least one point whose resource attribute equals the source.
  */
 export async function sourceMetricNames(ctx: SourcesContext, key: string, value: string): Promise<string[]> {
   if (ctx.projectIds.length === 0) return [];
-  const all = await reservoir.getMetricNames({
+  const res = await reservoir.getMetricNames({
     organizationId: ctx.organizationId,
     projectId: ctx.projectIds,
     from: ctx.from,
     to: ctx.to,
     limit: MAX_METRIC_NAMES,
+    filters: [{ scope: 'resource', key, op: 'eq', values: [value] }],
   });
-  const names = [...new Set(all.names.map((n) => n.name))].sort();
-  const has = async (include: string[], exclude: string[]): Promise<boolean> => {
-    const found = await fetchSources(ctx, key, {
-      includeMetricPrefixes: include,
-      ...(exclude.length > 0 ? { excludeMetricPrefixes: exclude } : {}),
-    });
-    return found.some((s) => s.value === value);
-  };
-
-  const families = new Map<string, string[]>();
-  const loners: string[] = [];
-  for (const name of names) {
-    const dot = name.indexOf('.');
-    if (dot < 0) loners.push(name);
-    else {
-      const fam = name.slice(0, dot + 1);
-      families.set(fam, [...(families.get(fam) ?? []), name]);
-    }
-  }
-
-  const presentFamilies = (
-    await mapLimit([...families.keys()], PROBE_CONCURRENCY, async (fam) => ((await has([fam], [])) ? fam : null))
-  ).filter((f): f is string => f !== null);
-
-  const toProbe: Array<{ name: string; alone: boolean }> = [];
-  for (const fam of presentFamilies) {
-    const list = families.get(fam) as string[];
-    for (const name of list) toProbe.push({ name, alone: list.length === 1 });
-  }
-  for (const name of loners) toProbe.push({ name, alone: false });
-
-  const result: string[] = [];
-  await mapLimit(toProbe, PROBE_CONCURRENCY, async ({ name, alone }) => {
-    if (alone) {
-      result.push(name);
-      return;
-    }
-    const longer = names.filter((n) => n !== name && n.startsWith(name));
-    if (await has([name], longer)) result.push(name);
-  });
-  return result.sort();
+  return [...new Set(res.names.map((n) => n.name))].sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -170,47 +128,39 @@ async function runSignal(
 ): Promise<SignalMap> {
   const out: SignalMap = new Map();
   const interval = pickInterval(ctx.to.getTime() - ctx.from.getTime(), SOURCE_SPARK_POINTS);
-  const chunks: string[][] = [];
-  for (let i = 0; i < hostNames.length; i += SERIES_CHUNK) chunks.push(hostNames.slice(i, i + SERIES_CHUNK));
   const label = 'resource.host.name';
 
-  await mapLimit(chunks, CONCURRENCY, async (chunk) => {
-    const query: ResolvedMetricQuery = {
-      organizationId: ctx.organizationId,
-      projectIds: ctx.projectIds,
-      from: ctx.from.toISOString(),
-      to: ctx.to.toISOString(),
-      interval,
-      compareTo: 'none',
-      display: 'lines',
-      formulas: [],
-      queries: [
-        {
-          id: 'A',
-          metricName: def.metricName,
-          aggregation: def.aggregation,
-          spaceAggregation: def.spaceAggregation,
-          filters: [
-            ...(def.filters ?? []),
-            ...(hostNames.length > SERIES_CHUNK
-              ? [{ scope: 'resource' as const, key: 'host.name', op: 'in' as const, values: chunk }]
-              : []),
-          ],
-          groupBy: [{ scope: 'resource', key: 'host.name' }],
-          limit: SERIES_CHUNK,
-        },
-      ],
-      // Every host of the chunk is its own series, never folded into Other.
-      internal: { maxSeries: SERIES_CHUNK },
-    };
-    const res = await metricQueryService.run(query);
-    for (const s of res.series) {
-      const host = s.labels[label];
-      if (!host || s.comparison || s.queryId !== 'A') continue;
-      const spark = s.points.map((p) => p.v);
-      out.set(host, { value: lastNonNull(spark), unit: def.unit, spark });
-    }
-  });
+  // One grouped query for every host: the request count does not depend on how many hosts there are.
+  const query: ResolvedMetricQuery = {
+    organizationId: ctx.organizationId,
+    projectIds: ctx.projectIds,
+    from: ctx.from.toISOString(),
+    to: ctx.to.toISOString(),
+    interval,
+    compareTo: 'none',
+    display: 'lines',
+    formulas: [],
+    queries: [
+      {
+        id: 'A',
+        metricName: def.metricName,
+        aggregation: def.aggregation,
+        spaceAggregation: def.spaceAggregation,
+        filters: [...(def.filters ?? [])],
+        groupBy: [{ scope: 'resource', key: 'host.name' }],
+        limit: hostNames.length,
+      },
+    ],
+    // Every host is its own series (the public cap of 50 would fold the rest).
+    internal: { maxSeries: hostNames.length },
+  };
+  const res = await metricQueryService.run(query);
+  for (const s of res.series) {
+    const host = s.labels[label];
+    if (!host || s.comparison || s.queryId !== 'A') continue;
+    const spark = s.points.map((p) => p.v);
+    out.set(host, { value: lastNonNull(spark), unit: def.unit, spark });
+  }
   return out;
 }
 
@@ -387,17 +337,105 @@ interface SpanStats {
   p95: number | null;
 }
 
+interface SpanTrend {
+  rate: Array<number | null>;
+  errors: Array<number | null>;
+  p95: Array<number | null>;
+}
+
+interface SpanData {
+  /** Every service with spans in the window. */
+  services: Set<string>;
+  /** Entry-span stats (every span for a service the engine returned no entry stats for). */
+  stats: Map<string, SpanStats>;
+  trends: Map<string, SpanTrend>;
+  /** ms of the newest span of each service. */
+  lastSeen: Map<string, number>;
+}
+
+interface Acc {
+  calls: number;
+  errors: number;
+  ops: OperationStat[];
+}
+
+function accumulate(into: Map<string, Acc>, rows: OperationStat[], only?: string): void {
+  for (const r of rows) {
+    if (only !== undefined && r.service !== only) continue;
+    const cur = into.get(r.service) ?? { calls: 0, errors: 0, ops: [] };
+    cur.calls += r.count;
+    cur.errors += r.errorCount;
+    cur.ops.push(r);
+    into.set(r.service, cur);
+  }
+}
+
 /**
- * RED from traces counts entry spans only (server/consumer kinds, roots when a
- * scope has none) through getOperationStats and getLatencyHistogram. Services
- * are discovered with getServiceHealthStats (every span), which is also the
- * fallback when an engine cannot answer the entry-span calls.
+ * Newest span time per service. The reservoir has no "max start time per
+ * service" call, so each project is asked for its newest spans of the services
+ * still unresolved, a few rounds at most (a round resolves every service that
+ * shows up in the newest LAST_SPAN_BATCH spans). A service still unresolved
+ * after the rounds is reported at the start of its newest active slice, which
+ * can only make it look older, never fresher.
  */
-async function loadSpanStats(ctx: SourcesContext): Promise<Map<string, SpanStats>> {
+async function loadLastSeen(
+  ctx: SourcesContext,
+  perProject: Map<string, string[]>,
+  fallback: Map<string, number>,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  await mapLimit([...perProject.entries()], CONCURRENCY, async ([projectId, services]) => {
+    const remaining = new Set(services);
+    for (let round = 0; round < LAST_SPAN_ROUNDS && remaining.size > 0; round++) {
+      let rows;
+      try {
+        rows = await reservoir.querySpans({
+          projectId,
+          serviceName: [...remaining],
+          from: ctx.from,
+          to: ctx.to,
+          sortBy: 'start_time',
+          sortOrder: 'desc',
+          limit: LAST_SPAN_BATCH,
+        });
+      } catch {
+        break;
+      }
+      let progressed = false;
+      for (const span of rows.spans) {
+        if (!remaining.has(span.serviceName)) continue;
+        // Sorted newest first: the first span of a service is its newest.
+        out.set(span.serviceName, Math.max(out.get(span.serviceName) ?? 0, span.startTime.getTime()));
+        remaining.delete(span.serviceName);
+        progressed = true;
+      }
+      if (!progressed) break;
+    }
+    for (const svc of remaining) {
+      const f = fallback.get(svc);
+      if (f !== undefined) out.set(svc, Math.max(out.get(svc) ?? 0, f));
+    }
+  });
+  return out;
+}
+
+/**
+ * Span data of every service with a bounded number of reservoir calls per
+ * project (health stats, entry stats of the window, one entry stats call per
+ * spark slice, a few newest-span rounds), whatever the number of services.
+ * Entry spans (server/consumer kinds, roots when a scope has none) feed the
+ * headline and the spark alike; getServiceHealthStats (every span) discovers
+ * the services and covers any the entry stats missed.
+ */
+async function loadSpanData(ctx: SourcesContext, only?: string): Promise<SpanData> {
   const health = new Map<string, SpanStats>();
+  const perProject = new Map<string, string[]>();
   await mapLimit(ctx.projectIds, CONCURRENCY, async (projectId) => {
     const rows = await reservoir.getServiceHealthStats(projectId, ctx.from, ctx.to);
+    const names: string[] = [];
     for (const r of rows) {
+      if (only !== undefined && r.serviceName !== only) continue;
+      names.push(r.serviceName);
       const cur = health.get(r.serviceName) ?? { calls: 0, errors: 0, p95: null };
       cur.calls += r.totalCalls;
       cur.errors += r.totalErrors;
@@ -405,72 +443,78 @@ async function loadSpanStats(ctx: SourcesContext): Promise<Map<string, SpanStats
       if (r.p95LatencyMs !== null && (cur.p95 === null || r.p95LatencyMs > cur.p95)) cur.p95 = r.p95LatencyMs;
       health.set(r.serviceName, cur);
     }
+    if (names.length > 0) perProject.set(projectId, names);
+  });
+  const result: SpanData = { services: new Set(health.keys()), stats: new Map(), trends: new Map(), lastSeen: new Map() };
+  if (health.size === 0) return result;
+  const activeProjects = [...perProject.keys()];
+
+  const opParams = (projectId: string, from: Date, to: Date) => ({
+    projectId,
+    ...(only !== undefined ? { service: only } : {}),
+    from,
+    to,
+    limit: OPERATION_STATS_MAX_LIMIT,
   });
 
-  const out = new Map<string, SpanStats>();
-  await mapLimit([...health.keys()], CONCURRENCY, async (service) => {
+  // Headline: entry spans over the whole window, one call per project.
+  const entry = new Map<string, Acc>();
+  await mapLimit(activeProjects, CONCURRENCY, async (projectId) => {
     try {
-      let calls = 0;
-      let errors = 0;
-      let bounds: number[] = [];
-      let counts: number[] = [];
-      for (const projectId of ctx.projectIds) {
-        const ops = await reservoir.getOperationStats({
-          projectId,
-          service,
-          from: ctx.from,
-          to: ctx.to,
-          limit: OPERATION_STATS_MAX_LIMIT,
-        });
-        if (ops.length === 0) continue;
-        for (const o of ops) {
-          calls += o.count;
-          errors += o.errorCount;
-        }
-        const h = await reservoir.getLatencyHistogram({ projectId, service, from: ctx.from, to: ctx.to });
-        bounds = h.bounds;
-        counts = counts.length === 0 ? [...h.counts] : counts.map((c, i) => c + (h.counts[i] ?? 0));
-      }
-      out.set(service, { calls, errors, p95: histogramPercentile(bounds, counts, 0.95) });
+      accumulate(entry, await reservoir.getOperationStats(opParams(projectId, ctx.from, ctx.to)), only);
     } catch {
-      // Engine without entry-span stats: fall back to every span of the service.
-      out.set(service, health.get(service) as SpanStats);
+      // Engine without entry-span stats: its services fall back to every span below.
     }
   });
-  return out;
-}
-
-interface SpanTrend {
-  rate: Array<number | null>;
-  errors: Array<number | null>;
-  p95: Array<number | null>;
-  /** ms of the end of the last non-empty bucket, capped at the window end. */
-  lastSeen: number | null;
-}
-
-// The spark comes from getSpanTimeseries, which has no span kind filter: it
-// counts every span of the service while the headline values count entry spans.
-async function loadSpanTrend(ctx: SourcesContext, service: string): Promise<SpanTrend> {
-  const windowMs = ctx.to.getTime() - ctx.from.getTime();
-  const bucket = windowMs <= 7 * 86_400_000 ? 'hour' : 'day';
-  const bucketMs = bucket === 'hour' ? 3_600_000 : 86_400_000;
-  const rows = await reservoir.getSpanTimeseries({
-    projectIds: ctx.projectIds,
-    from: ctx.from,
-    to: ctx.to,
-    bucket,
-    serviceName: service,
-  });
-  let lastSeen: number | null = null;
-  for (const r of rows) {
-    if (r.spanCount > 0) lastSeen = Math.min(r.time.getTime() + bucketMs, ctx.to.getTime());
+  for (const [svc, h] of health) {
+    const e = entry.get(svc);
+    result.stats.set(
+      svc,
+      e && e.calls > 0 ? { calls: e.calls, errors: e.errors, p95: mixturePercentile(e.ops, 0.95) } : h,
+    );
   }
-  return {
-    rate: rows.map((r) => r.spanCount / (bucketMs / 1000)),
-    errors: rows.map((r) => (r.spanCount > 0 ? (r.errorCount / r.spanCount) * 100 : null)),
-    p95: rows.map((r) => r.p95),
-    lastSeen,
-  };
+
+  // Spark: the same entry spans, one call per project and slice for all services at once.
+  const slices = sliceWindow(ctx.from.getTime(), ctx.to.getTime(), SOURCE_SPARK_POINTS);
+  const perSlice: Array<Map<string, Acc>> = slices.map(() => new Map());
+  const jobs: Array<{ projectId: string; slice: number }> = [];
+  for (const projectId of activeProjects) for (let i = 0; i < slices.length; i++) jobs.push({ projectId, slice: i });
+  if (entry.size > 0) {
+    await mapLimit(jobs, CONCURRENCY, async ({ projectId, slice }) => {
+      try {
+        const rows = await reservoir.getOperationStats(
+          opParams(projectId, new Date(slices[slice].from), new Date(slices[slice].to)),
+        );
+        accumulate(perSlice[slice], rows, only);
+      } catch {
+        // A slice that fails stays empty: the spark shows a gap, the headline is unaffected.
+      }
+    });
+  }
+  const sliceSeconds = slices.map((s) => Math.max(1, (s.to - s.from + 1) / 1000));
+  const lastActive = new Map<string, number>();
+  for (const svc of entry.keys()) {
+    const rate: Array<number | null> = [];
+    const errors: Array<number | null> = [];
+    const p95: Array<number | null> = [];
+    perSlice.forEach((m, i) => {
+      const acc = m.get(svc);
+      if (!acc || acc.calls === 0) {
+        rate.push(0);
+        errors.push(null);
+        p95.push(null);
+        return;
+      }
+      lastActive.set(svc, slices[i].from);
+      rate.push(acc.calls / sliceSeconds[i]);
+      errors.push((acc.errors / acc.calls) * 100);
+      p95.push(mixturePercentile(acc.ops, 0.95));
+    });
+    result.trends.set(svc, { rate, errors, p95 });
+  }
+
+  result.lastSeen = await loadLastSeen(ctx, perProject, lastActive);
+  return result;
 }
 
 /** RED from HTTP server metrics for services without spans (newest semconv first, legacy name for the rest). */
@@ -480,83 +524,73 @@ async function loadMetricRed(ctx: SourcesContext, candidates: string[]): Promise
   const interval = pickInterval(ctx.to.getTime() - ctx.from.getTime(), SOURCE_SPARK_POINTS);
   for (const variant of HTTP_SERVER_METRICS) {
     if (remaining.length === 0) break;
-    const chunks: string[][] = [];
-    for (let i = 0; i < remaining.length; i += SERIES_CHUNK) chunks.push(remaining.slice(i, i + SERIES_CHUNK));
-    await mapLimit(chunks, CONCURRENCY, async (chunk) => {
-      const svc = { scope: 'resource' as const, key: 'service.name', op: 'in' as const, values: chunk };
-      const groupBy = [{ scope: 'resource' as const, key: 'service.name' }];
-      try {
-        const res = await metricQueryService.run({
-          organizationId: ctx.organizationId,
-          projectIds: ctx.projectIds,
-          from: ctx.from.toISOString(),
-          to: ctx.to.toISOString(),
-          interval,
-          compareTo: 'none',
-          display: 'lines',
-          formulas: [],
-          queries: [
-            { id: 'A', metricName: variant.metricName, aggregation: 'rate', spaceAggregation: 'sum', filters: [svc], groupBy, limit: SERIES_CHUNK },
-            {
-              id: 'B',
-              metricName: variant.metricName,
-              aggregation: 'rate',
-              spaceAggregation: 'sum',
-              filters: [svc, { scope: 'metric', key: variant.statusKey, op: 'gte', values: ['500'] }],
-              groupBy,
-              limit: SERIES_CHUNK,
-            },
-            { id: 'C', metricName: variant.metricName, aggregation: 'p95', spaceAggregation: 'avg', filters: [svc], groupBy, limit: SERIES_CHUNK },
-          ],
-          internal: { maxSeries: SERIES_CHUNK },
-        });
-        for (const name of chunk) {
-          const red = redFromSeries(res.series, name, variant.defaultUnit);
-          if (red) out.set(name, red);
-        }
-      } catch {
-        // Best effort: a failing query leaves these services without RED.
+    // One query per semconv variant for every remaining service.
+    const svc = { scope: 'resource' as const, key: 'service.name', op: 'in' as const, values: remaining };
+    const groupBy = [{ scope: 'resource' as const, key: 'service.name' }];
+    const limit = remaining.length;
+    try {
+      const res = await metricQueryService.run({
+        organizationId: ctx.organizationId,
+        projectIds: ctx.projectIds,
+        from: ctx.from.toISOString(),
+        to: ctx.to.toISOString(),
+        interval,
+        compareTo: 'none',
+        display: 'lines',
+        formulas: [],
+        queries: [
+          { id: 'A', metricName: variant.metricName, aggregation: 'rate', spaceAggregation: 'sum', filters: [svc], groupBy, limit },
+          {
+            id: 'B',
+            metricName: variant.metricName,
+            aggregation: 'rate',
+            spaceAggregation: 'sum',
+            filters: [svc, { scope: 'metric', key: variant.statusKey, op: 'gte', values: ['500'] }],
+            groupBy,
+            limit,
+          },
+          { id: 'C', metricName: variant.metricName, aggregation: 'p95', spaceAggregation: 'avg', filters: [svc], groupBy, limit },
+        ],
+        internal: { maxSeries: limit },
+      });
+      for (const name of remaining) {
+        const red = redFromSeries(res.series, name, variant.defaultUnit);
+        if (red) out.set(name, red);
       }
-    });
+    } catch {
+      // Best effort: a failing query leaves these services without RED.
+    }
     remaining = remaining.filter((n) => !out.has(n));
   }
   return out;
 }
 
 export async function listServices(ctx: SourcesContext, only?: string): Promise<ServiceSourceSummary[]> {
-  const [metricSources, spanStats] = await Promise.all([
+  const [metricSources, spans] = await Promise.all([
     fetchSources(ctx, 'service.name', { coKeys: ['host.name'], excludeMetricPrefixes: [...HOST_METRIC_PREFIXES] }),
-    loadSpanStats(ctx),
+    loadSpanData(ctx, only),
   ]);
   const byName = new Map(metricSources.map((s) => [s.value, s]));
-  let names = [...new Set([...byName.keys(), ...spanStats.keys()])].sort();
+  let names = [...new Set([...byName.keys(), ...spans.services])].sort();
   if (only !== undefined) names = names.filter((n) => n === only);
 
   const windowSec = Math.max(1, (ctx.to.getTime() - ctx.from.getTime()) / 1000);
   const now = ref(ctx);
-  const trends = new Map<string, SpanTrend>();
-  await mapLimit(
-    names.filter((n) => (spanStats.get(n)?.calls ?? 0) > 0),
-    CONCURRENCY,
-    async (n) => {
-      trends.set(n, await loadSpanTrend(ctx, n));
-    },
-  );
 
   const metricRed = await loadMetricRed(
     ctx,
-    names.filter((n) => (spanStats.get(n)?.calls ?? 0) === 0 && (byName.get(n)?.metricCount ?? 0) > 0),
+    names.filter((n) => (spans.stats.get(n)?.calls ?? 0) === 0 && (byName.get(n)?.metricCount ?? 0) > 0),
   );
 
   return names.map((name): ServiceSourceSummary => {
     const m = byName.get(name);
-    const st = spanStats.get(name);
-    const trend = trends.get(name);
+    const st = spans.stats.get(name);
+    const trend = spans.trends.get(name);
     const hasTraces = !!st && st.calls > 0;
     const red = hasTraces ? null : (metricRed.get(name) ?? null);
     const redSource: ServiceSourceSummary['redSource'] = hasTraces ? 'traces' : red ? 'metrics' : null;
     const errorPct = hasTraces ? (st.errors / st.calls) * 100 : (red?.errorRate.value ?? null);
-    const lastSeenMs = Math.max(m?.lastSeen.getTime() ?? 0, trend?.lastSeen ?? 0) || ctx.from.getTime();
+    const lastSeenMs = Math.max(m?.lastSeen.getTime() ?? 0, spans.lastSeen.get(name) ?? 0) || ctx.from.getTime();
     const { status, reason } = computeServiceStatus({ now, lastSeen: lastSeenMs, errorRate: errorPct });
     return {
       kind: 'service',
@@ -566,6 +600,7 @@ export async function listServices(ctx: SourcesContext, only?: string): Promise<
       status,
       statusReason: reason,
       redSource,
+      // Window rate: entry spans of the whole window over the window length.
       requestRate: hasTraces
         ? { value: st.calls / windowSec, unit: 'req/s', spark: trend?.rate ?? [] }
         : (red?.requestRate ?? EMPTY_SIGNAL('req/s')),
@@ -589,18 +624,14 @@ export async function getServiceDetail(ctx: SourcesContext, name: string): Promi
 // Customize
 // ---------------------------------------------------------------------------
 
-/** The `variables` column arrives with the dashboards change; until the create path takes it, this is the one place to adapt. */
-export interface DashboardCreateWithVariables {
-  organizationId: string;
-  projectId: null;
-  name: string;
-  panels: PanelInstance[];
-  variables: DashboardVariable[];
+export type DashboardCreateInput = Parameters<typeof customDashboardsService.create>[0];
+
+export function createDashboard(input: DashboardCreateInput, userId: string) {
+  return customDashboardsService.create(input, userId);
 }
 
-export function createDashboard(input: DashboardCreateWithVariables, userId: string) {
-  return customDashboardsService.create(input as Parameters<typeof customDashboardsService.create>[0], userId);
-}
+/** Dashboard names are capped at 200 characters by the dashboards API. */
+const DASHBOARD_NAME_MAX = 200;
 
 export function buildCustomizeInput(
   kind: MetricSourceKind,
@@ -608,12 +639,16 @@ export function buildCustomizeInput(
   organizationId: string,
   metricNames: string[],
   projectIds: string[] | null,
-): DashboardCreateWithVariables {
+): DashboardCreateInput & { variables: DashboardVariable[]; panels: PanelInstance[] } {
   const template = SOURCE_TEMPLATES[kind];
+  // Concatenation, not String.replace: the source name is user data and "$&" style patterns must stay literal.
+  const [head, tail = ''] = template.dashboardName.split('{name}');
+  const room = Math.max(1, DASHBOARD_NAME_MAX - head.length - tail.length);
+  const dashboardName = `${head}${name.slice(0, room)}${tail}`;
   return {
     organizationId,
     projectId: null,
-    name: template.dashboardName.replace('{name}', name),
+    name: dashboardName,
     panels: buildDashboardPanels(template, metricNames, projectIds, () => `panel-${randomUUID()}`),
     variables: [{ ...template.variable, default: name }],
   };

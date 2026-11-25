@@ -1210,7 +1210,8 @@ describe('TimescaleEngine - Metrics', () => {
       const params = mockQuery.mock.calls[0][1] as unknown[];
       expect(sql).not.toContain('_stats');
       expect(sql).toContain('DISTINCT ON (bucket)');
-      expect(sql).toContain('jsonb_array_length(p.h_counts) = jsonb_array_length(k.h_counts)');
+      expect(sql).toContain('WHERE p.h_bounds = k.h_bounds');
+      expect(sql).not.toContain('jsonb_array_length(p.h_counts)');
       expect(sql).toContain('WITH ORDINALITY AS e(val, ord)');
       expect(sql).toContain('array_agg(v ORDER BY ord)');
       expect(params).toEqual(expect.arrayContaining(['http.route', '/a']));

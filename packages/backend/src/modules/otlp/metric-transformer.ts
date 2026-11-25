@@ -381,8 +381,9 @@ function transformExpHistogramDataPoints(
       count: toNumber(dp.count),
       min: dp.min,
       max: dp.max,
-      // Explicit buckets derived from the exponential ones, so the histogram
-      // aggregations (hist_last / hist_sum) read every histogram the same way.
+      // Explicit buckets on the fixed canonical grid (EXP_CANONICAL_BOUNDS), so
+      // the histogram aggregations (hist_last / hist_sum) read every histogram
+      // the same way and every point of a series has identical bounds.
       ...expToExplicitBuckets(dp),
       scale: dp.scale,
       zero_count: toNumber(dp.zeroCount),
@@ -481,59 +482,102 @@ export function toTemporality(v: unknown): 'cumulative' | 'delta' | undefined {
 }
 
 /**
- * Convert an exponential histogram data point to explicit buckets
- * (explicit_bounds + bucket_counts, OTLP explicit histogram layout: counts has
- * bounds.length + 1 entries, bucket i holds (bounds[i-1], bounds[i]], the last
- * one is +Inf).
+ * Canonical grid for exponential histograms converted to explicit buckets.
  *
- * - base = 2^(2^-scale); positive bucket i (index offset + i) holds
- *   (base^(offset+i), base^(offset+i+1)], so its upper bound is
- *   base^(offset+i+1). The lower edge of the first positive bucket,
- *   base^offset, is emitted as a bound too, so interpolation stays inside the
- *   real bucket range.
- * - zero_count lands in the bucket that contains 0: when there are zero or
- *   negative values a bound 0 is prepended and the first bucket (-Inf, 0]
- *   holds them.
- * - Negative buckets are folded into that first bucket (for simplicity: the
- *   histogram percentiles then read negative values as 0).
- * - The trailing +Inf bucket is always empty.
+ * Every exponential histogram point is re-bucketed onto ONE fixed set of
+ * explicit bounds, whatever its scale, offset or populated range, so every
+ * point of a series (and every series of a metric) carries identical bounds:
+ * the histogram aggregations merge only points with identical bounds, and a
+ * cumulative series diffs cleanly snapshot to snapshot. Nothing is trimmed.
+ *
+ * Grid (OTLP explicit layout: counts has bounds.length + 1 entries, bucket i
+ * holds (bounds[i-1], bounds[i]], the last one is +Inf):
+ * - scale EXP_CANONICAL_SCALE = 2, base = 2^(2^-2) = 2^(1/4) ~ 1.1892;
+ * - canonical bucket index i holds (base^i, base^(i+1)], for i from
+ *   EXP_GRID_MIN_INDEX (-80) to EXP_GRID_MAX_INDEX (159): positive values
+ *   from 2^-20 (~9.5e-7) to 2^40 (~1.1e12), 60 octaves of 4 buckets;
+ * - bounds = [0, base^-80, base^-79, ..., base^160] (242 bounds, 243 counts):
+ *   counts[0] = (-Inf, 0] holds zero_count and the negative buckets (folded
+ *   for simplicity: percentiles read negative values as 0), counts[1] =
+ *   (0, 2^-20] the positive values below the grid, then one count per
+ *   canonical bucket, and the last one (2^40, +Inf) the values above it.
+ *
+ * Precision: neighbouring bounds differ by a factor 2^(1/4), so a bucket is
+ * ~18.9% wide relative to its lower edge and a percentile interpolated inside
+ * it is off by less than that (usually far less). Values outside
+ * [2^-20, 2^40] only keep their side (underflow / overflow bucket).
+ *
+ * Conversion of a source point at scale s (clamped to the OTLP range -10..20):
+ * - s >= 2: source bucket j lies entirely inside canonical bucket
+ *   floor(j / 2^(s - 2)) (the OTLP downscale), so the counts are exact;
+ * - s < 2: source bucket j spans the n = 2^(2 - s) canonical buckets
+ *   j * n .. (j + 1) * n - 1 and its count c is split evenly across them:
+ *   sub-bucket k gets ceil((c - k) / n), which adds up to c and never
+ *   decreases when c grows, so a cumulative series never looks like a reset
+ *   because of the split.
+ */
+export const EXP_CANONICAL_SCALE = 2;
+export const EXP_GRID_MIN_INDEX = -80;
+export const EXP_GRID_MAX_INDEX = 159;
+
+/** base^i at the canonical scale, i.e. 2^(i / 4) (exact for multiples of 4). */
+function canonicalBound(index: number): number {
+  return Math.pow(2, index / Math.pow(2, EXP_CANONICAL_SCALE));
+}
+
+/** The canonical explicit bounds (always the same doubles). */
+export const EXP_CANONICAL_BOUNDS: readonly number[] = Object.freeze([
+  0,
+  ...Array.from(
+    { length: EXP_GRID_MAX_INDEX - EXP_GRID_MIN_INDEX + 2 },
+    (_, k) => canonicalBound(EXP_GRID_MIN_INDEX + k),
+  ),
+]);
+
+/** Position in bucket_counts of canonical bucket index i (clamped to underflow / overflow). */
+function canonicalSlot(index: number): number {
+  if (index < EXP_GRID_MIN_INDEX) return 1;
+  if (index > EXP_GRID_MAX_INDEX) return EXP_CANONICAL_BOUNDS.length;
+  return 2 + index - EXP_GRID_MIN_INDEX;
+}
+
+/**
+ * Convert an exponential histogram data point to explicit buckets on the
+ * canonical grid: explicit_bounds is always EXP_CANONICAL_BOUNDS, bucket_counts
+ * its counts (see the grid comment above).
  */
 export function expToExplicitBuckets(
-  dp: Pick<OtlpExponentialHistogramDataPoint, 'scale' | 'zeroCount' | 'positive' | 'negative' | 'count'>
+  dp: Pick<OtlpExponentialHistogramDataPoint, 'scale' | 'zeroCount' | 'positive' | 'negative'>
 ): { explicit_bounds: number[]; bucket_counts: number[] } {
-  const scale = typeof dp.scale === 'number' && Number.isFinite(dp.scale) ? dp.scale : 0;
-  const offset = typeof dp.positive?.offset === 'number' ? dp.positive.offset : 0;
+  const rawScale = typeof dp.scale === 'number' && Number.isFinite(dp.scale) ? Math.trunc(dp.scale) : 0;
+  const scale = Math.min(Math.max(rawScale, -10), 20);
+  const rawOffset = dp.positive?.offset;
+  const offset = typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? Math.trunc(rawOffset) : 0;
   const positive = (dp.positive?.bucketCounts ?? []).map(toNumber);
   const negativeTotal = (dp.negative?.bucketCounts ?? []).map(toNumber).reduce((a, b) => a + b, 0);
-  const zeroOrBelow = toNumber(dp.zeroCount) + negativeTotal;
-  // Drop empty trailing positive buckets: they add bounds and nothing else.
-  let last = positive.length - 1;
-  while (last >= 0 && positive[last] === 0) last--;
-  const used = positive.slice(0, last + 1);
 
-  if (used.length === 0) {
-    // Only zero / negative values (or nothing): one bucket (-Inf, 0] plus +Inf.
-    if (zeroOrBelow === 0 && toNumber(dp.count) === 0) return { explicit_bounds: [], bucket_counts: [0] };
-    return { explicit_bounds: [0], bucket_counts: [zeroOrBelow, 0] };
-  }
+  const counts = new Array<number>(EXP_CANONICAL_BOUNDS.length + 1).fill(0);
+  counts[0] = toNumber(dp.zeroCount) + negativeTotal;
 
-  // 2^((index) * 2^-scale) keeps precision better than Math.pow(base, index).
-  const bound = (index: number) => Math.pow(2, index * Math.pow(2, -scale));
-  const bounds: number[] = [];
-  const counts: number[] = [];
-  if (zeroOrBelow > 0) {
-    bounds.push(0);
-    counts.push(zeroOrBelow);
+  if (scale >= EXP_CANONICAL_SCALE) {
+    const width = Math.pow(2, scale - EXP_CANONICAL_SCALE);
+    for (let j = 0; j < positive.length; j++) {
+      if (positive[j] === 0) continue;
+      counts[canonicalSlot(Math.floor((offset + j) / width))] += positive[j];
+    }
+  } else {
+    const n = Math.pow(2, EXP_CANONICAL_SCALE - scale);
+    for (let j = 0; j < positive.length; j++) {
+      const c = positive[j];
+      if (c === 0) continue;
+      const first = (offset + j) * n;
+      for (let k = 0; k < n; k++) {
+        const part = Number.isInteger(c) ? Math.max(Math.ceil((c - k) / n), 0) : c / n;
+        if (part !== 0) counts[canonicalSlot(first + k)] += part;
+      }
+    }
   }
-  // (prev, base^offset]: nothing (the zero / negative values sit below 0).
-  bounds.push(bound(offset));
-  counts.push(0);
-  for (let i = 0; i < used.length; i++) {
-    bounds.push(bound(offset + i + 1));
-    counts.push(used[i]);
-  }
-  counts.push(0); // +Inf
-  return { explicit_bounds: bounds, bucket_counts: counts };
+  return { explicit_bounds: [...EXP_CANONICAL_BOUNDS], bucket_counts: counts };
 }
 
 /**
