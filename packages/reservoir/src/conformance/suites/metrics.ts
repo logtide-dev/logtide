@@ -91,8 +91,10 @@ export function describeMetricsConformance(ctx: ConformanceContext): void {
 // ----------------------------------------------------------------------------
 // Rulings pinned here: the pick of a bucket (per group) is its latest point
 // with explicit buckets; hist_last returns it, hist_sum adds up bucket_counts
-// element-wise, sum and count over the points whose bucket_counts length
-// equals the pick's (others are skipped) and takes the pick's bounds. Points
+// element-wise, sum and count over the pick's merge class: the points whose
+// explicit_bounds are IDENTICAL to the pick's (same length with other values
+// is another class and is skipped, like any other length), and takes the
+// pick's bounds. Points
 // without histogram_data or without explicit buckets are ignored; a group
 // with none of them has no row. value = count. Corpus rows: HISTOGRAM_ROWS.
 
@@ -127,15 +129,18 @@ function describeMetricHistogramConformance(ctx: ConformanceContext): void {
   it('MT26 hist_last: the latest point with buckets of each bucket', async () => {
     expect(await hist('hist_last')).toEqual(sorted([
       `${at(0)} 4 [10,100] [1,2,1] 200 4`,
-      `${at(15)} 5 [10,100] [0,0,5] 900 5`,
+      `${at(15)} 2 [20,200] [1,1,0] 60 2`,
       `${at(30)} 10 [10,100] [4,4,2] 600 10`,
     ]));
   });
 
-  it('MT27 hist_sum: element-wise sum, a different bucket length is skipped', async () => {
+  it('MT27 hist_sum: element-wise sum over the merge class of the latest point', async () => {
     expect(await hist('hist_sum')).toEqual(sorted([
+      // HB2 (other length) and HA5 (same length, bounds [10,50]) skipped.
       `${at(0)} 15 [10,100] [4,8,3] 700 15`,
-      `${at(15)} 13 [10,100] [3,4,6] 1300 13`,
+      // The latest points (HB5, HB6) have bounds [20,200]: HA3 and HB4
+      // ([10,100], same length) are not added in.
+      `${at(15)} 5 [20,200] [1,3,1] 360 5`,
       `${at(30)} 10 [10,100] [4,4,2] 600 10`,
     ]));
   });
@@ -145,14 +150,15 @@ function describeMetricHistogramConformance(ctx: ConformanceContext): void {
       `${at(0)} /a 6 [10,100] [2,3,1] 300 6`,
       `${at(0)} /b 4 [10,100] [1,2,1] 200 4`,
       `${at(15)} /a 8 [10,100] [3,4,1] 400 8`,
-      `${at(15)} /b 5 [10,100] [0,0,5] 900 5`,
+      `${at(15)} /b 2 [20,200] [1,1,0] 60 2`,
       `${at(30)} /a 10 [10,100] [4,4,2] 600 10`,
     ]));
     expect(await hist('hist_sum', { groupBy: ['http.route'] })).toEqual(sorted([
+      // HA5 has three counts like HA1 / HA2 but bounds [10,50]: skipped.
       `${at(0)} /a 9 [10,100] [3,5,1] 350 9`,
       `${at(0)} /b 6 [10,100] [1,3,2] 350 6`,
       `${at(15)} /a 8 [10,100] [3,4,1] 400 8`,
-      `${at(15)} /b 5 [10,100] [0,0,5] 900 5`,
+      `${at(15)} /b 5 [20,200] [1,3,1] 360 5`,
       `${at(30)} /a 10 [10,100] [4,4,2] 600 10`,
     ]));
   });
@@ -162,9 +168,13 @@ function describeMetricHistogramConformance(ctx: ConformanceContext): void {
     expect(await hist('hist_last', { interval: '1h' })).toEqual([`${at(0)} 10 [10,100] [4,4,2] 600 10`]);
     expect(await hist('hist_last', { interval: '1h', groupByAttrs: [res('service.name')] })).toEqual(sorted([
       `${at(0)} api 10 [10,100] [4,4,2] 600 10`,
-      `${at(0)} web 5 [10,100] [0,0,5] 900 5`,
+      `${at(0)} web 2 [20,200] [1,1,0] 60 2`,
     ]));
     expect(await hist('hist_sum', { interval: '1h', filters: [f(met('http.route'), 'eq', '/b')] })).toEqual([
+      `${at(0)} 5 [20,200] [1,3,1] 360 5`,
+    ]);
+    // Before HB5: the latest /b point is HB4, class [10,100] (HB1, HB3, HB4).
+    expect(await hist('hist_sum', { interval: '1h', to: minutes(20.5), filters: [f(met('http.route'), 'eq', '/b')] })).toEqual([
       `${at(0)} 11 [10,100] [1,3,7] 1250 11`,
     ]);
     // Only HB2 (four buckets) in its own 5m bucket: its bounds are the pick.
@@ -173,6 +183,30 @@ function describeMetricHistogramConformance(ctx: ConformanceContext): void {
     ]);
     // Only points without explicit buckets: no rows.
     expect(await hist('hist_sum', { from: minutes(12), to: minutes(14) })).toEqual([]);
+  });
+
+  it('MT30 same length, different bounds: separate merge classes, the latest one wins', async () => {
+    // HA1 [10,100] (t1), HB1 [10,100] (t2), HA5 [10,50] (t3): HA5 is the
+    // latest, so its class alone is returned, not a positional sum.
+    expect(await hist('hist_sum', { interval: '5m', from: minutes(0), to: minutes(4) })).toEqual([
+      `${at(0)} 5 [10,50] [5,0,0] 20 5`,
+    ]);
+    expect(await hist('hist_last', { interval: '5m', from: minutes(0), to: minutes(4) })).toEqual([
+      `${at(0)} 5 [10,50] [5,0,0] 20 5`,
+    ]);
+    // Per group the classes are separate per series.
+    expect(await hist('hist_sum', { interval: '5m', from: minutes(0), to: minutes(4), groupBy: ['http.route'] })).toEqual(sorted([
+      `${at(0)} /a 5 [10,50] [5,0,0] 20 5`,
+      `${at(0)} /b 2 [10,100] [0,1,1] 150 2`,
+    ]));
+    // Before HA5: HA1 and HB1 share their bounds and add up.
+    expect(await hist('hist_sum', { interval: '5m', from: minutes(0), to: minutes(2.5) })).toEqual([
+      `${at(0)} 5 [10,100] [1,3,1] 200 5`,
+    ]);
+    // HB5 and HB6 alone ([20,200]) add up; HB4 before them ([10,100]) does not.
+    expect(await hist('hist_sum', { interval: '5m', from: minutes(20), to: minutes(23) })).toEqual([
+      `${at(20)} 5 [20,200] [1,3,1] 360 5`,
+    ]);
   });
 }
 

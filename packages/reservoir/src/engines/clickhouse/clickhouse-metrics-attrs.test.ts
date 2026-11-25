@@ -193,7 +193,7 @@ describe('ClickHouseEngine 1.8 metric attributes (unit)', () => {
       expect(query).toContain('FROM metrics PREWHERE');
       expect(query).toContain("JSONExtract(ifNull(histogram_data, ''), 'bucket_counts', 'Array(Float64)')");
       expect(query).toContain('argMax(tuple(h_bounds, h_counts, h_sum, h_count), time) AS h_class');
-      expect(query).toContain('GROUP BY bucket, label_attr_0, h_len');
+      expect(query).toContain('GROUP BY bucket, label_attr_0, h_bounds');
       expect(query).toContain('argMax(h_class, last_t) AS picked');
       expect(result.timeseries).toEqual([{
         bucket: new Date('2026-01-01T00:00:00.000Z'),
@@ -215,7 +215,7 @@ describe('ClickHouseEngine 1.8 metric attributes (unit)', () => {
       const { query, query_params } = lastCall();
       expect(query).toContain('tuple(argMax(h_bounds, time), sumForEach(h_counts), sum(h_sum), sum(h_count)) AS h_class');
       expect(query).toContain("length(JSONExtract(ifNull(histogram_data, ''), 'bucket_counts', 'Array(Float64)')) = length(JSONExtract(ifNull(histogram_data, ''), 'explicit_bounds', 'Array(Float64)')) + 1");
-      expect(query).toContain('GROUP BY bucket, h_len');
+      expect(query).toContain('GROUP BY bucket, h_bounds');
       expect(query_params).toMatchObject({ p_mfk0: 'http.route', p_mfv0: '/a' });
       expect(result.timeseries[0].histogram).toEqual({ bounds: [10, 100], counts: [3, 5, 1], sum: 350, count: 9 });
       expect(result.timeseries[0].value).toBe(9);

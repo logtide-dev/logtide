@@ -1519,9 +1519,10 @@ export class MongoDBEngine extends StorageEngine {
   /**
    * hist_last / hist_sum over histogram_data (explicit buckets). Points are
    * sorted by time; hist_last keeps the $last per bucket and group. hist_sum
-   * unwinds bucket_counts with their index and sums per (group, length,
-   * index), rebuilds the arrays in index order, then keeps the length class
-   * of the latest point (the pick), whose bounds it carries.
+   * unwinds bucket_counts with their index and sums per (group, bounds,
+   * index): a merge class is the points with identical explicit_bounds (same
+   * length is not enough). It rebuilds the arrays in index order, then keeps
+   * the class of the latest point (the pick), whose bounds it carries.
    */
   private async aggregateMetricHistograms(
     params: MetricAggregateParams,
@@ -1561,28 +1562,29 @@ export class MongoDBEngine extends StorageEngine {
       });
     } else {
       pipeline.push(
-        { $addFields: { h_len: { $size: counts } } },
+        // The merge class is the bounds array itself: only points with
+        // identical explicit_bounds are added together.
+        { $addFields: { h_bounds: bounds } },
         { $unwind: { path: counts, includeArrayIndex: 'h_idx' } },
         {
           $group: {
-            _id: { ...groupId, h_len: '$h_len', h_idx: '$h_idx' },
+            _id: { ...groupId, h_bounds: '$h_bounds', h_idx: '$h_idx' },
             v: { $sum: counts },
             // One element per point carries its sum and count.
             sum: { $sum: { $cond: [{ $eq: ['$h_idx', 0] }, sumOf, 0] } },
             count: { $sum: { $cond: [{ $eq: ['$h_idx', 0] }, countOf, 0] } },
             last_t: { $max: '$time' },
-            bounds: { $last: bounds },
           },
         },
         { $sort: { '_id.h_idx': 1 } },
         {
           $group: {
-            _id: carried({ h_len: '$_id.h_len' }),
+            _id: carried({ h_bounds: '$_id.h_bounds' }),
             counts: { $push: '$v' },
             sum: { $sum: '$sum' },
             count: { $sum: '$count' },
             last_t: { $max: '$last_t' },
-            bounds: { $first: '$bounds' },
+            bounds: { $first: '$_id.h_bounds' },
           },
         },
         { $sort: { last_t: 1 } },
