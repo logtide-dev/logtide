@@ -192,8 +192,8 @@ describe('ClickHouseEngine 1.8 metric attributes (unit)', () => {
       expect(query).not.toContain('rollup');
       expect(query).toContain('FROM metrics PREWHERE');
       expect(query).toContain("JSONExtract(ifNull(histogram_data, ''), 'bucket_counts', 'Array(Float64)')");
-      expect(query).toContain('argMax(tuple(h_bounds, h_counts, h_sum, h_count), time) AS h_class');
-      expect(query).toContain('GROUP BY bucket, label_attr_0, h_bounds');
+      expect(query).toContain('argMax(tuple(h_bounds, h_counts, h_sum, h_count, h_grid), time) AS h_class');
+      expect(query).toContain('GROUP BY bucket, label_attr_0, h_grid, h_bounds, length(h_counts)');
       expect(query).toContain('argMax(h_class, last_t) AS picked');
       expect(result.timeseries).toEqual([{
         bucket: new Date('2026-01-01T00:00:00.000Z'),
@@ -213,12 +213,29 @@ describe('ClickHouseEngine 1.8 metric attributes (unit)', () => {
         filters: [{ scope: 'metric', key: 'http.route', op: 'eq', values: ['/a'] }],
       });
       const { query, query_params } = lastCall();
-      expect(query).toContain('tuple(argMax(h_bounds, time), sumForEach(h_counts), sum(h_sum), sum(h_count)) AS h_class');
+      expect(query).toContain('tuple(any(h_bounds), sumForEach(h_counts), sum(h_sum), sum(h_count), any(h_grid)) AS h_class');
       expect(query).toContain("length(JSONExtract(ifNull(histogram_data, ''), 'bucket_counts', 'Array(Float64)')) = length(JSONExtract(ifNull(histogram_data, ''), 'explicit_bounds', 'Array(Float64)')) + 1");
-      expect(query).toContain('GROUP BY bucket, h_bounds');
+      expect(query).toContain('GROUP BY bucket, h_grid, h_bounds, length(h_counts)');
       expect(query_params).toMatchObject({ p_mfk0: 'http.route', p_mfv0: '/a' });
       expect(result.timeseries[0].histogram).toEqual({ bounds: [10, 100], counts: [3, 5, 1], sum: 350, count: 9 });
       expect(result.timeseries[0].value).toBe(9);
+    });
+
+    it('grid points: the grid id is part of the class and comes back with empty bounds', async () => {
+      mockQuery.mockResolvedValueOnce(rows([{ ...hrow, label_attr_0: undefined, h_bounds: [], h_grid: 'exp2-s2-v1' }]));
+      const result = await engine.aggregateMetrics({ ...base, metricType: 'exp_histogram', interval: '5m', aggregation: 'hist_sum' });
+      const { query } = lastCall();
+      expect(query).toContain("JSONExtractString(ifNull(histogram_data, ''), 'grid') AS h_grid");
+      expect(query).toContain("if(h_grid != '', emptyArrayFloat64(), JSONExtract(ifNull(histogram_data, ''), 'explicit_bounds', 'Array(Float64)')) AS h_bounds");
+      expect(query).toContain("(JSONExtractString(ifNull(histogram_data, ''), 'grid') != '' OR (JSONHas(ifNull(histogram_data, ''), 'explicit_bounds') AND");
+      expect(query).toContain('tupleElement(picked, 5) AS h_grid');
+      expect(result.timeseries[0].histogram).toEqual({ bounds: [], grid: 'exp2-s2-v1', counts: [3, 5, 1], sum: 350, count: 9 });
+    });
+
+    it('an empty h_grid (explicit bounds class) sets no grid', async () => {
+      mockQuery.mockResolvedValueOnce(rows([{ ...hrow, label_attr_0: undefined, h_grid: '' }]));
+      const result = await engine.aggregateMetrics({ ...base, metricType: 'histogram', interval: '5m', aggregation: 'hist_last' });
+      expect(result.timeseries[0].histogram).toEqual({ bounds: [10, 100], counts: [3, 5, 1], sum: 350, count: 9 });
     });
   });
 
