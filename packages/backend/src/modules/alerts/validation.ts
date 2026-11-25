@@ -26,8 +26,9 @@ export interface RuleCriteriaInput {
 }
 
 /**
- * Lifecycle rules on top of the Zod schemas: `query` and `renotify_minutes`
- * exist on threshold rules only (mirrors chk_alert_rules_threshold_only), and
+ * Lifecycle rules on top of the Zod schemas: `query` exists on threshold
+ * rules only and `renotify_minutes` on threshold and metric rules (mirrors
+ * chk_alert_rules_threshold_only), and
  * a query must parse. The grammar is the shared one; W8 adds no rejection of
  * its own, so a query contradicting the rule filters is accepted (it merges
  * to "match nothing").
@@ -39,8 +40,8 @@ export function assertValidRuleCriteria(input: RuleCriteriaInput): void {
     if (query !== null) {
       throw new AlertRuleInputError('Text queries are only supported on threshold rules');
     }
-    if (input.renotifyMinutes !== null && input.renotifyMinutes !== undefined) {
-      throw new AlertRuleInputError('Re-notify interval is only supported on threshold rules');
+    if (input.alertType !== 'metric' && input.renotifyMinutes !== null && input.renotifyMinutes !== undefined) {
+      throw new AlertRuleInputError('Re-notify interval is only supported on threshold and metric rules');
     }
     return;
   }

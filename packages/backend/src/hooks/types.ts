@@ -70,7 +70,7 @@ export interface BeforeQueryContext {
 export interface BeforeAlertEvaluationContext {
   readonly organizationId: string;
   readonly ruleId: string;
-  readonly ruleType: 'threshold' | 'rate_of_change';
+  readonly ruleType: 'threshold' | 'rate_of_change' | 'metric';
 }
 
 /** Runs immediately before the outbound webhook HTTP call (safeFetch). */

@@ -1,6 +1,7 @@
 import { sql, type Selectable } from 'kysely';
 import { db } from '../../database/connection.js';
-import type { LogLevel, MetadataFilter } from '@logtide/shared';
+import type { LogLevel, MetadataFilter, MetricAlertConfig } from '@logtide/shared';
+import { METRIC_ALERT_WINDOW_MINUTES } from '@logtide/shared';
 import type {
   AlertRulesTable,
   AlertType,
@@ -24,6 +25,13 @@ import {
   type RateOfChangeSignal,
 } from './lifecycle.js';
 import { openAlertIncident, resolveAlertIncident } from './incident-sync.js';
+import {
+  clearMetricInstances,
+  evaluateMetricRule,
+  firingMetricInstances,
+  metricInstancePayload,
+  metricWindowFromConfig,
+} from './metric-evaluator.js';
 import type { AlertEvaluationResult, AlertNotificationJobData, AlertNotificationKind } from './types.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { reservoir } from '../../database/reservoir.js';
@@ -131,6 +139,8 @@ export interface AlertRule {
   lastNotifiedAt: Date | null;
   snoozedUntil: Date | null;
   renotifyMinutes: number | null;
+  /** 1.8 metric rules (alertType 'metric'): the rule definition; null on log rules. */
+  metricConfig: MetricAlertConfig | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -155,8 +165,10 @@ export interface CreateAlertRuleInput {
   metadataFilters?: MetadataFilter[] | null;
   /** Grammar query (threshold rules only); blank is stored as null. */
   query?: string | null;
-  /** Threshold rules only, 5 to 1440. */
+  /** Threshold and metric rules, 5 to 1440. */
   renotifyMinutes?: number | null;
+  /** Metric rules only (alertType 'metric'). */
+  metricConfig?: MetricAlertConfig | null;
 }
 
 export interface UpdateAlertRuleInput {
@@ -177,6 +189,7 @@ export interface UpdateAlertRuleInput {
   metadataFilters?: MetadataFilter[] | null;
   query?: string | null;
   renotifyMinutes?: number | null;
+  metricConfig?: MetricAlertConfig | null;
 }
 
 function toDateOrNull(value: Date | string | null | undefined): Date | null {
@@ -202,6 +215,7 @@ export class AlertsService {
    * Create a new alert rule
    */
   async createAlertRule(input: CreateAlertRuleInput): Promise<AlertRule> {
+    if (input.alertType === 'metric') return this.createMetricAlertRule(input);
     const alertRule = await db
       .insertInto('alert_rules')
       .values({
@@ -224,6 +238,40 @@ export class AlertsService {
         metadata_filters: sql`${JSON.stringify(input.metadataFilters ?? [])}::jsonb`,
         query: normalizeAlertQuery(input.query),
         renotify_minutes: input.renotifyMinutes ?? null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return this.mapAlertRule(alertRule);
+  }
+
+  /**
+   * Create a metric rule: the definition lives in metric_config; the log
+   * columns get neutral values (no levels, threshold 0, time_window = the
+   * evaluation window in minutes). project_id is the query's project when it
+   * reads exactly one, else null (org-wide).
+   */
+  private async createMetricAlertRule(input: CreateAlertRuleInput): Promise<AlertRule> {
+    const config = input.metricConfig;
+    if (!config) throw new AlertRuleInputError('Metric alerts require a metric configuration');
+    const projectIds = config.query.projectIds;
+    const alertRule = await db
+      .insertInto('alert_rules')
+      .values({
+        organization_id: input.organizationId,
+        project_id: projectIds && projectIds.length === 1 ? projectIds[0] : null,
+        name: input.name,
+        enabled: input.enabled ?? true,
+        service: null,
+        level: [],
+        threshold: 0,
+        time_window: METRIC_ALERT_WINDOW_MINUTES[config.window],
+        alert_type: 'metric',
+        email_recipients: input.emailRecipients,
+        webhook_url: input.webhookUrl || null,
+        metadata_filters: sql`'[]'::jsonb`,
+        renotify_minutes: input.renotifyMinutes ?? null,
+        metric_config: JSON.stringify(config),
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -323,6 +371,12 @@ export class AlertsService {
     if (input.metadataFilters !== undefined) updateData.metadata_filters = sql`${JSON.stringify(input.metadataFilters ?? [])}::jsonb`;
     if (input.query !== undefined) updateData.query = normalizeAlertQuery(input.query);
     if (input.renotifyMinutes !== undefined) updateData.renotify_minutes = input.renotifyMinutes;
+    if (input.metricConfig !== undefined && input.metricConfig !== null) {
+      updateData.metric_config = JSON.stringify(input.metricConfig);
+      updateData.time_window = METRIC_ALERT_WINDOW_MINUTES[input.metricConfig.window];
+      const ids = input.metricConfig.query.projectIds;
+      updateData.project_id = ids && ids.length === 1 ? ids[0] : null;
+    }
 
     if (input.enabled === false) {
       // A disabled rule is no longer evaluated: it leaves the firing state in
@@ -332,6 +386,9 @@ export class AlertsService {
       if (!current) return null;
       if (current.state === 'firing') {
         await this.resolveFiringRule(current);
+      } else if (current.alert_type === 'metric') {
+        // Pending breach counters of a disabled rule start over when re-enabled.
+        await clearMetricInstances(current);
       }
       updateData.state = 'ok';
     }
@@ -395,11 +452,15 @@ export class AlertsService {
   private async resolveFiringRule(
     rule: Pick<
       Selectable<AlertRulesTable>,
-      'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'last_triggered_at' | 'last_notified_at'
+      'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'last_triggered_at' | 'last_notified_at' | 'metric_config'
     >
   ): Promise<void> {
     const now = new Date();
     const incidentId = await resolveAlertIncident(rule, 'manual', now);
+    if (rule.alert_type === 'metric') {
+      await this.resolveFiringMetricInstances(rule, incidentId, now);
+      return;
+    }
 
     const lastTriggeredAt = toDateOrNull(rule.last_triggered_at);
     const lastNotifiedAt = toDateOrNull(rule.last_notified_at);
@@ -432,19 +493,66 @@ export class AlertsService {
     }
   }
 
+  /**
+   * Metric rule disabled or deleted while firing: one `resolved` job per
+   * firing instance whose episode notified anyone (same as a recovery), then
+   * the instances are forgotten (a re-enabled rule starts from scratch).
+   */
+  private async resolveFiringMetricInstances(
+    rule: Pick<Selectable<AlertRulesTable>, 'id' | 'organization_id' | 'project_id' | 'name' | 'metric_config'>,
+    incidentId: string | null,
+    now: Date
+  ): Promise<void> {
+    const config = rule.metric_config as MetricAlertConfig | null;
+    try {
+      const firing = await firingMetricInstances(rule);
+      const notified = firing.filter(
+        (i) =>
+          i.last_notified_at !== null &&
+          (i.last_triggered_at === null || i.last_notified_at.getTime() >= i.last_triggered_at.getTime())
+      );
+      if (config && notified.length > 0) {
+        const channels = await notificationChannelsService.getAlertRuleChannels(rule.id, rule.organization_id);
+        const window = metricWindowFromConfig(config);
+        const results: AlertEvaluationResult[] = notified.map((i) => ({
+          kind: 'resolved',
+          rule_id: rule.id,
+          rule_name: rule.name,
+          organization_id: rule.organization_id,
+          project_id: rule.project_id ?? null,
+          alert_type: 'metric',
+          log_count: 0,
+          threshold: config.threshold,
+          time_window: METRIC_ALERT_WINDOW_MINUTES[config.window],
+          firing_since: (i.last_triggered_at ?? now).toISOString(),
+          resolved_at: now.toISOString(),
+          incident_id: incidentId,
+          ...(channels.length > 0 ? { channel_ids: channels.map((c) => c.id) } : {}),
+          metric: metricInstancePayload(config, window, { groupKey: i.group_key, labels: i.labels, value: i.last_value }),
+        }));
+        const { createQueue } = await import('../../queue/connection.js');
+        const { enqueueAlertNotifications } = await import('../../queue/jobs/alert-evaluation.js');
+        await enqueueAlertNotifications(results, createQueue<AlertNotificationJobData>('alert-notifications'));
+      }
+    } catch (error) {
+      console.error(`[Alerts] Failed to queue the resolve of metric rule ${rule.id}:`, error);
+    }
+    await clearMetricInstances(rule);
+  }
+
   private async getLifecycleState(
     id: string,
     organizationId: string
   ): Promise<
     | Pick<
         Selectable<AlertRulesTable>,
-        'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'state' | 'last_triggered_at' | 'last_notified_at'
+        'id' | 'organization_id' | 'project_id' | 'name' | 'alert_type' | 'threshold' | 'time_window' | 'state' | 'last_triggered_at' | 'last_notified_at' | 'metric_config'
       >
     | undefined
   > {
     return db
       .selectFrom('alert_rules')
-      .select(['id', 'organization_id', 'project_id', 'name', 'alert_type', 'threshold', 'time_window', 'state', 'last_triggered_at', 'last_notified_at'])
+      .select(['id', 'organization_id', 'project_id', 'name', 'alert_type', 'threshold', 'time_window', 'state', 'last_triggered_at', 'last_notified_at', 'metric_config'])
       .where('id', '=', id)
       .where('organization_id', '=', organizationId)
       .executeTakeFirst();
@@ -480,7 +588,7 @@ export class AlertsService {
 
     // PERFORMANCE: Pre-fetch all org->projects mappings in one query
     // instead of querying per rule (N+1 fix)
-    const orgIds = [...new Set(rules.filter(r => !r.project_id).map(r => r.organization_id))];
+    const orgIds = [...new Set(rules.filter(r => !r.project_id && r.alert_type !== 'metric').map(r => r.organization_id))];
     const orgProjectsMap = new Map<string, string[]>();
 
     if (orgIds.length > 0) {
@@ -506,7 +614,7 @@ export class AlertsService {
           await hooks.run('beforeAlertEvaluation', {
             organizationId: rule.organization_id,
             ruleId: rule.id,
-            ruleType: rule.alert_type === 'rate_of_change' ? 'rate_of_change' : 'threshold',
+            ruleType: rule.alert_type,
           });
         } catch (err) {
           if (err instanceof HookRejectionError) {
@@ -519,6 +627,11 @@ export class AlertsService {
       }
 
       try {
+        if (rule.alert_type === 'metric') {
+          results.push(...(await evaluateMetricRule(rule, now)));
+          evaluated.push(rule);
+          continue;
+        }
         const result = await this.checkRule(rule, orgProjectsMap, now);
         evaluated.push(rule);
         if (result) results.push(result);
@@ -900,6 +1013,7 @@ export class AlertsService {
         'alert_history.triggered_at',
         'alert_history.log_count',
         'alert_history.baseline_metadata',
+        'alert_history.metric_metadata',
         'alert_history.notified',
         'alert_history.error',
         // Alert rule details
@@ -962,6 +1076,7 @@ export class AlertsService {
         service: row.service,
         level: row.level,
         alertType: (row as any).alert_type || 'threshold',
+        metricMetadata: row.metric_metadata ?? null,
         query: row.query ?? null,
         metadataFilters: (row.metadata_filters ?? []) as MetadataFilter[],
       })),
@@ -1533,6 +1648,7 @@ export class AlertsService {
       lastNotifiedAt: toDateOrNull(row.last_notified_at),
       snoozedUntil: toDateOrNull(row.snoozed_until),
       renotifyMinutes: row.renotify_minutes != null ? Number(row.renotify_minutes) : null,
+      metricConfig: row.metric_config ?? null,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     };
