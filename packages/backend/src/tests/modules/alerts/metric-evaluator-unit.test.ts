@@ -55,6 +55,8 @@ function instance(o: Partial<MetricInstanceRow> = {}): MetricInstanceRow {
     last_value: null,
     last_triggered_at: null,
     last_notified_at: null,
+    no_data_since: null,
+    no_data_evaluations: 0,
     ...o,
   };
 }
@@ -238,6 +240,8 @@ describe('planMetricInstances', () => {
         last_value: 0.97,
         last_triggered_at: NOW,
         last_notified_at: NOW,
+        no_data_since: plus(30),
+        no_data_evaluations: 1,
       });
     }
     // Data comes back on the good side: resolves.
@@ -253,6 +257,79 @@ describe('planMetricInstances', () => {
     // A group without a row and without data needs no row.
     const [none] = planMetricInstances(config(), [web1(null)], [], RULE, NOW);
     expect(none.next).toBeNull();
+  });
+
+  describe('bounded no data', () => {
+    const firing = (o: Partial<MetricInstanceRow> = {}) =>
+      instance({ state: 'firing', consecutive_breaches: 3, last_value: 0.97, last_triggered_at: NOW, last_notified_at: NOW, ...o });
+
+    it('starts the streak on the first run without data and counts the following ones', () => {
+      const [first] = planMetricInstances(config(), [web1(null)], [firing()], RULE, plus(1));
+      expect(first.next).toMatchObject({ state: 'firing', no_data_since: plus(1), no_data_evaluations: 1 });
+      const [second] = planMetricInstances(config(), [], [firing({ no_data_since: plus(1), no_data_evaluations: 1 })], RULE, plus(2));
+      expect(second.next).toMatchObject({ no_data_since: plus(1), no_data_evaluations: 2 });
+      expect(second.decision).toEqual({ type: 'none' });
+    });
+
+    it('resets the streak when data returns, even when it still breaches', () => {
+      const held = firing({ no_data_since: plus(1), no_data_evaluations: 5 });
+      const [plan] = planMetricInstances(config(), [web1(0.99)], [held], RULE, plus(6));
+      expect(plan.next).toMatchObject({ state: 'firing', no_data_since: null, no_data_evaluations: 0 });
+      const [pending] = planMetricInstances(
+        config({ forEvaluations: 3 }),
+        [web1(0.99)],
+        [instance({ consecutive_breaches: 1, no_data_since: plus(1), no_data_evaluations: 4 })],
+        RULE,
+        plus(6)
+      );
+      expect(pending.next).toMatchObject({ consecutive_breaches: 2, no_data_since: null, no_data_evaluations: 0 });
+    });
+
+    it('holds while only the count is reached (10 evaluations in less than 60 minutes)', () => {
+      const [plan] = planMetricInstances(config(), [], [firing({ no_data_since: plus(0), no_data_evaluations: 9 })], RULE, plus(59));
+      expect(plan.decision).toEqual({ type: 'none' });
+      expect(plan.next).toMatchObject({ state: 'firing', no_data_evaluations: 10 });
+    });
+
+    it('holds while only the time is reached (60 minutes with fewer than 10 evaluations)', () => {
+      const [plan] = planMetricInstances(config(), [], [firing({ no_data_since: plus(0), no_data_evaluations: 3 })], RULE, plus(120));
+      expect(plan.decision).toEqual({ type: 'none' });
+      expect(plan.next).toMatchObject({ state: 'firing', no_data_evaluations: 4 });
+    });
+
+    it('resolves a firing group once both bounds are reached, with reason no_data', () => {
+      const [plan] = planMetricInstances(config(), [], [firing({ no_data_since: plus(0), no_data_evaluations: 9 })], RULE, plus(60));
+      expect(plan.decision).toEqual({ type: 'resolve', notification: 'resolved' });
+      expect(plan.reason).toBe('no_data');
+      expect(plan.next).toBeNull();
+    });
+
+    it('resolves silently when the episode never notified (snoozed)', () => {
+      const snoozed = { snoozedUntil: plus(500), renotifyMinutes: null };
+      const [plan] = planMetricInstances(
+        config(),
+        [],
+        [firing({ last_notified_at: null, no_data_since: plus(0), no_data_evaluations: 20 })],
+        snoozed,
+        plus(90)
+      );
+      expect(plan.decision).toEqual({ type: 'resolve', notification: null });
+      expect(plan.reason).toBe('no_data');
+    });
+
+    it('clears a pending group without any decision', () => {
+      const pending = instance({ consecutive_breaches: 1, last_value: 0.95, no_data_since: plus(0), no_data_evaluations: 20 });
+      const [plan] = planMetricInstances(config(), [], [pending], RULE, plus(61));
+      expect(plan.decision).toEqual({ type: 'none' });
+      expect(plan.reason).toBeUndefined();
+      expect(plan.next).toBeNull();
+    });
+
+    it('marks a normal resolve as recovered', () => {
+      const [plan] = planMetricInstances(config(), [web1(0.1)], [firing()], RULE, plus(1));
+      expect(plan.decision.type).toBe('resolve');
+      expect(plan.reason).toBe('recovered');
+    });
   });
 
   it('fires silently while snoozed and notifies once the snooze ends', () => {

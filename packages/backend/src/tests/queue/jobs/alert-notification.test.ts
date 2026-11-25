@@ -1103,6 +1103,24 @@ describe('Alert Notification Job', () => {
                     metric: { group_key: 'host.name=web-1', value: 0.2 },
                 });
             });
+
+            it('no data resolves carry the reason and say so in the title and message', async () => {
+                const { organization, project } = await createTestContext();
+                mockGetAlertRuleChannels.mockResolvedValueOnce([webhookChannel]);
+                const job = resolvedJob(organization.id, project.id, {
+                    alert_type: 'metric',
+                    metric: { ...metric, value: 0.95, reason: 'no_data' },
+                });
+
+                await processAlertNotification({ data: job });
+
+                const envelope = parseWebhookEvent(enqueueMock.mock.calls[0][0].payload);
+                expect(envelope.data).toMatchObject({
+                    title: 'Alert resolved (no data): Test Alert Rule (host.name=web-1)',
+                    message: expect.stringContaining('(no data)'),
+                    metric: { reason: 'no_data', value: 0.95 },
+                });
+            });
         });
 
         describe('PagerDuty destinations', () => {

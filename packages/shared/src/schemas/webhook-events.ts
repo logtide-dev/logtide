@@ -35,6 +35,7 @@ export const metricAlertInstanceDataSchema = z
     for_evaluations: z.number().int().min(1),
     labels: z.record(z.string(), z.string()),
     group_key: z.string(),
+    reason: z.enum(['recovered', 'no_data']).optional(),
   })
   .passthrough();
 export type MetricAlertInstanceData = z.infer<typeof metricAlertInstanceDataSchema>;

@@ -252,6 +252,66 @@ describe('metric rule evaluation (ungrouped)', () => {
     expect((await getRuleRow(rule.id)).state).toBe('ok');
   });
 
+  it('resolves a firing instance with reason no_data after 10 evaluations and 60 minutes, and the incident with it', async () => {
+    const { rule, organization } = await metricRule(config());
+    values = { '': 0.95 };
+    expect(await run(NOW)).toHaveLength(1);
+
+    values = {};
+    // Streak starts at minute 6; the 10th run at minute 66 reaches 10 evaluations and 60 minutes.
+    for (let i = 1; i <= 9; i++) {
+      expect(await run(plus(NOW, i * 6))).toEqual([]);
+    }
+    expect(await instances(rule.id, organization.id)).toMatchObject([
+      { state: 'firing', no_data_evaluations: 9 },
+    ]);
+    expect(resolveSpy).not.toHaveBeenCalled();
+
+    const out = await run(plus(NOW, 66));
+    expect(out).toEqual([
+      expect.objectContaining({
+        kind: 'resolved',
+        incident_id: INCIDENT_ID,
+        metric: expect.objectContaining({ reason: 'no_data', value: 0.95, group_key: '' }),
+      }),
+    ]);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
+    expect((await getRuleRow(rule.id)).state).toBe('ok');
+    expect(await instances(rule.id, organization.id)).toEqual([]);
+  });
+
+  it('does not resolve on no data before the time bound, however many runs', async () => {
+    const { rule } = await metricRule(config());
+    values = { '': 0.95 };
+    await run(NOW);
+    values = {};
+    for (let m = 1; m <= 30; m++) expect(await run(plus(NOW, m))).toEqual([]);
+    expect((await getRuleRow(rule.id)).state).toBe('firing');
+  });
+
+  it('data returning resets the no data streak', async () => {
+    const { rule, organization } = await metricRule(config());
+    values = { '': 0.95 };
+    await run(NOW);
+    values = {};
+    for (let m = 1; m <= 5; m++) await run(plus(NOW, m));
+    expect(await instances(rule.id, organization.id)).toMatchObject([{ no_data_evaluations: 5 }]);
+    values = { '': 0.97 };
+    await run(plus(NOW, 6));
+    expect(await instances(rule.id, organization.id)).toMatchObject([{ state: 'firing', no_data_evaluations: 0, no_data_since: null }]);
+  });
+
+  it('clears a pending instance after the no data bound without notifying', async () => {
+    const { rule, organization } = await metricRule(config({ forEvaluations: 2 }));
+    values = { '': 0.95 };
+    await run(NOW);
+    values = {};
+    for (let m = 1; m <= 10; m++) await run(plus(NOW, m * 7));
+    expect(await instances(rule.id, organization.id)).toEqual([]);
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect((await getRuleRow(rule.id)).state).toBe('ok');
+  });
+
   it('re-notifies on the rule interval', async () => {
     const { rule } = await metricRule(config(), { renotifyMinutes: 10 });
     values = { '': 0.95 };

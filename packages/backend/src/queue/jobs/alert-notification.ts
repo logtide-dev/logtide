@@ -152,7 +152,10 @@ export async function resolveAlertChannels(data: AlertNotificationJobData): Prom
 
 function pagerDutySummary(data: Record<string, unknown>, resolved: boolean): string {
   const name = String(data.alert_name ?? 'Alert');
-  if (resolved) return `Alert resolved: ${instanceName(name, data.metric as MetricAlertInstancePayload | undefined)}`;
+  if (resolved) {
+    const m = data.metric as MetricAlertInstancePayload | undefined;
+    return `Alert resolved${m?.reason === 'no_data' ? ' (no data)' : ''}: ${instanceName(name, m)}`;
+  }
   const prefix = data.renotify ? 'Alert still firing' : 'Alert triggered';
   const metric = data.metric as MetricAlertInstancePayload | undefined;
   if (metric) {
@@ -354,10 +357,13 @@ async function processResolvedNotification(data: AlertResolvedNotificationData) 
   );
   const duration = formatMinutes(Math.round(durationSeconds / 60));
   const name = instanceName(data.rule_name, data.metric);
+  const noData = data.metric?.reason === 'no_data';
   const message =
     data.alert_type === 'rate_of_change'
       ? `${data.rule_name} log volume is back to its baseline after ${duration}`
-      : `${name} is back to normal after ${duration}`;
+      : noData
+        ? `${name} stopped reporting data and was resolved automatically after ${duration} firing (no data)`
+        : `${name} is back to normal after ${duration}`;
 
   // Wrap in the unified envelope; data matches alertResolvedDataSchema.
   const envelope = buildEnvelope({
@@ -368,7 +374,7 @@ async function processResolvedNotification(data: AlertResolvedNotificationData) 
       alert_rule_id: data.rule_id,
       alert_name: data.rule_name,
       alert_type: data.alert_type,
-      title: `Alert resolved: ${name}`,
+      title: noData ? `Alert resolved (no data): ${name}` : `Alert resolved: ${name}`,
       message,
       log_count: data.log_count,
       threshold: data.threshold,

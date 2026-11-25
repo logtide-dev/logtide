@@ -530,7 +530,7 @@ export class AlertsService {
           resolved_at: now.toISOString(),
           incident_id: incidentId,
           ...(channels.length > 0 ? { channel_ids: channels.map((c) => c.id) } : {}),
-          metric: metricInstancePayload(config, window, { groupKey: i.group_key, labels: i.labels, value: i.last_value }),
+          metric: metricInstancePayload(config, window, { groupKey: i.group_key, labels: i.labels, value: i.last_value }, 'recovered'),
         }));
         const { createQueue } = await import('../../queue/connection.js');
         const { enqueueAlertNotifications } = await import('../../queue/jobs/alert-evaluation.js');
