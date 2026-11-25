@@ -5,9 +5,9 @@
 // freely, so results compare sorted.
 
 import { describe, expect, it } from 'vitest';
-import type { MetricAggregateParams, MetricAggregationFn } from '../../core/types.js';
+import { metricAttrLabel, type MetricAggregateParams, type MetricAggregationFn, type MetricAttrFilter, type MetricAttrRef, type MetricSourcesParams } from '../../core/types.js';
 import type { ConformanceContext } from '../harness.js';
-import { METRIC_REQUESTS, minutes, PROJECT_A, WINDOW } from '../corpus.js';
+import { METRIC_CPU, METRIC_QUEUE, METRIC_REQUESTS, minutes, PROJECT_A, PROJECT_B, PROJECT_C, WINDOW } from '../corpus.js';
 
 const METHOD = 'http.request.method';
 const ADDRESS = 'server.address';
@@ -80,5 +80,6 @@ export function describeMetricsConformance(ctx: ConformanceContext): void {
       expect(metrics.map((m) => `${new Date(m.time).toISOString()} ${m.value}`)).toEqual([`${at(3)} 7`]);
       expect(total).toBe(1);
     });
+    describeMetricAttrConformance(ctx);
   });
 }
