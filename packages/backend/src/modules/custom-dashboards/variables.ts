@@ -6,15 +6,12 @@ import { z } from 'zod';
 import { DASHBOARD_MAX_VARIABLES, DASHBOARD_VARIABLE_NAME_RE } from '@logtide/shared';
 import type { DashboardVariable, PanelInstance } from '@logtide/shared';
 
-// Same charset as the other attribute-key barriers (dots allowed, literal key).
-export const METRIC_ATTR_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/;
+// Attribute refs and the "$name" rule are the metrics query ones, shared with
+// the query routes and metric alerts.
+import { METRIC_ATTR_KEY_RE, metricAttrRefSchema } from '../metrics/query/schema.js';
+import { isVariableRef } from '../metrics/query/variables.js';
 
-export const metricAttrRefSchema = z
-  .object({
-    scope: z.enum(['metric', 'resource']),
-    key: z.string().regex(METRIC_ATTR_KEY_RE),
-  })
-  .strict();
+export { METRIC_ATTR_KEY_RE, metricAttrRefSchema, isVariableRef };
 
 export const dashboardVariableSchema = z
   .object({
@@ -42,11 +39,6 @@ export const dashboardVariablesSchema = z
       seen.add(v.name);
     });
   });
-
-/** A filter or service value that refers to a variable starts with "$". */
-export function isVariableRef(value: unknown): value is string {
-  return typeof value === 'string' && value.startsWith('$');
-}
 
 /** Every "$name" a panel config refers to (metrics filters, trace serviceName). */
 export function collectVariableRefs(config: PanelInstance['config']): string[] {

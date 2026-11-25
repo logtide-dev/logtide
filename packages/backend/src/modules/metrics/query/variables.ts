@@ -1,15 +1,26 @@
 // Dashboard variables in metrics filters: a value "$name" takes the variable's
 // current value; an unset (null / empty) variable drops the whole filter; an
 // unknown variable is a validation error.
+//
+// This is the one rule for "is this a variable": only "$" followed by a valid
+// variable name (DASHBOARD_VARIABLE_NAME_RE) is a reference. Anything else
+// that starts with "$" ("$5", "$", "$Foo") is a literal value. The query
+// schema, the dashboard document checks and the alert config all use it.
 
 import type { MetricAttrFilter } from '@logtide/shared';
+import { DASHBOARD_VARIABLE_NAME_RE } from '@logtide/shared';
 import { MetricQueryValidationError } from './errors.js';
 
-const VARIABLE_RE = /^\$([a-z][a-z0-9_]{0,31})$/;
+/** The variable name a value refers to, or null when the value is a literal. */
+export function variableName(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length < 2 || value[0] !== '$') return null;
+  const name = value.slice(1);
+  return DASHBOARD_VARIABLE_NAME_RE.test(name) ? name : null;
+}
 
-export function variableName(value: string): string | null {
-  const m = VARIABLE_RE.exec(value);
-  return m ? m[1] : null;
+/** Whether a value is a "$name" variable reference. */
+export function isVariableRef(value: unknown): value is string {
+  return variableName(value) !== null;
 }
 
 /**

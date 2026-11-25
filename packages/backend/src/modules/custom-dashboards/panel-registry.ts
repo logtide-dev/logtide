@@ -15,16 +15,9 @@
 
 import { z } from 'zod';
 import { PANEL_TIME_RANGES } from '@logtide/shared';
-import {
-  METRIC_MAX_FILTERS,
-  METRIC_MAX_FORMULAS,
-  METRIC_MAX_GROUP_BY,
-  METRIC_MAX_QUERIES,
-  METRIC_MAX_SERIES_LIMIT,
-  METRIC_QUERY_IDS,
-} from '@logtide/shared';
 import type { PanelType, PanelConfig, PanelLayout } from '@logtide/shared';
-import { METRIC_ATTR_KEY_RE, metricAttrRefSchema, isVariableRef, dashboardVariablesSchema, collectVariableRefs } from './variables.js';
+import { dashboardVariablesSchema, collectVariableRefs } from './variables.js';
+import { metricExplorerQuerySchema } from '../metrics/query/schema.js';
 
 const levelEnum = z.enum(['debug', 'info', 'warn', 'error', 'critical']);
 
@@ -121,96 +114,8 @@ const alertStatusSchema = z.object({
   limit: z.number().int().min(3).max(20),
 });
 
-const metricAggregationEnum = z.enum(['avg', 'sum', 'min', 'max', 'count', 'last', 'rate', 'p50', 'p95', 'p99']);
-const metricSpaceAggregationEnum = z.enum(['avg', 'sum', 'min', 'max']);
-const metricIntervalEnum = z.enum(['auto', '1m', '5m', '15m', '1h', '6h', '1d']);
-
-// Filter values: a literal or a "$name" variable reference (checked against the
-// dashboard's declared variables at the document level).
-const metricFilterValue = z.string().min(1).max(500);
-
-const metricFilterSchema = z
-  .object({
-    scope: z.enum(['metric', 'resource']),
-    key: z.string().regex(METRIC_ATTR_KEY_RE),
-    op: z.enum(['eq', 'neq', 'in', 'nin', 'exists', 'notExists', 'gte', 'lt']),
-    values: z.array(metricFilterValue).max(50).optional(),
-  })
-  .strict()
-  .superRefine((f, ctx) => {
-    const n = f.values?.length ?? 0;
-    const bad = (message: string) =>
-      ctx.addIssue({ code: 'custom', message, path: ['values'] });
-    switch (f.op) {
-      case 'eq':
-      case 'neq':
-        if (n !== 1) bad(`${f.op} takes exactly one value`);
-        break;
-      case 'in':
-      case 'nin':
-        if (n < 1) bad(`${f.op} takes at least one value`);
-        break;
-      case 'exists':
-      case 'notExists':
-        if (n !== 0) bad(`${f.op} takes no values`);
-        break;
-      case 'gte':
-      case 'lt':
-        if (n !== 1) bad(`${f.op} takes exactly one value`);
-        else if (!isVariableRef(f.values![0]) && !Number.isFinite(Number(f.values![0]))) {
-          bad(`${f.op} needs a numeric value`);
-        }
-        break;
-    }
-  });
-
-const metricQuerySpecSchema = z
-  .object({
-    id: z.enum(METRIC_QUERY_IDS),
-    metricName: z.string().min(1).max(255),
-    aggregation: metricAggregationEnum,
-    spaceAggregation: metricSpaceAggregationEnum.optional(),
-    filters: z.array(metricFilterSchema).max(METRIC_MAX_FILTERS),
-    groupBy: z.array(metricAttrRefSchema).max(METRIC_MAX_GROUP_BY),
-    limit: z.number().int().min(1).max(METRIC_MAX_SERIES_LIMIT).optional(),
-    hidden: z.boolean().optional(),
-    label: z.string().max(100).optional(),
-  })
-  .strict();
-
-const metricFormulaSpecSchema = z
-  .object({
-    id: z.enum(['F1', 'F2', 'F3', 'F4']),
-    expression: z.string().min(1).max(200),
-    label: z.string().max(100).optional(),
-    hidden: z.boolean().optional(),
-  })
-  .strict();
-
-const metricExplorerQuerySchema = z
-  .object({
-    projectIds: z.array(z.string().guid()).max(100).nullable(),
-    queries: z.array(metricQuerySpecSchema).min(1).max(METRIC_MAX_QUERIES),
-    formulas: z.array(metricFormulaSpecSchema).max(METRIC_MAX_FORMULAS),
-    interval: metricIntervalEnum,
-    compareTo: z.enum(['none', '1h', '1d', '1w']),
-    display: z.enum(['lines', 'area', 'bars', 'split', 'stat', 'table']),
-    unitOverride: z.string().max(20).nullable().optional(),
-  })
-  .strict()
-  .superRefine((q, ctx) => {
-    const dupes = (ids: string[], path: string) => {
-      const seen = new Set<string>();
-      ids.forEach((id, i) => {
-        if (seen.has(id)) {
-          ctx.addIssue({ code: 'custom', message: `Duplicate id "${id}"`, path: [path, i, 'id'] });
-        }
-        seen.add(id);
-      });
-    };
-    dupes(q.queries.map((x) => x.id), 'queries');
-    dupes(q.formulas.map((x) => x.id), 'formulas');
-  });
+// The explorer query schema is shared with the query routes and metric
+// alerts (metrics/query/schema.ts): a query saved anywhere validates the same.
 
 const metricsSchema = z.object({
   type: z.literal('metrics'),
