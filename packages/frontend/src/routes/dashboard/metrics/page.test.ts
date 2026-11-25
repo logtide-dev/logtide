@@ -121,6 +121,33 @@ describe('metrics sources page', () => {
     expect(screen.getByRole('heading', { name: /Hosts/ }).textContent).toContain('4');
   });
 
+  it('hosts table drops its wide columns below 2xl so it fits 1280-1440px', async () => {
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    const headers = within(hosts).getAllByRole('columnheader');
+    const byText = (t: string) => headers.find((th) => th.textContent?.includes(t))!;
+    for (const t of ['CPU trend', 'Services', 'Load 5m']) {
+      expect(byText(t).className).toContain('hidden');
+      expect(byText(t).className).toContain('2xl:table-cell');
+    }
+    for (const t of ['CPU', 'Memory', 'Disk', 'Network', 'Last seen']) {
+      expect(byText(t).className).not.toMatch(/(^|\s)hidden(\s|$)/);
+    }
+    // meters are the narrow variant
+    expect(within(hosts).getAllByRole('meter')[0].className).toContain('w-10');
+  });
+
+  it('shows a quiet service rate per minute instead of 0/s', async () => {
+    h.getSources.mockResolvedValue({
+      hosts: [],
+      services: [service('quiet', 'ok', { requestRate: sig(0.004, 'req/s') })],
+    });
+    render(Page);
+    const row = (await screen.findByTestId('services-section')).querySelector('tbody tr')!;
+    expect(row.textContent).toContain('/min');
+    expect(row.textContent).not.toContain('0/s');
+  });
+
   it('sorts worst status first, then by name', async () => {
     render(Page);
     const hosts = await screen.findByTestId('hosts-section');

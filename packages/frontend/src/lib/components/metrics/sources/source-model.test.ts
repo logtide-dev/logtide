@@ -4,6 +4,7 @@ import { decodeExplorerQuery } from '$lib/utils/metrics-explorer-url';
 import {
   buildExploreHref,
   buildServiceTracesHref,
+  formatRequestRate,
   buildSourceLogsHref,
   filterHostRows,
   filterServiceRows,
@@ -165,5 +166,17 @@ describe('aggregationForCatalogEntry', () => {
     expect(map.get('a')).toBe('p95');
     expect(map.get('b')).toBe('rate');
     expect(map.get('zzz')).toBeUndefined();
+  });
+});
+
+describe('formatRequestRate', () => {
+  it('never shows a busy-looking zero for a quiet service', () => {
+    expect(formatRequestRate(12)).toBe('12/s');
+    expect(formatRequestRate(0.5)).toBe('0.5/s');
+    expect(formatRequestRate(0.004)).toBe('0.2/min');
+    expect(formatRequestRate(0.0004)).toBe('1.4/h');
+    expect(formatRequestRate(0.000001)).toBe('<0.1/h');
+    expect(formatRequestRate(0)).toBe('0/s');
+    expect(formatRequestRate(null)).toBe('n/a');
   });
 });

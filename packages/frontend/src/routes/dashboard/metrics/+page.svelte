@@ -27,7 +27,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import MetricsSubNav from '$lib/components/metrics/v2/MetricsSubNav.svelte';
-  import SourceSignalCell from '$lib/components/metrics/v2/SourceSignalCell.svelte';
+  import SourceMeterCell from '$lib/components/metrics/sources/SourceMeterCell.svelte';
   import SourceStatusDot from '$lib/components/metrics/v2/SourceStatusDot.svelte';
   import {
     DEFAULT_SORT,
@@ -35,6 +35,7 @@
     SETUP_DOCS,
     filterHostRows,
     filterServiceRows,
+    formatRequestRate,
     parseKind,
     redSourceLabel,
     sortHosts,
@@ -178,28 +179,34 @@
   const hostCell = (s: unknown) => s as Snippet<[HostSourceSummary]>;
   const svcCell = (s: unknown) => s as Snippet<[ServiceSourceSummary]>;
 
+  // Columns that do not fit next to the sidebar below 1536px are hidden there
+  // (the table must never scroll sideways at 1280-1440px); the same facts stay
+  // on the detail page. px-2 keeps the cells tight.
+  const CELL = 'px-2';
+  const WIDE_ONLY = 'hidden px-2 2xl:table-cell';
+
   const hostColumns: DataTableColumn<HostSourceSummary>[] = [
-    { key: 'status', header: 'Status', sortable: true, class: 'w-16', cell: hostCell(hostStatusCell) },
-    { key: 'name', header: 'Host', sortable: true, cell: hostCell(hostNameCell) },
-    { key: 'cpu', header: 'CPU', sortable: true, cell: hostCell(hostCpuCell) },
-    { key: 'memory', header: 'Memory', sortable: true, cell: hostCell(hostMemoryCell) },
-    { key: 'disk', header: 'Disk', sortable: true, cell: hostCell(hostDiskCell) },
-    { key: 'network', header: 'Network', sortable: true, cell: hostCell(hostNetworkCell) },
-    { key: 'load', header: 'Load 5m', sortable: true, cell: hostCell(hostLoadCell) },
-    { key: 'trend', header: 'CPU trend', cell: hostCell(hostTrendCell) },
-    { key: 'services', header: 'Services', sortable: true, cell: hostCell(hostServicesCell) },
-    { key: 'lastSeen', header: 'Last seen', sortable: true, cell: hostCell(lastSeenCell) },
+    { key: 'status', header: 'Status', sortable: true, class: 'w-12 px-2', cell: hostCell(hostStatusCell) },
+    { key: 'name', header: 'Host', sortable: true, class: 'max-w-56 px-2', cell: hostCell(hostNameCell) },
+    { key: 'cpu', header: 'CPU', sortable: true, class: CELL, cell: hostCell(hostCpuCell) },
+    { key: 'memory', header: 'Memory', sortable: true, class: CELL, cell: hostCell(hostMemoryCell) },
+    { key: 'disk', header: 'Disk', sortable: true, class: CELL, cell: hostCell(hostDiskCell) },
+    { key: 'network', header: 'Network', sortable: true, class: CELL, cell: hostCell(hostNetworkCell) },
+    { key: 'load', header: 'Load 5m', sortable: true, class: WIDE_ONLY, cell: hostCell(hostLoadCell) },
+    { key: 'trend', header: 'CPU trend', class: WIDE_ONLY, cell: hostCell(hostTrendCell) },
+    { key: 'services', header: 'Services', sortable: true, class: `${WIDE_ONLY} max-w-48`, cell: hostCell(hostServicesCell) },
+    { key: 'lastSeen', header: 'Last seen', sortable: true, class: CELL, cell: hostCell(lastSeenCell) },
   ];
 
   const serviceColumns: DataTableColumn<ServiceSourceSummary>[] = [
-    { key: 'status', header: 'Status', sortable: true, class: 'w-16', cell: svcCell(serviceStatusCell) },
-    { key: 'name', header: 'Service', sortable: true, cell: svcCell(serviceNameCell) },
-    { key: 'requestRate', header: 'Requests/s', sortable: true, cell: svcCell(requestRateCell) },
-    { key: 'errorRate', header: 'Errors', sortable: true, cell: svcCell(errorRateCell) },
-    { key: 'p95', header: 'p95', sortable: true, cell: svcCell(p95Cell) },
-    { key: 'hosts', header: 'Hosts', sortable: true, cell: svcCell(serviceHostsCell) },
-    { key: 'redSource', header: 'RED source', cell: svcCell(redSourceCell) },
-    { key: 'lastSeen', header: 'Last seen', sortable: true, cell: svcCell(lastSeenCell) },
+    { key: 'status', header: 'Status', sortable: true, class: 'w-12 px-2', cell: svcCell(serviceStatusCell) },
+    { key: 'name', header: 'Service', sortable: true, class: 'max-w-64 px-2', cell: svcCell(serviceNameCell) },
+    { key: 'requestRate', header: 'Requests/s', sortable: true, class: CELL, cell: svcCell(requestRateCell) },
+    { key: 'errorRate', header: 'Errors', sortable: true, class: CELL, cell: svcCell(errorRateCell) },
+    { key: 'p95', header: 'p95', sortable: true, class: CELL, cell: svcCell(p95Cell) },
+    { key: 'hosts', header: 'Hosts', sortable: true, class: `${WIDE_ONLY} max-w-48`, cell: svcCell(serviceHostsCell) },
+    { key: 'redSource', header: 'RED source', class: WIDE_ONLY, cell: svcCell(redSourceCell) },
+    { key: 'lastSeen', header: 'Last seen', sortable: true, class: CELL, cell: svcCell(lastSeenCell) },
   ];
 
   const hostKey = (h: HostSourceSummary) => `host:${h.name}`;
@@ -220,7 +227,7 @@
 
 {#snippet hostNameCell(h: HostSourceSummary)}
   <div class="min-w-0">
-    <a class="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={hostHref(h)}>{h.name}</a>
+    <a class="block truncate font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={hostHref(h)}>{h.name}</a>
     {#if h.statusReason && h.status !== 'ok'}
       <p class="truncate text-xs text-muted-foreground" data-testid="status-reason">{h.statusReason}</p>
     {:else if h.os}
@@ -230,19 +237,19 @@
 {/snippet}
 
 {#snippet hostCpuCell(h: HostSourceSummary)}
-  <SourceSignalCell signal={h.cpu} label="CPU" thresholds={HOST_THRESHOLDS.cpu} />
+  <SourceMeterCell signal={h.cpu} label="CPU" thresholds={HOST_THRESHOLDS.cpu} />
 {/snippet}
 {#snippet hostMemoryCell(h: HostSourceSummary)}
-  <SourceSignalCell signal={h.memory} label="Memory" thresholds={HOST_THRESHOLDS.memory} />
+  <SourceMeterCell signal={h.memory} label="Memory" thresholds={HOST_THRESHOLDS.memory} />
 {/snippet}
 {#snippet hostDiskCell(h: HostSourceSummary)}
-  <SourceSignalCell signal={h.disk} label="Disk" thresholds={HOST_THRESHOLDS.disk} />
+  <SourceMeterCell signal={h.disk} label="Disk" thresholds={HOST_THRESHOLDS.disk} />
 {/snippet}
 {#snippet hostNetworkCell(h: HostSourceSummary)}
-  <SourceSignalCell signal={h.network} label="Network" showSpark={false} />
+  <SourceMeterCell signal={h.network} label="Network" showSpark={false} />
 {/snippet}
 {#snippet hostLoadCell(h: HostSourceSummary)}
-  <SourceSignalCell signal={h.load} label="Load" showSpark={false} />
+  <SourceMeterCell signal={h.load} label="Load" showSpark={false} />
 {/snippet}
 
 {#snippet hostTrendCell(h: HostSourceSummary)}
@@ -268,7 +275,7 @@
 
 {#snippet serviceNameCell(s: ServiceSourceSummary)}
   <div class="min-w-0">
-    <a class="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={serviceHref(s)}>{s.name}</a>
+    <a class="block truncate font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={serviceHref(s)}>{s.name}</a>
     {#if s.statusReason && s.status !== 'ok'}
       <p class="truncate text-xs text-muted-foreground" data-testid="status-reason">{s.statusReason}</p>
     {:else if !s.redSource}
@@ -278,7 +285,7 @@
 {/snippet}
 
 {#snippet requestRateCell(s: ServiceSourceSummary)}
-  <SourceSignalCell signal={s.redSource ? s.requestRate : null} label="Requests per second" />
+  <SourceMeterCell signal={s.redSource ? s.requestRate : null} label="Requests per second" format={(v) => formatRequestRate(v)} />
 {/snippet}
 
 {#snippet errorRateCell(s: ServiceSourceSummary)}
@@ -290,7 +297,7 @@
 {/snippet}
 
 {#snippet p95Cell(s: ServiceSourceSummary)}
-  <SourceSignalCell signal={s.redSource ? s.p95 : null} label="p95 latency" />
+  <SourceMeterCell signal={s.redSource ? s.p95 : null} label="p95 latency" />
 {/snippet}
 
 {#snippet redSourceCell(s: ServiceSourceSummary)}
@@ -319,7 +326,7 @@
     <a class="font-medium" href={serviceHref(s)}>{s.name}</a>
   </div>
   <div class="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-    <span>Req <b class="text-foreground">{formatMetricValue(s.requestRate.value, s.requestRate.unit)}</b></span>
+    <span>Req <b class="text-foreground">{formatRequestRate(s.requestRate.value)}</b></span>
     <span>Err <b class="text-foreground">{formatMetricValue(s.errorRate.value, s.errorRate.unit)}</b></span>
     <span>p95 <b class="text-foreground">{formatMetricValue(s.p95.value, s.p95.unit)}</b></span>
   </div>
