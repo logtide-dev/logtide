@@ -74,6 +74,8 @@ function trimNumber(value: number, digits: number): string {
 /** Number with up to `digits` decimals, en-US grouping, no trailing zeros. */
 export function formatPlainNumber(value: number, digits = 2): string {
   const abs = Math.abs(value);
+  // Small non-zero values keep two significant digits instead of rounding to 0.
+  if (abs > 0 && abs < 0.01) return Number(value.toPrecision(2)).toString();
   const d = abs >= 100 ? 0 : abs >= 10 ? Math.min(digits, 1) : digits;
   const [int, frac] = trimNumber(value, d).split('.');
   const grouped = Number(int).toLocaleString('en-US');
