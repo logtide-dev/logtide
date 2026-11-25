@@ -46,6 +46,28 @@ describe('metric catalog registry', () => {
     expect(out.find((r) => r.type === 'sum')!.isMonotonic).toBe(true);
   });
 
+  it('records temporality, first valid value of the batch wins', () => {
+    const out = distinctCatalogRows([
+      rec({ metricType: 'sum', temporality: 'bogus' }),
+      rec({ metricType: 'sum', temporality: 'delta' }),
+      rec({ metricType: 'sum', temporality: 'cumulative' }),
+      rec({ metricType: 'gauge' }),
+    ]);
+    expect(out.find((r) => r.type === 'sum')!.temporality).toBe('delta');
+    expect(out.find((r) => r.type === 'gauge')!.temporality).toBeNull();
+  });
+
+  it('stores temporality and does not erase it with a record lacking one', async () => {
+    await registerMetricCatalog([rec({ metricType: 'histogram', temporality: 'cumulative' })], projectId, 0);
+    expect((await rows(projectId))[0].temporality).toBe('cumulative');
+    await registerMetricCatalog([rec({ metricType: 'histogram', time: T2 })], projectId, CATALOG_THROTTLE_MS);
+    const r = (await rows(projectId))[0];
+    expect(r.temporality).toBe('cumulative');
+    expect(r.last_seen_at).toEqual(T2);
+    await registerMetricCatalog([rec({ metricType: 'histogram', temporality: 'delta' })], projectId, 2 * CATALOG_THROTTLE_MS);
+    expect((await rows(projectId))[0].temporality).toBe('delta');
+  });
+
   it('upserts one row per (name, type) and keeps min first_seen, max last_seen', async () => {
     const n = await registerMetricCatalog(
       [rec({ time: T1, unit: '%', description: 'cpu' }), rec({ time: T0 }), rec({ metricType: 'sum' })],

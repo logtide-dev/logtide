@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS metric_catalog (
   unit text,
   description text,
   is_monotonic boolean,
+  -- OTLP aggregation temporality of sums and histograms: cumulative | delta | null
+  temporality text,
   first_seen_at timestamptz NOT NULL,
   last_seen_at timestamptz NOT NULL,
   PRIMARY KEY (project_id, metric_name, metric_type)

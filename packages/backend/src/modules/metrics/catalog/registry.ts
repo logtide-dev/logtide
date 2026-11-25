@@ -29,6 +29,7 @@ interface MetricLike {
   unit?: string;
   description?: string;
   isMonotonic?: boolean;
+  temporality?: 'cumulative' | 'delta';
 }
 
 interface CatalogRow {
@@ -37,6 +38,7 @@ interface CatalogRow {
   unit: string | null;
   description: string | null;
   isMonotonic: boolean | null;
+  temporality: 'cumulative' | 'delta' | null;
   firstSeen: Date;
   lastSeen: Date;
 }
@@ -75,6 +77,10 @@ function clip(value: string | undefined, max: number): string | null {
   return value.length > max ? value.slice(0, max) : value;
 }
 
+function validTemporality(t: unknown): 'cumulative' | 'delta' | null {
+  return t === 'cumulative' || t === 'delta' ? t : null;
+}
+
 function validTime(t: Date): number | null {
   const ms = t instanceof Date ? t.getTime() : NaN;
   return Number.isFinite(ms) ? ms : null;
@@ -98,6 +104,7 @@ export function distinctCatalogRows(records: readonly MetricLike[]): CatalogRow[
         unit,
         description,
         isMonotonic: typeof r.isMonotonic === 'boolean' ? r.isMonotonic : null,
+        temporality: validTemporality(r.temporality),
         firstSeen: new Date(ms),
         lastSeen: new Date(ms),
       });
@@ -106,6 +113,7 @@ export function distinctCatalogRows(records: readonly MetricLike[]): CatalogRow[
     if (existing.unit === null) existing.unit = unit;
     if (existing.description === null) existing.description = description;
     if (existing.isMonotonic === null && typeof r.isMonotonic === 'boolean') existing.isMonotonic = r.isMonotonic;
+    if (existing.temporality === null) existing.temporality = validTemporality(r.temporality);
     if (ms < existing.firstSeen.getTime()) existing.firstSeen = new Date(ms);
     if (ms > existing.lastSeen.getTime()) existing.lastSeen = new Date(ms);
   }
@@ -124,6 +132,7 @@ async function upsertRows(rows: CatalogRow[], projectId: string): Promise<void> 
           unit: r.unit,
           description: r.description,
           is_monotonic: r.isMonotonic,
+          temporality: r.temporality,
           first_seen_at: r.firstSeen,
           last_seen_at: r.lastSeen,
         }))
@@ -133,6 +142,7 @@ async function upsertRows(rows: CatalogRow[], projectId: string): Promise<void> 
           unit: sql`coalesce(excluded.unit, metric_catalog.unit)`,
           description: sql`coalesce(excluded.description, metric_catalog.description)`,
           is_monotonic: sql`coalesce(excluded.is_monotonic, metric_catalog.is_monotonic)`,
+          temporality: sql`coalesce(excluded.temporality, metric_catalog.temporality)`,
           first_seen_at: sql`least(metric_catalog.first_seen_at, excluded.first_seen_at)`,
           last_seen_at: sql`greatest(metric_catalog.last_seen_at, excluded.last_seen_at)`,
         })
