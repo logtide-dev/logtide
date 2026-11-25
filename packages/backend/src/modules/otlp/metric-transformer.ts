@@ -232,6 +232,7 @@ export function transformOtlpToMetrics(
     for (const scopeMetric of resourceMetric.scopeMetrics ?? []) {
       for (const metric of scopeMetric.metrics ?? []) {
         const metricName = sanitizeForPostgres(metric.name || 'unknown');
+        const firstIndex = records.length;
 
         if (metric.gauge) {
           records.push(
@@ -253,6 +254,19 @@ export function transformOtlpToMetrics(
           records.push(
             ...transformSummaryDataPoints(metric.summary, metricName, serviceName, resourceAttributes)
           );
+        }
+
+        // 1.8 catalog: carry the metric unit and description on every record
+        const unit = typeof metric.unit === 'string' && metric.unit !== '' ? sanitizeForPostgres(metric.unit) : undefined;
+        const description =
+          typeof metric.description === 'string' && metric.description !== ''
+            ? sanitizeForPostgres(metric.description)
+            : undefined;
+        if (unit !== undefined || description !== undefined) {
+          for (let i = firstIndex; i < records.length; i++) {
+            if (unit !== undefined) records[i].unit = unit;
+            if (description !== undefined) records[i].description = description;
+          }
         }
       }
     }
