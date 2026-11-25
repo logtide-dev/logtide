@@ -130,6 +130,7 @@ interface CatalogDbRow {
   unit: string | null;
   description: string | null;
   is_monotonic: boolean | null;
+  temporality: 'cumulative' | 'delta' | null;
   first_seen_at: Date;
   last_seen_at: Date;
 }
@@ -148,8 +149,7 @@ function mergeEntries(rows: CatalogDbRow[]): MetricCatalogEntry[] {
         unit: r.unit,
         description: r.description,
         isMonotonic: r.is_monotonic,
-        // Filled from the catalog temporality column (1.8 histograms task).
-        temporality: null,
+        temporality: r.temporality ?? null,
         projectIds: [r.project_id],
         firstSeen: r.first_seen_at.toISOString(),
         lastSeen: r.last_seen_at.toISOString(),
@@ -160,6 +160,7 @@ function mergeEntries(rows: CatalogDbRow[]): MetricCatalogEntry[] {
     existing.unit ??= r.unit;
     existing.description ??= r.description;
     existing.isMonotonic ??= r.is_monotonic;
+    existing.temporality ??= r.temporality ?? null;
     if (r.first_seen_at.toISOString() < existing.firstSeen) existing.firstSeen = r.first_seen_at.toISOString();
   }
   return [...entries.values()].sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type));

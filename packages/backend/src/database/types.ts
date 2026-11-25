@@ -1005,6 +1005,7 @@ export interface MetricCatalogTable {
   unit: string | null;
   description: string | null;
   is_monotonic: boolean | null;
+  temporality: 'cumulative' | 'delta' | null;
   first_seen_at: Timestamp;
   last_seen_at: Timestamp;
 }

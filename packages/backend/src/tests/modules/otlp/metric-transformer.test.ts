@@ -203,6 +203,9 @@ describe('OTLP Metric Transformer', () => {
         count: 200,
         min: 0.5,
         max: 100.0,
+        // zero_count + negatives fold into (-Inf, 0]; base = 2^(1/8)
+        explicit_bounds: [0, 2 ** (1 / 8), 2 ** (2 / 8), 2 ** (3 / 8), 2 ** (4 / 8)],
+        bucket_counts: [25, 0, 10, 20, 30, 0],
         scale: 3,
         zero_count: 5,
         positive: { offset: 1, bucket_counts: [10, 20, 30] },

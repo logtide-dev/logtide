@@ -103,6 +103,25 @@ describe('Metric catalog routes', () => {
       expect(wild.body.metrics).toHaveLength(0);
     });
 
+    it('reports temporality, first non-null across projects', async () => {
+      const second = (await createTestProject({ organizationId: a.organization.id, userId: a.user.id })).id;
+      await seedCatalog(a.project.id, 'http.server.request.duration', {
+        metric_type: 'histogram',
+        temporality: null,
+        last_seen_at: NOW,
+      });
+      await seedCatalog(second, 'http.server.request.duration', {
+        metric_type: 'histogram',
+        temporality: 'delta',
+        last_seen_at: new Date(NOW.getTime() - 60_000),
+      });
+      await seedCatalog(a.project.id, 'plain.gauge');
+      const res = await get('/catalog', tokenA, { organizationId: a.organization.id });
+      const byName = Object.fromEntries(res.body.metrics.map((m: any) => [m.name, m]));
+      expect(byName['http.server.request.duration']).toMatchObject({ type: 'histogram', temporality: 'delta' });
+      expect(byName['plain.gauge'].temporality).toBeNull();
+    });
+
     it('merges projects and honors projectIds as comma list or repeated', async () => {
       const second = (await createTestProject({ organizationId: a.organization.id, userId: a.user.id })).id;
       await seedCatalog(a.project.id, 'shared.metric');
@@ -344,6 +363,55 @@ describe('Metric catalog routes', () => {
         if (!row) await new Promise((r) => setTimeout(r, 50));
       }
       expect(row).toMatchObject({ metric_type: 'gauge', unit: '{message}', description: 'Messages waiting' });
+    });
+
+    it('records the temporality of a histogram from an OTLP push', async () => {
+      const res = await request(app.server)
+        .post('/v1/otlp/metrics')
+        .set('x-api-key', a.apiKey.plainKey)
+        .set('Content-Type', 'application/json')
+        .send({
+          resourceMetrics: [
+            {
+              resource: { attributes: [{ key: 'service.name', value: { stringValue: 'svc' } }] },
+              scopeMetrics: [
+                {
+                  metrics: [
+                    {
+                      name: 'rpc.duration',
+                      unit: 'ms',
+                      histogram: {
+                        aggregationTemporality: 1,
+                        dataPoints: [
+                          {
+                            timeUnixNano: String(Date.now() * 1_000_000),
+                            count: '2',
+                            sum: 30,
+                            bucketCounts: ['1', '1', '0'],
+                            explicitBounds: [10, 100],
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        });
+      expect(res.status).toBeLessThan(300);
+
+      let row: any;
+      for (let i = 0; i < 50 && !row; i++) {
+        row = await db
+          .selectFrom('metric_catalog')
+          .selectAll()
+          .where('project_id', '=', a.project.id)
+          .where('metric_name', '=', 'rpc.duration')
+          .executeTakeFirst();
+        if (!row) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(row).toMatchObject({ metric_type: 'histogram', unit: 'ms', temporality: 'delta' });
     });
   });
 });
