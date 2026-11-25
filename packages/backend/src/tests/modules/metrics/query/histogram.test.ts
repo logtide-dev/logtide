@@ -15,6 +15,7 @@ import {
   type HistSeries,
 } from '../../../../modules/metrics/query/histogram.js';
 import { applyDeltaRate } from '../../../../modules/metrics/query/series-fold.js';
+import { EXP_CANONICAL_BOUNDS, EXP_GRID_ID } from '../../../../modules/otlp/exp-histogram-grid.js';
 import { effectiveTemporality, queryResultUnit, isHistogramType } from '../../../../modules/metrics/query/units.js';
 
 const MIN = 60_000;
@@ -268,6 +269,50 @@ describe('mergeHistograms', () => {
     const merged = mergeHistograms([h([0.1, 0.5, 1], [10, 0, 0, 0]), h([0.1, 0.5, 1], [0, 0, 10, 0])])!;
     expect(histogramQuantile(merged, 0.5)).toBeCloseTo(0.1);
     expect(histogramQuantile(merged, 0.75)).toBeCloseTo(0.75);
+  });
+});
+
+describe('normalizeHistogram with grid ids', () => {
+  const slots = EXP_CANONICAL_BOUNDS.length + 1;
+
+  it('expands a known grid id to its explicit bounds', () => {
+    const counts = new Array<number>(slots).fill(0);
+    counts[5] = 3;
+    const out = normalizeHistogram({ bounds: [], grid: EXP_GRID_ID, counts, sum: 1, count: 3 });
+    expect(out).toEqual({ bounds: [...EXP_CANONICAL_BOUNDS], counts, sum: 1, count: 3 });
+    expect(out).not.toHaveProperty('grid');
+    // A fresh array: callers may not touch the frozen grid.
+    expect(out!.bounds).not.toBe(EXP_CANONICAL_BOUNDS);
+  });
+
+  it('the grid id wins over bounds the engine returned', () => {
+    const counts = new Array<number>(slots).fill(1);
+    expect(normalizeHistogram({ bounds: [1, 2], grid: EXP_GRID_ID, counts, sum: 0, count: slots })!.bounds).toHaveLength(slots - 1);
+  });
+
+  it('rejects an unknown grid id or a counts length that does not fit the grid', () => {
+    expect(normalizeHistogram({ bounds: [], grid: 'exp2-s9-v9', counts: [1], sum: 0, count: 1 })).toBeNull();
+    expect(normalizeHistogram({ bounds: [], grid: EXP_GRID_ID, counts: [1, 2, 3], sum: 0, count: 6 })).toBeNull();
+  });
+
+  it('an empty grid id reads the bounds (explicit path)', () => {
+    expect(normalizeHistogram({ bounds: [1], grid: '', counts: [1, 1], sum: 0, count: 2 })).toEqual(h([1], [1, 1], 0, 2));
+  });
+
+  it('a grid snapshot diffs against an explicit snapshot with the same bounds bucket by bucket', () => {
+    const prevCounts = new Array<number>(slots).fill(0);
+    prevCounts[100] = 4;
+    const curCounts = [...prevCounts];
+    curCounts[100] = 6;
+    curCounts[120] = 1;
+    const prev = normalizeHistogram({ bounds: [...EXP_CANONICAL_BOUNDS], counts: prevCounts, sum: 4, count: 4 })!;
+    const cur = normalizeHistogram({ bounds: [], grid: EXP_GRID_ID, counts: curCounts, sum: 9, count: 7 })!;
+    const d = diffHistogram(prev, cur);
+    expect(d.bounds).toEqual([...EXP_CANONICAL_BOUNDS]);
+    expect(d.counts[100]).toBe(2);
+    expect(d.counts[120]).toBe(1);
+    expect(d.count).toBe(3);
+    expect(mergeHistograms([prev, cur])!.bounds).toEqual([...EXP_CANONICAL_BOUNDS]);
   });
 });
 

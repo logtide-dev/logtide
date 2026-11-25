@@ -9,6 +9,7 @@
 
 import type { MetricTimeAggregation } from '@logtide/shared';
 import type { MetricHistogramValue, MetricTimeBucket } from '@logtide/reservoir';
+import { histogramGridBounds } from '../../otlp/exp-histogram-grid.js';
 import { bucketStart } from './interval.js';
 import { labelKey, OTHER_LABEL, seriesMean, type GridSeries } from './series-fold.js';
 
@@ -23,16 +24,31 @@ export interface HistSeries {
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
-/** A well-formed copy of an engine histogram, or null. */
+/**
+ * The explicit bounds of an engine histogram: a grid id (points stored on a
+ * canonical grid, exp-histogram-grid.ts) expands to the grid's bounds, else
+ * the bounds the engine returned. An unknown grid id has no bounds (null).
+ */
+function boundsOf(h: MetricHistogramValue): readonly number[] | null {
+  if (typeof h.grid === 'string' && h.grid !== '') return histogramGridBounds(h.grid) ?? null;
+  return Array.isArray(h.bounds) ? h.bounds : null;
+}
+
+/**
+ * A well-formed copy of an engine histogram with explicit bounds (grid ids
+ * expanded, so every later step only sees bounds), or null.
+ */
 export function normalizeHistogram(h: MetricHistogramValue | null | undefined): Histogram | null {
-  if (!h || !Array.isArray(h.bounds) || !Array.isArray(h.counts)) return null;
-  if (h.counts.length !== h.bounds.length + 1) return null;
-  if (!h.bounds.every(finite)) return null;
-  for (let i = 1; i < h.bounds.length; i++) if (h.bounds[i] <= h.bounds[i - 1]) return null;
+  if (!h || !Array.isArray(h.counts)) return null;
+  const bounds = boundsOf(h);
+  if (!bounds) return null;
+  if (h.counts.length !== bounds.length + 1) return null;
+  if (!bounds.every(finite)) return null;
+  for (let i = 1; i < bounds.length; i++) if (bounds[i] <= bounds[i - 1]) return null;
   const counts = h.counts.map((c) => (finite(c) && c > 0 ? c : 0));
   const total = counts.reduce((a, b) => a + b, 0);
   return {
-    bounds: [...h.bounds],
+    bounds: [...bounds],
     counts,
     sum: finite(h.sum) ? h.sum : 0,
     count: finite(h.count) && h.count >= 0 ? h.count : total,
@@ -68,6 +84,7 @@ export function histBucketsToSeries(
 }
 
 function sameBounds(a: number[], b: number[]): boolean {
+  if (a === b) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
