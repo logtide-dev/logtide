@@ -4,6 +4,8 @@ import { requireFullAccess } from '../auth/guards.js';
 import { verifyProjectAccess } from '../auth/verify-project-access.js';
 import type { AggregationInterval, MetricAggregationFn } from '@logtide/reservoir';
 import { TooManyFilterValuesError } from './aggregate-options.js';
+import { metricCatalogRoutes } from './catalog/routes.js';
+import { sourcesRoutes } from './sources/index.js';
 import metricQueryRoutes from './query/routes.js';
 
 /**
@@ -57,6 +59,9 @@ export function parseAttributeFilters(query: Record<string, unknown>): Record<st
 }
 
 const metricsRoutes: FastifyPluginAsync = async (fastify) => {
+  await fastify.register(metricCatalogRoutes);
+  // 1.8 sources (session auth, its own encapsulated hook)
+  await fastify.register(sourcesRoutes, { prefix: '/sources' });
   // 1.8 query service: POST /query and POST /panels/data
   await fastify.register(metricQueryRoutes);
 
