@@ -77,7 +77,11 @@ import type {
   ListSessionsResult,
   HasSessionsParams,
   SessionSummary,
+  MetricSourcesParams,
+  MetricSourcesResult,
+  MetricSource,
 } from '../../core/types.js';
+import { metricAttrLabel } from '../../core/types.js';
 import { FACETS_DEFAULT_LIMIT, LATENCY_HISTOGRAM_BOUNDS_MS, OPERATION_STATS_DEFAULT_LIMIT } from '../../core/constants.js';
 import {
   assertTimeRange,
@@ -89,6 +93,13 @@ import {
 } from '../../core/normalize.js';
 import { decodeSessionCursor, encodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
+import {
+  SqlParams,
+  likePrefixPattern,
+  metricAttrColumn,
+  metricAttrFiltersSql,
+  metricAttrText,
+} from './metric-attr-sql.js';
 import { assembleFacets, histogramRowsToResult, type FacetRow, type HistogramRow } from './log-analytics.js';
 import {
   buildSpanConditions,
@@ -114,6 +125,10 @@ const EXACT_COUNT_THRESHOLD = 50_000;
 function sanitizeNull(value: string): string {
   return value.includes('\0') ? value.replace(/\0/g, '') : value;
 }
+
+/** getMetricSources: default number of sources, and values kept per co-key. */
+const DEFAULT_SOURCES_LIMIT = 500;
+const MAX_SOURCE_CO_VALUES = 20;
 
 const METRIC_INTERVAL_MAP: Record<AggregationInterval, string> = {
   '1m': '1 minute',
@@ -1563,8 +1578,6 @@ export class TimescaleEngine extends StorageEngine {
       values.push(JSON.stringify(params.attributes));
     }
 
-    const where = `WHERE ${conditions.join(' AND ')}`;
-
     // Build aggregation expression
     let aggExpr: string;
     switch (params.aggregation) {
@@ -1599,17 +1612,28 @@ export class TimescaleEngine extends StorageEngine {
         aggExpr = 'AVG(value)';
     }
 
-    // Build groupBy columns (parameterized to prevent SQL injection)
+    // Build groupBy columns (keys are bound parameters, never interpolated).
+    // Legacy groupBy reads metric attributes under the bare key; groupByAttrs
+    // reads either scope under metricAttrLabel(ref). A missing key groups as ''.
+    const sqlParams = new SqlParams(values);
+    const groupLabels: string[] = [];
     const groupByColumns: string[] = [];
     const selectExtra: string[] = [];
-    if (params.groupBy && params.groupBy.length > 0) {
-      for (const key of params.groupBy) {
-        const alias = `label_${groupByColumns.length}`;
-        selectExtra.push(`attributes->>$${idx++} AS ${alias}`);
-        values.push(key);
-        groupByColumns.push(alias);
-      }
+    const addGroup = (label: string, textExpr: string) => {
+      const alias = `label_${groupByColumns.length}`;
+      selectExtra.push(`COALESCE(${textExpr}, '') AS ${alias}`);
+      groupByColumns.push(alias);
+      groupLabels.push(label);
+    };
+    for (const key of params.groupBy ?? []) {
+      addGroup(key, metricAttrText('metric', sqlParams.add(key)));
     }
+    for (const ref of params.groupByAttrs ?? []) {
+      addGroup(metricAttrLabel(ref), metricAttrText(ref.scope, sqlParams.add(ref.key)));
+    }
+    conditions.push(...metricAttrFiltersSql(params.filters, sqlParams));
+
+    const where = `WHERE ${conditions.join(' AND ')}`;
 
     const selectCols = [
       `time_bucket($1, time) AS bucket`,
@@ -1625,7 +1649,7 @@ export class TimescaleEngine extends StorageEngine {
        ${where}
        GROUP BY ${groupByCols}
        ORDER BY bucket ASC`,
-      values,
+      sqlParams.values,
     );
 
     const timeseries: MetricTimeBucket[] = result.rows.map((row: Record<string, unknown>) => {
@@ -1633,10 +1657,10 @@ export class TimescaleEngine extends StorageEngine {
         bucket: row.bucket as Date,
         value: Number(row.agg_value),
       };
-      if (params.groupBy && params.groupBy.length > 0) {
+      if (groupLabels.length > 0) {
         const labels: Record<string, string> = {};
-        for (let i = 0; i < params.groupBy.length; i++) {
-          labels[params.groupBy[i]] = (row[`label_${i}`] as string) ?? '';
+        for (let i = 0; i < groupLabels.length; i++) {
+          labels[groupLabels[i]] = (row[`label_${i}`] as string) ?? '';
         }
         bucket.labels = labels;
       }
@@ -1656,6 +1680,10 @@ export class TimescaleEngine extends StorageEngine {
     if (params.aggregation === 'last' || params.aggregation === 'p50' || params.aggregation === 'p95' || params.aggregation === 'p99') return false;
     if (params.groupBy && params.groupBy.length > 0) return false;
     if (params.attributes && Object.keys(params.attributes).length > 0) return false;
+    // 1.8: the rollups carry no attributes, so attribute groups and filters
+    // always read raw points.
+    if (params.groupByAttrs && params.groupByAttrs.length > 0) return false;
+    if (params.filters && params.filters.length > 0) return false;
     return true;
   }
 
@@ -1776,49 +1804,46 @@ export class TimescaleEngine extends StorageEngine {
     };
   }
 
+  /**
+   * Shared WHERE of the label discovery queries. With metricName '' every
+   * metric counts (used with resource scope, where keys span metrics).
+   */
+  private metricLabelConditions(params: MetricLabelParams, sqlParams: SqlParams): string[] {
+    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
+    const conditions = [`project_id = ANY(${sqlParams.add(pids)})`];
+    if (params.metricName !== '') {
+      conditions.push(`metric_name = ${sqlParams.add(params.metricName)}`);
+    }
+    if (params.organizationId) {
+      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
+      conditions.push(`organization_id = ANY(${sqlParams.add(oids)})`);
+    }
+    if (params.from) {
+      conditions.push(`time >= ${sqlParams.add(params.from)}`);
+    }
+    if (params.to) {
+      conditions.push(`time <= ${sqlParams.add(params.to)}`);
+    }
+    return conditions;
+  }
+
   async getMetricLabelKeys(params: MetricLabelParams): Promise<MetricLabelResult> {
     const start = Date.now();
     const s = this.schema;
+    const col = metricAttrColumn(params.scope ?? 'metric');
 
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    // Project filter
-    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-    conditions.push(`project_id = ANY($${idx++})`);
-    values.push(pids);
-
-    // Metric name
-    conditions.push(`metric_name = $${idx++}`);
-    values.push(params.metricName);
-
-    // Optional filters
-    if (params.organizationId) {
-      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
-      conditions.push(`organization_id = ANY($${idx++})`);
-      values.push(oids);
-    }
-    if (params.from) {
-      conditions.push(`time >= $${idx++}`);
-      values.push(params.from);
-    }
-    if (params.to) {
-      conditions.push(`time <= $${idx++}`);
-      values.push(params.to);
-    }
-
-    const where = `WHERE ${conditions.join(' AND ')}`;
-    const limitClause = params.limit ? `LIMIT $${idx++}` : '';
-    const limitValues = params.limit ? [params.limit] : [];
+    const sqlParams = new SqlParams();
+    const conditions = this.metricLabelConditions(params, sqlParams);
+    conditions.push(`${col} IS NOT NULL`);
+    const limitClause = params.limit ? `LIMIT ${sqlParams.add(params.limit)}` : '';
 
     const result = await this.runQuery(
-      `SELECT DISTINCT jsonb_object_keys(attributes) AS key
+      `SELECT DISTINCT jsonb_object_keys(${col}) AS key
        FROM ${s}.metrics
-       ${where} AND attributes IS NOT NULL
+       WHERE ${conditions.join(' AND ')}
        ORDER BY key ASC
        ${limitClause}`,
-      [...values, ...limitValues],
+      sqlParams.values,
     );
 
     return {
@@ -1830,58 +1855,103 @@ export class TimescaleEngine extends StorageEngine {
   async getMetricLabelValues(params: MetricLabelParams, labelKey: string): Promise<MetricLabelResult> {
     const start = Date.now();
     const s = this.schema;
+    const col = metricAttrColumn(params.scope ?? 'metric');
 
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    // Project filter
-    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-    conditions.push(`project_id = ANY($${idx++})`);
-    values.push(pids);
-
-    // Metric name
-    conditions.push(`metric_name = $${idx++}`);
-    values.push(params.metricName);
-
-    // Must have the key
-    conditions.push(`attributes ? $${idx++}`);
-    values.push(labelKey);
-
-    // Optional filters
-    if (params.organizationId) {
-      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
-      conditions.push(`organization_id = ANY($${idx++})`);
-      values.push(oids);
-    }
-    if (params.from) {
-      conditions.push(`time >= $${idx++}`);
-      values.push(params.from);
-    }
-    if (params.to) {
-      conditions.push(`time <= $${idx++}`);
-      values.push(params.to);
-    }
-
-    const where = `WHERE ${conditions.join(' AND ')}`;
-    const limitClause = params.limit ? `LIMIT $${idx++}` : '';
-    const limitValues = params.limit ? [params.limit] : [];
+    const sqlParams = new SqlParams();
+    const conditions = this.metricLabelConditions(params, sqlParams);
+    const key = sqlParams.add(labelKey);
+    // Must have the key, with a non-empty text form.
+    conditions.push(`${col} ? ${key}`);
+    conditions.push(`${col}->>${key} <> ''`);
+    const limitClause = params.limit ? `LIMIT ${sqlParams.add(params.limit)}` : '';
 
     const result = await this.runQuery(
-      `SELECT DISTINCT attributes->>$${idx++} AS value
+      `SELECT DISTINCT ${col}->>${key} AS value
        FROM ${s}.metrics
-       ${where}
+       WHERE ${conditions.join(' AND ')}
        ORDER BY value ASC
        ${limitClause}`,
-      [...values, ...limitValues, labelKey],
+      sqlParams.values,
     );
 
     return {
       values: result.rows
         .map((row: Record<string, unknown>) => row.value as string)
-        .filter((v) => v != null),
+        .filter((v) => v != null && v !== ''),
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  /**
+   * One row per distinct non-empty value of resource_attributes[key] in the
+   * window. A single pass over the metrics hypertable (chunk exclusion on
+   * time, project_id = ANY), every key and prefix bound as a parameter.
+   */
+  async getMetricSources(params: MetricSourcesParams): Promise<MetricSourcesResult> {
+    const start = Date.now();
+    const s = this.schema;
+    const sqlParams = new SqlParams();
+
+    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
+    const value = metricAttrText('resource', sqlParams.add(params.key));
+    const conditions = [
+      `project_id = ANY(${sqlParams.add(pids)})`,
+      `time >= ${sqlParams.add(params.from)}`,
+      `time <= ${sqlParams.add(params.to)}`,
+      `${value} <> ''`,
+    ];
+    if (params.organizationId) {
+      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
+      conditions.push(`organization_id = ANY(${sqlParams.add(oids)})`);
+    }
+    if (params.includeMetricPrefixes && params.includeMetricPrefixes.length > 0) {
+      const patterns = params.includeMetricPrefixes.map(likePrefixPattern);
+      conditions.push(`metric_name LIKE ANY(${sqlParams.add(patterns)}::text[])`);
+    }
+    if (params.excludeMetricPrefixes && params.excludeMetricPrefixes.length > 0) {
+      const patterns = params.excludeMetricPrefixes.map(likePrefixPattern);
+      conditions.push(`NOT (metric_name LIKE ANY(${sqlParams.add(patterns)}::text[]))`);
+    }
+
+    const coKeys = [...new Set(params.coKeys ?? [])];
+    const coSelects = coKeys.map((coKey, i) => {
+      const co = `(${metricAttrText('resource', sqlParams.add(coKey))} COLLATE "C")`;
+      return `(array_agg(DISTINCT ${co} ORDER BY ${co}) FILTER (WHERE ${co} <> ''))[1:${MAX_SOURCE_CO_VALUES}] AS co_${i}`;
+    });
+
+    const limit = params.limit && params.limit > 0 ? params.limit : DEFAULT_SOURCES_LIMIT;
+
+    const result = await this.runQuery(
+      `SELECT ${value} COLLATE "C" AS value,
+              array_agg(DISTINCT project_id::text ORDER BY project_id::text) AS project_ids,
+              MAX(time) AS last_seen,
+              COUNT(DISTINCT metric_name)::int AS metric_count,
+              COUNT(*)::bigint AS point_count${coSelects.map((c) => `,
+              ${c}`).join('')}
+       FROM ${s}.metrics
+       WHERE ${conditions.join(' AND ')}
+       GROUP BY 1
+       ORDER BY 1 ASC
+       LIMIT ${sqlParams.add(limit)}`,
+      sqlParams.values,
+    );
+
+    const sources: MetricSource[] = result.rows.map((row: Record<string, unknown>) => {
+      const co: Record<string, string[]> = {};
+      coKeys.forEach((coKey, i) => {
+        co[coKey] = (row[`co_${i}`] as string[] | null) ?? [];
+      });
+      return {
+        value: row.value as string,
+        projectIds: row.project_ids as string[],
+        lastSeen: row.last_seen as Date,
+        metricCount: Number(row.metric_count),
+        pointCount: Number(row.point_count),
+        co,
+      };
+    });
+
+    return { sources, executionTimeMs: Date.now() - start };
   }
 
   async deleteMetricsByTimeRange(params: DeleteMetricsByTimeRangeParams): Promise<DeleteResult> {
