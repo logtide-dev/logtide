@@ -1,4 +1,4 @@
-export { customDashboardsRoutes } from './routes.js';
+export { customDashboardsRoutes, createWithinLimit } from './routes.js';
 export { customDashboardsService, CustomDashboardsService } from './service.js';
 export {
   panelRegistry,

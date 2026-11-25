@@ -4,6 +4,7 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { customDashboardsService } from './service.js';
 import { panelInstanceSchema } from './panel-registry.js';
+import { dashboardVariablesSchema } from './variables.js';
 import { fetchPanelData, applyTimeRangeOverride } from './panel-data-service.js';
 import { PANEL_TIME_RANGES } from '@logtide/shared';
 import { context } from '@logtide/shared/context';
@@ -22,6 +23,7 @@ const createSchema = z.object({
   description: z.string().max(2000).optional().nullable(),
   isPersonal: z.boolean().optional(),
   panels: z.array(panelInstanceSchema).optional(),
+  variables: dashboardVariablesSchema.optional(),
 });
 
 const updateSchema = z.object({
@@ -29,6 +31,7 @@ const updateSchema = z.object({
   description: z.string().max(2000).optional().nullable(),
   isPersonal: z.boolean().optional(),
   panels: z.array(panelInstanceSchema).optional(),
+  variables: dashboardVariablesSchema.optional(),
 });
 
 const importYamlSchema = z.object({
@@ -72,6 +75,8 @@ const panelDataBatchSchema = z.object({
   // Dashboard-level time override (#305): applied to every window-scoped
   // panel for this request only, never persisted.
   timeRange: z.enum(PANEL_TIME_RANGES).optional(),
+  // Dashboard variable values by name; null = All.
+  variables: z.record(z.string(), z.string().max(500).nullable()).optional(),
 });
 
 async function checkMembership(userId: string, orgId: string): Promise<boolean> {
@@ -85,7 +90,7 @@ async function checkMembership(userId: string, orgId: string): Promise<boolean> 
  * goes through this so the capability check cannot be forgotten. A
  * CapabilityError propagates to the global error handler.
  */
-async function createWithinLimit<T>(organizationId: string, create: () => Promise<T>): Promise<T> {
+export async function createWithinLimit<T>(organizationId: string, create: () => Promise<T>): Promise<T> {
   return withLimitLock(organizationId, 'dashboards.max_custom', async () => {
     await context.runAsSystem('dashboards:create-limit-check', async () => {
       await context.with({ organizationId }, async () => {
@@ -155,6 +160,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
             description: body.description ?? null,
             isPersonal: body.isPersonal,
             panels: body.panels,
+            variables: body.variables,
           },
           request.user.id
         )
@@ -560,7 +566,14 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         ? dashboard.panels.filter((p) => requestedIds.has(p.id))
         : dashboard.panels;
 
-      const ctx = { organizationId: body.organizationId, userId: request.user.id };
+      // Only declared variables reach the fetchers.
+      const declared = new Set(dashboard.variables.map((v) => v.name));
+      const variables: Record<string, string | null> = {};
+      for (const [name, value] of Object.entries(body.variables ?? {})) {
+        if (declared.has(name)) variables[name] = value;
+      }
+
+      const ctx = { organizationId: body.organizationId, userId: request.user.id, variables };
       const settled = await Promise.allSettled(
         panelsToFetch.map((panel) =>
           fetchPanelData(

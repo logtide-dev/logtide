@@ -15,7 +15,16 @@
 
 import { z } from 'zod';
 import { PANEL_TIME_RANGES } from '@logtide/shared';
+import {
+  METRIC_MAX_FILTERS,
+  METRIC_MAX_FORMULAS,
+  METRIC_MAX_GROUP_BY,
+  METRIC_MAX_QUERIES,
+  METRIC_MAX_SERIES_LIMIT,
+  METRIC_QUERY_IDS,
+} from '@logtide/shared';
 import type { PanelType, PanelConfig, PanelLayout } from '@logtide/shared';
+import { METRIC_ATTR_KEY_RE, metricAttrRefSchema, isVariableRef, dashboardVariablesSchema, collectVariableRefs } from './variables.js';
 
 const levelEnum = z.enum(['debug', 'info', 'warn', 'error', 'critical']);
 
@@ -112,48 +121,103 @@ const alertStatusSchema = z.object({
   limit: z.number().int().min(3).max(20),
 });
 
-const metricAggregationEnum = z.enum([
-  'avg',
-  'sum',
-  'min',
-  'max',
-  'count',
-  'last',
-  'rate',
-  'p50',
-  'p95',
-  'p99',
-]);
-const metricIntervalEnum = z.enum(['1m', '5m', '15m', '1h', '6h', '1d']);
+const metricAggregationEnum = z.enum(['avg', 'sum', 'min', 'max', 'count', 'last', 'rate', 'p50', 'p95', 'p99']);
+const metricSpaceAggregationEnum = z.enum(['avg', 'sum', 'min', 'max']);
+const metricIntervalEnum = z.enum(['auto', '1m', '5m', '15m', '1h', '6h', '1d']);
 
-const METRIC_GROUP_BY_KEY = /^[a-zA-Z_][a-zA-Z0-9_.]{0,63}$/;
+// Filter values: a literal or a "$name" variable reference (checked against the
+// dashboard's declared variables at the document level).
+const metricFilterValue = z.string().min(1).max(500);
 
-const metricChartSchema = z.object({
-  type: z.literal('metric_chart'),
+const metricFilterSchema = z
+  .object({
+    scope: z.enum(['metric', 'resource']),
+    key: z.string().regex(METRIC_ATTR_KEY_RE),
+    op: z.enum(['eq', 'neq', 'in', 'nin', 'exists', 'notExists', 'gte', 'lt']),
+    values: z.array(metricFilterValue).max(50).optional(),
+  })
+  .strict()
+  .superRefine((f, ctx) => {
+    const n = f.values?.length ?? 0;
+    const bad = (message: string) =>
+      ctx.addIssue({ code: 'custom', message, path: ['values'] });
+    switch (f.op) {
+      case 'eq':
+      case 'neq':
+        if (n !== 1) bad(`${f.op} takes exactly one value`);
+        break;
+      case 'in':
+      case 'nin':
+        if (n < 1) bad(`${f.op} takes at least one value`);
+        break;
+      case 'exists':
+      case 'notExists':
+        if (n !== 0) bad(`${f.op} takes no values`);
+        break;
+      case 'gte':
+      case 'lt':
+        if (n !== 1) bad(`${f.op} takes exactly one value`);
+        else if (!isVariableRef(f.values![0]) && !Number.isFinite(Number(f.values![0]))) {
+          bad(`${f.op} needs a numeric value`);
+        }
+        break;
+    }
+  });
+
+const metricQuerySpecSchema = z
+  .object({
+    id: z.enum(METRIC_QUERY_IDS),
+    metricName: z.string().min(1).max(255),
+    aggregation: metricAggregationEnum,
+    spaceAggregation: metricSpaceAggregationEnum.optional(),
+    filters: z.array(metricFilterSchema).max(METRIC_MAX_FILTERS),
+    groupBy: z.array(metricAttrRefSchema).max(METRIC_MAX_GROUP_BY),
+    limit: z.number().int().min(1).max(METRIC_MAX_SERIES_LIMIT).optional(),
+    hidden: z.boolean().optional(),
+    label: z.string().max(100).optional(),
+  })
+  .strict();
+
+const metricFormulaSpecSchema = z
+  .object({
+    id: z.enum(['F1', 'F2', 'F3', 'F4']),
+    expression: z.string().min(1).max(200),
+    label: z.string().max(100).optional(),
+    hidden: z.boolean().optional(),
+  })
+  .strict();
+
+const metricExplorerQuerySchema = z
+  .object({
+    projectIds: z.array(z.string().guid()).max(100).nullable(),
+    queries: z.array(metricQuerySpecSchema).min(1).max(METRIC_MAX_QUERIES),
+    formulas: z.array(metricFormulaSpecSchema).max(METRIC_MAX_FORMULAS),
+    interval: metricIntervalEnum,
+    compareTo: z.enum(['none', '1h', '1d', '1w']),
+    display: z.enum(['lines', 'area', 'bars', 'split', 'stat', 'table']),
+    unitOverride: z.string().max(20).nullable().optional(),
+  })
+  .strict()
+  .superRefine((q, ctx) => {
+    const dupes = (ids: string[], path: string) => {
+      const seen = new Set<string>();
+      ids.forEach((id, i) => {
+        if (seen.has(id)) {
+          ctx.addIssue({ code: 'custom', message: `Duplicate id "${id}"`, path: [path, i, 'id'] });
+        }
+        seen.add(id);
+      });
+    };
+    dupes(q.queries.map((x) => x.id), 'queries');
+    dupes(q.formulas.map((x) => x.id), 'formulas');
+  });
+
+const metricsSchema = z.object({
+  type: z.literal('metrics'),
   title: z.string().min(1).max(100),
   source: z.literal('metrics'),
-  projectId: z.string().guid().nullable(),
-  metricName: z.string().min(1).max(255),
-  aggregation: metricAggregationEnum,
-  interval: metricIntervalEnum,
+  query: metricExplorerQuerySchema,
   timeRange: timeRangeEnum,
-  serviceName: z.string().max(200).nullable(),
-  // Optional so every document saved before this field existed stays valid.
-  // The key charset is the first injection barrier; the reservoir
-  // parameterizes group-by keys as well.
-  groupBy: z.array(z.string().regex(METRIC_GROUP_BY_KEY)).max(2).optional(),
-});
-
-const metricStatSchema = z.object({
-  type: z.literal('metric_stat'),
-  title: z.string().min(1).max(100),
-  source: z.literal('metrics'),
-  projectId: z.string().guid().nullable(),
-  metricName: z.string().min(1).max(255),
-  aggregation: metricAggregationEnum,
-  timeRange: timeRangeEnum,
-  serviceName: z.string().max(200).nullable(),
-  unit: z.string().max(20).nullable(),
 });
 
 const traceLatencySchema = z.object({
@@ -295,8 +359,7 @@ export const panelConfigSchema = z
     topNTableBaseSchema,
     liveLogStreamSchema,
     alertStatusSchema,
-    metricChartSchema,
-    metricStatSchema,
+    metricsSchema,
     traceLatencySchema,
     traceVolumeSchema,
     detectionEventsSchema,
@@ -317,13 +380,13 @@ export interface BackendPanelDefinition {
   readonly defaultLayout: Pick<PanelLayout, 'w' | 'h'>;
 }
 
-// 1.8 placeholder: the real metrics panel schema replaces this.
-const metricsPanelSchema = z.object({ type: z.literal('metrics') }).passthrough();
+/** metric_chart / metric_stat only exist as v1 documents (migrated on read/import). */
+export type RegisteredPanelType = Exclude<PanelType, 'metric_chart' | 'metric_stat'>;
 
-export const panelRegistry: Record<PanelType, BackendPanelDefinition> = {
+export const panelRegistry: Record<RegisteredPanelType, BackendPanelDefinition> = {
   metrics: {
     type: 'metrics',
-    schema: metricsPanelSchema as unknown as z.ZodType<PanelConfig>,
+    schema: metricsSchema as unknown as z.ZodType<PanelConfig>,
     defaultLayout: { w: 6, h: 4 },
   },
   time_series: {
@@ -350,16 +413,6 @@ export const panelRegistry: Record<PanelType, BackendPanelDefinition> = {
     type: 'alert_status',
     schema: alertStatusSchema as unknown as z.ZodType<PanelConfig>,
     defaultLayout: { w: 4, h: 3 },
-  },
-  metric_chart: {
-    type: 'metric_chart',
-    schema: metricChartSchema as unknown as z.ZodType<PanelConfig>,
-    defaultLayout: { w: 6, h: 4 },
-  },
-  metric_stat: {
-    type: 'metric_stat',
-    schema: metricStatSchema as unknown as z.ZodType<PanelConfig>,
-    defaultLayout: { w: 3, h: 2 },
   },
   trace_latency: {
     type: 'trace_latency',
@@ -416,7 +469,23 @@ export const panelInstanceSchema = z.object({
   config: panelConfigSchema,
 });
 
-export const dashboardDocumentSchema = z.object({
-  schema_version: z.number().int().min(1),
-  panels: z.array(panelInstanceSchema),
-});
+export const dashboardDocumentSchema = z
+  .object({
+    schema_version: z.number().int().min(1),
+    panels: z.array(panelInstanceSchema),
+    variables: dashboardVariablesSchema.optional(),
+  })
+  .superRefine((doc, ctx) => {
+    const declared = new Set((doc.variables ?? []).map((v) => v.name));
+    doc.panels.forEach((panel, i) => {
+      for (const name of collectVariableRefs(panel.config as PanelConfig)) {
+        if (!declared.has(name)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `Unknown variable "$${name}"`,
+            path: ['panels', i, 'config'],
+          });
+        }
+      }
+    });
+  });
