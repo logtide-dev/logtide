@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/api/logs', () => ({ logsAPI: { createLogsWebSocket: vi.fn() } }));
 
-import { getAllPanelDefinitions, getPanelDefinition } from './panel-registry';
+import { getAllPanelDefinitions, getPanelDefinition, createPanelInstance } from './panel-registry';
 
 // Sentence case: the first word may be capitalised, no other word is, except
 // the standalone "N" in "Top N table".
@@ -25,5 +25,25 @@ describe('panel registry labels', () => {
         true
       );
     }
+  });
+});
+
+describe('panel registry metrics and legacy types', () => {
+  it('offers the metrics panel and not the legacy metric panels', () => {
+    const types = getAllPanelDefinitions().map((d) => d.type) as string[];
+    expect(types).toContain('metrics');
+    expect(types).not.toContain('metric_chart');
+    expect(types).not.toContain('metric_stat');
+  });
+
+  it('creates a metrics panel with an empty query', () => {
+    const panel = createPanelInstance('metrics');
+    expect(panel.config.type).toBe('metrics');
+  });
+
+  it.each(['metric_chart', 'metric_stat'] as const)('%s resolves to the legacy fallback', (type) => {
+    const def = getPanelDefinition(type);
+    expect(def.label).toBe('Legacy panel');
+    expect(def.description).toBe('Legacy panel, open and save to upgrade.');
   });
 });

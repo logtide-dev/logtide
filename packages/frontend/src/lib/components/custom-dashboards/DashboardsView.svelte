@@ -23,6 +23,8 @@
     panelDataMap,
     pausedPanelIds,
     timeRangeOverride,
+    dashboardVariables,
+    variableValuesMap,
   } from '$lib/stores/custom-dashboards';
   import { customDashboardsAPI } from '$lib/api/custom-dashboards';
   import type { DashboardTemplateSummary } from '$lib/api/custom-dashboards';
@@ -34,7 +36,10 @@
   import YamlImportDialog from './YamlImportDialog.svelte';
   import RenameDashboardDialog from './RenameDashboardDialog.svelte';
   import CreateFromTemplateDialog from './CreateFromTemplateDialog.svelte';
+  import DashboardVariablesBar from './DashboardVariablesBar.svelte';
+  import VariablesEditorDialog from './VariablesEditorDialog.svelte';
   import { readDashboardUrlState, writeDashboardUrlState } from './dashboard-url';
+  import { readVariableValues, writeVariableValues } from './dashboard-variables-url';
   import { TIME_RANGE_OPTIONS, timeRangeLabel } from './time-range-options';
   import PageHeader from '$lib/components/app/PageHeader.svelte';
   import ConfirmDialog from '$lib/components/app/ConfirmDialog.svelte';
@@ -49,8 +54,10 @@
   import Save from '@lucide/svelte/icons/save';
   import XIcon from '@lucide/svelte/icons/x';
   import LayoutTemplate from '@lucide/svelte/icons/layout-template';
+  import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
   import type {
     CustomDashboard,
+    DashboardVariable,
     PanelConfig,
     PanelInstance,
     PanelLayout,
@@ -74,6 +81,7 @@
   let showRename = $state(false);
   let showDelete = $state(false);
   let showTemplates = $state(false);
+  let showVariables = $state(false);
   let editingPanelId = $state<string | null>(null);
 
   let templates = $state<DashboardTemplateSummary[]>([]);
@@ -92,7 +100,12 @@
   // ─── Loading and URL sync ─────────────────────────────────────────────
 
   function urlKey(u: URL): string {
-    return `${u.searchParams.get('id') ?? ''}|${u.searchParams.get('range') ?? ''}`;
+    const vars = Array.from(u.searchParams.entries())
+      .filter(([k]) => k.startsWith('var-'))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${k}=${v}`)
+      .join('&');
+    return `${u.searchParams.get('id') ?? ''}|${u.searchParams.get('range') ?? ''}|${vars}`;
   }
 
   // `ready` is false while a load is in flight so the store-to-URL effect
@@ -104,12 +117,16 @@
   let syncedKey: string | null = null;
   let loadSeq = 0;
 
-  async function load(orgId: string, state: { id: string | null; range: PanelTimeRange | null }) {
+  async function load(
+    orgId: string,
+    state: { id: string | null; range: PanelTimeRange | null; variables?: Record<string, string | null> }
+  ) {
     const seq = ++loadSeq;
     ready = false;
     await customDashboardsStore.initialize(orgId, {
       dashboardId: state.id,
       range: state.range,
+      variables: state.variables,
     });
     if (seq === loadSeq) ready = true;
   }
@@ -130,10 +147,18 @@
         customDashboardsStore.reset();
         syncedKey = key;
         // An organization switch starts clean: dashboard ids are per org.
-        void load(orgId, first ? readDashboardUrlState(currentUrl) : { id: null, range: null });
+        void load(
+          orgId,
+          first
+            ? { ...readDashboardUrlState(currentUrl), variables: readVariableValues(currentUrl) }
+            : { id: null, range: null }
+        );
       } else if (key !== syncedKey) {
         syncedKey = key;
-        void load(orgId, readDashboardUrlState(currentUrl));
+        void load(orgId, {
+          ...readDashboardUrlState(currentUrl),
+          variables: readVariableValues(currentUrl),
+        });
       }
     });
   });
@@ -158,10 +183,15 @@
     const range = $timeRangeOverride;
     if (!dashboard) return;
     const current = untrack(() => url);
-    const next = writeDashboardUrlState(current, {
-      id: dashboard.isDefault ? null : dashboard.id,
-      range,
-    });
+    const values = $variableValuesMap;
+    const next = writeVariableValues(
+      writeDashboardUrlState(current, {
+        id: dashboard.isDefault ? null : dashboard.id,
+        range,
+      }),
+      dashboard.variables ?? [],
+      values
+    );
     // A pending ?create=1 is consumed by the effect above; never write it back.
     next.searchParams.delete('create');
     if (next.toString() === current.toString()) return;
@@ -172,7 +202,7 @@
   function reload() {
     const orgId = get(currentOrganization)?.id;
     if (!orgId) return;
-    void load(orgId, readDashboardUrlState(url));
+    void load(orgId, { ...readDashboardUrlState(url), variables: readVariableValues(url) });
   }
 
   // ─── Switcher actions ─────────────────────────────────────────────────
@@ -427,6 +457,14 @@
     customDashboardsStore.togglePanelPause(panelId);
   }
 
+  function handleVariableChange(name: string, value: string | null) {
+    void customDashboardsStore.setVariable(name, value);
+  }
+
+  function handleVariablesSave(variables: DashboardVariable[]) {
+    customDashboardsStore.setPendingVariables(variables);
+  }
+
   function handleAddPanelSubmit(panel: PanelInstance) {
     customDashboardsStore.addPanel(panel);
   }
@@ -505,6 +543,10 @@
     {/snippet}
     {#snippet actions()}
       {#if $editMode}
+        <Button variant="outline" onclick={() => (showVariables = true)} class="gap-2">
+          <SlidersHorizontal class="w-4 h-4" />
+          Variables
+        </Button>
         <Button variant="outline" onclick={() => (showAddPanel = true)} class="gap-2">
           <Plus class="w-4 h-4" />
           Add panel
@@ -580,6 +622,15 @@
       {/snippet}
     </EmptyState>
   {:else if $activeDashboard}
+    {#if $dashboardVariables.length > 0 && $currentOrganization}
+      <DashboardVariablesBar
+        variables={$dashboardVariables}
+        values={$variableValuesMap}
+        organizationId={$currentOrganization.id}
+        projectId={$activeDashboard.projectId}
+        onChange={handleVariableChange}
+      />
+    {/if}
     {#if displayedPanels.length === 0}
       <EmptyState
         variant="no-data"
@@ -623,6 +674,16 @@
 </div>
 
 <!-- Dialogs -->
+{#if $currentOrganization}
+  <VariablesEditorDialog
+    bind:open={showVariables}
+    variables={$dashboardVariables}
+    organizationId={$currentOrganization.id}
+    projectId={$activeDashboard?.projectId ?? null}
+    onSave={handleVariablesSave}
+    onOpenChange={(o) => (showVariables = o)}
+  />
+{/if}
 <AddPanelDialog
   bind:open={showAddPanel}
   onAdd={handleAddPanelSubmit}
