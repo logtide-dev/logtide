@@ -1531,6 +1531,8 @@ export interface AlertMetricInstancesTable {
   last_value: number | null;
   last_triggered_at: Timestamp | null;
   last_notified_at: Timestamp | null;
+  no_data_since: Timestamp | null;
+  no_data_evaluations: Generated<number>;
   updated_at: Generated<Timestamp>;
 }
 

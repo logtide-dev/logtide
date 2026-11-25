@@ -123,7 +123,7 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 
 **Metric alert instance (`data.metric`)**
 
-Metric alert rules watch one query or formula of a metrics query. When the query is grouped, every group is its own alert instance: it fires, re-notifies and resolves on its own, so one rule can send several `alert.triggered` and `alert.resolved` events, one per group. Missing data never fires or resolves an instance: a check without data keeps the instance as it is (firing instances keep firing, without re-notifying) until data comes back or the rule is disabled or deleted. On these events `log_count` is `0`, `threshold` is the metric threshold and `time_window` is the evaluation window in minutes.
+Metric alert rules watch one query or formula of a metrics query. When the query is grouped, every group is its own alert instance: it fires, re-notifies and resolves on its own, so one rule can send several `alert.triggered` and `alert.resolved` events, one per group. Missing data never fires an instance: a check without data keeps the instance as it is (firing instances keep firing, without re-notifying). The no-data streak is tracked per instance and reset when data returns. Once a group has had no data for at least 10 consecutive checks and at least 60 minutes, a firing instance is resolved (`alert.resolved` with `data.metric.reason` set to `no_data`, title and message mention "no data") and a pending one (still counting breaches) is cleared silently. Otherwise an instance resolves when data comes back on the good side of the threshold, or when the rule is disabled or deleted. On these events `log_count` is `0`, `threshold` is the metric threshold and `time_window` is the evaluation window in minutes.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -137,6 +137,7 @@ Metric alert rules watch one query or formula of a metrics query. When the query
 | `for_evaluations` | `number` | Consecutive breaching checks needed to fire. |
 | `labels` | `object` | Group labels (`{"host.name": "web-1"}`), `{}` when ungrouped. |
 | `group_key` | `string` | Stable instance key, `""` when ungrouped. |
+| `reason` | `string` | `alert.resolved` only: `recovered` (back on the good side, or the rule was disabled or deleted) or `no_data` (resolved because the group had no data for 10 checks and 60 minutes). Absent on `alert.triggered`. |
 
 **`incident.created`**
 

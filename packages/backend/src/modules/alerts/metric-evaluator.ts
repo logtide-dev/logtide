@@ -8,6 +8,7 @@ import {
   metricAlertTarget,
   type MetricAlertConfig,
   type MetricAlertInstancePayload,
+  type MetricAlertResolveReason,
   type MetricAlertWindow,
   type MetricQueryResponse,
 } from '@logtide/shared';
@@ -52,13 +53,20 @@ import type { AlertEvaluationResult, AlertNotificationKind } from './types.js';
  *   not breach. Snooze and re-notify are the rule's own and apply per
  *   instance, through the same state machine as threshold rules
  *   (lifecycle.ts).
- * - No data policy (HOLD): a run where a group has no value (no point in the
- *   window, the group or the metric disappeared, the rule's projects are
- *   gone) is neither a breach nor a recovery. The instance keeps its state,
- *   its breach counter and its last value, and nothing is notified (no fire,
- *   no re-notify, no resolve). Missing data never resolves a firing instance
- *   by itself: it resolves when data comes back on the good side of the
- *   threshold, or when a user disables or deletes the rule.
+ * - No data policy (HOLD, then bounded): a run where a group has no value (no
+ *   point in the window, the group or the metric disappeared, the rule's
+ *   projects are gone) is neither a breach nor a recovery. The instance keeps
+ *   its state, its breach counter and its last value, and nothing is notified
+ *   (no fire, no re-notify). The streak is tracked per instance
+ *   (no_data_since, no_data_evaluations) and reset as soon as data returns.
+ *   Once the streak reached BOTH METRIC_NO_DATA_MAX_EVALUATIONS (10)
+ *   consecutive evaluations AND METRIC_NO_DATA_MAX_MINUTES (60) minutes, the
+ *   instance is closed: a firing one is resolved through the normal resolve
+ *   path with reason `no_data` (notification, webhook, incident when it was
+ *   the last firing group), a pending one (counting breaches) is just
+ *   cleared. Before that, a firing instance only resolves when data comes
+ *   back on the good side of the threshold, or when a user disables or
+ *   deletes the rule.
  *
  * State: one alert_metric_instances row per instance that is firing or
  * counting breaches; ok instances without breaches have no row. The rule's
@@ -88,6 +96,10 @@ export interface MetricWindowResult {
   unit: string | null;
 }
 
+/** No-data streak bounds: both must be reached before an instance is closed. */
+export const METRIC_NO_DATA_MAX_EVALUATIONS = 10;
+export const METRIC_NO_DATA_MAX_MINUTES = 60;
+
 export interface MetricInstanceRow {
   group_key: string;
   labels: Record<string, string>;
@@ -96,6 +108,8 @@ export interface MetricInstanceRow {
   last_value: number | null;
   last_triggered_at: Date | null;
   last_notified_at: Date | null;
+  no_data_since: Date | null;
+  no_data_evaluations: number;
 }
 
 export interface MetricInstancePlan {
@@ -103,6 +117,8 @@ export interface MetricInstancePlan {
   labels: Record<string, string>;
   value: number | null;
   decision: LifecycleDecision;
+  /** Why a resolve decision resolved; undefined otherwise. */
+  reason?: MetricAlertResolveReason;
   previous: MetricInstanceRow | null;
   /** Row after this run, or null when the instance is ok without breaches (no row kept). */
   next: Omit<MetricInstanceRow, 'group_key' | 'labels'> | null;
@@ -255,22 +271,60 @@ export function planMetricInstances(
   for (const [groupKey, { labels, value }] of byKey) {
     const previous = previousByKey.get(groupKey) ?? null;
     if (value === null) {
-      // No data: hold. Not a breach, not a recovery, nothing notified.
+      if (!previous) {
+        plans.push({ groupKey, labels, value: null, decision: { type: 'none' }, previous, next: null });
+        continue;
+      }
+      const evaluations = previous.no_data_evaluations + 1;
+      const since = previous.no_data_since ?? now;
+      const expired =
+        evaluations >= METRIC_NO_DATA_MAX_EVALUATIONS &&
+        now.getTime() - since.getTime() >= METRIC_NO_DATA_MAX_MINUTES * MINUTE_MS;
+      if (expired) {
+        // Bounded no data: close the instance. A firing one goes through the
+        // normal resolve decision (snooze never suppresses it), a pending one
+        // is just cleared.
+        const decision: LifecycleDecision =
+          previous.state === 'firing'
+            ? decideThreshold(
+                {
+                  state: 'firing',
+                  lastTriggeredAt: previous.last_triggered_at,
+                  lastNotifiedAt: previous.last_notified_at,
+                  snoozedUntil: rule.snoozedUntil,
+                  renotifyMinutes: rule.renotifyMinutes,
+                },
+                false,
+                now
+              )
+            : { type: 'none' };
+        plans.push({
+          groupKey,
+          labels,
+          value: null,
+          decision,
+          reason: decision.type === 'resolve' ? 'no_data' : undefined,
+          previous,
+          next: null,
+        });
+        continue;
+      }
+      // Hold: not a breach, not a recovery, nothing notified.
       plans.push({
         groupKey,
         labels,
         value: null,
         decision: { type: 'none' },
         previous,
-        next: previous
-          ? {
-              state: previous.state,
-              consecutive_breaches: previous.consecutive_breaches,
-              last_value: previous.last_value,
-              last_triggered_at: previous.last_triggered_at,
-              last_notified_at: previous.last_notified_at,
-            }
-          : null,
+        next: {
+          state: previous.state,
+          consecutive_breaches: previous.consecutive_breaches,
+          last_value: previous.last_value,
+          last_triggered_at: previous.last_triggered_at,
+          last_notified_at: previous.last_notified_at,
+          no_data_since: since,
+          no_data_evaluations: evaluations,
+        },
       });
       continue;
     }
@@ -308,6 +362,7 @@ export function planMetricInstances(
       labels,
       value,
       decision,
+      reason: decision.type === 'resolve' ? 'recovered' : undefined,
       previous,
       next: keep
         ? {
@@ -316,6 +371,8 @@ export function planMetricInstances(
             last_value: value,
             last_triggered_at: lastTriggeredAt,
             last_notified_at: lastNotifiedAt,
+            no_data_since: null,
+            no_data_evaluations: 0,
           }
         : null,
     });
@@ -341,7 +398,9 @@ function instanceChanged(plan: MetricInstancePlan): boolean {
     p.consecutive_breaches !== n.consecutive_breaches ||
     p.last_value !== n.last_value ||
     !sameTime(p.last_triggered_at, n.last_triggered_at) ||
-    !sameTime(p.last_notified_at, n.last_notified_at)
+    !sameTime(p.last_notified_at, n.last_notified_at) ||
+    !sameTime(p.no_data_since, n.no_data_since) ||
+    p.no_data_evaluations !== n.no_data_evaluations
   );
 }
 
@@ -359,6 +418,8 @@ export async function loadInstances(
       'last_value',
       'last_triggered_at',
       'last_notified_at',
+      'no_data_since',
+      'no_data_evaluations',
     ])
     .where('rule_id', '=', rule.id)
     .where('organization_id', '=', rule.organization_id)
@@ -371,6 +432,8 @@ export async function loadInstances(
     last_value: r.last_value === null ? null : Number(r.last_value),
     last_triggered_at: toDate(r.last_triggered_at),
     last_notified_at: toDate(r.last_notified_at),
+    no_data_since: toDate(r.no_data_since),
+    no_data_evaluations: Number(r.no_data_evaluations ?? 0),
   }));
 }
 
@@ -423,7 +486,8 @@ async function whileRuleEnabled<T>(
 export function metricInstancePayload(
   config: MetricAlertConfig,
   window: Pick<MetricWindowResult, 'queryId' | 'source' | 'unit'>,
-  instance: { groupKey: string; labels: Record<string, string>; value: number | null }
+  instance: { groupKey: string; labels: Record<string, string>; value: number | null },
+  reason?: MetricAlertResolveReason
 ): MetricAlertInstancePayload {
   return {
     query_id: window.queryId,
@@ -436,6 +500,7 @@ export function metricInstancePayload(
     for_evaluations: config.forEvaluations,
     labels: { ...instance.labels },
     group_key: instance.groupKey,
+    ...(reason ? { reason } : {}),
   };
 }
 
@@ -535,6 +600,8 @@ export async function evaluateMetricRule(
         last_value: plan.next.last_value,
         last_triggered_at: plan.next.last_triggered_at,
         last_notified_at: plan.next.last_notified_at,
+        no_data_since: plan.next.no_data_since,
+        no_data_evaluations: plan.next.no_data_evaluations,
         updated_at: now,
       };
       await trx
@@ -635,10 +702,16 @@ export async function evaluateMetricRule(
   for (const plan of plans) {
     const kind = notificationKind(plan.decision);
     if (kind === null) continue;
-    const payload = metricInstancePayload(config, window, plan);
     const historyId = histories.get(plan.groupKey) ?? null;
 
     if (kind === 'resolved') {
+      // A no data resolve has no value in this run: report the last known one.
+      const resolvedPayload = metricInstancePayload(
+        config,
+        window,
+        { ...plan, value: plan.value ?? plan.previous?.last_value ?? null },
+        plan.reason ?? 'recovered'
+      );
       results.push({
         kind: 'resolved',
         rule_id: rule.id,
@@ -652,11 +725,12 @@ export async function evaluateMetricRule(
         firing_since: (plan.previous?.last_triggered_at ?? now).toISOString(),
         resolved_at: now.toISOString(),
         incident_id: resolvedIncidentId,
-        metric: payload,
+        metric: resolvedPayload,
       });
       continue;
     }
 
+    const payload = metricInstancePayload(config, window, plan);
     if (!historyId) continue;
     if (hooks.hasHandlers('afterAlertTriggered')) {
       void hooks.runAfter('afterAlertTriggered', {

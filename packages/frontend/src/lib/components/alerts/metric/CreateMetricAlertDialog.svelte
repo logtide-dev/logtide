@@ -345,7 +345,8 @@
         <p class="text-xs text-muted-foreground">
           The value is the average over the window, checked every minute. The alert fires after the condition holds for
           the given number of checks in a row and resolves on the first check where it does not. A check without data
-          changes nothing: a firing alert keeps firing until data comes back.
+          holds the current state. If a group has no data for at least 10 checks in a row and 60 minutes, a firing alert
+          is resolved with the reason "no data" (a pending one is cleared); data coming back resets that count.
         </p>
 
         <div class="space-y-1">

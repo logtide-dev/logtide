@@ -59,9 +59,9 @@ export interface MetricAlertInstancePayload {
   condition: MetricAlertCondition;
   threshold: number;
   /**
-   * Window aggregated value (raw). Missing data never fires nor resolves an
-   * instance (it holds), so this is the last evaluated value; null only when
-   * none is known.
+   * Window aggregated value (raw). Missing data never fires an instance, so
+   * this is the last evaluated value (also on a resolve with reason
+   * `no_data`); null only when none is known.
    */
   value: number | null;
   unit: string | null;
@@ -71,7 +71,15 @@ export interface MetricAlertInstancePayload {
   labels: Record<string, string>;
   /** Stable instance key ('' when ungrouped). */
   group_key: string;
+  /**
+   * Resolve events only: `recovered` (the value is back on the good side, or
+   * the rule was disabled or deleted) or `no_data` (the group had no data for
+   * long enough). Absent on triggered events.
+   */
+  reason?: MetricAlertResolveReason;
 }
+
+export type MetricAlertResolveReason = 'recovered' | 'no_data';
 
 /** The single visible item of a metric alert query, or null when there is not exactly one. */
 export function metricAlertTarget(
