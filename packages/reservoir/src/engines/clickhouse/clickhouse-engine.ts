@@ -144,6 +144,9 @@ import {
   type RepartitionSpec,
 } from './repartition.js';
 import { logsTableDdl, spansTableDdl } from './daily-tables.js';
+import { metricAttrLabel } from '../../core/types.js';
+import type { MetricSource, MetricSourcesParams, MetricSourcesResult } from '../../core/types.js';
+import { compileMetricAttrFilters, metricAttrColumn, metricAttrLabelExpr } from './metric-attrs.js';
 import { isVolumeOnlyFilter, splitWholeMinutes } from '../../core/log-volume.js';
 import type { NativeQuery } from '../../core/query-translator.js';
 
@@ -1862,13 +1865,15 @@ export class ClickHouseEngine extends StorageEngine {
     const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
 
+    // Project and window (primary key prefix and partition) go to PREWHERE.
     const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-    conditions.push(`project_id IN {p_pids:Array(String)}`);
+    const prewhere = [
+      `project_id IN {p_pids:Array(String)}`,
+      `time >= {p_from:DateTime64(3)}`,
+      `time <= {p_to:DateTime64(3)}`,
+    ];
     queryParams.p_pids = pids;
-
-    conditions.push(`time >= {p_from:DateTime64(3)}`);
     queryParams.p_from = toDateTime64(params.from);
-    conditions.push(`time <= {p_to:DateTime64(3)}`);
     queryParams.p_to = toDateTime64(params.to);
 
     conditions.push(`metric_name = {p_name:String}`);
@@ -1902,7 +1907,12 @@ export class ClickHouseEngine extends StorageEngine {
       }
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    // 1.8 attribute filters (metric or resource scope), all ANDed
+    if (params.filters && params.filters.length > 0) {
+      conditions.push(...compileMetricAttrFilters(params.filters, queryParams, 'p_mf'));
+    }
+
+    const where = `PREWHERE ${prewhere.join(' AND ')} WHERE ${conditions.join(' AND ')}`;
 
     // Build GROUP BY columns for groupBy label keys
     const groupByColumns = ['bucket'];
@@ -1916,6 +1926,12 @@ export class ClickHouseEngine extends StorageEngine {
         queryParams[keyParam] = labelKey;
         groupByColumns.push(alias);
       }
+    }
+    const attrRefs = params.groupByAttrs ?? [];
+    for (let i = 0; i < attrRefs.length; i++) {
+      const alias = `label_attr_${i}`;
+      selectExtra.push(`${metricAttrLabelExpr(attrRefs[i], `p_gba_key_${i}`, queryParams)} AS ${alias}`);
+      groupByColumns.push(alias);
     }
 
     const selectCols = [
@@ -1943,6 +1959,13 @@ export class ClickHouseEngine extends StorageEngine {
         const labels: Record<string, string> = {};
         for (let i = 0; i < params.groupBy.length; i++) {
           labels[params.groupBy[i]] = String(row[`label_${i}`] ?? '');
+        }
+        bucket.labels = labels;
+      }
+      if (attrRefs.length > 0) {
+        const labels: Record<string, string> = bucket.labels ?? {};
+        for (let i = 0; i < attrRefs.length; i++) {
+          labels[metricAttrLabel(attrRefs[i])] = String(row[`label_attr_${i}`] ?? '');
         }
         bucket.labels = labels;
       }
@@ -1977,6 +2000,8 @@ export class ClickHouseEngine extends StorageEngine {
     if (params.aggregation === 'last' || params.aggregation === 'p50' || params.aggregation === 'p95' || params.aggregation === 'p99') return false;
     if (params.groupBy && params.groupBy.length > 0) return false;
     if (params.attributes && Object.keys(params.attributes).length > 0) return false;
+    if (params.groupByAttrs && params.groupByAttrs.length > 0) return false;
+    if (params.filters && params.filters.length > 0) return false;
     return true;
   }
 
@@ -2097,40 +2122,45 @@ export class ClickHouseEngine extends StorageEngine {
     };
   }
 
-  async getMetricLabelKeys(params: MetricLabelParams): Promise<MetricLabelResult> {
-    const start = Date.now();
-    const limit = params.limit ?? 100;
+  /**
+   * PREWHERE (project, window) and WHERE (metric name, organization) of the
+   * label queries. With resource scope an empty metric name means every metric.
+   */
+  private metricLabelClauses(params: MetricLabelParams, queryParams: Record<string, unknown>): string {
+    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
+    const prewhere = [`project_id IN {p_pids:Array(String)}`];
+    queryParams.p_pids = pids;
+    if (params.from) {
+      prewhere.push(`time >= {p_from:DateTime64(3)}`);
+      queryParams.p_from = toDateTime64(params.from);
+    }
+    if (params.to) {
+      prewhere.push(`time <= {p_to:DateTime64(3)}`);
+      queryParams.p_to = toDateTime64(params.to);
+    }
 
     const conditions: string[] = [];
-    const queryParams: Record<string, unknown> = {};
-
-    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-    conditions.push(`project_id IN {p_pids:Array(String)}`);
-    queryParams.p_pids = pids;
-
-    conditions.push(`metric_name = {p_name:String}`);
-    queryParams.p_name = params.metricName;
-
+    if (params.scope !== 'resource' || params.metricName !== '') {
+      conditions.push(`metric_name = {p_name:String}`);
+      queryParams.p_name = params.metricName;
+    }
     if (params.organizationId) {
       const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
       conditions.push(`organization_id IN {p_oids:Array(String)}`);
       queryParams.p_oids = oids;
     }
-    if (params.from) {
-      conditions.push(`time >= {p_from:DateTime64(3)}`);
-      queryParams.p_from = toDateTime64(params.from);
-    }
-    if (params.to) {
-      conditions.push(`time <= {p_to:DateTime64(3)}`);
-      queryParams.p_to = toDateTime64(params.to);
-    }
+    return `PREWHERE ${prewhere.join(' AND ')}${conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''}`;
+  }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  async getMetricLabelKeys(params: MetricLabelParams): Promise<MetricLabelResult> {
+    const start = Date.now();
+    const limit = Math.max(0, Math.floor(params.limit ?? 100));
+    const queryParams: Record<string, unknown> = {};
+    const clauses = this.metricLabelClauses(params, queryParams);
+    const column = metricAttrColumn(params.scope ?? 'metric');
 
-    // ClickHouse has no native JSONB keys function, so we sample rows
-    // and extract keys client-side using JSONExtractKeys
     const resultSet = await this.runQuery({
-      query: `SELECT DISTINCT arrayJoin(JSONExtractKeys(attributes)) AS key FROM metrics ${where} LIMIT ${limit}`,
+      query: `SELECT DISTINCT arrayJoin(JSONExtractKeys(${column})) AS key FROM metrics ${clauses} LIMIT ${limit}`,
       query_params: queryParams,
       format: 'JSONEachRow',
     });
@@ -2144,37 +2174,16 @@ export class ClickHouseEngine extends StorageEngine {
 
   async getMetricLabelValues(params: MetricLabelParams, labelKey: string): Promise<MetricLabelResult> {
     const start = Date.now();
-    const limit = params.limit ?? 100;
-
-    const conditions: string[] = [];
+    const limit = Math.max(0, Math.floor(params.limit ?? 100));
     const queryParams: Record<string, unknown> = {};
-
-    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-    conditions.push(`project_id IN {p_pids:Array(String)}`);
-    queryParams.p_pids = pids;
-
-    conditions.push(`metric_name = {p_name:String}`);
-    queryParams.p_name = params.metricName;
-
-    if (params.organizationId) {
-      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
-      conditions.push(`organization_id IN {p_oids:Array(String)}`);
-      queryParams.p_oids = oids;
-    }
-    if (params.from) {
-      conditions.push(`time >= {p_from:DateTime64(3)}`);
-      queryParams.p_from = toDateTime64(params.from);
-    }
-    if (params.to) {
-      conditions.push(`time <= {p_to:DateTime64(3)}`);
-      queryParams.p_to = toDateTime64(params.to);
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const clauses = this.metricLabelClauses(params, queryParams);
+    // Values are the scalar text of the attribute (numbers and booleans as JSON text),
+    // the same form attribute filters compare against.
+    const valueExpr = metricAttrLabelExpr({ scope: params.scope ?? 'metric', key: labelKey }, 'p_label_key', queryParams);
 
     const resultSet = await this.runQuery({
-      query: `SELECT DISTINCT JSONExtractString(attributes, {p_label_key:String}) AS val FROM metrics ${where} HAVING val != '' LIMIT ${limit}`,
-      query_params: { ...queryParams, p_label_key: labelKey },
+      query: `SELECT DISTINCT ${valueExpr} AS val FROM metrics ${clauses} HAVING val != '' LIMIT ${limit}`,
+      query_params: queryParams,
       format: 'JSONEachRow',
     });
     const rows = await resultSet.json<{ val: string }>();
@@ -2183,6 +2192,86 @@ export class ClickHouseEngine extends StorageEngine {
       values: rows.map(r => r.val),
       executionTimeMs: Date.now() - start,
     };
+  }
+
+  /**
+   * 1.8: one row per distinct non-empty value of `resource_attributes[key]`,
+   * in one query grouped by that value. Bounded by project and window
+   * (PREWHERE), the prefix of the metrics table sort key.
+   */
+  async getMetricSources(params: MetricSourcesParams): Promise<MetricSourcesResult> {
+    const start = Date.now();
+    const limit = Math.max(0, Math.floor(params.limit ?? 500));
+    const queryParams: Record<string, unknown> = {};
+
+    const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
+    queryParams.p_pids = pids;
+    queryParams.p_from = toDateTime64(params.from);
+    queryParams.p_to = toDateTime64(params.to);
+    const prewhere = [
+      `project_id IN {p_pids:Array(String)}`,
+      `time >= {p_from:DateTime64(3)}`,
+      `time <= {p_to:DateTime64(3)}`,
+    ];
+
+    const sourceExpr = metricAttrLabelExpr({ scope: 'resource', key: params.key }, 'p_src_key', queryParams);
+    const conditions = [`${sourceExpr} != ''`];
+    if (params.organizationId) {
+      const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
+      conditions.push(`organization_id IN {p_oids:Array(String)}`);
+      queryParams.p_oids = oids;
+    }
+    const include = params.includeMetricPrefixes ?? [];
+    if (include.length > 0) {
+      const ors = include.map((prefix, i) => {
+        queryParams[`p_inc_${i}`] = prefix;
+        return `startsWith(metric_name, {p_inc_${i}:String})`;
+      });
+      conditions.push(`(${ors.join(' OR ')})`);
+    }
+    (params.excludeMetricPrefixes ?? []).forEach((prefix, i) => {
+      queryParams[`p_exc_${i}`] = prefix;
+      conditions.push(`NOT startsWith(metric_name, {p_exc_${i}:String})`);
+    });
+
+    const coKeys = params.coKeys ?? [];
+    const coSelects = coKeys.map((key, i) => {
+      const expr = metricAttrLabelExpr({ scope: 'resource', key }, `p_co_key_${i}`, queryParams);
+      return `arraySort(groupUniqArrayIf(20)(${expr}, ${expr} != '')) AS co_${i}`;
+    });
+
+    queryParams.p_limit = limit;
+    const query = [
+      `SELECT ${sourceExpr} AS source,`,
+      `arraySort(groupUniqArray(project_id)) AS project_ids,`,
+      `max(time) AS last_seen,`,
+      `uniqExact(metric_name) AS metric_count,`,
+      `count() AS point_count${coSelects.length > 0 ? ',' : ''}`,
+      coSelects.join(', '),
+      `FROM metrics PREWHERE ${prewhere.join(' AND ')}`,
+      `WHERE ${conditions.join(' AND ')}`,
+      `GROUP BY source ORDER BY source ASC LIMIT {p_limit:UInt32}`,
+    ].filter(part => part !== '').join(' ');
+
+    const resultSet = await this.runQuery({ query, query_params: queryParams, format: 'JSONEachRow' }, 'metric-sources');
+    const rows = await resultSet.json<Record<string, unknown>>();
+
+    const sources: MetricSource[] = rows.map(row => {
+      const co: Record<string, string[]> = {};
+      coKeys.forEach((key, i) => {
+        co[key] = ((row[`co_${i}`] as unknown[] | undefined) ?? []).map(String);
+      });
+      return {
+        value: String(row.source),
+        projectIds: ((row.project_ids as unknown[] | undefined) ?? []).map(String),
+        lastSeen: parseClickHouseTime(row.last_seen),
+        metricCount: Number(row.metric_count),
+        pointCount: Number(row.point_count),
+        co,
+      };
+    });
+
+    return { sources, executionTimeMs: Date.now() - start };
   }
 
   async deleteMetricsByTimeRange(params: DeleteMetricsByTimeRangeParams): Promise<DeleteResult> {
