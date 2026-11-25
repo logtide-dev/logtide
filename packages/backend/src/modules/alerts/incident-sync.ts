@@ -1,5 +1,6 @@
 import type { Selectable } from 'kysely';
-import type { LogLevel, MetadataFilter, Severity } from '@logtide/shared';
+import type { LogLevel, MetadataFilter, MetricAlertConfig, MetricAlertInstancePayload, Severity } from '@logtide/shared';
+import { METRIC_ALERT_WINDOW_MINUTES, formatMetricAlertLabels, formatMetricValue } from '@logtide/shared';
 import type { AlertRulesTable, BaselineMetadata } from '../../database/types.js';
 // The service file, not the barrel: the barrel also pulls in the incidents
 // routes (Fastify), which the worker must not load.
@@ -123,5 +124,97 @@ export async function resolveAlertIncident(
   } catch (error) {
     logFailure(rule.id, error);
     return null;
+  }
+}
+
+export interface OpenMetricAlertIncidentContext {
+  now: Date;
+  historyId: string | null;
+  notification: AlertNotificationKind | null;
+  /** The instance that fired or re-notified. */
+  metric: MetricAlertInstancePayload;
+  /** Rule name plus the firing groups; used when the incident is created. */
+  title: string;
+}
+
+/** "cpu at 95% (above 90%) over the last 5 minutes for host.name=web-1" */
+export function describeMetricTrigger(metric: MetricAlertInstancePayload): string {
+  const metricName = metric.source;
+  const value = formatMetricValue(metric.value, metric.unit, metricName);
+  const threshold = formatMetricValue(metric.threshold, metric.unit, metricName);
+  const minutes = METRIC_ALERT_WINDOW_MINUTES[metric.window];
+  const labels = formatMetricAlertLabels(metric.labels);
+  return (
+    `${metric.source} at ${value} (${metric.condition} ${threshold}) ` +
+    `averaged over the last ${minutes} minute${minutes === 1 ? '' : 's'}` +
+    (labels ? ` for ${labels}` : '')
+  );
+}
+
+/**
+ * Metric rules: open the rule's incident or update the active one, with the
+ * rule's configured severity. One incident per rule (one active incident
+ * per source is a database guarantee); each instance transition adds a
+ * source event carrying its labels and value.
+ */
+export async function openMetricAlertIncident(
+  rule: Selectable<AlertRulesTable>,
+  config: MetricAlertConfig,
+  ctx: OpenMetricAlertIncidentContext
+): Promise<string | null> {
+  const minutes = METRIC_ALERT_WINDOW_MINUTES[config.window];
+  const metadata: AlertIncidentMetadata = {
+    ruleId: rule.id,
+    alertType: 'metric',
+    notification: ctx.notification,
+    historyId: ctx.historyId,
+    logCount: 0,
+    threshold: config.threshold,
+    timeWindow: minutes,
+    level: [],
+    service: null,
+    query: null,
+    metadataFilters: [],
+    windowFrom: new Date(ctx.now.getTime() - minutes * 60_000).toISOString(),
+    windowTo: ctx.now.toISOString(),
+    baselineMetadata: null,
+    metric: { ...ctx.metric, labels: { ...ctx.metric.labels } },
+  };
+
+  try {
+    const { incident } = await incidentsService.openOrUpdateFromSource({
+      organizationId: rule.organization_id,
+      projectId: rule.project_id ?? null,
+      source: 'alert',
+      sourceId: rule.id,
+      title: ctx.title,
+      description: describeMetricTrigger(ctx.metric),
+      severity: config.severity,
+      occurredAt: ctx.now,
+      metadata: metadata as unknown as Record<string, unknown>,
+    });
+    return incident.id;
+  } catch (error) {
+    logFailure(rule.id, error);
+    return null;
+  }
+}
+
+/** Retitle the active incident of a grouped metric rule with the groups firing now. */
+export async function retitleMetricAlertIncident(
+  rule: { id: string; organization_id: string },
+  config: MetricAlertConfig,
+  title: string
+): Promise<void> {
+  try {
+    await incidentsService.setSeverityFromSource({
+      organizationId: rule.organization_id,
+      source: 'alert',
+      sourceId: rule.id,
+      severity: config.severity,
+      title,
+    });
+  } catch (error) {
+    logFailure(rule.id, error);
   }
 }
