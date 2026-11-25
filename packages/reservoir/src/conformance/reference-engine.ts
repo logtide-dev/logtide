@@ -48,6 +48,7 @@ import {
   type MetricAggregateParams,
   type MetricAggregateResult,
   type MetricAggregationFn,
+  type MetricHistogramValue,
   type MetricLabelParams,
   type MetricNamesParams,
   type MetricNamesResult,
@@ -259,6 +260,34 @@ function aggregatePoints(points: StoredMetricRecord[], aggregation: MetricAggreg
     default:
       throw new Error(`${NAME}: unsupported metric aggregation ${aggregation}`);
   }
+}
+
+/** The explicit buckets of a point, or undefined when it has none (ignored by hist_*). */
+function explicitHistogram(p: StoredMetricRecord): MetricHistogramValue | undefined {
+  const h = p.histogramData;
+  if (!h || !Array.isArray(h.explicit_bounds) || !Array.isArray(h.bucket_counts)) return undefined;
+  if (h.bucket_counts.length !== h.explicit_bounds.length + 1) return undefined;
+  return { bounds: h.explicit_bounds, counts: h.bucket_counts, sum: h.sum ?? 0, count: h.count ?? 0 };
+}
+
+/**
+ * hist_last / hist_sum over the points of one bucket and group. The pick is
+ * the latest point (by time); hist_sum adds up the points whose bucket_counts
+ * length equals the pick's and skips the rest.
+ */
+function aggregateHistograms(points: StoredMetricRecord[], aggregation: 'hist_last' | 'hist_sum'): MetricHistogramValue {
+  const hs = points
+    .map((p) => ({ time: p.time.getTime(), h: explicitHistogram(p)! }))
+    .sort((a, b) => a.time - b.time);
+  const pick = hs[hs.length - 1].h;
+  if (aggregation === 'hist_last') return structuredClone(pick);
+  const same = hs.filter((x) => x.h.counts.length === pick.counts.length).map((x) => x.h);
+  return {
+    bounds: [...pick.bounds],
+    counts: pick.counts.map((_, i) => same.reduce((acc, h) => acc + h.counts[i], 0)),
+    sum: same.reduce((acc, h) => acc + h.sum, 0),
+    count: same.reduce((acc, h) => acc + h.count, 0),
+  };
 }
 
 /** Built-in columns topValues and distinct accept (the translators' ALLOWED_COLUMNS). */
@@ -754,7 +783,9 @@ export class ReferenceEngine {
     const attrRefs = params.groupByAttrs ?? [];
     const grouped = groupBy.length > 0 || attrRefs.length > 0;
     const groups = new Map<string, { bucket: number; labels: Record<string, string>; points: StoredMetricRecord[] }>();
+    const histogram = params.aggregation === 'hist_last' || params.aggregation === 'hist_sum';
     for (const m of this.matchMetrics(params)) {
+      if (histogram && !explicitHistogram(m)) continue;
       const bucket = Math.floor(m.time.getTime() / bucketMs) * bucketMs;
       const entries: [string, string][] = [
         ...groupBy.map((key): [string, string] => [key, metricAttrText(m, { scope: 'metric', key }) ?? '']),
@@ -768,11 +799,17 @@ export class ReferenceEngine {
     }
     const timeseries = [...groups.values()]
       .sort((a, b) => a.bucket - b.bucket)
-      .map((g) => ({
-        bucket: new Date(g.bucket),
-        value: aggregatePoints(g.points, params.aggregation),
-        ...(grouped ? { labels: g.labels } : {}),
-      }));
+      .map((g) => {
+        if (histogram) {
+          const h = aggregateHistograms(g.points, params.aggregation as 'hist_last' | 'hist_sum');
+          return { bucket: new Date(g.bucket), value: h.count, ...(grouped ? { labels: g.labels } : {}), histogram: h };
+        }
+        return {
+          bucket: new Date(g.bucket),
+          value: aggregatePoints(g.points, params.aggregation),
+          ...(grouped ? { labels: g.labels } : {}),
+        };
+      });
     return { metricName: params.metricName, metricType: params.metricType ?? 'gauge', timeseries };
   }
 

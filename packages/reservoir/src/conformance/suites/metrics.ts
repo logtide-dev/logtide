@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { metricAttrLabel, type MetricAggregateParams, type MetricAggregationFn, type MetricAttrFilter, type MetricAttrRef, type MetricSourcesParams } from '../../core/types.js';
 import type { ConformanceContext } from '../harness.js';
-import { METRIC_CPU, METRIC_QUEUE, METRIC_REQUESTS, minutes, PROJECT_A, PROJECT_B, PROJECT_C, WINDOW } from '../corpus.js';
+import { METRIC_CPU, METRIC_LATENCY, METRIC_QUEUE, METRIC_REQUESTS, minutes, PROJECT_A, PROJECT_B, PROJECT_C, PROJECT_E, WINDOW } from '../corpus.js';
 
 const METHOD = 'http.request.method';
 const ADDRESS = 'server.address';
@@ -82,6 +82,97 @@ export function describeMetricsConformance(ctx: ConformanceContext): void {
     });
 
     describeMetricAttrConformance(ctx);
+    describeMetricHistogramConformance(ctx);
+  });
+}
+
+// ----------------------------------------------------------------------------
+// 1.8 histogram aggregations (MT26+)
+// ----------------------------------------------------------------------------
+// Rulings pinned here: the pick of a bucket (per group) is its latest point
+// with explicit buckets; hist_last returns it, hist_sum adds up bucket_counts
+// element-wise, sum and count over the points whose bucket_counts length
+// equals the pick's (others are skipped) and takes the pick's bounds. Points
+// without histogram_data or without explicit buckets are ignored; a group
+// with none of them has no row. value = count. Corpus rows: HISTOGRAM_ROWS.
+
+function describeMetricHistogramConformance(ctx: ConformanceContext): void {
+  /** `<bucket> <label>... <value> [bounds] [counts] <sum> <count>` lines, sorted. */
+  const hist = async (aggregation: 'hist_last' | 'hist_sum', extra: Partial<MetricAggregateParams> = {}): Promise<string[]> => {
+    const { timeseries } = await ctx.subject().aggregateMetrics({
+      projectId: PROJECT_E,
+      metricName: METRIC_LATENCY,
+      from: WINDOW.from,
+      to: WINDOW.to,
+      interval: '15m',
+      aggregation,
+      ...extra,
+    });
+    const labelKeys = [...(extra.groupBy ?? []), ...(extra.groupByAttrs ?? []).map(metricAttrLabel)];
+    return timeseries.map((b) => {
+      const h = b.histogram;
+      expect(h, 'histogram of every bucket').toBeDefined();
+      return [
+        new Date(b.bucket).toISOString(),
+        ...labelKeys.map((k) => b.labels?.[k]),
+        Number(b.value),
+        `[${h!.bounds.map(Number).join(',')}]`,
+        `[${h!.counts.map(Number).join(',')}]`,
+        Number(h!.sum),
+        Number(h!.count),
+      ].join(' ');
+    }).sort();
+  };
+
+  it('MT26 hist_last: the latest point with buckets of each bucket', async () => {
+    expect(await hist('hist_last')).toEqual(sorted([
+      `${at(0)} 4 [10,100] [1,2,1] 200 4`,
+      `${at(15)} 5 [10,100] [0,0,5] 900 5`,
+      `${at(30)} 10 [10,100] [4,4,2] 600 10`,
+    ]));
+  });
+
+  it('MT27 hist_sum: element-wise sum, a different bucket length is skipped', async () => {
+    expect(await hist('hist_sum')).toEqual(sorted([
+      `${at(0)} 15 [10,100] [4,8,3] 700 15`,
+      `${at(15)} 13 [10,100] [3,4,6] 1300 13`,
+      `${at(30)} 10 [10,100] [4,4,2] 600 10`,
+    ]));
+  });
+
+  it('MT28 hist_last and hist_sum per group', async () => {
+    expect(await hist('hist_last', { groupBy: ['http.route'] })).toEqual(sorted([
+      `${at(0)} /a 6 [10,100] [2,3,1] 300 6`,
+      `${at(0)} /b 4 [10,100] [1,2,1] 200 4`,
+      `${at(15)} /a 8 [10,100] [3,4,1] 400 8`,
+      `${at(15)} /b 5 [10,100] [0,0,5] 900 5`,
+      `${at(30)} /a 10 [10,100] [4,4,2] 600 10`,
+    ]));
+    expect(await hist('hist_sum', { groupBy: ['http.route'] })).toEqual(sorted([
+      `${at(0)} /a 9 [10,100] [3,5,1] 350 9`,
+      `${at(0)} /b 6 [10,100] [1,3,2] 350 6`,
+      `${at(15)} /a 8 [10,100] [3,4,1] 400 8`,
+      `${at(15)} /b 5 [10,100] [0,0,5] 900 5`,
+      `${at(30)} /a 10 [10,100] [4,4,2] 600 10`,
+    ]));
+  });
+
+  it('MT29 histograms with attribute groups, filters and hourly buckets', async () => {
+    // Hourly and ungrouped: never served from a rollup.
+    expect(await hist('hist_last', { interval: '1h' })).toEqual([`${at(0)} 10 [10,100] [4,4,2] 600 10`]);
+    expect(await hist('hist_last', { interval: '1h', groupByAttrs: [res('service.name')] })).toEqual(sorted([
+      `${at(0)} api 10 [10,100] [4,4,2] 600 10`,
+      `${at(0)} web 5 [10,100] [0,0,5] 900 5`,
+    ]));
+    expect(await hist('hist_sum', { interval: '1h', filters: [f(met('http.route'), 'eq', '/b')] })).toEqual([
+      `${at(0)} 11 [10,100] [1,3,7] 1250 11`,
+    ]);
+    // Only HB2 (four buckets) in its own 5m bucket: its bounds are the pick.
+    expect(await hist('hist_sum', { interval: '5m', from: minutes(6), to: minutes(8), groupByAttrs: [res('service.name')] })).toEqual([
+      `${at(5)} web 4 [10,100,1000] [1,1,1,1] 2000 4`,
+    ]);
+    // Only points without explicit buckets: no rows.
+    expect(await hist('hist_sum', { from: minutes(12), to: minutes(14) })).toEqual([]);
   });
 }
 
