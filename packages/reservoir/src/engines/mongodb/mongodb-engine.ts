@@ -1417,12 +1417,13 @@ export class MongoDBEngine extends StorageEngine {
     const groupId: Document = { bucket: bucketExpr };
     if (params.groupBy && params.groupBy.length > 0) {
       params.groupBy.forEach((key, i) => {
-        groupId[`label_${i}`] = metricLabelExpr(key);
+        groupId[`label_${i}`] = { $ifNull: [metricAttrTextExpr({ scope: 'metric', key }), ''] };
       });
     }
+    // A missing value and an empty string are the same group ('').
     const attrRefs = params.groupByAttrs ?? [];
     attrRefs.forEach((ref, i) => {
-      groupId[`attr_${i}`] = metricAttrTextExpr(ref);
+      groupId[`attr_${i}`] = { $ifNull: [metricAttrTextExpr(ref), ''] };
     });
     const grouped = (params.groupBy?.length ?? 0) > 0 || attrRefs.length > 0;
 
@@ -1581,9 +1582,7 @@ export class MongoDBEngine extends StorageEngine {
       { $match: filter },
       {
         $group: {
-          _id: params.scope === 'resource'
-            ? metricAttrTextExpr({ scope: 'resource', key: labelKey })
-            : metricLabelExpr(labelKey),
+          _id: metricAttrTextExpr({ scope: params.scope ?? 'metric', key: labelKey }),
         },
       },
       { $match: { _id: { $nin: [null, ''] } } },
@@ -2013,6 +2012,7 @@ export class MongoDBEngine extends StorageEngine {
     if (params.to) {
       filter.time = { ...filter.time, $lte: params.to };
     }
+    addMetricAttrFilters(filter, params.filters);
 
     return filter;
   }
@@ -2022,8 +2022,8 @@ export class MongoDBEngine extends StorageEngine {
     const filter: Document = {
       project_id: pids.length === 1 ? pids[0] : { $in: pids },
     };
-    // With resource scope an empty metric name means every metric.
-    if (params.scope !== 'resource' || params.metricName !== '') {
+    // An empty metric name means every metric.
+    if (params.metricName !== '') {
       filter.metric_name = params.metricName;
     }
 
@@ -2151,10 +2151,11 @@ export function metricAttrFilterClause(filter: MetricAttrFilter): Document {
       return { $expr: { $in: [text(), { $literal: values }] } };
     case 'nin':
       return { $expr: { $not: [{ $in: [text(), { $literal: values }] }] } };
+    // A JSON null counts as a missing key.
     case 'exists':
-      return { $expr: { $ne: [{ $type: metricAttrValueExpr(filter) }, 'missing'] } };
+      return { $expr: { $not: [{ $in: [{ $type: metricAttrValueExpr(filter) }, ['missing', 'null']] }] } };
     case 'notExists':
-      return { $expr: { $eq: [{ $type: metricAttrValueExpr(filter) }, 'missing'] } };
+      return { $expr: { $in: [{ $type: metricAttrValueExpr(filter) }, ['missing', 'null']] } };
     case 'gte':
     case 'lt': {
       const raw = values[0];
