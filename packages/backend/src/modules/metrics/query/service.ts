@@ -58,6 +58,7 @@ import {
   labelKey,
   lastValue,
   OTHER_LABEL,
+  pickLabels,
   spaceAggregate,
   topByRecent,
   type FoldResult,
@@ -114,13 +115,63 @@ export interface ResolvedMetricQuery extends Omit<MetricQueryRequest, 'projectId
    *   no top-N cap and no folded "Other" series (metric alerts evaluate every
    *   group before ranking them by the alert direction). At most
    *   MAX_UNFOLDED_GROUPS groups are returned (first ones by labels), the
-   *   rest are dropped with a warning.
+   *   rest are dropped with a warning (the most extreme ones in the `rank`
+   *   direction are kept, else the first ones by labels).
+   * - maxRawSeries raises MAX_RAW_SERIES for this query, up to
+   *   MAX_INTERNAL_RAW_SERIES, on every cap path (counter rates, cumulative
+   *   histograms, the one-step fallback), so the per-series path and its
+   *   space aggregation run for every series up to that many.
+   * - rank (metric alerts): the direction the caller watches. Series are
+   *   then never dropped by a recent value and the query never switches to
+   *   the one-step aggregation: above the raw series cap every group is
+   *   still computed per series and the groups kept are the most extreme
+   *   ones in that direction (mean of the points from `rank.from` on). Any
+   *   dropped group is reported by a partial result warning
+   *   (isPartialResultWarning).
    */
-  internal?: { maxSeries?: number; unfoldedGroups?: boolean };
+  internal?: {
+    maxSeries?: number;
+    unfoldedGroups?: boolean;
+    maxRawSeries?: number;
+    rank?: { direction: 'highest' | 'lowest'; from?: string };
+  };
 }
 
 /** Above this many raw series a query is capped or aggregated by the engine in one step. */
 export const MAX_RAW_SERIES = 500;
+/** Highest raw series cap an internal caller may ask for (internal.maxRawSeries). */
+export const MAX_INTERNAL_RAW_SERIES = 20000;
+/** Engine calls one request runs at the same time (partitions, queries and compare copies together). */
+export const MAX_ENGINE_CONCURRENCY = 4;
+/** Ends every warning that means groups or series are missing from a result. */
+export const PARTIAL_RESULT_NOTE = '(partial result)';
+
+/** Whether a warning says the result of query or formula `id` misses groups or series. */
+export function isPartialResultWarning(warning: string, id: string): boolean {
+  return (
+    (warning.startsWith(`Query ${id}:`) || warning.startsWith(`Formula ${id}:`)) && warning.endsWith(PARTIAL_RESULT_NOTE)
+  );
+}
+
+/** Runs async work with at most a fixed number of tasks in flight. */
+export type Limiter = <T>(fn: () => Promise<T>) => Promise<T>;
+
+/** FIFO limiter: a released slot goes straight to the next waiter, so the bound is never exceeded. */
+export function createLimiter(max: number): Limiter {
+  let active = 0;
+  const waiting: Array<() => void> = [];
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (active < max) active++;
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await fn();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
 /** Metric attribute keys used to tell series apart (the first ones in byte order). */
 export const MAX_IDENTITY_METRIC_KEYS = 10;
 /** Resource keys that identify who sent a series (used when present). */
@@ -164,6 +215,12 @@ interface WindowContext {
   maxSeries: number;
   /** Keep every group (no top-N fold), up to MAX_UNFOLDED_GROUPS. */
   unfoldedGroups: boolean;
+  /** Raw series above which a query is capped (MAX_RAW_SERIES unless raised). */
+  maxRawSeries: number;
+  /** Alert direction (internal.rank) with the grid index its mean starts at. */
+  rank: { direction: 'highest' | 'lowest'; fromIndex: number } | null;
+  /** Every engine call of the request goes through it. */
+  engine: Limiter;
 }
 
 /** One query evaluated: its groups before the top-N fold. */
@@ -203,17 +260,20 @@ async function labelKeys(
   scope: 'metric' | 'resource',
   limit: number,
   from: Date,
+  to: Date,
 ): Promise<string[]> {
   try {
-    const result = await reservoir.getMetricLabelKeys({
-      organizationId: ctx.organizationId,
-      projectId: ctx.projectIds,
-      metricName,
-      from,
-      to: ctx.to,
-      limit,
-      scope,
-    });
+    const result = await ctx.engine(() =>
+      reservoir.getMetricLabelKeys({
+        organizationId: ctx.organizationId,
+        projectId: ctx.projectIds,
+        metricName,
+        from,
+        to,
+        limit,
+        scope,
+      }),
+    );
     return [...(result?.keys ?? [])].sort(byteOrder);
   } catch {
     // An engine without resource-scope discovery still answers the query,
@@ -223,22 +283,26 @@ async function labelKeys(
 }
 
 /**
- * Identity keys of a metric, read over the last KEY_DISCOVERY_WINDOW_MS of
- * the window (a short, cheap scan); the whole window only when the metric
- * has no keys at all there (it stopped reporting earlier).
+ * Identity keys of a metric over the whole window: the last
+ * KEY_DISCOVERY_WINDOW_MS and, when the window is longer, the earlier part,
+ * unioned (a key seen only early in the window still tells series apart;
+ * without it they would be merged). Each read is bounded by key count: the
+ * first MAX_IDENTITY_METRIC_KEYS + 1 metric keys in byte order (enough to
+ * pick the first ones of the union and to know there are more) and
+ * RESOURCE_KEY_DISCOVERY_LIMIT resource keys.
  */
 async function discoverKeys(ctx: WindowContext, metricName: string): Promise<{ metric: string[]; resource: string[] }> {
-  const read = (from: Date) =>
+  const read = (from: Date, to: Date) =>
     Promise.all([
-      labelKeys(ctx, metricName, 'metric', MAX_IDENTITY_METRIC_KEYS + 1, from),
-      labelKeys(ctx, metricName, 'resource', RESOURCE_KEY_DISCOVERY_LIMIT, from),
+      labelKeys(ctx, metricName, 'metric', MAX_IDENTITY_METRIC_KEYS + 1, from, to),
+      labelKeys(ctx, metricName, 'resource', RESOURCE_KEY_DISCOVERY_LIMIT, from, to),
     ]);
   const recentFrom = new Date(Math.max(ctx.from.getTime(), ctx.to.getTime() - KEY_DISCOVERY_WINDOW_MS));
-  let [metric, resource] = await read(recentFrom);
-  if (metric.length === 0 && resource.length === 0 && recentFrom.getTime() > ctx.from.getTime()) {
-    [metric, resource] = await read(ctx.from);
-  }
-  return { metric, resource };
+  const reads = [read(recentFrom, ctx.to)];
+  if (recentFrom.getTime() > ctx.from.getTime()) reads.push(read(ctx.from, recentFrom));
+  const parts = await Promise.all(reads);
+  const union = (lists: string[][]) => [...new Set(lists.flat())].sort(byteOrder);
+  return { metric: union(parts.map((p) => p[0])), resource: union(parts.map((p) => p[1])) };
 }
 
 async function seriesIdentity(
@@ -290,17 +354,19 @@ async function aggregate(
   groupByAttrs: MetricAttrRef[],
   projectIds: string[] = ctx.projectIds,
 ): Promise<{ timeseries: MetricTimeBucket[]; metricType: string | null }> {
-  const result = await reservoir.aggregateMetrics({
-    organizationId: ctx.organizationId,
-    projectId: projectIds,
-    metricName: spec.metricName,
-    from: ctx.from,
-    to: ctx.to,
-    interval: ctx.interval,
-    aggregation,
-    groupByAttrs: groupByAttrs.length > 0 ? groupByAttrs : undefined,
-    filters: filters.length > 0 ? filters : undefined,
-  });
+  const result = await ctx.engine(() =>
+    reservoir.aggregateMetrics({
+      organizationId: ctx.organizationId,
+      projectId: projectIds,
+      metricName: spec.metricName,
+      from: ctx.from,
+      to: ctx.to,
+      interval: ctx.interval,
+      aggregation,
+      groupByAttrs: groupByAttrs.length > 0 ? groupByAttrs : undefined,
+      filters: filters.length > 0 ? filters : undefined,
+    }),
+  );
   const timeseries = result?.timeseries ?? [];
   return { timeseries, metricType: timeseries.length > 0 ? (result?.metricType ?? null) : null };
 }
@@ -330,6 +396,96 @@ export function seriesLimitCap(internal: ResolvedMetricQuery['internal']): numbe
   const asked = internal?.maxSeries;
   if (typeof asked !== 'number' || !Number.isFinite(asked)) return METRIC_MAX_SERIES_LIMIT;
   return Math.min(Math.max(Math.floor(asked), METRIC_MAX_SERIES_LIMIT), MAX_INTERNAL_SERIES_LIMIT);
+}
+
+/** The raw series cap: MAX_RAW_SERIES unless an internal caller raised it (never lowered). */
+export function rawSeriesCap(internal: ResolvedMetricQuery['internal']): number {
+  const asked = internal?.maxRawSeries;
+  if (typeof asked !== 'number' || !Number.isFinite(asked)) return MAX_RAW_SERIES;
+  return Math.min(Math.max(Math.floor(asked), MAX_RAW_SERIES), MAX_INTERNAL_RAW_SERIES);
+}
+
+/** internal.rank on the grid: the first bucket at or after `rank.from` (0 without one). */
+function rankOf(rank: NonNullable<ResolvedMetricQuery['internal']>['rank'], grid: number[]): WindowContext['rank'] {
+  if (!rank || (rank.direction !== 'highest' && rank.direction !== 'lowest')) return null;
+  const fromMs = rank.from ? Date.parse(rank.from) : Number.NaN;
+  let fromIndex = 0;
+  if (Number.isFinite(fromMs)) {
+    fromIndex = grid.findIndex((t) => t >= fromMs);
+    if (fromIndex < 0) fromIndex = grid.length;
+  }
+  return { direction: rank.direction, fromIndex };
+}
+
+/** Mean of the non-null values from `fromIndex` on. */
+function meanFrom(values: Array<number | null>, fromIndex: number): number | null {
+  let sum = 0;
+  let n = 0;
+  for (let i = Math.max(0, fromIndex); i < values.length; i++) {
+    const v = values[i];
+    if (v !== null) {
+      sum += v;
+      n++;
+    }
+  }
+  return n === 0 ? null : sum / n;
+}
+
+/**
+ * Groups most extreme first in the rank direction (highest mean first, or
+ * lowest first), groups without a value last, ties by labels.
+ */
+export function rankGroups(
+  groups: GridSeries[],
+  rank: { direction: 'highest' | 'lowest'; fromIndex: number },
+): GridSeries[] {
+  const sign = rank.direction === 'highest' ? -1 : 1;
+  return groups
+    .map((g) => ({ g, mean: meanFrom(g.values, rank.fromIndex), key: labelKey(g.labels) }))
+    .sort((a, b) => {
+      if (a.mean !== b.mean) {
+        if (a.mean === null) return 1;
+        if (b.mean === null) return -1;
+        return sign * (a.mean - b.mean);
+      }
+      return byteOrder(a.key, b.key);
+    })
+    .map((r) => r.g);
+}
+
+/**
+ * Raw series cap of a ranked (alert) query: every group was computed from
+ * all its series; keep the most extreme groups whose raw series fit in the
+ * cap (the first one always), drop the rest with a partial result warning.
+ * A kept group is never computed from a subset of its series.
+ */
+function capRankedGroups(
+  ctx: WindowContext,
+  spec: MetricQuerySpec,
+  result: QueryResult,
+  rawLabels: Array<Record<string, string>>,
+  groupLabels: string[],
+): QueryResult {
+  const rank = ctx.rank!;
+  const perGroup = new Map<string, number>();
+  for (const labels of rawLabels) {
+    const key = labelKey(pickLabels(labels, groupLabels));
+    perGroup.set(key, (perGroup.get(key) ?? 0) + 1);
+  }
+  const kept: GridSeries[] = [];
+  let used = 0;
+  for (const g of rankGroups(result.groups, rank)) {
+    const n = perGroup.get(labelKey(g.labels)) ?? 0;
+    if (kept.length > 0 && used + n > ctx.maxRawSeries) continue;
+    kept.push(g);
+    used += n;
+  }
+  if (kept.length < result.groups.length) {
+    result.warnings.push(
+      `Query ${spec.id}: more than ${ctx.maxRawSeries} series, only the ${kept.length} ${rank.direction} groups are evaluated ${PARTIAL_RESULT_NOTE}`,
+    );
+  }
+  return { ...result, groups: kept };
 }
 
 function seriesLimit(ctx: WindowContext, spec: MetricQuerySpec): number {
@@ -389,21 +545,26 @@ async function evaluateHistogramQuery(
   let metricType = perSeries.metricType;
   let series = histBucketsToSeries(perSeries.timeseries, ctx.grid, ctx.stepMs, ctx.shiftMs);
   const hasIdentity = identityRefs.length > groupRefs.length || partitions.length > 1;
-  if (series.length > MAX_RAW_SERIES && hasIdentity) {
+  const cap = ctx.maxRawSeries;
+  // Ranked (alert) queries keep every series here and cap whole groups at the end.
+  const rankedCap = series.length > cap && hasIdentity && ctx.rank !== null;
+  if (series.length > cap && hasIdentity && !rankedCap) {
     if (temporality === 'delta') {
       // Delta histograms add up, so the engine can sum each group directly.
-      warnings.push(`Query ${spec.id}: more than ${MAX_RAW_SERIES} series, histograms summed by the engine in one step`);
+      warnings.push(`Query ${spec.id}: more than ${cap} series, histograms summed by the engine in one step`);
       const grouped = await aggregate(ctx, spec, filters, engineAgg, groupRefs);
       metricType = grouped.metricType ?? metricType;
       series = histBucketsToSeries(grouped.timeseries, ctx.grid, ctx.stepMs, ctx.shiftMs);
     } else {
       // Cumulative snapshots must be diffed per series: keep the busiest ones.
       warnings.push(
-        `Query ${spec.id}: more than ${MAX_RAW_SERIES} series, showing the ${MAX_RAW_SERIES} with the highest recent count`,
+        `Query ${spec.id}: more than ${cap} series, showing the ${cap} with the highest recent count ${PARTIAL_RESULT_NOTE}`,
       );
-      series = topByRecent(series, MAX_RAW_SERIES, lastHistCount);
+      series = topByRecent(series, cap, lastHistCount);
     }
   }
+  const rawLabels = rankedCap ? series.map((s) => s.labels) : [];
+  const finish = (r: QueryResult): QueryResult => (rankedCap ? capRankedGroups(ctx, spec, r, rawLabels, groupLabels) : r);
   const base = { limit: seriesLimit(ctx, spec), grouped: groupLabels.length > 0, metricType, info, warnings };
   if (series.length === 0) return { ...base, groups: [], combine: () => nullSeries(OTHER_LABELS, len) };
 
@@ -412,18 +573,18 @@ async function evaluateHistogramQuery(
   if (isRate) {
     series = dropOpenBuckets(series, ctx.grid, ctx.stepMs, ctx.openAfterMs);
     const spaceAgg = spec.spaceAggregation ?? defaultSpaceAggregation('rate');
-    return {
+    return finish({
       ...base,
       groups: spaceAggregate(histSeriesToScalar(series, 'rate'), groupLabels, spaceAgg, len),
       combine: (members) => combineSeries(members, OTHER_LABELS, spaceAgg, len),
-    };
+    });
   }
 
   const merged = mergeHistSeries(series, groupLabels, len);
   const byKey = new Map(merged.map((g) => [labelKey(g.labels), g]));
   const scalar = (g: HistSeries): Array<number | null> =>
     g.values.map((h, i) => histogramScalar(h, spec.aggregation, g.seconds[i]));
-  return {
+  return finish({
     ...base,
     groups: merged.map((g) => ({ labels: g.labels, values: scalar(g) })),
     // The rest of a histogram query is one merged histogram (a percentile of
@@ -436,7 +597,7 @@ async function evaluateHistogramQuery(
       const [one] = mergeHistSeries(hs, [], len);
       return one ? { labels: OTHER_LABELS, values: scalar(one) } : nullSeries(OTHER_LABELS, len);
     },
-  };
+  });
 }
 
 async function evaluateQuery(
@@ -488,20 +649,22 @@ async function evaluateQuery(
   let series = bucketsToSeries(perSeries.timeseries, ctx.grid, ctx.stepMs, ctx.shiftMs);
 
   const hasIdentity = identityRefs.length > groupRefs.length || partitions.length > 1;
-  if (series.length > MAX_RAW_SERIES && hasIdentity) {
+  const cap = ctx.maxRawSeries;
+  // Ranked (alert) queries keep every series here and cap whole groups at the end.
+  const rankedCap = series.length > cap && hasIdentity && ctx.rank !== null;
+  const rawLabels = rankedCap ? series.map((s) => s.labels) : [];
+  if (series.length > cap && hasIdentity && !rankedCap) {
     if (isRate && !deltaRate) {
       // A counter rate is a diff per series: values of different series must
       // never be diffed against each other, so keep the busiest series.
       warnings.push(
-        `Query ${spec.id}: more than ${MAX_RAW_SERIES} series, the rate covers the ${MAX_RAW_SERIES} with the highest recent value`,
+        `Query ${spec.id}: more than ${cap} series, the rate covers the ${cap} with the highest recent value ${PARTIAL_RESULT_NOTE}`,
       );
-      series = topByRecent(series, MAX_RAW_SERIES, (s) => lastValue(s.values));
+      series = topByRecent(series, cap, (s) => lastValue(s.values));
     } else {
       // Let the engine aggregate each group directly (time aggregation
       // only, no space step).
-      warnings.push(
-        `Query ${spec.id}: more than ${MAX_RAW_SERIES} series, aggregated in one step (space aggregation skipped)`,
-      );
+      warnings.push(`Query ${spec.id}: more than ${cap} series, aggregated in one step (space aggregation skipped)`);
       const grouped = await aggregate(ctx, spec, filters, engineAgg, groupRefs);
       metricType = grouped.metricType ?? metricType;
       series = bucketsToSeries(grouped.timeseries, ctx.grid, ctx.stepMs, ctx.shiftMs);
@@ -513,28 +676,33 @@ async function evaluateQuery(
       ? applyDeltaRate(series, ctx.grid, ctx.stepMs, ctx.openAfterMs)
       : applyRate(series, ctx.grid, ctx.stepMs, ctx.openAfterMs);
   }
-  return done(series, metricType);
+  const result = done(series, metricType);
+  return rankedCap ? capRankedGroups(ctx, spec, result, rawLabels, groupLabels) : result;
 }
 
 /**
- * Every group, capped at MAX_UNFOLDED_GROUPS. The kept ones are the first by
- * labels (byte order): a ranking by value would favor one alert direction.
+ * Every group, capped at MAX_UNFOLDED_GROUPS. With a rank (metric alerts)
+ * the kept ones are the most extreme in the alert direction; without one,
+ * the first by labels (byte order). Dropping groups is a partial result.
  */
-function unfoldGroups(groups: GridSeries[], id: string, warnings: string[]): FoldResult {
+function unfoldGroups(groups: GridSeries[], id: string, warnings: string[], rank: WindowContext['rank']): FoldResult {
   if (groups.length <= MAX_UNFOLDED_GROUPS) return { series: groups, seriesTotal: groups.length, seriesShown: groups.length };
-  warnings.push(`${id}: more than ${MAX_UNFOLDED_GROUPS} groups, only the first ${MAX_UNFOLDED_GROUPS} are evaluated`);
-  const kept = groups
-    .map((g) => ({ g, key: labelKey(g.labels) }))
-    .sort((a, b) => byteOrder(a.key, b.key))
-    .slice(0, MAX_UNFOLDED_GROUPS)
-    .map((x) => x.g);
+  const ordered = rank
+    ? rankGroups(groups, rank)
+    : groups
+        .map((g) => ({ g, key: labelKey(g.labels) }))
+        .sort((a, b) => byteOrder(a.key, b.key))
+        .map((x) => x.g);
+  const which = rank ? `the ${MAX_UNFOLDED_GROUPS} ${rank.direction}` : `the first ${MAX_UNFOLDED_GROUPS}`;
+  warnings.push(`${id}: more than ${MAX_UNFOLDED_GROUPS} groups, only ${which} are evaluated ${PARTIAL_RESULT_NOTE}`);
+  const kept = ordered.slice(0, MAX_UNFOLDED_GROUPS);
   return { series: kept, seriesTotal: groups.length, seriesShown: kept.length };
 }
 
 /** Top-N fold of a query's groups for display (or every group when unfolded). */
-function foldQuery(r: QueryResult, id: string, unfolded: boolean, warnings: string[]): FoldResult {
+function foldQuery(r: QueryResult, id: string, ctx: WindowContext, warnings: string[]): FoldResult {
   if (!r.grouped) return { series: r.groups, seriesTotal: r.groups.length, seriesShown: r.groups.length };
-  if (unfolded) return unfoldGroups(r.groups, `Query ${id}`, warnings);
+  if (ctx.unfoldedGroups) return unfoldGroups(r.groups, `Query ${id}`, warnings, ctx.rank);
   return foldTopNWith(r.groups, r.limit, r.combine);
 }
 
@@ -585,10 +753,13 @@ async function evaluateWindow(
         }
         operands.set(id, { groups: r.groups, combine: r.combine });
         if (r.grouped) limit = Math.max(limit, r.limit);
+        if (r.warnings.some((w) => isPartialResultWarning(w, id))) {
+          out.warnings.push(`Formula ${f.spec.id}: query ${id} misses groups or series ${PARTIAL_RESULT_NOTE}`);
+        }
       }
       if (ctx.unfoldedGroups) {
         const all = evaluateFormulaFolded(f.ast, operands, Number.MAX_SAFE_INTEGER, ctx.grid.length, f.spec.missingAsZero === true);
-        out.formulas.set(f.spec.id, unfoldGroups(all.series, `Formula ${f.spec.id}`, out.warnings));
+        out.formulas.set(f.spec.id, unfoldGroups(all.series, `Formula ${f.spec.id}`, out.warnings, ctx.rank));
       } else {
         out.formulas.set(
           f.spec.id,
@@ -683,6 +854,11 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
     openAfterMs: now.getTime(),
     maxSeries: seriesLimitCap(query.internal),
     unfoldedGroups: query.internal?.unfoldedGroups === true,
+    maxRawSeries: rawSeriesCap(query.internal),
+    rank: rankOf(query.internal?.rank, grid),
+    // One limiter for the whole request: partitions, queries, key discovery
+    // and the compareTo copy all share it.
+    engine: createLimiter(MAX_ENGINE_CONCURRENCY),
   };
 
   const offset = compareOffsetMs(query.compareTo);
@@ -721,7 +897,7 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
   for (const q of queries) {
     const unit = unitOf(queryUnits.get(q.id) ?? null);
     const r = current.queries.get(q.id);
-    const folded = r ? foldQuery(r, q.id, baseCtx.unfoldedGroups, warnings) : null;
+    const folded = r ? foldQuery(r, q.id, baseCtx, warnings) : null;
     const info: MetricQueryInfo = {
       id: q.id,
       seriesTotal: folded?.seriesTotal ?? 0,
@@ -740,7 +916,7 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
     const name = q.label || q.metricName;
     for (const s of folded.series) series.push(toSeries(q.id, s, grid, name, unit, false));
     const cmp = previous?.queries.get(q.id);
-    if (cmp) for (const s of foldQuery(cmp, q.id, baseCtx.unfoldedGroups, warnings).series) series.push(toSeries(q.id, s, grid, name, unit, true));
+    if (cmp) for (const s of foldQuery(cmp, q.id, baseCtx, warnings).series) series.push(toSeries(q.id, s, grid, name, unit, true));
   }
 
   warnings.push(...current.warnings);
