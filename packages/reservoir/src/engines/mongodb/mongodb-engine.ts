@@ -50,6 +50,7 @@ import type {
   MetricQueryResult,
   MetricAggregateParams,
   MetricAggregateResult,
+  MetricTimeBucket,
   MetricNamesParams,
   MetricNamesResult,
   MetricLabelParams,
@@ -85,6 +86,7 @@ import { compareByteOrder, zeroFillHistogram } from '../../core/aggregation-help
 import { MongoLogVolume, type WriteToken } from './log-volume.js';
 import { scalarTextExpr } from './json-path.js';
 import { escapeRegex } from './text-query.js';
+import { toNumber } from './bson-number.js';
 import {
   assertTimeRange,
   normalizeDiscoverParams,
@@ -173,10 +175,8 @@ const INTERVAL_DATETRUNC: Record<AggregationInterval, { unit: string; binSize: n
   '1w': { unit: 'week', binSize: 1 },
 };
 
-// hist_last / hist_sum placeholders until the histogram aggregation lands (1.8).
-const AGG_ACCUMULATORS: Record<MetricAggregationFn, Document> = {
-  hist_last: { $last: '$value' },
-  hist_sum: { $sum: '$value' },
+// hist_last / hist_sum run their own pipeline (aggregateMetricHistograms).
+const AGG_ACCUMULATORS: Record<Exclude<MetricAggregationFn, 'hist_last' | 'hist_sum'>, Document> = {
   avg: { $avg: '$value' },
   sum: { $sum: '$value' },
   min: { $min: '$value' },
@@ -1430,6 +1430,10 @@ export class MongoDBEngine extends StorageEngine {
     });
     const grouped = (params.groupBy?.length ?? 0) > 0 || attrRefs.length > 0;
 
+    if (params.aggregation === 'hist_last' || params.aggregation === 'hist_sum') {
+      return this.aggregateMetricHistograms(params, start, col, filter, groupId, grouped, attrRefs);
+    }
+
     const aggExpr = AGG_ACCUMULATORS[params.aggregation] ?? AGG_ACCUMULATORS.avg;
 
     const pipeline: Document[] = [{ $match: filter }];
@@ -1507,6 +1511,120 @@ export class MongoDBEngine extends StorageEngine {
     return {
       metricName: params.metricName,
       metricType,
+      timeseries,
+      executionTimeMs: Date.now() - start,
+    };
+  }
+
+  /**
+   * hist_last / hist_sum over histogram_data (explicit buckets). Points are
+   * sorted by time; hist_last keeps the $last per bucket and group. hist_sum
+   * unwinds bucket_counts with their index and sums per (group, length,
+   * index), rebuilds the arrays in index order, then keeps the length class
+   * of the latest point (the pick), whose bounds it carries.
+   */
+  private async aggregateMetricHistograms(
+    params: MetricAggregateParams,
+    start: number,
+    col: Collection,
+    filter: Document,
+    groupId: Document,
+    grouped: boolean,
+    attrRefs: MetricAttrRef[],
+  ): Promise<MetricAggregateResult> {
+    const counts = '$histogram_data.bucket_counts';
+    const bounds = '$histogram_data.explicit_bounds';
+    const valid: Document = {
+      $expr: {
+        $and: [
+          { $isArray: counts },
+          { $isArray: bounds },
+          { $eq: [{ $size: counts }, { $add: [{ $size: bounds }, 1] }] },
+        ],
+      },
+    };
+    const sumOf = { $ifNull: ['$histogram_data.sum', 0] };
+    const countOf = { $ifNull: ['$histogram_data.count', 0] };
+    // Group keys (bucket, label_i, attr_i) carried over from a previous $group.
+    const carried = (extra: Record<string, string> = {}): Document => ({
+      ...Object.fromEntries(Object.keys(groupId).map((k) => [k, `$_id.${k}`])),
+      ...extra,
+    });
+
+    const pipeline: Document[] = [{ $match: { $and: [filter, valid] } }, { $sort: { time: 1 } }];
+    if (params.aggregation === 'hist_last') {
+      pipeline.push({
+        $group: {
+          _id: groupId,
+          h: { $last: { bounds, counts, sum: sumOf, count: countOf } },
+        },
+      });
+    } else {
+      pipeline.push(
+        { $addFields: { h_len: { $size: counts } } },
+        { $unwind: { path: counts, includeArrayIndex: 'h_idx' } },
+        {
+          $group: {
+            _id: { ...groupId, h_len: '$h_len', h_idx: '$h_idx' },
+            v: { $sum: counts },
+            // One element per point carries its sum and count.
+            sum: { $sum: { $cond: [{ $eq: ['$h_idx', 0] }, sumOf, 0] } },
+            count: { $sum: { $cond: [{ $eq: ['$h_idx', 0] }, countOf, 0] } },
+            last_t: { $max: '$time' },
+            bounds: { $last: bounds },
+          },
+        },
+        { $sort: { '_id.h_idx': 1 } },
+        {
+          $group: {
+            _id: carried({ h_len: '$_id.h_len' }),
+            counts: { $push: '$v' },
+            sum: { $sum: '$sum' },
+            count: { $sum: '$count' },
+            last_t: { $max: '$last_t' },
+            bounds: { $first: '$bounds' },
+          },
+        },
+        { $sort: { last_t: 1 } },
+        {
+          $group: {
+            _id: carried(),
+            h: { $last: { bounds: '$bounds', counts: '$counts', sum: '$sum', count: '$count' } },
+          },
+        },
+      );
+    }
+    pipeline.push({ $sort: { '_id.bucket': 1 } });
+
+    const rows = await col.aggregate(pipeline, { ...ctxOpts(), allowDiskUse: true }).toArray();
+    const timeseries = rows.map((row) => {
+      const histogram = {
+        bounds: (row.h.bounds as unknown[]).map(toNumber),
+        counts: (row.h.counts as unknown[]).map(toNumber),
+        sum: toNumber(row.h.sum),
+        count: toNumber(row.h.count),
+      };
+      const bucket: MetricTimeBucket = {
+        bucket: row._id.bucket instanceof Date ? row._id.bucket : new Date(row._id.bucket),
+        value: histogram.count,
+        histogram,
+      };
+      if (grouped) {
+        const labels: Record<string, string> = {};
+        (params.groupBy ?? []).forEach((key, i) => {
+          labels[key] = String(row._id[`label_${i}`] ?? '');
+        });
+        attrRefs.forEach((ref, i) => {
+          labels[metricAttrLabel(ref)] = String(row._id[`attr_${i}`] ?? '');
+        });
+        bucket.labels = labels;
+      }
+      return bucket;
+    });
+
+    return {
+      metricName: params.metricName,
+      metricType: params.metricType ?? 'histogram',
       timeseries,
       executionTimeMs: Date.now() - start,
     };

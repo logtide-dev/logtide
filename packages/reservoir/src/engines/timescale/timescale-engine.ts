@@ -59,6 +59,7 @@ import type {
   DeleteMetricsByTimeRangeParams,
   MetricType,
   MetricTimeBucket,
+  MetricHistogramValue,
   MetricExemplar,
   MetricOverviewItem,
   MetricsOverviewParams,
@@ -1633,6 +1634,10 @@ export class TimescaleEngine extends StorageEngine {
     }
     conditions.push(...metricAttrFiltersSql(params.filters, sqlParams));
 
+    if (params.aggregation === 'hist_last' || params.aggregation === 'hist_sum') {
+      return this.aggregateMetricHistograms(params, start, conditions, sqlParams, selectExtra, groupByColumns, groupLabels);
+    }
+
     const where = `WHERE ${conditions.join(' AND ')}`;
 
     const selectCols = [
@@ -1675,8 +1680,97 @@ export class TimescaleEngine extends StorageEngine {
     };
   }
 
+  /**
+   * hist_last / hist_sum over histogram_data (explicit buckets). The pick of
+   * a bucket and group is its latest valid point (DISTINCT ON); hist_sum adds
+   * up bucket_counts element-wise (by ordinality), sum and count over the
+   * points whose bucket_counts length equals the pick's.
+   */
+  private async aggregateMetricHistograms(
+    params: MetricAggregateParams,
+    start: number,
+    conditions: string[],
+    sqlParams: SqlParams,
+    selectExtra: string[],
+    groupByColumns: string[],
+    groupLabels: string[],
+  ): Promise<MetricAggregateResult> {
+    const s = this.schema;
+    const keys = ['bucket', ...groupByColumns];
+    const keyList = keys.join(', ');
+    const valid = [
+      `jsonb_typeof(histogram_data->'explicit_bounds') = 'array'`,
+      `jsonb_typeof(histogram_data->'bucket_counts') = 'array'`,
+      `jsonb_array_length(histogram_data->'bucket_counts') = jsonb_array_length(histogram_data->'explicit_bounds') + 1`,
+    ];
+    const pts = `pts AS (
+        SELECT time_bucket($1, time) AS bucket, ${[...selectExtra, ''].join(', ')}time,
+          histogram_data->'explicit_bounds' AS h_bounds,
+          histogram_data->'bucket_counts' AS h_counts,
+          COALESCE((histogram_data->>'sum')::float8, 0) AS h_sum,
+          COALESCE((histogram_data->>'count')::float8, 0) AS h_count
+        FROM ${s}.metrics
+        WHERE ${[...conditions, ...valid].join(' AND ')}
+      ),
+      picked AS (
+        SELECT DISTINCT ON (${keyList}) ${keyList}, h_bounds, h_counts, h_sum, h_count
+        FROM pts
+        ORDER BY ${keyList}, time DESC
+      )`;
+
+    const query = params.aggregation === 'hist_last'
+      ? `WITH ${pts}
+         SELECT ${keyList}, h_bounds, h_counts, h_sum, h_count FROM picked ORDER BY bucket ASC`
+      : `WITH ${pts},
+      matched AS (
+        SELECT p.* FROM pts p JOIN picked k USING (${keyList})
+        WHERE jsonb_array_length(p.h_counts) = jsonb_array_length(k.h_counts)
+      ),
+      elems AS (
+        SELECT ${keyList}, e.ord, SUM(e.val::float8) AS v
+        FROM matched CROSS JOIN LATERAL jsonb_array_elements_text(h_counts) WITH ORDINALITY AS e(val, ord)
+        GROUP BY ${keyList}, e.ord
+      ),
+      counts AS (
+        SELECT ${keyList}, array_agg(v ORDER BY ord) AS h_counts FROM elems GROUP BY ${keyList}
+      ),
+      totals AS (
+        SELECT ${keyList}, SUM(h_sum) AS h_sum, SUM(h_count) AS h_count FROM matched GROUP BY ${keyList}
+      )
+      SELECT ${keyList}, k.h_bounds, c.h_counts, t.h_sum, t.h_count
+      FROM picked k JOIN counts c USING (${keyList}) JOIN totals t USING (${keyList})
+      ORDER BY bucket ASC`;
+
+    const result = await this.runQuery(query, sqlParams.values);
+    const timeseries: MetricTimeBucket[] = result.rows.map((row: Record<string, unknown>) => {
+      const histogram: MetricHistogramValue = {
+        bounds: (row.h_bounds as unknown[]).map(Number),
+        counts: (row.h_counts as unknown[]).map(Number),
+        sum: Number(row.h_sum),
+        count: Number(row.h_count),
+      };
+      const bucket: MetricTimeBucket = { bucket: row.bucket as Date, value: histogram.count, histogram };
+      if (groupLabels.length > 0) {
+        const labels: Record<string, string> = {};
+        for (let i = 0; i < groupLabels.length; i++) {
+          labels[groupLabels[i]] = (row[`label_${i}`] as string) ?? '';
+        }
+        bucket.labels = labels;
+      }
+      return bucket;
+    });
+
+    return {
+      metricName: params.metricName,
+      metricType: params.metricType ?? 'histogram',
+      timeseries,
+      executionTimeMs: Date.now() - start,
+    };
+  }
+
   private canUseMetricRollup(params: MetricAggregateParams): boolean {
     if (params.interval !== '1h' && params.interval !== '1d') return false;
+    if (params.aggregation === 'hist_last' || params.aggregation === 'hist_sum') return false;
     if (params.aggregation === 'last' || params.aggregation === 'p50' || params.aggregation === 'p95' || params.aggregation === 'p99') return false;
     if (params.groupBy && params.groupBy.length > 0) return false;
     if (params.attributes && Object.keys(params.attributes).length > 0) return false;

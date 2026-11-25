@@ -169,6 +169,59 @@ describe('ClickHouseEngine 1.8 metric attributes (unit)', () => {
     });
   });
 
+  describe('aggregateMetrics hist_last / hist_sum', () => {
+    const hrow = {
+      bucket: '2026-01-01 00:00:00.000',
+      label_attr_0: 'api',
+      h_bounds: [10, 100],
+      h_counts: [3, 5, 1],
+      h_sum: 350,
+      h_count: 9,
+    };
+
+    it('hist_last takes argMax by time per length class, then the latest class, never a rollup', async () => {
+      mockQuery.mockResolvedValueOnce(rows([hrow]));
+      const result = await engine.aggregateMetrics({
+        ...base,
+        metricType: 'histogram',
+        interval: '1h',
+        aggregation: 'hist_last',
+        groupByAttrs: [{ scope: 'resource', key: 'service.name' }],
+      });
+      const { query } = lastCall();
+      expect(query).not.toContain('rollup');
+      expect(query).toContain('FROM metrics PREWHERE');
+      expect(query).toContain("JSONExtract(ifNull(histogram_data, ''), 'bucket_counts', 'Array(Float64)')");
+      expect(query).toContain('argMax(tuple(h_bounds, h_counts, h_sum, h_count), time) AS h_class');
+      expect(query).toContain('GROUP BY bucket, label_attr_0, h_len');
+      expect(query).toContain('argMax(h_class, last_t) AS picked');
+      expect(result.timeseries).toEqual([{
+        bucket: new Date('2026-01-01T00:00:00.000Z'),
+        value: 9,
+        labels: { 'resource.service.name': 'api' },
+        histogram: { bounds: [10, 100], counts: [3, 5, 1], sum: 350, count: 9 },
+      }]);
+    });
+
+    it('hist_sum uses sumForEach and keeps filters in WHERE', async () => {
+      mockQuery.mockResolvedValueOnce(rows([{ ...hrow, label_attr_0: undefined }]));
+      const result = await engine.aggregateMetrics({
+        ...base,
+        metricType: 'histogram',
+        interval: '5m',
+        aggregation: 'hist_sum',
+        filters: [{ scope: 'metric', key: 'http.route', op: 'eq', values: ['/a'] }],
+      });
+      const { query, query_params } = lastCall();
+      expect(query).toContain('tuple(argMax(h_bounds, time), sumForEach(h_counts), sum(h_sum), sum(h_count)) AS h_class');
+      expect(query).toContain("length(JSONExtract(ifNull(histogram_data, ''), 'bucket_counts', 'Array(Float64)')) = length(JSONExtract(ifNull(histogram_data, ''), 'explicit_bounds', 'Array(Float64)')) + 1");
+      expect(query).toContain('GROUP BY bucket, h_len');
+      expect(query_params).toMatchObject({ p_mfk0: 'http.route', p_mfv0: '/a' });
+      expect(result.timeseries[0].histogram).toEqual({ bounds: [10, 100], counts: [3, 5, 1], sum: 350, count: 9 });
+      expect(result.timeseries[0].value).toBe(9);
+    });
+  });
+
   describe('getMetricNames with filters', () => {
     it('keeps project and window in PREWHERE and ANDs filters into WHERE', async () => {
       mockQuery.mockResolvedValueOnce(rows([{ metric_name: 'system.cpu.utilization', metric_type: 'gauge' }]));

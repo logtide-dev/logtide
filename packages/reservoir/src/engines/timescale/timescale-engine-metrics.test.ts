@@ -1154,6 +1154,76 @@ describe('TimescaleEngine - Metrics', () => {
     });
   });
 
+  describe('aggregateMetrics hist_last / hist_sum (1.8)', () => {
+    const histParams = {
+      projectId: 'proj-1' as string | string[],
+      metricName: 'http.server.request.duration',
+      from: new Date('2024-01-01'),
+      to: new Date('2024-01-02'),
+      interval: '1h' as const,
+    };
+    const row = {
+      bucket: new Date('2024-01-01T00:00:00Z'),
+      label_0: 'api',
+      h_bounds: [10, 100],
+      h_counts: ['3', 5, 1],
+      h_sum: '350',
+      h_count: '9',
+    };
+
+    it('hist_last picks the latest valid point per bucket and group, never a rollup', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [row] });
+      await engine.connect();
+
+      const result = await engine.aggregateMetrics({
+        ...histParams,
+        aggregation: 'hist_last',
+        groupByAttrs: [{ scope: 'resource', key: 'service.name' }],
+      });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      expect(sql).not.toContain('_stats');
+      expect(sql).toContain('FROM public.metrics');
+      expect(sql).toContain(`jsonb_typeof(histogram_data->'bucket_counts') = 'array'`);
+      expect(sql).toContain('DISTINCT ON (bucket, label_0)');
+      expect(sql).toContain('ORDER BY bucket, label_0, time DESC');
+      expect(sql).not.toContain('WITH ORDINALITY');
+      expect(result.timeseries).toEqual([{
+        bucket: row.bucket,
+        value: 9,
+        labels: { 'resource.service.name': 'api' },
+        histogram: { bounds: [10, 100], counts: [3, 5, 1], sum: 350, count: 9 },
+      }]);
+    });
+
+    it('hist_sum adds up bucket_counts by ordinality over points of the pick length', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ ...row, label_0: undefined }] });
+      await engine.connect();
+
+      const result = await engine.aggregateMetrics({
+        ...histParams,
+        aggregation: 'hist_sum',
+        filters: [{ scope: 'metric', key: 'http.route', op: 'eq', values: ['/a'] }],
+      });
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(sql).not.toContain('_stats');
+      expect(sql).toContain('DISTINCT ON (bucket)');
+      expect(sql).toContain('jsonb_array_length(p.h_counts) = jsonb_array_length(k.h_counts)');
+      expect(sql).toContain('WITH ORDINALITY AS e(val, ord)');
+      expect(sql).toContain('array_agg(v ORDER BY ord)');
+      expect(params).toEqual(expect.arrayContaining(['http.route', '/a']));
+      const used = new Set([...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+      expect(used.size).toBe(params.length);
+      expect(result.timeseries[0]).toEqual({
+        bucket: row.bucket,
+        value: 9,
+        histogram: { bounds: [10, 100], counts: [3, 5, 1], sum: 350, count: 9 },
+      });
+    });
+  });
+
   describe('getMetricNames with filters (1.8)', () => {
     it('adds bound filter conditions before the limit', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [{ metric_name: 'cpu', metric_type: 'gauge' }] });

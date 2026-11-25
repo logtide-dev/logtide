@@ -17,6 +17,8 @@ export const PROJECT_B = '00000000-0000-4000-8000-0000000000b1';
 export const PROJECT_C = '00000000-0000-4000-8000-0000000000c1';
 /** Metadata path resolution edges (OTLP resource and body shapes, literal splits): logs L40 and up. */
 export const PROJECT_D = '00000000-0000-4000-8000-0000000000d1';
+/** 1.8 histogram aggregations only (hist_last / hist_sum): metrics HA*, HB*, HN*. */
+export const PROJECT_E = '00000000-0000-4000-8000-0000000000e1';
 export const ORG_ID = '00000000-0000-4000-8000-0000000000f1';
 
 const BASE_MS = CONFORMANCE_BASE.getTime();
@@ -413,6 +415,41 @@ const SOURCE_ROWS: SourceRow[] = [
   })),
 ];
 
+/** 1.8 histogram metric (explicit buckets), only in PROJECT_E. */
+export const METRIC_LATENCY = 'http.server.request.duration';
+
+type HistogramRow = {
+  id: string;
+  t: number;
+  route: string;
+  service: string;
+  histogram?: MetricRecord['histogramData'];
+};
+
+const hist = (counts: number[], sum: number, count: number, bounds: number[] = [10, 100]): MetricRecord['histogramData'] => ({
+  explicit_bounds: bounds,
+  bucket_counts: counts,
+  sum,
+  count,
+});
+
+// Two series (http.route /a on api, /b on web) over three 15m buckets. HB2
+// has one bucket more than its neighbours (hist_sum skips it, it is never the
+// latest point of a bucket). HN1 has no histogram_data, HN2 has sum and count
+// but no buckets: both are the latest points of bucket 0 and are ignored.
+const HISTOGRAM_ROWS: HistogramRow[] = [
+  { id: 'HA1', t: 1, route: '/a', service: 'api', histogram: hist([1, 2, 0], 50, 3) },
+  { id: 'HB1', t: 2, route: '/b', service: 'web', histogram: hist([0, 1, 1], 150, 2) },
+  { id: 'HA2', t: 5, route: '/a', service: 'api', histogram: hist([2, 3, 1], 300, 6) },
+  { id: 'HB2', t: 7, route: '/b', service: 'web', histogram: hist([1, 1, 1, 1], 2000, 4, [10, 100, 1000]) },
+  { id: 'HB3', t: 9, route: '/b', service: 'web', histogram: hist([1, 2, 1], 200, 4) },
+  { id: 'HN1', t: 12, route: '/a', service: 'api' },
+  { id: 'HN2', t: 13, route: '/b', service: 'web', histogram: { sum: 10, count: 1 } },
+  { id: 'HA3', t: 16, route: '/a', service: 'api', histogram: hist([3, 4, 1], 400, 8) },
+  { id: 'HB4', t: 20, route: '/b', service: 'web', histogram: hist([0, 0, 5], 900, 5) },
+  { id: 'HA4', t: 31, route: '/a', service: 'api', histogram: hist([4, 4, 2], 600, 10) },
+];
+
 const serviceOf = (row: SourceRow): string => {
   const name = row.resource['service.name'];
   return typeof name === 'string' ? name : 'unknown';
@@ -445,6 +482,21 @@ export const CORPUS_METRICS: readonly { readonly id: string; readonly record: Me
       serviceName: serviceOf(row),
       attributes: structuredClone(row.attributes),
       resourceAttributes: structuredClone(row.resource),
+    } satisfies MetricRecord,
+  })),
+  ...HISTOGRAM_ROWS.map((row) => Object.freeze({
+    id: row.id,
+    record: {
+      time: minutes(row.t),
+      organizationId: ORG_ID,
+      projectId: PROJECT_E,
+      metricName: METRIC_LATENCY,
+      metricType: 'histogram',
+      value: row.histogram?.count ?? 7,
+      serviceName: row.service,
+      attributes: { 'http.route': row.route },
+      resourceAttributes: { 'service.name': row.service },
+      ...(row.histogram ? { histogramData: structuredClone(row.histogram) } : {}),
     } satisfies MetricRecord,
   })),
 ]);

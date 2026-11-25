@@ -78,6 +78,7 @@ import type {
   MetricQueryResult,
   MetricAggregateParams,
   MetricAggregateResult,
+  MetricTimeBucket,
   MetricNamesParams,
   MetricNamesResult,
   MetricLabelParams,
@@ -1934,13 +1935,59 @@ export class ClickHouseEngine extends StorageEngine {
       groupByColumns.push(alias);
     }
 
-    const selectCols = [
-      `toStartOfInterval(time, INTERVAL ${interval}) AS bucket`,
-      `${aggExpr} AS agg_value`,
-      ...selectExtra,
-    ].join(', ');
-
-    const query = `SELECT ${selectCols} FROM metrics ${where} GROUP BY ${groupByColumns.join(', ')} ORDER BY bucket ASC`;
+    const histogram = params.aggregation === 'hist_last' || params.aggregation === 'hist_sum';
+    let query: string;
+    if (histogram) {
+      // hist_last / hist_sum: points with explicit buckets only. The inner
+      // level aggregates per bucket, group and bucket_counts length (element-
+      // wise sumForEach for hist_sum, argMax by time for hist_last); the outer
+      // level keeps the length class of the latest point (the pick).
+      // histogram_data is Nullable(String); arrays cannot be Nullable.
+      const hd = `ifNull(histogram_data, '')`;
+      const counts = `JSONExtract(${hd}, 'bucket_counts', 'Array(Float64)')`;
+      const bounds = `JSONExtract(${hd}, 'explicit_bounds', 'Array(Float64)')`;
+      const valid = [
+        `JSONHas(${hd}, 'bucket_counts')`,
+        `JSONHas(${hd}, 'explicit_bounds')`,
+        `length(${counts}) > 0`,
+        `length(${counts}) = length(${bounds}) + 1`,
+      ];
+      const histWhere = `${where} AND ${valid.join(' AND ')}`;
+      const keys = groupByColumns.join(', ');
+      const labelCols = groupByColumns.slice(1);
+      const inner = [
+        `toStartOfInterval(time, INTERVAL ${interval}) AS bucket`,
+        ...selectExtra,
+        'time',
+        `${bounds} AS h_bounds`,
+        `${counts} AS h_counts`,
+        `JSONExtract(${hd}, 'sum', 'Float64') AS h_sum`,
+        `JSONExtract(${hd}, 'count', 'Float64') AS h_count`,
+      ].join(', ');
+      const classValue = params.aggregation === 'hist_last'
+        ? 'argMax(tuple(h_bounds, h_counts, h_sum, h_count), time)'
+        : 'tuple(argMax(h_bounds, time), sumForEach(h_counts), sum(h_sum), sum(h_count))';
+      query = `SELECT ${['bucket', ...labelCols].join(', ')},
+          argMax(h_class, last_t) AS picked,
+          tupleElement(picked, 1) AS h_bounds,
+          tupleElement(picked, 2) AS h_counts,
+          tupleElement(picked, 3) AS h_sum,
+          tupleElement(picked, 4) AS h_count
+        FROM (
+          SELECT ${keys}, length(h_counts) AS h_len, max(time) AS last_t, ${classValue} AS h_class
+          FROM (SELECT ${inner} FROM metrics ${histWhere})
+          GROUP BY ${keys}, h_len
+        )
+        GROUP BY ${keys}
+        ORDER BY bucket ASC`;
+    } else {
+      const selectCols = [
+        `toStartOfInterval(time, INTERVAL ${interval}) AS bucket`,
+        `${aggExpr} AS agg_value`,
+        ...selectExtra,
+      ].join(', ');
+      query = `SELECT ${selectCols} FROM metrics ${where} GROUP BY ${groupByColumns.join(', ')} ORDER BY bucket ASC`;
+    }
 
     const resultSet = await this.runQuery({
       query,
@@ -1950,10 +1997,19 @@ export class ClickHouseEngine extends StorageEngine {
     const rows = await resultSet.json<Record<string, unknown>>();
 
     const timeseries = rows.map(row => {
-      const bucket: { bucket: Date; value: number; labels?: Record<string, string> } = {
+      const bucket: MetricTimeBucket = {
         bucket: parseClickHouseTime(row.bucket),
         value: Number(row.agg_value),
       };
+      if (histogram) {
+        bucket.histogram = {
+          bounds: (row.h_bounds as unknown[]).map(Number),
+          counts: (row.h_counts as unknown[]).map(Number),
+          sum: Number(row.h_sum),
+          count: Number(row.h_count),
+        };
+        bucket.value = bucket.histogram.count;
+      }
 
       if (params.groupBy && params.groupBy.length > 0) {
         const labels: Record<string, string> = {};
@@ -1997,6 +2053,7 @@ export class ClickHouseEngine extends StorageEngine {
 
   private canUseMetricRollup(params: MetricAggregateParams): boolean {
     if (params.interval !== '1h' && params.interval !== '1d') return false;
+    if (params.aggregation === 'hist_last' || params.aggregation === 'hist_sum') return false;
     if (params.aggregation === 'last' || params.aggregation === 'p50' || params.aggregation === 'p95' || params.aggregation === 'p99') return false;
     if (params.groupBy && params.groupBy.length > 0) return false;
     if (params.attributes && Object.keys(params.attributes).length > 0) return false;
