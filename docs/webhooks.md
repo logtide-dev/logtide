@@ -99,6 +99,8 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `renotify` | no | `boolean` | `true` when this is a repeat notification for a rule that is still firing (`renotify_minutes`), `false` on the first notification of an episode. |
 | `firing_since` | no | `string (ISO 8601)` | When the current firing episode started. Stays the same across re-notifications of one episode. |
 | `incident_id` | no | `string (UUID) \| null` | Incident opened or updated for this alert episode, or `null` when none could be opened. |
+| `alert_type` | no | `string` | `metric` on metric alert rules (1.8); absent on log rules. |
+| `metric` | no | `object` | Metric alert rules only: the alert instance, see below. |
 
 **`alert.resolved`**
 
@@ -106,7 +108,7 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | --- | --- | --- | --- |
 | `alert_rule_id` | yes | `string (UUID)` | Alert rule id. |
 | `alert_name` | yes | `string` | Name of the alert rule. |
-| `alert_type` | yes | `string` | `threshold` or `rate_of_change`. |
+| `alert_type` | yes | `string` | `threshold`, `rate_of_change` or `metric`. |
 | `title` | yes | `string` | Short notification title. |
 | `message` | yes | `string` | Human-readable summary. |
 | `log_count` | yes | `number` | Matching log events in the window at the evaluation that resolved the rule (current hourly rate for rate-of-change rules). |
@@ -117,6 +119,24 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `duration_seconds` | yes | `number` | Whole seconds between `firing_since` and `resolved_at`. |
 | `incident_id` | yes | `string (UUID) \| null` | Incident resolved together with the alert, or `null`. |
 | `link` | yes | `string` | Incident page when an incident exists, otherwise the alerts page. |
+| `metric` | no | `object` | Metric alert rules only: the alert instance that resolved, see below. |
+
+**Metric alert instance (`data.metric`)**
+
+Metric alert rules watch one query or formula of a metrics query. When the query is grouped, every group is its own alert instance: it fires, re-notifies and resolves on its own, so one rule can send several `alert.triggered` and `alert.resolved` events, one per group. On these events `log_count` is `0`, `threshold` is the metric threshold and `time_window` is the evaluation window in minutes.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `query_id` | `string` | Query or formula id watched by the rule (`A`, `F1`). |
+| `source` | `string` | Metric name of a query, expression of a formula. |
+| `condition` | `string` | `above` or `below` (strict comparison). |
+| `threshold` | `number` | Threshold in the metric's raw unit (0-1 ratios stay 0-1). |
+| `value` | `number \| null` | Average of the 1 minute buckets of the window; `null` on a resolve caused by missing data. |
+| `unit` | `string \| null` | Unit of the value (UCUM style, from the metric catalog). |
+| `window` | `string` | `1m`, `5m`, `15m` or `1h`. |
+| `for_evaluations` | `number` | Consecutive breaching checks needed to fire. |
+| `labels` | `object` | Group labels (`{"host.name": "web-1"}`), `{}` when ungrouped. |
+| `group_key` | `string` | Stable instance key, `""` when ungrouped. |
 
 **`incident.created`**
 
