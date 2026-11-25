@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Slow facets and log list on ClickHouse**: on projects whose logs carry large metadata (request or response bodies), loading facets could take 20 seconds and the first page of logs several seconds, because every scanned row's metadata was read and sorted before the sample or page was cut. Both now pick the rows first from the time, id and filter columns and read the full rows only for those: on a production project with 40 KB of metadata per log, facets went from 21 s to under 2 s and the log list from about 3 s to 65 ms.
 - **Log detail keys breaking mid-word**: on a narrow screen the metadata keys in the Details view wrapped in the middle of a word; they now wrap only after `.`, `_` or `-`.
+- **Sidebar polish**: the line under the logo now lines up with the header's bottom border, and the navigation uses a thin scrollbar in the theme colors instead of the wide native one.
 
 
 ## [1.7.1] - 2026-11-24
