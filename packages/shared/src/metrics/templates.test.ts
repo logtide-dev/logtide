@@ -48,3 +48,25 @@ describe('SERVICE_TEMPLATE http section', () => {
     expect(panel('http-legacy-latency').query.queries.map((x) => x.aggregation)).toEqual(['p50', 'p95', 'p99']);
   });
 });
+
+describe('service template traces and error rate', () => {
+  it('hides trace-only panels when the service has no traces', () => {
+    const keys = (opts: { hasTraces?: boolean }) =>
+      applicableTemplatePanels(SERVICE_TEMPLATE, [], opts).flatMap((s) => s.panels.map((p) => p.key));
+    expect(keys({})).toContain('trace-volume');
+    expect(keys({ hasTraces: true })).toContain('trace-latency');
+    expect(keys({ hasTraces: false })).not.toContain('trace-volume');
+    expect(keys({ hasTraces: false })).not.toContain('trace-latency');
+    expect(applicableTemplatePanels(SERVICE_TEMPLATE, [], { hasTraces: false }).some((s) => s.title === 'Traffic (from traces)')).toBe(false);
+  });
+
+  it('error rate formula is a percent with hidden operands', () => {
+    for (const key of ['http-error-rate', 'http-legacy-error-rate']) {
+      const p = SERVICE_TEMPLATE.sections.flatMap((s) => s.panels).find((x) => x.key === key)!;
+      const query = (p.config as unknown as { query: { unitOverride?: string; queries: Array<{ hidden?: boolean }>; formulas: unknown[] } }).query;
+      expect(query.unitOverride).toBe('%');
+      expect(query.formulas).toHaveLength(1);
+      expect(query.queries.every((x) => x.hidden === true)).toBe(true);
+    }
+  });
+});
