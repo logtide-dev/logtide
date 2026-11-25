@@ -299,8 +299,7 @@ describe('applyTimeRangeOverride (#305)', () => {
 
   it('replaces timeRange on the timeRange-scoped panels', () => {
     for (const config of [
-      { type: 'metric_chart', title: 'T', source: 'metrics', projectId: null, metricName: 'cpu', aggregation: 'avg', interval: '5m', timeRange: '24h', serviceName: null },
-      { type: 'metric_stat', title: 'T', source: 'metrics', projectId: null, metricName: 'cpu', aggregation: 'last', timeRange: '1h', serviceName: null, unit: null },
+      { type: 'metrics', title: 'T', source: 'metrics', timeRange: '1h', query: { projectIds: null, queries: [{ id: 'A', metricName: 'cpu', aggregation: 'avg', filters: [], groupBy: [] }], formulas: [], interval: 'auto', compareTo: 'none', display: 'lines' } },
       { type: 'trace_latency', title: 'T', source: 'traces', projectId: null, serviceName: null, timeRange: '24h', showPercentiles: ['p95'] },
       { type: 'trace_volume', title: 'T', source: 'traces', projectId: null, serviceName: null, timeRange: '24h', showErrors: true },
       { type: 'detection_events', title: 'T', source: 'detections', projectId: null, timeRange: '24h', severities: ['high'] },

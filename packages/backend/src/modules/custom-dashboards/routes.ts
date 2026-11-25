@@ -183,6 +183,9 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
           .status(400)
           .send({ error: 'Validation error', details: e.issues });
       }
+      if (e instanceof Error && e.message === 'Project does not belong to the organization') {
+        return reply.status(400).send({ error: e.message });
+      }
       throw e;
     }
   });
@@ -394,6 +397,9 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       }
       if (e instanceof Error && e.message === 'Dashboard not found') {
         return reply.status(404).send({ error: e.message });
+      }
+      if (e instanceof Error && e.message === 'Project does not belong to the organization') {
+        return reply.status(400).send({ error: e.message });
       }
       throw e;
     }
