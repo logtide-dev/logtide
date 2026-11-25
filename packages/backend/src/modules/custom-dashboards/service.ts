@@ -12,6 +12,7 @@ import {
   migrateDashboard,
   type CustomDashboard,
   type DashboardDocument,
+  type DashboardVariable,
   type PanelConfig,
   type PanelInstance,
 } from '@logtide/shared';
@@ -21,6 +22,7 @@ import {
   panelInstanceSchema,
   panelConfigSchema,
 } from './panel-registry.js';
+import { assertPanelVariableRefs, dashboardVariablesSchema } from './variables.js';
 import { buildTemplateYaml } from './templates.js';
 
 interface DashboardRow {
@@ -34,6 +36,7 @@ interface DashboardRow {
   is_personal: boolean;
   schema_version: number;
   panels: unknown;
+  variables?: unknown;
   created_at: Date;
   updated_at: Date;
 }
@@ -45,6 +48,7 @@ export interface CreateDashboardInput {
   description?: string | null;
   isPersonal?: boolean;
   panels?: PanelInstance[];
+  variables?: DashboardVariable[];
 }
 
 export interface UpdateDashboardInput {
@@ -52,6 +56,7 @@ export interface UpdateDashboardInput {
   description?: string | null;
   isPersonal?: boolean;
   panels?: PanelInstance[];
+  variables?: DashboardVariable[];
 }
 
 export class CustomDashboardsService {
@@ -66,6 +71,7 @@ export class CustomDashboardsService {
     const rawDoc: DashboardDocument = {
       schema_version: safeVersion,
       panels: this.normalizePanelsField(row.panels),
+      variables: this.normalizeVariablesField(row.variables),
     };
     const migrated = migrateDashboard(rawDoc, CURRENT_SCHEMA_VERSION);
 
@@ -86,6 +92,19 @@ export class CustomDashboardsService {
     };
   }
 
+  private normalizeVariablesField(value: unknown): DashboardVariable[] {
+    if (Array.isArray(value)) return value as DashboardVariable[];
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+
   private normalizePanelsField(value: unknown): PanelInstance[] {
     if (Array.isArray(value)) return value as PanelInstance[];
     if (typeof value === 'string') {
@@ -103,8 +122,40 @@ export class CustomDashboardsService {
    * Validate every panel in a list against its registered Zod schema. Throws
    * a ZodError on any failure - handlers translate that into HTTP 400.
    */
-  private validatePanels(panels: PanelInstance[]): PanelInstance[] {
-    return panels.map((p) => panelInstanceSchema.parse(p) as PanelInstance);
+  private validatePanels(
+    panels: PanelInstance[],
+    variables: DashboardVariable[] = []
+  ): PanelInstance[] {
+    const validated = panels.map((p) => panelInstanceSchema.parse(p) as PanelInstance);
+    assertPanelVariableRefs(validated, variables);
+    return validated;
+  }
+
+  private validateVariables(variables: DashboardVariable[]): DashboardVariable[] {
+    return dashboardVariablesSchema.parse(variables) as DashboardVariable[];
+  }
+
+  /** Every project a metrics panel queries must belong to the organization. */
+  private async assertMetricsProjectsInOrg(
+    panels: PanelInstance[],
+    organizationId: string
+  ): Promise<void> {
+    const ids = new Set<string>();
+    for (const p of panels) {
+      if (p.config.type === 'metrics') {
+        for (const id of p.config.query.projectIds ?? []) ids.add(id);
+      }
+    }
+    if (ids.size === 0) return;
+    const rows = await db
+      .selectFrom('projects')
+      .select('id')
+      .where('organization_id', '=', organizationId)
+      .where('id', 'in', [...ids])
+      .execute();
+    if (rows.length !== ids.size) {
+      throw new Error('Project does not belong to the organization');
+    }
   }
 
   async list(organizationId: string, userId: string, projectId?: string | null): Promise<CustomDashboard[]> {
@@ -156,7 +207,9 @@ export class CustomDashboardsService {
   }
 
   async create(input: CreateDashboardInput, userId: string): Promise<CustomDashboard> {
-    const panels = this.validatePanels(input.panels ?? []);
+    const variables = this.validateVariables(input.variables ?? []);
+    const panels = this.validatePanels(input.panels ?? [], variables);
+    await this.assertMetricsProjectsInOrg(panels, input.organizationId);
 
     const row = await db
       .insertInto('custom_dashboards')
@@ -169,6 +222,7 @@ export class CustomDashboardsService {
         is_personal: input.isPersonal ?? false,
         schema_version: CURRENT_SCHEMA_VERSION,
         panels: JSON.stringify(panels) as unknown as PanelInstance[],
+        variables: JSON.stringify(variables),
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -202,6 +256,7 @@ export class CustomDashboardsService {
         description: source.description,
         isPersonal: source.isPersonal,
         panels: source.panels.map((p) => ({ ...p, id: this.generatePanelId() })),
+        variables: source.variables,
       },
       userId
     );
@@ -218,8 +273,24 @@ export class CustomDashboardsService {
     if (input.name !== undefined) updates.name = input.name;
     if (input.description !== undefined) updates.description = input.description;
     if (input.isPersonal !== undefined) updates.is_personal = input.isPersonal;
-    if (input.panels !== undefined) {
-      updates.panels = JSON.stringify(this.validatePanels(input.panels));
+    if (input.panels !== undefined || input.variables !== undefined) {
+      // Panels and variables are validated together: a panel may only refer
+      // to declared variables, and a variable cannot be removed while a panel
+      // still uses it.
+      const existing =
+        input.panels === undefined || input.variables === undefined
+          ? await this.getById(id, organizationId, userId)
+          : null;
+      if (!existing && (input.panels === undefined || input.variables === undefined)) {
+        throw new Error('Dashboard not found');
+      }
+      const variables = this.validateVariables(input.variables ?? existing!.variables);
+      const panels = this.validatePanels(input.panels ?? existing!.panels, variables);
+      if (input.panels !== undefined) {
+        await this.assertMetricsProjectsInOrg(panels, organizationId);
+        updates.panels = JSON.stringify(panels);
+      }
+      if (input.variables !== undefined) updates.variables = JSON.stringify(variables);
       updates.schema_version = CURRENT_SCHEMA_VERSION;
     }
 
@@ -482,6 +553,7 @@ export class CustomDashboardsService {
       description: dashboard.description,
       schema_version: dashboard.schemaVersion,
       panels: dashboard.panels,
+      variables: dashboard.variables,
     };
     return yaml.dump(exportable, { noRefs: true, sortKeys: false });
   }
@@ -520,6 +592,7 @@ export class CustomDashboardsService {
     const rawDoc: DashboardDocument = {
       schema_version: rawSchemaVersion,
       panels: Array.isArray(obj.panels) ? (obj.panels as PanelInstance[]) : [],
+      variables: Array.isArray(obj.variables) ? (obj.variables as DashboardVariable[]) : undefined,
     };
 
     // Migrate to current version, then validate
@@ -538,6 +611,7 @@ export class CustomDashboardsService {
         name: obj.name,
         description: typeof obj.description === 'string' ? obj.description : null,
         panels: panelsWithFreshIds as PanelInstance[],
+        variables: (validated.variables ?? []) as DashboardVariable[],
       },
       userId
     );
@@ -570,7 +644,14 @@ export class CustomDashboardsService {
       }
     }
 
-    const defaults = panelRegistry[config.type].defaultLayout;
+    if (config.type === 'metrics') {
+      await this.assertMetricsProjectsInOrg(
+        [{ id: 'new', layout: { x: 0, y: 0, w: 1, h: 1 }, config }],
+        organizationId
+      );
+    }
+
+    const defaults = panelRegistry[config.type as keyof typeof panelRegistry].defaultLayout;
 
     return db.transaction().execute(async (trx) => {
       const row = await trx
@@ -598,6 +679,8 @@ export class CustomDashboardsService {
         },
         config,
       }) as PanelInstance;
+
+      assertPanelVariableRefs([panel], current.variables);
 
       const updated = await trx
         .updateTable('custom_dashboards')

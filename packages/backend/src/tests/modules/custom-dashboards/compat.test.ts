@@ -2,9 +2,9 @@
 // Backward compatibility of stored dashboards and exported YAML
 // ============================================================================
 //
-// Every field added after 1.0 is optional and schema_version stays 1, so a
-// document written by an older build must load, migrate and re-import
-// unchanged.
+// Fields added after 1.0 are optional. Schema v2 (1.8) turns metric_chart and
+// metric_stat into the `metrics` panel: v1 documents must load, migrate and
+// re-import (YAML) into valid v2 documents.
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ZodError } from 'zod';
@@ -12,6 +12,7 @@ import { CURRENT_SCHEMA_VERSION, migrateDashboard } from '@logtide/shared';
 import type { PanelInstance } from '@logtide/shared';
 import { CustomDashboardsService } from '../../../modules/custom-dashboards/service.js';
 import { dashboardDocumentSchema, panelRegistry } from '../../../modules/custom-dashboards/panel-registry.js';
+import { db } from '../../../database/index.js';
 import { createTestContext } from '../../helpers/index.js';
 
 let service: CustomDashboardsService;
@@ -32,8 +33,7 @@ const ONE_OF_EACH: PanelInstance[] = [
   { id: 'p3', layout: LAYOUT, config: { type: 'top_n_table', title: 'Top', source: 'logs', dimension: 'service', limit: 5, projectId: null, interval: '7d' } },
   { id: 'p4', layout: LAYOUT, config: { type: 'live_log_stream', title: 'Live', source: 'logs', projectId: null, service: null, levels: ['error'], maxRows: 50 } },
   { id: 'p5', layout: LAYOUT, config: { type: 'alert_status', title: 'Alerts', source: 'alerts', projectId: null, ruleIds: [], showHistory: true, limit: 5 } },
-  { id: 'p6', layout: LAYOUT, config: { type: 'metric_chart', title: 'Chart', source: 'metrics', projectId: null, metricName: 'cpu', aggregation: 'avg', interval: '5m', timeRange: '1h', serviceName: null } },
-  { id: 'p7', layout: LAYOUT, config: { type: 'metric_stat', title: 'MStat', source: 'metrics', projectId: null, metricName: 'cpu', aggregation: 'max', timeRange: '1h', serviceName: null, unit: '%' } },
+  { id: 'p6', layout: LAYOUT, config: { type: 'metrics', title: 'Metrics', source: 'metrics', timeRange: '1h', query: { projectIds: null, queries: [{ id: 'A', metricName: 'cpu', aggregation: 'avg', filters: [], groupBy: [] }], formulas: [], interval: 'auto', compareTo: 'none', display: 'lines', unitOverride: null } } },
   { id: 'p8', layout: LAYOUT, config: { type: 'trace_latency', title: 'Lat', source: 'traces', projectId: null, serviceName: null, timeRange: '24h', showPercentiles: ['p50', 'p99'] } },
   { id: 'p9', layout: LAYOUT, config: { type: 'trace_volume', title: 'Vol', source: 'traces', projectId: null, serviceName: null, timeRange: '24h', showErrors: true } },
   { id: 'p10', layout: LAYOUT, config: { type: 'detection_events', title: 'Det', source: 'detections', projectId: null, timeRange: '7d', severities: ['critical', 'high'] } },
@@ -45,31 +45,57 @@ const ONE_OF_EACH: PanelInstance[] = [
 ];
 
 describe('dashboard compatibility', () => {
-  it('a document saved before this release (no groupBy, no seriesLabels, no metadataField) parses and migrates unchanged', async () => {
+  const LEGACY_CHART = { type: 'metric_chart', title: 'Chart', source: 'metrics', projectId: null, metricName: 'cpu', aggregation: 'avg', interval: '5m', timeRange: '1h', serviceName: 'api', groupBy: ['host'] };
+  const LEGACY_STAT = { type: 'metric_stat', title: 'MStat', source: 'metrics', projectId: null, metricName: 'cpu', aggregation: 'max', timeRange: '1h', serviceName: null, unit: '%' };
+
+  it('a v1 document with metric panels migrates to valid v2 metrics panels', async () => {
     const legacy = {
       schema_version: 1,
-      panels: ONE_OF_EACH.filter((p) =>
-        ['time_series', 'metric_chart', 'top_n_table'].includes(p.config.type)
-      ),
-    };
-    for (const p of legacy.panels) {
-      expect(p.config).not.toHaveProperty('groupBy');
-      expect(p.config).not.toHaveProperty('seriesLabels');
-      expect(p.config).not.toHaveProperty('metadataField');
-    }
+      panels: [
+        { id: 'l1', layout: LAYOUT, config: LEGACY_CHART },
+        { id: 'l2', layout: LAYOUT, config: LEGACY_STAT },
+        ONE_OF_EACH[0],
+      ],
+    } as unknown as { schema_version: number; panels: PanelInstance[] };
 
-    const parsed = dashboardDocumentSchema.parse(legacy);
-    expect(parsed).toEqual(legacy);
-    expect(migrateDashboard(legacy, CURRENT_SCHEMA_VERSION)).toEqual(legacy);
+    // Raw v1 no longer validates (metric_chart is not a registered panel type)...
+    expect(() => dashboardDocumentSchema.parse(legacy)).toThrow();
 
-    // Same through the database round trip.
-    const created = await service.create(
-      { organizationId: ctx.organization.id, name: 'Legacy', panels: legacy.panels },
-      ctx.user.id
-    );
+    // ...but migrates and validates.
+    const migrated = migrateDashboard(legacy, CURRENT_SCHEMA_VERSION);
+    expect(migrated.schema_version).toBe(2);
+    const parsed = dashboardDocumentSchema.parse(migrated);
+    expect(parsed.panels.map((p) => p.config.type)).toEqual(['metrics', 'metrics', 'time_series']);
+
+    // Same through the database: a stored v1 row reads back as v2.
+    const created = await service.create({ organizationId: ctx.organization.id, name: 'Legacy' }, ctx.user.id);
+    await db
+      .updateTable('custom_dashboards')
+      .set({ schema_version: 1, panels: JSON.stringify(legacy.panels) as unknown as PanelInstance[] })
+      .where('id', '=', created.id)
+      .execute();
     const read = await service.getById(created.id, ctx.organization.id, ctx.user.id);
-    expect(read!.panels).toEqual(legacy.panels);
-    expect(read!.schemaVersion).toBe(1);
+    expect(read!.schemaVersion).toBe(2);
+    expect(read!.variables).toEqual([]);
+    expect(read!.panels.map((p) => p.config.type)).toEqual(['metrics', 'metrics', 'time_series']);
+    const chart = read!.panels[0].config as unknown as { query: { queries: Array<Record<string, unknown>> } };
+    expect(chart.query.queries[0]).toMatchObject({
+      id: 'A',
+      metricName: 'cpu',
+      filters: [{ scope: 'resource', key: 'service.name', op: 'eq', values: ['api'] }],
+      groupBy: [{ scope: 'metric', key: 'host' }],
+    });
+  });
+
+  it('metric_chart and metric_stat can no longer be saved', async () => {
+    for (const config of [LEGACY_CHART, LEGACY_STAT]) {
+      await expect(
+        service.create(
+          { organizationId: ctx.organization.id, name: 'No', panels: [{ id: 'x', layout: LAYOUT, config } as unknown as PanelInstance] },
+          ctx.user.id
+        )
+      ).rejects.toBeInstanceOf(ZodError);
+    }
   });
 
   it('yaml export then import round trips every panel type', async () => {
@@ -93,7 +119,7 @@ describe('dashboard compatibility', () => {
 
   it('yaml round trip keeps the optional fields added after 1.0', async () => {
     const withOptionals: PanelInstance[] = [
-      { id: 'o1', layout: LAYOUT, config: { type: 'metric_chart', title: 'Grouped', source: 'metrics', projectId: null, metricName: 'cpu', aggregation: 'avg', interval: '5m', timeRange: '1h', serviceName: null, groupBy: ['host'] } },
+      { id: 'o1', layout: LAYOUT, config: { type: 'metrics', title: 'Grouped', source: 'metrics', timeRange: '1h', query: { projectIds: null, queries: [{ id: 'A', metricName: 'cpu', aggregation: 'avg', filters: [{ scope: 'resource', key: 'host.name', op: 'in', values: ['a', 'b'] }], groupBy: [{ scope: 'resource', key: 'host.name' }], limit: 5 }], formulas: [{ id: 'F1', expression: 'A * 2' }], interval: '5m', compareTo: '1d', display: 'split', unitOverride: 'ms' } } },
       { id: 'o2', layout: LAYOUT, config: { type: 'time_series', title: 'Labels', source: 'logs', projectId: null, interval: '24h', levels: ['error'], service: null, seriesLabels: { error: 'Failures' } } },
       { id: 'o3', layout: LAYOUT, config: { type: 'top_n_table', title: 'Meta', source: 'logs', dimension: 'metadata', metadataField: 'performance.metric', limit: 5, projectId: null, interval: '7d' } },
     ];
@@ -106,18 +132,51 @@ describe('dashboard compatibility', () => {
     expect(imported.panels.map((p) => p.config)).toEqual(withOptionals.map((p) => p.config));
   });
 
-  it('accepts the rate aggregation on metric panels and keeps it through a yaml round trip', async () => {
-    const withRate: PanelInstance[] = [
-      { id: 'r1', layout: LAYOUT, config: { type: 'metric_chart', title: 'Rate', source: 'metrics', projectId: null, metricName: 'requests', aggregation: 'rate', interval: '5m', timeRange: '1h', serviceName: null, groupBy: ['host'] } },
-      { id: 'r2', layout: LAYOUT, config: { type: 'metric_stat', title: 'Rate stat', source: 'metrics', projectId: null, metricName: 'requests', aggregation: 'rate', timeRange: '1h', serviceName: null, unit: '/s' } },
-    ];
-    const source = await service.create(
-      { organizationId: ctx.organization.id, name: 'Rates', panels: withRate },
+  it('a v1 yaml with metric panels (rate included) imports as v2 metrics panels', async () => {
+    const text = `
+name: Old board
+schema_version: 1
+panels:
+  - id: r1
+    layout: { x: 0, y: 0, w: 4, h: 3 }
+    config:
+      type: metric_chart
+      title: Rate
+      source: metrics
+      projectId: null
+      metricName: requests
+      aggregation: rate
+      interval: 5m
+      timeRange: 1h
+      serviceName: null
+      groupBy: [host]
+  - id: r2
+    layout: { x: 4, y: 0, w: 4, h: 3 }
+    config:
+      type: metric_stat
+      title: Rate stat
+      source: metrics
+      projectId: null
+      metricName: requests
+      aggregation: rate
+      timeRange: 1h
+      serviceName: null
+      unit: /s
+`;
+    const imported = await service.importYaml(text, ctx.organization.id, ctx.user.id);
+    expect(imported.schemaVersion).toBe(2);
+    const [a, b] = imported.panels.map((p) => p.config) as unknown as Array<{ type: string; query: { queries: Array<{ aggregation: string }>; display: string; unitOverride: string | null } }>;
+    expect(a.type).toBe('metrics');
+    expect(a.query.queries[0].aggregation).toBe('rate');
+    expect(b.query.display).toBe('stat');
+    expect(b.query.unitOverride).toBe('/s');
+
+    const again = await service.importYaml(
+      await service.exportYaml(imported.id, ctx.organization.id, ctx.user.id),
+      ctx.organization.id,
       ctx.user.id
     );
-    const text = await service.exportYaml(source.id, ctx.organization.id, ctx.user.id);
-    const imported = await service.importYaml(text, ctx.organization.id, ctx.user.id);
-    expect(imported.panels.map((p) => p.config)).toEqual(withRate.map((p) => p.config));
+    expect(again.panels.map((p) => p.config)).toEqual(imported.panels.map((p) => p.config));
   });
 
   it('a panel using a field unknown to this version is rejected with a validation error, not a crash', async () => {
@@ -164,13 +223,13 @@ ${config}
     expect(await service.countForOrg(ctx.organization.id)).toBe(0);
   });
 
-  it('schema_version is still 1', async () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(1);
+  it('schema_version is 2', async () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(2);
     const d = await service.create({ organizationId: ctx.organization.id, name: 'V' }, ctx.user.id);
-    expect(d.schemaVersion).toBe(1);
+    expect(d.schemaVersion).toBe(2);
     const added = await service.addPanel(d.id, ctx.organization.id, ctx.user.id, { config: ONE_OF_EACH[5].config });
-    expect(added.dashboard.schemaVersion).toBe(1);
+    expect(added.dashboard.schemaVersion).toBe(2);
     const fromTemplate = await service.createFromTemplate('service-health', ctx.organization.id, ctx.user.id);
-    expect(fromTemplate.schemaVersion).toBe(1);
+    expect(fromTemplate.schemaVersion).toBe(2);
   });
 });

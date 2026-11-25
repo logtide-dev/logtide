@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { reservoir } from '../../../database/reservoir.js';
+import { fetchMetricsPanelData } from '../../../modules/metrics/query/panel.js';
 import { fetchPanelData } from '../../../modules/custom-dashboards/panel-data-service.js';
 import { customDashboardsRoutes } from '../../../modules/custom-dashboards/routes.js';
 import { customDashboardsService } from '../../../modules/custom-dashboards/service.js';
@@ -24,6 +25,8 @@ import {
   createTestSpan,
   createTestSession,
 } from '../../helpers/index.js';
+
+vi.mock('../../../modules/metrics/query/panel.js', () => ({ fetchMetricsPanelData: vi.fn() }));
 
 vi.mock('../../../queue/jobs/monitor-notification.js', () => ({
   monitorNotificationQueue: { add: vi.fn().mockResolvedValue(undefined) },
@@ -473,56 +476,83 @@ describe('project scope: traces', () => {
 
 // ─── metric panels (mocked aggregation) ─────────────────────────────────────
 
-describe('project scope: metric panels', () => {
-  function mockAggregation() {
-    return vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValue({
-      metricName: 'm',
-      metricType: 'gauge',
-      timeseries: [{ bucket: new Date(), value: 1, labels: {} }],
-      executionTimeMs: 1,
-    } as Awaited<ReturnType<typeof reservoir.aggregateMetrics>>);
+describe('project scope: metrics panels', () => {
+  function metricsConfig(projectIds: string[] | null) {
+    return {
+      type: 'metrics' as const,
+      title: 'M',
+      source: 'metrics' as const,
+      timeRange: '1h' as const,
+      query: {
+        projectIds,
+        queries: [{ id: 'A', metricName: 'm', aggregation: 'avg' as const, filters: [], groupBy: [] }],
+        formulas: [],
+        interval: 'auto' as const,
+        compareTo: 'none' as const,
+        display: 'lines' as const,
+      },
+    };
   }
 
-  it('metric_chart: aggregateMetrics is called with projectId [A]', async () => {
-    const spy = mockAggregation();
-    await fetchPanelData(
-      {
-        type: 'metric_chart', title: 'MC', source: 'metrics', projectId: projectA,
-        metricName: 'm', aggregation: 'avg', interval: '1h', timeRange: '24h', serviceName: null,
-      },
-      ctx(),
-    );
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy.mock.calls[0][0].projectId).toEqual([projectA]);
+  beforeEach(() => {
+    vi.mocked(fetchMetricsPanelData).mockReset();
+    vi.mocked(fetchMetricsPanelData).mockResolvedValue({ series: [], interval: '1m', queries: [], warnings: [] });
   });
 
-  it('metric_chart: null resolves to both org projects only', async () => {
-    const spy = mockAggregation();
-    await fetchPanelData(
-      {
-        type: 'metric_chart', title: 'MC', source: 'metrics', projectId: null,
-        metricName: 'm', aggregation: 'avg', interval: '1h', timeRange: '24h', serviceName: null,
-      },
-      ctx(),
-    );
-    const ids = spy.mock.calls[0][0].projectId as string[];
-    expect([...ids].sort()).toEqual([projectA, projectB].sort());
-    expect(ids).not.toContain(foreignProject);
+  it('delegates to the metrics query service with the org, user and window', async () => {
+    const config = metricsConfig([projectA]);
+    await fetchPanelData(config, { ...ctx(), variables: { host: 'web-1' } });
+    expect(fetchMetricsPanelData).toHaveBeenCalledTimes(1);
+    const [cfg, mctx] = vi.mocked(fetchMetricsPanelData).mock.calls[0];
+    expect(cfg).toEqual(config);
+    expect(mctx.organizationId).toBe(orgId);
+    expect(mctx.userId).toBe(userId);
+    expect(mctx.variables).toEqual({ host: 'web-1' });
+    expect(mctx.to.getTime() - mctx.from.getTime()).toBe(60 * 60 * 1000);
   });
 
-  it('metric_stat: aggregateMetrics is called with projectId [A]', async () => {
-    const spy = mockAggregation();
+  it('accepts several projects of the org and null (scope resolved by the query service)', async () => {
+    await fetchPanelData(metricsConfig([projectA, projectB]), ctx());
+    await fetchPanelData(metricsConfig(null), ctx());
+    expect(fetchMetricsPanelData).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a foreign project id in any query slot without calling the query service', async () => {
+    await expect(fetchPanelData(metricsConfig([projectA, foreignProject]), ctx())).rejects.toThrow(
+      /does not belong/,
+    );
+    await expect(fetchPanelData(metricsConfig([foreignProject]), ctx())).rejects.toThrow(/does not belong/);
+    expect(fetchMetricsPanelData).not.toHaveBeenCalled();
+  });
+});
+
+describe('project scope: service variables on trace panels', () => {
+  it('trace_volume substitutes $name in serviceName and drops it when unset', async () => {
+    const spy = vi.spyOn(reservoir, 'getSpanTimeseries').mockResolvedValue([]);
+    const cfg = {
+      type: 'trace_volume' as const, title: 'V', source: 'traces' as const, projectId: projectA,
+      serviceName: '$service', timeRange: '24h' as const, showErrors: true,
+    };
+    await fetchPanelData(cfg, { ...ctx(), variables: { service: 'api' } });
+    expect(spy.mock.calls[0][0].serviceName).toBe('api');
+    await fetchPanelData(cfg, { ...ctx(), variables: { service: null } });
+    expect(spy.mock.calls[1][0].serviceName).toBeUndefined();
+    await fetchPanelData(cfg, ctx());
+    expect(spy.mock.calls[2][0].serviceName).toBeUndefined();
+    spy.mockRestore();
+  });
+
+  it('trace_latency does the same', async () => {
+    const spy = vi.spyOn(reservoir, 'getSpanTimeseries').mockResolvedValue([]);
     await fetchPanelData(
       {
-        type: 'metric_stat', title: 'MS', source: 'metrics', projectId: projectA,
-        metricName: 'm', aggregation: 'avg', timeRange: '24h', serviceName: null,
+        type: 'trace_latency', title: 'L', source: 'traces', projectId: projectA,
+        serviceName: '$service', timeRange: '24h', showPercentiles: ['p95'],
       },
-      ctx(),
+      { ...ctx(), variables: { service: 'worker' } },
     );
-    expect(spy).toHaveBeenCalled();
-    for (const call of spy.mock.calls) {
-      expect(call[0].projectId).toEqual([projectA]);
-    }
+    expect(spy.mock.calls[0][0].serviceName).toBe('worker');
+    spy.mockRestore();
   });
 });
 

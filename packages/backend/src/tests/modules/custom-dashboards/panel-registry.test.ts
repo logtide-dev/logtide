@@ -1,11 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import { panelRegistry, panelInstanceSchema, panelConfigSchema, dashboardDocumentSchema } from '../../../modules/custom-dashboards/panel-registry.js';
 
+function metricsPanel(overrides: Record<string, unknown> = {}) {
+  return {
+    type: 'metrics',
+    title: 'T',
+    source: 'metrics',
+    timeRange: '24h',
+    query: {
+      projectIds: null,
+      queries: [{ id: 'A', metricName: 'cpu', aggregation: 'avg', filters: [], groupBy: [] }],
+      formulas: [],
+      interval: 'auto',
+      compareTo: 'none',
+      display: 'lines',
+    },
+    ...overrides,
+  };
+}
+
 describe('panelRegistry', () => {
   it('has entries for all panel types', () => {
     const types = [
       'time_series', 'single_stat', 'top_n_table', 'live_log_stream',
-      'alert_status', 'metric_chart', 'metric_stat', 'trace_latency',
+      'alert_status', 'metrics', 'trace_latency',
       'trace_volume', 'detection_events', 'monitor_status', 'system_status',
       'activity_overview', 'geo_map', 'log_table',
     ];
@@ -13,6 +31,14 @@ describe('panelRegistry', () => {
       expect(panelRegistry[type as keyof typeof panelRegistry]).toBeDefined();
       expect(panelRegistry[type as keyof typeof panelRegistry].defaultLayout.w).toBeGreaterThan(0);
       expect(panelRegistry[type as keyof typeof panelRegistry].defaultLayout.h).toBeGreaterThan(0);
+    }
+  });
+
+  it('no longer registers the v1 metric panels', () => {
+    expect(panelRegistry).not.toHaveProperty('metric_chart');
+    expect(panelRegistry).not.toHaveProperty('metric_stat');
+    for (const type of ['metric_chart', 'metric_stat']) {
+      expect(panelConfigSchema.safeParse({ type, title: 'T', source: 'metrics' }).success).toBe(false);
     }
   });
 });
@@ -113,19 +139,8 @@ describe('panelInstanceSchema', () => {
 });
 
 describe('panelConfigSchema', () => {
-  it('validates metric_chart config', () => {
-    const config = {
-      type: 'metric_chart',
-      title: 'CPU',
-      source: 'metrics',
-      projectId: null,
-      metricName: 'cpu_usage',
-      aggregation: 'avg',
-      interval: '5m',
-      timeRange: '1h',
-      serviceName: null,
-    };
-    expect(() => panelConfigSchema.parse(config)).not.toThrow();
+  it('validates metrics config', () => {
+    expect(() => panelConfigSchema.parse(metricsPanel())).not.toThrow();
   });
 
   it('validates trace_latency config', () => {
@@ -466,16 +481,7 @@ describe('panel time range presets (#305)', () => {
       mode: 'snapshot', timeRange: '1h', levels: [], service: null,
       maxRows: 25, columns: [], builtinColumns: ['time', 'message'], wrapCells: false,
     },
-    metric_chart: {
-      type: 'metric_chart', title: 'T', source: 'metrics', projectId: null,
-      metricName: 'cpu', aggregation: 'avg', interval: '5m', timeRange: '24h',
-      serviceName: null,
-    },
-    metric_stat: {
-      type: 'metric_stat', title: 'T', source: 'metrics', projectId: null,
-      metricName: 'cpu', aggregation: 'last', timeRange: '1h',
-      serviceName: null, unit: null,
-    },
+    metrics: metricsPanel(),
     trace_latency: {
       type: 'trace_latency', title: 'T', source: 'traces', projectId: null,
       serviceName: null, timeRange: '24h', showPercentiles: ['p95'],
@@ -499,8 +505,7 @@ describe('panel time range presets (#305)', () => {
     top_n_table: 'interval',
     geo_map: 'interval',
     log_table: 'timeRange',
-    metric_chart: 'timeRange',
-    metric_stat: 'timeRange',
+    metrics: 'timeRange',
     trace_latency: 'timeRange',
     trace_volume: 'timeRange',
     detection_events: 'timeRange',
@@ -524,36 +529,169 @@ describe('panel time range presets (#305)', () => {
   }
 });
 
-describe('metric_chart groupBy', () => {
-  const base = {
-    type: 'metric_chart',
-    title: 'CPU',
-    source: 'metrics',
-    projectId: null,
-    metricName: 'cpu_usage',
-    aggregation: 'avg',
-    interval: '5m',
-    timeRange: '1h',
-    serviceName: null,
-  };
+function qspec(overrides: Record<string, unknown> = {}) {
+  return { id: 'A', metricName: 'cpu', aggregation: 'avg', filters: [], groupBy: [], ...overrides };
+}
 
-  it('metric_chart accepts groupBy with 1 or 2 keys', () => {
-    expect(() => panelConfigSchema.parse({ ...base, groupBy: ['host'] })).not.toThrow();
-    expect(() => panelConfigSchema.parse({ ...base, groupBy: ['host', 'http.method'] })).not.toThrow();
+describe('metrics panel schema', () => {
+  const parse = (query: Record<string, unknown>) =>
+    panelConfigSchema.safeParse(metricsPanel({ query: { ...metricsPanel().query, ...query } }));
+
+  it('accepts a full explorer query', () => {
+    const r = parse({
+      projectIds: ['11111111-1111-4111-8111-111111111111'],
+      queries: [
+        qspec({
+          spaceAggregation: 'max',
+          filters: [
+            { scope: 'resource', key: 'host.name', op: 'in', values: ['a', 'b'] },
+            { scope: 'metric', key: 'state', op: 'neq', values: ['idle'] },
+            { scope: 'metric', key: 'mount', op: 'exists' },
+            { scope: 'metric', key: 'latency', op: 'gte', values: ['0.5'] },
+          ],
+          groupBy: [{ scope: 'resource', key: 'host.name' }],
+          limit: 20,
+          hidden: true,
+          label: 'CPU',
+        }),
+        qspec({ id: 'B', metricName: 'mem' }),
+      ],
+      formulas: [{ id: 'F1', expression: 'A / B * 100', label: 'ratio' }],
+      interval: '15m',
+      compareTo: '1w',
+      display: 'table',
+      unitOverride: '%',
+    });
+    expect(r.success).toBe(true);
   });
 
-  it('metric_chart rejects 3 groupBy keys', () => {
-    expect(() => panelConfigSchema.parse({ ...base, groupBy: ['a', 'b', 'c'] })).toThrow();
+  it('requires 1 to 6 queries with unique ids A..F', () => {
+    expect(parse({ queries: [] }).success).toBe(false);
+    const seven = ['A', 'B', 'C', 'D', 'E', 'F', 'A'].map((id) => qspec({ id }));
+    expect(parse({ queries: seven }).success).toBe(false);
+    expect(parse({ queries: [qspec(), qspec()] }).success).toBe(false);
+    expect(parse({ queries: [qspec({ id: 'G' })] }).success).toBe(false);
+    const six = ['A', 'B', 'C', 'D', 'E', 'F'].map((id) => qspec({ id }));
+    expect(parse({ queries: six }).success).toBe(true);
   });
 
-  it('metric_chart rejects groupBy key with SQL characters', () => {
-    for (const key of ["host'; DROP TABLE logs;--", 'a b', 'a-b', '1abc', '', 'x"y', 'a/b']) {
-      expect(() => panelConfigSchema.parse({ ...base, groupBy: [key] }), key).toThrow();
+  it('limits formulas to F1..F4 unique', () => {
+    const f = (id: string) => ({ id, expression: 'A' });
+    expect(parse({ formulas: [f('F1'), f('F2'), f('F3'), f('F4')] }).success).toBe(true);
+    expect(parse({ formulas: [f('F1'), f('F2'), f('F3'), f('F4'), f('F5')] }).success).toBe(false);
+    expect(parse({ formulas: [f('F1'), f('F1')] }).success).toBe(false);
+    expect(parse({ formulas: [f('A')] }).success).toBe(false);
+  });
+
+  it('enforces filter value shapes per operator', () => {
+    const ok = (op: string, values?: string[]) =>
+      parse({ queries: [qspec({ filters: [{ scope: 'metric', key: 'k', op, values }] })] }).success;
+    expect(ok('eq', ['a'])).toBe(true);
+    expect(ok('eq', ['a', 'b'])).toBe(false);
+    expect(ok('eq')).toBe(false);
+    expect(ok('neq', ['a'])).toBe(true);
+    expect(ok('in', ['a', 'b'])).toBe(true);
+    expect(ok('in', [])).toBe(false);
+    expect(ok('nin', ['a'])).toBe(true);
+    expect(ok('exists')).toBe(true);
+    expect(ok('exists', [])).toBe(true);
+    expect(ok('exists', ['a'])).toBe(false);
+    expect(ok('notExists', ['a'])).toBe(false);
+    expect(ok('gte', ['3'])).toBe(true);
+    expect(ok('gte', ['abc'])).toBe(false);
+    expect(ok('lt', ['1', '2'])).toBe(false);
+    expect(ok('regex')).toBe(false);
+  });
+
+  it('caps filters, group by and series limit', () => {
+    const filters = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ scope: 'metric', key: `k${i}`, op: 'exists' }));
+    expect(parse({ queries: [qspec({ filters: filters(10) })] }).success).toBe(true);
+    expect(parse({ queries: [qspec({ filters: filters(11) })] }).success).toBe(false);
+    const refs = (n: number) => Array.from({ length: n }, (_, i) => ({ scope: 'metric', key: `g${i}` }));
+    expect(parse({ queries: [qspec({ groupBy: refs(3) })] }).success).toBe(true);
+    expect(parse({ queries: [qspec({ groupBy: refs(4) })] }).success).toBe(false);
+    expect(parse({ queries: [qspec({ limit: 50 })] }).success).toBe(true);
+    expect(parse({ queries: [qspec({ limit: 51 })] }).success).toBe(false);
+    expect(parse({ queries: [qspec({ limit: 0 })] }).success).toBe(false);
+  });
+
+  it('validates attribute keys (dots allowed, SQL characters not)', () => {
+    const withKey = (key: string) =>
+      parse({ queries: [qspec({ groupBy: [{ scope: 'resource', key }] })] }).success;
+    expect(withKey('k8s.pod.name')).toBe(true);
+    for (const key of ["host'; DROP TABLE x;--", 'a b', 'a-b', '1abc', '', 'x"y', 'a/b']) {
+      expect(withKey(key), key).toBe(false);
     }
   });
 
-  it('metric_chart without groupBy still valid', () => {
-    const parsed = panelConfigSchema.parse(base) as Record<string, unknown>;
-    expect(parsed).not.toHaveProperty('groupBy');
+  it('validates scope, enums, project ids and unit override', () => {
+    expect(parse({ queries: [qspec({ groupBy: [{ scope: 'other', key: 'k' }] })] }).success).toBe(false);
+    expect(parse({ queries: [qspec({ aggregation: 'geomean' })] }).success).toBe(false);
+    expect(parse({ queries: [qspec({ spaceAggregation: 'p95' })] }).success).toBe(false);
+    expect(parse({ interval: '2m' }).success).toBe(false);
+    expect(parse({ compareTo: '1y' }).success).toBe(false);
+    expect(parse({ display: 'pie' }).success).toBe(false);
+    expect(parse({ projectIds: ['nope'] }).success).toBe(false);
+    expect(parse({ projectIds: null }).success).toBe(true);
+    expect(parse({ unitOverride: 'x'.repeat(21) }).success).toBe(false);
+    expect(parse({ unitOverride: 'x'.repeat(20) }).success).toBe(true);
+    expect(parse({ extra: 1 }).success).toBe(false);
+  });
+});
+
+describe('dashboard variables', () => {
+  const varDef = (over: Record<string, unknown> = {}) => ({
+    name: 'host',
+    label: 'Host',
+    attr: { scope: 'resource', key: 'host.name' },
+    default: null,
+    ...over,
+  });
+  const refPanel = (value = '$host') =>
+    metricsPanel({
+      query: {
+        ...metricsPanel().query,
+        queries: [qspec({ filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: [value] }] })],
+      },
+    });
+  const doc = (panels: unknown[], variables?: unknown[]) => ({
+    schema_version: 2,
+    panels: panels.map((config, i) => ({ id: `p${i}`, layout: { x: 0, y: 0, w: 4, h: 3 }, config })),
+    ...(variables ? { variables } : {}),
+  });
+
+  it('accepts a declared variable referenced by a metrics filter', () => {
+    expect(dashboardDocumentSchema.safeParse(doc([refPanel()], [varDef()])).success).toBe(true);
+  });
+
+  it('rejects a reference to an undeclared variable', () => {
+    expect(dashboardDocumentSchema.safeParse(doc([refPanel()], [])).success).toBe(false);
+    expect(dashboardDocumentSchema.safeParse(doc([refPanel()])).success).toBe(false);
+    expect(dashboardDocumentSchema.safeParse(doc([refPanel('$other')], [varDef()])).success).toBe(false);
+  });
+
+  it('checks trace panel service variables too', () => {
+    const trace = { type: 'trace_volume', title: 'T', source: 'traces', projectId: null, serviceName: '$service', timeRange: '24h', showErrors: true };
+    expect(dashboardDocumentSchema.safeParse(doc([trace], [])).success).toBe(false);
+    expect(
+      dashboardDocumentSchema.safeParse(doc([trace], [varDef({ name: 'service', label: 'Service', attr: { scope: 'resource', key: 'service.name' } })])).success
+    ).toBe(true);
+  });
+
+  it('validates names, uniqueness, count and attr shape', () => {
+    const ok = (vars: unknown[]) => dashboardDocumentSchema.safeParse(doc([], vars)).success;
+    expect(ok([varDef()])).toBe(true);
+    expect(ok([varDef({ name: 'Host' })])).toBe(false);
+    expect(ok([varDef({ name: '1host' })])).toBe(false);
+    expect(ok([varDef({ name: 'a'.repeat(33) })])).toBe(false);
+    expect(ok([varDef(), varDef()])).toBe(false);
+    const five = ['a', 'b', 'c', 'd', 'e'].map((name) => varDef({ name }));
+    expect(ok(five)).toBe(true);
+    expect(ok([...five, varDef({ name: 'f' })])).toBe(false);
+    expect(ok([varDef({ attr: { scope: 'nope', key: 'k' } })])).toBe(false);
+    expect(ok([varDef({ attr: { scope: 'metric', key: 'bad key' } })])).toBe(false);
+    expect(ok([varDef({ default: 'web-1', metricName: 'cpu' })])).toBe(true);
+    expect(ok([varDef({ label: '' })])).toBe(false);
   });
 });

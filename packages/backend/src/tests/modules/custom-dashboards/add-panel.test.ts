@@ -22,15 +22,18 @@ function auth(t: string) {
 
 function metricChart(overrides: Record<string, unknown> = {}) {
   return {
-    type: 'metric_chart',
+    type: 'metrics',
     title: 'CPU',
     source: 'metrics',
-    projectId: null,
-    metricName: 'cpu_usage',
-    aggregation: 'avg',
-    interval: '5m',
     timeRange: '1h',
-    serviceName: null,
+    query: {
+      projectIds: null,
+      queries: [{ id: 'A', metricName: 'cpu_usage', aggregation: 'avg', filters: [], groupBy: [] }],
+      formulas: [],
+      interval: 'auto',
+      compareTo: 'none',
+      display: 'lines',
+    },
     ...overrides,
   };
 }
@@ -83,13 +86,13 @@ beforeEach(async () => {
 });
 
 describe('POST /:id/panels', () => {
-  it('appends a metric_chart and returns the new panel with generated id', async () => {
+  it('appends a metrics panel and returns the new panel with generated id', async () => {
     const d = await makeDashboard();
     const res = await post(d.id, { config: metricChart() });
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.payload);
     expect(body.panel.id).toMatch(/^panel-/);
-    expect(body.panel.config.type).toBe('metric_chart');
+    expect(body.panel.config.type).toBe('metrics');
     expect(body.dashboard.id).toBe(d.id);
     expect(body.dashboard.panels).toHaveLength(1);
     expect(body.dashboard.panels[0].id).toBe(body.panel.id);
@@ -110,8 +113,8 @@ describe('POST /:id/panels', () => {
   it('uses registry default layout when layout omitted', async () => {
     const d = await makeDashboard();
     const { panel } = JSON.parse((await post(d.id, { config: metricChart() })).payload);
-    expect(panel.layout.w).toBe(panelRegistry.metric_chart.defaultLayout.w);
-    expect(panel.layout.h).toBe(panelRegistry.metric_chart.defaultLayout.h);
+    expect(panel.layout.w).toBe(panelRegistry.metrics.defaultLayout.w);
+    expect(panel.layout.h).toBe(panelRegistry.metrics.defaultLayout.h);
   });
 
   it('honours layout w/h override', async () => {
@@ -126,19 +129,55 @@ describe('POST /:id/panels', () => {
       (await post(d.id, { config: metricChart(), layout: { w: 4 } })).payload
     );
     expect(partial.panel.layout.w).toBe(4);
-    expect(partial.panel.layout.h).toBe(panelRegistry.metric_chart.defaultLayout.h);
+    expect(partial.panel.layout.h).toBe(panelRegistry.metrics.defaultLayout.h);
   });
 
-  it('accepts groupBy on a metric_chart and stores it', async () => {
+  it('accepts group by and a resource filter on a metrics panel and stores it', async () => {
     const d = await makeDashboard();
-    const res = await post(d.id, { config: metricChart({ groupBy: ['host', 'http.method'] }) });
+    const query = {
+      projectIds: null,
+      queries: [
+        {
+          id: 'A',
+          metricName: 'cpu_usage',
+          aggregation: 'avg',
+          filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] }],
+          groupBy: [{ scope: 'metric', key: 'http.method' }],
+        },
+      ],
+      formulas: [],
+      interval: '5m',
+      compareTo: '1d',
+      display: 'split',
+    };
+    const res = await post(d.id, { config: metricChart({ query }) });
     expect(res.statusCode).toBe(201);
-    expect(JSON.parse(res.payload).panel.config.groupBy).toEqual(['host', 'http.method']);
+    expect(JSON.parse(res.payload).panel.config.query.queries[0].groupBy).toEqual([
+      { scope: 'metric', key: 'http.method' },
+    ]);
+  });
+
+  it('rejects a metrics panel that references an undeclared variable', async () => {
+    const d = await makeDashboard();
+    const query = {
+      ...metricChart().query,
+      queries: [
+        {
+          id: 'A',
+          metricName: 'cpu_usage',
+          aggregation: 'avg',
+          filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['$host'] }],
+          groupBy: [],
+        },
+      ],
+    };
+    const res = await post(d.id, { config: metricChart({ query }) });
+    expect(res.statusCode).toBe(400);
   });
 
   it('rejects invalid config with 400', async () => {
     const d = await makeDashboard();
-    const bad = await post(d.id, { config: metricChart({ aggregation: 'nope' }) });
+    const bad = await post(d.id, { config: metricChart({ timeRange: 'nope' }) });
     expect(bad.statusCode).toBe(400);
     expect(JSON.parse(bad.payload).error).toBe('Validation error');
 
@@ -155,7 +194,7 @@ describe('POST /:id/panels', () => {
   it('rejects a project of another organization with 400', async () => {
     const other = await createTestContext();
     const d = await makeDashboard();
-    const res = await post(d.id, { config: metricChart({ projectId: other.project.id }) });
+    const res = await post(d.id, { config: metricChart({ query: { ...metricChart().query, projectIds: [other.project.id] } }) });
     expect(res.statusCode).toBe(400);
     const stored = await customDashboardsService.getById(d.id, ctx.organization.id, ctx.user.id);
     expect(stored!.panels).toHaveLength(0);
@@ -163,7 +202,7 @@ describe('POST /:id/panels', () => {
 
   it('accepts a project of the organization', async () => {
     const d = await makeDashboard();
-    const res = await post(d.id, { config: metricChart({ projectId: ctx.project.id }) });
+    const res = await post(d.id, { config: metricChart({ query: { ...metricChart().query, projectIds: [ctx.project.id] } }) });
     expect(res.statusCode).toBe(201);
   });
 
@@ -243,6 +282,6 @@ describe('POST /:id/panels', () => {
       .where('resource_id', '=', d.id)
       .where('action', '=', 'dashboard.updated')
       .executeTakeFirstOrThrow();
-    expect((row.metadata as { addedPanelType: string }).addedPanelType).toBe('metric_chart');
+    expect((row.metadata as { addedPanelType: string }).addedPanelType).toBe('metrics');
   });
 });

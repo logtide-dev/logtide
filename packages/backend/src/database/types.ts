@@ -17,6 +17,7 @@ import type {
   PackCategory,
   ApiKeyType,
   PanelInstance,
+  DashboardVariable,
   MetadataFilter,
   DigestSections,
 } from '@logtide/shared';
@@ -1283,6 +1284,7 @@ export interface CustomDashboardsTable {
   is_personal: Generated<boolean>;
   schema_version: Generated<number>;
   panels: ColumnType<PanelInstance[], PanelInstance[] | string, PanelInstance[] | string>;
+  variables: ColumnType<DashboardVariable[], DashboardVariable[] | string | undefined, DashboardVariable[] | string>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }

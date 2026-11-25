@@ -18,8 +18,7 @@ import type {
   TopNTableConfig,
   LiveLogStreamConfig,
   AlertStatusConfig,
-  MetricChartConfig,
-  MetricStatConfig,
+  MetricsPanelConfig,
   TraceLatencyConfig,
   TraceVolumeConfig,
   DetectionEventsConfig,
@@ -32,10 +31,10 @@ import type {
 } from '@logtide/shared';
 import { resolveMetadataPath, formatMetadataCell, panelTimeRangeToMs } from '@logtide/shared';
 import type { PanelTimeRange } from '@logtide/shared';
+import type { RegisteredPanelType } from './panel-registry.js';
 import { dashboardService } from '../dashboard/service.js';
 import { alertsService } from '../alerts/service.js';
-import { metricsService } from '../metrics/service.js';
-import { pickAutoInterval } from '../metrics/aggregate-options.js';
+import { fetchMetricsPanelData } from '../metrics/query/panel.js';
 import { monitorService } from '../monitoring/routes.js';
 import { SiemDashboardService } from '../siem/dashboard-service.js';
 import { db } from '../../database/index.js';
@@ -56,6 +55,8 @@ const siemDashboardService = new SiemDashboardService(db);
 export interface PanelDataContext {
   organizationId: string;
   userId: string;
+  /** Dashboard variable values by name; null or absent = All. */
+  variables?: Record<string, string | null>;
 }
 
 export interface PanelDataSource<TConfig extends PanelConfig, TData> {
@@ -155,21 +156,6 @@ export interface AlertStatusData {
     triggeredAt: string;
     logCount: number;
   }>;
-}
-
-export interface MetricChartData {
-  metricName: string;
-  metricType: string;
-  series: Array<{ time: string; value: number; labels?: Record<string, string> }>;
-  aggregation: string;
-  interval: string;
-}
-
-export interface MetricStatData {
-  metricName: string;
-  value: number | null;
-  unit: string | null;
-  aggregation: string;
 }
 
 export interface TraceLatencyData {
@@ -895,134 +881,6 @@ const alertStatusFetcher: PanelDataSource<AlertStatusConfig, AlertStatusData> = 
   },
 };
 
-const metricChartFetcher: PanelDataSource<MetricChartConfig, MetricChartData> = {
-  type: 'metric_chart',
-  async fetchData(config, ctx) {
-    const projectIds = config.projectId
-      ? [config.projectId]
-      : await resolveProjectIdsForOrg(ctx.organizationId);
-
-    if (projectIds.length === 0) {
-      return {
-        metricName: config.metricName,
-        metricType: 'gauge',
-        series: [],
-        aggregation: config.aggregation,
-        interval: config.interval,
-      };
-    }
-
-    const now = new Date();
-    const from = new Date(now.getTime() - panelTimeRangeToMs(config.timeRange));
-
-    const groupBy = config.groupBy && config.groupBy.length > 0 ? config.groupBy : undefined;
-    // 'rate' is not a reservoir aggregation: the metrics service reads 'last'
-    // per bucket and turns the deltas into per-second values.
-    const result =
-      config.aggregation === 'rate'
-        ? await metricsService.aggregateWithOptions({
-            projectId: projectIds,
-            metricName: config.metricName,
-            from,
-            to: now,
-            interval: config.interval,
-            aggregation: 'rate',
-            serviceName: config.serviceName ?? undefined,
-            groupBy,
-          })
-        : await metricsService.aggregateMetrics({
-            projectId: projectIds,
-            metricName: config.metricName,
-            from,
-            to: now,
-            interval: config.interval,
-            aggregation: config.aggregation,
-            serviceName: config.serviceName ?? undefined,
-            groupBy,
-          });
-
-    return {
-      metricName: result.metricName,
-      metricType: result.metricType,
-      aggregation: config.aggregation,
-      interval: config.interval,
-      series: result.timeseries.map((b) => ({
-        time: b.bucket.toISOString(),
-        value: Number(b.value ?? 0),
-        labels: b.labels,
-      })),
-    };
-  },
-};
-
-const metricStatFetcher: PanelDataSource<MetricStatConfig, MetricStatData> = {
-  type: 'metric_stat',
-  async fetchData(config, ctx) {
-    const projectIds = config.projectId
-      ? [config.projectId]
-      : await resolveProjectIdsForOrg(ctx.organizationId);
-
-    if (projectIds.length === 0) {
-      return {
-        metricName: config.metricName,
-        value: null,
-        unit: config.unit,
-        aggregation: config.aggregation,
-      };
-    }
-
-    const now = new Date();
-    const from = new Date(now.getTime() - panelTimeRangeToMs(config.timeRange));
-
-    // Aggregate at the coarsest supported interval (1d); the combine step
-    // below folds however many buckets the window spans (a 30d range at 1d
-    // interval yields up to 31) into a single stat value.
-    const result =
-      config.aggregation === 'rate'
-        ? await metricsService.aggregateWithOptions({
-            projectId: projectIds,
-            metricName: config.metricName,
-            from,
-            to: now,
-            // Rate needs at least two buckets inside the window (the first
-            // bucket has no previous value), so size buckets to the range.
-            interval: pickAutoInterval(from, now),
-            aggregation: 'rate',
-            serviceName: config.serviceName ?? undefined,
-          })
-        : await metricsService.aggregateMetrics({
-            projectId: projectIds,
-            metricName: config.metricName,
-            from,
-            to: now,
-            interval: '1d',
-            aggregation: config.aggregation,
-            serviceName: config.serviceName ?? undefined,
-          });
-
-    // The window can span more than one bucket (e.g. a 24h range crossing midnight
-    // at 1d interval). For additive aggregations (sum/count) the buckets must be
-    // summed, otherwise only the latest day is counted and the stat undercounts.
-    // For avg/min/max/last/percentiles the tile shows the most recent bucket.
-    const nonNull = result.timeseries.filter((b) => b.value != null);
-    let value: number | null = null;
-    if (nonNull.length > 0) {
-      if (config.aggregation === 'sum' || config.aggregation === 'count') {
-        value = nonNull.reduce((acc, b) => acc + Number(b.value), 0);
-      } else {
-        value = Number(nonNull[nonNull.length - 1].value);
-      }
-    }
-
-    return {
-      metricName: result.metricName,
-      value,
-      unit: config.unit,
-      aggregation: config.aggregation,
-    };
-  },
-};
-
 const traceLatencyFetcher: PanelDataSource<TraceLatencyConfig, TraceLatencyData> = {
   type: 'trace_latency',
   async fetchData(config, ctx) {
@@ -1601,23 +1459,28 @@ function buildBucketTimes(
 
 type AnyFetcher = PanelDataSource<PanelConfig, unknown>;
 
-// 1.8 placeholder: replaced by the metrics query fetcher (modules/metrics/query).
-const metricsPanelFetcher: AnyFetcher = {
+const metricsPanelFetcher: PanelDataSource<MetricsPanelConfig, unknown> = {
   type: 'metrics',
-  async fetchData() {
-    throw new Error('metrics panel data is not implemented yet');
+  async fetchData(config, ctx) {
+    const to = new Date();
+    const from = new Date(to.getTime() - panelTimeRangeToMs(config.timeRange));
+    return fetchMetricsPanelData(config, {
+      organizationId: ctx.organizationId,
+      userId: ctx.userId,
+      from,
+      to,
+      variables: ctx.variables,
+    });
   },
 };
 
-const dataFetchers: Record<PanelType, AnyFetcher> = {
-  metrics: metricsPanelFetcher,
+const dataFetchers: Record<RegisteredPanelType, AnyFetcher> = {
+  metrics: metricsPanelFetcher as AnyFetcher,
   time_series: timeSeriesFetcher as AnyFetcher,
   single_stat: singleStatFetcher as AnyFetcher,
   top_n_table: topNTableFetcher as AnyFetcher,
   live_log_stream: liveLogStreamFetcher as AnyFetcher,
   alert_status: alertStatusFetcher as AnyFetcher,
-  metric_chart: metricChartFetcher as AnyFetcher,
-  metric_stat: metricStatFetcher as AnyFetcher,
   trace_latency: traceLatencyFetcher as AnyFetcher,
   trace_volume: traceVolumeFetcher as AnyFetcher,
   detection_events: detectionEventsFetcher as AnyFetcher,
@@ -1645,8 +1508,7 @@ export function applyTimeRangeOverride(
       return { ...config, interval: range };
     case 'log_table':
       return config.mode === 'snapshot' ? { ...config, timeRange: range } : config;
-    case 'metric_chart':
-    case 'metric_stat':
+    case 'metrics':
     case 'trace_latency':
     case 'trace_volume':
     case 'detection_events':
@@ -1657,11 +1519,26 @@ export function applyTimeRangeOverride(
   }
 }
 
+/**
+ * trace_latency / trace_volume: a serviceName of "$name" takes the variable's
+ * value; an unset (null or missing) variable means every service. Metrics
+ * panels resolve their own filters in the metrics query service.
+ */
+function applyServiceVariable(
+  config: PanelConfig,
+  variables: Record<string, string | null> | undefined
+): PanelConfig {
+  if (config.type !== 'trace_latency' && config.type !== 'trace_volume') return config;
+  const ref = config.serviceName;
+  if (typeof ref !== 'string' || !ref.startsWith('$')) return config;
+  return { ...config, serviceName: variables?.[ref.slice(1)] ?? null };
+}
+
 export async function fetchPanelData(
   config: PanelConfig,
   ctx: PanelDataContext
 ): Promise<unknown> {
-  const fetcher = dataFetchers[config.type];
+  const fetcher = dataFetchers[config.type as RegisteredPanelType];
   if (!fetcher) {
     throw new Error(`No data fetcher registered for panel type: ${config.type}`);
   }
@@ -1672,6 +1549,11 @@ export async function fetchPanelData(
   if ('projectId' in config) {
     await ensureProjectInOrg(config.projectId, ctx.organizationId);
   }
+  if (config.type === 'metrics') {
+    for (const id of config.query.projectIds ?? []) {
+      await ensureProjectInOrg(id, ctx.organizationId);
+    }
+  }
 
-  return fetcher.fetchData(config, ctx);
+  return fetcher.fetchData(applyServiceVariable(config, ctx.variables), ctx);
 }
