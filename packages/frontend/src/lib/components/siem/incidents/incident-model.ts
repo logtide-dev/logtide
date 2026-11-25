@@ -323,7 +323,9 @@ export function describeHistoryEntry(entry: Pick<IncidentHistoryEntry, 'action' 
     case 'status_change':
     case 'status_changed': {
       const base = `Status changed from ${statusText(entry.oldValue)} to ${statusText(entry.newValue)}`;
-      return entry.metadata?.reason === 'recovered' ? `${base} (recovered)` : base;
+      if (entry.metadata?.reason === 'recovered') return `${base} (recovered)`;
+      if (entry.metadata?.reason === 'no_data') return `${base} (no data)`;
+      return base;
     }
     case 'assignment_change':
     case 'assignee_changed':

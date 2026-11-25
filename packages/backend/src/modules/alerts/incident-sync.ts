@@ -109,7 +109,7 @@ export async function openAlertIncident(
  */
 export async function resolveAlertIncident(
   rule: { id: string; organization_id: string },
-  reason: 'recovered' | 'manual',
+  reason: 'recovered' | 'no_data' | 'manual',
   now: Date
 ): Promise<string | null> {
   try {

@@ -20,7 +20,7 @@ export type IncidentBulkAction = (typeof INCIDENT_BULK_ACTIONS)[number];
 export const INCIDENT_BULK_MAX_IDS = 100;
 
 /** Stored as `metadata.reason` on the history row of a change. */
-export type IncidentChangeReason = 'recovered' | 'manual' | 'source_event';
+export type IncidentChangeReason = 'recovered' | 'no_data' | 'manual' | 'source_event';
 
 export type IncidentHistoryAction =
   | 'status_change'
