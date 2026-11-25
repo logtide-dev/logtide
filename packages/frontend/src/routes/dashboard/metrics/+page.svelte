@@ -1,439 +1,440 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { authStore } from '$lib/stores/auth';
-  import { layoutStore } from '$lib/stores/layout';
+  import {
+    HOST_THRESHOLDS,
+    SERVICE_ERROR_THRESHOLDS,
+    formatMetricValue,
+    type HostSourceSummary,
+    type MetricSourcesResponse,
+    type ServiceSourceSummary,
+  } from '@logtide/shared';
   import { currentOrganization } from '$lib/stores/organization';
   import { scopeStore, resolveRange } from '$lib/stores/scope';
-  import { metricsStore } from '$lib/stores/metrics';
+  import { layoutStore } from '$lib/stores/layout';
+  import { startVisiblePolling } from '$lib/utils/visible-polling';
   import { ProjectsAPI } from '$lib/api/projects';
-  import type { MetricDataPoint } from '$lib/api/metrics';
-  import {
-    inferMetricUnit,
-    parseMetricsUrl,
-    writeMetricsUrl,
-    type MetricQueryState,
-    type MetricsTab,
-    type PanelRangeInput,
-  } from '$lib/utils/metrics-query';
-
+  import { metricsV2API } from '$lib/api/metrics-v2';
+  import { getAuthToken } from '$lib/utils/auth';
   import PageHeader from '$lib/components/app/PageHeader.svelte';
-  import EmptyState from '$lib/components/app/EmptyState.svelte';
   import ScopeBar from '$lib/components/app/ScopeBar.svelte';
+  import EmptyState from '$lib/components/app/EmptyState.svelte';
+  import DataTable from '$lib/components/app/DataTable.svelte';
   import Timestamp from '$lib/components/app/Timestamp.svelte';
-  import EmptyMetrics from '$lib/components/EmptyMetrics.svelte';
-  import OverviewPanel from '$lib/components/metrics/OverviewPanel.svelte';
-  import GoldenSignalsPanel from '$lib/components/metrics/GoldenSignalsPanel.svelte';
-  import MetricQueryRow from '$lib/components/metrics/MetricQueryRow.svelte';
-  import MetricChart from '$lib/components/metrics/MetricChart.svelte';
-  import AddToDashboardDialog from '$lib/components/metrics/AddToDashboardDialog.svelte';
-  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
-  import { Badge } from '$lib/components/ui/badge';
+  import Sparkline from '$lib/components/app/Sparkline.svelte';
+  import type { DataTableColumn, DataTableSort } from '$lib/components/app/data-table';
   import Button from '$lib/components/ui/button/button.svelte';
-  import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '$lib/components/ui/table';
-
-  import ExternalLink from '@lucide/svelte/icons/external-link';
-  import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
-  import Search from '@lucide/svelte/icons/search';
-  import Gauge from '@lucide/svelte/icons/gauge';
+  import Input from '$lib/components/ui/input/input.svelte';
+  import MetricsSubNav from '$lib/components/metrics/v2/MetricsSubNav.svelte';
+  import SourceSignalCell from '$lib/components/metrics/v2/SourceSignalCell.svelte';
+  import SourceStatusDot from '$lib/components/metrics/v2/SourceStatusDot.svelte';
+  import {
+    DEFAULT_SORT,
+    SETUP_DOCS,
+    filterHostRows,
+    filterServiceRows,
+    parseKind,
+    sortHosts,
+    sortServices,
+    sourceHref,
+    type KindFilter,
+  } from '$lib/components/metrics/sources/source-model';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-  import ChartColumn from '@lucide/svelte/icons/chart-column';
+  import Search from '@lucide/svelte/icons/search';
 
-  // Layout
+  const REFRESH_MS = 60_000;
+
   let maxWidthClass = $state('max-w-7xl');
-  let containerPadding = $state('px-8 py-8');
-  $effect(() => layoutStore.maxWidthClass.subscribe((v) => (maxWidthClass = v)));
-  $effect(() => layoutStore.containerPadding.subscribe((v) => (containerPadding = v)));
+  let containerPadding = $state('px-6 py-8');
+  $effect(() => {
+    const a = layoutStore.maxWidthClass.subscribe((v) => (maxWidthClass = v));
+    const b = layoutStore.containerPadding.subscribe((v) => (containerPadding = v));
+    return () => {
+      a();
+      b();
+    };
+  });
 
-  // Projects
-  let token = $state<string | null>(null);
-  $effect(() => authStore.subscribe((s) => (token = s.token)));
-  let projectsAPI = $derived(new ProjectsAPI(() => token));
+  const org = $derived($currentOrganization);
+  const projectsAPI = new ProjectsAPI(getAuthToken);
 
   let projects = $state<{ id: string; name: string }[]>([]);
   let projectsLoaded = $state(false);
-  let projectsError = $state<string | null>(null);
-  let projectsRequest = 0;
 
   $effect(() => {
-    const org = $currentOrganization;
-    const api = projectsAPI;
-    if (!org) return;
-    const request = ++projectsRequest;
+    const orgId = org?.id;
+    if (!orgId) return;
+    let cancelled = false;
     projectsLoaded = false;
-    projectsError = null;
-    (async () => {
-      try {
-        const [res, availability] = await Promise.all([
-          api.getProjects(org.id),
-          api.getProjectDataAvailability(org.id).catch(() => null),
-        ]);
-        if (request !== projectsRequest) return;
-        const withMetrics = availability?.metrics;
-        const list = withMetrics && withMetrics.length > 0
-          ? res.projects.filter((p) => withMetrics.includes(p.id))
-          : res.projects;
-        projects = list.map((p) => ({ id: p.id, name: p.name }));
-      } catch (e) {
-        if (request !== projectsRequest) return;
+    projectsAPI
+      .getProjects(orgId)
+      .then((res) => {
+        if (cancelled) return;
+        projects = res.projects.map((p) => ({ id: p.id, name: p.name }));
+        projectsLoaded = true;
+      })
+      .catch(() => {
+        if (cancelled) return;
         projects = [];
-        projectsError = e instanceof Error ? e.message : 'Could not load projects';
-      } finally {
-        if (request === projectsRequest) projectsLoaded = true;
-      }
-    })();
+        projectsLoaded = true;
+      });
+    return () => {
+      cancelled = true;
+    };
   });
 
-  let refreshTick = $state(0);
-  let projectId = $derived($scopeStore.projectIds[0] ?? null);
+  // Empty selection means every project of the organization.
+  const projectIds = $derived.by(() => {
+    const known = new Set(projects.map((p) => p.id));
+    const ids = $scopeStore.projectIds.filter((id) => known.has(id));
+    return ids.length > 0 ? ids : null;
+  });
+  const scopeKey = $derived(JSON.stringify([org?.id, projectIds, $scopeStore.range]));
 
-  // URL <-> query state. Once the page runs the store is the source of truth;
-  // the URL is applied to it only for navigation this page did not cause.
-  function sameQuery(a: MetricQueryState, b: MetricQueryState): boolean {
-    return JSON.stringify(a) === JSON.stringify(b);
+  let data = $state<MetricSourcesResponse | null>(null);
+  let loading = $state(false);
+  let error = $state<string | null>(null);
+
+  // Newest request wins.
+  let seq = 0;
+
+  async function load(silent: boolean) {
+    const organizationId = org?.id;
+    if (!organizationId) return;
+    const mine = ++seq;
+    if (!silent) loading = true;
+    const { from, to } = resolveRange($scopeStore.range);
+    try {
+      const res = await metricsV2API.getSources({
+        organizationId,
+        projectIds,
+        from: from.toISOString(),
+        to: to.toISOString(),
+      });
+      if (mine !== seq) return;
+      data = res;
+      error = null;
+    } catch (err) {
+      if (mine !== seq) return;
+      error = err instanceof Error ? err.message : 'Could not load sources';
+      // A failed background refresh keeps the last good data on screen.
+      if (!silent) data = null;
+    } finally {
+      if (mine === seq) loading = false;
+    }
   }
 
-  const writtenSearches = new Set<string>();
-
   $effect(() => {
-    const search = page.url.search.replace(/^\?/, '');
-    const parsed = parseMetricsUrl(page.url.searchParams);
-    untrack(() => {
-      // One of our own writes arriving back: the store already holds newer state.
-      if (writtenSearches.delete(search)) return;
-      if (!sameQuery(parsed, metricsStore.get().query)) metricsStore.setQuery(parsed);
-    });
+    scopeKey;
+    if (!projectsLoaded || !org) return;
+    untrack(() => void load(false));
+    const stop = startVisiblePolling(() => void load(true), REFRESH_MS);
+    return () => {
+      stop();
+      seq++;
+    };
   });
 
-  $effect(() => {
-    const query = $metricsStore.query;
-    const current = page.url.searchParams;
-    const next = writeMetricsUrl(current, query);
-    if (next.toString() === current.toString()) return;
-    writtenSearches.add(next.toString());
+  // Kind filter lives in the URL.
+  const kind = $derived<KindFilter>(parseKind(page.url.searchParams.get('kind')));
+
+  function setKind(next: KindFilter) {
     const url = new URL(page.url);
-    url.search = next.toString();
-    goto(url, { replaceState: true, keepFocus: true, noScroll: true });
-  });
+    if (next === 'all') url.searchParams.delete('kind');
+    else url.searchParams.set('kind', next);
+    void goto(`${url.pathname}${url.search}`, { replaceState: true, keepFocus: true, noScroll: true });
+  }
 
-  // Scope -> store context (project and time bounds). Declared after the URL
-  // effect so the first load already knows which tab and metric to fetch.
-  // Preset ranges resolve against "now", so the bounds are recomputed only when
-  // the scope value really changed or Refresh was pressed.
-  let lastScopeKey = '';
-  $effect(() => {
-    const scope = $scopeStore;
-    const tick = refreshTick;
-    const id = scope.projectIds[0] ?? null;
-    if (!id) return;
-    const key = JSON.stringify([id, scope.range, tick]);
-    if (key === lastScopeKey) return;
-    lastScopeKey = key;
-    const { from, to } = resolveRange(scope.range);
-    untrack(() => metricsStore.setContext({ projectId: id, from, to }));
-  });
+  let filter = $state('');
+  let hostSort = $state<DataTableSort | undefined>(DEFAULT_SORT);
+  let serviceSort = $state<DataTableSort | undefined>(DEFAULT_SORT);
 
-  $effect(() => () => metricsStore.reset());
+  const allHosts = $derived(data?.hosts ?? []);
+  const allServices = $derived(data?.services ?? []);
+  const hosts = $derived(sortHosts(filterHostRows(allHosts, filter), hostSort));
+  const services = $derived(sortServices(filterServiceRows(allServices, filter), serviceSort));
+  const showHosts = $derived(kind !== 'service');
+  const showServices = $derived(kind !== 'host');
+  const total = $derived(allHosts.length + allServices.length);
+  const nothingVisible = $derived((!showHosts || hosts.length === 0) && (!showServices || services.length === 0));
 
-  let query = $derived($metricsStore.query);
-  let tab = $derived(query.tab);
-  let range = $derived.by(() => $metricsStore.range);
-  let unit = $derived(query.metric ? inferMetricUnit(query.metric, query.aggregation) : null);
+  const chips = $derived([
+    { id: 'all' as const, label: 'All', count: total },
+    { id: 'host' as const, label: 'Hosts', count: allHosts.length },
+    { id: 'service' as const, label: 'Services', count: allServices.length },
+  ]);
 
-  let dashboardRange = $derived.by((): PanelRangeInput => {
-    const r = $scopeStore.range;
-    if (r.kind === 'preset') return r.preset;
-    return range;
-  });
+  function errorTone(value: number | null | undefined): string {
+    if (value === null || value === undefined) return '';
+    if (value >= SERVICE_ERROR_THRESHOLDS.critical) return 'text-destructive-text';
+    if (value >= SERVICE_ERROR_THRESHOLDS.warning) return 'text-warning-text';
+    return '';
+  }
 
-  let addOpen = $state(false);
+  // Snippets are typed by their own parameter; the table wants Snippet<[Row]>.
+  const hostCell = (s: unknown) => s as Snippet<[HostSourceSummary]>;
+  const svcCell = (s: unknown) => s as Snippet<[ServiceSourceSummary]>;
 
-  const TABS: { id: MetricsTab; label: string; icon: typeof Search }[] = [
-    { id: 'overview', label: 'Overview', icon: LayoutDashboard as unknown as typeof Search },
-    { id: 'explorer', label: 'Explorer', icon: Search },
-    { id: 'golden', label: 'Golden signals', icon: Gauge as unknown as typeof Search },
+  const hostColumns: DataTableColumn<HostSourceSummary>[] = [
+    { key: 'status', header: 'Status', sortable: true, class: 'w-16', cell: hostCell(hostStatusCell) },
+    { key: 'name', header: 'Host', sortable: true, cell: hostCell(hostNameCell) },
+    { key: 'cpu', header: 'CPU', sortable: true, cell: hostCell(hostCpuCell) },
+    { key: 'memory', header: 'Memory', sortable: true, cell: hostCell(hostMemoryCell) },
+    { key: 'disk', header: 'Disk', sortable: true, cell: hostCell(hostDiskCell) },
+    { key: 'network', header: 'Network', sortable: true, cell: hostCell(hostNetworkCell) },
+    { key: 'load', header: 'Load 5m', sortable: true, cell: hostCell(hostLoadCell) },
+    { key: 'trend', header: 'CPU trend', cell: hostCell(hostTrendCell) },
+    { key: 'services', header: 'Services', sortable: true, cell: hostCell(hostServicesCell) },
+    { key: 'lastSeen', header: 'Last seen', sortable: true, cell: hostCell(lastSeenCell) },
   ];
 
-  function setTab(next: MetricsTab) {
-    metricsStore.setQuery({ tab: next });
-  }
+  const serviceColumns: DataTableColumn<ServiceSourceSummary>[] = [
+    { key: 'status', header: 'Status', sortable: true, class: 'w-16', cell: svcCell(serviceStatusCell) },
+    { key: 'name', header: 'Service', sortable: true, cell: svcCell(serviceNameCell) },
+    { key: 'requestRate', header: 'Requests/s', sortable: true, cell: svcCell(requestRateCell) },
+    { key: 'errorRate', header: 'Errors', sortable: true, cell: svcCell(errorRateCell) },
+    { key: 'p95', header: 'p95', sortable: true, cell: svcCell(p95Cell) },
+    { key: 'hosts', header: 'Hosts', sortable: true, cell: svcCell(serviceHostsCell) },
+    { key: 'lastSeen', header: 'Last seen', sortable: true, cell: svcCell(lastSeenCell) },
+  ];
 
-  function handleChange(patch: Partial<MetricQueryState>) {
-    metricsStore.setQuery(patch);
-  }
+  const hostKey = (h: HostSourceSummary) => `host:${h.name}`;
+  const serviceKey = (s: ServiceSourceSummary) => `service:${s.name}`;
+  const hostHref = (h: HostSourceSummary) => sourceHref('host', h.name);
+  const serviceHref = (s: ServiceSourceSummary) => sourceHref('service', s.name);
 
-  function handleOverviewMetricClick(metricName: string) {
-    metricsStore.setQuery({ tab: 'explorer', metric: metricName });
+  function listPreview(names: string[]): string {
+    if (names.length === 0) return '-';
+    const shown = names.slice(0, 2).join(', ');
+    return names.length > 2 ? `${shown} +${names.length - 2}` : shown;
   }
-
-  // Chart click: open the first exemplar trace inside the clicked bucket.
-  function handleBucketClick(bucketStart: Date, bucketSeconds: number) {
-    const id = projectId;
-    if (!id) return;
-    const start = bucketStart.getTime();
-    const end = start + Math.max(bucketSeconds, 1) * 1000;
-    const points: MetricDataPoint[] = $metricsStore.dataPoints?.metrics ?? [];
-    for (const point of points) {
-      const t = new Date(point.time).getTime();
-      if (t < start || t >= end || !point.hasExemplars) continue;
-      const traceId = point.exemplars?.find((e) => e.traceId)?.traceId;
-      if (traceId) {
-        goto(`/dashboard/traces/${encodeURIComponent(traceId)}?project=${encodeURIComponent(id)}`);
-        return;
-      }
-    }
-  }
-
-  function goToTrace(traceId: string) {
-    if (projectId) {
-      goto(`/dashboard/traces/${encodeURIComponent(traceId)}?project=${encodeURIComponent(projectId)}`);
-    }
-  }
-
-  function truncateJson(obj: Record<string, unknown> | null, maxLen = 60): string {
-    if (!obj) return '-';
-    const str = JSON.stringify(obj);
-    return str.length <= maxLen ? str : `${str.slice(0, maxLen)}...`;
-  }
-
-  // Derived data for the panels
-  let overviewServices = $derived($metricsStore.overview?.services ?? []);
-  let visibleServices = $derived(
-    query.service ? overviewServices.filter((s) => s.serviceName === query.service) : overviewServices
-  );
-  let sparklineMap = $derived(new Map(Object.entries($metricsStore.sparklines)));
-  let sparklineLoading = $derived(new Set($metricsStore.sparklinesLoading));
-  let panelRange = $derived(range ?? { from: new Date(), to: new Date() });
 </script>
+
+{#snippet hostStatusCell(h: HostSourceSummary)}
+  <SourceStatusDot status={h.status} reason={h.statusReason} />
+{/snippet}
+
+{#snippet hostNameCell(h: HostSourceSummary)}
+  <div class="min-w-0">
+    <a class="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={hostHref(h)}>{h.name}</a>
+    {#if h.statusReason && h.status !== 'ok'}
+      <p class="truncate text-xs text-muted-foreground" data-testid="status-reason">{h.statusReason}</p>
+    {:else if h.os}
+      <p class="truncate text-xs text-muted-foreground">{h.os}</p>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet hostCpuCell(h: HostSourceSummary)}
+  <SourceSignalCell signal={h.cpu} label="CPU" thresholds={HOST_THRESHOLDS.cpu} />
+{/snippet}
+{#snippet hostMemoryCell(h: HostSourceSummary)}
+  <SourceSignalCell signal={h.memory} label="Memory" thresholds={HOST_THRESHOLDS.memory} />
+{/snippet}
+{#snippet hostDiskCell(h: HostSourceSummary)}
+  <SourceSignalCell signal={h.disk} label="Disk" thresholds={HOST_THRESHOLDS.disk} />
+{/snippet}
+{#snippet hostNetworkCell(h: HostSourceSummary)}
+  <SourceSignalCell signal={h.network} label="Network" showSpark={false} />
+{/snippet}
+{#snippet hostLoadCell(h: HostSourceSummary)}
+  <SourceSignalCell signal={h.load} label="Load" showSpark={false} />
+{/snippet}
+
+{#snippet hostTrendCell(h: HostSourceSummary)}
+  {@const values = h.cpu.spark.map((v) => v ?? 0)}
+  {#if values.length > 1}
+    <Sparkline {values} label="CPU trend of {h.name}" width={90} height={22} />
+  {:else}
+    <span class="text-muted-foreground">-</span>
+  {/if}
+{/snippet}
+
+{#snippet hostServicesCell(h: HostSourceSummary)}
+  <span class="text-sm text-muted-foreground" title={h.services.join(', ')}>{listPreview(h.services)}</span>
+{/snippet}
+
+{#snippet lastSeenCell(row: { lastSeen: string })}
+  <span class="whitespace-nowrap text-sm text-muted-foreground"><Timestamp value={row.lastSeen} relative /></span>
+{/snippet}
+
+{#snippet serviceStatusCell(s: ServiceSourceSummary)}
+  <SourceStatusDot status={s.status} reason={s.statusReason} />
+{/snippet}
+
+{#snippet serviceNameCell(s: ServiceSourceSummary)}
+  <div class="min-w-0">
+    <a class="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={serviceHref(s)}>{s.name}</a>
+    {#if s.statusReason && s.status !== 'ok'}
+      <p class="truncate text-xs text-muted-foreground" data-testid="status-reason">{s.statusReason}</p>
+    {:else if !s.hasTraces}
+      <p class="truncate text-xs text-muted-foreground">No traces</p>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet requestRateCell(s: ServiceSourceSummary)}
+  <SourceSignalCell signal={s.hasTraces ? s.requestRate : null} label="Requests per second" />
+{/snippet}
+
+{#snippet errorRateCell(s: ServiceSourceSummary)}
+  {#if s.hasTraces && s.errorRate.value !== null}
+    <span class="text-sm tabular-nums {errorTone(s.errorRate.value)}">{formatMetricValue(s.errorRate.value, s.errorRate.unit)}</span>
+  {:else}
+    <span class="text-muted-foreground" aria-label="Errors: no data">-</span>
+  {/if}
+{/snippet}
+
+{#snippet p95Cell(s: ServiceSourceSummary)}
+  <SourceSignalCell signal={s.hasTraces ? s.p95 : null} label="p95 latency" />
+{/snippet}
+
+{#snippet serviceHostsCell(s: ServiceSourceSummary)}
+  <span class="text-sm text-muted-foreground" title={s.hosts.join(', ')}>{listPreview(s.hosts)}</span>
+{/snippet}
+
+{#snippet hostMobile(h: HostSourceSummary)}
+  <div class="flex items-center gap-2">
+    <SourceStatusDot status={h.status} reason={h.statusReason} />
+    <a class="font-medium" href={hostHref(h)}>{h.name}</a>
+  </div>
+  <div class="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+    <span>CPU <b class="text-foreground">{formatMetricValue(h.cpu.value, h.cpu.unit)}</b></span>
+    <span>Mem <b class="text-foreground">{formatMetricValue(h.memory.value, h.memory.unit)}</b></span>
+    <span>Disk <b class="text-foreground">{formatMetricValue(h.disk.value, h.disk.unit)}</b></span>
+  </div>
+{/snippet}
+
+{#snippet serviceMobile(s: ServiceSourceSummary)}
+  <div class="flex items-center gap-2">
+    <SourceStatusDot status={s.status} reason={s.statusReason} />
+    <a class="font-medium" href={serviceHref(s)}>{s.name}</a>
+  </div>
+  <div class="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+    <span>Req <b class="text-foreground">{formatMetricValue(s.requestRate.value, s.requestRate.unit)}</b></span>
+    <span>Err <b class="text-foreground">{formatMetricValue(s.errorRate.value, s.errorRate.unit)}</b></span>
+    <span>p95 <b class="text-foreground">{formatMetricValue(s.p95.value, s.p95.unit)}</b></span>
+  </div>
+{/snippet}
 
 <svelte:head>
   <title>Metrics - LogTide</title>
 </svelte:head>
 
-<div class="container mx-auto {containerPadding} {maxWidthClass}">
-  <PageHeader title="Metrics" description="Explore OTLP metrics from your applications">
+<div class="container mx-auto flex flex-col gap-4 {containerPadding} {maxWidthClass}">
+  <PageHeader title="Metrics" description="Hosts and services that send metrics" appliesTo="organization">
     {#snippet actions()}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        class="gap-2"
-        disabled={!projectId}
-        onclick={() => (refreshTick += 1)}
-      >
-        <RefreshCw class="h-4 w-4" aria-hidden="true" />
-        Refresh
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        class="gap-2"
-        disabled={!query.metric || !projectId || !$currentOrganization}
-        onclick={() => (addOpen = true)}
-      >
-        <ChartColumn class="h-4 w-4" aria-hidden="true" />
-        Add to dashboard
+      <ScopeBar mode="multi" {projects} />
+      <Button variant="outline" size="sm" onclick={() => void load(false)} aria-label="Refresh">
+        <RefreshCw class="h-4 w-4" />
       </Button>
     {/snippet}
   </PageHeader>
 
-  {#if !projectsLoaded}
-    <div class="py-16 text-center text-sm text-muted-foreground" role="status">Loading projects</div>
-  {:else if projectsError}
-    <EmptyState variant="error" title="Could not load projects" description={projectsError} />
+  <MetricsSubNav />
+
+  {#if !projectsLoaded || (loading && !data)}
+    <div class="py-16 text-center text-sm text-muted-foreground" role="status">Loading sources</div>
   {:else if projects.length === 0}
-    <EmptyMetrics />
+    <EmptyState variant="setup" title="Create a project first" description="Hosts and services send their metrics to a project.">
+      {#snippet actions()}
+        <Button size="sm" href="/dashboard/projects">Go to projects</Button>
+      {/snippet}
+    </EmptyState>
+  {:else if error && !data}
+    <EmptyState variant="error" title="Could not load sources" description={error}>
+      {#snippet actions()}
+        <Button variant="outline" size="sm" onclick={() => void load(false)}>Try again</Button>
+      {/snippet}
+    </EmptyState>
+  {:else if total === 0}
+    <EmptyState
+      variant="setup"
+      title="No metrics yet"
+      description="Run the LogTide hardware agent on a host, or send OTLP metrics from your services. Hosts are listed by host.name and services by service.name."
+    >
+      {#snippet actions()}
+        <Button size="sm" href={SETUP_DOCS.hardware} target="_blank" rel="noopener noreferrer">Hardware agent docs</Button>
+        <Button variant="outline" size="sm" href={SETUP_DOCS.otlp} target="_blank" rel="noopener noreferrer">OTLP docs</Button>
+      {/snippet}
+    </EmptyState>
   {:else}
-    <div class="mb-4">
-      <ScopeBar mode="single" {projects} />
-    </div>
-
-    <div class="mb-6 flex items-center gap-1 border-b" role="tablist" aria-label="Metrics views">
-      {#each TABS as t (t.id)}
-        {@const Icon = t.icon}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === t.id}
-          class="-mb-px flex items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition-colors {tab === t.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}"
-          onclick={() => setTab(t.id)}
-        >
-          <Icon class="h-4 w-4" aria-hidden="true" />
-          {t.label}
-        </button>
-      {/each}
-    </div>
-
-    {#if !projectId}
-      <EmptyState
-        variant="no-data"
-        title="No project selected"
-        description="Select a project to view metrics."
-      />
-    {:else}
-      <div class="mb-6">
-        <MetricQueryRow
-          metricNames={$metricsStore.metricNames}
-          metricNamesLoading={$metricsStore.metricNamesLoading}
-          {query}
-          labelKeys={$metricsStore.labelKeys}
-          loadLabelValues={(key) => metricsStore.loadLabelValues(key)}
-          services={$metricsStore.services}
-          onChange={handleChange}
-          serviceOnly={tab !== 'explorer'}
-        />
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="flex items-center gap-1.5" role="group" aria-label="Kind">
+        {#each chips as chip (chip.id)}
+          <button
+            type="button"
+            class="rounded-full px-3 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {kind === chip.id
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-muted text-muted-foreground hover:text-foreground'}"
+            aria-pressed={kind === chip.id}
+            onclick={() => setKind(chip.id)}
+          >
+            {chip.label}
+            <span class="ml-1 tabular-nums opacity-80">{chip.count}</span>
+          </button>
+        {/each}
       </div>
+      <div class="relative min-w-48 flex-1">
+        <Search class="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+        <Input class="h-9 pl-8" placeholder="Filter by name, OS or service" aria-label="Filter sources" bind:value={filter} />
+      </div>
+    </div>
 
-      {#if tab === 'overview'}
-        {#if $metricsStore.overviewLoading && !$metricsStore.overview}
-          <div class="py-16 text-center text-sm text-muted-foreground" role="status">Loading metrics</div>
-        {:else if $metricsStore.overviewError}
-          <EmptyState
-            variant="error"
-            title="Could not load metrics"
-            description={$metricsStore.overviewError}
-          />
-        {:else}
-          <OverviewPanel
-            services={overviewServices}
-            selectedService={query.service}
-            timeseriesMap={sparklineMap}
-            loadingMetrics={sparklineLoading}
-            {projectId}
-            timeRange={panelRange}
-            onMetricClick={handleOverviewMetricClick}
-          />
-        {/if}
-      {:else if tab === 'golden'}
-        <GoldenSignalsPanel
-          metricNames={$metricsStore.metricNames}
-          services={visibleServices}
-          {projectId}
-          timeRange={panelRange}
-          interval={query.interval}
-        />
-      {:else}
-        <Card class="mb-6">
-          <CardHeader>
-            <CardTitle>
-              {#if query.metric}
-                {query.metric}
-                <Badge variant="outline" class="ml-2 text-xs">
-                  {query.aggregation} / {$metricsStore.timeseries?.interval ?? query.interval}
-                </Badge>
-              {:else}
-                Time series
-              {/if}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {#if !query.metric}
-              <EmptyState
-                variant="no-data"
-                title="Select a metric to visualize"
-                description="Pick a metric above, then add filters or a group by."
-              />
-            {:else}
-              <MetricChart
-                result={$metricsStore.timeseries}
-                {unit}
-                loading={$metricsStore.timeseriesLoading}
-                error={$metricsStore.timeseriesError}
-                onBucketClick={handleBucketClick}
-                clickHint="Click to open a trace when the metric has exemplars"
-              />
-            {/if}
-          </CardContent>
-        </Card>
+    {#if error}
+      <p class="text-sm text-destructive-text" role="alert">Could not refresh the list: {error}</p>
+    {/if}
 
-        {#if query.metric}
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                {#if $metricsStore.dataPoints}
-                  {$metricsStore.dataPoints.total.toLocaleString('en-US')} data {$metricsStore.dataPoints.total === 1 ? 'point' : 'points'}
-                {:else}
-                  Data points
-                {/if}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {#if $metricsStore.dataPointsLoading && !$metricsStore.dataPoints}
-                <div class="py-8 text-center text-sm text-muted-foreground" role="status">Loading data points</div>
-              {:else if $metricsStore.dataPoints && $metricsStore.dataPoints.metrics.length > 0}
-                <div class="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead class="w-[180px]">Time</TableHead>
-                        <TableHead class="w-[120px]">Value</TableHead>
-                        <TableHead class="w-[100px]">Type</TableHead>
-                        <TableHead class="w-[140px]">Service</TableHead>
-                        <TableHead>Attributes</TableHead>
-                        <TableHead class="w-[100px]">Exemplar</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {#each $metricsStore.dataPoints.metrics as point (point.id)}
-                        <TableRow>
-                          <TableCell class="font-mono text-xs"><Timestamp value={point.time} precision="second" /></TableCell>
-                          <TableCell class="font-mono text-sm font-medium">
-                            {typeof point.value === 'number' ? point.value.toLocaleString('en-US', { maximumFractionDigits: 3 }) : point.value}
-                          </TableCell>
-                          <TableCell><Badge variant="outline">{point.metricType}</Badge></TableCell>
-                          <TableCell><Badge variant="secondary">{point.serviceName}</Badge></TableCell>
-                          <TableCell
-                            class="max-w-xs truncate font-mono text-xs"
-                            title={point.attributes ? JSON.stringify(point.attributes) : ''}
-                          >
-                            {truncateJson(point.attributes)}
-                          </TableCell>
-                          <TableCell>
-                            {#each (point.exemplars ?? []).filter((e) => e.traceId) as exemplar}
-                              <button
-                                type="button"
-                                class="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                                onclick={() => exemplar.traceId && goToTrace(exemplar.traceId)}
-                              >
-                                <ExternalLink class="h-3 w-3" aria-hidden="true" />
-                                Trace
-                              </button>
-                            {:else}
-                              <span class="text-xs text-muted-foreground">-</span>
-                            {/each}
-                          </TableCell>
-                        </TableRow>
-                      {/each}
-                    </TableBody>
-                  </Table>
-                </div>
-                {#if $metricsStore.dataPoints.hasMore}
-                  <p class="mt-4 text-center text-sm text-muted-foreground">
-                    Showing {$metricsStore.dataPoints.metrics.length.toLocaleString('en-US')} of {$metricsStore.dataPoints.total.toLocaleString('en-US')} data points
-                  </p>
-                {/if}
-              {:else}
-                <EmptyState
-                  variant="no-data"
-                  title="No data points"
-                  description="Nothing was recorded for this metric and time range."
-                />
-              {/if}
-            </CardContent>
-          </Card>
-        {/if}
+    {#if nothingVisible}
+      <EmptyState variant="no-results" title="No sources match" description="Change the filter or the kind to see more.">
+        {#snippet actions()}
+          <Button
+            variant="outline"
+            size="sm"
+            onclick={() => {
+              filter = '';
+              setKind('all');
+            }}>Clear filters</Button
+          >
+        {/snippet}
+      </EmptyState>
+    {:else}
+      {#if showHosts && hosts.length > 0}
+        <section aria-labelledby="sources-hosts" class="space-y-2" data-testid="hosts-section">
+          <h2 id="sources-hosts" class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Hosts <span class="tabular-nums">{hosts.length}</span>
+          </h2>
+          <DataTable
+            columns={hostColumns}
+            rows={hosts}
+            rowKey={hostKey}
+            rowHref={hostHref}
+            bind:sort={hostSort}
+            mobileRow={hostCell(hostMobile)}
+          />
+        </section>
+      {/if}
+      {#if showServices && services.length > 0}
+        <section aria-labelledby="sources-services" class="space-y-2" data-testid="services-section">
+          <h2 id="sources-services" class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Services <span class="tabular-nums">{services.length}</span>
+          </h2>
+          <DataTable
+            columns={serviceColumns}
+            rows={services}
+            rowKey={serviceKey}
+            rowHref={serviceHref}
+            bind:sort={serviceSort}
+            mobileRow={svcCell(serviceMobile)}
+          />
+        </section>
       {/if}
     {/if}
+
+    <p class="text-xs text-muted-foreground">
+      Refreshes every minute. Hosts need a host.name resource attribute to appear here.
+      <a class="text-primary-text hover:underline" href={SETUP_DOCS.hardware} target="_blank" rel="noopener noreferrer">Hardware agent</a>
+    </p>
   {/if}
 </div>
-
-{#if projectId && $currentOrganization && query.metric}
-  <AddToDashboardDialog
-    bind:open={addOpen}
-    organizationId={$currentOrganization.id}
-    {query}
-    {projectId}
-    range={dashboardRange}
-  />
-{/if}

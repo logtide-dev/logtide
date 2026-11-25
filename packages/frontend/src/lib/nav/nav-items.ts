@@ -58,7 +58,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'incidents', label: 'Incidents', href: '/dashboard/incidents', shortcut: 'g i' },
       { id: 'alerts', label: 'Alerts', href: '/dashboard/alerts', shortcut: 'g a' },
       { id: 'uptime', label: 'Uptime', href: '/dashboard/uptime', shortcut: 'g u' },
-      { id: 'hardware', label: 'Hardware', href: '/dashboard/hardware', shortcut: 'g h' },
     ],
   },
   {

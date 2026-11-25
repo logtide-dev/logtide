@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
   getProject: vi.fn(),
 }));
 
-vi.mock('$app/navigation', () => ({ goto: h.goto }));
+
 vi.mock('$lib/api/hardware', () => ({
   getHardwareHost: h.get,
   getHardwareHostEvents: h.events,
@@ -29,8 +29,7 @@ vi.mock('$lib/stores/toast', () => ({
   toastStore: { success: h.success, warning: vi.fn(), error: h.error, info: vi.fn() },
 }));
 
-import Page from './+page.svelte';
-import { page } from '$app/state';
+import Page from './HardwareHostPanel.svelte';
 import { authStore } from '$lib/stores/auth';
 import { organizationStore } from '$lib/stores/organization';
 import { detail, detailResponse, events, summary, vmHost, staleHost } from '$lib/components/hardware/hardware-fixtures';
@@ -52,14 +51,13 @@ function setRole(role: 'owner' | 'admin' | 'member') {
 }
 
 async function renderPage() {
-  const view = render(Page);
+  const view = render(Page, { hostId: 'h-crit', onForgotten: h.goto });
   await waitFor(() => expect(h.get).toHaveBeenCalled());
   return view;
 }
 
 beforeEach(() => {
   Object.values(h).forEach((m) => m.mockReset());
-  (page as { params: Record<string, string> }).params = { id: 'h-crit' };
   h.get.mockResolvedValue(detailResponse());
   h.events.mockResolvedValue({ events });
   h.getProject.mockResolvedValue({ project: { id: 'p1', organizationId: 'org-1' } });
@@ -69,7 +67,7 @@ beforeEach(() => {
   setRole('owner');
 });
 
-describe('hardware host detail page', () => {
+describe('HardwareHostPanel', () => {
   it('loads the host and its events and renders the header', async () => {
     await renderPage();
     expect(h.get).toHaveBeenCalledWith('h-crit');
@@ -285,12 +283,12 @@ describe('hardware host detail page', () => {
     expect(h.del).not.toHaveBeenCalled();
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Forget host' }));
     await waitFor(() => expect(h.del).toHaveBeenCalledWith('h-crit'));
-    await waitFor(() => expect(h.goto).toHaveBeenCalledWith('/dashboard/hardware'));
+    await waitFor(() => expect(h.goto).toHaveBeenCalled());
   });
 
   it('shows an error state when the host cannot be loaded', async () => {
     h.get.mockRejectedValue(new Error('Host not found'));
-    render(Page);
+    render(Page, { hostId: 'h-crit', onForgotten: h.goto });
     expect(await screen.findByText('Could not load this host')).toBeTruthy();
     expect(screen.getByText('Host not found')).toBeTruthy();
   });
