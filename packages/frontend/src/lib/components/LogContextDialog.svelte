@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { logsAPI, type LogContextResponse, type LogEntry } from '$lib/api/logs';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -8,6 +8,8 @@
 	import Spinner from '$lib/components/Spinner.svelte';
 	import SeverityBadge from '$lib/components/app/SeverityBadge.svelte';
 	import KeyValueTable from '$lib/components/app/KeyValueTable.svelte';
+	import CopyButton from '$lib/components/app/CopyButton.svelte';
+	import { jsonSegments, breakEscapedNewlines, jsonClass } from '$lib/components/search/json-highlight';
 	import { ExceptionDetailsDialog } from '$lib/components/exceptions';
 	import BreadcrumbTimeline from '$lib/components/BreadcrumbTimeline.svelte';
 	import { createRequestGuard } from '$lib/components/search/request-guard';
@@ -52,6 +54,11 @@
 	let exceptionDialogOpen = $state(false);
 	let breadcrumbsOpen = $state(false);
 	const expandedMetadata = new SvelteSet<string>();
+	const expandedJson = new SvelteSet<string>();
+
+	/** The highlighted selected-log card, scrolled into view once the context has rendered. */
+	let selectedEl = $state<HTMLElement | null>(null);
+	let scrolledKey: string | null = null;
 
 	const host = $derived(selectedLog ? logHostname(selectedLog) : null);
 	const breadcrumbs = $derived(selectedLog ? logBreadcrumbs(selectedLog) : []);
@@ -87,7 +94,22 @@
 			breadcrumbsOpen = false;
 			exceptionDialogOpen = false;
 			expandedMetadata.clear();
+			expandedJson.clear();
+			scrolledKey = null;
 			if (key) void load();
+		});
+	});
+
+	// Once the rows are in the DOM, bring the selected log to the middle of the dialog's scroll area.
+	// Only the first render per opened log scrolls: "Load earlier" and the toggles keep the position.
+	$effect(() => {
+		const el = selectedEl;
+		if (!el || !context) return;
+		const key = anchorKey;
+		if (!key || scrolledKey === key) return;
+		scrolledKey = key;
+		void tick().then(() => {
+			if (el.isConnected) el.scrollIntoView?.({ block: 'center' });
 		});
 	});
 
@@ -164,6 +186,19 @@
 		return `${side}-${log.id ?? `${log.time}-${index}`}`;
 	}
 
+	function toggleJson(key: string, event: Event) {
+		if ((event.currentTarget as HTMLDetailsElement).open) expandedJson.add(key);
+		else expandedJson.delete(key);
+	}
+
+	function prettyJson(log: LogEntry): string {
+		try {
+			return JSON.stringify(log, null, 2);
+		} catch {
+			return String(log.message ?? '');
+		}
+	}
+
 	function toggleMetadata(key: string, event: Event) {
 		if ((event.currentTarget as HTMLDetailsElement).open) expandedMetadata.add(key);
 		else expandedMetadata.delete(key);
@@ -179,8 +214,19 @@
 		<summary class="cursor-pointer text-muted-foreground hover:text-foreground">View metadata</summary>
 		{#if expandedMetadata.has(key)}
 			<div class="mt-2 min-w-0">
-				<KeyValueTable data={metadata} />
+				<KeyValueTable data={metadata} showCopy={false} />
 			</div>
+		{/if}
+	</details>
+{/snippet}
+
+{#snippet jsonBlock(log: LogEntry, key: string)}
+	<details class="mt-2 min-w-0 text-xs" data-testid="row-json" ontoggle={(e) => toggleJson(key, e)}>
+		<summary class="cursor-pointer text-muted-foreground hover:text-foreground">View JSON</summary>
+		{#if expandedJson.has(key)}
+			<pre
+				aria-label="Log as JSON"
+				class="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/40 p-2 font-mono text-xs leading-relaxed">{#each jsonSegments(prettyJson(log)).map(breakEscapedNewlines) as seg, i (i)}<span class={jsonClass[seg.kind]}>{seg.text}</span>{/each}</pre>
 		{/if}
 	</details>
 {/snippet}
@@ -191,19 +237,19 @@
 		{#if onOpenAround}
 			<button
 				type="button"
-				class="block w-full px-3 pt-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {log.traceId || metadata ? 'pb-1' : 'pb-2.5'}"
+				class="block w-full px-3 pt-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pb-1"
 				title="Open in the explorer around this log"
 				onclick={() => onOpenAround?.(log)}
 			>
 				{@render rowSummary(log)}
 			</button>
 		{:else}
-			<div class="px-3 pt-2.5 {log.traceId || metadata ? 'pb-1' : 'pb-2.5'}">
+			<div class="px-3 pt-2.5 pb-1">
 				{@render rowSummary(log)}
 			</div>
 		{/if}
-		{#if log.traceId || metadata}
-			<div class="min-w-0 px-3 pb-2.5">
+		<div class="min-w-0 px-3 pb-2.5">
+			<div class="flex flex-wrap items-center gap-2">
 				{#if log.traceId}
 					<a
 						href={traceHref(log)}
@@ -213,11 +259,15 @@
 						Trace {shortTrace(log.traceId)}
 					</a>
 				{/if}
-				{#if metadata}
-					{@render metadataBlock(metadata, key)}
-				{/if}
+				<span class="ml-auto">
+					<CopyButton value={prettyJson(log)} ariaLabel="Copy log as JSON" class="size-7" />
+				</span>
 			</div>
-		{/if}
+			{#if metadata}
+				{@render metadataBlock(metadata, key)}
+			{/if}
+			{@render jsonBlock(log, key)}
+		</div>
 	</li>
 {/snippet}
 
@@ -298,8 +348,16 @@
 				{/if}
 
 				{#if selectedLog}
-					<section class="overflow-hidden rounded-lg border-2 border-primary bg-primary/5 p-4" aria-label="Selected log">
-						<h3 class="mb-2 text-xs font-semibold text-primary">Selected log</h3>
+					<section
+						bind:this={selectedEl}
+						data-testid="selected-log"
+						class="overflow-hidden rounded-lg border-2 border-primary bg-primary/5 p-4 ring-4 ring-primary/20"
+						aria-label="Selected log"
+					>
+						<div class="mb-2 flex items-center justify-between gap-2">
+							<h3 class="text-xs font-semibold text-primary">Selected log</h3>
+							<CopyButton value={prettyJson(selectedLog)} ariaLabel="Copy log as JSON" class="size-7" />
+						</div>
 						<div class="mb-2 flex flex-wrap items-center gap-3">
 							<span class="font-mono text-sm text-muted-foreground">{time(selectedLog.time)}</span>
 							<span class="text-sm font-medium">{selectedLog.service}</span>
@@ -318,6 +376,7 @@
 						{#if selectedMetadata}
 							{@render metadataBlock(selectedMetadata, 'selected', 'selected-metadata')}
 						{/if}
+						{@render jsonBlock(selectedLog, 'selected')}
 						{#if isErrorLevel(selectedLog.level) && selectedLog.id && organizationId}
 							<div class="mt-3 border-t pt-2">
 								<Button variant="outline" size="sm" class="gap-2" onclick={() => (exceptionDialogOpen = true)}>

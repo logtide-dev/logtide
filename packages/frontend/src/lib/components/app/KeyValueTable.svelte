@@ -6,14 +6,17 @@
   import Columns3 from '@lucide/svelte/icons/columns-3';
   import { Button } from '$lib/components/ui/button';
   import CopyButton from './CopyButton.svelte';
+  import IconTip from './IconTip.svelte';
 
   interface Props {
     data: Record<string, unknown>;
     onFilter?: (path: string, value: unknown, negate: boolean) => void;
     onAddColumn?: (path: string) => void;
+    /** Per-field copy value / copy path buttons. Off where the caller offers a single copy action. */
+    showCopy?: boolean;
   }
 
-  let { data, onFilter, onAddColumn }: Props = $props();
+  let { data, onFilter, onAddColumn, showCopy = true }: Props = $props();
 
   /** Objects nested deeper than this render as a JSON string leaf. */
   const MAX_DEPTH = 8;
@@ -77,6 +80,16 @@
     return String(value);
   }
 
+  /**
+   * Splits a key after ".", "_" and "-" and at camelCase boundaries, so a
+   * narrow column wraps between words. Only a single word wider than the
+   * column is cut inside (overflow-wrap: anywhere), so the table never
+   * overflows its panel.
+   */
+  function keyParts(key: string): string[] {
+    return key.split(/(?<=[._-])|(?<=[a-z0-9])(?=[A-Z])/);
+  }
+
   const rows = $derived(entriesOf(data ?? {}));
 </script>
 
@@ -105,8 +118,8 @@
     {/if}
   {:else}
     <tr class="group border-b border-border/60 align-top last:border-0">
-      <td class="py-1 pr-3 font-mono text-xs text-muted-foreground" style="padding-left: {depth * 16 + 18}px">
-        <span class="break-all">{key}</span>
+      <td class="w-[35%] min-w-24 py-1 pr-3 font-mono text-xs text-muted-foreground" style="padding-left: {depth * 16 + 18}px">
+        <span class="[overflow-wrap:anywhere]">{#each keyParts(key) as part, i (i)}{#if i > 0}<wbr />{/if}{part}{/each}</span>
       </td>
       <td class="py-1 pr-2 font-mono text-xs">
         {#if value === null}
@@ -117,38 +130,55 @@
       </td>
       <td class="w-px whitespace-nowrap py-0.5 text-right">
         <span class="inline-flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-          <CopyButton value={copyText(value)} ariaLabel="Copy value" />
-          <CopyButton value={path} ariaLabel="Copy path" />
+          {#if showCopy}
+            <CopyButton value={copyText(value)} ariaLabel="Copy value" tooltip="Copy value" />
+            <CopyButton value={path} ariaLabel="Copy path" tooltip="Copy field path ({path})" />
+          {/if}
           {#if onFilter && !underArray}
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-8"
-              aria-label="Filter by {path}"
-              onclick={() => onFilter(path, value, false)}
-            >
-              <ListFilter />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-8"
-              aria-label="Exclude {path}"
-              onclick={() => onFilter(path, value, true)}
-            >
-              <Ban />
-            </Button>
+            <IconTip label="Show only logs with this value">
+              {#snippet trigger({ props })}
+                <Button
+                  {...props}
+                  variant="ghost"
+                  size="icon"
+                  class="size-8"
+                  aria-label="Filter by {path}"
+                  onclick={() => onFilter(path, value, false)}
+                >
+                  <ListFilter />
+                </Button>
+              {/snippet}
+            </IconTip>
+            <IconTip label="Hide logs with this value">
+              {#snippet trigger({ props })}
+                <Button
+                  {...props}
+                  variant="ghost"
+                  size="icon"
+                  class="size-8"
+                  aria-label="Exclude {path}"
+                  onclick={() => onFilter(path, value, true)}
+                >
+                  <Ban />
+                </Button>
+              {/snippet}
+            </IconTip>
           {/if}
           {#if onAddColumn && !underArray}
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-8"
-              aria-label="Add {path} as column"
-              onclick={() => onAddColumn(path)}
-            >
-              <Columns3 />
-            </Button>
+            <IconTip label="Add as a column to the log list">
+              {#snippet trigger({ props })}
+                <Button
+                  {...props}
+                  variant="ghost"
+                  size="icon"
+                  class="size-8"
+                  aria-label="Add {path} as column"
+                  onclick={() => onAddColumn(path)}
+                >
+                  <Columns3 />
+                </Button>
+              {/snippet}
+            </IconTip>
           {/if}
         </span>
       </td>

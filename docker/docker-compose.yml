@@ -333,6 +333,8 @@ services:
       - /sys:/host/sys:ro
       - /proc:/host/proc:ro
       - /etc/hostname:/host/etc/hostname:ro
+      # Optional (agent 1.1+): host filesystem usage in the system.* metrics.
+      # - /:/host:ro
       - hw_agent_state:/var/lib/logtide-hw-agent
     depends_on:
       - backend

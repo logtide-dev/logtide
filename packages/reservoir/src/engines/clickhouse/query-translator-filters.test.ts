@@ -14,14 +14,26 @@ function paramsOf(r: { parameters?: unknown[] }): Record<string, unknown> {
   return (r.parameters ?? [])[0] as Record<string, unknown>;
 }
 
+/**
+ * The key-picking subquery of a two-phase translateQuery (the part that
+ * applies the filters), or the query itself when there is none.
+ */
+function keyPart(query: string): string {
+  const marker = '(time, id) IN (';
+  const idx = query.indexOf(marker);
+  return idx === -1 ? query : query.slice(idx + marker.length);
+}
+
 /** The PREWHERE and WHERE text of a query, without ORDER BY / LIMIT. */
-function filterText(query: string): string {
+function filterText(raw: string): string {
+  const query = keyPart(raw);
   const start = query.indexOf(' PREWHERE ');
   const end = query.indexOf(' ORDER BY ');
   return query.slice(start, end === -1 ? undefined : end);
 }
 
-function prewhereText(query: string): string {
+function prewhereText(raw: string): string {
+  const query = keyPart(raw);
   const start = query.indexOf(' PREWHERE ') + ' PREWHERE '.length;
   const where = query.indexOf(' WHERE ', start);
   const order = query.indexOf(' ORDER BY ', start);
@@ -29,7 +41,8 @@ function prewhereText(query: string): string {
   return query.slice(start, end === -1 ? undefined : end);
 }
 
-function whereText(query: string): string {
+function whereText(raw: string): string {
+  const query = keyPart(raw);
   const start = query.indexOf(' WHERE ');
   if (start === -1) return '';
   const end = query.indexOf(' ORDER BY ', start);
@@ -49,6 +62,24 @@ const allFilters: CountParams = {
 };
 
 describe('ClickHouseQueryTranslator log filters', () => {
+  it('query picks page keys from filter columns, then reads whole rows for those keys only', () => {
+    const q = translator.translateQuery({ ...allFilters, limit: 25, offset: 50 } as QueryParams);
+    const query = q.query as string;
+    expect(query.startsWith('SELECT * FROM logs PREWHERE project_id = {p_project_id:String} AND time >= ')).toBe(true);
+    expect(query).toContain('(time, id) IN (SELECT time, id FROM logs PREWHERE ');
+    // The filters, the offset and the sort live in the key subquery only.
+    expect(keyPart(query)).toContain(" WHERE ");
+    expect(keyPart(query)).toContain('ORDER BY time DESC, id DESC LIMIT {p_limit:UInt32} OFFSET {p_offset:UInt32})');
+    expect(query.endsWith(') ORDER BY time DESC, id DESC LIMIT {p_limit:UInt32}')).toBe(true);
+    expect(paramsOf(q)).toMatchObject({ p_limit: 26, p_offset: 50 });
+  });
+
+  it('query keeps the sort order in both phases', () => {
+    const query = translator.translateQuery({ ...baseParams, sortOrder: 'asc' } as QueryParams).query as string;
+    expect(query.match(/ORDER BY time ASC, id ASC/g)).toHaveLength(2);
+    expect(query).not.toContain('OFFSET');
+  });
+
   it('count and query share predicates', () => {
     const q = translator.translateQuery(allFilters as QueryParams);
     const c = translator.translateCount(allFilters);

@@ -4,6 +4,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import KeyValueTable from '$lib/components/app/KeyValueTable.svelte';
   import CopyButton from '$lib/components/app/CopyButton.svelte';
+  import IconTip from '$lib/components/app/IconTip.svelte';
   import SeverityBadge from '$lib/components/app/SeverityBadge.svelte';
   import IdentifierBadge from '$lib/components/IdentifierBadge.svelte';
   import BreadcrumbTimeline from '$lib/components/BreadcrumbTimeline.svelte';
@@ -203,6 +204,23 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+{#snippet actions(extra: string)}
+  {#if log}
+    <div class="flex flex-wrap gap-2 {extra}" data-testid="log-actions">
+      <Button variant="outline" size="sm" class="gap-1.5" onclick={() => onOpenContext(log)}>
+        <TextSearch class="size-4" />
+        View context
+      </Button>
+      {#if isErrorLevel && log.id}
+        <Button variant="outline" size="sm" class="gap-1.5" onclick={() => (exceptionOpen = true)}>
+          <TriangleAlert class="size-4 text-destructive-text" />
+          View exception details
+        </Button>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
 {#if log}
   <aside aria-label="Log details" class="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card text-card-foreground">
     <header class="flex flex-wrap items-center gap-2 border-b px-3 py-2">
@@ -247,6 +265,7 @@
             Wrap lines
           </label>
         </div>
+        {@render actions('')}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <pre
           tabindex="0"
@@ -297,27 +316,35 @@
               {/if}
             </span>
             <span class="flex shrink-0 items-center">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-7"
-                aria-label="Filter by {chip.key} {chip.value}"
-                title="Filter"
-                onclick={() => onFilter(chip.key, chip.value, false)}
-              >
-                <ListFilter class="size-3.5" />
-              </Button>
+              <IconTip label="Show only logs with this {chip.label.toLowerCase()}">
+                {#snippet trigger({ props })}
+                  <Button
+                    {...props}
+                    variant="ghost"
+                    size="icon"
+                    class="size-7"
+                    aria-label="Filter by {chip.key} {chip.value}"
+                    onclick={() => onFilter(chip.key, chip.value, false)}
+                  >
+                    <ListFilter class="size-3.5" />
+                  </Button>
+                {/snippet}
+              </IconTip>
               {#if chip.exclude}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="size-7"
-                  aria-label="Exclude {chip.key} {chip.value}"
-                  title="Exclude"
-                  onclick={() => onFilter(chip.key, chip.value, true)}
-                >
-                  <Ban class="size-3.5" />
-                </Button>
+                <IconTip label="Hide logs with this {chip.label.toLowerCase()}">
+                  {#snippet trigger({ props })}
+                    <Button
+                      {...props}
+                      variant="ghost"
+                      size="icon"
+                      class="size-7"
+                      aria-label="Exclude {chip.key} {chip.value}"
+                      onclick={() => onFilter(chip.key, chip.value, true)}
+                    >
+                      <Ban class="size-3.5" />
+                    </Button>
+                  {/snippet}
+                </IconTip>
               {/if}
             </span>
           </div>
@@ -361,18 +388,7 @@
         </section>
       {/if}
 
-      <div class="flex flex-wrap gap-2 border-t pt-3">
-        <Button variant="outline" size="sm" class="gap-1.5" onclick={() => onOpenContext(log)}>
-          <TextSearch class="size-4" />
-          View context
-        </Button>
-        {#if isErrorLevel && log.id}
-          <Button variant="outline" size="sm" class="gap-1.5" onclick={() => (exceptionOpen = true)}>
-            <TriangleAlert class="size-4 text-destructive-text" />
-            View exception details
-          </Button>
-        {/if}
-      </div>
+      {@render actions('border-t pt-3')}
 
       {#if crumbs.length > 0}
         <section class="border-t pt-3">

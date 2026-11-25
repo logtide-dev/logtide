@@ -225,11 +225,29 @@ describe('clickhouse query plans', () => {
     return { text, steps: readSteps(text) };
   }
 
-  /** The single logs read of the one query `run` sends. */
+  /**
+   * The key subquery of a two-phase page query (`(time, id) IN (...)`): the
+   * read that applies the filters. EXPLAIN of the outer query shows only the
+   * row read by key, not the plan of the IN set.
+   */
+  function keySubquery(query: string): string | null {
+    const marker = '(time, id) IN (';
+    const start = query.indexOf(marker);
+    if (start === -1) return null;
+    let depth = 1;
+    for (let i = start + marker.length; i < query.length; i++) {
+      if (query[i] === '(') depth++;
+      else if (query[i] === ')' && --depth === 0) return query.slice(start + marker.length, i);
+    }
+    return null;
+  }
+
+  /** The single logs read that applies the filters of the one query `run` sends. */
   async function logsReadOf(run: () => Promise<unknown>): Promise<ReadStep> {
     const calls = (await recorded(run)).filter((c) => !c.query.includes('count()'));
     expect(calls.length, 'one page query').toBe(1);
-    const { text, steps } = await explain(calls[0]);
+    const keys = keySubquery(calls[0].query);
+    const { text, steps } = await explain(keys ? { ...calls[0], query: keys } : calls[0]);
     const logs = steps.filter((s) => s.table === `${PLANS_CONFIG.database}.logs`);
     expect(logs.length, text).toBe(1);
     return logs[0];

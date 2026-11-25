@@ -164,7 +164,7 @@ describe('translateFacets', () => {
     expect(sql).toContain(`base AS (SELECT level, service, metadata FROM scanned WHERE ${shared.conditions.join(' AND ')} ORDER BY time DESC, id DESC LIMIT $${5 + shared.values.length})`);
     expect(r.parameters?.slice(0, 4)).toEqual([base.from, base.to, 2_000_000, base.projectId]);
     expect(r.parameters?.slice(4, 4 + shared.values.length)).toEqual(shared.values);
-    expect(r.parameters?.[4 + shared.values.length]).toBe(100_000);
+    expect(r.parameters?.[4 + shared.values.length]).toBe(20_000);
     expect(sql).toContain("CROSS JOIN LATERAL (VALUES (0, level), (1, metadata->>'hostname'), (2, ");
     expect(sql).toContain(", (4, '1')) AS kv(f, v)");
   });
