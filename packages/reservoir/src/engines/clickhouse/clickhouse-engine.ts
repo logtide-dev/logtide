@@ -2129,7 +2129,7 @@ export class ClickHouseEngine extends StorageEngine {
 
   /**
    * PREWHERE (project, window) and WHERE (metric name, organization) of the
-   * label queries. With resource scope an empty metric name means every metric.
+   * label queries. An empty metric name means every metric (either scope).
    */
   private metricLabelClauses(params: MetricLabelParams, queryParams: Record<string, unknown>): string {
     const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
@@ -2145,7 +2145,7 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     const conditions: string[] = [];
-    if (params.scope !== 'resource' || params.metricName !== '') {
+    if (params.metricName !== '') {
       conditions.push(`metric_name = {p_name:String}`);
       queryParams.p_name = params.metricName;
     }
