@@ -269,10 +269,10 @@
         <pre
           tabindex="0"
           aria-label="Log as JSON"
-          class="min-h-0 flex-1 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-xs leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}">{#each segments as seg, i (i)}<span class={jsonClass[seg.kind]}>{seg.text}</span>{/each}</pre>
+          class="scrollbar-thin min-h-0 flex-1 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-xs leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {wrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}">{#each segments as seg, i (i)}<span class={jsonClass[seg.kind]}>{seg.text}</span>{/each}</pre>
       </div>
     {:else}
-    <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+    <div class="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
       <section aria-label="Fields" class="space-y-1.5">
         <div class="flex items-center gap-2 text-sm">
           <span class="w-16 shrink-0 text-xs text-muted-foreground">Project</span>
@@ -345,7 +345,7 @@
       <section aria-labelledby="{uid}-message" class="space-y-1">
         <h3 id="{uid}-message" class="text-xs font-medium text-muted-foreground">Message</h3>
         <pre
-          class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 font-mono text-xs">{log.message}</pre>
+          class="scrollbar-thin max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 font-mono text-xs">{log.message}</pre>
       </section>
 
       <section aria-labelledby="{uid}-metadata" class="space-y-1">
@@ -397,7 +397,7 @@
             />
           </button>
           {#if breadcrumbsOpen}
-            <div class="mt-2 max-h-64 overflow-auto">
+            <div class="scrollbar-thin mt-2 max-h-64 overflow-auto">
               <BreadcrumbTimeline breadcrumbs={crumbs} eventTime={log.time} />
             </div>
           {/if}
