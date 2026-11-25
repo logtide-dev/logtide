@@ -319,6 +319,7 @@ function transformSumDataPoints(
     metricType: 'sum' as const,
     value: extractScalarValue(dp),
     isMonotonic: sum.isMonotonic,
+    temporality: toTemporality(sum.aggregationTemporality),
     serviceName,
     attributes: attributesToRecord(dp.attributes),
     resourceAttributes,
@@ -355,6 +356,7 @@ function transformHistogramDataPoints(
       metricName,
       metricType: 'histogram' as const,
       value,
+      temporality: toTemporality(histogram.aggregationTemporality),
       serviceName,
       attributes: attributesToRecord(dp.attributes),
       resourceAttributes,
@@ -379,6 +381,9 @@ function transformExpHistogramDataPoints(
       count: toNumber(dp.count),
       min: dp.min,
       max: dp.max,
+      // Explicit buckets derived from the exponential ones, so the histogram
+      // aggregations (hist_last / hist_sum) read every histogram the same way.
+      ...expToExplicitBuckets(dp),
       scale: dp.scale,
       zero_count: toNumber(dp.zeroCount),
       positive: dp.positive ? {
@@ -400,6 +405,7 @@ function transformExpHistogramDataPoints(
       metricName,
       metricType: 'exp_histogram' as const,
       value,
+      temporality: toTemporality(expHistogram.aggregationTemporality),
       serviceName,
       attributes: attributesToRecord(dp.attributes),
       resourceAttributes,
@@ -462,6 +468,72 @@ function extractScalarValue(dp: OtlpNumberDataPoint): number {
     return toNumber(dp.asInt);
   }
   return 0;
+}
+
+/**
+ * OTLP AggregationTemporality: 1 = DELTA, 2 = CUMULATIVE, 0 / missing = unspecified.
+ * Protobuf decoders may also hand back the enum name.
+ */
+export function toTemporality(v: unknown): 'cumulative' | 'delta' | undefined {
+  if (v === 1 || v === 'AGGREGATION_TEMPORALITY_DELTA') return 'delta';
+  if (v === 2 || v === 'AGGREGATION_TEMPORALITY_CUMULATIVE') return 'cumulative';
+  return undefined;
+}
+
+/**
+ * Convert an exponential histogram data point to explicit buckets
+ * (explicit_bounds + bucket_counts, OTLP explicit histogram layout: counts has
+ * bounds.length + 1 entries, bucket i holds (bounds[i-1], bounds[i]], the last
+ * one is +Inf).
+ *
+ * - base = 2^(2^-scale); positive bucket i (index offset + i) holds
+ *   (base^(offset+i), base^(offset+i+1)], so its upper bound is
+ *   base^(offset+i+1). The lower edge of the first positive bucket,
+ *   base^offset, is emitted as a bound too, so interpolation stays inside the
+ *   real bucket range.
+ * - zero_count lands in the bucket that contains 0: when there are zero or
+ *   negative values a bound 0 is prepended and the first bucket (-Inf, 0]
+ *   holds them.
+ * - Negative buckets are folded into that first bucket (for simplicity: the
+ *   histogram percentiles then read negative values as 0).
+ * - The trailing +Inf bucket is always empty.
+ */
+export function expToExplicitBuckets(
+  dp: Pick<OtlpExponentialHistogramDataPoint, 'scale' | 'zeroCount' | 'positive' | 'negative' | 'count'>
+): { explicit_bounds: number[]; bucket_counts: number[] } {
+  const scale = typeof dp.scale === 'number' && Number.isFinite(dp.scale) ? dp.scale : 0;
+  const offset = typeof dp.positive?.offset === 'number' ? dp.positive.offset : 0;
+  const positive = (dp.positive?.bucketCounts ?? []).map(toNumber);
+  const negativeTotal = (dp.negative?.bucketCounts ?? []).map(toNumber).reduce((a, b) => a + b, 0);
+  const zeroOrBelow = toNumber(dp.zeroCount) + negativeTotal;
+  // Drop empty trailing positive buckets: they add bounds and nothing else.
+  let last = positive.length - 1;
+  while (last >= 0 && positive[last] === 0) last--;
+  const used = positive.slice(0, last + 1);
+
+  if (used.length === 0) {
+    // Only zero / negative values (or nothing): one bucket (-Inf, 0] plus +Inf.
+    if (zeroOrBelow === 0 && toNumber(dp.count) === 0) return { explicit_bounds: [], bucket_counts: [0] };
+    return { explicit_bounds: [0], bucket_counts: [zeroOrBelow, 0] };
+  }
+
+  // 2^((index) * 2^-scale) keeps precision better than Math.pow(base, index).
+  const bound = (index: number) => Math.pow(2, index * Math.pow(2, -scale));
+  const bounds: number[] = [];
+  const counts: number[] = [];
+  if (zeroOrBelow > 0) {
+    bounds.push(0);
+    counts.push(zeroOrBelow);
+  }
+  // (prev, base^offset]: nothing (the zero / negative values sit below 0).
+  bounds.push(bound(offset));
+  counts.push(0);
+  for (let i = 0; i < used.length; i++) {
+    bounds.push(bound(offset + i + 1));
+    counts.push(used[i]);
+  }
+  counts.push(0); // +Inf
+  return { explicit_bounds: bounds, bucket_counts: counts };
 }
 
 /**
