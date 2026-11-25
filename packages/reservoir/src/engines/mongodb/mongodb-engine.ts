@@ -50,6 +50,7 @@ import type {
   MetricQueryResult,
   MetricAggregateParams,
   MetricAggregateResult,
+  MetricHistogramValue,
   MetricTimeBucket,
   MetricNamesParams,
   MetricNamesResult,
@@ -1535,15 +1536,38 @@ export class MongoDBEngine extends StorageEngine {
   ): Promise<MetricAggregateResult> {
     const counts = '$histogram_data.bucket_counts';
     const bounds = '$histogram_data.explicit_bounds';
+    const gridField = '$histogram_data.grid';
+    // A point stored on a canonical grid: a non-empty string id.
+    const isGrid: Document = {
+      $and: [{ $eq: [{ $type: gridField }, 'string'] }, { $ne: [gridField, ''] }],
+    };
+    // $cond keeps $size away from non-arrays (it raises on them).
     const valid: Document = {
       $expr: {
-        $and: [
-          { $isArray: counts },
-          { $isArray: bounds },
-          { $eq: [{ $size: counts }, { $add: [{ $size: bounds }, 1] }] },
+        $cond: [
+          { $not: [{ $isArray: counts }] },
+          false,
+          {
+            $cond: [
+              isGrid,
+              { $gt: [{ $size: counts }, 0] },
+              {
+                $cond: [
+                  { $isArray: bounds },
+                  { $eq: [{ $size: counts }, { $add: [{ $size: bounds }, 1] }] },
+                  false,
+                ],
+              },
+            ],
+          },
         ],
       },
     };
+    // Merge class parts: grid points carry their id and bounds [], the
+    // others no id and their explicit bounds; h_len splits grid classes by
+    // counts length.
+    const gridOf = { $cond: [isGrid, gridField, null] };
+    const boundsOf = { $cond: [isGrid, [], bounds] };
     const sumOf = { $ifNull: ['$histogram_data.sum', 0] };
     const countOf = { $ifNull: ['$histogram_data.count', 0] };
     // Group keys (bucket, label_i, attr_i) carried over from a previous $group.
@@ -1557,18 +1581,19 @@ export class MongoDBEngine extends StorageEngine {
       pipeline.push({
         $group: {
           _id: groupId,
-          h: { $last: { bounds, counts, sum: sumOf, count: countOf } },
+          h: { $last: { bounds: boundsOf, grid: gridOf, counts, sum: sumOf, count: countOf } },
         },
       });
     } else {
       pipeline.push(
-        // The merge class is the bounds array itself: only points with
-        // identical explicit_bounds are added together.
-        { $addFields: { h_bounds: bounds } },
+        // The merge class is (grid id, bounds, counts length): only points
+        // with identical explicit_bounds, or the same grid and length, are
+        // added together.
+        { $addFields: { h_grid: gridOf, h_bounds: boundsOf, h_len: { $size: counts } } },
         { $unwind: { path: counts, includeArrayIndex: 'h_idx' } },
         {
           $group: {
-            _id: { ...groupId, h_bounds: '$h_bounds', h_idx: '$h_idx' },
+            _id: { ...groupId, h_grid: '$h_grid', h_bounds: '$h_bounds', h_len: '$h_len', h_idx: '$h_idx' },
             v: { $sum: counts },
             // One element per point carries its sum and count.
             sum: { $sum: { $cond: [{ $eq: ['$h_idx', 0] }, sumOf, 0] } },
@@ -1579,19 +1604,20 @@ export class MongoDBEngine extends StorageEngine {
         { $sort: { '_id.h_idx': 1 } },
         {
           $group: {
-            _id: carried({ h_bounds: '$_id.h_bounds' }),
+            _id: carried({ h_grid: '$_id.h_grid', h_bounds: '$_id.h_bounds', h_len: '$_id.h_len' }),
             counts: { $push: '$v' },
             sum: { $sum: '$sum' },
             count: { $sum: '$count' },
             last_t: { $max: '$last_t' },
             bounds: { $first: '$_id.h_bounds' },
+            grid: { $first: '$_id.h_grid' },
           },
         },
         { $sort: { last_t: 1 } },
         {
           $group: {
             _id: carried(),
-            h: { $last: { bounds: '$bounds', counts: '$counts', sum: '$sum', count: '$count' } },
+            h: { $last: { bounds: '$bounds', grid: '$grid', counts: '$counts', sum: '$sum', count: '$count' } },
           },
         },
       );
@@ -1600,12 +1626,13 @@ export class MongoDBEngine extends StorageEngine {
 
     const rows = await col.aggregate(pipeline, { ...ctxOpts(), allowDiskUse: true }).toArray();
     const timeseries = rows.map((row) => {
-      const histogram = {
+      const histogram: MetricHistogramValue = {
         bounds: (row.h.bounds as unknown[]).map(toNumber),
         counts: (row.h.counts as unknown[]).map(toNumber),
         sum: toNumber(row.h.sum),
         count: toNumber(row.h.count),
       };
+      if (typeof row.h.grid === 'string' && row.h.grid !== '') histogram.grid = row.h.grid;
       const bucket: MetricTimeBucket = {
         bucket: row._id.bucket instanceof Date ? row._id.bucket : new Date(row._id.bucket),
         value: histogram.count,

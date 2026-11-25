@@ -262,19 +262,41 @@ function aggregatePoints(points: StoredMetricRecord[], aggregation: MetricAggreg
   }
 }
 
-/** The explicit buckets of a point, or undefined when it has none (ignored by hist_*). */
+/** The grid id of a point stored on a canonical grid, or undefined. */
+function histogramGrid(p: StoredMetricRecord): string | undefined {
+  const g = p.histogramData?.grid;
+  return typeof g === 'string' && g !== '' ? g : undefined;
+}
+
+/**
+ * The buckets of a point, or undefined when it has none (ignored by hist_*):
+ * a grid point (grid id + non-empty bucket_counts, bounds []) or explicit
+ * buckets (bucket_counts.length = explicit_bounds.length + 1).
+ */
 function explicitHistogram(p: StoredMetricRecord): MetricHistogramValue | undefined {
   const h = p.histogramData;
-  if (!h || !Array.isArray(h.explicit_bounds) || !Array.isArray(h.bucket_counts)) return undefined;
+  if (!h || !Array.isArray(h.bucket_counts)) return undefined;
+  const grid = histogramGrid(p);
+  if (grid !== undefined) {
+    if (h.bucket_counts.length === 0) return undefined;
+    return { bounds: [], grid, counts: h.bucket_counts, sum: h.sum ?? 0, count: h.count ?? 0 };
+  }
+  if (!Array.isArray(h.explicit_bounds)) return undefined;
   if (h.bucket_counts.length !== h.explicit_bounds.length + 1) return undefined;
   return { bounds: h.explicit_bounds, counts: h.bucket_counts, sum: h.sum ?? 0, count: h.count ?? 0 };
 }
 
+/** Same merge class: same grid id and counts length, or no grid and identical bounds. */
+function sameMergeClass(a: MetricHistogramValue, b: MetricHistogramValue): boolean {
+  if (a.grid !== undefined || b.grid !== undefined) return a.grid === b.grid && a.counts.length === b.counts.length;
+  return a.bounds.length === b.bounds.length && a.bounds.every((x, i) => x === b.bounds[i]);
+}
+
 /**
  * hist_last / hist_sum over the points of one bucket and group. The pick is
- * the latest point (by time); hist_sum adds up the points whose explicit
- * bounds are identical to the pick's (same length and same values in order:
- * the pick's merge class) and skips the rest.
+ * the latest point (by time); hist_sum adds up the points of the pick's merge
+ * class (identical explicit bounds, or the same grid id and counts length)
+ * and skips the rest.
  */
 function aggregateHistograms(points: StoredMetricRecord[], aggregation: 'hist_last' | 'hist_sum'): MetricHistogramValue {
   const hs = points
@@ -282,11 +304,10 @@ function aggregateHistograms(points: StoredMetricRecord[], aggregation: 'hist_la
     .sort((a, b) => a.time - b.time);
   const pick = hs[hs.length - 1].h;
   if (aggregation === 'hist_last') return structuredClone(pick);
-  const sameBounds = (bounds: number[]) =>
-    bounds.length === pick.bounds.length && bounds.every((b, i) => b === pick.bounds[i]);
-  const same = hs.filter((x) => sameBounds(x.h.bounds)).map((x) => x.h);
+  const same = hs.filter((x) => sameMergeClass(x.h, pick)).map((x) => x.h);
   return {
     bounds: [...pick.bounds],
+    ...(pick.grid !== undefined ? { grid: pick.grid } : {}),
     counts: pick.counts.map((_, i) => same.reduce((acc, h) => acc + h.counts[i], 0)),
     sum: same.reduce((acc, h) => acc + h.sum, 0),
     count: same.reduce((acc, h) => acc + h.count, 0),

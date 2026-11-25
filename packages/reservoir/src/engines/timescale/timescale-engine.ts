@@ -1684,9 +1684,11 @@ export class TimescaleEngine extends StorageEngine {
    * hist_last / hist_sum over histogram_data (explicit buckets). The pick of
    * a bucket and group is its latest valid point (DISTINCT ON); hist_sum adds
    * up bucket_counts element-wise (by ordinality), sum and count over the
-   * points whose explicit_bounds are identical to the pick's (jsonb equality:
-   * same length, same values in order). Points with other bounds form other
-   * merge classes and are skipped.
+   * points of the pick's merge class (h_key): identical explicit_bounds
+   * (jsonb equality: same length, same values in order) or, for points stored
+   * on a canonical grid (histogram_data.grid), the same grid id and
+   * bucket_counts length. Points of other classes are skipped. Grid classes
+   * return the grid id with empty bounds.
    */
   private async aggregateMetricHistograms(
     params: MetricAggregateParams,
@@ -1700,14 +1702,22 @@ export class TimescaleEngine extends StorageEngine {
     const s = this.schema;
     const keys = ['bucket', ...groupByColumns];
     const keyList = keys.join(', ');
+    const isGrid = `(jsonb_typeof(histogram_data->'grid') = 'string' AND histogram_data->>'grid' <> '')`;
+    // CASE keeps jsonb_array_length away from non-arrays (it raises on them).
     const valid = [
-      `jsonb_typeof(histogram_data->'explicit_bounds') = 'array'`,
       `jsonb_typeof(histogram_data->'bucket_counts') = 'array'`,
-      `jsonb_array_length(histogram_data->'bucket_counts') = jsonb_array_length(histogram_data->'explicit_bounds') + 1`,
+      `(CASE WHEN ${isGrid} THEN jsonb_array_length(histogram_data->'bucket_counts') > 0
+        WHEN jsonb_typeof(histogram_data->'explicit_bounds') = 'array'
+          THEN jsonb_array_length(histogram_data->'bucket_counts') = jsonb_array_length(histogram_data->'explicit_bounds') + 1
+        ELSE false END)`,
     ];
     const pts = `pts AS (
         SELECT time_bucket($1, time) AS bucket, ${[...selectExtra, ''].join(', ')}time,
-          histogram_data->'explicit_bounds' AS h_bounds,
+          CASE WHEN ${isGrid} THEN '[]'::jsonb ELSE histogram_data->'explicit_bounds' END AS h_bounds,
+          CASE WHEN ${isGrid} THEN histogram_data->>'grid' END AS h_grid,
+          CASE WHEN ${isGrid}
+            THEN jsonb_build_array('grid', histogram_data->'grid', jsonb_array_length(histogram_data->'bucket_counts'))
+            ELSE jsonb_build_array('bounds', histogram_data->'explicit_bounds') END AS h_key,
           histogram_data->'bucket_counts' AS h_counts,
           COALESCE((histogram_data->>'sum')::float8, 0) AS h_sum,
           COALESCE((histogram_data->>'count')::float8, 0) AS h_count
@@ -1715,18 +1725,18 @@ export class TimescaleEngine extends StorageEngine {
         WHERE ${[...conditions, ...valid].join(' AND ')}
       ),
       picked AS (
-        SELECT DISTINCT ON (${keyList}) ${keyList}, h_bounds, h_counts, h_sum, h_count
+        SELECT DISTINCT ON (${keyList}) ${keyList}, h_bounds, h_grid, h_key, h_counts, h_sum, h_count
         FROM pts
         ORDER BY ${keyList}, time DESC
       )`;
 
     const query = params.aggregation === 'hist_last'
       ? `WITH ${pts}
-         SELECT ${keyList}, h_bounds, h_counts, h_sum, h_count FROM picked ORDER BY bucket ASC`
+         SELECT ${keyList}, h_bounds, h_grid, h_counts, h_sum, h_count FROM picked ORDER BY bucket ASC`
       : `WITH ${pts},
       matched AS (
         SELECT p.* FROM pts p JOIN picked k USING (${keyList})
-        WHERE p.h_bounds = k.h_bounds
+        WHERE p.h_key = k.h_key
       ),
       elems AS (
         SELECT ${keyList}, e.ord, SUM(e.val::float8) AS v
@@ -1739,7 +1749,7 @@ export class TimescaleEngine extends StorageEngine {
       totals AS (
         SELECT ${keyList}, SUM(h_sum) AS h_sum, SUM(h_count) AS h_count FROM matched GROUP BY ${keyList}
       )
-      SELECT ${keyList}, k.h_bounds, c.h_counts, t.h_sum, t.h_count
+      SELECT ${keyList}, k.h_bounds, k.h_grid, c.h_counts, t.h_sum, t.h_count
       FROM picked k JOIN counts c USING (${keyList}) JOIN totals t USING (${keyList})
       ORDER BY bucket ASC`;
 
@@ -1751,6 +1761,7 @@ export class TimescaleEngine extends StorageEngine {
         sum: Number(row.h_sum),
         count: Number(row.h_count),
       };
+      if (typeof row.h_grid === 'string') histogram.grid = row.h_grid;
       const bucket: MetricTimeBucket = { bucket: row.bucket as Date, value: histogram.count, histogram };
       if (groupLabels.length > 0) {
         const labels: Record<string, string> = {};
