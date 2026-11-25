@@ -54,6 +54,7 @@ import type {
   LogTableConfig,
 } from '@logtide/shared';
 import { uuid } from '$lib/utils/uuid';
+import { defaultExplorerQuery } from '$lib/utils/metrics-explorer-url';
 
 import TimeSeriesPanel from './panels/TimeSeriesPanel.svelte';
 import SingleStatPanel from './panels/SingleStatPanel.svelte';
@@ -157,7 +158,7 @@ const registry: Record<CreatablePanelType, FrontendPanelDefinition> = {
       title: 'Metrics',
       source: 'metrics',
       timeRange: '24h',
-      query: { projectIds: null, queries: [], formulas: [], interval: 'auto', compareTo: 'none', display: 'lines' },
+      query: defaultExplorerQuery(),
     } as MetricsPanelConfig,
     component: MetricsPanel as Component<PanelComponentProps>,
     configForm: MetricsConfigForm as Component<ConfigFormProps>,
