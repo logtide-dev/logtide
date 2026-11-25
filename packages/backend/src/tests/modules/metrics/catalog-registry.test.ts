@@ -46,6 +46,37 @@ describe('metric catalog registry', () => {
     expect(out.find((r) => r.type === 'sum')!.isMonotonic).toBe(true);
   });
 
+  it('clamps future timestamps to now', () => {
+    const now = Date.parse('2026-11-01T12:00:00Z');
+    const out = distinctCatalogRows([rec({ time: new Date('2030-01-01T00:00:00Z') }), rec({ time: T0 })], now);
+    expect(out[0].lastSeen).toEqual(new Date(now));
+    expect(out[0].firstSeen).toEqual(T0);
+    const future = distinctCatalogRows([rec({ time: new Date('2030-01-01T00:00:00Z') })], now);
+    expect(future[0].firstSeen).toEqual(new Date(now));
+  });
+
+  it('does not write future last_seen_at to the database', async () => {
+    await registerMetricCatalog([rec({ time: new Date(Date.now() + 86400_000 * 365) })], projectId, 0);
+    const r = (await rows(projectId))[0];
+    expect(r.last_seen_at.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('upserts overlapping batches in opposite order concurrently without deadlock', async () => {
+    const names = Array.from({ length: 40 }, (_, i) => `m.${String(i).padStart(2, '0')}`);
+    const fwd = names.map((metricName) => rec({ metricName }));
+    const rev = [...fwd].reverse();
+    for (let i = 0; i < 5; i++) {
+      resetMetricCatalogThrottle();
+      const results = await Promise.all([
+        registerMetricCatalog(fwd, projectId, 0),
+        registerMetricCatalog(rev, projectId, 0),
+        registerMetricCatalog(rev, projectId, 0),
+      ]);
+      expect(results.every((n) => n === 40 || n === 0)).toBe(true);
+    }
+    expect(await rows(projectId)).toHaveLength(40);
+  });
+
   it('records temporality, first valid value of the batch wins', () => {
     const out = distinctCatalogRows([
       rec({ metricType: 'sum', temporality: 'bogus' }),

@@ -87,12 +87,14 @@ function validTime(t: Date): number | null {
 }
 
 /** Distinct (name, type) of a batch with the first non-empty unit/description and the time span. */
-export function distinctCatalogRows(records: readonly MetricLike[]): CatalogRow[] {
+export function distinctCatalogRows(records: readonly MetricLike[], clampMs: number = Date.now()): CatalogRow[] {
   const rows = new Map<string, CatalogRow>();
   for (const r of records) {
     if (typeof r.metricName !== 'string' || r.metricName === '' || r.metricName.length > MAX_NAME_LENGTH) continue;
-    const ms = validTime(r.time);
-    if (ms === null) continue;
+    const rawMs = validTime(r.time);
+    if (rawMs === null) continue;
+    // A sender with a skewed clock must not push first/last seen into the future.
+    const ms = Math.min(rawMs, clampMs);
     const key = `${r.metricName}\u0000${r.metricType}`;
     const unit = clip(r.unit, MAX_UNIT_LENGTH);
     const description = clip(r.description, MAX_DESCRIPTION_LENGTH);
@@ -120,7 +122,14 @@ export function distinctCatalogRows(records: readonly MetricLike[]): CatalogRow[
   return [...rows.values()];
 }
 
-async function upsertRows(rows: CatalogRow[], projectId: string): Promise<void> {
+/** Stable (name, type) order so concurrent batches lock rows in the same order (no deadlocks). */
+function byNameType(a: CatalogRow, b: CatalogRow): number {
+  if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+  return a.type < b.type ? -1 : a.type > b.type ? 1 : 0;
+}
+
+async function upsertRows(unsorted: CatalogRow[], projectId: string): Promise<void> {
+  const rows = [...unsorted].sort(byNameType);
   for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
     await db
       .insertInto('metric_catalog')
@@ -165,7 +174,7 @@ export async function registerMetricCatalog(
   const previous = new Map<string, Remembered | undefined>();
   try {
     if (!projectId || records.length === 0) return 0;
-    const rows = distinctCatalogRows(records);
+    const rows = distinctCatalogRows(records, Date.now());
     due = rows.filter((r) => {
       const last = remembered.get(keyOf(projectId, r.name, r.type));
       if (last === undefined || now - last.at >= CATALOG_THROTTLE_MS) return true;
