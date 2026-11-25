@@ -26,6 +26,15 @@
 	const hardwareHostId = $derived(
 		incident.source === 'hardware' ? (incident.sourceRef?.id ?? incident.hardwareHostId ?? null) : null
 	);
+	// Straight to the host page when the host name is known; when only the
+	// hardware host id is known, the /dashboard/hardware/<id> redirect resolves it.
+	const hardwareHref = $derived(
+		incident.sourceRef?.name
+			? `/dashboard/metrics/hosts/${encodeURIComponent(incident.sourceRef.name)}?tab=hardware`
+			: hardwareHostId
+				? `/dashboard/hardware/${encodeURIComponent(hardwareHostId)}`
+				: null
+	);
 	const tactics = $derived(incident.mitreTactics ?? []);
 	const techniques = $derived(incident.mitreTechniques ?? []);
 	const services = $derived(incident.affectedServices ?? []);
@@ -206,7 +215,7 @@
 						<p class="font-medium">{incident.sourceRef.name}</p>
 					{/if}
 					<p>
-						<a class="text-primary-text hover:underline" href={`/dashboard/hardware/${encodeURIComponent(hardwareHostId)}`}>
+						<a class="text-primary-text hover:underline" href={hardwareHref}>
 							View host
 						</a>
 					</p>

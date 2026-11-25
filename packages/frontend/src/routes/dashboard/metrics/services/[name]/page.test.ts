@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   getSources: vi.fn(),
   panelsData: vi.fn(),
   customizeSource: vi.fn(),
+  getCatalog: vi.fn(),
   getProjects: vi.fn(),
   getLogs: vi.fn(),
 }));
@@ -31,6 +32,7 @@ vi.mock('$lib/api/metrics-v2', () => ({
     getSources: h.getSources,
     panelsData: h.panelsData,
     customizeSource: h.customizeSource,
+    getCatalog: h.getCatalog,
   },
 }));
 vi.mock('$lib/api/projects', () => ({
@@ -91,6 +93,7 @@ beforeEach(() => {
     panels: Object.fromEntries(req.panels.map((p) => [p.id, { data: { series: [], queries: [] } }])),
   }));
   h.customizeSource.mockResolvedValue({ dashboardId: 'dash-3' });
+  h.getCatalog.mockResolvedValue({ metrics: [] });
   scopeStore.reset();
   authStore.setAuth({ id: 'user-1', email: 'a@b.c', name: 'Test User' }, 'token-1');
   organizationStore.clear();

@@ -2,6 +2,8 @@ import {
   SOURCE_STATUS_RANK,
   quoteFieldValue,
   type HostSourceSummary,
+  type MetricCatalogEntry,
+  type MetricTimeAggregation,
   type MetricAttrFilter,
   type MetricSourceKind,
   type ServiceSourceSummary,
@@ -202,4 +204,29 @@ export function buildSourceLogsHref(kind: MetricSourceKind, name: string, scope:
 /** Traces page filtered on a service. */
 export function buildServiceTracesHref(service: string, scope: Partial<Scope>): string {
   return scopedUrl('/dashboard/traces', scope, { service });
+}
+
+/**
+ * Time aggregation a source metric card charts by catalog type: rate for
+ * monotonic sums, p95 for histograms, avg for everything else (gauges,
+ * non-monotonic sums, unknown metrics).
+ */
+export function aggregationForCatalogEntry(
+  entry: Pick<MetricCatalogEntry, 'type' | 'isMonotonic'> | null | undefined,
+): MetricTimeAggregation {
+  if (!entry) return 'avg';
+  if (entry.type === 'histogram' || entry.type === 'exp_histogram') return 'p95';
+  if (entry.type === 'sum' && entry.isMonotonic === true) return 'rate';
+  return 'avg';
+}
+
+/** metric name -> aggregation, from a catalog listing. */
+export function aggregationsByMetric(entries: MetricCatalogEntry[]): Map<string, MetricTimeAggregation> {
+  const out = new Map<string, MetricTimeAggregation>();
+  for (const e of entries) {
+    const agg = aggregationForCatalogEntry(e);
+    // a name can exist with several types: a non-default choice wins over avg
+    if (!out.has(e.name) || out.get(e.name) === 'avg') out.set(e.name, agg);
+  }
+  return out;
 }
