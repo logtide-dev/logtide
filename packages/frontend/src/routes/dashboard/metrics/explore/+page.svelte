@@ -62,6 +62,16 @@
 
   // ---- query state (URL is the persistence) ----
   let base = $state<MetricExplorerQuery>(untrack(() => readExplorerQuery(page.url.searchParams)));
+  // An explicit project scope in the link (the `project` param, or for older
+  // links the projects stored in the query) decides the scope from the first
+  // run: the remembered scope never replaces it.
+  untrack(() => {
+    const url = new URL(page.url);
+    if (!url.searchParams.has('project') && base.projectIds && base.projectIds.length > 0) {
+      url.searchParams.set('project', base.projectIds.join(','));
+    }
+    if (url.searchParams.has('project')) scopeStore.applyUrl(url);
+  });
   const scopeIds = $derived(scopeProjectIds($scopeStore.projectIds));
   // The query's projects always follow the scope.
   const effective = $derived<MetricExplorerQuery>({ ...base, projectIds: scopeIds });
