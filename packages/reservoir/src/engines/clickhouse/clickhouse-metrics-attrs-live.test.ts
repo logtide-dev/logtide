@@ -16,6 +16,7 @@ const CH_URL = `http://default:@localhost:18123/${DATABASE}`;
 
 const PA = 'proj-ch18-a';
 const PB = 'proj-ch18-b';
+const PC = 'proj-ch18-c';
 const FROM = new Date('2026-03-01T00:00:00.000Z');
 const TO = new Date('2026-03-01T01:00:00.000Z');
 const at = (min: number) => new Date(FROM.getTime() + min * 60_000);
@@ -49,6 +50,9 @@ const POINTS: MetricRecord[] = [
   point(PB, 5, 'app.requests', 1, {}, { 'host.name': 'web-1', 'service.name': 'api' }),
   point(PB, 6, 'app.requests', 2, {}, { 'service.name': 'api' }),
   point(PA, 7, 'custom.x', 3, {}, { 'host.name': 7, 'os.type': '' }),
+  // JSON null counts as missing (own project, so the other cases stay unchanged)
+  point(PC, 8, 'null.metric', 5, { flag: null }, { 'host.name': null }),
+  point(PC, 9, 'null.metric', 7, { flag: 'on' }, { 'host.name': 'h' }),
   // Outside the window
   point(PA, 120, 'system.cpu.utilization', 99, {}, { 'host.name': 'web-3' }),
 ];
@@ -151,6 +155,61 @@ describe('clickhouse 1.8 aggregateMetrics with attributes (live)', () => {
 
   live('a 1d interval with filters reads raw rows, not the rollup', async (r) => {
     expect(await total(r, { interval: '1d', filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-2'] }] })).toBe(50);
+  });
+});
+
+describe('clickhouse 1.8 JSON null counts as missing (live)', () => {
+  const nul: Partial<MetricAggregateParams> = { projectId: PC, metricName: 'null.metric' };
+
+  live('exists / notExists / neq / nin', async (r) => {
+    expect(await total(r, { ...nul, filters: [{ scope: 'metric', key: 'flag', op: 'exists' }] })).toBe(7);
+    expect(await total(r, { ...nul, filters: [{ scope: 'metric', key: 'flag', op: 'notExists' }] })).toBe(5);
+    expect(await total(r, { ...nul, filters: [{ scope: 'resource', key: 'host.name', op: 'notExists' }] })).toBe(5);
+    expect(await total(r, { ...nul, filters: [{ scope: 'metric', key: 'flag', op: 'neq', values: ['on'] }] })).toBe(5);
+    expect(await total(r, { ...nul, filters: [{ scope: 'metric', key: 'flag', op: 'nin', values: ['on'] }] })).toBe(5);
+  });
+
+  live('group label is empty', async (r) => {
+    const res = await r.aggregateMetrics({ ...cpu, ...nul, groupByAttrs: [{ scope: 'resource', key: 'host.name' }] });
+    const byHost = Object.fromEntries(res.timeseries.map((b) => [b.labels?.['resource.host.name'], b.value]));
+    expect(byHost).toEqual({ '': 5, h: 7 });
+  });
+
+  live('no source and no label value for null', async (r) => {
+    const sources = await r.getMetricSources({ projectId: PC, from: FROM, to: TO, key: 'host.name' });
+    expect(sources.sources.map((s) => [s.value, s.pointCount])).toEqual([['h', 1]]);
+    const values = await r.getMetricLabelValues({ projectId: PC, metricName: '', scope: 'resource', from: FROM, to: TO }, 'host.name');
+    expect(values.values).toEqual(['h']);
+  });
+});
+
+describe('clickhouse 1.8 getMetricNames with filters (live)', () => {
+  const names = async (r: Reservoir, filters: MetricAggregateParams['filters']) =>
+    (await r.getMetricNames({ projectId: [PA, PB], from: FROM, to: TO, filters })).names.map((n) => n.name);
+
+  live('without filters lists every name in the window', async (r) => {
+    expect(await names(r, undefined)).toEqual(['app.requests', 'custom.x', 'system.cpu.utilization', 'system.memory.usage']);
+  });
+
+  live('only names with a point matching every filter', async (r) => {
+    expect(await names(r, [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] }])).toEqual([
+      'app.requests',
+      'system.cpu.utilization',
+    ]);
+    expect(await names(r, [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-2'] }])).toEqual([
+      'system.cpu.utilization',
+      'system.memory.usage',
+    ]);
+    expect(
+      await names(r, [
+        { scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] },
+        { scope: 'resource', key: 'service.name', op: 'eq', values: ['api'] },
+      ]),
+    ).toEqual(['app.requests']);
+    expect(await names(r, [{ scope: 'resource', key: 'host.name', op: 'notExists' }])).toEqual(['app.requests']);
+    expect(await names(r, [{ scope: 'metric', key: 'cpu', op: 'gte', values: ['1'] }])).toEqual(['system.cpu.utilization']);
+    // web-3 only has a point outside the window
+    expect(await names(r, [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-3'] }])).toEqual([]);
   });
 });
 

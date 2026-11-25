@@ -63,9 +63,9 @@ describe('compileMetricAttrFilters', () => {
 
   it('neq and nin keep points lacking the key', () => {
     const neq = compile({ scope: 'metric', key: 'state', op: 'neq', values: ['idle'] });
-    expect(neq.sql).toMatch(/^\(NOT \(JSONHas\(attributes, \{p_mfk0:String\}\)\) OR ifNull\(.* != \{p_mfv0:String\}, 1\)\)$/);
+    expect(neq.sql).toMatch(/^\(NOT \(\(JSONHas\(attributes, \{p_mfk0:String\}\) AND JSONExtractRaw\(attributes, \{p_mfk0:String\}\) != 'null'\)\) OR ifNull\(.* != \{p_mfv0:String\}, 1\)\)$/);
     const nin = compile({ scope: 'metric', key: 'state', op: 'nin', values: ['idle', 'wait'] });
-    expect(nin.sql).toMatch(/^\(NOT \(JSONHas\(attributes, \{p_mfk0:String\}\)\) OR ifNull\(.* NOT IN \{p_mfv0:Array\(String\)\}, 1\)\)$/);
+    expect(nin.sql).toMatch(/^\(NOT \(\(JSONHas\(attributes, \{p_mfk0:String\}\) AND JSONExtractRaw\(attributes, \{p_mfk0:String\}\) != 'null'\)\) OR ifNull\(.* NOT IN \{p_mfv0:Array\(String\)\}, 1\)\)$/);
     expect(nin.params.p_mfv0).toEqual(['idle', 'wait']);
   });
 
@@ -76,11 +76,11 @@ describe('compileMetricAttrFilters', () => {
     expect(compile({ scope: 'metric', key: 'state', op: 'nin', values: [] }).sql).toBe('1');
   });
 
-  it('exists and notExists use JSONHas', () => {
+  it('exists and notExists use JSONHas and treat JSON null as missing', () => {
     expect(compile({ scope: 'resource', key: 'k8s.pod.name', op: 'exists' }).sql).toBe(
-      'JSONHas(resource_attributes, {p_mfk0:String})',
+      "(JSONHas(resource_attributes, {p_mfk0:String}) AND JSONExtractRaw(resource_attributes, {p_mfk0:String}) != 'null')",
     );
-    expect(compile({ scope: 'metric', key: 'cpu', op: 'notExists' }).sql).toBe('NOT (JSONHas(attributes, {p_mfk0:String}))');
+    expect(compile({ scope: 'metric', key: 'cpu', op: 'notExists' }).sql).toBe("NOT ((JSONHas(attributes, {p_mfk0:String}) AND JSONExtractRaw(attributes, {p_mfk0:String}) != 'null'))");
   });
 
   it('gte and lt compare numerically with toFloat64OrNull', () => {
@@ -147,7 +147,7 @@ describe('ClickHouseEngine 1.8 metric attributes (unit)', () => {
       });
       const { query, query_params } = lastCall();
       const where = query.slice(query.indexOf(' WHERE '));
-      expect(where).toContain('= {p_mfv0:String}, 0) AND (NOT (JSONHas(attributes, {p_mfk1:String}))');
+      expect(where).toContain("= {p_mfv0:String}, 0) AND (NOT ((JSONHas(attributes, {p_mfk1:String}) AND JSONExtractRaw(attributes, {p_mfk1:String}) != 'null'))");
       expect(query_params).toMatchObject({ p_mfk0: 'host.name', p_mfv0: 'web-1', p_mfk1: 'state', p_mfv1: 'idle' });
     });
 
@@ -166,6 +166,34 @@ describe('ClickHouseEngine 1.8 metric attributes (unit)', () => {
       mockQuery.mockResolvedValueOnce(rows([]));
       await engine.aggregateMetrics({ ...base, interval: '1h', groupByAttrs: [], filters: [] });
       expect(lastCall().query).toContain('FROM metrics_hourly_rollup');
+    });
+  });
+
+  describe('getMetricNames with filters', () => {
+    it('keeps project and window in PREWHERE and ANDs filters into WHERE', async () => {
+      mockQuery.mockResolvedValueOnce(rows([{ metric_name: 'system.cpu.utilization', metric_type: 'gauge' }]));
+      const result = await engine.getMetricNames({
+        projectId: 'proj-1',
+        from: base.from,
+        to: base.to,
+        filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] }],
+      });
+      const { query, query_params } = lastCall();
+      expect(result.names).toEqual([{ name: 'system.cpu.utilization', type: 'gauge' }]);
+      expect(query).toContain(
+        'FROM metrics PREWHERE project_id IN {p_pids:Array(String)} AND time >= {p_from:DateTime64(3)} AND time <= {p_to:DateTime64(3)} WHERE ifNull(',
+      );
+      expect(query).toContain('JSONExtractRaw(resource_attributes, {p_mfk0:String})');
+      expect(query).toContain('GROUP BY metric_name, metric_type');
+      expect(query_params).toMatchObject({ p_mfk0: 'host.name', p_mfv0: 'web-1' });
+    });
+
+    it('has no WHERE without filters, organization or type', async () => {
+      mockQuery.mockResolvedValueOnce(rows([]));
+      await engine.getMetricNames({ projectId: 'proj-1' });
+      const { query } = lastCall();
+      expect(query).toContain('FROM metrics PREWHERE project_id IN {p_pids:Array(String)} GROUP BY');
+      expect(query).not.toContain(' WHERE ');
     });
   });
 
