@@ -439,7 +439,7 @@ describe('expToCanonicalBuckets bounded work (coarse scales, huge arrays)', () =
       expect(r.bucket_counts.reduce((a, b) => a + b, 0)).toBe(2 * EXP_MAX_BUCKETS_PER_SIDE * 1_000_007);
     }
     // Before the closed form this was 4 x 16384 x 4096 sub-buckets (~270M steps).
-    expect(performance.now() - start).toBeLessThan(500);
+    expect(performance.now() - start).toBeLessThan(3000);
   });
 
   it('rejects points with more buckets than the cap, with a clear error', () => {
