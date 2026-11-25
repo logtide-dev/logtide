@@ -926,6 +926,8 @@ describe('ClickHouseEngine metric operations (unit)', () => {
       const query = mockQuery.mock.calls[0][0].query as string;
       expect(query).toContain('SELECT DISTINCT arrayJoin(JSONExtractKeys(attributes)) AS key');
       expect(query).toContain('FROM metrics');
+      // Sorted before the limit, so the first N keys are deterministic.
+      expect(query).toMatch(/ORDER BY key ASC LIMIT \d+$/);
     });
 
     it('should include project and metric name filters', async () => {

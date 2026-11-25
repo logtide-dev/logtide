@@ -361,6 +361,14 @@ function describeMetricAttrConformance(ctx: ConformanceContext): void {
       );
     });
 
+    it('MT30 label keys are byte ordered before the limit', async () => {
+      // No client-side sort: the engine order itself is checked.
+      const raw = async (q: LabelQuery, limit: number) =>
+        (await ctx.subject().getMetricLabelKeys({ ...labelParams(q), limit })).keys ?? [];
+      expect(await raw({ projectId: BOTH, metricName: '', scope: 'metric' }, 3)).toEqual(['cpu.core', 'cpu.state', 'http']);
+      expect(await raw({ projectId: PROJECT_B, metricName: '', scope: 'resource' }, 2)).toEqual(['host', 'host.cpus']);
+    });
+
     it('MT18 label values as text, empty values dropped', async () => {
       expect(await values({ projectId: BOTH, metricName: '', scope: 'resource' }, 'host.name')).toEqual(['host-1', 'host-2']);
       expect(await values({ projectId: PROJECT_A, metricName: '', scope: 'resource', window: false }, 'host.name')).toEqual(['host-1', 'host-2', 'host-3']);

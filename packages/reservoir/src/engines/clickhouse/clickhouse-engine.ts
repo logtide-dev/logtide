@@ -2222,7 +2222,8 @@ export class ClickHouseEngine extends StorageEngine {
     const column = metricAttrColumn(params.scope ?? 'metric');
 
     const resultSet = await this.runQuery({
-      query: `SELECT DISTINCT arrayJoin(JSONExtractKeys(${column})) AS key FROM metrics ${clauses} LIMIT ${limit}`,
+      // Byte order, like the other engines: the first `limit` keys are the same everywhere.
+      query: `SELECT DISTINCT arrayJoin(JSONExtractKeys(${column})) AS key FROM metrics ${clauses} ORDER BY key ASC LIMIT ${limit}`,
       query_params: queryParams,
       format: 'JSONEachRow',
     });
