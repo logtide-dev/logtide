@@ -12,6 +12,7 @@
     thresholds     warning/critical percent for table meters (default CPU thresholds)
     showSpark      stat mode: draw a sparkline under the number (default true)
     onSeriesClick  called with the series when its name (or a line/bar) is clicked
+    threshold      optional raw value drawn as a dashed horizontal line (lines/area/bars)
 
   Comparison series (compareTo) are drawn dashed with the color of their
   current series, and excluded from stat/table/split cards.
@@ -42,6 +43,7 @@
     thresholds?: SignalThreshold;
     showSpark?: boolean;
     onSeriesClick?: (series: MetricSeries) => void;
+    threshold?: number | null;
   }
 
   let {
@@ -55,6 +57,7 @@
     thresholds,
     showSpark = true,
     onSeriesClick,
+    threshold = null,
   }: Props = $props();
 
   const allSeries = $derived(response?.series ?? []);
@@ -125,6 +128,7 @@
           {metricNames}
           {height}
           {onSeriesClick}
+          {threshold}
         />
         <div class="mt-2 overflow-x-auto">
           <table class="w-full text-sm" aria-label="Series legend">

@@ -199,3 +199,21 @@ describe('MetricSeriesView table', () => {
     expect(screen.getByRole('meter')).toHaveAttribute('aria-valuenow', '50');
   });
 });
+
+describe('MetricSeriesView threshold', () => {
+  it('draws the threshold as a dashed mark line on the first series and keeps it in the y range', () => {
+    render(MetricSeriesView, { response: resp(three), threshold: 95 });
+    const option = chart.setOption.mock.calls[0][0];
+    expect(option.series[0].markLine).toMatchObject({ data: [{ yAxis: 95 }], lineStyle: { type: 'dashed' } });
+    expect(option.series[1].markLine).toBeUndefined();
+    expect(option.yAxis[0].max({ max: 90 })).toBe(95);
+    expect(option.yAxis[0].max({ max: 120 })).toBe(120);
+  });
+
+  it('draws no mark line without a threshold', () => {
+    render(MetricSeriesView, { response: resp(three) });
+    const option = chart.setOption.mock.calls[0][0];
+    expect(option.series[0].markLine).toBeUndefined();
+    expect(option.yAxis[0].max).toBeUndefined();
+  });
+});
