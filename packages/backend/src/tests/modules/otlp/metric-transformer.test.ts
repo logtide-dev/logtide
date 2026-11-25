@@ -5,6 +5,7 @@ import {
   parseOtlpMetricsJson,
   parseOtlpMetricsProtobuf,
   EXP_CANONICAL_BOUNDS,
+  EXP_GRID_ID,
   type OtlpExportMetricsRequest,
 } from '../../../modules/otlp/metric-transformer.js';
 
@@ -206,7 +207,7 @@ describe('OTLP Metric Transformer', () => {
         max: 100.0,
         // Canonical grid (scale 2): zero_count + negatives fold into (-Inf, 0];
         // scale 3 indices 1, 2, 3 land in canonical buckets 0, 1, 1.
-        explicit_bounds: [...EXP_CANONICAL_BOUNDS],
+        grid: EXP_GRID_ID,
         bucket_counts: EXP_CANONICAL_BOUNDS.map((_, i) => (i === 0 ? 25 : i === 82 ? 10 : i === 83 ? 50 : 0)).concat(0),
         scale: 3,
         zero_count: 5,
