@@ -120,6 +120,25 @@ export interface FrontendPanelDefinition<
 }
 
 const registry: Record<PanelType, FrontendPanelDefinition> = {
+  // 1.8 placeholder: replaced by the metrics panel (explorer query model).
+  metrics: {
+    type: 'metrics',
+    label: 'Metrics',
+    description: 'Any metric query: several metrics, formulas, group by.',
+    icon: Activity,
+    defaultLayout: { x: 0, y: 0, w: 6, h: 4 },
+    defaultConfig: {
+      type: 'metrics',
+      title: 'Metrics',
+      source: 'metrics',
+      timeRange: '24h',
+      query: { projectIds: null, queries: [], formulas: [], interval: 'auto', compareTo: 'none', display: 'lines' },
+    } as PanelConfig,
+    component: MetricChartPanel as Component<PanelComponentProps>,
+    configForm: MetricChartConfigForm as Component<ConfigFormProps>,
+    minW: 4,
+    minH: 3,
+  },
   time_series: {
     type: 'time_series',
     label: 'Log volume',

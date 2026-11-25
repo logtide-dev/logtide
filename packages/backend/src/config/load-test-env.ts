@@ -15,6 +15,10 @@ export function loadTestEnv(envTestPath: string): void {
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && ENGINE_VARS.test(key)) explicit[key] = value;
   }
+  // TEST_DATABASE_URL points one run at its own database, so two suites in
+  // separate worktrees never truncate each other's tables.
+  const testDatabaseUrl = process.env.TEST_DATABASE_URL;
   dotenv.config({ path: envTestPath, override: true });
   Object.assign(process.env, explicit);
+  if (testDatabaseUrl) process.env.DATABASE_URL = testDatabaseUrl;
 }

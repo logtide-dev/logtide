@@ -317,7 +317,15 @@ export interface BackendPanelDefinition {
   readonly defaultLayout: Pick<PanelLayout, 'w' | 'h'>;
 }
 
+// 1.8 placeholder: the real metrics panel schema replaces this.
+const metricsPanelSchema = z.object({ type: z.literal('metrics') }).passthrough();
+
 export const panelRegistry: Record<PanelType, BackendPanelDefinition> = {
+  metrics: {
+    type: 'metrics',
+    schema: metricsPanelSchema as unknown as z.ZodType<PanelConfig>,
+    defaultLayout: { w: 6, h: 4 },
+  },
   time_series: {
     type: 'time_series',
     schema: timeSeriesSchema as unknown as z.ZodType<PanelConfig>,

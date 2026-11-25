@@ -80,6 +80,7 @@ export class CustomDashboardsService {
       isPersonal: row.is_personal,
       schemaVersion: migrated.schema_version,
       panels: migrated.panels,
+      variables: migrated.variables ?? [],
       createdAt: row.created_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     };

@@ -1601,7 +1601,16 @@ function buildBucketTimes(
 
 type AnyFetcher = PanelDataSource<PanelConfig, unknown>;
 
+// 1.8 placeholder: replaced by the metrics query fetcher (modules/metrics/query).
+const metricsPanelFetcher: AnyFetcher = {
+  type: 'metrics',
+  async fetchData() {
+    throw new Error('metrics panel data is not implemented yet');
+  },
+};
+
 const dataFetchers: Record<PanelType, AnyFetcher> = {
+  metrics: metricsPanelFetcher,
   time_series: timeSeriesFetcher as AnyFetcher,
   single_stat: singleStatFetcher as AnyFetcher,
   top_n_table: topNTableFetcher as AnyFetcher,
