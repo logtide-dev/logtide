@@ -1,239 +1,237 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
-import { chooseSelectOption } from '$lib/test-utils/select-field';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
+import type { HostSourceSummary, ServiceSourceSummary, SourceSignalValue } from '@logtide/shared';
 
 const h = vi.hoisted(() => ({
   goto: vi.fn(),
-  chartHandlers: [] as Array<[string, (p: unknown) => void]>,
+  getSources: vi.fn(),
   getProjects: vi.fn(),
-  getAvailability: vi.fn(),
-  api: {
-    getMetricNames: vi.fn(),
-    getLabelKeys: vi.fn(),
-    getLabelValues: vi.fn(),
-    getMetricData: vi.fn(),
-    aggregateMetrics: vi.fn(),
-    getOverview: vi.fn(),
-  },
 }));
 
 vi.mock('$app/navigation', () => ({ goto: h.goto }));
-vi.mock('echarts', () => ({
-  graphic: { LinearGradient: class {} },
-  init: vi.fn(() => ({
-    setOption: vi.fn(),
-    on: (name: string, fn: (p: unknown) => void) => h.chartHandlers.push([name, fn]),
-    resize: vi.fn(),
-    dispose: vi.fn(),
-    clear: vi.fn(),
-  })),
+vi.mock('$lib/components/app/ScopeBar.svelte', async () => ({
+  default: (await import('../../../test-stubs/ScopeBar.stub.svelte')).default,
 }));
+vi.mock('$lib/api/metrics-v2', () => ({ metricsV2API: { getSources: h.getSources } }));
 vi.mock('$lib/api/projects', () => ({
   ProjectsAPI: class {
     getProjects = h.getProjects;
-    getProjectDataAvailability = h.getAvailability;
   },
 }));
-vi.mock('$lib/api/metrics', () => ({
-  metricsAPI: h.api,
-  listDashboardsForPicker: vi.fn().mockResolvedValue([]),
-  addMetricPanelToDashboard: vi.fn(),
-}));
-vi.mock('$lib/stores/organization', async () => {
-  const { writable } = await import('svelte/store');
-  return { currentOrganization: writable({ id: 'org1', name: 'Org' }) };
+
+import Page from './+page.svelte';
+import { page } from '$app/state';
+import { authStore } from '$lib/stores/auth';
+import { organizationStore } from '$lib/stores/organization';
+import { scopeStore } from '$lib/stores/scope';
+
+const org = {
+  id: 'org-1',
+  name: 'Acme',
+  slug: 'acme',
+  ownerId: 'user-1',
+  role: 'owner' as const,
+  retentionDays: 90,
+  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+  updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+};
+
+const sig = (value: number | null, unit: string | null = '%'): SourceSignalValue => ({
+  value,
+  unit,
+  spark: value === null ? [] : [value, value + 1, value],
 });
 
-import { page } from '$app/state';
-import { scopeStore } from '$lib/stores/scope';
-import { metricsStore } from '$lib/stores/metrics';
-import MetricsPage from './+page.svelte';
+function host(name: string, status: HostSourceSummary['status'], cpu: number | null, extra: Partial<HostSourceSummary> = {}): HostSourceSummary {
+  return {
+    kind: 'host',
+    name,
+    projectIds: ['p1'],
+    lastSeen: new Date().toISOString(),
+    status,
+    statusReason: status === 'ok' ? null : `${status} reason`,
+    cpu: sig(cpu),
+    memory: sig(30),
+    disk: sig(40),
+    network: sig(2048, 'By/s'),
+    load: sig(0.5, '1'),
+    hardwareStatus: null,
+    hardwareHosts: [],
+    services: [],
+    os: null,
+    metricCount: 12,
+    ...extra,
+  };
+}
 
-globalThis.ResizeObserver ??= class {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-} as unknown as typeof ResizeObserver;
+function service(name: string, status: ServiceSourceSummary['status'], extra: Partial<ServiceSourceSummary> = {}): ServiceSourceSummary {
+  return {
+    kind: 'service',
+    name,
+    projectIds: ['p1'],
+    lastSeen: new Date().toISOString(),
+    status,
+    statusReason: null,
+    requestRate: sig(12, 'req/s'),
+    errorRate: sig(0.4),
+    p95: sig(180, 'ms'),
+    hosts: ['alpha'],
+    metricCount: 3,
+    hasTraces: true,
+    ...extra,
+  };
+}
 
-const flush = () => new Promise((r) => setTimeout(r, 20));
+const HOSTS = [host('alpha', 'ok', 20), host('bravo', 'critical', 97), host('charlie', 'warning', 88), host('delta', 'ok', 5)];
+const SERVICES = [service('api', 'ok'), service('checkout', 'warning')];
 
-function visit(search: string) {
+function names(section: HTMLElement): string[] {
+  return within(section)
+    .getAllByRole('link')
+    .map((a) => a.textContent?.trim() ?? '');
+}
+
+function setUrl(search = '') {
   (page as { url: URL }).url = new URL(`http://localhost/dashboard/metrics${search}`);
 }
 
-const overview = {
-  services: [
-    {
-      serviceName: 'a',
-      metrics: [
-        { metricName: 'http.server.request.duration', metricType: 'histogram', serviceName: 'a', latestValue: 1, avgValue: 1, minValue: 1, maxValue: 1, pointCount: 1 },
-      ],
-    },
-    {
-      serviceName: 'b',
-      metrics: [
-        { metricName: 'http.server.request.duration', metricType: 'histogram', serviceName: 'b', latestValue: 2, avgValue: 2, minValue: 2, maxValue: 2, pointCount: 1 },
-      ],
-    },
-  ],
-};
-
-const series = {
-  metricName: 'cpu',
-  metricType: 'gauge',
-  bucketSeconds: 300,
-  timeseries: [
-    { bucket: '2026-01-01T00:00:00Z', value: 1 },
-    { bucket: '2026-01-01T00:05:00Z', value: 2 },
-  ],
-};
-
 beforeEach(() => {
-  metricsStore.reset();
-  vi.clearAllMocks();
-  h.chartHandlers.length = 0;
-  scopeStore.set({ projectIds: ['p1'], range: { kind: 'preset', preset: '24h' } });
-  h.getProjects.mockResolvedValue({ projects: [{ id: 'p1', name: 'One' }, { id: 'p2', name: 'Two' }] });
-  h.getAvailability.mockResolvedValue({ logs: [], traces: [], metrics: ['p1', 'p2'] });
-  h.api.getMetricNames.mockResolvedValue([
-    { name: 'cpu', type: 'gauge' },
-    { name: 'http.server.request.duration', type: 'histogram' },
-  ]);
-  h.api.getLabelKeys.mockResolvedValue(['host']);
-  h.api.getLabelValues.mockResolvedValue([]);
-  h.api.getMetricData.mockResolvedValue({ metrics: [], total: 0, hasMore: false, limit: 100, offset: 0 });
-  h.api.aggregateMetrics.mockResolvedValue(series);
-  h.api.getOverview.mockResolvedValue(overview);
-  visit('');
+  Object.values(h).forEach((m) => m.mockReset());
+  setUrl();
+  h.getProjects.mockResolvedValue({ projects: [{ id: 'p1', name: 'Project One' }] });
+  h.getSources.mockResolvedValue({ hosts: HOSTS, services: SERVICES });
+  scopeStore.reset();
+  authStore.setAuth({ id: 'user-1', email: 'a@b.c', name: 'Test User' }, 'token-1');
+  organizationStore.clear();
+  organizationStore.setCurrentOrganization({ ...org });
 });
 
-describe('metrics page', () => {
-  it('scope time range change reloads timeseries once', async () => {
-    visit('?tab=explorer&metric=cpu');
-    render(MetricsPage);
-    await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalledTimes(1));
-    await flush();
-
-    scopeStore.setRange({ kind: 'preset', preset: '1h' });
-    await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalledTimes(2));
-    await flush();
-    expect(h.api.aggregateMetrics).toHaveBeenCalledTimes(2);
-    const last = h.api.aggregateMetrics.mock.calls[1][0];
-    expect(Date.parse(last.to) - Date.parse(last.from)).toBe(3600_000);
+describe('metrics sources page', () => {
+  it('asks the API for every project of the organization and groups hosts and services', async () => {
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    expect(screen.getByTestId('services-section')).toBeTruthy();
+    expect(h.getSources).toHaveBeenCalledTimes(1);
+    const args = h.getSources.mock.calls[0][0];
+    expect(args.organizationId).toBe('org-1');
+    expect(args.projectIds).toBeNull();
+    expect(typeof args.from).toBe('string');
+    expect(within(hosts).getByText('alpha')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /Hosts/ }).textContent).toContain('4');
   });
 
-  it('explorer state restored from url on load', async () => {
-    visit('?tab=explorer&metric=cpu&agg=rate&by=host&w=env%3Dprod&w=env%3Dstage&service=a&interval=5m');
-    render(MetricsPage);
-    await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalled());
-    const call = h.api.aggregateMetrics.mock.calls[0][0];
-    expect(call).toMatchObject({
-      metricName: 'cpu',
-      aggregation: 'rate',
-      groupBy: ['host'],
-      attributes: { env: ['prod', 'stage'] },
-      serviceName: 'a',
-      interval: '5m',
-      projectId: 'p1',
-    });
+  it('sorts worst status first, then by name', async () => {
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    expect(names(hosts)).toEqual(['bravo', 'charlie', 'alpha', 'delta']);
+    expect(names(screen.getByTestId('services-section'))).toEqual(['checkout', 'api']);
   });
 
-  it('service selection reaches aggregate request on the overview tab', async () => {
-    visit('?service=b');
-    render(MetricsPage);
-    await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalled());
-    await flush();
-    const services = h.api.aggregateMetrics.mock.calls.map(([arg]) => arg.serviceName);
-    expect(services.length).toBeGreaterThan(0);
-    expect(new Set(services)).toEqual(new Set(['b']));
+  it('sorts by a column header and reverses on a second click', async () => {
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    await fireEvent.click(within(hosts).getByRole('button', { name: 'CPU' }));
+    expect(names(hosts)).toEqual(['delta', 'alpha', 'charlie', 'bravo']);
+    await fireEvent.click(within(hosts).getByRole('button', { name: 'CPU' }));
+    expect(names(hosts)).toEqual(['bravo', 'charlie', 'alpha', 'delta']);
   });
 
-  it('service selection reaches aggregate request on the explorer tab', async () => {
-    visit('?tab=explorer&metric=cpu');
-    render(MetricsPage);
-    await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalledTimes(1));
-    await flush();
-    await chooseSelectOption(await screen.findByLabelText('Service'), 'b');
-    await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalledTimes(2));
-    expect(h.api.aggregateMetrics.mock.calls[1][0].serviceName).toBe('b');
+  it('keeps hosts without a value at the bottom', async () => {
+    h.getSources.mockResolvedValue({ hosts: [host('alpha', 'ok', 20), host('nodata', 'ok', null)], services: [] });
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    await fireEvent.click(within(hosts).getByRole('button', { name: 'CPU' }));
+    expect(names(hosts)).toEqual(['alpha', 'nodata']);
+    await fireEvent.click(within(hosts).getByRole('button', { name: 'CPU' }));
+    expect(names(hosts)).toEqual(['alpha', 'nodata']);
   });
 
-  it('service selection reaches aggregate request on the golden signals tab', async () => {
-    visit('?tab=golden&service=b');
-    render(MetricsPage);
-    await waitFor(() => expect(h.api.aggregateMetrics).toHaveBeenCalled());
-    await flush();
-    for (const [arg] of h.api.aggregateMetrics.mock.calls) expect(arg.serviceName).toBe('b');
+  it('shows the status reason of an unhealthy source', async () => {
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    expect(within(hosts).getByText('critical reason')).toBeTruthy();
   });
 
-  it('tab is read from and written to the url', async () => {
-    visit('?tab=golden');
-    render(MetricsPage);
-    const golden = await screen.findByRole('tab', { name: 'Golden signals' });
-    expect(golden.getAttribute('aria-selected')).toBe('true');
-
-    await fireEvent.click(screen.getByRole('tab', { name: 'Explorer' }));
-    await waitFor(() => expect(h.goto).toHaveBeenCalled());
-    const url = String(h.goto.mock.calls.at(-1)![0]);
-    expect(url).toContain('tab=explorer');
+  it('shows kind chips with counts and writes the kind to the URL', async () => {
+    render(Page);
+    await screen.findByTestId('hosts-section');
+    const group = screen.getByRole('group', { name: 'Kind' });
+    expect(within(group).getByRole('button', { name: /All\s*6/ })).toBeTruthy();
+    expect(within(group).getByRole('button', { name: /Hosts\s*4/ })).toBeTruthy();
+    await fireEvent.click(within(group).getByRole('button', { name: /Services\s*2/ }));
+    expect(h.goto).toHaveBeenCalledTimes(1);
+    expect(h.goto.mock.calls[0][0]).toBe('/dashboard/metrics?kind=service');
+    expect(h.goto.mock.calls[0][1]).toMatchObject({ replaceState: true });
   });
 
-  it('shows EmptyMetrics when no project has metrics', async () => {
-    h.getProjects.mockResolvedValue({ projects: [] });
-    render(MetricsPage);
-    expect(await screen.findByText('No metrics yet')).toBeInTheDocument();
+  it('shows only hosts for ?kind=host', async () => {
+    setUrl('?kind=host');
+    render(Page);
+    await screen.findByTestId('hosts-section');
+    expect(screen.queryByTestId('services-section')).toBeNull();
+    expect(within(screen.getByRole('group', { name: 'Kind' })).getByRole('button', { name: /Hosts/ }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('chart click with exemplar navigates to the trace', async () => {
-    h.api.getMetricData.mockResolvedValue({
-      metrics: [
-        {
-          id: 'm1',
-          time: '2026-01-01T00:05:30Z',
-          metricName: 'cpu',
-          metricType: 'gauge',
-          value: 2,
-          serviceName: 'a',
-          attributes: null,
-          resourceAttributes: null,
-          histogramData: null,
-          hasExemplars: true,
-          exemplars: [{ exemplarValue: 2, traceId: 't-1' }],
-        },
-      ],
-      total: 1,
-      hasMore: false,
-      limit: 100,
-      offset: 0,
-    });
-    visit('?tab=explorer&metric=cpu');
-    render(MetricsPage);
-    await waitFor(() => expect(h.chartHandlers.length).toBeGreaterThan(0));
-    await waitFor(() => expect(h.api.getMetricData).toHaveBeenCalled());
-    await flush();
-    h.goto.mockClear();
-
-    const click = h.chartHandlers.filter(([n]) => n === 'click').at(-1)![1];
-    click({ value: [Date.parse('2026-01-01T00:05:00Z'), 2] });
-    expect(h.goto).toHaveBeenCalledWith('/dashboard/traces/t-1?project=p1');
+  it('shows only services for ?kind=service', async () => {
+    setUrl('?kind=service');
+    render(Page);
+    await screen.findByTestId('services-section');
+    expect(screen.queryByTestId('hosts-section')).toBeNull();
   });
 
-  it('chart click without exemplar does not navigate', async () => {
-    visit('?tab=explorer&metric=cpu');
-    render(MetricsPage);
-    await waitFor(() => expect(h.chartHandlers.length).toBeGreaterThan(0));
-    await flush();
-    h.goto.mockClear();
-
-    const click = h.chartHandlers.filter(([n]) => n === 'click').at(-1)![1];
-    click({ value: [Date.parse('2026-01-01T00:05:00Z'), 2] });
-    expect(h.goto).not.toHaveBeenCalled();
+  it('filters by name', async () => {
+    render(Page);
+    await screen.findByTestId('hosts-section');
+    await fireEvent.input(screen.getByLabelText('Filter sources'), { target: { value: 'brav' } });
+    expect(names(screen.getByTestId('hosts-section'))).toEqual(['bravo']);
+    expect(screen.queryByTestId('services-section')).toBeNull();
   });
 
-  it('add to dashboard is disabled until a metric is selected', async () => {
-    visit('');
-    render(MetricsPage);
-    const button = await screen.findByRole('button', { name: 'Add to dashboard' });
-    expect(button).toBeDisabled();
+  it('shows a no results state when nothing matches', async () => {
+    render(Page);
+    await screen.findByTestId('hosts-section');
+    await fireEvent.input(screen.getByLabelText('Filter sources'), { target: { value: 'zzz' } });
+    expect(await screen.findByText('No sources match')).toBeTruthy();
+  });
+
+  it('links each row to its source page', async () => {
+    h.getSources.mockResolvedValue({ hosts: [host('web 1', 'ok', 10)], services: [service('api', 'ok')] });
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    expect(within(hosts).getByRole('link', { name: 'web 1' }).getAttribute('href')).toBe('/dashboard/metrics/hosts/web%201');
+    expect(within(screen.getByTestId('services-section')).getByRole('link', { name: 'api' }).getAttribute('href')).toBe(
+      '/dashboard/metrics/services/api',
+    );
+  });
+
+  it('shows setup links when there are no sources', async () => {
+    h.getSources.mockResolvedValue({ hosts: [], services: [] });
+    render(Page);
+    expect(await screen.findByText('No metrics yet')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Hardware agent docs' }).getAttribute('href')).toBe('https://logtide.dev/docs/hardware-health/');
+    expect(screen.getByRole('link', { name: 'OTLP docs' })).toBeTruthy();
+  });
+
+  it('shows an error state with a retry', async () => {
+    h.getSources.mockRejectedValueOnce(new Error('boom'));
+    render(Page);
+    expect(await screen.findByText('Could not load sources')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(h.getSources).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId('hosts-section')).toBeTruthy();
+  });
+
+  it('refreshes quietly while the tab is visible', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(Page);
+      await screen.findByTestId('hosts-section');
+      expect(h.getSources).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await waitFor(() => expect(h.getSources).toHaveBeenCalledTimes(2));
+      expect(screen.queryByText('Loading sources')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
