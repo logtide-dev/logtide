@@ -41,6 +41,22 @@ describe('KeyValueTable', () => {
     expect(key.className).toContain('[overflow-wrap:anywhere]');
   });
 
+  it('explains the row buttons with a tooltip on focus', async () => {
+    render(KeyValueTable, { data: { env: 'prod' }, onFilter: vi.fn(), onAddColumn: vi.fn() });
+    const cases: [string, string][] = [
+      ['Copy value', 'Copy value'],
+      ['Copy path', 'Copy field path (env)'],
+      ['Filter by env', 'Show only logs with this value'],
+      ['Exclude env', 'Hide logs with this value'],
+      ['Add env as column', 'Add as a column to the log list'],
+    ];
+    for (const [button, tip] of cases) {
+      await fireEvent.focus(screen.getByRole('button', { name: button }));
+      expect(await screen.findByText(tip)).toBeInTheDocument();
+      await fireEvent.blur(screen.getByRole('button', { name: button }));
+    }
+  });
+
   it('hides the per-field copy buttons with showCopy=false', () => {
     render(KeyValueTable, { data: { host: 'web-1' }, showCopy: false });
     expect(screen.queryByRole('button', { name: 'Copy value' })).toBeNull();

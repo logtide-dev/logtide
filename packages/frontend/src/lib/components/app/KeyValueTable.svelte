@@ -6,6 +6,7 @@
   import Columns3 from '@lucide/svelte/icons/columns-3';
   import { Button } from '$lib/components/ui/button';
   import CopyButton from './CopyButton.svelte';
+  import IconTip from './IconTip.svelte';
 
   interface Props {
     data: Record<string, unknown>;
@@ -130,39 +131,54 @@
       <td class="w-px whitespace-nowrap py-0.5 text-right">
         <span class="inline-flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           {#if showCopy}
-            <CopyButton value={copyText(value)} ariaLabel="Copy value" />
-            <CopyButton value={path} ariaLabel="Copy path" />
+            <CopyButton value={copyText(value)} ariaLabel="Copy value" tooltip="Copy value" />
+            <CopyButton value={path} ariaLabel="Copy path" tooltip="Copy field path ({path})" />
           {/if}
           {#if onFilter && !underArray}
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-8"
-              aria-label="Filter by {path}"
-              onclick={() => onFilter(path, value, false)}
-            >
-              <ListFilter />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-8"
-              aria-label="Exclude {path}"
-              onclick={() => onFilter(path, value, true)}
-            >
-              <Ban />
-            </Button>
+            <IconTip label="Show only logs with this value">
+              {#snippet trigger({ props })}
+                <Button
+                  {...props}
+                  variant="ghost"
+                  size="icon"
+                  class="size-8"
+                  aria-label="Filter by {path}"
+                  onclick={() => onFilter(path, value, false)}
+                >
+                  <ListFilter />
+                </Button>
+              {/snippet}
+            </IconTip>
+            <IconTip label="Hide logs with this value">
+              {#snippet trigger({ props })}
+                <Button
+                  {...props}
+                  variant="ghost"
+                  size="icon"
+                  class="size-8"
+                  aria-label="Exclude {path}"
+                  onclick={() => onFilter(path, value, true)}
+                >
+                  <Ban />
+                </Button>
+              {/snippet}
+            </IconTip>
           {/if}
           {#if onAddColumn && !underArray}
-            <Button
-              variant="ghost"
-              size="icon"
-              class="size-8"
-              aria-label="Add {path} as column"
-              onclick={() => onAddColumn(path)}
-            >
-              <Columns3 />
-            </Button>
+            <IconTip label="Add as a column to the log list">
+              {#snippet trigger({ props })}
+                <Button
+                  {...props}
+                  variant="ghost"
+                  size="icon"
+                  class="size-8"
+                  aria-label="Add {path} as column"
+                  onclick={() => onAddColumn(path)}
+                >
+                  <Columns3 />
+                </Button>
+              {/snippet}
+            </IconTip>
           {/if}
         </span>
       </td>
