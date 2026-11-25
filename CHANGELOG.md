@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.7.2] - 2026-11-25
+
+### Added
+
+- **Host resource metrics from the hardware agent** (`logtide/hw-agent` 1.1.0, released separately): a new `system` collector, on by default, sends CPU utilization per state, load average, memory and swap, filesystem usage, disk and network throughput and uptime as `system.*` metrics, so a host shows up in Metrics next to its `hw.*` health signals. Agents with an explicit `LOGTIDE_HW_COLLECTORS` list need `system` added. In Docker, mount the host root (`-v /:/host:ro`, a commented line in the compose file) for filesystem usage. The compose file already follows the `1` tag, so `docker compose pull` picks it up.
 
 ### Changed
 
