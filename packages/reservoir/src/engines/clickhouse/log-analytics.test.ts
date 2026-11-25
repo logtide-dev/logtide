@@ -10,7 +10,7 @@ import {
 import { decodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { ClickHouseQueryTranslator } from './query-translator.js';
 import { ClickHouseEngine } from './clickhouse-engine.js';
-import type { LogFacetField, LogFacetsParams, LogHistogramParams } from '../../core/types.js';
+import { GLOBAL_SCOPE, type LogFacetField, type LogFacetsParams, type LogHistogramParams } from '../../core/types.js';
 
 const at = (iso: string) => new Date(iso);
 const ms = (iso: string) => String(at(iso).getTime());
@@ -227,7 +227,7 @@ describe('clickhouse facets', () => {
     expect(query).toContain('lowerUTF8(message) LIKE {p_tq0:String}');
     expect(query).toContain('JSONExtractRaw(metadata, {p_mfk0:String})');
     expect(query).toContain('ORDER BY time DESC, id DESC LIMIT {p_sample:UInt64}');
-    expect(params).toMatchObject({ p_scan: 2_000_000, p_sample: 100_000 });
+    expect(params).toMatchObject({ p_scan: 2_000_000, p_sample: 20_000 });
   });
 
   it('facets read one capped branch per project and count the sample', () => {
@@ -237,9 +237,34 @@ describe('clickhouse facets', () => {
     const params = (native.parameters as Record<string, unknown>[])[0];
     expect(query).toContain('PREWHERE project_id = {p_fp0:String} AND');
     expect(query).toContain(' UNION ALL SELECT *, hostname FROM logs PREWHERE project_id = {p_fp1:String} AND');
-    expect(query).not.toContain('project_id IN');
+    // The ordered scans address one project each (an IN list gives no key order).
+    const keyScan = query.slice(query.indexOf('(time, id) IN ('));
+    expect(keyScan).not.toContain('project_id IN');
     expect(query).toContain("(1, toNullable('1'))");
-    expect(params).toMatchObject({ p_fp0: 'p1', p_fp1: 'p2', p_scan: 50, p_sample: 7 });
+    expect(params).toMatchObject({ p_fp0: 'p1', p_fp1: 'p2', p_fps: ['p1', 'p2'], p_scan: 50, p_sample: 7 });
+  });
+
+  it('facets pick sample keys first, then read the facet columns for those keys only', () => {
+    const translator = new ClickHouseQueryTranslator('logs');
+    const native = translator.translateFacets(
+      { ...facetBase, projectId: 'p1', level: 'error', fields: [{ builtin: 'level' }, { metadata: 'env' }] },
+      10,
+    );
+    const query = native.query as string;
+    expect(query).toContain(
+      'FROM (SELECT level, service, hostname, metadata FROM logs PREWHERE project_id IN {p_fps:Array(String)} AND time >= ',
+    );
+    expect(query).toContain('AND (time, id) IN (SELECT time, id FROM (SELECT *, hostname FROM logs PREWHERE project_id = {p_fp0:String}');
+    // Filters and the sample cap apply while picking keys.
+    expect(query).toMatch(/\) WHERE level = \{[^}]+\} ORDER BY time DESC, id DESC LIMIT \{p_sample:UInt64\}\)\)/);
+  });
+
+  it('global facets read rows without a project condition', () => {
+    const translator = new ClickHouseQueryTranslator('logs');
+    const native = translator.translateFacets({ ...facetBase, projectId: GLOBAL_SCOPE, fields: [{ builtin: 'level' }] }, 10);
+    const query = native.query as string;
+    expect(query).not.toContain('project_id');
+    expect(query).toContain('SELECT level, service, hostname, metadata FROM logs PREWHERE time >= ');
   });
 
   it('the engine maps rows to facets in request order', async () => {

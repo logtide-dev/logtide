@@ -139,14 +139,24 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
     const sortOrder = params.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const order = `ORDER BY time ${sortOrder}, id ${sortOrder}`;
 
-    let query = `SELECT * FROM ${this.tableName}${prewhereClause}${whereClause} ORDER BY time ${sortOrder}, id ${sortOrder} LIMIT {p_limit:UInt32}`;
+    // Two phases: pick the page's (time, id) keys reading only the key and
+    // filter columns, then read whole rows for those keys alone. A single
+    // `SELECT *` sorted with LIMIT materializes every column (metadata can be
+    // tens of KB per row) of each row it sorts, on ClickHouse versions
+    // without lazy materialization.
+    let keys = `SELECT time, id FROM ${this.tableName}${prewhereClause}${whereClause} ${order} LIMIT {p_limit:UInt32}`;
     queryParams.p_limit = limit + 1;
 
     if (offset > 0) {
-      query += ` OFFSET {p_offset:UInt32}`;
+      keys += ` OFFSET {p_offset:UInt32}`;
       queryParams.p_offset = offset;
     }
+
+    const query =
+      `SELECT * FROM ${this.tableName} PREWHERE ${[...prewhere, `(time, id) IN (${keys})`].join(' AND ')} ` +
+      `${order} LIMIT {p_limit:UInt32}`;
 
     return { query, parameters: [queryParams], metadata: { limit } };
   }
@@ -213,8 +223,19 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
       return `SELECT *, hostname FROM ${this.tableName} PREWHERE ${scope.join(' AND ')} ${order} LIMIT {p_scan:UInt64}`;
     });
     const scanned = branches.length === 1 ? branches[0] : branches.join(' UNION ALL ');
-    const sample =
-      `SELECT * FROM (${scanned})${filters.length > 0 ? ` WHERE ${filters.join(' AND ')}` : ''} ${order} LIMIT {p_sample:UInt64}`;
+    // Two phases: the sample's (time, id) keys come from the key and filter
+    // columns only (unused columns are pruned from the scan), then the facet
+    // columns are read for those keys alone. Sorting the scan with metadata
+    // attached materialized every scanned row's metadata (tens of KB each).
+    const sampleKeys =
+      `SELECT time, id FROM (${scanned})${filters.length > 0 ? ` WHERE ${filters.join(' AND ')}` : ''} ${order} LIMIT {p_sample:UInt64}`;
+    const rowScope = [...windowConds];
+    if (params.projectId !== GLOBAL_SCOPE) {
+      rowScope.unshift(`project_id IN {p_fps:Array(String)}`);
+      queryParams.p_fps = projects;
+    }
+    rowScope.push(`(time, id) IN (${sampleKeys})`);
+    const sample = `SELECT level, service, hostname, metadata FROM ${this.tableName} PREWHERE ${rowScope.join(' AND ')}`;
 
     const pairs = params.fields.map((field, i) => `(${i}, ${this.facetValueExpr(field, i, queryParams)})`);
     pairs.push(`(${params.fields.length}, toNullable('1'))`);

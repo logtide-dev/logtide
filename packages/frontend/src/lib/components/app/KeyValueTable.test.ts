@@ -20,6 +20,49 @@ describe('KeyValueTable', () => {
     expect(screen.getByText('true')).toBeInTheDocument();
   });
 
+  it('wraps keys between words, never inside one', () => {
+    const { container } = render(KeyValueTable, { data: { 'http.request_id': 'x', hostname: 'h' } });
+    const keys = [...container.querySelectorAll('td:first-child > span')];
+    expect(keys).toHaveLength(2);
+    for (const k of keys) expect(k.className).not.toContain('break-all');
+    // break opportunities after the separators only; the text itself is unchanged
+    expect(keys[0].textContent).toBe('http.request_id');
+    expect(keys[0].querySelectorAll('wbr')).toHaveLength(2);
+    expect(keys[1].querySelectorAll('wbr')).toHaveLength(0);
+  });
+
+  it('also wraps camelCase keys between words, and never widens the panel', () => {
+    const { container } = render(KeyValueTable, { data: { customerRenewalNotificationPreference: 'email' } });
+    const key = container.querySelector('td:first-child > span')!;
+    expect(key.textContent).toBe('customerRenewalNotificationPreference');
+    // customer|Renewal|Notification|Preference
+    expect(key.querySelectorAll('wbr')).toHaveLength(3);
+    // a single word longer than the column is cut instead of overflowing the table
+    expect(key.className).toContain('[overflow-wrap:anywhere]');
+  });
+
+  it('explains the row buttons with a tooltip on focus', async () => {
+    render(KeyValueTable, { data: { env: 'prod' }, onFilter: vi.fn(), onAddColumn: vi.fn() });
+    const cases: [string, string][] = [
+      ['Copy value', 'Copy value'],
+      ['Copy path', 'Copy field path (env)'],
+      ['Filter by env', 'Show only logs with this value'],
+      ['Exclude env', 'Hide logs with this value'],
+      ['Add env as column', 'Add as a column to the log list'],
+    ];
+    for (const [button, tip] of cases) {
+      await fireEvent.focus(screen.getByRole('button', { name: button }));
+      expect(await screen.findByText(tip)).toBeInTheDocument();
+      await fireEvent.blur(screen.getByRole('button', { name: button }));
+    }
+  });
+
+  it('hides the per-field copy buttons with showCopy=false', () => {
+    render(KeyValueTable, { data: { host: 'web-1' }, showCopy: false });
+    expect(screen.queryByRole('button', { name: 'Copy value' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy path' })).toBeNull();
+  });
+
   it('renders "No metadata" for empty data', () => {
     render(KeyValueTable, { data: {} });
     expect(screen.getByText('No metadata')).toBeInTheDocument();

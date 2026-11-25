@@ -247,10 +247,53 @@ describe('LogContextDialog', () => {
     selectedDetails.dispatchEvent(new Event('toggle'));
     await tick();
     expect(within(selectedDetails).getByText('hostname')).toBeInTheDocument();
-    // KeyValueTable's copy buttons replace the old icon-only copy button, and it offers no filter actions
-    expect(within(selectedDetails).getAllByRole('button', { name: 'Copy value' }).length).toBeGreaterThan(0);
+    // one copy action per row (the whole log as JSON), so the table has no per-field copy buttons
+    expect(within(selectedDetails).queryByRole('button', { name: 'Copy value' })).toBeNull();
+    expect(within(selectedDetails).queryByRole('button', { name: 'Copy path' })).toBeNull();
     expect(within(selectedDetails).queryByRole('button', { name: /^Filter/ })).toBeNull();
     expect(within(dialog).queryByTitle('Copy metadata')).toBeNull();
+  });
+
+  it('offers a single copy button per row', async () => {
+    echo();
+    setup();
+    await screen.findByText('before 0');
+    const dialog = screen.getByRole('dialog');
+    const copies = within(dialog).getAllByRole('button', { name: 'Copy log as JSON' });
+    // 25 before + selected + 25 after
+    expect(copies).toHaveLength(51);
+    expect(within(dialog).queryByRole('button', { name: 'Copy value' })).toBeNull();
+  });
+
+  it('shows a row as highlighted JSON on demand', async () => {
+    echo();
+    setup();
+    await screen.findByText('before 0');
+    const dialog = screen.getByRole('dialog');
+    const details = within(dialog).getAllByTestId('row-json')[0] as HTMLDetailsElement;
+    expect(within(details).queryByLabelText('Log as JSON')).toBeNull();
+    details.open = true;
+    details.dispatchEvent(new Event('toggle'));
+    await tick();
+    const pre = within(details).getByLabelText('Log as JSON');
+    expect(pre.textContent).toContain('"id": "before-0"');
+    expect(pre.querySelectorAll('span').length).toBeGreaterThan(3);
+  });
+
+  it('scrolls the selected log into view once, after the rows render', async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    echo();
+    setup();
+    await screen.findByText('before 0');
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center' });
+    expect(scrollIntoView.mock.instances[0]).toBe(screen.getByTestId('selected-log'));
+    // loading more rows keeps the reader where they are
+    await fireEvent.click(screen.getByRole('button', { name: /Load 25 earlier/ }));
+    await screen.findByText('before 49');
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
 
   it('shows the error message', async () => {
