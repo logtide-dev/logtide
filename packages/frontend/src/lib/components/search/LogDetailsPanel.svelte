@@ -4,6 +4,7 @@
   import Button from '$lib/components/ui/button/button.svelte';
   import KeyValueTable from '$lib/components/app/KeyValueTable.svelte';
   import CopyButton from '$lib/components/app/CopyButton.svelte';
+  import IconTip from '$lib/components/app/IconTip.svelte';
   import SeverityBadge from '$lib/components/app/SeverityBadge.svelte';
   import IdentifierBadge from '$lib/components/IdentifierBadge.svelte';
   import BreadcrumbTimeline from '$lib/components/BreadcrumbTimeline.svelte';
@@ -315,27 +316,35 @@
               {/if}
             </span>
             <span class="flex shrink-0 items-center">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-7"
-                aria-label="Filter by {chip.key} {chip.value}"
-                title="Filter"
-                onclick={() => onFilter(chip.key, chip.value, false)}
-              >
-                <ListFilter class="size-3.5" />
-              </Button>
+              <IconTip label="Show only logs with this {chip.label.toLowerCase()}">
+                {#snippet trigger({ props })}
+                  <Button
+                    {...props}
+                    variant="ghost"
+                    size="icon"
+                    class="size-7"
+                    aria-label="Filter by {chip.key} {chip.value}"
+                    onclick={() => onFilter(chip.key, chip.value, false)}
+                  >
+                    <ListFilter class="size-3.5" />
+                  </Button>
+                {/snippet}
+              </IconTip>
               {#if chip.exclude}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="size-7"
-                  aria-label="Exclude {chip.key} {chip.value}"
-                  title="Exclude"
-                  onclick={() => onFilter(chip.key, chip.value, true)}
-                >
-                  <Ban class="size-3.5" />
-                </Button>
+                <IconTip label="Hide logs with this {chip.label.toLowerCase()}">
+                  {#snippet trigger({ props })}
+                    <Button
+                      {...props}
+                      variant="ghost"
+                      size="icon"
+                      class="size-7"
+                      aria-label="Exclude {chip.key} {chip.value}"
+                      onclick={() => onFilter(chip.key, chip.value, true)}
+                    >
+                      <Ban class="size-3.5" />
+                    </Button>
+                  {/snippet}
+                </IconTip>
               {/if}
             </span>
           </div>
