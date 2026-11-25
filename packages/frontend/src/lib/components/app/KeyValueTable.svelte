@@ -11,9 +11,11 @@
     data: Record<string, unknown>;
     onFilter?: (path: string, value: unknown, negate: boolean) => void;
     onAddColumn?: (path: string) => void;
+    /** Per-field copy value / copy path buttons. Off where the caller offers a single copy action. */
+    showCopy?: boolean;
   }
 
-  let { data, onFilter, onAddColumn }: Props = $props();
+  let { data, onFilter, onAddColumn, showCopy = true }: Props = $props();
 
   /** Objects nested deeper than this render as a JSON string leaf. */
   const MAX_DEPTH = 8;
@@ -77,6 +79,11 @@
     return String(value);
   }
 
+  /** Splits a key after ".", "_" and "-" so a narrow column wraps between words, never inside one. */
+  function keyParts(key: string): string[] {
+    return key.split(/(?<=[._-])/);
+  }
+
   const rows = $derived(entriesOf(data ?? {}));
 </script>
 
@@ -106,7 +113,7 @@
   {:else}
     <tr class="group border-b border-border/60 align-top last:border-0">
       <td class="py-1 pr-3 font-mono text-xs text-muted-foreground" style="padding-left: {depth * 16 + 18}px">
-        <span class="break-all">{key}</span>
+        <span class="break-words">{#each keyParts(key) as part, i (i)}{#if i > 0}<wbr />{/if}{part}{/each}</span>
       </td>
       <td class="py-1 pr-2 font-mono text-xs">
         {#if value === null}
@@ -117,8 +124,10 @@
       </td>
       <td class="w-px whitespace-nowrap py-0.5 text-right">
         <span class="inline-flex items-center opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
-          <CopyButton value={copyText(value)} ariaLabel="Copy value" />
-          <CopyButton value={path} ariaLabel="Copy path" />
+          {#if showCopy}
+            <CopyButton value={copyText(value)} ariaLabel="Copy value" />
+            <CopyButton value={path} ariaLabel="Copy path" />
+          {/if}
           {#if onFilter && !underArray}
             <Button
               variant="ghost"

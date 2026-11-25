@@ -20,6 +20,23 @@ describe('KeyValueTable', () => {
     expect(screen.getByText('true')).toBeInTheDocument();
   });
 
+  it('wraps keys between words, never inside one', () => {
+    const { container } = render(KeyValueTable, { data: { 'http.request_id': 'x', hostname: 'h' } });
+    const keys = [...container.querySelectorAll('td:first-child > span')];
+    expect(keys).toHaveLength(2);
+    for (const k of keys) expect(k.className).not.toContain('break-all');
+    // break opportunities after the separators only; the text itself is unchanged
+    expect(keys[0].textContent).toBe('http.request_id');
+    expect(keys[0].querySelectorAll('wbr')).toHaveLength(2);
+    expect(keys[1].querySelectorAll('wbr')).toHaveLength(0);
+  });
+
+  it('hides the per-field copy buttons with showCopy=false', () => {
+    render(KeyValueTable, { data: { host: 'web-1' }, showCopy: false });
+    expect(screen.queryByRole('button', { name: 'Copy value' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Copy path' })).toBeNull();
+  });
+
   it('renders "No metadata" for empty data', () => {
     render(KeyValueTable, { data: {} });
     expect(screen.getByText('No metadata')).toBeInTheDocument();
