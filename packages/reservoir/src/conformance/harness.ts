@@ -45,6 +45,7 @@ export type ConformanceSubject = Pick<
   | 'ingestMetrics'
   | 'queryMetrics'
   | 'aggregateMetrics'
+  | 'getMetricNames'
   | 'getMetricLabelKeys'
   | 'getMetricLabelValues'
   | 'getMetricSources'

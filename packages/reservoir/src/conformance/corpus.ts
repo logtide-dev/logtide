@@ -389,14 +389,15 @@ const host2 = { 'host.name': 'host-2', 'service.name': HOST_AGENT_SERVICE, 'host
 // 2 hosts x 2 services across PROJECT_A and PROJECT_B, plus the edge cases:
 // a point without host.name (MH6, MQ5), an empty host.name (MQ6), a nested
 // `host: { name }` that is not the literal key (MQ7), a point outside WINDOW
-// (MQ8), and `cpu.core` as a number, a numeric string, a word and a boolean.
+// (MQ8), `cpu.core` as a number, a numeric string, a word and a boolean, and
+// a JSON null `cpu.state` (MH6), which counts as a missing key.
 const SOURCE_ROWS: SourceRow[] = [
   { id: 'MH1', t: 1, project: PROJECT_A, metric: METRIC_CPU, value: 20, resource: host1, attributes: { 'cpu.state': 'user', 'cpu.core': 0 } },
   { id: 'MH2', t: 2, project: PROJECT_A, metric: METRIC_CPU, value: 40, resource: host2, attributes: { 'cpu.state': 'user', 'cpu.core': 1 } },
   { id: 'MH3', t: 3, project: PROJECT_A, metric: METRIC_CPU, value: 10, resource: host1, attributes: { 'cpu.state': 'system', 'cpu.core': '2' } },
   { id: 'MH4', t: 16, project: PROJECT_A, metric: METRIC_CPU, value: 30, resource: host1, attributes: { 'cpu.state': 'user', 'cpu.core': 4 } },
   { id: 'MH5', t: 4, project: PROJECT_B, metric: METRIC_CPU, value: 50, resource: host2, attributes: { 'cpu.state': 'idle', 'cpu.core': 'high' } },
-  { id: 'MH6', t: 5, project: PROJECT_A, metric: METRIC_CPU, value: 60, resource: { 'service.name': HOST_AGENT_SERVICE }, attributes: { 'cpu.core': true } },
+  { id: 'MH6', t: 5, project: PROJECT_A, metric: METRIC_CPU, value: 60, resource: { 'service.name': HOST_AGENT_SERVICE }, attributes: { 'cpu.core': true, 'cpu.state': null } },
   { id: 'MQ1', t: 1, project: PROJECT_A, metric: METRIC_QUEUE, value: 5, resource: { 'host.name': 'host-1', 'service.name': 'checkout' }, attributes: { 'queue.name': 'orders' } },
   { id: 'MQ2', t: 2, project: PROJECT_A, metric: METRIC_QUEUE, value: 7, resource: { 'host.name': 'host-2', 'service.name': 'checkout' }, attributes: { 'queue.name': 'orders' } },
   { id: 'MQ3', t: 3, project: PROJECT_B, metric: METRIC_QUEUE, value: 2, resource: { 'host.name': 'host-1', 'service.name': 'cart' }, attributes: { 'queue.name': 'carts' } },
@@ -405,14 +406,11 @@ const SOURCE_ROWS: SourceRow[] = [
   { id: 'MQ6', t: 7, project: PROJECT_A, metric: METRIC_QUEUE, value: 1, resource: { 'host.name': '', 'service.name': 'cart' }, attributes: { 'queue.name': 'carts' } },
   { id: 'MQ7', t: 8, project: PROJECT_B, metric: METRIC_QUEUE, value: 3, resource: { host: { name: 'nested-host' }, 'service.name': 'cart' }, attributes: { 'queue.name': 'carts' } },
   { id: 'MQ8', t: -60, project: PROJECT_A, metric: METRIC_QUEUE, value: 100, resource: { 'host.name': 'host-3', 'service.name': 'checkout' }, attributes: { 'queue.name': 'orders' } },
-  // 22 instances on one host, inserted in reverse order: co-keys keep the first 20 sorted.
-  ...Array.from({ length: 22 }, (_, i): SourceRow => {
-    const n = String(22 - i).padStart(2, '0');
-    return {
-      id: `MJ${n}`, t: 10, project: PROJECT_C, metric: METRIC_JOBS, value: 1,
-      resource: { 'host.name': 'host-9', 'service.name': 'jobs', 'service.instance.id': `i-${n}` }, attributes: {},
-    };
-  }),
+  // One host, instances out of order and repeated: co-keys are distinct and sorted.
+  ...['i-10', 'i-02', 'i-01', 'i-02'].map((instance, i): SourceRow => ({
+    id: `MJ${i + 1}`, t: 10, project: PROJECT_C, metric: METRIC_JOBS, value: 1,
+    resource: { 'host.name': 'host-9', 'service.name': 'jobs', 'service.instance.id': instance }, attributes: {},
+  })),
 ];
 
 const serviceOf = (row: SourceRow): string => {

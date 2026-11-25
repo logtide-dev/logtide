@@ -49,6 +49,9 @@ import {
   type MetricAggregateResult,
   type MetricAggregationFn,
   type MetricLabelParams,
+  type MetricNamesParams,
+  type MetricNamesResult,
+  type MetricType,
   type MetricLabelResult,
   type MetricQueryParams,
   type MetricQueryResult,
@@ -160,7 +163,7 @@ function hostnameOf(log: LogRecord): string | undefined {
   return typeof fromMetadata === 'string' ? fromMetadata : log.hostname;
 }
 
-/** A metric label: the literal attribute key (dots included), string values only. */
+/** A legacy `attributes` filter label: the literal attribute key (dots included), string values only. */
 function metricLabel(metric: MetricRecord, key: string): string | undefined {
   const attributes = metric.attributes;
   if (!attributes || !Object.prototype.hasOwnProperty.call(attributes, key)) return undefined;
@@ -175,7 +178,9 @@ function metricLabel(metric: MetricRecord, key: string): string | undefined {
 function metricAttrValue(metric: MetricRecord, ref: MetricAttrRef): { present: boolean; value: unknown } {
   const map = ref.scope === 'resource' ? metric.resourceAttributes : metric.attributes;
   if (!map || typeof map !== 'object' || !Object.prototype.hasOwnProperty.call(map, ref.key)) return { present: false, value: undefined };
-  return { present: true, value: map[ref.key] };
+  const value = map[ref.key];
+  // A JSON null counts as a missing key.
+  return value === null || value === undefined ? { present: false, value: undefined } : { present: true, value };
 }
 
 /** Text form: strings as they are, numbers and booleans as JSON scalars (200, true), anything else none. */
@@ -722,10 +727,18 @@ export class ReferenceEngine {
       && (params.filters ?? []).every((f) => metricAttrFilterMatches(m, f)));
   }
 
-  /** Label discovery scope: with resource scope an empty metric name means every metric. */
+  /** Label discovery: an empty metric name means every metric (both scopes). */
   private matchLabelMetrics(params: MetricLabelParams): StoredMetricRecord[] {
-    const everyMetric = params.scope === 'resource' && params.metricName === '';
-    return this.matchMetrics({ ...params, metricName: everyMetric ? undefined : params.metricName });
+    return this.matchMetrics({ ...params, metricName: params.metricName === '' ? undefined : params.metricName });
+  }
+
+  async getMetricNames(params: MetricNamesParams): Promise<MetricNamesResult> {
+    const seen = new Map<string, { name: string; type: MetricType }>();
+    for (const m of this.matchMetrics(params)) {
+      seen.set(JSON.stringify([m.metricName, m.metricType]), { name: m.metricName, type: m.metricType });
+    }
+    const names = [...seen.values()].sort((a, b) => compareByteOrder(a.name, b.name) || compareByteOrder(a.type, b.type));
+    return { names: names.slice(0, params.limit ?? 1000) };
   }
 
   async queryMetrics(params: MetricQueryParams): Promise<MetricQueryResult> {
@@ -744,7 +757,7 @@ export class ReferenceEngine {
     for (const m of this.matchMetrics(params)) {
       const bucket = Math.floor(m.time.getTime() / bucketMs) * bucketMs;
       const entries: [string, string][] = [
-        ...groupBy.map((key): [string, string] => [key, metricLabel(m, key) ?? '']),
+        ...groupBy.map((key): [string, string] => [key, metricAttrText(m, { scope: 'metric', key }) ?? '']),
         ...attrRefs.map((ref): [string, string] => [metricAttrLabel(ref), metricAttrText(m, ref) ?? '']),
       ];
       const labels = Object.fromEntries(entries);
@@ -776,8 +789,7 @@ export class ReferenceEngine {
   async getMetricLabelValues(params: MetricLabelParams, labelKey: string): Promise<MetricLabelResult> {
     const values = new Set<string>();
     for (const m of this.matchLabelMetrics(params)) {
-      // Resource values are the text form; metric labels keep the legacy string-only rule.
-      const value = params.scope === 'resource' ? metricAttrText(m, { scope: 'resource', key: labelKey }) : metricLabel(m, labelKey);
+      const value = metricAttrText(m, { scope: params.scope ?? 'metric', key: labelKey });
       if (value !== undefined && value !== '') values.add(value);
     }
     const sorted = [...values].sort(compareByteOrder);
