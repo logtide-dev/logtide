@@ -42,6 +42,12 @@ export interface MetricAlertConfig {
   /** Consecutive breaching evaluations before the instance fires (1..10). */
   forEvaluations: number;
   severity: Severity;
+  /**
+   * Unit of the watched item when the rule was saved (display only: the UI
+   * shows the threshold in display units, e.g. percent for 0-1 ratios). The
+   * evaluation always compares raw values.
+   */
+  unit?: string | null;
 }
 
 /** Payload of one metric alert instance in notifications and webhooks. */

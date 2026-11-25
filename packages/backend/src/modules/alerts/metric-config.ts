@@ -27,6 +27,7 @@ export const metricAlertConfigSchema = z.object({
   window: z.enum(METRIC_ALERT_WINDOWS as unknown as [string, ...string[]]),
   forEvaluations: z.number().int().min(METRIC_ALERT_MIN_EVALUATIONS).max(METRIC_ALERT_MAX_EVALUATIONS),
   severity: z.enum(SEVERITIES).default('high'),
+  unit: z.string().max(32).nullable().optional(),
 });
 
 /**

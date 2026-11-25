@@ -21,6 +21,8 @@ const OWNED = [
   'src/tests/queue/jobs/alert-notification.test.ts',
   'src/tests/queue/jobs/alert-evaluation.test.ts',
   'migrations/065_alert_rule_lifecycle.sql',
+  'migrations/083_metric_alert_rules.sql',
+  '../shared/src/types/metric-alert.ts',
   '../shared/src/schemas/webhook-events.ts',
   '../../docs/webhooks.md',
 ];
@@ -153,8 +155,11 @@ describe('alert backend copy rules', () => {
     const titles = stringLiterals(functionSource(notificationSource(), 'inAppCopy')).filter((t) =>
       t.endsWith(': ${}')
     );
+    // Metric rules (1.8) reuse the alert titles with the group labels in the name.
     expect([...titles].sort()).toEqual([
       'Alert still firing: ${}',
+      'Alert still firing: ${}',
+      'Alert triggered: ${}',
       'Alert triggered: ${}',
       'Anomaly detected: ${}',
       'Anomaly still active: ${}',
@@ -171,7 +176,8 @@ describe('alert backend copy rules', () => {
     const subjects = stringLiterals(functionSource(notificationSource(), 'sendEmailNotification')).filter((t) =>
       /^\[(Alert|Anomaly)\] /.test(t)
     );
-    expect(subjects).toHaveLength(4);
+    // threshold, anomaly and metric rules, triggered and still firing each
+    expect(subjects).toHaveLength(6);
     for (const subject of subjects) {
       const words = subject
         .replace(/^\[(Alert|Anomaly)\] /, '')
