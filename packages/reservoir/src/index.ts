@@ -67,7 +67,16 @@ export type {
   MetricOverviewItem,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  // 1.8 metrics contract
+  MetricAttrScope,
+  MetricAttrRef,
+  MetricAttrFilterOp,
+  MetricAttrFilter,
+  MetricSourcesParams,
+  MetricSource,
+  MetricSourcesResult,
 } from './core/types.js';
+export { metricAttrLabel } from './core/types.js';
 // 1.6 contract types
 export type {
   TextQuery,

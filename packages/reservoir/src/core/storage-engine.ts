@@ -46,6 +46,8 @@ import type {
   DeleteMetricsByTimeRangeParams,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  MetricSourcesParams,
+  MetricSourcesResult,
   LogHistogramParams,
   LogHistogramResult,
   LogFacetsParams,
@@ -159,6 +161,11 @@ export abstract class StorageEngine {
   /** Top values per field over the matching logs (1.6) */
   async facets(_params: LogFacetsParams): Promise<LogFacetsResult> {
     throw new NotImplementedError('facets', this.constructor.name);
+  }
+
+  /** Distinct metric sources: values of one resource attribute (1.8) */
+  async getMetricSources(_params: MetricSourcesParams): Promise<MetricSourcesResult> {
+    throw new NotImplementedError('getMetricSources', this.constructor.name);
   }
 
   /** Metadata keys of the most recent logs, one nested level (1.6) */

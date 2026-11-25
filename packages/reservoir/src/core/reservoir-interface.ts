@@ -45,6 +45,8 @@ import type {
   DeleteMetricsByTimeRangeParams,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  MetricSourcesParams,
+  MetricSourcesResult,
   LogHistogramParams,
   LogHistogramResult,
   LogFacetsParams,
@@ -136,6 +138,8 @@ export interface IReservoir {
   getMetricLabelValues(params: MetricLabelParams, labelKey: string): Promise<MetricLabelResult>;
   deleteMetricsByTimeRange(params: DeleteMetricsByTimeRangeParams): Promise<DeleteResult>;
   getMetricsOverview(params: MetricsOverviewParams): Promise<MetricsOverviewResult>;
+  /** 1.8: distinct metric sources (values of a resource attribute) */
+  getMetricSources(params: MetricSourcesParams): Promise<MetricSourcesResult>;
 
   /**
    * Hard-purge all logs, spans, and metrics for a project across every

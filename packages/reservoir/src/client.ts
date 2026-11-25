@@ -46,6 +46,8 @@ import type {
   DeleteMetricsByTimeRangeParams,
   MetricsOverviewParams,
   MetricsOverviewResult,
+  MetricSourcesParams,
+  MetricSourcesResult,
   LogHistogramParams,
   LogHistogramResult,
   LogFacetsParams,
@@ -397,6 +399,11 @@ export class Reservoir implements IReservoir {
   async getMetricsOverview(params: MetricsOverviewParams): Promise<MetricsOverviewResult> {
     this.ensureInitialized();
     return this.engine.getMetricsOverview(params);
+  }
+
+  async getMetricSources(params: MetricSourcesParams): Promise<MetricSourcesResult> {
+    this.ensureInitialized();
+    return this.engine.getMetricSources(params);
   }
 
   /**

@@ -539,6 +539,10 @@ export interface MetricRecord {
   serviceName: string;
   attributes?: Record<string, unknown>;
   resourceAttributes?: Record<string, unknown>;
+  /** 1.8: OTLP unit (e.g. "By", "%", "s"). Engines do not store it; the backend metric catalog does. */
+  unit?: string;
+  /** 1.8: OTLP description. Engines do not store it; the backend metric catalog does. */
+  description?: string;
   histogramData?: HistogramData;
   exemplars?: MetricExemplar[];
 }
@@ -595,6 +599,41 @@ export interface MetricAggregateParams {
   /** Group results by these label keys */
   groupBy?: string[];
   attributes?: Record<string, string>;
+  /**
+   * 1.8: group by metric or resource attributes, after groupBy. Each ref adds
+   * a label keyed by metricAttrLabel(ref) ("resource." prefix for resource keys).
+   */
+  groupByAttrs?: MetricAttrRef[];
+  /** 1.8: filters on metric or resource attributes, all ANDed. */
+  filters?: MetricAttrFilter[];
+}
+
+/** Which attribute map a key lives in: data point attributes or resource attributes. */
+export type MetricAttrScope = 'metric' | 'resource';
+
+/** A reference to one attribute of a metric data point or of its resource. */
+export interface MetricAttrRef {
+  scope: MetricAttrScope;
+  /** Literal key, dots included ("host.name" is one key, never a path). */
+  key: string;
+}
+
+/**
+ * Attribute filter (1.8). Values compare as text, except gte/lt which compare
+ * numerically (a missing or non-numeric value never matches). exists and
+ * notExists ignore values. eq/neq take exactly one value, in/nin one or more.
+ * neq/nin match data points that lack the key.
+ */
+export type MetricAttrFilterOp = 'eq' | 'neq' | 'in' | 'nin' | 'exists' | 'notExists' | 'gte' | 'lt';
+
+export interface MetricAttrFilter extends MetricAttrRef {
+  op: MetricAttrFilterOp;
+  values?: string[];
+}
+
+/** Label key of a grouped attribute in MetricTimeBucket.labels. */
+export function metricAttrLabel(ref: MetricAttrRef): string {
+  return ref.scope === 'resource' ? `resource.${ref.key}` : ref.key;
 }
 
 /** A single time bucket in a metric aggregation result */
@@ -632,10 +671,53 @@ export interface MetricNamesResult {
 export interface MetricLabelParams {
   organizationId?: string | string[];
   projectId: string | string[];
+  /** Required for metric scope. With resource scope, an empty string means every metric. */
   metricName: string;
   from?: Date;
   to?: Date;
   limit?: number;
+  /** 1.8: which attribute map keys/values come from. Default 'metric'. */
+  scope?: MetricAttrScope;
+}
+
+/**
+ * 1.8: who sends metrics. One row per distinct value of a resource attribute
+ * (for example host.name or service.name) across the projects and window.
+ */
+export interface MetricSourcesParams {
+  organizationId?: string | string[];
+  projectId: string | string[];
+  from: Date;
+  to: Date;
+  /** Resource attribute that identifies a source, e.g. "host.name". */
+  key: string;
+  /** Only count data points whose metric name starts with one of these prefixes. */
+  includeMetricPrefixes?: string[];
+  /** Ignore data points whose metric name starts with one of these prefixes. */
+  excludeMetricPrefixes?: string[];
+  /** Other resource attributes collected per source (distinct values, at most 20 each, sorted). */
+  coKeys?: string[];
+  /** Max sources, ordered by value ascending. Default 500. */
+  limit?: number;
+}
+
+export interface MetricSource {
+  /** Value of the identifying resource attribute (non-empty). */
+  value: string;
+  /** Projects where the source was seen, sorted. */
+  projectIds: string[];
+  lastSeen: Date;
+  /** Distinct metric names sent by the source in the window. */
+  metricCount: number;
+  /** Data points in the window. */
+  pointCount: number;
+  /** Distinct values per requested co-key (every requested key present, possibly empty). */
+  co: Record<string, string[]>;
+}
+
+export interface MetricSourcesResult {
+  sources: MetricSource[];
+  executionTimeMs?: number;
 }
 
 /** Result of metric label query */
