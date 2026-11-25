@@ -106,12 +106,12 @@ describe('IncidentSourcePanel', () => {
     expect(screen.getByText('Hardware host')).toBeTruthy();
     expect(screen.getByText('db-01')).toBeTruthy();
     expect((screen.getByRole('link', { name: 'View host' }) as HTMLAnchorElement).getAttribute('href')).toBe(
-      '/dashboard/hardware/h1'
+      '/dashboard/metrics/hosts/db-01?tab=hardware'
     );
     expect(screen.queryByText('Affected services')).toBeNull();
   });
 
-  it('hardware falls back to hardwareHostId when the source ref is missing', () => {
+  it('hardware keeps the id redirect link when only the host id is known', () => {
     render(IncidentSourcePanel, {
       props: { incident: incident({ source: 'hardware', hardwareHostId: 'h 2' }), members, onAssign: vi.fn() },
     });
