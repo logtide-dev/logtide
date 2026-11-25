@@ -43,7 +43,7 @@
   import SourceMetricsGrid from './SourceMetricsGrid.svelte';
   import SourceRelatedList from './SourceRelatedList.svelte';
   import SourceLogsTab from './SourceLogsTab.svelte';
-  import { buildExploreHref, buildServiceTracesHref, buildSourceLogsHref } from './source-model';
+  import { RED_MISSING_HINT, buildExploreHref, buildServiceTracesHref, buildSourceLogsHref, redSourceLabel } from './source-model';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import ExternalLink from '@lucide/svelte/icons/external-link';
@@ -283,9 +283,9 @@
     }
     if (service) {
       return [
-        { id: 'rate', label: 'Requests', value: service.hasTraces ? fmt(service.requestRate) : 'n/a' },
-        { id: 'errors', label: 'Errors', value: service.hasTraces ? fmt(service.errorRate) : 'n/a', tone: service.hasTraces ? percentTone(service.errorRate.value, SERVICE_ERROR_THRESHOLDS) : undefined },
-        { id: 'p95', label: 'p95 latency', value: service.hasTraces ? fmt(service.p95) : 'n/a' },
+        { id: 'rate', label: 'Requests', value: service.redSource ? fmt(service.requestRate) : 'n/a', hint: redSourceLabel(service.redSource) ?? undefined },
+        { id: 'errors', label: 'Errors', value: service.redSource ? fmt(service.errorRate) : 'n/a', tone: service.redSource ? percentTone(service.errorRate.value, SERVICE_ERROR_THRESHOLDS) : undefined },
+        { id: 'p95', label: 'p95 latency', value: service.redSource ? fmt(service.p95) : 'n/a' },
         { id: 'hosts', label: 'Hosts', value: String(service.hosts.length) },
         { id: 'metrics', label: 'Metrics', value: service.metricCount.toLocaleString('en-US') },
       ];
@@ -378,6 +378,9 @@
             </div>
           {/each}
         </div>
+        {#if service && !service.redSource}
+          <p class="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground" data-testid="red-hint">{RED_MISSING_HINT}</p>
+        {/if}
         <SourceTemplateView
           {kind}
           {name}

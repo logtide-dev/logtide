@@ -51,6 +51,7 @@ function service(name: string, status: ServiceSourceSummary['status'], extra: Pa
     hosts: [],
     metricCount: 1,
     hasTraces: true,
+    redSource: 'traces',
     ...extra,
   };
 }

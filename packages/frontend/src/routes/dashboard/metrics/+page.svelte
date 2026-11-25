@@ -31,10 +31,12 @@
   import SourceStatusDot from '$lib/components/metrics/v2/SourceStatusDot.svelte';
   import {
     DEFAULT_SORT,
+    RED_MISSING_HINT,
     SETUP_DOCS,
     filterHostRows,
     filterServiceRows,
     parseKind,
+    redSourceLabel,
     sortHosts,
     sortServices,
     sourceHref,
@@ -196,6 +198,7 @@
     { key: 'errorRate', header: 'Errors', sortable: true, cell: svcCell(errorRateCell) },
     { key: 'p95', header: 'p95', sortable: true, cell: svcCell(p95Cell) },
     { key: 'hosts', header: 'Hosts', sortable: true, cell: svcCell(serviceHostsCell) },
+    { key: 'redSource', header: 'RED source', cell: svcCell(redSourceCell) },
     { key: 'lastSeen', header: 'Last seen', sortable: true, cell: svcCell(lastSeenCell) },
   ];
 
@@ -268,18 +271,18 @@
     <a class="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" href={serviceHref(s)}>{s.name}</a>
     {#if s.statusReason && s.status !== 'ok'}
       <p class="truncate text-xs text-muted-foreground" data-testid="status-reason">{s.statusReason}</p>
-    {:else if !s.hasTraces}
-      <p class="truncate text-xs text-muted-foreground">No traces</p>
+    {:else if !s.redSource}
+      <p class="truncate text-xs text-muted-foreground" title={RED_MISSING_HINT}>No request data</p>
     {/if}
   </div>
 {/snippet}
 
 {#snippet requestRateCell(s: ServiceSourceSummary)}
-  <SourceSignalCell signal={s.hasTraces ? s.requestRate : null} label="Requests per second" />
+  <SourceSignalCell signal={s.redSource ? s.requestRate : null} label="Requests per second" />
 {/snippet}
 
 {#snippet errorRateCell(s: ServiceSourceSummary)}
-  {#if s.hasTraces && s.errorRate.value !== null}
+  {#if s.redSource && s.errorRate.value !== null}
     <span class="text-sm tabular-nums {errorTone(s.errorRate.value)}">{formatMetricValue(s.errorRate.value, s.errorRate.unit)}</span>
   {:else}
     <span class="text-muted-foreground" aria-label="Errors: no data">-</span>
@@ -287,7 +290,11 @@
 {/snippet}
 
 {#snippet p95Cell(s: ServiceSourceSummary)}
-  <SourceSignalCell signal={s.hasTraces ? s.p95 : null} label="p95 latency" />
+  <SourceSignalCell signal={s.redSource ? s.p95 : null} label="p95 latency" />
+{/snippet}
+
+{#snippet redSourceCell(s: ServiceSourceSummary)}
+  <span class="whitespace-nowrap text-xs text-muted-foreground" data-testid="red-source">{redSourceLabel(s.redSource) ?? '-'}</span>
 {/snippet}
 
 {#snippet serviceHostsCell(s: ServiceSourceSummary)}

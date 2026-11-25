@@ -26,6 +26,17 @@ export function parseKind(value: string | null | undefined): KindFilter {
   return value === 'host' || value === 'service' ? value : 'all';
 }
 
+/** Where a service's RED numbers come from, as shown in the UI. */
+export function redSourceLabel(source: ServiceSourceSummary['redSource']): string | null {
+  if (source === 'traces') return 'From traces';
+  if (source === 'metrics') return 'From HTTP metrics';
+  return null;
+}
+
+/** How to get RED for a service that has none. */
+export const RED_MISSING_HINT =
+  'No request data yet. Send traces from this service, or HTTP server metrics (http.server.request.duration) with OpenTelemetry.';
+
 export function sourceHref(kind: MetricSourceKind, name: string): string {
   return `/dashboard/metrics/${kind === 'host' ? 'hosts' : 'services'}/${encodeURIComponent(name)}`;
 }
