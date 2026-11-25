@@ -203,6 +203,23 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+{#snippet actions(extra: string)}
+  {#if log}
+    <div class="flex flex-wrap gap-2 {extra}" data-testid="log-actions">
+      <Button variant="outline" size="sm" class="gap-1.5" onclick={() => onOpenContext(log)}>
+        <TextSearch class="size-4" />
+        View context
+      </Button>
+      {#if isErrorLevel && log.id}
+        <Button variant="outline" size="sm" class="gap-1.5" onclick={() => (exceptionOpen = true)}>
+          <TriangleAlert class="size-4 text-destructive-text" />
+          View exception details
+        </Button>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
 {#if log}
   <aside aria-label="Log details" class="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card text-card-foreground">
     <header class="flex flex-wrap items-center gap-2 border-b px-3 py-2">
@@ -247,6 +264,7 @@
             Wrap lines
           </label>
         </div>
+        {@render actions('')}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <pre
           tabindex="0"
@@ -361,18 +379,7 @@
         </section>
       {/if}
 
-      <div class="flex flex-wrap gap-2 border-t pt-3">
-        <Button variant="outline" size="sm" class="gap-1.5" onclick={() => onOpenContext(log)}>
-          <TextSearch class="size-4" />
-          View context
-        </Button>
-        {#if isErrorLevel && log.id}
-          <Button variant="outline" size="sm" class="gap-1.5" onclick={() => (exceptionOpen = true)}>
-            <TriangleAlert class="size-4 text-destructive-text" />
-            View exception details
-          </Button>
-        {/if}
-      </div>
+      {@render actions('border-t pt-3')}
 
       {#if crumbs.length > 0}
         <section class="border-t pt-3">

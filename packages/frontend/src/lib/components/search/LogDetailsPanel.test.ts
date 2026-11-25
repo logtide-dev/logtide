@@ -295,6 +295,18 @@ describe('LogDetailsPanel JSON view', () => {
     expect(pre.textContent).toContain('<script>alert(1)</script>');
   });
 
+  it('keeps View context and View exception details in the JSON view', async () => {
+    const log = fullLog();
+    const utils = setup(log);
+    await openJson(utils);
+    expect(utils.getByTestId('json-view')).toContainElement(utils.getByTestId('log-actions'));
+    await fireEvent.click(utils.getByRole('button', { name: 'View context' }));
+    expect(utils.onOpenContext).toHaveBeenCalledWith(log);
+    expect(utils.getByRole('button', { name: 'View exception details' })).toBeInTheDocument();
+    // no second Copy JSON in the header while the toolbar has one
+    expect(utils.getAllByRole('button', { name: /copy json/i })).toHaveLength(1);
+  });
+
   it('toggles line wrapping', async () => {
     const utils = setup();
     await openJson(utils);
