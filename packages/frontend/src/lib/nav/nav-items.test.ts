@@ -14,7 +14,7 @@ describe('nav-items', () => {
     const ids = (section: string) =>
       NAV_SECTIONS.find((s) => s.id === section)!.items.map((i) => i.id);
     expect(ids('explore')).toEqual(['logs', 'traces', 'metrics', 'errors', 'sessions', 'web-vitals']);
-    expect(ids('monitor')).toEqual(['incidents', 'alerts', 'uptime', 'hardware']);
+    expect(ids('monitor')).toEqual(['incidents', 'alerts', 'uptime']);
     expect(ids('security')).toEqual(['security-overview', 'security-rules']);
     expect(ids('manage')).toEqual(['projects', 'settings']);
   });
@@ -31,7 +31,6 @@ describe('nav-items', () => {
       'Incidents',
       'Alerts',
       'Uptime',
-      'Hardware',
       'Overview',
       'Rules',
       'Projects',
@@ -64,7 +63,6 @@ describe('nav-items', () => {
       i: '/dashboard/incidents',
       a: '/dashboard/alerts',
       u: '/dashboard/uptime',
-      h: '/dashboard/hardware',
       r: '/dashboard/security',
       p: '/dashboard/projects',
     };
@@ -102,12 +100,14 @@ describe('nav-items', () => {
     expect(isNavItemActive(settings, '/dashboard/projects')).toBe(false);
   });
 
-  it('marks Hardware active on its detail pages', () => {
+  it('marks Metrics active on the sources, host and service pages', () => {
     const items = flatNavItems();
     const activeIds = (pathname: string) =>
       items.filter((i) => isNavItemActive(i, pathname)).map((i) => i.id);
-    expect(activeIds('/dashboard/hardware')).toEqual(['hardware']);
-    expect(activeIds('/dashboard/hardware/h1')).toEqual(['hardware']);
+    expect(activeIds('/dashboard/metrics')).toEqual(['metrics']);
+    expect(activeIds('/dashboard/metrics/hosts/vps-app')).toEqual(['metrics']);
+    expect(activeIds('/dashboard/metrics/services/api')).toEqual(['metrics']);
+    expect(activeIds('/dashboard/hardware')).toEqual([]);
   });
 
   it('never marks external links active', () => {
