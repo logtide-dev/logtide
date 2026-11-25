@@ -200,6 +200,8 @@ async function runSignal(
           limit: SERIES_CHUNK,
         },
       ],
+      // Every host of the chunk is its own series, never folded into Other.
+      internal: { maxSeries: SERIES_CHUNK },
     };
     const res = await metricQueryService.run(query);
     for (const s of res.series) {
@@ -506,6 +508,7 @@ async function loadMetricRed(ctx: SourcesContext, candidates: string[]): Promise
             },
             { id: 'C', metricName: variant.metricName, aggregation: 'p95', spaceAggregation: 'avg', filters: [svc], groupBy, limit: SERIES_CHUNK },
           ],
+          internal: { maxSeries: SERIES_CHUNK },
         });
         for (const name of chunk) {
           const red = redFromSeries(res.series, name, variant.defaultUnit);

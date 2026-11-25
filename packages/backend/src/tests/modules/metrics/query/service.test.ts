@@ -311,14 +311,28 @@ describe('metricQueryService.run', () => {
 
   it('falls back to single-level aggregation above 500 raw series', async () => {
     for (let i = 0; i < 501; i++) {
+      points.push({ metric: 'wide', t: T0, v: i % 2 ? 1 : 3, attrs: { id: String(i) }, resource: { 'host.name': i % 2 ? 'a' : 'b' } });
+    }
+    const res = await run(
+      base({ queries: [{ id: 'A', metricName: 'wide', aggregation: 'avg', spaceAggregation: 'max', filters: [], groupBy: [{ scope: 'resource', key: 'host.name' }] }] }),
+    );
+    expect(res.warnings.some((w) => w.includes('more than 500 series'))).toBe(true);
+    expect(aggregateMetrics).toHaveBeenCalledTimes(2);
+    expect(aggregateMetrics.mock.calls[1][0].groupByAttrs).toEqual([{ scope: 'resource', key: 'host.name' }]);
+    const avgs = Object.fromEntries(res.series.map((s) => [s.name, s.points[0].v]));
+    expect(avgs).toEqual({ a: 1, b: 3 });
+  });
+
+  it('sums of many series are exact in one engine read', async () => {
+    for (let i = 0; i < 501; i++) {
       points.push({ metric: 'wide', t: T0, v: 1, attrs: { id: String(i) }, resource: { 'host.name': i % 2 ? 'a' : 'b' } });
     }
     const res = await run(
       base({ queries: [{ id: 'A', metricName: 'wide', aggregation: 'sum', filters: [], groupBy: [{ scope: 'resource', key: 'host.name' }] }] }),
     );
-    expect(res.warnings.some((w) => w.includes('more than 500 series'))).toBe(true);
-    expect(aggregateMetrics).toHaveBeenCalledTimes(2);
-    expect(aggregateMetrics.mock.calls[1][0].groupByAttrs).toEqual([{ scope: 'resource', key: 'host.name' }]);
+    expect(res.warnings).toEqual([]);
+    expect(aggregateMetrics).toHaveBeenCalledTimes(1);
+    expect(aggregateMetrics.mock.calls[0][0].groupByAttrs).toEqual([{ scope: 'resource', key: 'host.name' }]);
     const sums = Object.fromEntries(res.series.map((s) => [s.name, s.points[0].v]));
     expect(sums).toEqual({ a: 250, b: 251 });
   });

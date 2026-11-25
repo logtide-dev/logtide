@@ -311,7 +311,7 @@ describe('temporality-aware rate of sums', () => {
     expect(values(res.series[0]).slice(0, 2)).toEqual([null, 1]);
   });
 
-  it('unknown temporality: cumulative when monotonic, delta otherwise', async () => {
+  it('unknown temporality: cumulative, monotonic or not', async () => {
     catalog.entries.set('reqs', { unit: null, type: 'sum', temporality: null, isMonotonic: true });
     add(0, 1);
     await run(base([{ id: 'A', metricName: 'reqs', aggregation: 'rate', filters: [], groupBy: [] }]));
@@ -320,7 +320,7 @@ describe('temporality-aware rate of sums', () => {
     aggregateMetrics.mockClear();
     catalog.entries.set('reqs', { unit: null, type: 'sum', temporality: null, isMonotonic: false });
     await run(base([{ id: 'A', metricName: 'reqs', aggregation: 'rate', filters: [], groupBy: [] }]));
-    expect(aggregateMetrics.mock.calls[0][0].aggregation).toBe('sum');
+    expect(aggregateMetrics.mock.calls[0][0].aggregation).toBe('last');
   });
 
   it('delta sums above 500 series rate the engine group sums', async () => {

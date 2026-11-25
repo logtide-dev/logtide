@@ -270,8 +270,9 @@ describe('temporality and units', () => {
     expect(effectiveTemporality(undefined)).toBeNull();
     expect(effectiveTemporality({ unit: null, type: 'sum', temporality: 'delta', isMonotonic: true })).toBe('delta');
     expect(effectiveTemporality({ unit: null, type: 'sum', isMonotonic: true })).toBe('cumulative');
-    expect(effectiveTemporality({ unit: null, type: 'sum', isMonotonic: false })).toBe('delta');
-    expect(effectiveTemporality({ unit: null, type: 'sum', isMonotonic: null })).toBe('delta');
+    // Without a temporality only an explicit delta is delta (fix item 14).
+    expect(effectiveTemporality({ unit: null, type: 'sum', isMonotonic: false })).toBe('cumulative');
+    expect(effectiveTemporality({ unit: null, type: 'sum', isMonotonic: null })).toBe('cumulative');
     expect(effectiveTemporality({ unit: null, type: 'histogram' })).toBe('cumulative');
     expect(effectiveTemporality({ unit: null, type: 'exp_histogram', temporality: 'delta' })).toBe('delta');
     expect(effectiveTemporality({ unit: null, type: 'gauge' })).toBeNull();

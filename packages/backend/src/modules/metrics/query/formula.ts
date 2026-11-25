@@ -2,8 +2,8 @@
 // parser (numbers, query ids A..F, + - * /, unary minus, parentheses; never
 // eval), and an evaluator that joins series by identical labels.
 
-import type { GridSeries } from './series-fold.js';
-import { labelKey } from './series-fold.js';
+import type { FoldResult, GridSeries } from './series-fold.js';
+import { labelKey, OTHER_LABEL, rankByMean } from './series-fold.js';
 
 export class FormulaError extends Error {
   constructor(message: string) {
@@ -249,6 +249,54 @@ export function evaluateFormula(node: FormulaNode, operands: Map<string, GridSer
   const result = evaluate(node);
   if (result.kind === 'scalar') return [{ labels: {}, values: new Array(length).fill(result.value) }];
   return result.series;
+}
+
+/** One operand of a folded formula: its unfolded groups and how to fold some of them. */
+export interface FormulaOperand {
+  groups: GridSeries[];
+  /** Combine some of the groups into one series (the query's own fold of them). */
+  combine: (members: GridSeries[]) => GridSeries;
+}
+
+/**
+ * Evaluate a formula on unfolded operands, then keep the top `limit` result
+ * series by mean and fold the rest. The folded "Other" is the formula applied
+ * to each operand's own fold of the same groups (sum of errors over sum of
+ * requests, not a sum of ratios), so an "Other" is never joined with another
+ * query's unrelated "Other".
+ */
+export function evaluateFormulaFolded(
+  node: FormulaNode,
+  operands: Map<string, FormulaOperand>,
+  limit: number,
+  length: number,
+): FoldResult {
+  const groups = new Map<string, GridSeries[]>();
+  for (const [id, op] of operands) groups.set(id, op.groups);
+  const result = evaluateFormula(node, groups, length);
+  const seriesTotal = result.length;
+  const grouped = result.some((s) => Object.keys(s.labels).length > 0);
+  if (!grouped || seriesTotal <= limit) return { series: result, seriesTotal, seriesShown: seriesTotal };
+
+  const ranked = rankByMean(result);
+  const kept = ranked.slice(0, limit);
+  const restKeys = new Set(ranked.slice(limit).map((s) => labelKey(s.labels)));
+  const otherLabels = { [OTHER_LABEL]: 'true' };
+  const folded = new Map<string, GridSeries[]>();
+  for (const [id, op] of operands) {
+    if (op.groups.length === 0 || isBroadcast(op.groups)) {
+      folded.set(id, op.groups);
+      continue;
+    }
+    const members = op.groups.filter((g) => restKeys.has(labelKey(g.labels)));
+    folded.set(id, [{ labels: otherLabels, values: op.combine(members).values }]);
+  }
+  const other = evaluateFormula(node, folded, length).find((s) => s.labels[OTHER_LABEL] === 'true');
+  return {
+    series: [...kept, other ?? { labels: otherLabels, values: new Array(length).fill(null) }],
+    seriesTotal,
+    seriesShown: kept.length,
+  };
 }
 
 /** A formula keeps a unit only when every query it reads has that same unit. */

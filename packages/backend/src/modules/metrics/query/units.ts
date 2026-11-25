@@ -12,6 +12,8 @@ export interface CatalogInfo {
   temporality?: 'cumulative' | 'delta' | null;
   /** Sums: monotonic flag (first non-null across projects). */
   isMonotonic?: boolean | null;
+  /** Projects with a catalog row for the name, most recently seen first. */
+  projectIds?: string[];
 }
 
 export interface CatalogLookup {
@@ -32,17 +34,18 @@ export async function loadCatalog(projectIds: string[], metricNames: string[]): 
   if (projectIds.length === 0 || metricNames.length === 0) return { available: true, entries };
   try {
     const result = await sql<{
+      project_id: string;
       metric_name: string;
       metric_type: string;
       unit: string | null;
       temporality: 'cumulative' | 'delta' | null;
       is_monotonic: boolean | null;
     }>`
-      SELECT metric_name, metric_type, unit, temporality, is_monotonic
+      SELECT project_id, metric_name, metric_type, unit, temporality, is_monotonic
       FROM metric_catalog
       WHERE project_id = ANY(${projectIds}::uuid[])
         AND metric_name = ANY(${metricNames}::text[])
-      ORDER BY last_seen_at DESC
+      ORDER BY last_seen_at DESC, project_id
     `.execute(db);
     for (const row of result.rows) {
       const entry = entries.get(row.metric_name);
@@ -52,9 +55,11 @@ export async function loadCatalog(projectIds: string[], metricNames: string[]): 
           type: row.metric_type ?? null,
           temporality: row.temporality ?? null,
           isMonotonic: row.is_monotonic ?? null,
+          projectIds: [row.project_id],
         });
         continue;
       }
+      if (!entry.projectIds!.includes(row.project_id)) entry.projectIds!.push(row.project_id);
       // Later rows are older; they only fill what is still unknown, and only
       // for the same type as the most recent one.
       if (entry.unit === null && row.unit) entry.unit = row.unit;
@@ -76,15 +81,15 @@ export function isHistogramType(type: string | null | undefined): boolean {
 }
 
 /**
- * Temporality used for the math: the catalog value, else for sums cumulative
- * when monotonic and delta otherwise, else for histograms cumulative (the
- * OTLP SDK default).
+ * Temporality used for the math: the catalog value, else cumulative for sums
+ * and histograms (the OTLP SDK default; Prometheus counters and the older
+ * catalog rows without temporality are cumulative too). Only an explicit
+ * 'delta' makes a sum or histogram delta, whatever isMonotonic says.
  */
 export function effectiveTemporality(info: CatalogInfo | undefined): 'cumulative' | 'delta' | null {
   if (!info) return null;
   if (info.temporality === 'cumulative' || info.temporality === 'delta') return info.temporality;
-  if (info.type === 'sum') return info.isMonotonic === true ? 'cumulative' : 'delta';
-  if (isHistogramType(info.type)) return 'cumulative';
+  if (info.type === 'sum' || isHistogramType(info.type)) return 'cumulative';
   return null;
 }
 
