@@ -14,7 +14,6 @@
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import ShortcutsHelpModal from "$lib/components/ShortcutsHelpModal.svelte";
   import Button from "$lib/components/ui/button/button.svelte";
-  import { Separator } from "$lib/components/ui/separator";
   import { DropdownMenu as DropdownMenuPrimitive, Tooltip as TooltipPrimitive } from "bits-ui";
   import DropdownMenuContent from "$lib/components/ui/dropdown-menu/dropdown-menu-content.svelte";
   import DropdownMenuItem from "$lib/components/ui/dropdown-menu/dropdown-menu-item.svelte";
@@ -268,17 +267,15 @@
   <aside
     class="hidden lg:flex fixed left-0 top-0 h-screen w-64 flex-col border-r border-border bg-card z-40"
   >
-    <div class="p-6">
+    <!-- Same height as the page header so their bottom borders line up. -->
+    <div class="h-16 shrink-0 px-6 flex items-center justify-center border-b border-border">
       <a href="/dashboard"
-        class="flex items-center gap-3 hover:opacity-80 transition-opacity"
+        class="flex items-center hover:opacity-80 transition-opacity"
       >
-        <div class="flex flex-col items-start mx-auto">
-            <img src={$logoPath} alt="LogTide" class="h-14 w-auto" />
-        </div>
+        <img src={$logoPath} alt="LogTide" class="h-12 w-auto" />
       </a>
     </div>
 
-    <Separator />
 
     <SidebarNav pathname={page.url.pathname} isAdmin={!!user?.is_admin} />
 
@@ -307,18 +304,15 @@
       ? 'translate-x-0 visible'
       : '-translate-x-full invisible pointer-events-none'}"
   >
-    <div class="p-6 flex items-center justify-between">
-      <a href="/dashboard" class="flex items-center gap-3 hover:opacity-80 transition-opacity" onclick={() => (mobileMenuOpen = false)}>
-        <div class="flex flex-col items-start">
-          <img src={$logoPath} alt="LogTide" class="h-14 w-auto" />
-        </div>
+    <div class="h-16 shrink-0 px-6 flex items-center justify-between border-b border-border">
+      <a href="/dashboard" class="flex items-center hover:opacity-80 transition-opacity" onclick={() => (mobileMenuOpen = false)}>
+        <img src={$logoPath} alt="LogTide" class="h-12 w-auto" />
       </a>
       <Button variant="ghost" size="icon" aria-label="Close menu" onclick={() => (mobileMenuOpen = false)}>
         <X class="w-5 h-5" />
       </Button>
     </div>
 
-    <Separator />
 
     <SidebarNav
       pathname={page.url.pathname}
