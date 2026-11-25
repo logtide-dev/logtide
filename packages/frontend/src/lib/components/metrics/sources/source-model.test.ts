@@ -143,3 +143,26 @@ describe('links', () => {
     expect(traces.searchParams.get('service')).toBe('api');
   });
 });
+
+import { aggregationForCatalogEntry, aggregationsByMetric } from './source-model';
+
+describe('aggregationForCatalogEntry', () => {
+  it('rate for monotonic sums, p95 for histograms, avg otherwise', () => {
+    expect(aggregationForCatalogEntry({ type: 'sum', isMonotonic: true })).toBe('rate');
+    expect(aggregationForCatalogEntry({ type: 'sum', isMonotonic: false })).toBe('avg');
+    expect(aggregationForCatalogEntry({ type: 'sum', isMonotonic: null })).toBe('avg');
+    expect(aggregationForCatalogEntry({ type: 'histogram', isMonotonic: null })).toBe('p95');
+    expect(aggregationForCatalogEntry({ type: 'exp_histogram', isMonotonic: null })).toBe('p95');
+    expect(aggregationForCatalogEntry({ type: 'gauge', isMonotonic: null })).toBe('avg');
+    expect(aggregationForCatalogEntry(undefined)).toBe('avg');
+  });
+
+  it('maps a catalog listing by name', () => {
+    const entry = (name: string, type: string, isMonotonic: boolean | null) =>
+      ({ name, type, isMonotonic }) as Parameters<typeof aggregationsByMetric>[0][number];
+    const map = aggregationsByMetric([entry('a', 'gauge', null), entry('a', 'histogram', null), entry('b', 'sum', true)]);
+    expect(map.get('a')).toBe('p95');
+    expect(map.get('b')).toBe('rate');
+    expect(map.get('zzz')).toBeUndefined();
+  });
+});

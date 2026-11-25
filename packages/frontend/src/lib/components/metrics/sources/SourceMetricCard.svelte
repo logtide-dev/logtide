@@ -7,9 +7,10 @@
     metricName       the metric to chart
     organizationId, projectIds, from, to   scope of the query
     exploreHref      Open in Explore link
+    aggregation      time aggregation (rate / p95 / avg by catalog type)
 -->
 <script lang="ts">
-  import type { MetricQueryResponse, MetricSourceKind } from '@logtide/shared';
+  import type { MetricQueryResponse, MetricSourceKind, MetricTimeAggregation } from '@logtide/shared';
   import { metricsV2API } from '$lib/api/metrics-v2';
   import MetricSeriesView from '$lib/components/metrics/v2/MetricSeriesView.svelte';
   import ExternalLink from '@lucide/svelte/icons/external-link';
@@ -23,9 +24,11 @@
     from: string;
     to: string;
     exploreHref: string;
+    /** Chosen from the catalog type by the grid; avg when omitted. */
+    aggregation?: MetricTimeAggregation;
   }
 
-  let { kind, name, metricName, organizationId, projectIds, from, to, exploreHref }: Props = $props();
+  let { kind, name, metricName, organizationId, projectIds, from, to, exploreHref, aggregation = 'avg' }: Props = $props();
 
   let response = $state<MetricQueryResponse | null>(null);
   let loading = $state(true);
@@ -46,7 +49,7 @@
             {
               id: 'A',
               metricName,
-              aggregation: 'avg',
+              aggregation,
               filters: [{ scope: 'resource', key: kind === 'host' ? 'host.name' : 'service.name', op: 'eq', values: [name] }],
               groupBy: [],
             },

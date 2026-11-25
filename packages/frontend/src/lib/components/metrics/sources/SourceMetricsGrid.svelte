@@ -7,12 +7,13 @@
     organizationId, projectIds, from, to   scope of the queries
 -->
 <script lang="ts">
-  import type { MetricSourceKind } from '@logtide/shared';
+  import type { MetricSourceKind, MetricTimeAggregation } from '@logtide/shared';
+  import { metricsV2API } from '$lib/api/metrics-v2';
   import Input from '$lib/components/ui/input/input.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
   import SourceMetricCard from './SourceMetricCard.svelte';
-  import { buildMetricExploreHref } from './source-model';
+  import { aggregationsByMetric, buildMetricExploreHref } from './source-model';
 
   interface Props {
     kind: MetricSourceKind;
@@ -27,6 +28,27 @@
   let { kind, name, metricNames, organizationId, projectIds, from, to }: Props = $props();
 
   const PAGE = 12;
+
+  // One catalog call for the source's projects; cards wait for it (avg on failure).
+  let aggregations = $state<Map<string, MetricTimeAggregation>>(new Map());
+  let catalogReady = $state(false);
+
+  $effect(() => {
+    const controller = new AbortController();
+    catalogReady = false;
+    metricsV2API
+      .getCatalog({ organizationId, projectIds })
+      .then((res) => {
+        if (!controller.signal.aborted) aggregations = aggregationsByMetric(res.metrics);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) aggregations = new Map();
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) catalogReady = true;
+      });
+    return () => controller.abort();
+  });
 
   let filter = $state('');
   let shown = $state(PAGE);
@@ -55,7 +77,7 @@
     </div>
 
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {#each visible as metric (metric)}
+      {#each catalogReady ? visible : [] as metric (metric)}
         <SourceMetricCard
           {kind}
           {name}
@@ -64,6 +86,7 @@
           {projectIds}
           {from}
           {to}
+          aggregation={aggregations.get(metric) ?? 'avg'}
           exploreHref={buildMetricExploreHref(kind, name, metric, projectIds)}
         />
       {/each}
