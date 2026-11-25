@@ -262,7 +262,7 @@ describe('Metric catalog routes', () => {
       const res = await get('/catalog/entry', tokenA, { organizationId: a.organization.id, name: 'http.server.duration' });
       expect(res.status).toBe(200);
       expect(res.body.entry).toMatchObject({ name: 'http.server.duration', unit: 'ms', type: 'gauge' });
-      expect(res.body.attributes.metric).toHaveLength(30);
+      expect(res.body.attributes.metric).toHaveLength(20);
       expect(res.body.attributes.metric[0]).toEqual({ key: 'k0', values: ['v1', 'v2'] });
       expect(res.body.attributes.resource.map((x: any) => x.key)).toEqual(['host.name', 'service.name']);
       expect(res.body.sources).toEqual({ hosts: ['h1', 'h2'], services: ['svc'] });
@@ -275,6 +275,33 @@ describe('Metric catalog routes', () => {
         metricName: 'http.server.duration',
       });
       expect(values).toHaveBeenCalled();
+    });
+
+    it('bounds the reservoir fan-out and reuses host/service values', async () => {
+      await seedCatalog(a.project.id, 'fan.out');
+      let inFlight = 0;
+      let peak = 0;
+      const keys = vi.spyOn(reservoir, 'getMetricLabelKeys').mockImplementation(async (p: any) => ({
+        keys: p.scope === 'resource'
+          ? ['host.name', 'service.name', ...Array.from({ length: 60 }, (_, i) => `r${i}`)]
+          : Array.from({ length: 60 }, (_, i) => `k${i}`),
+      }));
+      const values = vi.spyOn(reservoir, 'getMetricLabelValues').mockImplementation(async (_p: any, key: string) => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        return { values: key === 'host.name' ? ['h1'] : key === 'service.name' ? ['s1'] : ['v'] };
+      });
+      const res = await get('/catalog/entry', tokenA, { organizationId: a.organization.id, name: 'fan.out' });
+      expect(res.status).toBe(200);
+      expect(keys).toHaveBeenCalledTimes(2);
+      // 2 source calls + 20 metric keys + 18 other resource keys (host/service reused)
+      expect(values.mock.calls.length).toBe(2 + 20 + 18);
+      expect(values.mock.calls.length).toBeLessThanOrEqual(44);
+      expect(peak).toBeLessThanOrEqual(4);
+      expect(res.body.attributes.resource[0]).toEqual({ key: 'host.name', values: ['h1'] });
+      expect(res.body.sources).toEqual({ hosts: ['h1'], services: ['s1'] });
     });
 
     it('is 404 for an unknown metric and 400 without a name', async () => {
@@ -305,8 +332,38 @@ describe('Metric catalog routes', () => {
         to: new Date(to),
       });
 
+      // metricName absent or '' means every metric for the metric scope too
       const metricScope = await get('/attributes', tokenA, { organizationId: a.organization.id });
-      expect(metricScope.status).toBe(400);
+      expect(metricScope.status).toBe(200);
+      const empty = await get('/attributes', tokenA, { organizationId: a.organization.id, metricName: '' });
+      expect(empty.status).toBe(200);
+      expect((keys.mock.calls.at(-1)![0] as any).metricName).toBe('');
+    });
+
+    it('validates and caps the window', async () => {
+      const keys = vi.spyOn(reservoir, 'getMetricLabelKeys').mockResolvedValue({ keys: [] });
+      const q = { organizationId: a.organization.id, scope: 'resource' };
+      const bad = [
+        { from: '2026-11-02T00:00:00.000Z', to: '2026-11-01T00:00:00.000Z' },
+        { from: '2026-11-01T00:00:00.000Z', to: '2026-11-01T00:00:00.000Z' },
+        { from: '2026-09-01T00:00:00.000Z', to: '2026-11-01T00:00:00.000Z' },
+        { from: new Date(Date.now() + 3600_000).toISOString() },
+      ];
+      for (const w of bad) {
+        expect((await get('/attributes', tokenA, { ...q, ...w })).status).toBe(400);
+        expect((await get('/attribute-values', tokenA, { ...q, key: 'host.name', ...w })).status).toBe(400);
+      }
+      expect(keys).not.toHaveBeenCalled();
+      const ok = await get('/attributes', tokenA, {
+        ...q,
+        from: '2026-10-02T00:00:00.000Z',
+        to: '2026-11-02T00:00:00.000Z',
+      });
+      expect(ok.status).toBe(200);
+      // default window is 24h ending now
+      await get('/attributes', tokenA, q);
+      const call = keys.mock.calls.at(-1)![0] as any;
+      expect(call.to.getTime() - call.from.getTime()).toBe(24 * 3600_000);
     });
 
     it('returns attribute values', async () => {
@@ -322,6 +379,9 @@ describe('Metric catalog routes', () => {
       expect((values.mock.calls[0][0] as any).scope).toBe('metric');
 
       expect((await get('/attribute-values', tokenA, { organizationId: a.organization.id, metricName: 'm' })).status).toBe(400);
+
+      await get('/attribute-values', tokenA, { organizationId: a.organization.id, key: 'http.method' });
+      expect(values.mock.calls.at(-1)![0]).toMatchObject({ metricName: '', scope: 'metric' });
     });
   });
 
