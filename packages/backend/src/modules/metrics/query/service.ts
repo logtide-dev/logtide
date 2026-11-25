@@ -14,6 +14,13 @@
 // host/service resource keys); this service then turns counters into rates,
 // combines the series of each group (space aggregation), keeps the top N and
 // folds the rest. Formulas and compareTo copies work on those results.
+//
+// Histograms (catalog type histogram / exp_histogram) take their own path:
+// the engine returns one histogram per bucket and series (hist_last for
+// cumulative temporality, then diffed here; hist_sum for delta), series are
+// merged per group and reduced to the requested aggregation (histogram.ts).
+// Sums use their temporality for `rate`: cumulative = diff of the last value
+// per bucket, delta = bucket sum / bucket seconds.
 
 import type {
   MetricAttrFilter,
@@ -32,6 +39,7 @@ import { MetricQueryValidationError, MetricScopeError } from './errors.js';
 import { resolveProjectScope } from './scope.js';
 import { buildGrid, QUERY_INTERVAL_MS, resolveInterval, type QueryInterval } from './interval.js';
 import {
+  applyDeltaRate,
   applyRate,
   bucketsToSeries,
   computeStats,
@@ -44,7 +52,23 @@ import {
 import { evaluateFormula, formulaRefs, formulaUnit, parseFormula, FormulaError, type FormulaNode } from './formula.js';
 import { compareOffsetMs, shiftWindow } from './compare.js';
 import { resolveFilterVariables } from './variables.js';
-import { loadCatalog, resolveUnit, type CatalogLookup } from './units.js';
+import {
+  effectiveTemporality,
+  isHistogramType,
+  loadCatalog,
+  queryResultUnit,
+  resolveUnit,
+  type CatalogInfo,
+  type CatalogLookup,
+} from './units.js';
+import {
+  cumulativeToDelta,
+  dropOpenBuckets,
+  foldTopNHistograms,
+  histBucketsToSeries,
+  histSeriesToScalar,
+  mergeHistSeries,
+} from './histogram.js';
 
 export { MetricScopeError, MetricQueryValidationError, resolveProjectScope };
 
@@ -138,14 +162,12 @@ async function aggregate(
   return { timeseries, metricType: timeseries.length > 0 ? (result?.metricType ?? null) : null };
 }
 
-async function evaluateQuery(ctx: WindowContext, spec: MetricQuerySpec, filters: MetricAttrFilter[]): Promise<QueryResult> {
-  const warnings: string[] = [];
-  const isRate = spec.aggregation === 'rate';
-  const engineAgg: MetricAggregationFn = isRate ? 'last' : (spec.aggregation as MetricAggregationFn);
-  const spaceAgg = spec.spaceAggregation ?? defaultSpaceAggregation(spec.aggregation);
+async function seriesIdentity(
+  ctx: WindowContext,
+  spec: MetricQuerySpec,
+): Promise<{ groupRefs: MetricAttrRef[]; groupLabels: string[]; identityRefs: MetricAttrRef[] }> {
   const groupRefs = dedupeRefs(spec.groupBy);
   const groupLabels = groupRefs.map(metricAttrLabel);
-
   const [metricKeys, resourceKeys] = await Promise.all([
     labelKeys(ctx, spec.metricName, 'metric'),
     labelKeys(ctx, spec.metricName, 'resource'),
@@ -155,6 +177,84 @@ async function evaluateQuery(ctx: WindowContext, spec: MetricQuerySpec, filters:
     ...metricKeys.slice(0, MAX_IDENTITY_METRIC_KEYS).map((key) => ({ scope: 'metric' as const, key })),
     ...IDENTITY_RESOURCE_KEYS.filter((k) => resourceKeys.includes(k)).map((key) => ({ scope: 'resource' as const, key })),
   ]);
+  return { groupRefs, groupLabels, identityRefs };
+}
+
+function seriesLimit(spec: MetricQuerySpec): number {
+  return Math.min(Math.max(1, spec.limit ?? METRIC_DEFAULT_SERIES_LIMIT), METRIC_MAX_SERIES_LIMIT);
+}
+
+/**
+ * Histogram metrics: per-series histograms from the engine, cumulative
+ * snapshots diffed into per-bucket deltas, merged per group (union of bounds)
+ * and reduced to the aggregation. `rate` is count / seconds per series, then
+ * combined with the space aggregation like counters. Other aggregations
+ * merge histograms, so the space aggregation does not apply to them.
+ */
+async function evaluateHistogramQuery(
+  ctx: WindowContext,
+  spec: MetricQuerySpec,
+  filters: MetricAttrFilter[],
+  info: CatalogInfo,
+): Promise<QueryResult> {
+  const warnings: string[] = [];
+  const temporality = effectiveTemporality(info) ?? 'cumulative';
+  const engineAgg: MetricAggregationFn = temporality === 'delta' ? 'hist_sum' : 'hist_last';
+  const isRate = spec.aggregation === 'rate';
+  const len = ctx.grid.length;
+  const { groupRefs, groupLabels, identityRefs } = await seriesIdentity(ctx, spec);
+
+  const perSeries = await aggregate(ctx, spec, filters, engineAgg, identityRefs);
+  let metricType = perSeries.metricType;
+  let series = histBucketsToSeries(perSeries.timeseries, ctx.grid, ctx.stepMs, ctx.shiftMs);
+  // Delta histograms add up, so above the raw-series cap the engine can sum
+  // each group directly. Cumulative snapshots must be diffed per series and
+  // are always read per series.
+  if (series.length > MAX_RAW_SERIES && temporality === 'delta' && identityRefs.length > groupRefs.length) {
+    warnings.push(`Query ${spec.id}: more than ${MAX_RAW_SERIES} series, histograms summed by the engine in one step`);
+    const grouped = await aggregate(ctx, spec, filters, engineAgg, groupRefs);
+    metricType = grouped.metricType ?? metricType;
+    series = histBucketsToSeries(grouped.timeseries, ctx.grid, ctx.stepMs, ctx.shiftMs);
+  }
+  if (series.length === 0) return { series: [], seriesTotal: 0, seriesShown: 0, metricType, warnings };
+
+  if (temporality === 'cumulative') series = cumulativeToDelta(series, ctx.grid);
+
+  if (isRate) {
+    series = dropOpenBuckets(series, ctx.grid, ctx.stepMs, ctx.openAfterMs);
+    const spaceAgg = spec.spaceAggregation ?? defaultSpaceAggregation('rate');
+    const groups = spaceAggregate(histSeriesToScalar(series, 'rate'), groupLabels, spaceAgg, len);
+    if (groupLabels.length === 0) return { series: groups, seriesTotal: 1, seriesShown: 1, metricType, warnings };
+    return { ...foldTopN(groups, seriesLimit(spec), spaceAgg, len), metricType, warnings };
+  }
+
+  const merged = mergeHistSeries(series, groupLabels, len);
+  if (groupLabels.length === 0) {
+    const folded = foldTopNHistograms(merged, 1, spec.aggregation, len);
+    return { series: folded.series, seriesTotal: 1, seriesShown: 1, metricType, warnings };
+  }
+  return { ...foldTopNHistograms(merged, seriesLimit(spec), spec.aggregation, len), metricType, warnings };
+}
+
+async function evaluateQuery(
+  ctx: WindowContext,
+  spec: MetricQuerySpec,
+  filters: MetricAttrFilter[],
+  info?: CatalogInfo,
+): Promise<QueryResult> {
+  if (info && isHistogramType(info.type)) return evaluateHistogramQuery(ctx, spec, filters, info);
+
+  const warnings: string[] = [];
+  const isRate = spec.aggregation === 'rate';
+  // Delta sums: each point is already an increment, the rate is the bucket sum per second.
+  const deltaRate = isRate && info?.type === 'sum' && effectiveTemporality(info) === 'delta';
+  const engineAgg: MetricAggregationFn = isRate ? (deltaRate ? 'sum' : 'last') : (spec.aggregation as MetricAggregationFn);
+  const spaceAgg = spec.spaceAggregation ?? defaultSpaceAggregation(spec.aggregation);
+  const toRate = (s: GridSeries[]) =>
+    deltaRate
+      ? applyDeltaRate(s, ctx.grid, ctx.stepMs, ctx.openAfterMs)
+      : applyRate(s, ctx.grid, ctx.stepMs, ctx.openAfterMs);
+  const { groupRefs, groupLabels, identityRefs } = await seriesIdentity(ctx, spec);
 
   const perSeries = await aggregate(ctx, spec, filters, engineAgg, identityRefs);
   let metricType = perSeries.metricType;
@@ -170,18 +270,17 @@ async function evaluateQuery(ctx: WindowContext, spec: MetricQuerySpec, filters:
     const grouped = await aggregate(ctx, spec, filters, engineAgg, groupRefs);
     metricType = grouped.metricType ?? metricType;
     series = bucketsToSeries(grouped.timeseries, ctx.grid, ctx.stepMs, ctx.shiftMs);
-    if (isRate) series = applyRate(series, ctx.grid, ctx.stepMs, ctx.openAfterMs);
+    if (isRate) series = toRate(series);
     groups = spaceAggregate(series, groupLabels, spaceAgg, ctx.grid.length);
   } else {
-    if (isRate) series = applyRate(series, ctx.grid, ctx.stepMs, ctx.openAfterMs);
+    if (isRate) series = toRate(series);
     groups = spaceAggregate(series, groupLabels, spaceAgg, ctx.grid.length);
   }
 
   if (series.length === 0) return { series: [], seriesTotal: 0, seriesShown: 0, metricType, warnings };
   if (groupLabels.length === 0) return { series: groups, seriesTotal: 1, seriesShown: 1, metricType, warnings };
 
-  const limit = Math.min(Math.max(1, spec.limit ?? METRIC_DEFAULT_SERIES_LIMIT), METRIC_MAX_SERIES_LIMIT);
-  const folded = foldTopN(groups, limit, spaceAgg, ctx.grid.length);
+  const folded = foldTopN(groups, seriesLimit(spec), spaceAgg, ctx.grid.length);
   return { ...folded, metricType, warnings };
 }
 
@@ -197,6 +296,7 @@ async function evaluateWindow(
   queries: MetricQuerySpec[],
   filtersById: Map<string, MetricAttrFilter[]>,
   formulas: Array<{ spec: MetricFormulaSpec; ast: FormulaNode | null; error?: string }>,
+  catalog?: CatalogLookup,
 ): Promise<Evaluated> {
   const out: Evaluated = {
     queries: new Map(),
@@ -204,7 +304,7 @@ async function evaluateWindow(
     formulas: new Map(),
     formulaErrors: new Map(),
   };
-  const settled = await Promise.allSettled(queries.map((q) => evaluateQuery(ctx, q, filtersById.get(q.id) ?? [])));
+  const settled = await Promise.allSettled(queries.map((q) => evaluateQuery(ctx, q, filtersById.get(q.id) ?? [], catalog?.entries.get(q.metricName))));
   queries.forEach((q, i) => {
     const r = settled[i];
     if (r.status === 'fulfilled') out.queries.set(q.id, r.value);
@@ -319,7 +419,7 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
   const visibleQueries = queries.filter((q) => !q.hidden);
   const visibleFormulas = formulas.filter((f) => !f.spec.hidden);
 
-  const currentPromise = evaluateWindow(baseCtx, queries, filtersById, formulas);
+  const currentPromise = evaluateWindow(baseCtx, queries, filtersById, formulas, catalog);
   let comparePromise: Promise<Evaluated> | null = null;
   if (offset > 0 && (visibleQueries.length > 0 || visibleFormulas.length > 0)) {
     // Only what the visible items need: visible queries plus the operands of visible formulas.
@@ -331,13 +431,14 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
       queries.filter((q) => needed.has(q.id)),
       filtersById,
       visibleFormulas,
+      catalog,
     );
   }
   const [current, previous] = await Promise.all([currentPromise, comparePromise]);
 
   // Units per query (override > catalog), formulas share a unit only when all operands do.
   const queryUnits = new Map<string, string | null>();
-  for (const q of queries) queryUnits.set(q.id, catalog.entries.get(q.metricName)?.unit ?? null);
+  for (const q of queries) queryUnits.set(q.id, queryResultUnit(catalog.entries.get(q.metricName), q.aggregation));
   const unitOf = (catalogUnit: string | null) => resolveUnit(query.unitOverride, catalogUnit);
 
   const infos: MetricQueryInfo[] = [];
