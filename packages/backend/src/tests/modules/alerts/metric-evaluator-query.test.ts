@@ -55,7 +55,7 @@ vi.mock('../../../modules/metrics/query/units.js', async (importOriginal) => {
 });
 
 import { computeMetricWindow, selectAlertGroups } from '../../../modules/alerts/metric-evaluator.js';
-import { metricQueryService } from '../../../modules/metrics/query/service.js';
+import { MAX_UNFOLDED_GROUPS, metricQueryService } from '../../../modules/metrics/query/service.js';
 
 // 10:07:30, so the window of a 1m rule is [10:06, 10:07) and the lead step 10:05.
 const NOW = new Date('2026-11-25T10:07:30.000Z');
@@ -132,5 +132,28 @@ describe('computeMetricWindow', () => {
     expect(result.groups.some((g) => g.labels.__other__ === 'true')).toBe(false);
     const picked = selectAlertGroups(cfg, result.groups, []);
     expect(picked.map((g) => g.value)).toEqual([0, 1, 2]);
+  });
+
+  it('above the unfolded group cap, a below rule keeps the lowest groups and knows the result is partial (N4)', async () => {
+    catalog.entries = new Map([['load', { unit: null, type: 'gauge' }]]);
+    const n = MAX_UNFOLDED_GROUPS + 20;
+    // Highest-labelled hosts carry the lowest values: a labels-first cap would drop them.
+    for (let i = 0; i < n; i++) {
+      points.push({ metric: 'load', t: at(10, 6), v: n - i, resource: { 'host.name': `h${String(i).padStart(4, '0')}` } });
+    }
+    const cfg = config({ condition: 'below', threshold: 3 }, true);
+    cfg.query.queries[0] = { ...cfg.query.queries[0], metricName: 'load', aggregation: 'avg' };
+    const result = await computeMetricWindow(cfg, 'org-1', ['p1'], NOW);
+    expect(result.groups).toHaveLength(MAX_UNFOLDED_GROUPS);
+    expect(result.partial).toBe(true);
+    const picked = selectAlertGroups(cfg, result.groups, []);
+    expect(picked.map((g) => g.value)).toEqual([1, 2]);
+  });
+
+  it('a small grouped query is complete (not partial)', async () => {
+    points.push({ metric: 'http.requests', t: at(10, 5), v: 600, resource: { 'host.name': 'a' } });
+    points.push({ metric: 'http.requests', t: at(10, 6), v: 1200, resource: { 'host.name': 'a' } });
+    const result = await computeMetricWindow(config({}, true), 'org-1', ['p1'], NOW);
+    expect(result.partial).toBe(false);
   });
 });

@@ -8,8 +8,10 @@ import {
   metricIncidentTitle,
   metricInstanceTitle,
   planMetricInstances,
+  ruleResolveReason,
   type MetricInstanceRow,
 } from '../../../modules/alerts/metric-evaluator.js';
+import { PARTIAL_RESULT_NOTE } from '../../../modules/metrics/query/service.js';
 import { assertValidMetricConfig, parseMetricAlertConfig } from '../../../modules/alerts/metric-config.js';
 import { AlertRuleInputError } from '../../../modules/alerts/validation.js';
 import { alertNotificationJobKey } from '../../../queue/jobs/alert-evaluation.js';
@@ -329,6 +331,51 @@ describe('planMetricInstances', () => {
       const [plan] = planMetricInstances(config(), [web1(0.1)], [firing()], RULE, plus(1));
       expect(plan.decision.type).toBe('resolve');
       expect(plan.reason).toBe('recovered');
+    });
+
+    it('the rule incident resolves with the reason of the instances resolving in the run (N10)', () => {
+      expect(ruleResolveReason([{ reason: 'no_data' }])).toBe('no_data');
+      expect(ruleResolveReason([{ reason: 'no_data' }, { reason: 'no_data' }])).toBe('no_data');
+      expect(ruleResolveReason([{ reason: 'no_data' }, { reason: 'recovered' }])).toBe('recovered');
+      expect(ruleResolveReason([{ reason: 'recovered' }])).toBe('recovered');
+      expect(ruleResolveReason([])).toBe('recovered');
+    });
+  });
+
+  describe('partial responses (N4)', () => {
+    const firing = (o: Partial<MetricInstanceRow> = {}) =>
+      instance({ state: 'firing', consecutive_breaches: 3, last_value: 0.97, last_triggered_at: NOW, last_notified_at: NOW, ...o });
+
+    it('holds an instance absent from a partial response exactly as it is, past the no-data bound', () => {
+      const held = firing({ no_data_since: plus(0), no_data_evaluations: 9 });
+      const [plan] = planMetricInstances(config(), [], [held], RULE, plus(120), { partial: true });
+      expect(plan.decision).toEqual({ type: 'none' });
+      const { group_key: _k, labels: _l, ...rest } = held;
+      expect(plan.next).toEqual(rest);
+    });
+
+    it('a pending instance absent from a partial response keeps its count and no streak', () => {
+      const pending = instance({ consecutive_breaches: 1, last_value: 0.95 });
+      const [plan] = planMetricInstances(config(), [], [pending], RULE, plus(5), { partial: true });
+      expect(plan.next).toMatchObject({ consecutive_breaches: 1, no_data_since: null, no_data_evaluations: 0 });
+    });
+
+    it('a group present with no value in a partial response is still no data', () => {
+      const [plan] = planMetricInstances(config(), [web1(null)], [firing()], RULE, plus(1), { partial: true });
+      expect(plan.next).toMatchObject({ no_data_since: plus(1), no_data_evaluations: 1 });
+    });
+
+    it('groupsFromResponse flags partial results of the watched item only', () => {
+      const base = {
+        interval: '1m' as const,
+        series: [],
+        queries: [{ id: 'A', seriesTotal: 0, seriesShown: 0, metricType: 'gauge', unit: '1' }],
+      };
+      const note = PARTIAL_RESULT_NOTE;
+      expect(groupsFromResponse(config(), { ...base, warnings: [`Query A: capped ${note}`] }).partial).toBe(true);
+      expect(groupsFromResponse(config(), { ...base, warnings: [`Query B: capped ${note}`] }).partial).toBe(false);
+      expect(groupsFromResponse(config(), { ...base, warnings: ['Query A: sent by more than 20 projects'] }).partial).toBe(false);
+      expect(groupsFromResponse(config(), { ...base, warnings: [] }).partial).toBe(false);
     });
   });
 
