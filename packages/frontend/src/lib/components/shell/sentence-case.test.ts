@@ -21,8 +21,6 @@ const TITLE_CASE_LEFTOVERS: Array<[string, string[]]> = [
     'lib/components/siem/enrichment/IpReputationCard.svelte',
     ['IP Reputation', 'Usage Type', 'Last Checked'],
   ],
-  ['lib/components/metrics/GoldenSignalsPanel.svelte', ['All Services']],
-  ['lib/utils/golden-signals.ts', ["'Request Rate'", "'Error Rate'"]],
   [
     'routes/dashboard/admin/auth-providers/+page.svelte',
     [
