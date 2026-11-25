@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Log context opens on the log**: the context dialog now scrolls to the selected log once the surrounding logs have loaded, instead of starting at the top of the 25 earlier ones. Each row has a single "Copy log as JSON" action (the per-field copy buttons are gone there) and a "View JSON" expander with the same highlighted JSON as the log details panel.
 - **Log details actions in the JSON view**: "View context" and "View exception details" are available from the JSON tab too, not only from Details.
+- **Tooltips on log detail buttons**: the icon buttons on each field (copy value, copy field path, show only, hide, add as column) now say what they do on hover and keyboard focus. Scroll areas in log details and log context use the same thin scrollbar as the sidebar.
 - **Facets sample size**: facets now count the newest 20,000 matching logs (was 100,000). Top values are the same in practice and the panel says when a sample was used.
 
 ### Fixed
