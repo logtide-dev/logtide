@@ -659,6 +659,8 @@ export interface MetricNamesParams {
   from?: Date;
   to?: Date;
   limit?: number;
+  /** 1.8: only names with at least one data point matching every filter (e.g. resource host.name = X). */
+  filters?: MetricAttrFilter[];
 }
 
 /** Result of metric name listing */
@@ -711,7 +713,7 @@ export interface MetricSource {
   metricCount: number;
   /** Data points in the window. */
   pointCount: number;
-  /** Distinct values per requested co-key (every requested key present, possibly empty). */
+  /** Distinct non-empty values per requested co-key, at most 20 (which 20 is engine-defined when there are more), sorted; every requested key present, possibly empty. */
   co: Record<string, string[]>;
 }
 
