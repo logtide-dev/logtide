@@ -971,8 +971,8 @@ describe('TimescaleEngine - Metrics', () => {
 
       const sql = mockQuery.mock.calls[0][0] as string;
       expect(sql).toContain('SELECT DISTINCT jsonb_object_keys(attributes) AS key');
+      expect(sql).toMatch(/\) k\s+ORDER BY key COLLATE "C" ASC/);
       expect(sql).toContain('FROM public.metrics');
-      expect(sql).toContain('ORDER BY key ASC');
     });
 
     it('should include NULL check in WHERE clause', async () => {

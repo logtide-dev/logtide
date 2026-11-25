@@ -162,7 +162,7 @@ describe('metric rule evaluation (ungrouped)', () => {
       compareTo: 'none',
       from: new Date(to - 6 * 60_000).toISOString(),
       to: new Date(to).toISOString(),
-      unfoldedGroups: true,
+      internal: { unfoldedGroups: true },
     });
     expect((await getRuleRow(rule.id)).state).toBe('ok');
   });

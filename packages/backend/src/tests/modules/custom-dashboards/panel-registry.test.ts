@@ -616,11 +616,11 @@ describe('metrics panel schema', () => {
     expect(parse({ queries: [qspec({ limit: 0 })] }).success).toBe(false);
   });
 
-  it('validates attribute keys (dots allowed, SQL characters not)', () => {
+  it('validates attribute keys (dots, dashes, slashes allowed, SQL characters not)', () => {
     const withKey = (key: string) =>
       parse({ queries: [qspec({ groupBy: [{ scope: 'resource', key }] })] }).success;
-    expect(withKey('k8s.pod.name')).toBe(true);
-    for (const key of ["host'; DROP TABLE x;--", 'a b', 'a-b', '1abc', '', 'x"y', 'a/b']) {
+    for (const key of ['k8s.pod.name', 'a-b', 'app.kubernetes.io/name']) expect(withKey(key), key).toBe(true);
+    for (const key of ["host'; DROP TABLE x;--", 'a b', '1abc', '', 'x"y']) {
       expect(withKey(key), key).toBe(false);
     }
   });
@@ -634,9 +634,13 @@ describe('metrics panel schema', () => {
     expect(parse({ display: 'pie' }).success).toBe(false);
     expect(parse({ projectIds: ['nope'] }).success).toBe(false);
     expect(parse({ projectIds: null }).success).toBe(true);
-    expect(parse({ unitOverride: 'x'.repeat(21) }).success).toBe(false);
-    expect(parse({ unitOverride: 'x'.repeat(20) }).success).toBe(true);
-    expect(parse({ extra: 1 }).success).toBe(false);
+    // Same limits as the explorer and alerts (metrics/query/schema.ts).
+    expect(parse({ unitOverride: 'x'.repeat(33) }).success).toBe(false);
+    expect(parse({ unitOverride: 'x'.repeat(32) }).success).toBe(true);
+    // Unknown keys are stripped, not stored.
+    const stripped = parse({ extra: 1 });
+    expect(stripped.success).toBe(true);
+    expect((stripped.data as { query: Record<string, unknown> }).query.extra).toBeUndefined();
   });
 });
 

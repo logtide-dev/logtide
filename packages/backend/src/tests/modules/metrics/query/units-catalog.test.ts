@@ -41,8 +41,20 @@ describe('loadCatalog', () => {
 
     const out = await loadCatalog([ctx.project.id, second], ['lat', 'reqs', 'missing']);
     expect(out.available).toBe(true);
-    expect(out.entries.get('lat')).toEqual({ unit: 's', type: 'histogram', temporality: 'delta', isMonotonic: null });
-    expect(out.entries.get('reqs')).toEqual({ unit: null, type: 'sum', temporality: 'cumulative', isMonotonic: true });
+    expect(out.entries.get('lat')).toEqual({
+      unit: 's',
+      type: 'histogram',
+      temporality: 'delta',
+      isMonotonic: null,
+      projectIds: [ctx.project.id, second],
+    });
+    expect(out.entries.get('reqs')).toEqual({
+      unit: null,
+      type: 'sum',
+      temporality: 'cumulative',
+      isMonotonic: true,
+      projectIds: [ctx.project.id, second],
+    });
     expect(out.entries.has('missing')).toBe(false);
   });
 

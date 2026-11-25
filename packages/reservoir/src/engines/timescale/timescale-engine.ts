@@ -1939,10 +1939,14 @@ export class TimescaleEngine extends StorageEngine {
     const limitClause = params.limit ? `LIMIT ${sqlParams.add(params.limit)}` : '';
 
     const result = await this.runQuery(
-      `SELECT DISTINCT jsonb_object_keys(${col}) AS key
-       FROM ${s}.metrics
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY key ASC
+      // Byte order (C collation), like the other engines: the first
+      // `limit` keys are the same everywhere.
+      `SELECT key FROM (
+         SELECT DISTINCT jsonb_object_keys(${col}) AS key
+         FROM ${s}.metrics
+         WHERE ${conditions.join(' AND ')}
+       ) k
+       ORDER BY key COLLATE "C" ASC
        ${limitClause}`,
       sqlParams.values,
     );

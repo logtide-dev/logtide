@@ -4,9 +4,9 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { MetricQueryRequest, PanelConfig } from '@logtide/shared';
-import { metricQueryRequestSchema, metricPanelsDataSchema } from './schema.js';
-import { metricQueryService, resolveProjectScope } from './service.js';
-import { isOrgMember } from './scope.js';
+import { effectiveVariables, metricQueryRequestSchema, metricPanelsDataSchema } from './schema.js';
+import { metricQueryService } from './service.js';
+import { isOrgMember, resolveProjectScopeDetailed } from './scope.js';
 import { fetchTemplatePanelData } from './panel.js';
 import { MetricQueryValidationError, MetricScopeError } from './errors.js';
 
@@ -34,8 +34,10 @@ const metricQueryRoutes: FastifyPluginAsync = async (fastify) => {
     if (!userId) return;
     try {
       const body = metricQueryRequestSchema.parse(request.body) as MetricQueryRequest;
-      const projectIds = await resolveProjectScope(body.organizationId, userId, body.projectIds);
-      return await metricQueryService.run({ ...body, projectIds });
+      const scope = await resolveProjectScopeDetailed(body.organizationId, userId, body.projectIds);
+      const response = await metricQueryService.run({ ...body, projectIds: scope.projectIds });
+      if (scope.warnings.length === 0) return response;
+      return { ...response, warnings: [...scope.warnings, ...response.warnings] };
     } catch (err) {
       return sendError(reply, err);
     }
@@ -54,7 +56,8 @@ const metricQueryRoutes: FastifyPluginAsync = async (fastify) => {
         userId,
         from: new Date(body.from),
         to: new Date(body.to),
-        variables: body.variables,
+        // Declared variables the body leaves out take their default.
+        variables: effectiveVariables(body.variables, body.declaredVariables),
       };
       const settled = await Promise.allSettled(
         body.panels.map((p) => fetchTemplatePanelData(p.config as unknown as PanelConfig, ctx)),

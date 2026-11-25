@@ -13,7 +13,7 @@ import type {
   TraceVolumeConfig,
 } from '@logtide/shared';
 import { PANEL_TIME_RANGES, PANEL_TIME_RANGE_MS } from '@logtide/shared';
-import { resolveOrgProjects, resolveProjectScope } from './scope.js';
+import { resolveOrgProjectScope, resolveProjectScopeDetailed } from './scope.js';
 import { metricQueryService } from './service.js';
 import { resolveVariableValue } from './variables.js';
 import { MetricQueryValidationError } from './errors.js';
@@ -33,17 +33,22 @@ export async function fetchMetricsPanelData(
   ctx: MetricsPanelContext,
 ): Promise<MetricQueryResponse> {
   const { query } = config;
-  const projectIds = ctx.userId
-    ? await resolveProjectScope(ctx.organizationId, ctx.userId, query.projectIds)
-    : await resolveOrgProjects(ctx.organizationId, query.projectIds);
-  return metricQueryService.run({
+  // Projects deleted since the panel was saved are skipped with a warning.
+  const scope = ctx.userId
+    ? await resolveProjectScopeDetailed(ctx.organizationId, ctx.userId, query.projectIds)
+    : await resolveOrgProjectScope(ctx.organizationId, query.projectIds);
+  const response = await metricQueryService.run({
     ...query,
-    projectIds,
+    projectIds: scope.projectIds,
     organizationId: ctx.organizationId,
     from: ctx.from.toISOString(),
     to: ctx.to.toISOString(),
     variables: ctx.variables,
+    // A stored panel never carries internal options.
+    internal: undefined,
   });
+  if (scope.warnings.length === 0) return response;
+  return { ...response, warnings: [...scope.warnings, ...response.warnings] };
 }
 
 /**

@@ -39,7 +39,7 @@ import type { AlertEvaluationResult, AlertNotificationKind } from './types.js';
  *   buckets smooths one late or partial bucket instead of letting the last
  *   bucket alone decide. A group without any point in the window has no
  *   value (no data).
- * - Groups: the query service returns EVERY group (unfoldedGroups, no top-N
+ * - Groups: the query service returns EVERY group (internal.unfoldedGroups, no top-N
  *   fold), so breaches are evaluated before any ranking. Groups that already
  *   have an instance are always evaluated. New breaching groups get an
  *   instance ranked by the alert direction (highest first for `above`,
@@ -195,7 +195,7 @@ export async function computeMetricWindow(
     from: from.toISOString(),
     to: to.toISOString(),
     // Every group: breaches are evaluated here, before any ranking.
-    unfoldedGroups: true,
+    internal: { unfoldedGroups: true },
   });
   return groupsFromResponse(config, response, window.from);
 }

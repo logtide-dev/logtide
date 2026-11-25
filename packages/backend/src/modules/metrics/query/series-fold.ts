@@ -105,7 +105,7 @@ export function combine(values: number[], agg: MetricSpaceAggregation): number |
   }
 }
 
-function combineSeries(members: GridSeries[], labels: Record<string, string>, agg: MetricSpaceAggregation, length: number): GridSeries {
+export function combineSeries(members: GridSeries[], labels: Record<string, string>, agg: MetricSpaceAggregation, length: number): GridSeries {
   const values: Array<number | null> = new Array(length).fill(null);
   for (let i = 0; i < length; i++) {
     const present: number[] = [];
@@ -158,6 +158,42 @@ export function seriesMean(values: Array<number | null>): number | null {
   return n === 0 ? null : sum / n;
 }
 
+export interface FoldResult {
+  series: GridSeries[];
+  seriesTotal: number;
+  seriesShown: number;
+}
+
+/** Groups ranked by mean value, descending (no value last), ties by labels. */
+export function rankByMean(groups: GridSeries[]): GridSeries[] {
+  return groups
+    .map((g) => ({ g, mean: seriesMean(g.values), key: labelKey(g.labels) }))
+    .sort((a, b) => {
+      const am = a.mean ?? -Infinity;
+      const bm = b.mean ?? -Infinity;
+      if (am !== bm) return bm - am;
+      return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+    })
+    .map((r) => r.g);
+}
+
+/**
+ * Keep the `limit` groups with the highest mean, fold the rest with
+ * `combineRest` (which returns the { __other__: 'true' } series).
+ * seriesShown counts the kept groups (the folded rest excluded).
+ */
+export function foldTopNWith(
+  groups: GridSeries[],
+  limit: number,
+  combineRest: (rest: GridSeries[]) => GridSeries,
+): FoldResult {
+  const seriesTotal = groups.length;
+  if (seriesTotal <= limit) return { series: groups, seriesTotal, seriesShown: seriesTotal };
+  const ranked = rankByMean(groups);
+  const kept = ranked.slice(0, limit);
+  return { series: [...kept, combineRest(ranked.slice(limit))], seriesTotal, seriesShown: kept.length };
+}
+
 /**
  * Keep the `limit` groups with the highest mean (descending, ties by labels),
  * fold the rest into one { __other__: 'true' } series with the space
@@ -168,21 +204,36 @@ export function foldTopN(
   limit: number,
   agg: MetricSpaceAggregation,
   length: number,
-): { series: GridSeries[]; seriesTotal: number; seriesShown: number } {
-  const seriesTotal = groups.length;
-  if (seriesTotal <= limit) return { series: groups, seriesTotal, seriesShown: seriesTotal };
-  const ranked = groups
-    .map((g) => ({ g, mean: seriesMean(g.values), key: labelKey(g.labels) }))
+): FoldResult {
+  return foldTopNWith(groups, limit, (rest) => combineSeries(rest, { [OTHER_LABEL]: 'true' }, agg, length));
+}
+
+/** Last non-null value of a series, or null. */
+export function lastValue(values: Array<number | null>): number | null {
+  for (let i = values.length - 1; i >= 0; i--) if (values[i] !== null) return values[i];
+  return null;
+}
+
+/**
+ * The `limit` items with the highest recent value (last non-null point,
+ * items without one last, ties by labels). Used to cap per-series reads.
+ */
+export function topByRecent<T extends { labels: Record<string, string> }>(
+  items: T[],
+  limit: number,
+  recent: (item: T) => number | null,
+): T[] {
+  if (items.length <= limit) return items;
+  return items
+    .map((item) => ({ item, v: recent(item), key: labelKey(item.labels) }))
     .sort((a, b) => {
-      const am = a.mean ?? -Infinity;
-      const bm = b.mean ?? -Infinity;
-      if (am !== bm) return bm - am;
+      const av = a.v ?? -Infinity;
+      const bv = b.v ?? -Infinity;
+      if (av !== bv) return bv - av;
       return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
-    });
-  const kept = ranked.slice(0, limit).map((r) => r.g);
-  const rest = ranked.slice(limit).map((r) => r.g);
-  const other = combineSeries(rest, { [OTHER_LABEL]: 'true' }, agg, length);
-  return { series: [...kept, other], seriesTotal, seriesShown: kept.length };
+    })
+    .slice(0, limit)
+    .map((r) => r.item);
 }
 
 export function computeStats(values: Array<number | null>): MetricSeriesStats {

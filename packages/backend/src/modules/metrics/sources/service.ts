@@ -151,6 +151,8 @@ async function runSignal(
         limit: hostNames.length,
       },
     ],
+    // Every host is its own series (the public cap of 50 would fold the rest).
+    internal: { maxSeries: hostNames.length },
   };
   const res = await metricQueryService.run(query);
   for (const s of res.series) {
@@ -549,6 +551,7 @@ async function loadMetricRed(ctx: SourcesContext, candidates: string[]): Promise
           },
           { id: 'C', metricName: variant.metricName, aggregation: 'p95', spaceAggregation: 'avg', filters: [svc], groupBy, limit },
         ],
+        internal: { maxSeries: limit },
       });
       for (const name of remaining) {
         const red = redFromSeries(res.series, name, variant.defaultUnit);

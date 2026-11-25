@@ -8,6 +8,19 @@ import { createTestContext, createTestSpan } from '../../../helpers/index.js';
 import { createTestProject } from '../../../helpers/factories.js';
 import { fetchMetricsPanelData } from '../../../../modules/metrics/query/panel.js';
 import { MetricScopeError } from '../../../../modules/metrics/query/errors.js';
+import { metricQueryRequestSchema } from '../../../../modules/metrics/query/schema.js';
+
+const metricExplorerQuerySchemaKeys = () =>
+  Object.keys(
+    metricQueryRequestSchema.parse({
+      organizationId: '11111111-1111-4111-8111-111111111111',
+      from: '2026-11-25T00:00:00.000Z',
+      to: '2026-11-25T01:00:00.000Z',
+      projectIds: null,
+      queries: [{ id: 'A', metricName: 'm', aggregation: 'avg' }],
+      internal: { maxSeries: 2000 },
+    }),
+  );
 
 const MIN = 60_000;
 
@@ -175,13 +188,93 @@ describe('metrics query routes', () => {
       (await post('/panels/data', { organizationId: other.organization.id, from, to, panels: [{ id: 'p', config: { type: 'metrics' } }] }))
         .status,
     ).toBe(403);
-    // soft-deleted project of the own org
-    const deleted = await createTestProject({ organizationId: ctx.organization.id, userId: ctx.user.id });
-    await db.updateTable('projects').set({ deleted_at: new Date() }).where('id', '=', deleted.id).execute();
-    expect((await post('/query', query({ projectIds: [deleted.id] }))).status).toBe(403);
     // API key (no session)
     const apiKeyRes = await request(app.server).post('/api/v1/metrics/query').set('x-api-key', ctx.apiKey.plainKey).send(query());
     expect(apiKeyRes.status).toBe(403);
+  });
+
+  it('skips deleted projects of the own org with a warning (item 11)', async () => {
+    await ingest('web-1', 0.5, now - 10 * MIN);
+    const deleted = await createTestProject({ organizationId: ctx.organization.id, userId: ctx.user.id });
+    await ingest('web-9', 0.9, now - 10 * MIN, deleted.id);
+    await db.updateTable('projects').set({ deleted_at: new Date() }).where('id', '=', deleted.id).execute();
+
+    const mixed = await post('/query', query({ projectIds: [ctx.project.id, deleted.id] }));
+    expect(mixed.status).toBe(200);
+    expect(mixed.body.series[0].stats.max).toBeCloseTo(0.5);
+    expect(mixed.body.warnings).toContain('A selected project was deleted and is skipped');
+
+    const only = await post('/query', query({ projectIds: [deleted.id] }));
+    expect(only.status).toBe(200);
+    expect(only.body.series).toEqual([]);
+    expect(only.body.warnings).toContain('A selected project was deleted and is skipped');
+
+    // A foreign id still fails the whole request.
+    expect((await post('/query', query({ projectIds: [deleted.id, other.project.id] }))).status).toBe(403);
+
+    // Panels saved with the deleted project keep rendering.
+    const panel = {
+      type: 'metrics',
+      title: 'CPU',
+      source: 'metrics',
+      timeRange: '1h',
+      query: { ...query(), organizationId: undefined, from: undefined, to: undefined, projectIds: [ctx.project.id, deleted.id] },
+    };
+    const res = await post('/panels/data', { organizationId: ctx.organization.id, from, to, panels: [{ id: 'p', config: panel }] });
+    expect(res.status).toBe(200);
+    expect(res.body.panels.p.data.series[0].stats.max).toBeCloseTo(0.5);
+    expect(res.body.panels.p.data.warnings).toContain('A selected project was deleted and is skipped');
+  });
+
+  it('caps the window at 90 days on both endpoints (item 4)', async () => {
+    const longFrom = new Date(now - 91 * 24 * 60 * MIN).toISOString();
+    const q = await post('/query', query({ from: longFrom }));
+    expect(q.status).toBe(400);
+    expect(JSON.stringify(q.body)).toMatch(/90 days/);
+    const p = await post('/panels/data', { organizationId: ctx.organization.id, from: longFrom, to, panels: [{ id: 'p', config: { type: 'metrics' } }] });
+    expect(p.status).toBe(400);
+  });
+
+  it('falls back to declared variable defaults on /panels/data (item 12)', async () => {
+    await ingest('web-1', 0.2, now - 10 * MIN);
+    await ingest('web-2', 0.8, now - 10 * MIN);
+    const panel = {
+      type: 'metrics',
+      title: 'CPU',
+      source: 'metrics',
+      timeRange: '1h',
+      query: {
+        projectIds: null,
+        queries: [
+          { id: 'A', metricName: 'system.cpu.utilization', aggregation: 'max', filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['$host'] }], groupBy: [] },
+        ],
+        formulas: [],
+        interval: 'auto',
+        compareTo: 'none',
+        display: 'lines',
+      },
+    };
+    const body = (extra: Record<string, unknown>) => ({ organizationId: ctx.organization.id, from, to, panels: [{ id: 'p', config: panel }], ...extra });
+    const declaredVariables = [{ name: 'host', label: 'Host', attr: { scope: 'resource', key: 'host.name' }, default: 'web-1' }];
+
+    const fallback = await post('/panels/data', body({ declaredVariables }));
+    expect(fallback.status).toBe(200);
+    expect(fallback.body.panels.p.data.series[0].stats.max).toBeCloseTo(0.2);
+
+    const sent = await post('/panels/data', body({ declaredVariables, variables: { host: 'web-2' } }));
+    expect(sent.body.panels.p.data.series[0].stats.max).toBeCloseTo(0.8);
+
+    const all = await post('/panels/data', body({ declaredVariables, variables: { host: null } }));
+    expect(all.body.panels.p.data.series[0].stats.max).toBeCloseTo(0.8);
+
+    const undeclared = await post('/panels/data', body({}));
+    expect(undeclared.body.panels.p.error).toMatch(/Unknown variable "\$host"/);
+  });
+
+  it('never takes internal options from the body', async () => {
+    const res = await post('/query', { ...query(), internal: { maxSeries: 2000 } });
+    expect(res.status).toBe(200);
+    expect(metricExplorerQuerySchemaKeys()).not.toContain('internal');
   });
 
   it('evaluates template panels and reports per-panel errors', async () => {

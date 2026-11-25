@@ -107,7 +107,7 @@ describe('computeMetricWindow', () => {
       from: '2026-11-25T10:05:00.000Z',
       to: '2026-11-25T10:07:00.000Z',
       interval: '1m',
-      unfoldedGroups: true,
+      internal: { unfoldedGroups: true },
     });
     expect(result.groups).toHaveLength(1);
     expect(result.groups[0].value).toBeCloseTo(10);
