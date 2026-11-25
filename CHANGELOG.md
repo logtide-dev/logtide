@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **New Metrics: sources, explore and catalog**: the Metrics page is rebuilt from scratch around who sends the data.
+  - **Sources** (the first screen) lists every host and service that sends metrics across the organization's projects, in one table grouped by kind. Hosts show status, CPU, memory, fullest disk, network and load with colored meters and a trend; services show requests per second, error rate and p95 with sparklines. The worst status sorts first, and every non-ok status says why ("Disk / at 93%", "No data for 14 min").
+  - **Host and service pages**: header with status and host info, then tabs. A host has Resources (CPU by state, memory, load, swap, filesystems by mountpoint, disk and network throughput), Hardware (the former Monitor > Hardware page), Services running on it, Logs, Traces and every metric it sends. A service has an overview with requests, errors and latency, the hosts it runs on, Logs, Traces and its metrics.
+  - **Explore**: several metrics in one chart (queries A to F), filters and group by on data point or resource attributes (`host.name`, `service.name`, `k8s.pod.name`...), time and space aggregation, top N with an "Other" series, formulas (`A / B * 100`), compare with the previous hour, day or week, auto refresh, and a shareable link. Grouping by a source (host, service, container) shows one small chart per source by default. Suggestions offer one-click breakdowns.
+  - **Catalog**: every metric with its type, unit, description, projects and last seen, plus its attributes, the sources that send it and the dashboards that use it.
+- **Customize a source view**: a host or service page can be saved as a dashboard with one click. The dashboard keeps every panel, gets a selector for the host or service, and can take panels from any other source, so an app and its VPS can share one page.
+- **Dashboard variables and the new metrics panel**: dashboards can declare variables (a host or service selector at the top, stored with the dashboard and in the URL), and the new metrics panel runs any explorer query across several projects. Existing metric chart and metric stat panels are converted automatically (dashboard schema version 2).
+- **Metric alerts**: alert rules on any metric query, created from the explorer with "Create alert": above or below a threshold over a window, for N checks in a row, per group when the query is grouped. They use the same lifecycle, notifications, incidents, snooze, re-notify and webhooks as the other alert rules, count toward the alert rule limit, and show their groups, values and a chart in the incident. A group that stops sending data is resolved with reason "no data" after 10 checks and at least an hour.
+- **Service RED from HTTP metrics**: a service without traces still gets requests per second, error rate and p95, computed from its `http.server.request.duration` (or the older `http.server.duration`) histogram.
+
+### Changed
+
+- **Monitor > Hardware moved into Metrics**: hosts are now listed under Metrics > Sources and their hardware health is the Hardware tab of the host page. Old Hardware links redirect.
+- **Metric units**: the unit and description sent over OTLP are kept (metric catalog, migration 081) and used everywhere: bytes, rates, durations, temperatures and percentages are formatted on axes, legends and tables.
+
+### Fixed
+
+- **Histogram metrics**: percentiles, averages and rates of OTLP histograms are now computed from their buckets on every storage engine, with cumulative histograms turned into per-interval deltas (counter resets handled) and exponential histograms converted to a fixed bucket grid at ingest. Before, p95 of a histogram metric was computed over its running sum.
+- **Counter rates**: delta and cumulative sums are told apart using the OTLP aggregation temporality, so rates of delta counters are no longer wrong.
+- **Metrics no longer averaged across hosts**: every chart can split by host or any resource attribute; the old page mixed every host of a service into one line.
+
 
 ## [1.7.2] - 2026-11-25
 
