@@ -269,6 +269,26 @@ describe('org isolation of metrics panel projectIds', () => {
     });
     expect(upd.statusCode).toBe(400);
   });
+
+  it('refuses a deleted project of the own organization on save', async () => {
+    const deleted = await db
+      .insertInto('projects')
+      .values({
+        organization_id: ctx.organization.id,
+        user_id: ctx.user.id,
+        name: `Gone ${Date.now()}`,
+        slug: `gone-${Date.now()}`,
+        deleted_at: new Date(),
+      } as any)
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    const res = await req('POST', '/', {
+      organizationId: ctx.organization.id,
+      name: 'Deleted',
+      panels: [metricsPanel('p1', 'x', [deleted.id])],
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });
 
 describe('batch panel data with variables', () => {

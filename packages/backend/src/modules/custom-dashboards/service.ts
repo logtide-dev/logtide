@@ -152,6 +152,7 @@ export class CustomDashboardsService {
       .select('id')
       .where('organization_id', '=', organizationId)
       .where('id', 'in', [...ids])
+      .where('deleted_at', 'is', null)
       .execute();
     if (rows.length !== ids.size) {
       throw new Error('Project does not belong to the organization');
