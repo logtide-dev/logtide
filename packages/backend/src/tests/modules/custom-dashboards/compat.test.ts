@@ -87,6 +87,24 @@ describe('dashboard compatibility', () => {
     });
   });
 
+  it('updating only variables on a v1 row writes the migrated panels with the new schema version', async () => {
+    const created = await service.create({ organizationId: ctx.organization.id, name: 'Legacy vars' }, ctx.user.id);
+    await db
+      .updateTable('custom_dashboards')
+      .set({ schema_version: 1, panels: JSON.stringify([{ id: 'l1', layout: LAYOUT, config: LEGACY_CHART }]) as unknown as PanelInstance[] })
+      .where('id', '=', created.id)
+      .execute();
+
+    await service.update(created.id, ctx.organization.id, ctx.user.id, {
+      variables: [{ name: 'host', label: 'Host', attr: { scope: 'resource', key: 'host.name' }, metricName: null, default: null }],
+    });
+
+    const row = await db.selectFrom('custom_dashboards').select(['schema_version', 'panels']).where('id', '=', created.id).executeTakeFirstOrThrow();
+    expect(row.schema_version).toBe(2);
+    const stored = (typeof row.panels === 'string' ? JSON.parse(row.panels) : row.panels) as Array<{ config: { type: string } }>;
+    expect(stored.map((p) => p.config.type)).toEqual(['metrics']);
+  });
+
   it('metric_chart and metric_stat can no longer be saved', async () => {
     for (const config of [LEGACY_CHART, LEGACY_STAT]) {
       await expect(
