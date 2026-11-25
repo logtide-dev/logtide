@@ -1,6 +1,8 @@
 import type { ColumnType } from 'kysely';
 import type {
   LogLevel,
+  MetricAlertConfig,
+  MetricAlertInstancePayload,
   OrgRole,
   SpanKind,
   SpanStatusCode,
@@ -215,7 +217,7 @@ export interface ApiKeysTable {
   key_prefix: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-export type AlertType = 'threshold' | 'rate_of_change';
+export type AlertType = 'threshold' | 'rate_of_change' | 'metric';
 export type BaselineType = 'same_time_yesterday' | 'same_day_last_week' | 'rolling_7d_avg' | 'percentile_p95';
 
 export interface BaselineMetadata {
@@ -1501,4 +1503,34 @@ export interface AlertRulesTable {
   last_notified_at: Timestamp | null;
   snoozed_until: Timestamp | null;
   renotify_minutes: number | null;
+}
+
+// 1.8 metric alert rules, migration 083. Declaration merging extends the tables above.
+export interface AlertRulesTable {
+  metric_config: ColumnType<MetricAlertConfig | null, string | null, string | null>;
+}
+
+export interface AlertHistoryTable {
+  metric_metadata: ColumnType<
+    MetricAlertInstancePayload | null,
+    string | null | undefined,
+    string | null
+  >;
+}
+
+export interface AlertMetricInstancesTable {
+  rule_id: string;
+  organization_id: string;
+  group_key: string;
+  labels: ColumnType<Record<string, string>, string | undefined, string>;
+  state: Generated<AlertRuleState>;
+  consecutive_breaches: Generated<number>;
+  last_value: number | null;
+  last_triggered_at: Timestamp | null;
+  last_notified_at: Timestamp | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface Database {
+  alert_metric_instances: AlertMetricInstancesTable;
 }

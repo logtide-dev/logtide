@@ -3,7 +3,7 @@
  * organization_id and/or project_id.
  */
 export const TENANT_TABLES = new Set<string>([
-  'logs', 'api_keys', 'alert_rules', 'alert_history', 'notifications',
+  'logs', 'api_keys', 'alert_rules', 'alert_history', 'alert_metric_instances', 'notifications',
   'sigma_rules', 'traces', 'spans', 'logs_hourly_stats', 'logs_daily_stats', 'logs_minute_stats',
   'spans_hourly_stats', 'spans_daily_stats', 'detection_events_hourly_stats',
   'detection_events_daily_stats', 'detection_events_rule_stats', 'detection_events',
