@@ -33,6 +33,11 @@ import type { StorageEngine } from '../core/storage-engine.js';
 import { mergeTraceSummary } from '../core/trace-merge.js';
 import {
   GLOBAL_SCOPE,
+  metricAttrLabel,
+  type MetricAttrFilter,
+  type MetricAttrRef,
+  type MetricSourcesParams,
+  type MetricSourcesResult,
   type CountParams,
   type CountResult,
   type DiscoverMetadataKeysParams,
@@ -44,6 +49,9 @@ import {
   type MetricAggregateResult,
   type MetricAggregationFn,
   type MetricLabelParams,
+  type MetricNamesParams,
+  type MetricNamesResult,
+  type MetricType,
   type MetricLabelResult,
   type MetricQueryParams,
   type MetricQueryResult,
@@ -155,12 +163,74 @@ function hostnameOf(log: LogRecord): string | undefined {
   return typeof fromMetadata === 'string' ? fromMetadata : log.hostname;
 }
 
-/** A metric label: the literal attribute key (dots included), string values only. */
+/** A legacy `attributes` filter label: the literal attribute key (dots included), string values only. */
 function metricLabel(metric: MetricRecord, key: string): string | undefined {
   const attributes = metric.attributes;
   if (!attributes || !Object.prototype.hasOwnProperty.call(attributes, key)) return undefined;
   const value = attributes[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * 1.8 attribute ref: a literal key (dots included) of `attributes` (metric
+ * scope) or `resourceAttributes` (resource scope).
+ */
+function metricAttrValue(metric: MetricRecord, ref: MetricAttrRef): { present: boolean; value: unknown } {
+  const map = ref.scope === 'resource' ? metric.resourceAttributes : metric.attributes;
+  if (!map || typeof map !== 'object' || !Object.prototype.hasOwnProperty.call(map, ref.key)) return { present: false, value: undefined };
+  const value = map[ref.key];
+  // A JSON null counts as a missing key.
+  return value === null || value === undefined ? { present: false, value: undefined } : { present: true, value };
+}
+
+/** Text form: strings as they are, numbers and booleans as JSON scalars (200, true), anything else none. */
+function metricAttrText(metric: MetricRecord, ref: MetricAttrRef): string | undefined {
+  const { value } = metricAttrValue(metric, ref);
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  return undefined;
+}
+
+/** Plain decimal numbers only (no Infinity, NaN, hex or blanks). */
+const NUMERIC_TEXT_RE = /^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/;
+
+function numericText(text: string | undefined): number | undefined {
+  return text !== undefined && NUMERIC_TEXT_RE.test(text) ? Number(text) : undefined;
+}
+
+/**
+ * 1.8 attribute filter: eq/neq/in/nin compare the text form (neq and nin
+ * also match a missing key), exists/notExists test the key, gte/lt compare
+ * the number the text form parses to (booleans, objects and text that is
+ * not a plain number never match).
+ */
+function metricAttrFilterMatches(metric: MetricRecord, filter: MetricAttrFilter): boolean {
+  const values = filter.values ?? [];
+  const text = metricAttrText(metric, filter);
+  switch (filter.op) {
+    case 'eq':
+      return values.length > 0 && text === values[0];
+    case 'neq':
+      return values.length === 0 || text !== values[0];
+    case 'in':
+      return text !== undefined && values.includes(text);
+    case 'nin':
+      return text === undefined || !values.includes(text);
+    case 'exists':
+      return metricAttrValue(metric, filter).present;
+    case 'notExists':
+      return !metricAttrValue(metric, filter).present;
+    case 'gte':
+    case 'lt': {
+      const threshold = numericText(values[0]);
+      const n = typeof metricAttrValue(metric, filter).value === 'boolean' ? undefined : numericText(text);
+      if (threshold === undefined || n === undefined) return false;
+      return filter.op === 'gte' ? n >= threshold : n < threshold;
+    }
+    default:
+      throw new Error(`${NAME}: unsupported metric attribute filter op ${String((filter as MetricAttrFilter).op)}`);
+  }
 }
 
 const METRIC_INTERVAL_MS: Record<AggregationInterval, number> = {
@@ -637,6 +707,7 @@ export class ReferenceEngine {
     fromExclusive?: boolean;
     toExclusive?: boolean;
     attributes?: Record<string, string>;
+    filters?: MetricAttrFilter[];
   }): StoredMetricRecord[] {
     const projects = asList(params.projectId)!;
     const orgs = asList(params.organizationId);
@@ -652,7 +723,22 @@ export class ReferenceEngine {
       && (params.from === undefined || (params.fromExclusive ? m.time > params.from : m.time >= params.from))
       && (params.to === undefined || (params.toExclusive ? m.time < params.to : m.time <= params.to))
       // A label filter compares the literal attribute key with a string value.
-      && Object.entries(params.attributes ?? {}).every(([key, value]) => metricLabel(m, key) === value));
+      && Object.entries(params.attributes ?? {}).every(([key, value]) => metricLabel(m, key) === value)
+      && (params.filters ?? []).every((f) => metricAttrFilterMatches(m, f)));
+  }
+
+  /** Label discovery: an empty metric name means every metric (both scopes). */
+  private matchLabelMetrics(params: MetricLabelParams): StoredMetricRecord[] {
+    return this.matchMetrics({ ...params, metricName: params.metricName === '' ? undefined : params.metricName });
+  }
+
+  async getMetricNames(params: MetricNamesParams): Promise<MetricNamesResult> {
+    const seen = new Map<string, { name: string; type: MetricType }>();
+    for (const m of this.matchMetrics(params)) {
+      seen.set(JSON.stringify([m.metricName, m.metricType]), { name: m.metricName, type: m.metricType });
+    }
+    const names = [...seen.values()].sort((a, b) => compareByteOrder(a.name, b.name) || compareByteOrder(a.type, b.type));
+    return { names: names.slice(0, params.limit ?? 1000) };
   }
 
   async queryMetrics(params: MetricQueryParams): Promise<MetricQueryResult> {
@@ -665,11 +751,17 @@ export class ReferenceEngine {
   async aggregateMetrics(params: MetricAggregateParams): Promise<MetricAggregateResult> {
     const bucketMs = METRIC_INTERVAL_MS[params.interval];
     const groupBy = params.groupBy ?? [];
+    const attrRefs = params.groupByAttrs ?? [];
+    const grouped = groupBy.length > 0 || attrRefs.length > 0;
     const groups = new Map<string, { bucket: number; labels: Record<string, string>; points: StoredMetricRecord[] }>();
     for (const m of this.matchMetrics(params)) {
       const bucket = Math.floor(m.time.getTime() / bucketMs) * bucketMs;
-      const labels = Object.fromEntries(groupBy.map((key) => [key, metricLabel(m, key) ?? '']));
-      const groupKey = JSON.stringify([bucket, groupBy.map((key) => labels[key])]);
+      const entries: [string, string][] = [
+        ...groupBy.map((key): [string, string] => [key, metricAttrText(m, { scope: 'metric', key }) ?? '']),
+        ...attrRefs.map((ref): [string, string] => [metricAttrLabel(ref), metricAttrText(m, ref) ?? '']),
+      ];
+      const labels = Object.fromEntries(entries);
+      const groupKey = JSON.stringify([bucket, entries]);
       const group = groups.get(groupKey) ?? { bucket, labels, points: [] };
       group.points.push(m);
       groups.set(groupKey, group);
@@ -679,19 +771,68 @@ export class ReferenceEngine {
       .map((g) => ({
         bucket: new Date(g.bucket),
         value: aggregatePoints(g.points, params.aggregation),
-        ...(groupBy.length > 0 ? { labels: g.labels } : {}),
+        ...(grouped ? { labels: g.labels } : {}),
       }));
     return { metricName: params.metricName, metricType: params.metricType ?? 'gauge', timeseries };
   }
 
+  async getMetricLabelKeys(params: MetricLabelParams): Promise<MetricLabelResult> {
+    const keys = new Set<string>();
+    for (const m of this.matchLabelMetrics(params)) {
+      const map = params.scope === 'resource' ? m.resourceAttributes : m.attributes;
+      for (const key of Object.keys(map ?? {})) keys.add(key);
+    }
+    const sorted = [...keys].sort(compareByteOrder);
+    return { keys: params.limit ? sorted.slice(0, params.limit) : sorted };
+  }
+
   async getMetricLabelValues(params: MetricLabelParams, labelKey: string): Promise<MetricLabelResult> {
     const values = new Set<string>();
-    for (const m of this.matchMetrics(params)) {
-      const value = metricLabel(m, labelKey);
+    for (const m of this.matchLabelMetrics(params)) {
+      const value = metricAttrText(m, { scope: params.scope ?? 'metric', key: labelKey });
       if (value !== undefined && value !== '') values.add(value);
     }
     const sorted = [...values].sort(compareByteOrder);
     return { values: params.limit ? sorted.slice(0, params.limit) : sorted };
+  }
+
+  async getMetricSources(params: MetricSourcesParams): Promise<MetricSourcesResult> {
+    const include = params.includeMetricPrefixes ?? [];
+    const exclude = params.excludeMetricPrefixes ?? [];
+    const coKeys = params.coKeys ?? [];
+    type Acc = { projects: Set<string>; lastSeen: number; names: Set<string>; points: number; co: Map<string, Set<string>> };
+    const sources = new Map<string, Acc>();
+    for (const m of this.matchMetrics({ projectId: params.projectId, organizationId: params.organizationId, from: params.from, to: params.to })) {
+      if (include.length > 0 && !include.some((p) => m.metricName.startsWith(p))) continue;
+      if (exclude.some((p) => m.metricName.startsWith(p))) continue;
+      const value = metricAttrText(m, { scope: 'resource', key: params.key });
+      if (value === undefined || value === '') continue;
+      let acc = sources.get(value);
+      if (!acc) {
+        acc = { projects: new Set(), lastSeen: -Infinity, names: new Set(), points: 0, co: new Map(coKeys.map((k) => [k, new Set<string>()])) };
+        sources.set(value, acc);
+      }
+      acc.projects.add(m.projectId);
+      acc.lastSeen = Math.max(acc.lastSeen, m.time.getTime());
+      acc.names.add(m.metricName);
+      acc.points++;
+      for (const key of coKeys) {
+        const co = metricAttrText(m, { scope: 'resource', key });
+        if (co !== undefined && co !== '') acc.co.get(key)!.add(co);
+      }
+    }
+    const rows = [...sources.entries()]
+      .sort(([a], [b]) => compareByteOrder(a, b))
+      .slice(0, params.limit ?? 500)
+      .map(([value, acc]) => ({
+        value,
+        projectIds: [...acc.projects].sort(compareByteOrder),
+        lastSeen: new Date(acc.lastSeen),
+        metricCount: acc.names.size,
+        pointCount: acc.points,
+        co: Object.fromEntries(coKeys.map((key) => [key, [...acc.co.get(key)!].sort(compareByteOrder).slice(0, 20)])),
+      }));
+    return { sources: rows };
   }
 
   async getLatencyHistogram(params: LatencyHistogramParams): Promise<LatencyHistogramResult> {

@@ -366,8 +366,60 @@ const METRIC_ROWS: { id: string; t: number; value: number; attributes: Record<st
   { id: 'MX5', t: 4, value: 100, attributes: { http: { request: { method: 'PUT' } } } },
 ];
 
-export const CORPUS_METRICS: readonly { readonly id: string; readonly record: MetricRecord }[] = Object.freeze(
-  METRIC_ROWS.map((row) => Object.freeze({
+/** 1.8 source metrics: a host agent gauge and an application gauge. */
+export const METRIC_CPU = 'system.cpu.utilization';
+export const METRIC_QUEUE = 'app.queue.depth';
+/** Only in PROJECT_C: one host with more instances than the co-key cap. */
+export const METRIC_JOBS = 'app.jobs.count';
+export const HOST_AGENT_SERVICE = 'hw-agent';
+
+type SourceRow = {
+  id: string;
+  t: number;
+  project: string;
+  metric: string;
+  value: number;
+  resource: Record<string, unknown>;
+  attributes: Record<string, unknown>;
+};
+
+const host1 = { 'host.name': 'host-1', 'service.name': HOST_AGENT_SERVICE, 'host.cpus': 8 };
+const host2 = { 'host.name': 'host-2', 'service.name': HOST_AGENT_SERVICE, 'host.cpus': 4 };
+
+// 2 hosts x 2 services across PROJECT_A and PROJECT_B, plus the edge cases:
+// a point without host.name (MH6, MQ5), an empty host.name (MQ6), a nested
+// `host: { name }` that is not the literal key (MQ7), a point outside WINDOW
+// (MQ8), `cpu.core` as a number, a numeric string, a word and a boolean, and
+// a JSON null `cpu.state` (MH6), which counts as a missing key.
+const SOURCE_ROWS: SourceRow[] = [
+  { id: 'MH1', t: 1, project: PROJECT_A, metric: METRIC_CPU, value: 20, resource: host1, attributes: { 'cpu.state': 'user', 'cpu.core': 0 } },
+  { id: 'MH2', t: 2, project: PROJECT_A, metric: METRIC_CPU, value: 40, resource: host2, attributes: { 'cpu.state': 'user', 'cpu.core': 1 } },
+  { id: 'MH3', t: 3, project: PROJECT_A, metric: METRIC_CPU, value: 10, resource: host1, attributes: { 'cpu.state': 'system', 'cpu.core': '2' } },
+  { id: 'MH4', t: 16, project: PROJECT_A, metric: METRIC_CPU, value: 30, resource: host1, attributes: { 'cpu.state': 'user', 'cpu.core': 4 } },
+  { id: 'MH5', t: 4, project: PROJECT_B, metric: METRIC_CPU, value: 50, resource: host2, attributes: { 'cpu.state': 'idle', 'cpu.core': 'high' } },
+  { id: 'MH6', t: 5, project: PROJECT_A, metric: METRIC_CPU, value: 60, resource: { 'service.name': HOST_AGENT_SERVICE }, attributes: { 'cpu.core': true, 'cpu.state': null } },
+  { id: 'MQ1', t: 1, project: PROJECT_A, metric: METRIC_QUEUE, value: 5, resource: { 'host.name': 'host-1', 'service.name': 'checkout' }, attributes: { 'queue.name': 'orders' } },
+  { id: 'MQ2', t: 2, project: PROJECT_A, metric: METRIC_QUEUE, value: 7, resource: { 'host.name': 'host-2', 'service.name': 'checkout' }, attributes: { 'queue.name': 'orders' } },
+  { id: 'MQ3', t: 3, project: PROJECT_B, metric: METRIC_QUEUE, value: 2, resource: { 'host.name': 'host-1', 'service.name': 'cart' }, attributes: { 'queue.name': 'carts' } },
+  { id: 'MQ4', t: 17, project: PROJECT_B, metric: METRIC_QUEUE, value: 4, resource: { 'host.name': 'host-2', 'service.name': 'cart' }, attributes: {} },
+  { id: 'MQ5', t: 6, project: PROJECT_A, metric: METRIC_QUEUE, value: 9, resource: { 'service.name': 'checkout' }, attributes: { 'queue.name': 'orders' } },
+  { id: 'MQ6', t: 7, project: PROJECT_A, metric: METRIC_QUEUE, value: 1, resource: { 'host.name': '', 'service.name': 'cart' }, attributes: { 'queue.name': 'carts' } },
+  { id: 'MQ7', t: 8, project: PROJECT_B, metric: METRIC_QUEUE, value: 3, resource: { host: { name: 'nested-host' }, 'service.name': 'cart' }, attributes: { 'queue.name': 'carts' } },
+  { id: 'MQ8', t: -60, project: PROJECT_A, metric: METRIC_QUEUE, value: 100, resource: { 'host.name': 'host-3', 'service.name': 'checkout' }, attributes: { 'queue.name': 'orders' } },
+  // One host, instances out of order and repeated: co-keys are distinct and sorted.
+  ...['i-10', 'i-02', 'i-01', 'i-02'].map((instance, i): SourceRow => ({
+    id: `MJ${i + 1}`, t: 10, project: PROJECT_C, metric: METRIC_JOBS, value: 1,
+    resource: { 'host.name': 'host-9', 'service.name': 'jobs', 'service.instance.id': instance }, attributes: {},
+  })),
+];
+
+const serviceOf = (row: SourceRow): string => {
+  const name = row.resource['service.name'];
+  return typeof name === 'string' ? name : 'unknown';
+};
+
+export const CORPUS_METRICS: readonly { readonly id: string; readonly record: MetricRecord }[] = Object.freeze([
+  ...METRIC_ROWS.map((row) => Object.freeze({
     id: row.id,
     record: {
       time: minutes(row.t),
@@ -381,7 +433,21 @@ export const CORPUS_METRICS: readonly { readonly id: string; readonly record: Me
       attributes: structuredClone(row.attributes),
     } satisfies MetricRecord,
   })),
-);
+  ...SOURCE_ROWS.map((row) => Object.freeze({
+    id: row.id,
+    record: {
+      time: minutes(row.t),
+      organizationId: ORG_ID,
+      projectId: row.project,
+      metricName: row.metric,
+      metricType: 'gauge',
+      value: row.value,
+      serviceName: serviceOf(row),
+      attributes: structuredClone(row.attributes),
+      resourceAttributes: structuredClone(row.resource),
+    } satisfies MetricRecord,
+  })),
+]);
 
 /** A corpus span record by its fixture id, e.g. `corpusSpan('PAGE-3').spanId`. */
 export function corpusSpan(id: string): SpanRecord {

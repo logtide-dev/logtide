@@ -32,7 +32,14 @@ describe('corpus', () => {
     expect(CORPUS_LOGS).toHaveLength(40);
     expect(CORPUS_SPANS).toHaveLength(131);
     expect(CORPUS_TRACES).toHaveLength(16);
-    expect(CORPUS_METRICS.map((m) => m.id)).toEqual(['MX1', 'MX2', 'MX3', 'MX4', 'MX5']);
+    const metricIds = CORPUS_METRICS.map((m) => m.id);
+    expect(metricIds.slice(0, 19)).toEqual([
+      'MX1', 'MX2', 'MX3', 'MX4', 'MX5',
+      'MH1', 'MH2', 'MH3', 'MH4', 'MH5', 'MH6',
+      'MQ1', 'MQ2', 'MQ3', 'MQ4', 'MQ5', 'MQ6', 'MQ7', 'MQ8',
+    ]);
+    expect(metricIds.slice(19)).toEqual(['MJ1', 'MJ2', 'MJ3', 'MJ4']);
+    expect(new Set(metricIds).size).toBe(metricIds.length);
     const logKeys = new Set(CORPUS_LOGS.map((l) => `${l.record.projectId}|${l.record.time.toISOString()}|${l.record.message}`));
     expect(logKeys.size).toBe(40);
     expect(new Set(CORPUS_SPANS.map((s) => `${s.record.projectId}|${s.record.traceId}|${s.record.spanId}`)).size).toBe(131);
