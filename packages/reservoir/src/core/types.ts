@@ -543,6 +543,8 @@ export interface MetricRecord {
   unit?: string;
   /** 1.8: OTLP description. Engines do not store it; the backend metric catalog does. */
   description?: string;
+  /** 1.8: OTLP aggregation temporality of sums and histograms. Engines do not store it; the catalog does. */
+  temporality?: 'cumulative' | 'delta';
   histogramData?: HistogramData;
   exemplars?: MetricExemplar[];
 }
@@ -583,7 +585,39 @@ export interface MetricQueryResult {
 }
 
 /** Aggregation function for metric time-series */
-export type MetricAggregationFn = 'avg' | 'sum' | 'min' | 'max' | 'count' | 'last' | 'p50' | 'p95' | 'p99';
+/**
+ * hist_last / hist_sum (1.8) work on histogram_data with explicit buckets
+ * (explicit_bounds + bucket_counts; exponential histograms are converted to
+ * explicit buckets at ingest) and fill MetricTimeBucket.histogram:
+ * - hist_last: the histogram of the latest point in the bucket (per group).
+ *   For cumulative temporality, where each point is a running total.
+ * - hist_sum: element-wise sum of bucket_counts, sum of sum and count, over
+ *   every point in the bucket (per group). For delta temporality.
+ * bounds come from one point of the bucket; points whose bounds differ in
+ * length from that point are skipped (engine-defined pick). Points without
+ * histogram_data or buckets are ignored. MetricTimeBucket.value = count.
+ */
+export type MetricAggregationFn =
+  | 'avg'
+  | 'sum'
+  | 'min'
+  | 'max'
+  | 'count'
+  | 'last'
+  | 'p50'
+  | 'p95'
+  | 'p99'
+  | 'hist_last'
+  | 'hist_sum';
+
+/** 1.8: a histogram value returned by hist_last / hist_sum. */
+export interface MetricHistogramValue {
+  /** Explicit upper bounds (length n); counts has n + 1 entries (last is +Inf). */
+  bounds: number[];
+  counts: number[];
+  sum: number;
+  count: number;
+}
 
 /** Parameters for time-series aggregation of metrics */
 export interface MetricAggregateParams {
@@ -641,6 +675,8 @@ export interface MetricTimeBucket {
   bucket: Date;
   value: number;
   labels?: Record<string, string>;
+  /** 1.8: set for hist_last / hist_sum. */
+  histogram?: MetricHistogramValue;
 }
 
 /** Result of a metric aggregation query */

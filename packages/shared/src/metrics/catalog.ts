@@ -23,6 +23,8 @@ export interface MetricCatalogEntry {
   description: string | null;
   /** Sums only. */
   isMonotonic: boolean | null;
+  /** Sums and histograms (OTLP aggregation temporality); null when unknown or not applicable. */
+  temporality: 'cumulative' | 'delta' | null;
   projectIds: string[];
   /** ISO */
   firstSeen: string;

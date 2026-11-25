@@ -7,8 +7,8 @@ import { defaultExplorerQuery } from '$lib/utils/metrics-explorer-url';
 import { chooseSelectOption } from '$lib/test-utils/select-field';
 
 const catalog: MetricCatalogEntry[] = [
-  { name: 'system.cpu.utilization.total', type: 'gauge', unit: '%', description: null, isMonotonic: null, projectIds: ['p'], firstSeen: '', lastSeen: '' },
-  { name: 'http.requests', type: 'sum', unit: '{request}', description: null, isMonotonic: true, projectIds: ['p'], firstSeen: '', lastSeen: '' },
+  { name: 'system.cpu.utilization.total', type: 'gauge', unit: '%', description: null, isMonotonic: null, temporality: null, projectIds: ['p'], firstSeen: '', lastSeen: '' },
+  { name: 'http.requests', type: 'sum', unit: '{request}', description: null, isMonotonic: true, temporality: 'cumulative', projectIds: ['p'], firstSeen: '', lastSeen: '' },
 ];
 
 function makeApi() {

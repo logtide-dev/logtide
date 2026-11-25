@@ -75,6 +75,7 @@ export type {
   MetricSourcesParams,
   MetricSource,
   MetricSourcesResult,
+  MetricHistogramValue,
 } from './core/types.js';
 export { metricAttrLabel } from './core/types.js';
 // 1.6 contract types

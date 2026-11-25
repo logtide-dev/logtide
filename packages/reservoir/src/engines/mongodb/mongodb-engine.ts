@@ -173,7 +173,10 @@ const INTERVAL_DATETRUNC: Record<AggregationInterval, { unit: string; binSize: n
   '1w': { unit: 'week', binSize: 1 },
 };
 
+// hist_last / hist_sum placeholders until the histogram aggregation lands (1.8).
 const AGG_ACCUMULATORS: Record<MetricAggregationFn, Document> = {
+  hist_last: { $last: '$value' },
+  hist_sum: { $sum: '$value' },
   avg: { $avg: '$value' },
   sum: { $sum: '$value' },
   min: { $min: '$value' },

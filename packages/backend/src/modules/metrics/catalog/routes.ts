@@ -148,6 +148,8 @@ function mergeEntries(rows: CatalogDbRow[]): MetricCatalogEntry[] {
         unit: r.unit,
         description: r.description,
         isMonotonic: r.is_monotonic,
+        // Filled from the catalog temporality column (1.8 histograms task).
+        temporality: null,
         projectIds: [r.project_id],
         firstSeen: r.first_seen_at.toISOString(),
         lastSeen: r.last_seen_at.toISOString(),
