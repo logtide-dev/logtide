@@ -950,7 +950,7 @@ describe('ClickHouseEngine metric operations (unit)', () => {
   // ===========================================================================
 
   describe('getMetricLabelValues', () => {
-    it('should return values using JSONExtractString', async () => {
+    it('should return values as the scalar text of the attribute', async () => {
       mockQuery.mockResolvedValueOnce(
         mockQueryResult([
           { val: 'server-1' },
@@ -966,7 +966,8 @@ describe('ClickHouseEngine metric operations (unit)', () => {
       expect(result.values).toEqual(['server-1', 'server-2']);
 
       const query = mockQuery.mock.calls[0][0].query as string;
-      expect(query).toContain('SELECT DISTINCT JSONExtractString(attributes, {p_label_key:String}) AS val');
+      expect(query).toContain("SELECT DISTINCT ifNull(multiIf(JSONExtractRaw(attributes, {p_label_key:String}) = ''");
+      expect(query).toContain("), '') AS val");
       expect(query).toContain('FROM metrics');
       expect(mockQuery.mock.calls[0][0].query_params.p_label_key).toBe('host');
     });
