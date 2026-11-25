@@ -1,20 +1,37 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
-const { list, add, toast } = vi.hoisted(() => ({
+const { list, add, create, toast } = vi.hoisted(() => ({
   list: vi.fn(),
   add: vi.fn(),
+  create: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
-vi.mock('$lib/api/metrics', () => ({
-  listDashboardsForPicker: list,
-  addMetricPanelToDashboard: add,
+vi.mock('$lib/api/custom-dashboards', () => ({
+  customDashboardsAPI: { list, addPanel: add, create },
 }));
 vi.mock('svelte-sonner', () => ({ toast }));
 
+import type { MetricExplorerQuery } from '@logtide/shared';
 import { chooseSelectOption } from '$lib/test-utils/select-field';
 import AddToDashboardDialog from './AddToDashboardDialog.svelte';
-import { DEFAULT_QUERY } from '$lib/utils/metrics-query';
+
+const query: MetricExplorerQuery = {
+  projectIds: ['p1'],
+  queries: [
+    {
+      id: 'A',
+      metricName: 'system.cpu.utilization',
+      aggregation: 'avg',
+      filters: [],
+      groupBy: [{ scope: 'resource', key: 'host.name' }],
+    },
+  ],
+  formulas: [],
+  interval: 'auto',
+  compareTo: 'none',
+  display: 'split',
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -22,44 +39,57 @@ beforeEach(() => {
     { id: 'd1', name: 'Ops' },
     { id: 'd2', name: 'Perf' },
   ]);
-  add.mockResolvedValue(undefined);
+  add.mockResolvedValue({ dashboard: {}, panel: {} });
+  create.mockResolvedValue({ id: 'new1', name: 'Infra' });
 });
 
-function open(query = {}) {
-  return render(AddToDashboardDialog, {
-    open: true,
-    organizationId: 'org1',
-    query: { ...DEFAULT_QUERY, metric: 'cpu.usage', service: 'api', ...query },
-    projectId: 'p1',
-    range: '1h',
-  });
+function open(range: { kind: 'preset'; preset: '1h' | '24h' } | { kind: 'custom'; from: string; to: string } = { kind: 'preset', preset: '1h' }) {
+  return render(AddToDashboardDialog, { open: true, organizationId: 'org1', query, range });
 }
 
 describe('AddToDashboardDialog', () => {
-  it('lists dashboards and calls addMetricPanelToDashboard with resolved config', async () => {
+  it('saves the query as a metrics panel on the chosen dashboard', async () => {
     open();
     await waitFor(() => expect(screen.getByLabelText('Dashboard')).not.toBeDisabled());
+    expect(screen.getByLabelText('Panel title')).toHaveValue('system.cpu.utilization');
     await chooseSelectOption(screen.getByLabelText('Dashboard'), 'Perf');
     await fireEvent.click(screen.getByRole('button', { name: 'Add panel' }));
     await waitFor(() => expect(add).toHaveBeenCalledTimes(1));
-    const arg = add.mock.calls[0][0];
-    expect(arg.organizationId).toBe('org1');
-    expect(arg.dashboardId).toBe('d2');
-    expect(arg.config).toMatchObject({
-      type: 'metric_chart',
-      metricName: 'cpu.usage',
-      projectId: 'p1',
-      serviceName: 'api',
+    const [id, org, config] = add.mock.calls[0];
+    expect(id).toBe('d2');
+    expect(org).toBe('org1');
+    expect(config).toMatchObject({
+      type: 'metrics',
+      source: 'metrics',
+      title: 'system.cpu.utilization',
       timeRange: '1h',
-      interval: '1m',
+      query,
     });
+    expect(create).not.toHaveBeenCalled();
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(toast.success.mock.calls[0][0]).toBe('Panel added to Perf');
   });
 
-  it('shows dropped notice when rate selected', async () => {
-    open({ aggregation: 'rate' });
-    expect(screen.getByText(/Not saved to the panel yet: rate/)).toBeInTheDocument();
+  it('maps a custom range to the closest preset', async () => {
+    const from = new Date('2026-01-01T00:00:00Z');
+    open({ kind: 'custom', from: from.toISOString(), to: new Date(from.getTime() + 5 * 3600_000).toISOString() });
+    await waitFor(() => expect(screen.getByLabelText('Dashboard')).not.toBeDisabled());
+    await chooseSelectOption(screen.getByLabelText('Dashboard'), 'Ops');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add panel' }));
+    await waitFor(() => expect(add).toHaveBeenCalled());
+    expect(add.mock.calls[0][2].timeRange).toBe('6h');
+  });
+
+  it('creates a new dashboard and adds the panel to it', async () => {
+    open();
+    await waitFor(() => expect(screen.getByLabelText('Dashboard')).not.toBeDisabled());
+    await chooseSelectOption(screen.getByLabelText('Dashboard'), 'New dashboard');
+    expect(screen.getByRole('button', { name: 'Add panel' })).toBeDisabled();
+    await fireEvent.input(screen.getByLabelText('Dashboard name'), { target: { value: 'Infra' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add panel' }));
+    await waitFor(() => expect(add).toHaveBeenCalledTimes(1));
+    expect(create).toHaveBeenCalledWith({ organizationId: 'org1', name: 'Infra', panels: [] });
+    expect(add.mock.calls[0][0]).toBe('new1');
   });
 
   it('disables confirm until a dashboard is chosen', async () => {
