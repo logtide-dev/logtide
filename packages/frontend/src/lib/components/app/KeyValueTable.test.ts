@@ -31,6 +31,16 @@ describe('KeyValueTable', () => {
     expect(keys[1].querySelectorAll('wbr')).toHaveLength(0);
   });
 
+  it('also wraps camelCase keys between words, and never widens the panel', () => {
+    const { container } = render(KeyValueTable, { data: { customerRenewalNotificationPreference: 'email' } });
+    const key = container.querySelector('td:first-child > span')!;
+    expect(key.textContent).toBe('customerRenewalNotificationPreference');
+    // customer|Renewal|Notification|Preference
+    expect(key.querySelectorAll('wbr')).toHaveLength(3);
+    // a single word longer than the column is cut instead of overflowing the table
+    expect(key.className).toContain('[overflow-wrap:anywhere]');
+  });
+
   it('hides the per-field copy buttons with showCopy=false', () => {
     render(KeyValueTable, { data: { host: 'web-1' }, showCopy: false });
     expect(screen.queryByRole('button', { name: 'Copy value' })).toBeNull();

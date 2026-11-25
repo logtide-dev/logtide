@@ -79,9 +79,14 @@
     return String(value);
   }
 
-  /** Splits a key after ".", "_" and "-" so a narrow column wraps between words, never inside one. */
+  /**
+   * Splits a key after ".", "_" and "-" and at camelCase boundaries, so a
+   * narrow column wraps between words. Only a single word wider than the
+   * column is cut inside (overflow-wrap: anywhere), so the table never
+   * overflows its panel.
+   */
   function keyParts(key: string): string[] {
-    return key.split(/(?<=[._-])/);
+    return key.split(/(?<=[._-])|(?<=[a-z0-9])(?=[A-Z])/);
   }
 
   const rows = $derived(entriesOf(data ?? {}));
@@ -112,8 +117,8 @@
     {/if}
   {:else}
     <tr class="group border-b border-border/60 align-top last:border-0">
-      <td class="py-1 pr-3 font-mono text-xs text-muted-foreground" style="padding-left: {depth * 16 + 18}px">
-        <span class="break-words">{#each keyParts(key) as part, i (i)}{#if i > 0}<wbr />{/if}{part}{/each}</span>
+      <td class="w-[35%] min-w-24 py-1 pr-3 font-mono text-xs text-muted-foreground" style="padding-left: {depth * 16 + 18}px">
+        <span class="[overflow-wrap:anywhere]">{#each keyParts(key) as part, i (i)}{#if i > 0}<wbr />{/if}{part}{/each}</span>
       </td>
       <td class="py-1 pr-2 font-mono text-xs">
         {#if value === null}
