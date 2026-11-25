@@ -433,13 +433,19 @@ const hist = (counts: number[], sum: number, count: number, bounds: number[] = [
   count,
 });
 
-// Two series (http.route /a on api, /b on web) over three 15m buckets. HB2
-// has one bucket more than its neighbours (hist_sum skips it, it is never the
-// latest point of a bucket). HN1 has no histogram_data, HN2 has sum and count
-// but no buckets: both are the latest points of bucket 0 and are ignored.
+// Two series (http.route /a on api, /b on web) over three 15m buckets. Only
+// points with IDENTICAL bounds are merged (a merge class); the pick is the
+// class of the latest point. HB2 has one bucket more than its neighbours and
+// HA5 has as many buckets but other bounds ([10,50]): neither is ever the
+// latest point of a bucket, so hist_sum skips both. In bucket 15 the latest
+// points of /b (HB5, HB6) have bounds [20,200], same length as [10,100]: that
+// class wins and HA3 / HB4 are skipped there unless a group or filter leaves
+// them alone. HN1 has no histogram_data, HN2 has sum and count but no
+// buckets: both are the latest points of bucket 0 and are ignored.
 const HISTOGRAM_ROWS: HistogramRow[] = [
   { id: 'HA1', t: 1, route: '/a', service: 'api', histogram: hist([1, 2, 0], 50, 3) },
   { id: 'HB1', t: 2, route: '/b', service: 'web', histogram: hist([0, 1, 1], 150, 2) },
+  { id: 'HA5', t: 3, route: '/a', service: 'api', histogram: hist([5, 0, 0], 20, 5, [10, 50]) },
   { id: 'HA2', t: 5, route: '/a', service: 'api', histogram: hist([2, 3, 1], 300, 6) },
   { id: 'HB2', t: 7, route: '/b', service: 'web', histogram: hist([1, 1, 1, 1], 2000, 4, [10, 100, 1000]) },
   { id: 'HB3', t: 9, route: '/b', service: 'web', histogram: hist([1, 2, 1], 200, 4) },
@@ -447,6 +453,8 @@ const HISTOGRAM_ROWS: HistogramRow[] = [
   { id: 'HN2', t: 13, route: '/b', service: 'web', histogram: { sum: 10, count: 1 } },
   { id: 'HA3', t: 16, route: '/a', service: 'api', histogram: hist([3, 4, 1], 400, 8) },
   { id: 'HB4', t: 20, route: '/b', service: 'web', histogram: hist([0, 0, 5], 900, 5) },
+  { id: 'HB5', t: 21, route: '/b', service: 'web', histogram: hist([0, 2, 1], 300, 3, [20, 200]) },
+  { id: 'HB6', t: 22, route: '/b', service: 'web', histogram: hist([1, 1, 0], 60, 2, [20, 200]) },
   { id: 'HA4', t: 31, route: '/a', service: 'api', histogram: hist([4, 4, 2], 600, 10) },
 ];
 
