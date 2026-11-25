@@ -2081,9 +2081,18 @@ export class ClickHouseEngine extends StorageEngine {
     const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
 
+    // Project and window go to PREWHERE; the rest to WHERE.
     const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
-    conditions.push(`project_id IN {p_pids:Array(String)}`);
+    const prewhere = [`project_id IN {p_pids:Array(String)}`];
     queryParams.p_pids = pids;
+    if (params.from) {
+      prewhere.push(`time >= {p_from:DateTime64(3)}`);
+      queryParams.p_from = toDateTime64(params.from);
+    }
+    if (params.to) {
+      prewhere.push(`time <= {p_to:DateTime64(3)}`);
+      queryParams.p_to = toDateTime64(params.to);
+    }
 
     if (params.organizationId) {
       const oids = Array.isArray(params.organizationId) ? params.organizationId : [params.organizationId];
@@ -2095,16 +2104,12 @@ export class ClickHouseEngine extends StorageEngine {
       conditions.push(`metric_type IN {p_types:Array(String)}`);
       queryParams.p_types = types;
     }
-    if (params.from) {
-      conditions.push(`time >= {p_from:DateTime64(3)}`);
-      queryParams.p_from = toDateTime64(params.from);
-    }
-    if (params.to) {
-      conditions.push(`time <= {p_to:DateTime64(3)}`);
-      queryParams.p_to = toDateTime64(params.to);
+    // 1.8: names with at least one point matching every attribute filter
+    if (params.filters && params.filters.length > 0) {
+      conditions.push(...compileMetricAttrFilters(params.filters, queryParams, 'p_mf'));
     }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const where = `PREWHERE ${prewhere.join(' AND ')}${conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''}`;
 
     const resultSet = await this.runQuery({
       query: `SELECT metric_name, metric_type FROM metrics ${where} GROUP BY metric_name, metric_type ORDER BY metric_name ASC LIMIT ${limit}`,

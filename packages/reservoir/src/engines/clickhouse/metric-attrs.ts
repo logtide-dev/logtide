@@ -9,7 +9,7 @@
 // value travels as a query parameter.
 
 import type { MetricAttrFilter, MetricAttrRef, MetricAttrScope } from '../../core/types.js';
-import { chJsonExistsExpr, chJsonScalarExpr, type ChJsonColumn, type ChJsonKeyParams } from './json-path.js';
+import { chJsonScalarExpr, type ChJsonColumn, type ChJsonKeyParams } from './json-path.js';
 
 /** JSON column holding the attributes of a scope. */
 export function metricAttrColumn(scope: MetricAttrScope): ChJsonColumn {
@@ -33,10 +33,19 @@ export function metricAttrLabelExpr(ref: MetricAttrRef, paramName: string, query
 }
 
 /**
+ * Whether an attribute is present. A JSON null value counts as missing
+ * (lead ruling, same as Timescale); objects and arrays count as present.
+ */
+export function metricAttrExistsExpr(column: ChJsonColumn, keyParams: ChJsonKeyParams): string {
+  const keys = keyParams.candidates[0].join(', ');
+  return `(JSONHas(${column}, ${keys}) AND JSONExtractRaw(${column}, ${keys}) != 'null')`;
+}
+
+/**
  * Compiles attribute filters into WHERE predicates (ANDed by the caller).
  * Parameters are `<prefix>k<i>` (key) and `<prefix>v<i>` (value or list).
- * neq/nin match points lacking the key; gte/lt compare numerically and never
- * match a missing or non-numeric value.
+ * A JSON null value counts as missing. neq/nin match points lacking the key;
+ * gte/lt compare numerically and never match a missing or non-numeric value.
  */
 export function compileMetricAttrFilters(
   filters: MetricAttrFilter[],
@@ -46,7 +55,7 @@ export function compileMetricAttrFilters(
   return filters.map((f, i) => {
     const column = metricAttrColumn(f.scope);
     const keyParams = bindLiteralKey(f.key, `${prefix}k${i}`, queryParams);
-    const exists = chJsonExistsExpr(column, keyParams);
+    const exists = metricAttrExistsExpr(column, keyParams);
     const scalar = chJsonScalarExpr(column, keyParams);
     const valueName = `${prefix}v${i}`;
     const value = (): string => {
