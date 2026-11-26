@@ -103,6 +103,38 @@ describe('Metric catalog routes', () => {
       expect(wild.body.metrics).toHaveLength(0);
     });
 
+    it('filters by source: only the metrics a host or service sent', async () => {
+      await seedCatalog(a.project.id, 'system.cpu.utilization', { unit: '1' });
+      await seedCatalog(a.project.id, 'system.memory.usage');
+      await seedCatalog(a.project.id, 'http.server.duration', { unit: 'ms' });
+      const names = vi.spyOn(reservoir, 'getMetricNames').mockResolvedValue({
+        names: [
+          { name: 'system.memory.usage', type: 'gauge' },
+          { name: 'system.cpu.utilization', type: 'gauge' },
+        ],
+      } as never);
+
+      const host = await get('/catalog', tokenA, { organizationId: a.organization.id, source: 'host:vps-app' });
+      expect(host.status).toBe(200);
+      expect(host.body.metrics.map((m: any) => m.name)).toEqual(['system.cpu.utilization', 'system.memory.usage']);
+      expect(names.mock.calls[0][0]).toMatchObject({
+        projectId: [a.project.id],
+        filters: [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['vps-app'] }],
+      });
+
+      // combines with search; a name with a colon keeps it
+      const svc = await get('/catalog', tokenA, { organizationId: a.organization.id, source: 'service:api:v2', search: 'memory' });
+      expect(svc.body.metrics.map((m: any) => m.name)).toEqual(['system.memory.usage']);
+      expect(names.mock.calls[1][0].filters).toEqual([{ scope: 'resource', key: 'service.name', op: 'eq', values: ['api:v2'] }]);
+
+      names.mockResolvedValue({ names: [] } as never);
+      const none = await get('/catalog', tokenA, { organizationId: a.organization.id, source: 'host:ghost' });
+      expect(none.body.metrics).toEqual([]);
+
+      const bad = await get('/catalog', tokenA, { organizationId: a.organization.id, source: 'pod:x' });
+      expect(bad.status).toBe(400);
+    });
+
     it('reports temporality, first non-null across projects', async () => {
       const second = (await createTestProject({ organizationId: a.organization.id, userId: a.user.id })).id;
       await seedCatalog(a.project.id, 'http.server.request.duration', {

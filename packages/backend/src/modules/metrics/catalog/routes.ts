@@ -23,6 +23,7 @@ import type {
 import { db } from '../../../database/index.js';
 import { reservoir } from '../../../database/reservoir.js';
 import { resolveProjectScope, MetricScopeError } from '../query/service.js';
+import { sourceMetricNames } from '../sources/service.js';
 
 /**
  * /catalog/entry reservoir call budget: label keys are fetched once per scope
@@ -49,9 +50,18 @@ const baseQuery = z.object({
   projectIds: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
+/** Metrics a source sent are looked up over this window when the list is filtered by source. */
+const SOURCE_WINDOW_MS = 7 * 24 * 3600_000;
+
 const listQuery = baseQuery.extend({
   search: z.string().max(200).optional(),
   prefix: z.string().max(200).optional(),
+  /** `host:<host.name>` or `service:<service.name>`: only the metrics that source sent. */
+  source: z
+    .string()
+    .max(520)
+    .regex(/^(host|service):.+$/, 'source must be host:<name> or service:<name>')
+    .optional(),
 });
 const entryQuery = baseQuery.extend({ name: z.string().min(1).max(512) });
 const timeRange = {
@@ -292,6 +302,17 @@ export async function metricCatalogRoutes(fastify: FastifyInstance) {
       .selectFrom('metric_catalog')
       .selectAll()
       .where('project_id', 'in', scope.projectIds);
+    if (parsed.data.source) {
+      const [kind, ...rest] = parsed.data.source.split(':');
+      const to = new Date();
+      const names = await sourceMetricNames(
+        { organizationId: scope.organizationId, projectIds: scope.projectIds, from: new Date(to.getTime() - SOURCE_WINDOW_MS), to },
+        kind === 'host' ? 'host.name' : 'service.name',
+        rest.join(':'),
+      );
+      if (names.length === 0) return { metrics: [] } satisfies MetricCatalogListResponse;
+      query = query.where('metric_name', 'in', names);
+    }
     if (parsed.data.search) {
       query = query.where('metric_name', 'ilike', `%${escapeLike(parsed.data.search)}%`);
     }
