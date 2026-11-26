@@ -317,6 +317,26 @@ describe('OTLP Transformer', () => {
       expect(meta).not.toHaveProperty('host.name');
     });
 
+    it('fills hostname from the resource host.name so the log belongs to its host', () => {
+      const request = (resource: Array<{ key: string; value: { stringValue: string } }>, attrs: Array<{ key: string; value: { stringValue: string } }> = []): OtlpExportLogsRequest => ({
+        resourceLogs: [{ resource: { attributes: resource }, scopeLogs: [{ logRecords: [{ body: { stringValue: 'msg' }, attributes: attrs }] }] }],
+      });
+      const svc = { key: 'service.name', value: { stringValue: 'svc' } };
+
+      const fromResource = transformOtlpToLogTide(request([svc, { key: 'host.name', value: { stringValue: 'vps-app' } }]));
+      expect(fromResource[0].metadata?.hostname).toBe('vps-app');
+      expect(fromResource[0].metadata).not.toHaveProperty('host.name');
+
+      // An explicit hostname log attribute wins.
+      const explicit = transformOtlpToLogTide(
+        request([svc, { key: 'host.name', value: { stringValue: 'vps-app' } }], [{ key: 'hostname', value: { stringValue: 'container-7' } }]),
+      );
+      expect(explicit[0].metadata?.hostname).toBe('container-7');
+
+      // No host.name, no hostname.
+      expect(transformOtlpToLogTide(request([svc]))[0].metadata).not.toHaveProperty('hostname');
+    });
+
     it('should handle collision: log attr wins flat space, resource attr preserved under resource', () => {
       const request: OtlpExportLogsRequest = {
         resourceLogs: [

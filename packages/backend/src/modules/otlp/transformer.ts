@@ -174,6 +174,13 @@ export function transformLogRecord(
   resourceAttrs: Record<string, unknown> = {}
 ): TransformedLog {
   const logMetadata = attributesToRecord(record.attributes);
+  // hostname is how LogTide ties a log to its host (Metrics host page, host:
+  // search). OTLP carries the host in the resource; an explicit attribute wins.
+  const resourceHost = resourceAttrs['host.name'];
+  const hostname =
+    typeof resourceHost === 'string' && resourceHost && baseMetadata.hostname === undefined && logMetadata.hostname === undefined
+      ? resourceHost
+      : undefined;
 
   // Decode structured body to preserve original structure alongside message.
   // String/int/double/bool bodies use message only (no otel.body noise).
@@ -185,6 +192,7 @@ export function transformLogRecord(
     level: mapSeverityToLevel(record.severityNumber, record.severityText),
     message: extractMessage(record.body),
     metadata: {
+      ...(hostname !== undefined && { hostname }),
       ...baseMetadata,
       ...logMetadata,
       // Preserve original severity for debugging
