@@ -17,12 +17,17 @@ import Book from '@lucide/svelte/icons/book';
 import Github from '@lucide/svelte/icons/github';
 import ServerCog from '@lucide/svelte/icons/server-cog';
 import Cpu from '@lucide/svelte/icons/cpu';
+import Compass from '@lucide/svelte/icons/compass';
+import BookOpen from '@lucide/svelte/icons/book-open';
 
 const ICONS: Record<string, Component<any>> = {
   dashboards: LayoutDashboard as unknown as Component<any>,
   logs: FileText as unknown as Component<any>,
   traces: GitBranch as unknown as Component<any>,
   metrics: BarChart3 as unknown as Component<any>,
+  'metrics-sources': BarChart3 as unknown as Component<any>,
+  'metrics-explore': Compass as unknown as Component<any>,
+  'metrics-catalog': BookOpen as unknown as Component<any>,
   errors: Bug as unknown as Component<any>,
   sessions: MonitorPlay as unknown as Component<any>,
   'web-vitals': Gauge as unknown as Component<any>,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { NAV_SECTIONS, flatNavItems, isNavItemActive, ADMIN_NAV_ITEM } from './nav-items';
+import { NAV_SECTIONS, flatNavItems, isNavItemActive, isInNavGroup, isNavGroupActive, ADMIN_NAV_ITEM } from './nav-items';
 
 describe('nav-items', () => {
   it('lists the sidebar sections in the 5.1 order', () => {
@@ -24,7 +24,9 @@ describe('nav-items', () => {
       'Dashboards',
       'Logs',
       'Traces',
-      'Metrics',
+      'Hosts & services',
+      'Explore',
+      'Catalog',
       'Errors',
       'Sessions',
       'Web vitals',
@@ -102,15 +104,29 @@ describe('nav-items', () => {
     expect(isNavItemActive(settings, '/dashboard/projects')).toBe(false);
   });
 
-  it('marks Metrics active on the sources, host and service pages', () => {
+  it('marks the Metrics children: hosts and services on the list and the source pages, explore, catalog', () => {
     const items = flatNavItems();
     const activeIds = (pathname: string, search = '') =>
       items.filter((i) => isNavItemActive(i, pathname, search)).map((i) => i.id);
-    expect(activeIds('/dashboard/metrics')).toEqual(['metrics']);
-    expect(activeIds('/dashboard/metrics', '?kind=host')).toEqual(['metrics']);
-    expect(activeIds('/dashboard/metrics/hosts/vps-app')).toEqual(['metrics']);
-    expect(activeIds('/dashboard/metrics/hosts/vps-app', '?tab=resources')).toEqual(['metrics']);
-    expect(activeIds('/dashboard/metrics/services/api')).toEqual(['metrics']);
+    expect(activeIds('/dashboard/metrics')).toEqual(['metrics-sources']);
+    expect(activeIds('/dashboard/metrics', '?kind=host')).toEqual(['metrics-sources']);
+    expect(activeIds('/dashboard/metrics/hosts/vps-app')).toEqual(['metrics-sources']);
+    expect(activeIds('/dashboard/metrics/hosts/vps-app', '?tab=resources')).toEqual(['metrics-sources']);
+    expect(activeIds('/dashboard/metrics/services/api')).toEqual(['metrics-sources']);
+    expect(activeIds('/dashboard/metrics/explore')).toEqual(['metrics-explore']);
+    expect(activeIds('/dashboard/metrics/catalog')).toEqual(['metrics-catalog']);
+  });
+
+  it('a group covers its area and is current through its children', () => {
+    const metrics = NAV_SECTIONS.find((s) => s.id === 'explore')!.items.find((i) => i.id === 'metrics')!;
+    expect(metrics.children?.map((c) => c.label)).toEqual(['Hosts & services', 'Explore', 'Catalog']);
+    expect(isInNavGroup(metrics, '/dashboard/metrics')).toBe(true);
+    expect(isInNavGroup(metrics, '/dashboard/metrics/catalog')).toBe(true);
+    expect(isInNavGroup(metrics, '/dashboard/metricsx')).toBe(false);
+    expect(isInNavGroup(metrics, '/dashboard/logs')).toBe(false);
+    expect(isNavGroupActive(metrics, '/dashboard/metrics/explore')).toBe(true);
+    // the Hardware tab of a host belongs to Hardware
+    expect(isNavGroupActive(metrics, '/dashboard/metrics/hosts/a', '?tab=hardware')).toBe(false);
   });
 
   it('marks Hardware active on its page and on the Hardware tab of a host, never both', () => {
@@ -122,7 +138,7 @@ describe('nav-items', () => {
     expect(activeIds('/dashboard/metrics/hosts/vps-app', '?tab=hardware&hw=h1')).toEqual(['hardware']);
     expect(activeIds('/dashboard/metrics/hosts/vps-app', 'tab=hardware')).toEqual(['hardware']);
     // Only host pages have a Hardware tab.
-    expect(activeIds('/dashboard/metrics/services/api', '?tab=hardware')).toEqual(['metrics']);
+    expect(activeIds('/dashboard/metrics/services/api', '?tab=hardware')).toEqual(['metrics-sources']);
   });
 
   it('never marks external links active', () => {

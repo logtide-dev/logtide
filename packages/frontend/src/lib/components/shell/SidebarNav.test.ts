@@ -10,12 +10,40 @@ function renderNav(props: { pathname?: string; isAdmin?: boolean; onNavigate?: (
 }
 
 describe('SidebarNav', () => {
-  it('renders every nav item once with its data-nav-item', () => {
-    const { container } = renderNav();
+  it('renders every nav item once with its data-nav-item (groups open inside their area)', () => {
+    const { container } = renderNav({ pathname: '/dashboard/metrics' });
     const rendered = Array.from(container.querySelectorAll('[data-nav-item]')).map((a) =>
       a.getAttribute('data-nav-item')
     );
-    expect(rendered).toEqual(flatNavItems().map((i) => i.id));
+    // the group row comes right before its children
+    const expected = flatNavItems().flatMap((i) => (i.id === 'metrics-sources' ? ['metrics', i.id] : [i.id]));
+    expect(rendered).toEqual(expected);
+  });
+
+  it('opens the Metrics group inside Metrics, closes it elsewhere, and the chevron overrides it', async () => {
+    const view = renderNav({ pathname: '/dashboard/logs' });
+    const children = () => view.container.querySelectorAll('[data-nav-item^="metrics-"]').length;
+    expect(children()).toBe(0);
+    const toggle = screen.getByRole('button', { name: 'Expand Metrics' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    await fireEvent.click(toggle);
+    expect(children()).toBe(3);
+    expect(screen.getByRole('button', { name: 'Collapse Metrics' }).getAttribute('aria-expanded')).toBe('true');
+
+    // Entering the area resets the manual choice: open.
+    await view.rerender({ pathname: '/dashboard/metrics/catalog', isAdmin: false });
+    expect(children()).toBe(3);
+    expect(view.container.querySelector('[aria-current="page"]')?.getAttribute('data-nav-item')).toBe('metrics-catalog');
+    // Closing by hand inside the area works until the area changes.
+    await fireEvent.click(screen.getByRole('button', { name: 'Collapse Metrics' }));
+    expect(children()).toBe(0);
+    await view.rerender({ pathname: '/dashboard/metrics/explore', isAdmin: false });
+    expect(children()).toBe(0);
+    // Leaving the area closes it.
+    await view.rerender({ pathname: '/dashboard/alerts', isAdmin: false });
+    expect(children()).toBe(0);
+    await view.rerender({ pathname: '/dashboard/metrics', isAdmin: false });
+    expect(children()).toBe(3);
   });
 
   it('hides the admin entry unless the user is an admin', () => {

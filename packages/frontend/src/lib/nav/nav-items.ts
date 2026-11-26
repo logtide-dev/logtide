@@ -25,6 +25,14 @@ export interface NavItem {
    * claims the page: the item that owns the path is not active there.
    */
   activeQuery?: { pathPrefix: string; param: string; value: string };
+  /** With `exact`: also active on pages under these prefixes. */
+  activePrefixes?: string[];
+  /**
+   * A group: the sidebar shows the children under it, open inside the group's
+   * area (its href and the pages below it) and closed elsewhere. The group row
+   * itself is never the active item; flatNavItems lists the children instead.
+   */
+  children?: NavItem[];
   adminOnly?: boolean;
   badge?: {
     id: string;
@@ -50,7 +58,24 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { id: 'logs', label: 'Logs', href: '/dashboard/logs', shortcut: 'g l' },
       { id: 'traces', label: 'Traces', href: '/dashboard/traces', shortcut: 'g t' },
-      { id: 'metrics', label: 'Metrics', href: '/dashboard/metrics', shortcut: 'g m' },
+      {
+        id: 'metrics',
+        label: 'Metrics',
+        href: '/dashboard/metrics',
+        children: [
+          {
+            id: 'metrics-sources',
+            label: 'Hosts & services',
+            paletteLabel: 'Metrics: hosts and services',
+            href: '/dashboard/metrics',
+            shortcut: 'g m',
+            exact: true,
+            activePrefixes: ['/dashboard/metrics/hosts/', '/dashboard/metrics/services/'],
+          },
+          { id: 'metrics-explore', label: 'Explore', paletteLabel: 'Metrics explorer', href: '/dashboard/metrics/explore' },
+          { id: 'metrics-catalog', label: 'Catalog', paletteLabel: 'Metric catalog', href: '/dashboard/metrics/catalog' },
+        ],
+      },
       { id: 'errors', label: 'Errors', href: '/dashboard/errors', shortcut: 'g e' },
       { id: 'sessions', label: 'Sessions', href: '/dashboard/sessions', shortcut: 'g s' },
       { id: 'web-vitals', label: 'Web vitals', href: '/dashboard/web-vitals', shortcut: 'g w' },
@@ -119,9 +144,19 @@ export const ADMIN_NAV_ITEM: NavItem = {
   adminOnly: true,
 };
 
-/** Every regular sidebar item in display order (the admin entry is separate). */
+/** Every regular sidebar destination in display order, groups replaced by their children (the admin entry is separate). */
 export function flatNavItems(): NavItem[] {
-  return NAV_SECTIONS.flatMap((s) => s.items);
+  return NAV_SECTIONS.flatMap((s) => s.items.flatMap((i) => i.children ?? [i]));
+}
+
+/** The pages of a group: its href and everything below it. */
+export function isInNavGroup(group: NavItem, pathname: string): boolean {
+  return pathname === group.href || pathname.startsWith(group.href + '/');
+}
+
+/** One of the group's children is the active item. */
+export function isNavGroupActive(group: NavItem, pathname: string, search = ''): boolean {
+  return (group.children ?? []).some((c) => isNavItemActive(c, pathname, search));
 }
 
 function matchesActiveQuery(item: NavItem, pathname: string, search: string): boolean {
@@ -138,7 +173,7 @@ export function isNavItemActive(item: NavItem, pathname: string, search = ''): b
     (other) => other !== item && matchesActiveQuery(other, pathname, search),
   );
   if (claimed) return false;
-  if (item.exact) return pathname === item.href;
+  if (item.exact) return pathname === item.href || (item.activePrefixes ?? []).some((p) => pathname.startsWith(p));
   const base = item.activePath ?? item.href;
   return pathname === base || pathname.startsWith(base + '/') || pathname === item.href;
 }
