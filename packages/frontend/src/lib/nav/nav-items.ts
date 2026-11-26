@@ -58,6 +58,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'incidents', label: 'Incidents', href: '/dashboard/incidents', shortcut: 'g i' },
       { id: 'alerts', label: 'Alerts', href: '/dashboard/alerts', shortcut: 'g a' },
       { id: 'uptime', label: 'Uptime', href: '/dashboard/uptime', shortcut: 'g u' },
+      // Hardware health lives in Metrics (1.8): the hosts list with the hardware column.
+      { id: 'hardware', label: 'Hardware', href: '/dashboard/metrics?kind=host', shortcut: 'g h' },
     ],
   },
   {

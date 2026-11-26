@@ -14,7 +14,7 @@ describe('nav-items', () => {
     const ids = (section: string) =>
       NAV_SECTIONS.find((s) => s.id === section)!.items.map((i) => i.id);
     expect(ids('explore')).toEqual(['logs', 'traces', 'metrics', 'errors', 'sessions', 'web-vitals']);
-    expect(ids('monitor')).toEqual(['incidents', 'alerts', 'uptime']);
+    expect(ids('monitor')).toEqual(['incidents', 'alerts', 'uptime', 'hardware']);
     expect(ids('security')).toEqual(['security-overview', 'security-rules']);
     expect(ids('manage')).toEqual(['projects', 'settings']);
   });
@@ -31,6 +31,7 @@ describe('nav-items', () => {
       'Incidents',
       'Alerts',
       'Uptime',
+      'Hardware',
       'Overview',
       'Rules',
       'Projects',
@@ -63,6 +64,7 @@ describe('nav-items', () => {
       i: '/dashboard/incidents',
       a: '/dashboard/alerts',
       u: '/dashboard/uptime',
+      h: '/dashboard/metrics?kind=host',
       r: '/dashboard/security',
       p: '/dashboard/projects',
     };
@@ -108,6 +110,8 @@ describe('nav-items', () => {
     expect(activeIds('/dashboard/metrics/hosts/vps-app')).toEqual(['metrics']);
     expect(activeIds('/dashboard/metrics/services/api')).toEqual(['metrics']);
     expect(activeIds('/dashboard/hardware')).toEqual([]);
+    // Hardware links to the hosts list inside Metrics, which owns the highlight.
+    expect(activeIds('/dashboard/metrics')).not.toContain('hardware');
   });
 
   it('never marks external links active', () => {
