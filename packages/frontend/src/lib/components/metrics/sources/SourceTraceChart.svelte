@@ -13,7 +13,7 @@
   import { themeStore } from '$lib/stores/theme';
   import { displayPreferences } from '$lib/stores/display-preferences';
   import { levelTone } from '$lib/utils/severity';
-  import { formatTimestamp } from '$lib/utils/datetime';
+  import { formatAxisTime } from '$lib/utils/datetime';
   import { buildLatencyOption, buildRequestsOption } from './source-traces';
 
   interface Props {
@@ -24,7 +24,6 @@
 
   let { variant, buckets, bucketSeconds }: Props = $props();
 
-  const DAY_MS = 86_400_000;
   let el: HTMLDivElement;
   let chart: echarts.ECharts | null = null;
 
@@ -34,7 +33,7 @@
       buckets,
       bucketSeconds,
       colors: { ok: levelTone('info').chart, error: levelTone('error').chart, latency: levelTone('warn').chart },
-      formatAxis: (ms: number) => formatTimestamp(ms, { precision: 'minute', withDate: span > DAY_MS }),
+      formatAxis: (ms: number) => formatAxisTime(ms, span),
     };
     return variant === 'requests' ? buildRequestsOption(input) : buildLatencyOption(input);
   }

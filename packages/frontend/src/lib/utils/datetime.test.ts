@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { displayPreferences } from '$lib/stores/display-preferences';
 import {
+  formatAxisTime,
   formatTimestamp,
   formatRelative,
   formatRange,
@@ -229,5 +230,23 @@ describe('datetime', () => {
       expect(formatDateShort(bad as any)).toBe('Invalid date');
       expect(formatTimeAgo(bad as any)).toBe('Invalid date');
     });
+  });
+});
+
+describe('formatAxisTime', () => {
+  const utc = { hour12: false, timeZone: 'UTC' };
+  const H = 3_600_000;
+
+  it('shows the clock inside a day and the date at midnight', () => {
+    expect(formatAxisTime(Date.parse('2026-11-26T16:00:00Z'), 24 * H, { prefs: utc })).toBe('16:00');
+    expect(formatAxisTime(Date.parse('2026-11-26T00:00:00Z'), 24 * H, { prefs: utc })).toBe('Nov 26');
+  });
+
+  it('shows only dates when the chart spans several days', () => {
+    expect(formatAxisTime(Date.parse('2026-11-26T16:00:00Z'), 7 * 24 * H, { prefs: utc })).toBe('Nov 26');
+  });
+
+  it('knows midnight on a 12 hour clock too', () => {
+    expect(formatAxisTime(Date.parse('2026-11-26T00:00:00Z'), 24 * H, { prefs: { hour12: true, timeZone: 'UTC' } })).toBe('Nov 26');
   });
 });

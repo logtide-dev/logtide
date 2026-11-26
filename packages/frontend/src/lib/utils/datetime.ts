@@ -275,3 +275,17 @@ export function formatDateShort(date: Date | string): string {
 export function getBrowserTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Short time-axis label for charts: the clock ("16:00") inside a day, the date
+ * ("Nov 26") at midnight, and the date only when the chart spans several days.
+ * Long "Nov 26, 16:00" labels overlap on narrow charts.
+ */
+export function formatAxisTime(value: number, spanMs: number, opts: { prefs?: TimestampOptions['prefs'] } = {}): string {
+  if (spanMs > 2 * DAY_MS) return formatTimestamp(value, { dateOnly: true, prefs: opts.prefs });
+  const time = formatTimestamp(value, { precision: 'minute', withDate: false, prefs: opts.prefs });
+  const midnight = /^(00:00|12:00\s?AM)$/i.test(time);
+  return midnight ? formatTimestamp(value, { dateOnly: true, prefs: opts.prefs }) : time;
+}

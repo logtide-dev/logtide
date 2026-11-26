@@ -19,7 +19,7 @@
   import { formatMetricValue, isRatioPercentMetric, type MetricSeries } from '@logtide/shared';
   import { getAxisStyle, getTooltipStyle } from '$lib/utils/echarts-theme';
   import { themeStore } from '$lib/stores/theme';
-  import { formatTimestamp } from '$lib/utils/datetime';
+  import { formatAxisTime, formatTimestamp } from '$lib/utils/datetime';
   import { baseSeriesId, escapeHtml, seriesLabel } from '$lib/utils/metrics-series';
 
   interface Props {
@@ -56,6 +56,8 @@
   function buildOption(): echarts.EChartsOption {
     const axisStyle = getAxisStyle();
     const tooltipStyle = getTooltipStyle();
+    const times = series.flatMap((s) => (s.points.length > 0 ? [Date.parse(s.points[0].t), Date.parse(s.points[s.points.length - 1].t)] : []));
+    const spanMs = times.length > 0 ? Math.max(...times) - Math.min(...times) : 0;
 
     // One y axis per distinct display unit (series of different queries that
     // share a unit share the axis). At most two axes: the first two units get
@@ -161,9 +163,12 @@
       xAxis: {
         type: 'time',
         ...axisStyle,
+        // Few, short labels: small multiples are narrow and long labels overlap.
+        splitNumber: compact ? 3 : 6,
         axisLabel: {
           ...axisStyle.axisLabel,
-          formatter: (value: number) => formatTimestamp(value, { precision: 'minute' }),
+          hideOverlap: true,
+          formatter: (value: number) => formatAxisTime(value, spanMs),
         },
         show: true,
       },
