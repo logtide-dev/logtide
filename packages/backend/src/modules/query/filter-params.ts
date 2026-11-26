@@ -101,19 +101,40 @@ export function readLogFilterRequest(query: Record<string, unknown>): LogFilterR
  * bound project (403 otherwise), session users must be members of every
  * requested project's organization. Returns null when a reply was sent.
  */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * projectId as repeated params or one comma separated value (both forms reach
+ * these endpoints), each a project id. Anything else is a 400, never a
+ * database error.
+ */
+export function normalizeProjectIdParam(
+  raw: string | string[],
+): { ok: true; value: string | string[] } | { ok: false; error: string } {
+  const ids = [...new Set((Array.isArray(raw) ? raw : [raw]).flatMap((v) => String(v).split(',')).map((v) => v.trim()).filter(Boolean))];
+  if (ids.some((id) => !UUID_RE.test(id))) return { ok: false, error: 'projectId must be a project id or a comma separated list of them' };
+  return { ok: true, value: ids.length === 1 ? ids[0] : ids };
+}
+
 export async function resolveAccessibleProjects(
   request: FastifyRequest,
   reply: FastifyReply,
   queryProjectId: string | string[] | undefined,
 ): Promise<string | string[] | null> {
-  const resolved = await resolveQueryProjectId(request, reply, queryProjectId);
-  if (resolved === null) return null;
+  const raw = await resolveQueryProjectId(request, reply, queryProjectId);
+  if (raw === null) return null;
 
-  const empty = resolved === undefined || resolved === '' || (Array.isArray(resolved) && resolved.length === 0);
+  const empty = raw === undefined || raw === '' || (Array.isArray(raw) && raw.length === 0);
   if (empty) {
     reply.code(400).send({ error: 'Project context missing - provide projectId query parameter' });
     return null;
   }
+  const normalized = normalizeProjectIdParam(raw);
+  if (!normalized.ok) {
+    reply.code(400).send({ error: normalized.error });
+    return null;
+  }
+  const resolved = normalized.value;
 
   const userId = (request as FastifyRequest & { user?: { id?: string } }).user?.id;
   if (userId) {

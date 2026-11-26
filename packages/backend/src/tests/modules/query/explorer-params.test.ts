@@ -141,3 +141,22 @@ describe('parseFacetFields', () => {
     }
   });
 });
+
+import { normalizeProjectIdParam } from '../../../modules/query/filter-params.js';
+
+describe('normalizeProjectIdParam', () => {
+  const A = '11111111-1111-4111-8111-111111111111';
+  const B = '22222222-2222-4222-8222-222222222222';
+
+  it('accepts repeated params and one comma separated value alike', () => {
+    expect(normalizeProjectIdParam([A, B])).toEqual({ ok: true, value: [A, B] });
+    expect(normalizeProjectIdParam(`${A},${B}`)).toEqual({ ok: true, value: [A, B] });
+    expect(normalizeProjectIdParam(` ${A} `)).toEqual({ ok: true, value: A });
+    expect(normalizeProjectIdParam([A, A])).toEqual({ ok: true, value: A });
+  });
+
+  it('rejects anything that is not a project id instead of reaching the database', () => {
+    expect(normalizeProjectIdParam('nope').ok).toBe(false);
+    expect(normalizeProjectIdParam([A, 'x']).ok).toBe(false);
+  });
+});
