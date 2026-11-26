@@ -180,3 +180,40 @@ describe('formatRequestRate', () => {
     expect(formatRequestRate(null)).toBe('n/a');
   });
 });
+
+import { countStatuses, filterByStatus, hostHardwareHref, parseStatusFilter, sortHosts as sortHostRows } from './source-model';
+
+describe('status tiles', () => {
+  it('parses the status filter, anything unknown is all', () => {
+    expect(parseStatusFilter('critical')).toBe('critical');
+    expect(parseStatusFilter('stale')).toBe('stale');
+    expect(parseStatusFilter('bogus')).toBe('all');
+    expect(parseStatusFilter(null)).toBe('all');
+  });
+
+  it('counts every status and the total', () => {
+    const rows = [{ status: 'ok' as const }, { status: 'ok' as const }, { status: 'critical' as const }, { status: 'unknown' as const }];
+    expect(countStatuses(rows)).toEqual({ all: 4, ok: 2, warning: 0, critical: 1, stale: 0, unknown: 1 });
+  });
+
+  it('filters by status, all keeps every row', () => {
+    const rows = [{ status: 'ok' as const }, { status: 'warning' as const }];
+    expect(filterByStatus(rows, 'all')).toHaveLength(2);
+    expect(filterByStatus(rows, 'warning')).toEqual([{ status: 'warning' }]);
+  });
+});
+
+describe('hardware column', () => {
+  const base = (name: string, hardwareStatus: HostSourceSummary['hardwareStatus']) =>
+    ({ name, status: 'ok', hardwareStatus, lastSeen: new Date(0).toISOString() }) as unknown as HostSourceSummary;
+
+  it('sorts worst hardware first, hosts without hardware data last', () => {
+    const rows = [base('a', 'ok'), base('b', null), base('c', 'critical'), base('d', 'warning')];
+    expect(sortHostRows(rows, { key: 'hardware', dir: 'desc' }).map((h) => h.name)).toEqual(['c', 'd', 'a', 'b']);
+    expect(sortHostRows(rows, { key: 'hardware', dir: 'asc' }).map((h) => h.name)).toEqual(['a', 'd', 'c', 'b']);
+  });
+
+  it('links to the Hardware tab of the host page', () => {
+    expect(hostHardwareHref('home nas')).toBe('/dashboard/metrics/hosts/home%20nas?tab=hardware');
+  });
+});

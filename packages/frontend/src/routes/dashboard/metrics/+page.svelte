@@ -29,19 +29,25 @@
   import MetricsSubNav from '$lib/components/metrics/v2/MetricsSubNav.svelte';
   import SourceMeterCell from '$lib/components/metrics/sources/SourceMeterCell.svelte';
   import SourceStatusDot from '$lib/components/metrics/v2/SourceStatusDot.svelte';
+  import HardwareStatusBadge from '$lib/components/hardware/HardwareStatusBadge.svelte';
   import {
     DEFAULT_SORT,
     RED_MISSING_HINT,
     SETUP_DOCS,
+    countStatuses,
+    filterByStatus,
     filterHostRows,
     filterServiceRows,
     formatRequestRate,
+    hostHardwareHref,
     parseKind,
+    parseStatusFilter,
     redSourceLabel,
     sortHosts,
     sortServices,
     sourceHref,
     type KindFilter,
+    type StatusFilter,
   } from '$lib/components/metrics/sources/source-model';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import Search from '@lucide/svelte/icons/search';
@@ -142,11 +148,25 @@
   // Kind filter lives in the URL.
   const kind = $derived<KindFilter>(parseKind(page.url.searchParams.get('kind')));
 
-  function setKind(next: KindFilter) {
+  // Status tile filter lives in the URL too.
+  const statusFilter = $derived<StatusFilter>(parseStatusFilter(page.url.searchParams.get('status')));
+
+  function setParams(next: { kind?: KindFilter; status?: StatusFilter }) {
     const url = new URL(page.url);
-    if (next === 'all') url.searchParams.delete('kind');
-    else url.searchParams.set('kind', next);
+    for (const [key, value] of Object.entries(next)) {
+      if (value === undefined) continue;
+      if (value === 'all') url.searchParams.delete(key);
+      else url.searchParams.set(key, value);
+    }
     void goto(`${url.pathname}${url.search}`, { replaceState: true, keepFocus: true, noScroll: true });
+  }
+
+  function setKind(next: KindFilter) {
+    setParams({ kind: next });
+  }
+
+  function setStatus(next: StatusFilter) {
+    setParams({ status: next === statusFilter ? 'all' : next });
   }
 
   let filter = $state('');
@@ -155,10 +175,25 @@
 
   const allHosts = $derived(data?.hosts ?? []);
   const allServices = $derived(data?.services ?? []);
-  const hosts = $derived(sortHosts(filterHostRows(allHosts, filter), hostSort));
-  const services = $derived(sortServices(filterServiceRows(allServices, filter), serviceSort));
   const showHosts = $derived(kind !== 'service');
   const showServices = $derived(kind !== 'host');
+  const hosts = $derived(sortHosts(filterByStatus(filterHostRows(allHosts, filter), statusFilter), hostSort));
+  const services = $derived(sortServices(filterByStatus(filterServiceRows(allServices, filter), statusFilter), serviceSort));
+
+  // Tiles count the sources of the selected kind, before the status filter.
+  const statusCounts = $derived(
+    countStatuses([...(showHosts ? allHosts : []), ...(showServices ? allServices : [])]),
+  );
+  const tiles = $derived(
+    [
+      { id: 'all' as const, label: kind === 'host' ? 'Hosts' : kind === 'service' ? 'Services' : 'Sources', tone: 'text-muted-foreground' },
+      { id: 'critical' as const, label: 'Critical', tone: 'text-destructive-text' },
+      { id: 'warning' as const, label: 'Warning', tone: 'text-warning-text' },
+      { id: 'ok' as const, label: 'Healthy', tone: 'text-success-text' },
+      { id: 'stale' as const, label: 'No data', tone: 'text-muted-foreground' },
+      { id: 'unknown' as const, label: 'Unknown', tone: 'text-muted-foreground' },
+    ].filter((t) => t.id !== 'unknown' || statusCounts.unknown > 0 || statusFilter === 'unknown'),
+  );
   const total = $derived(allHosts.length + allServices.length);
   const nothingVisible = $derived((!showHosts || hosts.length === 0) && (!showServices || services.length === 0));
 
@@ -188,6 +223,7 @@
   const hostColumns: DataTableColumn<HostSourceSummary>[] = [
     { key: 'status', header: 'Status', sortable: true, class: 'w-12 px-2', cell: hostCell(hostStatusCell) },
     { key: 'name', header: 'Host', sortable: true, class: 'max-w-56 px-2', cell: hostCell(hostNameCell) },
+    { key: 'hardware', header: 'Hardware', sortable: true, class: CELL, cell: hostCell(hostHardwareCell) },
     { key: 'cpu', header: 'CPU', sortable: true, class: CELL, cell: hostCell(hostCpuCell) },
     { key: 'memory', header: 'Memory', sortable: true, class: CELL, cell: hostCell(hostMemoryCell) },
     { key: 'disk', header: 'Disk', sortable: true, class: CELL, cell: hostCell(hostDiskCell) },
@@ -234,6 +270,20 @@
       <p class="truncate text-xs text-muted-foreground">{h.os}</p>
     {/if}
   </div>
+{/snippet}
+
+{#snippet hostHardwareCell(h: HostSourceSummary)}
+  {#if h.hardwareStatus}
+    <a
+      class="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      href={hostHardwareHref(h.name)}
+      aria-label="Hardware health of {h.name}"
+    >
+      <HardwareStatusBadge status={h.hardwareStatus} />
+    </a>
+  {:else}
+    <span class="text-muted-foreground" title="No hardware health data from this host">-</span>
+  {/if}
 {/snippet}
 
 {#snippet hostCpuCell(h: HostSourceSummary)}
@@ -312,6 +362,11 @@
   <div class="flex items-center gap-2">
     <SourceStatusDot status={h.status} reason={h.statusReason} />
     <a class="font-medium" href={hostHref(h)}>{h.name}</a>
+    {#if h.hardwareStatus}
+      <a class="ml-auto" href={hostHardwareHref(h.name)} aria-label="Hardware health of {h.name}">
+        <HardwareStatusBadge status={h.hardwareStatus} />
+      </a>
+    {/if}
   </div>
   <div class="mt-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
     <span>CPU <b class="text-foreground">{formatMetricValue(h.cpu.value, h.cpu.unit)}</b></span>
@@ -374,6 +429,25 @@
       {/snippet}
     </EmptyState>
   {:else}
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 {tiles.length > 5 ? 'lg:grid-cols-6' : 'lg:grid-cols-5'}" role="group" aria-label="Status">
+      {#each tiles as tile (tile.id)}
+        <button
+          type="button"
+          aria-pressed={statusFilter === tile.id}
+          class="rounded-lg border bg-card p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring {statusFilter ===
+          tile.id
+            ? 'ring-2 ring-primary'
+            : 'hover:border-primary/50'}"
+          onclick={() => setStatus(tile.id)}
+        >
+          <p class="text-xs font-medium {tile.tone}">{tile.label}</p>
+          <p class="text-2xl font-bold tabular-nums" data-testid="status-tile-{tile.id}">
+            {statusCounts[tile.id].toLocaleString('en-US')}
+          </p>
+        </button>
+      {/each}
+    </div>
+
     <div class="flex flex-wrap items-center gap-2">
       <div class="flex items-center gap-1.5" role="group" aria-label="Kind">
         {#each chips as chip (chip.id)}
@@ -401,14 +475,14 @@
     {/if}
 
     {#if nothingVisible}
-      <EmptyState variant="no-results" title="No sources match" description="Change the filter or the kind to see more.">
+      <EmptyState variant="no-results" title="No sources match" description="Change the filter, the status or the kind to see more.">
         {#snippet actions()}
           <Button
             variant="outline"
             size="sm"
             onclick={() => {
               filter = '';
-              setKind('all');
+              setParams({ kind: 'all', status: 'all' });
             }}>Clear filters</Button
           >
         {/snippet}

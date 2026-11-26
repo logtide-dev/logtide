@@ -238,6 +238,68 @@ describe('metrics sources page', () => {
     expect(await screen.findByText('No sources match')).toBeTruthy();
   });
 
+  it('shows status tiles counted over the selected kind', async () => {
+    render(Page);
+    await screen.findByTestId('hosts-section');
+    expect(screen.getByTestId('status-tile-all').textContent).toBe('6');
+    expect(screen.getByTestId('status-tile-critical').textContent).toBe('1');
+    expect(screen.getByTestId('status-tile-warning').textContent).toBe('2');
+    expect(screen.getByTestId('status-tile-ok').textContent).toBe('3');
+    expect(screen.getByTestId('status-tile-stale').textContent).toBe('0');
+    expect(screen.queryByTestId('status-tile-unknown')).toBeNull();
+  });
+
+  it('counts only hosts on ?kind=host', async () => {
+    setUrl('?kind=host');
+    render(Page);
+    await screen.findByTestId('hosts-section');
+    const group = screen.getByRole('group', { name: 'Status' });
+    expect(within(group).getByText('Hosts')).toBeTruthy();
+    expect(screen.getByTestId('status-tile-all').textContent).toBe('4');
+    expect(screen.getByTestId('status-tile-warning').textContent).toBe('1');
+  });
+
+  it('writes the status tile to the URL and clears it on a second click', async () => {
+    render(Page);
+    await screen.findByTestId('hosts-section');
+    const group = screen.getByRole('group', { name: 'Status' });
+    await fireEvent.click(within(group).getByRole('button', { name: /Critical/ }));
+    expect(h.goto.mock.calls[0][0]).toBe('/dashboard/metrics?status=critical');
+  });
+
+  it('clears the status filter when the active tile is clicked again', async () => {
+    setUrl('?kind=host&status=critical');
+    render(Page);
+    await screen.findByTestId('hosts-section');
+    const group = screen.getByRole('group', { name: 'Status' });
+    const tile = within(group).getByRole('button', { name: /Critical/ });
+    expect(tile.getAttribute('aria-pressed')).toBe('true');
+    await fireEvent.click(tile);
+    expect(h.goto.mock.calls[0][0]).toBe('/dashboard/metrics?kind=host');
+  });
+
+  it('shows only the sources with the status of ?status=', async () => {
+    setUrl('?status=warning');
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    expect(names(hosts)).toEqual(['charlie']);
+    expect(names(screen.getByTestId('services-section'))).toEqual(['checkout']);
+  });
+
+  it('shows the hardware health of a host and links it to the Hardware tab', async () => {
+    h.getSources.mockResolvedValue({
+      hosts: [host('nas', 'critical', 10, { hardwareStatus: 'critical', statusReason: 'Hardware: disk sda failing' }), host('vm', 'ok', 10)],
+      services: [],
+    });
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    const link = within(hosts).getByRole('link', { name: 'Hardware health of nas' });
+    expect(link.getAttribute('href')).toBe('/dashboard/metrics/hosts/nas?tab=hardware');
+    expect(within(link).getByTestId('hardware-status').getAttribute('data-status')).toBe('critical');
+    expect(within(hosts).getByText('Hardware: disk sda failing')).toBeTruthy();
+    expect(within(hosts).queryByRole('link', { name: 'Hardware health of vm' })).toBeNull();
+  });
+
   it('links each row to its source page', async () => {
     h.getSources.mockResolvedValue({ hosts: [host('web 1', 'ok', 10)], services: [service('api', 'ok')] });
     render(Page);

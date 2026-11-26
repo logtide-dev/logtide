@@ -8,6 +8,7 @@ import {
   type MetricTimeAggregation,
   type MetricAttrFilter,
   type MetricSourceKind,
+  type MetricSourceStatus,
   type ServiceSourceSummary,
   type SourceSignalValue,
 } from '@logtide/shared';
@@ -64,7 +65,7 @@ export function sourceHref(kind: MetricSourceKind, name: string): string {
 // sorting
 // ---------------------------------------------------------------------------
 
-export type HostSortKey = 'status' | 'name' | 'cpu' | 'memory' | 'disk' | 'network' | 'load' | 'services' | 'lastSeen';
+export type HostSortKey = 'status' | 'name' | 'hardware' | 'cpu' | 'memory' | 'disk' | 'network' | 'load' | 'services' | 'lastSeen';
 export type ServiceSortKey = 'status' | 'name' | 'requestRate' | 'errorRate' | 'p95' | 'hosts' | 'lastSeen';
 
 /** Worst status first, then name: the order of a list nobody sorted. */
@@ -84,6 +85,8 @@ function hostValue(h: HostSourceSummary, key: string): number | string | null {
       return SOURCE_STATUS_RANK[h.status] ?? 0;
     case 'name':
       return h.name.toLowerCase();
+    case 'hardware':
+      return h.hardwareStatus === null ? null : (SOURCE_STATUS_RANK[h.hardwareStatus] ?? 0);
     case 'cpu':
     case 'memory':
     case 'disk':
@@ -163,6 +166,36 @@ export function filterHostRows(rows: HostSourceSummary[], query: string): HostSo
 
 export function filterServiceRows(rows: ServiceSourceSummary[], query: string): ServiceSourceSummary[] {
   return rows.filter((s) => matches([s.name, ...s.hosts], query));
+}
+
+// ---------------------------------------------------------------------------
+// status tiles
+// ---------------------------------------------------------------------------
+
+export type StatusFilter = 'all' | MetricSourceStatus;
+
+const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'ok', 'warning', 'critical', 'stale', 'unknown'];
+
+/** `?status=ok|warning|critical|stale|unknown`; anything else shows every status. */
+export function parseStatusFilter(value: string | null | undefined): StatusFilter {
+  return STATUS_FILTERS.includes(value as StatusFilter) ? (value as StatusFilter) : 'all';
+}
+
+export type StatusCounts = Record<StatusFilter, number>;
+
+export function countStatuses(rows: Array<{ status: MetricSourceStatus }>): StatusCounts {
+  const counts: StatusCounts = { all: rows.length, ok: 0, warning: 0, critical: 0, stale: 0, unknown: 0 };
+  for (const r of rows) counts[r.status] = (counts[r.status] ?? 0) + 1;
+  return counts;
+}
+
+export function filterByStatus<T extends { status: MetricSourceStatus }>(rows: T[], status: StatusFilter): T[] {
+  return status === 'all' ? rows : rows.filter((r) => r.status === status);
+}
+
+/** Host page opened on the Hardware tab. */
+export function hostHardwareHref(name: string): string {
+  return `${sourceHref('host', name)}?tab=hardware`;
 }
 
 // ---------------------------------------------------------------------------
