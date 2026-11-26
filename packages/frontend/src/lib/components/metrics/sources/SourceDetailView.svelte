@@ -248,8 +248,14 @@
   const hardwareId = $derived.by(() => {
     const byUser = hardwareHosts.find((h) => h.id === selectedHardwareId);
     if (byUser) return byUser.id;
+    // ?hw= (from the Hardware list) names the hardware host; ?project= the scope.
+    const wantedId = page.url.searchParams.get('hw');
     const wantedProject = page.url.searchParams.get('project');
-    return (hardwareHosts.find((h) => h.projectId === wantedProject) ?? hardwareHosts[0])?.id ?? null;
+    return (
+      hardwareHosts.find((h) => h.id === wantedId) ??
+      hardwareHosts.find((h) => h.projectId === wantedProject) ??
+      hardwareHosts[0]
+    )?.id ?? null;
   });
 
   // ---- kpis ------------------------------------------------------------------
@@ -296,6 +302,16 @@
   const TONE_TEXT = { ok: '', warning: 'text-warning-text', critical: 'text-destructive-text' } as const;
 
   const crumbKind = $derived(kind === 'host' ? 'Hosts' : 'Services');
+  // The Hardware tab belongs to the Hardware page in the navigation.
+  const breadcrumbs = $derived(
+    kind === 'host' && activeTab === 'hardware'
+      ? [{ label: 'Hardware', href: '/dashboard/hardware' }, { label: name }]
+      : [
+          { label: 'Metrics', href: '/dashboard/metrics' },
+          { label: crumbKind, href: `/dashboard/metrics?kind=${kind}` },
+          { label: name },
+        ],
+  );
   const title = $derived(name);
 </script>
 
@@ -307,11 +323,7 @@
   <PageHeader
     {title}
     description={infoLine}
-    breadcrumbs={[
-      { label: 'Metrics', href: '/dashboard/metrics' },
-      { label: crumbKind, href: `/dashboard/metrics?kind=${kind}` },
-      { label: name },
-    ]}
+    breadcrumbs={breadcrumbs}
   >
     {#snippet meta()}
       {#if detail}

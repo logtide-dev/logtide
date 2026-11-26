@@ -233,6 +233,33 @@ describe('host page', () => {
     await waitFor(() => expect(screen.getByTestId('hardware-panel').textContent).toContain('hw-2'));
   });
 
+  it('hardware tab opens the hardware host named by ?hw= (from the Hardware page)', async () => {
+    setUrl('?tab=hardware&hw=hw-2');
+    h.getHostSource.mockResolvedValue(
+      detail({
+        hardwareHosts: [
+          { projectId: 'p1', id: 'hw-1' },
+          { projectId: 'p2', id: 'hw-2' },
+        ],
+      }),
+    );
+    render(Page);
+    expect((await screen.findByTestId('hardware-panel')).textContent).toContain('hw-2');
+  });
+
+  it('hardware tab leads back to the Hardware page, other tabs to Metrics', async () => {
+    setUrl('?tab=hardware');
+    const view = render(Page);
+    await screen.findByRole('heading', { name: 'vps-app', level: 1 });
+    expect(screen.getByRole('link', { name: 'Hardware' }).getAttribute('href')).toBe('/dashboard/hardware');
+    view.unmount();
+
+    setUrl('');
+    render(Page);
+    await screen.findByRole('heading', { name: 'vps-app', level: 1 });
+    expect(screen.getByRole('link', { name: 'Hosts' }).getAttribute('href')).toBe('/dashboard/metrics?kind=host');
+  });
+
   it('services tab lists the services on the host with links', async () => {
     setUrl('?tab=services');
     render(Page);
