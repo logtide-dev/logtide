@@ -166,6 +166,14 @@ describe('metricQueryService.run', () => {
     expect(ungrouped.series[0].name).toBe('CPU');
   });
 
+  it('asks the engine for one instrument kind only when the query names it', async () => {
+    cpu('a', '0', 0, 0.2);
+    await run(base({ queries: [{ id: 'A', metricName: 'system.cpu.utilization', metricType: 'gauge', aggregation: 'avg', filters: [], groupBy: [] }] }));
+    expect(aggregateMetrics.mock.calls.at(-1)![0].metricType).toBe('gauge');
+    await run(base({ queries: [{ id: 'A', metricName: 'system.cpu.utilization', aggregation: 'avg', filters: [], groupBy: [] }] }));
+    expect(aggregateMetrics.mock.calls.at(-1)![0]).not.toHaveProperty('metricType');
+  });
+
   it('computes rates per series with counter resets, then sums them', async () => {
     const add = (iface: string, minute: number, v: number) =>
       points.push({ metric: 'net.bytes', t: T0 + minute * MIN + 30_000, v, attrs: { iface }, resource: { 'host.name': 'a' } });

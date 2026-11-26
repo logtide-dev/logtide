@@ -104,10 +104,19 @@ export const METRIC_MAX_FILTERS = 10;
 export const METRIC_DEFAULT_SERIES_LIMIT = 10;
 export const METRIC_MAX_SERIES_LIMIT = 50;
 
+/** OTLP instrument kinds a metric is stored as. */
+export const METRIC_INSTRUMENT_TYPES = ['gauge', 'sum', 'histogram', 'exp_histogram', 'summary'] as const;
+export type MetricInstrumentType = (typeof METRIC_INSTRUMENT_TYPES)[number];
+
 export interface MetricQuerySpec {
   /** "A".."F", unique in the request. */
   id: string;
   metricName: string;
+  /**
+   * Only points of this kind. Set when a name is sent with several kinds
+   * (a gauge from one source, a counter from another), so they are not mixed.
+   */
+  metricType?: MetricInstrumentType;
   aggregation: MetricTimeAggregation;
   /** Defaults to defaultSpaceAggregation(aggregation). */
   spaceAggregation?: MetricSpaceAggregation;

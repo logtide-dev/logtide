@@ -26,6 +26,7 @@ import {
   METRIC_QUERY_IDS,
   METRIC_SPACE_AGGREGATIONS,
   METRIC_TIME_AGGREGATIONS,
+  METRIC_INSTRUMENT_TYPES,
   DASHBOARD_VARIABLE_NAME_RE,
 } from '@logtide/shared';
 import type { MetricAttrFilterOp, MetricSpaceAggregation, MetricTimeAggregation } from '@logtide/shared';
@@ -90,6 +91,7 @@ export const metricAttrFilterSchema = metricAttrRefSchema
 export const metricQuerySpecSchema = z.object({
   id: z.enum(METRIC_QUERY_IDS),
   metricName: z.string().min(1).max(METRIC_NAME_MAX),
+  metricType: z.enum(METRIC_INSTRUMENT_TYPES).optional(),
   aggregation: z.enum(METRIC_TIME_AGGREGATIONS as unknown as [MetricTimeAggregation, ...MetricTimeAggregation[]]),
   spaceAggregation: z.enum(METRIC_SPACE_AGGREGATIONS as unknown as [MetricSpaceAggregation, ...MetricSpaceAggregation[]]).optional(),
   filters: z.array(metricAttrFilterSchema).max(METRIC_MAX_FILTERS).default([]),

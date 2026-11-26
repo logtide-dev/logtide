@@ -8,6 +8,7 @@ import {
   METRIC_QUERY_IDS,
   METRIC_SPACE_AGGREGATIONS,
   METRIC_TIME_AGGREGATIONS,
+  METRIC_INSTRUMENT_TYPES,
   type MetricAttrFilter,
   type MetricAttrRef,
   type MetricCompareTo,
@@ -129,6 +130,9 @@ function cleanQuerySpec(v: unknown, id: string): MetricQuerySpec | null {
       .filter((r): r is MetricAttrRef => r !== null)
       .slice(0, METRIC_MAX_GROUP_BY),
   };
+  if (typeof v.metricType === 'string' && (METRIC_INSTRUMENT_TYPES as readonly string[]).includes(v.metricType)) {
+    spec.metricType = v.metricType as MetricQuerySpec['metricType'];
+  }
   if (typeof v.spaceAggregation === 'string' && (METRIC_SPACE_AGGREGATIONS as readonly string[]).includes(v.spaceAggregation)) {
     spec.spaceAggregation = v.spaceAggregation as MetricQuerySpec['spaceAggregation'];
   }
@@ -217,6 +221,7 @@ function compact(q: MetricExplorerQuery): Record<string, unknown> {
   const out: Record<string, unknown> = {
     queries: q.queries.map((s) => {
       const c: Record<string, unknown> = { id: s.id, metricName: s.metricName, aggregation: s.aggregation };
+      if (s.metricType) c.metricType = s.metricType;
       if (s.spaceAggregation) c.spaceAggregation = s.spaceAggregation;
       if (s.filters.length > 0) c.filters = s.filters;
       if (s.groupBy.length > 0) c.groupBy = s.groupBy;

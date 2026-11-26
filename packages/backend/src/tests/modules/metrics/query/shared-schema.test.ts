@@ -95,6 +95,11 @@ describe('one explorer query schema (item 10)', () => {
     expect(everywhere(explorer({}, { projectIds: ['not-a-uuid'] }))).toEqual(all(false));
   });
 
+  it('accepts a known instrument kind and rejects any other everywhere', () => {
+    expect(everywhere(explorer({ metricType: 'histogram' }))).toEqual(all(true));
+    expect(everywhere(explorer({ metricType: 'counter' }))).toEqual(all(false));
+  });
+
   it('strips unknown keys instead of storing them', () => {
     const parsed = panelConfigSchema.parse(panel(explorer({ uiOnly: 1 }, { extra: true }))) as PanelConfig & {
       query: Record<string, unknown>;

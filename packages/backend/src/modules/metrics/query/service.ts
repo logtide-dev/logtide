@@ -359,6 +359,7 @@ async function aggregate(
       organizationId: ctx.organizationId,
       projectId: projectIds,
       metricName: spec.metricName,
+      ...(spec.metricType ? { metricType: spec.metricType } : {}),
       from: ctx.from,
       to: ctx.to,
       interval: ctx.interval,
