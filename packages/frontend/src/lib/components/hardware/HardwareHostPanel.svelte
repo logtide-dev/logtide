@@ -224,8 +224,15 @@
             <dd class="break-words">{host.info.model ?? '-'}</dd>
           </div>
           <div>
-            <dt class="text-xs text-muted-foreground">Kernel</dt>
-            <dd class="break-words font-mono text-xs">{host.info.kernel ?? '-'}</dd>
+            <dt class="text-xs text-muted-foreground">{host.info.os ? 'Operating system' : 'Kernel'}</dt>
+            <dd class="break-words" data-testid="host-os">
+              {#if host.info.os}
+                {host.info.os}
+                {#if host.info.kernel}<span class="block font-mono text-xs text-muted-foreground">{host.info.kernel}</span>{/if}
+              {:else}
+                <span class="font-mono text-xs">{host.info.kernel ?? '-'}</span>
+              {/if}
+            </dd>
           </div>
           <div>
             <dt class="text-xs text-muted-foreground">Agent version</dt>

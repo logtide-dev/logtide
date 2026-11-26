@@ -68,6 +68,14 @@ beforeEach(() => {
 });
 
 describe('HardwareHostPanel', () => {
+  it('shows the kernel alone for agents that send no operating system', async () => {
+    h.get.mockResolvedValue(detailResponse({ info: { vendor: null, model: null, kernel: '5.15.0', agentVersion: '1.1.0', os: null } }));
+    await renderPage();
+    const header = await screen.findByTestId('host-header');
+    expect(within(header).getByText('Kernel')).toBeTruthy();
+    expect(within(header).getByTestId('host-os').textContent?.trim()).toBe('5.15.0');
+  });
+
   it('loads the host and its events and renders the header', async () => {
     await renderPage();
     expect(h.get).toHaveBeenCalledWith('h-crit');
@@ -76,6 +84,8 @@ describe('HardwareHostPanel', () => {
     expect(within(header).getByText('Dell Inc.')).toBeTruthy();
     expect(within(header).getByText('PowerEdge R640')).toBeTruthy();
     expect(within(header).getByText('6.8.0-45-generic')).toBeTruthy();
+    expect(within(header).getByText('Operating system')).toBeTruthy();
+    expect(within(header).getByTestId('host-os').textContent).toContain('Ubuntu 24.04.1 LTS');
     expect(within(header).getByText('1.0.0')).toBeTruthy();
     expect(within(header).getByTestId('hardware-status').textContent).toContain('Critical');
     expect(within(header).getByTestId('last-evaluated').textContent).not.toContain('Not yet');

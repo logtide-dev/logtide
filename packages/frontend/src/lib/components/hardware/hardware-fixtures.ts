@@ -17,7 +17,7 @@ export function summary(over: Partial<HardwareHostSummary> = {}): HardwareHostSu
     status: 'ok',
     components: { disks: 'ok', memory: 'ok', cpu: 'ok', cooling: 'ok', power: 'ok', network: 'ok' },
     isVirtual: false,
-    info: { vendor: 'Dell Inc.', model: 'PowerEdge R640', kernel: '6.8.0-45-generic', agentVersion: '1.0.0' },
+    info: { vendor: 'Dell Inc.', model: 'PowerEdge R640', kernel: '6.8.0-45-generic', agentVersion: '1.0.0', os: 'Ubuntu 24.04.1 LTS' },
     lastSeenAt: ago(30_000),
     statusChangedAt: ago(86_400_000),
     muted: false,
@@ -39,7 +39,7 @@ export const vmHost = summary({
   hostName: 'vm-07',
   status: 'unknown',
   isVirtual: true,
-  info: { vendor: null, model: null, kernel: '6.1.0', agentVersion: '1.0.0' },
+  info: { vendor: null, model: null, kernel: '6.1.0', agentVersion: '1.0.0', os: null },
   components: {
     disks: 'unknown',
     memory: 'unknown',
