@@ -28,6 +28,9 @@ vi.mock('$lib/components/custom-dashboards/panels/TraceVolumePanel.svelte', asyn
 vi.mock('$lib/components/custom-dashboards/panels/TraceLatencyPanel.svelte', async () => ({
   default: (await import('../../../../../test-stubs/TracePanel.stub.svelte')).default,
 }));
+vi.mock('$lib/components/metrics/sources/SourceTracesTab.svelte', async () => ({
+  default: (await import('../../../../../test-stubs/SourceTab.stub.svelte')).default,
+}));
 vi.mock('$lib/components/metrics/sources/SourceLogsTab.svelte', async () => ({
   default: (await import('../../../../../test-stubs/SourceTab.stub.svelte')).default,
 }));
@@ -281,13 +284,14 @@ describe('host page', () => {
     expect(Date.parse(tab.dataset.to ?? '')).toBeGreaterThan(Date.parse(tab.dataset.from ?? ''));
   });
 
-  it('traces tab links each service to Traces', async () => {
+  it('traces tab renders the source traces for the host', async () => {
     setUrl('?tab=traces');
     render(Page);
-    const link = await screen.findByRole('link', { name: 'Open traces of checkout-api' });
-    expect(new URL(link.getAttribute('href') ?? '', 'http://x').searchParams.get('service')).toBe('checkout-api');
+    const tab = await screen.findByTestId('source-tab-stub');
+    expect(tab.dataset.kind).toBe('host');
+    expect(tab.dataset.name).toBe('vps-app');
+    expect(tab.dataset.projects).toBe('p1');
   });
-
   it('metrics tab shows 12 cards first and loads more on demand', async () => {
     setUrl('?tab=metrics');
     const metricNames = Array.from({ length: 30 }, (_, i) => `m.metric.${String(i).padStart(2, '0')}`);

@@ -41,6 +41,9 @@ vi.mock('$lib/api/projects', () => ({
   },
 }));
 vi.mock('$lib/api/logs', () => ({ logsAPI: { getLogs: h.getLogs } }));
+vi.mock('$lib/components/metrics/sources/SourceTracesTab.svelte', async () => ({
+  default: (await import('../../../../../test-stubs/SourceTab.stub.svelte')).default,
+}));
 vi.mock('$lib/components/metrics/sources/SourceLogsTab.svelte', async () => ({
   default: (await import('../../../../../test-stubs/SourceTab.stub.svelte')).default,
 }));
@@ -186,10 +189,11 @@ describe('service page', () => {
     expect(within(rows[0]).getByRole('link', { name: 'vps-app' }).getAttribute('href')).toBe('/dashboard/metrics/hosts/vps-app');
   });
 
-  it('traces tab links to Traces filtered by the service', async () => {
+  it('traces tab renders the source traces for the service', async () => {
     setUrl('?tab=traces');
     render(Page);
-    const link = await screen.findByRole('link', { name: 'Open in Traces' });
-    expect(new URL(link.getAttribute('href') ?? '', 'http://x').searchParams.get('service')).toBe('checkout-api');
+    const tab = await screen.findByTestId('source-tab-stub');
+    expect(tab.dataset.kind).toBe('service');
+    expect(tab.dataset.name).toBe('checkout-api');
   });
 });

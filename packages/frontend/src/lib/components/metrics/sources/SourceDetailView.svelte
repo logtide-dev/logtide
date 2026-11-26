@@ -43,7 +43,8 @@
   import SourceMetricsGrid from './SourceMetricsGrid.svelte';
   import SourceRelatedList from './SourceRelatedList.svelte';
   import SourceLogsTab from './SourceLogsTab.svelte';
-  import { RED_MISSING_HINT, formatRequestRate, buildExploreHref, buildServiceTracesHref, redSourceLabel } from './source-model';
+  import SourceTracesTab from './SourceTracesTab.svelte';
+  import { RED_MISSING_HINT, formatRequestRate, buildExploreHref, redSourceLabel } from './source-model';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import ExternalLink from '@lucide/svelte/icons/external-link';
@@ -456,39 +457,15 @@
       {:else if activeTab === 'logs'}
         <SourceLogsTab {kind} {name} projectIds={detailProjectIds} from={win.from} to={win.to} />
       {:else if activeTab === 'traces'}
-        <section class="rounded-lg border bg-card" data-testid="source-traces">
-          {#if service}
-            <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-              <div>
-                <h3 class="text-sm font-medium">Traces</h3>
-                <p class="text-sm text-muted-foreground">
-                  {service.hasTraces ? 'Open the traces of this service for the selected time range.' : 'This service sent no traces in this window. Instrument it with OpenTelemetry tracing to see them.'}
-                </p>
-              </div>
-              <Button size="sm" variant="outline" href={buildServiceTracesHref(name, { projectIds: $scopeStore.projectIds, range: $scopeStore.range })}>
-                Open in Traces
-              </Button>
-            </div>
-          {:else if host}
-            <div class="px-4 py-3">
-              <h3 class="text-sm font-medium">Traces of the services on this host</h3>
-              {#if host.services.length === 0}
-                <p class="mt-1 text-sm text-muted-foreground">No services are linked to this host yet.</p>
-              {:else}
-                <ul class="mt-2 divide-y">
-                  {#each host.services as s (s)}
-                    <li class="flex items-center justify-between gap-2 py-2">
-                      <span class="font-medium">{s}</span>
-                      <Button size="sm" variant="outline" href={buildServiceTracesHref(s, { projectIds: $scopeStore.projectIds, range: $scopeStore.range })} aria-label="Open traces of {s}">
-                        Open in Traces
-                      </Button>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </div>
-          {/if}
-        </section>
+        <SourceTracesTab
+          {kind}
+          {name}
+          organizationId={org.id}
+          projectIds={detailProjectIds}
+          services={host?.services ?? []}
+          from={win.from}
+          to={win.to}
+        />
       {:else if activeTab === 'metrics'}
         <SourceMetricsGrid
           {kind}

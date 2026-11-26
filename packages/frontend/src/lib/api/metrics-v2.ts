@@ -12,6 +12,7 @@ import type {
   MetricSourcesResponse,
   PanelConfig,
   ServiceSourceDetail,
+  SourceTraceSeries,
 } from '@logtide/shared';
 
 /** Where a call looks: organization, optional project subset (null/empty = every project) and window. */
@@ -96,6 +97,15 @@ export class MetricsV2API {
       `/metrics/sources/host/${encodeURIComponent(name)}`,
       this.scopeQuery(p),
       'Failed to load the host',
+    );
+  }
+
+  /** Requests, errors and p95 over time from the entry spans of a host or service. */
+  getSourceTraces(kind: MetricSourceKind, name: string, p: MetricsScopeParams): Promise<SourceTraceSeries> {
+    return this.get(
+      `/metrics/sources/${kind}/${encodeURIComponent(name)}/traces`,
+      this.scopeQuery(p),
+      'Failed to load the trace activity',
     );
   }
 
