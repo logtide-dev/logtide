@@ -60,7 +60,7 @@ beforeEach(() => {
     entry: metrics[1],
     attributes: {
       metric: [{ key: 'network.direction', values: ['receive', 'transmit'] }],
-      resource: [{ key: 'host.name', values: ['vps-app', 'lyra-01'] }],
+      resource: [{ key: 'host.name', values: ['vps-app', 'db-01'] }],
     },
     sources: { hosts: ['vps-app'], services: ['checkout api'] },
     usedIn: { dashboards: [{ id: 'd1', name: 'Infra' }] },

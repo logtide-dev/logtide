@@ -1,7 +1,7 @@
 import { test, expect, TestApiClient, registerUser, setAuthState, generateTestEmail, generateTestName, TEST_FRONTEND_URL, TEST_API_URL } from '../fixtures/auth';
 
 const METRIC = 'system.cpu.utilization';
-const HOSTS = ['vps-app', 'lyra-01'];
+const HOSTS = ['vps-app', 'db-01'];
 
 test.describe('Metrics Journey', () => {
   let apiClient: TestApiClient;

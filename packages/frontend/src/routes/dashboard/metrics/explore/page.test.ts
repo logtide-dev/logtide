@@ -88,7 +88,7 @@ const hostSeries = (name: string, last: number) => ({
 });
 
 const response = {
-  series: [hostSeries('vps-app', 71), hostSeries('lyra-01', 20)],
+  series: [hostSeries('vps-app', 71), hostSeries('db-01', 20)],
   interval: '5m',
   queries: [{ id: 'A', seriesTotal: 2, seriesShown: 2, metricType: 'gauge', unit: '%' }],
   warnings: [],
@@ -111,7 +111,7 @@ beforeEach(() => {
     entry: {},
     attributes: {
       metric: [{ key: 'system.cpu.state', values: ['user', 'system'] }],
-      resource: [{ key: 'host.name', values: ['vps-app', 'lyra-01', 'nas'] }],
+      resource: [{ key: 'host.name', values: ['vps-app', 'db-01', 'nas'] }],
     },
     sources: { hosts: [], services: [] },
     usedIn: { dashboards: [] },
