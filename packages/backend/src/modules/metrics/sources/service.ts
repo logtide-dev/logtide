@@ -296,7 +296,7 @@ export async function listHosts(ctx: SourcesContext, only?: string): Promise<Hos
       network: sig('network'),
       load: sig('load'),
       hardwareStatus: worstHardware(hw),
-      hardwareHosts: hw.map((h) => ({ projectId: h.projectId, id: h.id })),
+      hardwareHosts: hw.map((h) => ({ projectId: h.projectId, id: h.id, isVirtual: h.isVirtual })),
       services: (s.co['service.name'] ?? []).filter((n) => real.has(n)),
       os: kernel,
       metricCount: s.metricCount,

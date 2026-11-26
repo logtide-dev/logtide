@@ -250,6 +250,10 @@
   const hostHref = (h: HostSourceSummary) => sourceHref('host', h.name);
   const serviceHref = (s: ServiceSourceSummary) => sourceHref('service', s.name);
 
+  // A VM reports no hardware sensors: the badge says so instead of "Unknown".
+  const isVirtualHost = (h: HostSourceSummary) =>
+    h.hardwareHosts.length > 0 && h.hardwareHosts.every((x) => x.isVirtual === true);
+
   function listPreview(names: string[]): string {
     if (names.length === 0) return '-';
     const shown = names.slice(0, 2).join(', ');
@@ -279,7 +283,7 @@
       href={hostHardwareHref(h.name)}
       aria-label="Hardware health of {h.name}"
     >
-      <HardwareStatusBadge status={h.hardwareStatus} />
+      <HardwareStatusBadge status={h.hardwareStatus} isVirtual={isVirtualHost(h)} />
     </a>
   {:else}
     <span class="text-muted-foreground" title="No hardware health data from this host">-</span>
@@ -364,7 +368,7 @@
     <a class="font-medium" href={hostHref(h)}>{h.name}</a>
     {#if h.hardwareStatus}
       <a class="ml-auto" href={hostHardwareHref(h.name)} aria-label="Hardware health of {h.name}">
-        <HardwareStatusBadge status={h.hardwareStatus} />
+        <HardwareStatusBadge status={h.hardwareStatus} isVirtual={isVirtualHost(h)} />
       </a>
     {/if}
   </div>

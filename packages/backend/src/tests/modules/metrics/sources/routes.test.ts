@@ -199,7 +199,7 @@ describe('GET /sources', () => {
     const body = (await f.inject({ method: 'GET', url: `/sources${q()}` })).json();
     const dbHost = body.hosts.find((h: any) => h.name === 'db-1');
     expect(dbHost.hardwareStatus).toBe('critical');
-    expect(dbHost.hardwareHosts).toEqual([{ projectId: P1, id: 'hw-1' }]);
+    expect(dbHost.hardwareHosts).toEqual([{ projectId: P1, id: 'hw-1', isVirtual: false }]);
     expect(dbHost.status).toBe('critical');
     expect(dbHost.statusReason).toBe('Hardware: disk failing');
     expect(dbHost.os).toBe('6.1.0');

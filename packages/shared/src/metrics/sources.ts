@@ -53,8 +53,11 @@ export interface HostSourceSummary {
   load: SourceSignalValue;
   /** Hardware Health status when the host is also a hardware host (hw.* metrics), else null. */
   hardwareStatus: 'ok' | 'warning' | 'critical' | 'unknown' | 'stale' | null;
-  /** Hardware host rows for this name (one per project). */
-  hardwareHosts: Array<{ projectId: string; id: string }>;
+  /**
+   * Hardware host rows for this name (one per project). isVirtual is null until
+   * the agent reported hw.host.info; a VM has no hardware sensors to judge.
+   */
+  hardwareHosts: Array<{ projectId: string; id: string; isVirtual?: boolean | null }>;
   /** Services (service.name) seen on this host, agent services excluded. */
   services: string[];
   /** Operating system, e.g. "Debian 12" or the kernel when that is all we know. */

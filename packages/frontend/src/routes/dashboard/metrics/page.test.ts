@@ -300,6 +300,17 @@ describe('metrics sources page', () => {
     expect(within(hosts).queryByRole('link', { name: 'Hardware health of vm' })).toBeNull();
   });
 
+  it('says No sensors for a virtual machine, like the Hardware page', async () => {
+    h.getSources.mockResolvedValue({
+      hosts: [host('vm-1', 'ok', 10, { hardwareStatus: 'unknown', hardwareHosts: [{ projectId: 'p1', id: 'hw-9', isVirtual: true }] })],
+      services: [],
+    });
+    render(Page);
+    const hosts = await screen.findByTestId('hosts-section');
+    const badge = within(within(hosts).getByRole('link', { name: 'Hardware health of vm-1' })).getByTestId('hardware-status');
+    expect(badge.textContent).toContain('No sensors');
+  });
+
   it('links each row to its source page', async () => {
     h.getSources.mockResolvedValue({ hosts: [host('web 1', 'ok', 10)], services: [service('api', 'ok')] });
     render(Page);
