@@ -217,6 +217,7 @@ function checkKinds(kinds: unknown, what: string): SpanKind[] {
  * 86,400 and overrides `bucket`; otherwise `bucket` is `'hour'` or `'day'`.
  * `kinds`, when set, is a non-empty list of known kinds. An empty
  * `serviceName` string means no service filter (as before 1.8).
+ * `groupByService`, when set, is a boolean; `false` is dropped.
  */
 export function normalizeSpanTimeseriesParams<T extends SpanTimeseriesParams>(params: T): T {
   const out: SpanTimeseriesParams = { ...params };
@@ -240,6 +241,10 @@ export function normalizeSpanTimeseriesParams<T extends SpanTimeseriesParams>(pa
   if (out.serviceName === '') delete out.serviceName;
   else if (Array.isArray(out.serviceName)) out.serviceName = [...out.serviceName];
   if (out.attributeFilters !== undefined && out.attributeFilters.length === 0) delete out.attributeFilters;
+  if (out.groupByService !== undefined && typeof out.groupByService !== 'boolean') {
+    throw new RangeError(`groupByService must be a boolean (got ${String(out.groupByService)})`);
+  }
+  if (out.groupByService === false) delete out.groupByService;
   return out as T;
 }
 

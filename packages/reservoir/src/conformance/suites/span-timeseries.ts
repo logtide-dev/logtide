@@ -6,7 +6,9 @@
 // follow the querySpans semantics (a `resource.` key reads the resource
 // attributes with the rest of the key, literal dotted key first, then the
 // nested path; include_missing as for logs). Counts and error counts are
-// exact; percentiles within the operation stats tolerances.
+// exact; percentiles within the operation stats tolerances. `groupByService`
+// splits every bucket per service (rows carry `serviceName`), ordered by
+// bucket time then service name; without it no row has a `serviceName` key.
 
 import { describe, expect, it } from 'vitest';
 import type { MetadataFilter, SpanTimeseriesBucket, SpanTimeseriesParams } from '../../core/types.js';
@@ -19,6 +21,12 @@ type Bucket = [number, number, number];
 
 const shape = (rows: SpanTimeseriesBucket[]): Bucket[] =>
   rows.map((r) => [(r.time.getTime() - CONFORMANCE_BASE.getTime()) / 1000, r.spanCount, r.errorCount]);
+
+/** [bucket start in seconds from CONFORMANCE_BASE, service, span count, error count] */
+type ServiceBucket = [number, string | undefined, number, number];
+
+const groupedShape = (rows: SpanTimeseriesBucket[]): ServiceBucket[] =>
+  rows.map((r) => [(r.time.getTime() - CONFORMANCE_BASE.getTime()) / 1000, r.serviceName, r.spanCount, r.errorCount]);
 
 const equals = (key: string, value: string): MetadataFilter => ({ key, op: 'equals', value, include_missing: false });
 
@@ -176,6 +184,100 @@ export function describeSpanTimeseriesConformance(ctx: ConformanceContext): void
 
     it('ST17 no project gives no bucket', async () => {
       expect(await series({ bucket: 'hour', projectIds: [] })).toEqual([]);
+    });
+
+    it('ST18 without groupByService the rows carry no serviceName', async () => {
+      for (const groupByService of [undefined, false]) {
+        const rows = await series({ bucketSeconds: 600, projectIds: [PROJECT_A, PROJECT_B], groupByService });
+        expect(rows.length).toBeGreaterThan(0);
+        for (const r of rows) expect(Object.hasOwn(r, 'serviceName'), `${String(groupByService)} ${r.time.toISOString()}`).toBe(false);
+      }
+    });
+
+    it('ST19 groupByService splits each bucket per service across projects', async () => {
+      // api: GET-1 to GET-100, POST-1 to POST-10 (project A) and B-SPAN (project B); worker: JOB-1 to JOB-4.
+      const rows = await series({
+        bucketSeconds: 3600,
+        projectIds: [PROJECT_A, PROJECT_B],
+        kinds: ['SERVER', 'CONSUMER'],
+        serviceName: ['api', 'worker', 'frontend'],
+        groupByService: true,
+      });
+      expect(groupedShape(rows)).toEqual([[0, 'api', 111, 7], [0, 'worker', 4, 1]]);
+      expectOrderedPercentiles(rows);
+      // Per bucket and service, the same counts as one service filter at a time.
+      for (const serviceName of ['api', 'worker']) {
+        const single = await buckets({ bucketSeconds: 3600, projectIds: [PROJECT_A, PROJECT_B], kinds: ['SERVER', 'CONSUMER'], serviceName });
+        const grouped = groupedShape(rows).filter(([, s]) => s === serviceName).map(([t, , n, e]) => [t, n, e]);
+        expect(grouped, serviceName).toEqual(single);
+      }
+    });
+
+    it('ST20 groupByService with bucketSeconds, kinds, a service list and an attribute filter', async () => {
+      // POST spans are dropped by the filter; the worker spans have no http.method (include_missing).
+      const noPost: MetadataFilter = { key: 'http.method', op: 'not_equals', value: 'POST', include_missing: true };
+      expect(groupedShape(await series({
+        bucketSeconds: 600,
+        projectIds: [PROJECT_A, PROJECT_B],
+        kinds: ['SERVER', 'CONSUMER'],
+        serviceName: ['api', 'worker'],
+        attributeFilters: [noPost],
+        groupByService: true,
+      }))).toEqual([
+        [0, 'api', 60, 0], // GET-1 to GET-59 and B-SPAN
+        [600, 'api', 41, 5], // GET-60 to GET-100
+        [2400, 'worker', 4, 1],
+      ]);
+      expect(groupedShape(await series({
+        bucketSeconds: 600,
+        projectIds: [PROJECT_A, PROJECT_B],
+        kinds: ['SERVER', 'CONSUMER'],
+        serviceName: 'worker',
+        attributeFilters: [equals('resource.host.name', 'vps-worker')],
+        groupByService: true,
+      }))).toEqual([[2400, 'worker', 4, 1]]);
+      expect(await series({
+        bucketSeconds: 600,
+        kinds: ['PRODUCER'],
+        groupByService: true,
+      })).toEqual([]);
+    });
+
+    it('ST21 groupByService orders by bucket time, then service name', async () => {
+      // No kind filter: the frontend spans (no kind) and the api CLIENT spans count too.
+      expect(groupedShape(await series({ bucketSeconds: 600, projectIds: [PROJECT_A, PROJECT_B], groupByService: true }))).toEqual([
+        [0, 'api', 60, 0],
+        [0, 'frontend', 4, 0],
+        [600, 'api', 41, 5],
+        [1200, 'api', 18, 1], // POST-1 to POST-9 and SELECT-1 to SELECT-9
+        [1800, 'api', 2, 1], // POST-10 and SELECT-10
+        [2400, 'worker', 5, 1],
+      ]);
+      expect(groupedShape(await series({ bucket: 'hour', groupByService: true }))).toEqual([
+        [0, 'api', 120, 7],
+        [0, 'frontend', 4, 0],
+        [0, 'worker', 5, 1],
+      ]);
+    });
+
+    it('ST22 groupByService percentiles are per service and bucket', async () => {
+      const rows = await series({
+        bucketSeconds: 3600,
+        kinds: ['SERVER', 'CONSUMER'],
+        attributeFilters: [{ key: 'http.method', op: 'not_equals', value: 'POST', include_missing: true }],
+        groupByService: true,
+      });
+      expect(groupedShape(rows)).toEqual([[0, 'api', 100, 5], [0, 'worker', 4, 1]]);
+      const [api, worker] = rows;
+      // api: GET-1 to GET-100 (1 to 100 ms), as in ST15.
+      expectMs(api.p50!, 50.5, 1.5, 'api p50');
+      expectMs(api.p95!, 95.05, 1.5, 'api p95');
+      expectMs(api.p99!, 99.01, 1.5, 'api p99');
+      // worker: JOB-1 to JOB-4 (10 to 40 ms), never mixed with the api durations.
+      expectBetween(worker.p50!, 10, 40, 'worker p50');
+      expectBetween(worker.p95!, 10, 40, 'worker p95');
+      expectBetween(worker.p99!, 10, 40, 'worker p99');
+      expectOrderedPercentiles(rows);
     });
   });
 }

@@ -744,6 +744,7 @@ export class ReferenceEngine {
    * Spans starting inside [from, to] of the projects, filtered like
    * querySpans (service, kinds, attribute filters), per bucket: epoch
    * multiples of `bucketSeconds`, else the UTC start of the hour or day.
+   * `groupByService` splits each bucket per service (byte order).
    */
   async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
     const services = asList(params.serviceName);
@@ -757,7 +758,8 @@ export class ReferenceEngine {
       if (params.bucket === 'day') return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
       return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours());
     };
-    const groups = new Map<number, { durations: number[]; errors: number }>();
+    const byService = params.groupByService === true;
+    const groups = new Map<string, { time: number; service?: string; durations: number[]; errors: number }>();
     for (const s of this.spans) {
       const start = s.startTime.getTime();
       if (!params.projectIds.includes(s.projectId)) continue;
@@ -765,18 +767,20 @@ export class ReferenceEngine {
       if (services && !services.includes(s.serviceName)) continue;
       if (kinds && (s.kind === undefined || !kinds.includes(s.kind))) continue;
       if (!spanFiltersMatch(s, params.attributeFilters)) continue;
-      const key = bucketStart(start);
-      const group = groups.get(key) ?? { durations: [], errors: 0 };
+      const time = bucketStart(start);
+      const key = byService ? JSON.stringify([time, s.serviceName]) : String(time);
+      const group = groups.get(key) ?? { time, ...(byService ? { service: s.serviceName } : {}), durations: [], errors: 0 };
       group.durations.push(s.durationMs);
       if (s.statusCode === 'ERROR') group.errors++;
       groups.set(key, group);
     }
-    return [...groups.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([time, g]) => {
+    return [...groups.values()]
+      .sort((a, b) => a.time - b.time || compareByteOrder(a.service ?? '', b.service ?? ''))
+      .map((g) => {
         const sorted = [...g.durations].sort((a, b) => a - b);
         return {
-          time: new Date(time),
+          time: new Date(g.time),
+          ...(g.service !== undefined ? { serviceName: g.service } : {}),
           spanCount: sorted.length,
           errorCount: g.errors,
           p50: percentileCont(sorted, 0.5),

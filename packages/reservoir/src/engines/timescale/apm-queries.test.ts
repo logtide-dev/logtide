@@ -214,4 +214,15 @@ describe('spanTimeseriesSql', () => {
       ['http.method', 'http', 'method'], 'GET', ['host.name', 'host', 'name'], 'vps-app', 60,
     ]);
   });
+
+  it('groupByService selects, groups and orders by service_name in byte order', () => {
+    const native = spanTimeseriesSql('public', { ...tsBase, bucketSeconds: 300, serviceName: ['api', 'worker'], groupByService: true });
+    const sql = native.query as string;
+    expect(sql).toContain('AS bucket_s, service_name, COUNT(*)::int AS span_count');
+    expect(sql).toMatch(/GROUP BY 1, service_name ORDER BY 1 ASC, service_name COLLATE "C" ASC$/);
+    expect(native.parameters).toEqual([['p1', 'p2'], from, to, ['api', 'worker'], 300]);
+    const plain = spanTimeseriesSql('public', { ...tsBase, bucket: 'hour' }).query as string;
+    expect(plain).not.toContain('service_name');
+    expect(plain).toMatch(/GROUP BY 1 ORDER BY 1 ASC$/);
+  });
 });

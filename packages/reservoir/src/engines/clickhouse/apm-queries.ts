@@ -198,7 +198,9 @@ export function traceOrderSql(params: Pick<TraceQueryParams, 'sortBy' | 'sortOrd
  * with the optional service, kinds and attribute filters (the querySpans
  * predicates). `bucketSeconds` buckets start at multiples of it since the
  * epoch (`bucket_ms`); otherwise `bucket` truncates to the hour or day
- * (`bucket`). Expects params validated by normalizeSpanTimeseriesParams.
+ * (`bucket`). `groupByService` adds `service_name` to the select, the
+ * grouping and the order (String compares bytes). Expects params validated
+ * by normalizeSpanTimeseriesParams.
  */
 export function spanTimeseriesSql(params: SpanTimeseriesParams): NativeQuery {
   const queryParams: Record<string, unknown> = {
@@ -234,11 +236,14 @@ export function spanTimeseriesSql(params: SpanTimeseriesParams): NativeQuery {
     bucketSelect = `${params.bucket === 'day' ? 'toStartOfDay' : 'toStartOfHour'}(start_time) AS bucket`;
     bucketColumn = 'bucket';
   }
+  const groupBy = params.groupByService ? `${bucketColumn}, service_name` : bucketColumn;
+  const orderBy = params.groupByService ? `${bucketColumn} ASC, service_name ASC` : `${bucketColumn} ASC`;
   const query =
-    `SELECT ${bucketSelect}, count() AS span_count, countIf(status_code = 'ERROR') AS error_count,` +
+    `SELECT ${bucketSelect},${params.groupByService ? ' service_name,' : ''}` +
+    ` count() AS span_count, countIf(status_code = 'ERROR') AS error_count,` +
     ` quantile(0.5)(duration_ms) AS p50, quantile(0.95)(duration_ms) AS p95, quantile(0.99)(duration_ms) AS p99` +
     ` FROM spans WHERE ${conditions.join(' AND ')}` +
-    ` GROUP BY ${bucketColumn} ORDER BY ${bucketColumn} ASC`;
+    ` GROUP BY ${groupBy} ORDER BY ${orderBy}`;
   return { query, parameters: [queryParams] };
 }
 

@@ -264,6 +264,13 @@ describe('normalizeSpanTimeseriesParams', () => {
     expect(normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', serviceName: ['a', 'b'] }).serviceName).toEqual(['a', 'b']);
   });
 
+  it('groupByService is a boolean, false is dropped', () => {
+    expect(normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', groupByService: true }).groupByService).toBe(true);
+    expect('groupByService' in normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', groupByService: false })).toBe(false);
+    expect(() => normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', groupByService: 'yes' as never }))
+      .toThrow('groupByService must be a boolean (got yes)');
+  });
+
   it('never mutates its input', () => {
     const input = { ...ts, bucket: 'hour' as const, bucketSeconds: 300, serviceName: '' };
     normalizeSpanTimeseriesParams(input);

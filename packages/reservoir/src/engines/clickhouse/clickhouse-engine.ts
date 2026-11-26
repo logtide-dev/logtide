@@ -1544,6 +1544,7 @@ export class ClickHouseEngine extends StorageEngine {
 
     return rows.map((r) => ({
       time: r.bucket_ms !== undefined ? new Date(Number(r.bucket_ms)) : parseClickHouseTime(r.bucket),
+      ...(normalized.groupByService ? { serviceName: String(r.service_name) } : {}),
       spanCount: Number(r.span_count ?? 0),
       errorCount: Number(r.error_count ?? 0),
       p50: r.p50 != null ? Number(r.p50) : null,

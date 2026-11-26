@@ -1248,6 +1248,7 @@ export class TimescaleEngine extends StorageEngine {
 
     return result.rows.map((r) => ({
       time: r.bucket_s != null ? new Date(Number(r.bucket_s) * 1000) : new Date(r.bucket as unknown as string),
+      ...(normalized.groupByService ? { serviceName: String(r.service_name) } : {}),
       spanCount: Number(r.span_count ?? 0),
       errorCount: Number(r.error_count ?? 0),
       p50: r.p50 != null ? Number(r.p50) : null,

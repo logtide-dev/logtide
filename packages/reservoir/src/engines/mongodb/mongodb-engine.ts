@@ -1172,10 +1172,13 @@ export class MongoDBEngine extends StorageEngine {
 
     const rows = await this.spansCol().aggregate(spanTimeseriesPipeline(normalized), { ...ctxOpts() }).toArray();
 
+    const grouped = normalized.groupByService === true;
     return rows.map((r) => {
       const p = Array.isArray(r.p) ? r.p : [];
+      const t = grouped ? r._id?.t : r._id;
       return {
-        time: r._id instanceof Date ? r._id : new Date(r._id as string),
+        time: t instanceof Date ? t : new Date(t as string),
+        ...(grouped ? { serviceName: String(r._id?.s ?? '') } : {}),
         spanCount: Number(r.span_count ?? 0),
         errorCount: Number(r.error_count ?? 0),
         p50: p[0] != null ? Number(p[0]) : null,

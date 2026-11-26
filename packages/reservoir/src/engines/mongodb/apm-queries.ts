@@ -384,8 +384,9 @@ export function assembleLatencyHistogram(rows: Document[]): LatencyHistogramResu
  * clauses). `bucketSeconds` buckets start at multiples of it since the Unix
  * epoch; otherwise `$dateTrunc` (MongoDB 5.0+) truncates to the hour or day.
  * Latency percentiles use the approximate `$percentile` (MongoDB 7.0+), as
- * getServiceHealthStats does. Expects params validated by
- * normalizeSpanTimeseriesParams.
+ * getServiceHealthStats does. `groupByService` groups on `{ t, s }` (bucket
+ * and service) and sorts on both (the default simple collation compares
+ * bytes). Expects params validated by normalizeSpanTimeseriesParams.
  */
 export function spanTimeseriesPipeline(params: SpanTimeseriesParams): Document[] {
   const match: Document = {
@@ -405,16 +406,17 @@ export function spanTimeseriesPipeline(params: SpanTimeseriesParams): Document[]
   } else {
     bucket = { $dateTrunc: { date: '$start_time', unit: params.bucket === 'day' ? 'day' : 'hour', binSize: 1 } };
   }
+  const grouped = params.groupByService === true;
   return [
     { $match: match },
     {
       $group: {
-        _id: bucket,
+        _id: grouped ? { t: bucket, s: '$service_name' } : bucket,
         span_count: { $sum: 1 },
         error_count: ERROR_COUNT,
         p: { $percentile: { input: '$duration_ms', p: PERCENTILES, method: 'approximate' } },
       },
     },
-    { $sort: { _id: 1 } },
+    { $sort: grouped ? { '_id.t': 1, '_id.s': 1 } : { _id: 1 } },
   ];
 }

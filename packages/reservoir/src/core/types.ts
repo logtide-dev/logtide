@@ -492,11 +492,19 @@ export interface SpanTimeseriesParams {
    * key, any other key reads `attributes`; every filter must hold.
    */
   attributeFilters?: MetadataFilter[];
+  /**
+   * One row per (bucket, service) instead of per bucket, each carrying its
+   * `serviceName`; counts and percentiles are per service. Rows are ordered
+   * by bucket time, then service name (byte order), both ascending.
+   */
+  groupByService?: boolean;
 }
 
 /** One time bucket of span volume + latency percentiles. */
 export interface SpanTimeseriesBucket {
   time: Date;
+  /** The service of the row; set only when `groupByService` is true. */
+  serviceName?: string;
   spanCount: number;
   errorCount: number;
   p50: number | null;

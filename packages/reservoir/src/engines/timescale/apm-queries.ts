@@ -145,8 +145,10 @@ export function traceSpanMatchSql(
  * predicates). `bucketSeconds` buckets start at multiples of it since the
  * Unix epoch (`bucket_s`, time_bucket would align some sizes to its own
  * origin instead); otherwise `bucket` goes through `date_trunc` (`bucket`).
- * Expects params validated by normalizeSpanTimeseriesParams; every value is
- * bound, the trunc unit comes from the validated union.
+ * `groupByService` adds `service_name` to the select, the grouping and the
+ * order (byte order, `COLLATE "C"`). Expects params validated by
+ * normalizeSpanTimeseriesParams; every value is bound, the trunc unit comes
+ * from the validated union.
  */
 export function spanTimeseriesSql(schema: string, params: SpanTimeseriesParams): NativeQuery {
   const out: SqlConditions = { conditions: [], values: [], nextIdx: 1 };
@@ -170,13 +172,13 @@ export function spanTimeseriesSql(schema: string, params: SpanTimeseriesParams):
     bucketSelect = `date_trunc('${params.bucket === 'day' ? 'day' : 'hour'}', start_time) AS bucket`;
   }
   const query =
-    `SELECT ${bucketSelect}, COUNT(*)::int AS span_count,` +
+    `SELECT ${bucketSelect},${params.groupByService ? ' service_name,' : ''} COUNT(*)::int AS span_count,` +
     ` SUM(CASE WHEN status_code = 'ERROR' THEN 1 ELSE 0 END)::int AS error_count,` +
     ' percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50,' +
     ' percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95,' +
     ' percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) AS p99' +
     ` FROM ${schema}.spans WHERE ${out.conditions.join(' AND ')}` +
-    ' GROUP BY 1 ORDER BY 1 ASC';
+    (params.groupByService ? ' GROUP BY 1, service_name ORDER BY 1 ASC, service_name COLLATE "C" ASC' : ' GROUP BY 1 ORDER BY 1 ASC');
   return { query, parameters: out.values };
 }
 

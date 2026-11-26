@@ -469,4 +469,26 @@ describe('spanTimeseriesPipeline', () => {
     expect(aggregates[0].col).toBe('spans');
     expect((aggregates[0].args[0] as Document[])[0].$match.kind).toEqual({ $in: ['SERVER'] });
   });
+
+  it('groupByService groups and sorts on bucket and service', () => {
+    const [, group, sort] = spanTimeseriesPipeline({ ...tsBase, bucket: 'hour', groupByService: true });
+    expect(group.$group._id).toEqual({
+      t: { $dateTrunc: { date: '$start_time', unit: 'hour', binSize: 1 } },
+      s: '$service_name',
+    });
+    expect(sort).toEqual({ $sort: { '_id.t': 1, '_id.s': 1 } });
+  });
+
+  it('the engine maps serviceName only when grouping by service', async () => {
+    const t = new Date('2026-01-05T10:00:00Z');
+    const grouped = fakeDb([{ _id: { t, s: 'worker' }, span_count: 4, error_count: 1, p: [20, 40, 40] }]);
+    const engine = new MongoDBEngine(config, { db: grouped.db as never, skipInitialize: true });
+    expect(await engine.getSpanTimeseries({ ...tsBase, bucketSeconds: 300, groupByService: true })).toEqual([
+      { time: t, serviceName: 'worker', spanCount: 4, errorCount: 1, p50: 20, p95: 40, p99: 40 },
+    ]);
+    const plain = fakeDb([{ _id: t, span_count: 4, error_count: 1, p: [20, 40, 40] }]);
+    const plainEngine = new MongoDBEngine(config, { db: plain.db as never, skipInitialize: true });
+    const rows = await plainEngine.getSpanTimeseries({ ...tsBase, bucketSeconds: 300 });
+    expect(Object.hasOwn(rows[0], 'serviceName')).toBe(false);
+  });
 });

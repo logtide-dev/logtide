@@ -310,4 +310,25 @@ describe('clickhouse span timeseries', () => {
     expect(await engine.getSpanTimeseries({ ...tsBase, projectIds: [], bucket: 'hour' })).toEqual([]);
     expect(calls()).toHaveLength(2);
   });
+
+  it('groupByService selects, groups and orders by service_name too', () => {
+    const native = spanTimeseriesSql({ ...tsBase, bucketSeconds: 300, serviceName: ['api', 'worker'], groupByService: true });
+    expect(native.query).toContain('AS bucket_ms, service_name, count() AS span_count');
+    expect(native.query).toContain('GROUP BY bucket_ms, service_name ORDER BY bucket_ms ASC, service_name ASC');
+    const hour = spanTimeseriesSql({ ...tsBase, bucket: 'hour', groupByService: true });
+    expect(hour.query).toContain('GROUP BY bucket, service_name ORDER BY bucket ASC, service_name ASC');
+    const plain = spanTimeseriesSql({ ...tsBase, bucket: 'hour' });
+    expect(plain.query).not.toContain('service_name');
+  });
+
+  it('the engine maps serviceName only when grouping by service', async () => {
+    const row = { bucket_ms: '1767607200000', service_name: 'api', span_count: '3', error_count: '1', p50: 10, p95: 20, p99: 30 };
+    const { engine } = stubEngine([[row], [row]]);
+    const grouped = await engine.getSpanTimeseries({ ...tsBase, bucketSeconds: 300, groupByService: true });
+    expect(grouped).toEqual([
+      { time: new Date('2026-01-05T10:00:00.000Z'), serviceName: 'api', spanCount: 3, errorCount: 1, p50: 10, p95: 20, p99: 30 },
+    ]);
+    const plain = await engine.getSpanTimeseries({ ...tsBase, bucketSeconds: 300, groupByService: false });
+    expect(Object.hasOwn(plain[0], 'serviceName')).toBe(false);
+  });
 });
