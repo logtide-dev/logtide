@@ -115,6 +115,55 @@ describe('MetricQueryBuilder queries', () => {
   });
 });
 
+describe('MetricQueryBuilder sources and kinds', () => {
+  it('shows the projects a metric comes from when the scope has several', async () => {
+    const multi = [
+      { ...catalog[0], projectIds: ['p1', 'p2'] },
+      { ...catalog[1], projectIds: ['p2'] },
+    ];
+    setup(defaultExplorerQuery(), { catalog: multi, projectNames: { p1: 'payments', p2: 'storefront' } });
+    await fireEvent.focus(screen.getByRole('combobox', { name: 'Metric A' }));
+    expect(await screen.findByRole('option', { name: /system\.cpu\.utilization\.total/ })).toHaveTextContent('payments, storefront');
+    expect(screen.getByRole('option', { name: /http\.requests/ })).toHaveTextContent('storefront');
+  });
+
+  it('offers a name sent with two kinds twice and keeps the picked kind', async () => {
+    const twoKinds = [...catalog, { ...catalog[1], type: 'gauge', isMonotonic: null, temporality: null }];
+    const { onChange } = setup(defaultExplorerQuery(), { catalog: twoKinds });
+    await fireEvent.focus(screen.getByRole('combobox', { name: 'Metric A' }));
+    const options = await screen.findAllByRole('option', { name: /http\.requests/ });
+    expect(options).toHaveLength(2);
+    await fireEvent.click(options.find((o) => o.textContent?.includes('gauge'))!);
+    expect(last(onChange).queries[0]).toMatchObject({ metricName: 'http.requests', metricType: 'gauge' });
+    expect(screen.getByTestId('metric-kind-A').textContent).toContain('gauge');
+  });
+
+  it('a unique name sets no kind', async () => {
+    const { onChange } = setup();
+    await pickMetric('http.requests');
+    expect(last(onChange).queries[0].metricType).toBeUndefined();
+  });
+
+  it('reads from one host or service with "from", shown in place of a where chip', async () => {
+    const { onChange, api } = setup();
+    await pickMetric('http.requests');
+    await fireEvent.click(screen.getByRole('button', { name: 'Source of query A' }));
+    await waitFor(() => expect(api.getAttributeValues).toHaveBeenCalledTimes(2));
+    expect(api.getAttributeValues.mock.calls.map((c) => c[0].key).sort()).toEqual(['host.name', 'service.name']);
+    expect(api.getAttributeValues.mock.calls[0][0]).toMatchObject({ metricName: 'http.requests', scope: 'resource' });
+    const hosts = await screen.findAllByRole('button', { name: 'web-1' });
+    await fireEvent.click(hosts[0]);
+    expect(last(onChange).queries[0].filters).toEqual([{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] }]);
+    expect(screen.getByTestId('query-source-A').textContent).toContain('web-1');
+    expect(screen.queryByText('where')).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Source of query A' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'All sources' }));
+    expect(last(onChange).queries[0].filters).toEqual([]);
+    expect(screen.getByTestId('query-source-A').textContent).toContain('all sources');
+  });
+});
+
 describe('MetricQueryBuilder filters', () => {
   async function openFilter() {
     await fireEvent.click(screen.getByRole('button', { name: 'Add filter' }));
@@ -137,7 +186,8 @@ describe('MetricQueryBuilder filters', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(last(onChange).queries[0].filters).toEqual([{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] }]);
-    expect(screen.getByText('host.name = web-1')).toBeInTheDocument();
+    // host.name = one value is the source of the query: it shows in "from", not as a where chip
+    expect(screen.getByTestId('query-source-A').textContent).toContain('web-1');
   });
 
   it('switching scope to data point reloads keys with that scope', async () => {
@@ -197,9 +247,10 @@ describe('MetricQueryBuilder filters', () => {
 
   it('removes a filter chip', async () => {
     const q = defaultExplorerQuery();
-    q.queries[0].filters = [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['a'] }];
+    q.queries[0].filters = [{ scope: 'metric', key: 'http.route', op: 'eq', values: ['/a'] }];
     const { onChange } = setup(q);
-    await fireEvent.click(screen.getByRole('button', { name: /Remove filter host\.name = a/ }));
+    expect(screen.getByText('http.route = /a')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: /Remove filter http\.route = \/a/ }));
     expect(last(onChange).queries[0].filters).toEqual([]);
   });
 
@@ -363,9 +414,11 @@ describe('BreakdownSuggestions', () => {
     render(BreakdownSuggestions, { metricName: 'm', organizationId: 'org', api, onAddGroupBy });
     const list = await screen.findByRole('list');
     const items = within(list).getAllByRole('button');
-    expect(items[0]).toHaveTextContent('resource.host.name');
+    expect(items[0]).toHaveTextContent('host.name');
+    expect(items[0]).toHaveTextContent('source');
     expect(items[0]).toHaveTextContent('2 values');
-    expect(items[1]).toHaveTextContent('resource.deployment.environment');
+    expect(items[1]).toHaveTextContent('deployment.environment');
+    expect(items.at(-1)).not.toHaveTextContent('source');
     expect(items.at(-1)).toHaveTextContent('one');
     expect(items.at(-1)).toHaveTextContent('1 value');
     await fireEvent.click(items[0]);

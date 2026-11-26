@@ -9,6 +9,7 @@
     from, to       ISO window for attribute key/value lookups (optional)
     variables      DashboardVariable[]; when given, "$name" is offered as a filter value
     catalog        MetricCatalogEntry[] to use instead of loading it (optional)
+    projectNames   project id -> name, shown next to metrics sent by several projects (optional)
     api            lookup client, defaults to metricsV2API (injectable for tests)
     debounceMs     debounce of onChange, default 300 (0 = immediate)
     showDisplay    show the display toggle (default true)
@@ -55,6 +56,7 @@
     to?: string;
     variables?: DashboardVariable[];
     catalog?: MetricCatalogEntry[];
+    projectNames?: Record<string, string>;
     api?: LookupApi;
     debounceMs?: number;
     showDisplay?: boolean;
@@ -68,6 +70,7 @@
     to,
     variables,
     catalog: catalogProp,
+    projectNames = {},
     api = metricsV2API,
     debounceMs = 300,
     showDisplay = true,
@@ -181,7 +184,9 @@
   }
 
   function setQuery(index: number, spec: MetricQuerySpec) {
-    update((q) => (q.queries[index] = spec));
+    update((q) => {
+      q.queries[index] = spec;
+    });
   }
 
   function removeQuery(index: number) {
@@ -243,6 +248,7 @@
       <QueryRowEditor
         {spec}
         {catalog}
+        {projectNames}
         {variables}
         {loadKeys}
         {loadValues}

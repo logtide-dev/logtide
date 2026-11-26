@@ -258,6 +258,7 @@
         from={lookupRange.from}
         to={lookupRange.to}
         showDisplay={false}
+        projectNames={Object.fromEntries(projects.map((p) => [p.id, p.name]))}
       />
     </div>
 

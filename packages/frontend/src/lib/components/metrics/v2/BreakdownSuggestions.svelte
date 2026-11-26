@@ -97,7 +97,10 @@
               class="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-sm hover:bg-muted"
               onclick={() => onAddGroupBy({ scope: s.scope, key: s.key })}
             >
-              <span>{s.scope === 'resource' ? `resource.${s.key}` : s.key}</span>
+              <span>{s.key}</span>
+              {#if s.scope === 'resource'}
+                <span class="rounded bg-primary/10 px-1 text-[10px] font-medium uppercase tracking-wide text-primary" title="Attribute of the source (who sent the metric)">source</span>
+              {/if}
               <span class="text-xs text-muted-foreground">{s.capped ? `${s.count}+` : s.count} {s.count === 1 && !s.capped ? 'value' : 'values'}</span>
             </button>
           </li>

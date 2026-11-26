@@ -9,6 +9,7 @@
   Props:
     spec          the MetricQuerySpec being edited
     catalog       catalog entries for the metric picker
+    projectNames  project id -> name, to say where a metric comes from (optional)
     variables     dashboard variables selectable as "$name" filter values
     loadKeys      (metricName, scope) => Promise<string[]>
     loadValues    (metricName, scope, key) => Promise<string[]>
@@ -47,11 +48,16 @@
   import Plus from '@lucide/svelte/icons/plus';
   import Filter from '@lucide/svelte/icons/filter';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
+  import Server from '@lucide/svelte/icons/server';
+  import Box from '@lucide/svelte/icons/box';
+  import Layers from '@lucide/svelte/icons/layers';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import AutocompleteInput, { type AutocompleteOption } from './AutocompleteInput.svelte';
 
   interface Props {
     spec: MetricQuerySpec;
     catalog: MetricCatalogEntry[];
+    projectNames?: Record<string, string>;
     variables?: DashboardVariable[];
     loadKeys: (metricName: string, scope: MetricAttrScope) => Promise<string[]>;
     loadValues: (metricName: string, scope: MetricAttrScope, key: string) => Promise<string[]>;
@@ -60,7 +66,7 @@
     onRemove: () => void;
   }
 
-  let { spec, catalog, variables = [], loadKeys, loadValues, canRemove = true, onChange, onRemove }: Props = $props();
+  let { spec, catalog, projectNames = {}, variables = [], loadKeys, loadValues, canRemove = true, onChange, onRemove }: Props = $props();
 
   const OP_LABELS: Record<MetricAttrFilterOp, string> = {
     eq: '=',
@@ -96,14 +102,79 @@
     ...METRIC_SPACE_AGGREGATIONS.map((a) => ({ value: a, label: a })),
   ]);
 
-  const entry = $derived(catalog.find((c) => c.name === spec.metricName));
+  // A name sent with several kinds (a gauge here, a counter there) is offered once
+  // per kind and the query keeps the kind, so the two are never mixed.
+  const KIND_SEP = '|kind:';
+  const nameCounts = $derived(
+    catalog.reduce((m, c) => m.set(c.name, (m.get(c.name) ?? 0) + 1), new Map<string, number>()),
+  );
+  const entry = $derived(
+    catalog.find((c) => c.name === spec.metricName && (!spec.metricType || c.type === spec.metricType)),
+  );
   const unit = $derived(entry?.unit ? (metricUnitLabel(entry.unit, entry.name) ?? entry.unit) : null);
+  function projectsText(ids: string[]): string | null {
+    const names = ids.map((id) => projectNames[id]).filter(Boolean);
+    if (names.length === 0 || Object.keys(projectNames).length < 2) return null;
+    return names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ');
+  }
   const metricOptions = $derived<AutocompleteOption[]>(
     catalog.map((c) => ({
-      value: c.name,
-      hint: [c.type, c.unit ? (metricUnitLabel(c.unit, c.name) ?? c.unit) : null].filter(Boolean).join(' · '),
+      value: (nameCounts.get(c.name) ?? 0) > 1 ? `${c.name}${KIND_SEP}${c.type}` : c.name,
+      label: c.name,
+      hint: [c.type, c.unit ? (metricUnitLabel(c.unit, c.name) ?? c.unit) : null, projectsText(c.projectIds)]
+        .filter(Boolean)
+        .join(' · '),
     })),
   );
+  function pickMetric(v: string) {
+    const [name, kind] = v.split(KIND_SEP);
+    const next: Partial<MetricQuerySpec> = { metricName: name, metricType: (kind as MetricQuerySpec['metricType']) || undefined };
+    // a new metric starts from every source
+    if (name !== spec.metricName) next.filters = spec.filters.filter((_, i) => i !== sourceFilterIndex);
+    patch(next);
+  }
+  const kindAmbiguous = $derived((nameCounts.get(spec.metricName) ?? 0) > 1);
+
+  // ---- "from": the source the query reads (a host.name or service.name filter) ----
+  const SOURCE_KEYS = ['host.name', 'service.name'] as const;
+  type SourceKey = (typeof SOURCE_KEYS)[number];
+  const sourceFilterIndex = $derived(
+    spec.filters.findIndex(
+      (f) => f.scope === 'resource' && (SOURCE_KEYS as readonly string[]).includes(f.key) && f.op === 'eq' && f.values?.length === 1,
+    ),
+  );
+  const sourceFilter = $derived(sourceFilterIndex >= 0 ? spec.filters[sourceFilterIndex] : null);
+  let fromOpen = $state(false);
+  let fromHosts = $state<string[]>([]);
+  let fromServices = $state<string[]>([]);
+  let fromLoading = $state(false);
+  let fromQuery = $state('');
+
+  async function loadFrom() {
+    if (!spec.metricName) return;
+    fromLoading = true;
+    try {
+      const [h, sv] = await Promise.all([
+        loadValues(spec.metricName, 'resource', 'host.name').catch(() => [] as string[]),
+        loadValues(spec.metricName, 'resource', 'service.name').catch(() => [] as string[]),
+      ]);
+      fromHosts = [...h].sort();
+      fromServices = [...sv].sort();
+    } finally {
+      fromLoading = false;
+    }
+  }
+
+  function setSource(key: SourceKey | null, value?: string) {
+    const rest = spec.filters.filter((_, i) => i !== sourceFilterIndex);
+    patch({ filters: key && value ? [{ scope: 'resource', key, op: 'eq', values: [value] }, ...rest] : rest });
+    fromOpen = false;
+  }
+  const fromMatch = (v: string) => v.toLowerCase().includes(fromQuery.trim().toLowerCase());
+  const fromGroups = $derived([
+    { key: 'host.name' as SourceKey, label: 'Hosts', icon: Server, values: fromHosts.filter(fromMatch) },
+    { key: 'service.name' as SourceKey, label: 'Services', icon: Box, values: fromServices.filter(fromMatch) },
+  ]);
 
   function patch(p: Partial<MetricQuerySpec>) {
     onChange({ ...spec, ...p });
@@ -258,11 +329,86 @@
         options={metricOptions}
         ariaLabel="Metric {spec.id}"
         placeholder="Select a metric"
-        onCommit={(v) => patch({ metricName: v })}
+        onCommit={pickMetric}
       />
     </div>
     {#if entry}
-      <span class="shrink-0 text-xs text-muted-foreground" data-testid="metric-kind-{spec.id}">{entry.type}{unit ? ` · ${unit}` : ''}</span>
+      <span
+        class="shrink-0 text-xs {kindAmbiguous ? 'text-warning-text' : 'text-muted-foreground'}"
+        title={kindAmbiguous ? `This name is also sent as another kind; only ${entry.type} points are read` : undefined}
+        data-testid="metric-kind-{spec.id}">{entry.type}{unit ? ` · ${unit}` : ''}</span
+      >
+    {/if}
+
+    {#if spec.metricName}
+      <span class="text-xs text-muted-foreground">from</span>
+      <Popover.Root
+        bind:open={fromOpen}
+        onOpenChange={(o) => {
+          if (o) {
+            fromQuery = '';
+            void loadFrom();
+          }
+        }}
+      >
+        <Popover.Trigger>
+          {#snippet child({ props })}
+            <button
+              {...props}
+              type="button"
+              class="inline-flex h-8 max-w-56 items-center gap-1.5 rounded-md border border-input bg-background px-2 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="Source of query {spec.id}"
+              data-testid="query-source-{spec.id}"
+            >
+              {#if sourceFilter}
+                {#if sourceFilter.key === 'host.name'}
+                  <Server class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                {:else}
+                  <Box class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                {/if}
+                <span class="truncate">{sourceFilter.values?.[0]}</span>
+              {:else}
+                <Layers class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <span>all sources</span>
+              {/if}
+              <ChevronDown class="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </button>
+          {/snippet}
+        </Popover.Trigger>
+        <Popover.Content class="w-64 p-2" align="start">
+          <Input class="mb-2 h-8 text-xs" placeholder="Search sources" aria-label="Search sources of query {spec.id}" bind:value={fromQuery} />
+          <div class="max-h-72 space-y-0.5 overflow-y-auto">
+            <button
+              type="button"
+              class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted {sourceFilter ? '' : 'bg-muted font-medium'}"
+              onclick={() => setSource(null)}
+            >
+              <Layers class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />All sources
+            </button>
+            {#if fromLoading && fromHosts.length === 0 && fromServices.length === 0}
+              <p class="px-2 py-2 text-xs text-muted-foreground" role="status">Loading sources</p>
+            {/if}
+            {#each fromGroups as group (group.key)}
+              {#if group.values.length > 0}
+                <p class="px-2 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</p>
+                {#each group.values as v (v)}
+                  {@const on = sourceFilter?.key === group.key && sourceFilter.values?.[0] === v}
+                  <button
+                    type="button"
+                    class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted {on ? 'bg-muted font-medium' : ''}"
+                    onclick={() => setSource(group.key, v)}
+                  >
+                    <group.icon class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" /><span class="truncate">{v}</span>
+                  </button>
+                {/each}
+              {/if}
+            {/each}
+            {#if !fromLoading && fromHosts.length === 0 && fromServices.length === 0}
+              <p class="px-2 py-2 text-xs text-muted-foreground">No host.name or service.name on this metric.</p>
+            {/if}
+          </div>
+        </Popover.Content>
+      </Popover.Root>
     {/if}
 
     <SelectField
@@ -378,16 +524,18 @@
     </div>
   </div>
 
-  {#if spec.filters.length > 0}
+  {#if spec.filters.some((_, i) => i !== sourceFilterIndex)}
     <div class="mt-2 flex flex-wrap items-center gap-1.5 pl-8">
       <span class="text-xs text-muted-foreground">where</span>
       {#each spec.filters as f, i (i)}
+        {#if i !== sourceFilterIndex}
         <span class={chip} title={scopeHint(f.scope)}>
           {filterText(f)}
           <button type="button" class={chipX} aria-label="Remove filter {filterText(f)}" onclick={() => removeFilter(i)}>
             <X class="h-3 w-3" aria-hidden="true" />
           </button>
         </span>
+        {/if}
       {/each}
     </div>
   {/if}
