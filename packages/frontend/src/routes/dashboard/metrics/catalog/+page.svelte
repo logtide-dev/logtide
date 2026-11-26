@@ -17,8 +17,9 @@
   import { Input } from '$lib/components/ui/input';
   import { Badge } from '$lib/components/ui/badge';
   import MetricDetailPanel from '$lib/components/metrics/catalog/MetricDetailPanel.svelte';
+  import CatalogSourceList from '$lib/components/metrics/catalog/CatalogSourceList.svelte';
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
-  import X from '@lucide/svelte/icons/x';
+  import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
   import { parseCatalogSource, sourceHref } from '$lib/components/metrics/sources/source-model';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
 
@@ -178,6 +179,19 @@
     <ScopeBar mode="multi" {projects} showTime={false} hideZoneOnMobile />
   </div>
 
+  <div class="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
+  <aside class="lg:sticky lg:top-4 lg:self-start">
+    {#if $currentOrganization}
+      <CatalogSourceList
+        organizationId={$currentOrganization.id}
+        projectIds={scopeIds}
+        selected={source}
+        onSelect={(next) => (source = next)}
+      />
+    {/if}
+  </aside>
+
+  <section class="min-w-0">
   <div class="mb-3 flex flex-wrap items-center gap-2">
     <Input
       type="search"
@@ -186,23 +200,6 @@
       aria-label="Search metrics"
       bind:value={searchInput}
     />
-    {#if source}
-      <span
-        class="inline-flex items-center gap-1 rounded-full border border-primary bg-primary/10 py-0.5 pl-2.5 pr-1 text-xs"
-        data-testid="catalog-source"
-      >
-        <span class="text-muted-foreground">{source.kind === 'host' ? 'Host' : 'Service'}</span>
-        <a class="font-medium hover:underline" href={sourceHref(source.kind, source.name)}>{source.name}</a>
-        <button
-          type="button"
-          class="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label="Show every source"
-          onclick={() => (source = null)}
-        >
-          <X class="h-3.5 w-3.5" />
-        </button>
-      </span>
-    {/if}
     <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by prefix">
       <button
         type="button"
@@ -226,6 +223,14 @@
     </div>
   </div>
 
+  {#if source}
+    <p class="-mt-1 mb-3 flex items-center gap-1.5 text-sm text-muted-foreground" data-testid="catalog-source">
+      Metrics sent by the {source.kind}
+      <a class="inline-flex items-center gap-0.5 font-medium text-foreground hover:underline" href={sourceHref(source.kind, source.name)}>
+        {source.name}<ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" />
+      </a>
+    </p>
+  {/if}
   {#if error}
     <EmptyState variant="error" title="Could not load the catalog" description={error} />
   {:else if loading && entries.length === 0}
@@ -290,6 +295,8 @@
     </div>
     <p class="mt-2 text-xs text-muted-foreground">{rows.length.toLocaleString('en-US')} {rows.length === 1 ? 'metric' : 'metrics'}</p>
   {/if}
+  </section>
+  </div>
 
   {#if $currentOrganization}
     <MetricDetailPanel

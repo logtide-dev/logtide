@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   goto: vi.fn(),
   getCatalog: vi.fn(),
   getCatalogEntry: vi.fn(),
+  getSources: vi.fn(),
   getProjects: vi.fn(),
 }));
 
@@ -14,7 +15,7 @@ vi.mock('$lib/components/app/ScopeBar.svelte', async () => ({
 }));
 vi.mock('$lib/api/projects', () => ({ projectsAPI: { getProjects: h.getProjects } }));
 vi.mock('$lib/api/metrics-v2', () => ({
-  metricsV2API: { getCatalog: h.getCatalog, getCatalogEntry: h.getCatalogEntry },
+  metricsV2API: { getCatalog: h.getCatalog, getCatalogEntry: h.getCatalogEntry, getSources: h.getSources },
 }));
 vi.mock('$lib/stores/organization', async () => {
   const { writable } = await import('svelte/store');
@@ -56,6 +57,11 @@ beforeEach(() => {
   scopeStore.set({ projectIds: [], range: { kind: 'preset', preset: '24h' } });
   h.getProjects.mockResolvedValue({ projects: [{ id: 'p1', name: 'One' }] });
   h.getCatalog.mockResolvedValue({ metrics });
+  const src = (name: string, status = 'ok', metricCount = 10) => ({ name, status, statusReason: null, metricCount });
+  h.getSources.mockResolvedValue({
+    hosts: [src('vps-edge', 'ok', 18), src('vps-app', 'critical', 26)],
+    services: [src('checkout-api', 'warning', 6), src('auth-service', 'ok', 0)],
+  });
   h.getCatalogEntry.mockResolvedValue({
     entry: metrics[1],
     attributes: {
@@ -76,17 +82,41 @@ describe('catalog page', () => {
     expect(h.getCatalog).toHaveBeenCalledWith({ organizationId: 'org1', projectIds: null, search: undefined });
   });
 
-  it('shows only the metrics of a source from ?source=, with a chip to drop the filter', async () => {
-    visit('?source=host:vps-app');
+  it('lists hosts and services of the projects in scope, with their metric counts', async () => {
+    scopeStore.set({ projectIds: ['p1'], range: { kind: 'preset', preset: '24h' } });
     render(CatalogPage);
-    await waitFor(() => expect(h.getCatalog).toHaveBeenCalled());
-    expect(h.getCatalog.mock.calls[0][0]).toMatchObject({ source: 'host:vps-app' });
-    const chip = await screen.findByTestId('catalog-source');
-    expect(chip.textContent).toContain('Host');
-    expect(within(chip).getByRole('link', { name: 'vps-app' }).getAttribute('href')).toBe('/dashboard/metrics/hosts/vps-app');
-    await fireEvent.click(within(chip).getByRole('button', { name: 'Show every source' }));
+    const list = await screen.findByTestId('catalog-sources');
+    await waitFor(() => expect(within(list).getByTestId('source-host-vps-app')).toBeTruthy());
+    expect(h.getSources.mock.calls[0][0]).toMatchObject({ organizationId: 'org1', projectIds: ['p1'] });
+    const hosts = within(list).getByRole('list', { name: 'Hosts' });
+    expect(within(hosts).getAllByRole('button').map((b) => b.textContent?.replace(/\s+/g, ' ').trim())).toEqual(['vps-app 26', 'vps-edge 18']);
+    // a service that sent only traces has no metrics to list
+    expect(within(list).queryByTestId('source-service-auth-service')).toBeNull();
+    expect(within(list).getByTestId('source-service-checkout-api')).toBeTruthy();
+  });
+
+  it('filters the catalog on a picked source and clears it on a second click', async () => {
+    render(CatalogPage);
+    const item = await screen.findByTestId('source-host-vps-app');
+    await fireEvent.click(item);
+    await waitFor(() => expect(h.getCatalog.mock.calls.at(-1)?.[0]).toMatchObject({ source: 'host:vps-app' }));
+    expect(item.getAttribute('aria-pressed')).toBe('true');
+    const note = screen.getByTestId('catalog-source');
+    expect(within(note).getByRole('link', { name: /vps-app/ }).getAttribute('href')).toBe('/dashboard/metrics/hosts/vps-app');
+    await fireEvent.click(item);
     await waitFor(() => expect(h.getCatalog.mock.calls.at(-1)?.[0].source).toBeUndefined());
     expect(screen.queryByTestId('catalog-source')).toBeNull();
+  });
+
+  it('opens filtered on ?source= and searches the source list', async () => {
+    visit('?source=service:checkout-api');
+    render(CatalogPage);
+    await waitFor(() => expect(h.getCatalog.mock.calls[0][0]).toMatchObject({ source: 'service:checkout-api' }));
+    const item = await screen.findByTestId('source-service-checkout-api');
+    expect(item.getAttribute('aria-pressed')).toBe('true');
+    await fireEvent.input(screen.getByLabelText('Search sources'), { target: { value: 'edge' } });
+    expect(screen.getByTestId('source-host-vps-edge')).toBeTruthy();
+    expect(screen.queryByTestId('source-host-vps-app')).toBeNull();
   });
 
   it('derives prefix chips from the data and filters by them', async () => {
