@@ -282,7 +282,11 @@ export async function listHosts(ctx: SourcesContext, only?: string): Promise<Hos
       disk: disk.value,
       hardware: hw.map((h) => ({ status: h.status, findingMessage: h.findingMessage })),
     });
-    const kernel = hw.map((h) => infoString(h.info, 'kernel')).find(Boolean) ?? null;
+    // The os-release name (agent 1.2.0+) reads better than the kernel version.
+    const os =
+      hw.map((h) => infoString(h.info, 'os')).find(Boolean) ??
+      hw.map((h) => infoString(h.info, 'kernel')).find(Boolean) ??
+      null;
     return {
       kind: 'host',
       name: s.value,
@@ -298,7 +302,7 @@ export async function listHosts(ctx: SourcesContext, only?: string): Promise<Hos
       hardwareStatus: worstHardware(hw),
       hardwareHosts: hw.map((h) => ({ projectId: h.projectId, id: h.id, isVirtual: h.isVirtual })),
       services: (s.co['service.name'] ?? []).filter((n) => real.has(n)),
-      os: kernel,
+      os,
       metricCount: s.metricCount,
     };
   });
@@ -312,11 +316,12 @@ async function hostInfo(ctx: SourcesContext, name: string): Promise<HostSourceIn
     info.vendor ??= infoString(h.info, 'vendor');
     info.model ??= infoString(h.info, 'model');
     info.agentVersion ??= infoString(h.info, 'agentVersion');
+    info.os ??= infoString(h.info, 'os');
     if (h.isVirtual !== null) info.virtual ??= h.isVirtual;
   }
-  if (info.kernel) info.os = info.kernel;
+  if (!info.os && info.kernel) info.os = info.kernel;
 
-  // Memory size and uptime ride on one query run (last value in the window).
+  // Memory size, uptime and CPU count ride on one query run (last value in the window).
   const hostFilter = { scope: 'resource' as const, key: 'host.name', op: 'eq' as const, values: [name] };
   try {
     const res = await metricQueryService.run({
@@ -331,14 +336,18 @@ async function hostInfo(ctx: SourcesContext, name: string): Promise<HostSourceIn
       queries: [
         { id: 'A', metricName: 'hw.memory.size', aggregation: 'last', spaceAggregation: 'sum', filters: [hostFilter], groupBy: [] },
         { id: 'B', metricName: 'system.uptime', aggregation: 'max', spaceAggregation: 'max', filters: [hostFilter], groupBy: [] },
+        // agent 1.2.0+
+        { id: 'C', metricName: 'system.cpu.logical.count', aggregation: 'last', spaceAggregation: 'max', filters: [hostFilter], groupBy: [] },
       ],
     });
     const pick = (id: string): number | null =>
       res.series.find((s) => s.queryId === id && !s.comparison)?.stats.last ?? null;
     const mem = pick('A');
     const up = pick('B');
+    const cpus = pick('C');
     if (mem !== null) info.memoryBytes = mem;
     if (up !== null) info.uptimeSeconds = up;
+    if (cpus !== null && cpus > 0) info.cpuCount = Math.round(cpus);
   } catch {
     // Info is best effort: the detail still renders without memory/uptime.
   }

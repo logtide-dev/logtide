@@ -110,6 +110,16 @@ export interface EvaluateHostResult {
 
 const T = HARDWARE_THRESHOLDS;
 
+/** os.description (PRETTY_NAME), else os.name and os.version joined (agent 1.2.0+). */
+function osLabel(attrs: Record<string, HardwareAttributeValue>): string | null {
+  const description = attr(attrs, 'os.description');
+  if (description) return description;
+  const name = attr(attrs, 'os.name');
+  if (!name) return null;
+  const version = attr(attrs, 'os.version');
+  return version ? `${name} ${version}` : name;
+}
+
 function attr(attrs: Record<string, HardwareAttributeValue>, key: string): string | null {
   const v = attrs[key];
   if (v === null || v === undefined) return null;
@@ -815,6 +825,7 @@ export function evaluateHost(input: EvaluateHostInput): EvaluateHostResult {
     model: infoPoint ? attr(infoPoint.attributes, 'hw.model') : null,
     kernel: infoPoint ? attr(infoPoint.attributes, 'os.kernel') : null,
     agentVersion: infoPoint ? attr(infoPoint.attributes, 'agent.version') : null,
+    os: infoPoint ? osLabel(infoPoint.attributes) : null,
   };
   const isVirtual = infoPoint ? parseBool(attr(infoPoint.attributes, 'hw.virtual')) : null;
   const collectors: HardwareCollectorStatus[] = ctx

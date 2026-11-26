@@ -82,6 +82,7 @@ function storedInfo(row: HardwareHostRow): HardwareHostInfo {
     model: i.model ?? null,
     kernel: i.kernel ?? null,
     agentVersion: i.agentVersion ?? null,
+    os: i.os ?? null,
   };
 }
 

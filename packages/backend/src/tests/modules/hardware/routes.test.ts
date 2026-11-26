@@ -108,7 +108,7 @@ describe('hardware REST API', () => {
     const h = (res.json() as HardwareHostListResponse).hosts[0];
     expect(h.status).toBe('unknown');
     expect(Object.values(h.components).every((c) => c === 'unknown')).toBe(true);
-    expect(h.info).toEqual({ vendor: null, model: null, kernel: null, agentVersion: null });
+    expect(h.info).toEqual({ vendor: null, model: null, kernel: null, agentVersion: null, os: null });
   });
 
   it('validates projectId and hides projects of other organizations', async () => {

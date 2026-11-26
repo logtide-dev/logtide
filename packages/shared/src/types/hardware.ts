@@ -450,6 +450,11 @@ export interface HardwareHostInfo {
   model: string | null;
   kernel: string | null;
   agentVersion: string | null;
+  /**
+   * Operating system from os-release (agent 1.2.0+), e.g. "Debian GNU/Linux 12
+   * (bookworm)"; null for older agents.
+   */
+  os: string | null;
 }
 
 export interface HardwareCollectorStatus {

@@ -205,6 +205,15 @@ describe('GET /sources', () => {
     expect(dbHost.os).toBe('6.1.0');
   });
 
+  it('shows the operating system of agent 1.2.0+ instead of the kernel', async () => {
+    mocks.hardwareRows = [
+      { id: 'hw-1', project_id: P1, host_name: 'db-1', status: 'ok', is_virtual: false, info: { kernel: '6.1.0', os: 'Debian GNU/Linux 12 (bookworm)' }, findings: [] },
+    ];
+    const f = await app();
+    const body = (await f.inject({ method: 'GET', url: `/sources${q()}` })).json();
+    expect(body.hosts.find((h: any) => h.name === 'db-1').os).toBe('Debian GNU/Linux 12 (bookworm)');
+  });
+
   it('is stale when the host sent nothing recently', async () => {
     mocks.getMetricSources.mockImplementation(async (p: any) =>
       p.key === 'host.name'
@@ -260,7 +269,7 @@ describe('GET /sources', () => {
 describe('detail endpoints', () => {
   it('host detail: info and metric names (one filtered reservoir call)', async () => {
     mocks.hardwareRows = [
-      { id: 'hw-1', project_id: P1, host_name: 'web-1', status: 'ok', is_virtual: true, info: { kernel: '6.1', vendor: 'Dell', model: 'R1', agentVersion: '1.1.0' }, findings: [] },
+      { id: 'hw-1', project_id: P1, host_name: 'web-1', status: 'ok', is_virtual: true, info: { kernel: '6.1', vendor: 'Dell', model: 'R1', agentVersion: '1.2.0', os: 'Ubuntu 24.04.1 LTS' }, findings: [] },
     ];
     mocks.run.mockImplementation(async (q: any) => {
       if (q.queries[0].metricName === 'hw.memory.size') {
@@ -268,6 +277,7 @@ describe('detail endpoints', () => {
           series: [
             { queryId: 'A', comparison: false, labels: {}, points: [], stats: { last: 8e9 } },
             { queryId: 'B', comparison: false, labels: {}, points: [], stats: { last: 3600 } },
+            { queryId: 'C', comparison: false, labels: {}, points: [], stats: { last: 8 } },
           ],
           interval: '15m', queries: [], warnings: [],
         };
@@ -281,7 +291,19 @@ describe('detail endpoints', () => {
     const res = await f.inject({ method: 'GET', url: `/sources/host/web-1${q()}` });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.info).toMatchObject({ kernel: '6.1', vendor: 'Dell', model: 'R1', agentVersion: '1.1.0', virtual: true, memoryBytes: 8e9, uptimeSeconds: 3600 });
+    expect(body.info).toMatchObject({
+      os: 'Ubuntu 24.04.1 LTS',
+      kernel: '6.1',
+      vendor: 'Dell',
+      model: 'R1',
+      agentVersion: '1.2.0',
+      virtual: true,
+      memoryBytes: 8e9,
+      uptimeSeconds: 3600,
+      cpuCount: 8,
+    });
+    const infoQuery = mocks.run.mock.calls.map((c: any) => c[0]).find((x: any) => x.queries[0].metricName === 'hw.memory.size');
+    expect(infoQuery.queries.map((x: any) => x.metricName)).toEqual(['hw.memory.size', 'system.uptime', 'system.cpu.logical.count']);
     expect(body.metricNames).toEqual(['system.cpu.utilization.total']);
     expect(mocks.getMetricNames.mock.calls[0][0].filters).toEqual([{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] }]);
   });

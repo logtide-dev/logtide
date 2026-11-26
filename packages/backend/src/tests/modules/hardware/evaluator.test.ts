@@ -677,6 +677,18 @@ describe('network', () => {
 // ---------------------------------------------------------------------------
 
 describe('host status', () => {
+  it('keeps the operating system of agent 1.2.0+ in the host info', () => {
+    const info = (attrs: Record<string, string>) =>
+      run([pt('hw.host.info', 1, { 'hw.type': 'host', 'hw.virtual': 'false', 'os.kernel': '6.1.0', ...attrs })]).info.os;
+    expect(info({ 'os.description': 'Debian GNU/Linux 12 (bookworm)', 'os.name': 'Debian GNU/Linux', 'os.version': '12' })).toBe(
+      'Debian GNU/Linux 12 (bookworm)',
+    );
+    // Without PRETTY_NAME the name and version are joined.
+    expect(info({ 'os.name': 'Alpine Linux', 'os.version': '3.20.3' })).toBe('Alpine Linux 3.20.3');
+    expect(info({ 'os.name': 'Arch Linux' })).toBe('Arch Linux');
+    expect(info({})).toBeNull();
+  });
+
   it('a VM that only reports host info has all components unknown', () => {
     const r = run([
       pt('hw.host.info', 1, { 'hw.type': 'host', 'hw.virtual': 'true', 'hw.vendor': 'QEMU', 'hw.model': 'Standard PC', 'os.kernel': '6.1.0', 'agent.version': '1.0.0' }),
@@ -693,7 +705,8 @@ describe('host status', () => {
       power: 'unknown',
       network: 'unknown',
     });
-    expect(r.info).toEqual({ vendor: 'QEMU', model: 'Standard PC', kernel: '6.1.0', agentVersion: '1.0.0' });
+    // Agents before 1.2.0 send no os.* attributes.
+    expect(r.info).toEqual({ vendor: 'QEMU', model: 'Standard PC', kernel: '6.1.0', agentVersion: '1.0.0', os: null });
     expect(r.collectors).toEqual([
       { collector: 'kmsg', ok: true },
       { collector: 'smart', ok: false },
