@@ -10,6 +10,9 @@
 // Endpoints (session auth, organization scoped):
 //   GET  /api/v1/metrics/sources?organizationId&projectIds=a,b&from&to
 //        -> MetricSourcesResponse
+//   GET  /api/v1/metrics/sources/index?organizationId&projectIds&from&to
+//        -> MetricSourceIndex (names, metric counts and last seen only: two
+//           storage reads, for pickers; no signals, no status)
 //   GET  /api/v1/metrics/sources/host/:name?organizationId&projectIds&from&to
 //        -> HostSourceDetail (404 when the host sent nothing in the window)
 //   GET  /api/v1/metrics/sources/service/:name?organizationId&projectIds&from&to
@@ -136,4 +139,19 @@ export interface SourceTraceSeries {
   /** Every bucket of the window, oldest first; empty buckets have 0 requests. */
   buckets: SourceTraceBucket[];
   totals: { requests: number; errors: number };
+}
+
+/** One host or service in a picker: no signals, no health. */
+export interface MetricSourceIndexEntry {
+  name: string;
+  metricCount: number;
+  /** ISO */
+  lastSeen: string;
+  /** Sent data within SOURCE_STALE_AFTER_MS of the end of the window. */
+  live: boolean;
+}
+
+export interface MetricSourceIndex {
+  hosts: MetricSourceIndexEntry[];
+  services: MetricSourceIndexEntry[];
 }

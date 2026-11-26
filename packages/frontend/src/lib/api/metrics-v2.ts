@@ -9,6 +9,7 @@ import type {
   MetricQueryRequest,
   MetricQueryResponse,
   MetricSourceKind,
+  MetricSourceIndex,
   MetricSourcesResponse,
   PanelConfig,
   ServiceSourceDetail,
@@ -90,6 +91,11 @@ export class MetricsV2API {
 
   getSources(p: MetricsScopeParams): Promise<MetricSourcesResponse> {
     return this.get('/metrics/sources', this.scopeQuery(p), 'Failed to load metric sources');
+  }
+
+  /** Hosts and services with metric counts only: cheap, for pickers. */
+  getSourceIndex(p: MetricsScopeParams): Promise<MetricSourceIndex> {
+    return this.get('/metrics/sources/index', this.scopeQuery(p), 'Failed to load the sources');
   }
 
   getHostSource(name: string, p: MetricsScopeParams): Promise<HostSourceDetail> {

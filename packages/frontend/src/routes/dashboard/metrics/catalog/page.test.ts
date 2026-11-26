@@ -5,7 +5,7 @@ const h = vi.hoisted(() => ({
   goto: vi.fn(),
   getCatalog: vi.fn(),
   getCatalogEntry: vi.fn(),
-  getSources: vi.fn(),
+  getSourceIndex: vi.fn(),
   getProjects: vi.fn(),
 }));
 
@@ -15,7 +15,7 @@ vi.mock('$lib/components/app/ScopeBar.svelte', async () => ({
 }));
 vi.mock('$lib/api/projects', () => ({ projectsAPI: { getProjects: h.getProjects } }));
 vi.mock('$lib/api/metrics-v2', () => ({
-  metricsV2API: { getCatalog: h.getCatalog, getCatalogEntry: h.getCatalogEntry, getSources: h.getSources },
+  metricsV2API: { getCatalog: h.getCatalog, getCatalogEntry: h.getCatalogEntry, getSourceIndex: h.getSourceIndex },
 }));
 vi.mock('$lib/stores/organization', async () => {
   const { writable } = await import('svelte/store');
@@ -57,9 +57,9 @@ beforeEach(() => {
   scopeStore.set({ projectIds: [], range: { kind: 'preset', preset: '24h' } });
   h.getProjects.mockResolvedValue({ projects: [{ id: 'p1', name: 'One' }] });
   h.getCatalog.mockResolvedValue({ metrics });
-  const src = (name: string, status = 'ok', metricCount = 10) => ({ name, status, statusReason: null, metricCount });
-  h.getSources.mockResolvedValue({
-    hosts: [src('vps-edge', 'ok', 18), src('vps-app', 'critical', 26)],
+  const src = (name: string, status = 'ok', metricCount = 10) => ({ name, live: status !== 'stale', lastSeen: '', metricCount });
+  h.getSourceIndex.mockResolvedValue({
+    hosts: [src('vps-app', 'ok', 26), src('vps-edge', 'ok', 18)],
     services: [src('checkout-api', 'warning', 6), src('auth-service', 'ok', 0)],
   });
   h.getCatalogEntry.mockResolvedValue({
@@ -87,7 +87,7 @@ describe('catalog page', () => {
     render(CatalogPage);
     const list = await screen.findByTestId('catalog-sources');
     await waitFor(() => expect(within(list).getByTestId('source-host-vps-app')).toBeTruthy());
-    expect(h.getSources.mock.calls[0][0]).toMatchObject({ organizationId: 'org1', projectIds: ['p1'] });
+    expect(h.getSourceIndex.mock.calls[0][0]).toMatchObject({ organizationId: 'org1', projectIds: ['p1'] });
     const hosts = within(list).getByRole('list', { name: 'Hosts' });
     expect(within(hosts).getAllByRole('button').map((b) => b.textContent?.replace(/\s+/g, ' ').trim())).toEqual(['vps-app 26', 'vps-edge 18']);
     // a service that sent only traces has no metrics to list

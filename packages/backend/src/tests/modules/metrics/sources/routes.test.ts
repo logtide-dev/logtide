@@ -268,6 +268,30 @@ describe('GET /sources', () => {
   });
 });
 
+describe('GET /sources/index', () => {
+  it('lists hosts and services with metric counts from two reads, no signals', async () => {
+    const now = Date.now();
+    mocks.getMetricSources.mockImplementation(async (p: any) =>
+      p.key === 'host.name'
+        ? { sources: [{ ...source('web-2'), metricCount: 7 }, { ...source('web-1'), lastSeen: new Date(now - 30 * 60_000) }] }
+        : { sources: [{ ...source('api'), metricCount: 3 }] },
+    );
+    const f = await app();
+    const res = await f.inject({ method: 'GET', url: `/sources/index${q()}` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.hosts.map((h: any) => h.name)).toEqual(['web-1', 'web-2']);
+    expect(body.hosts[1]).toMatchObject({ name: 'web-2', metricCount: 7, live: true });
+    expect(body.hosts[0].live).toBe(false);
+    expect(body.services).toEqual([expect.objectContaining({ name: 'api', metricCount: 3, live: true })]);
+    expect(mocks.getMetricSources).toHaveBeenCalledTimes(2);
+    // services exclude the agents (host level metrics only)
+    expect(mocks.getMetricSources.mock.calls.find((c: any) => c[0].key === 'service.name')[0].excludeMetricPrefixes).toEqual(['system.', 'hw.']);
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.getServiceHealthStats).not.toHaveBeenCalled();
+  });
+});
+
 describe('GET /sources/:kind/:name/traces', () => {
   const window = (fromIso: string, toIso: string) => `&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
 

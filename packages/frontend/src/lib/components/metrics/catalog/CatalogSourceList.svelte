@@ -1,6 +1,7 @@
 <!--
   Side list of the metric catalog: every host and service of the projects in
-  scope, with its status and how many metrics it sends. Picking one filters the
+  scope, whether it is sending data and how many metrics it sends. It reads the
+  cheap source index (two storage reads), not the health of each source. Picking one filters the
   catalog on it; picking it again (or "All sources") clears the filter.
 
   Props:
@@ -10,9 +11,8 @@
     onSelect         called with the new source, or null for every source
 -->
 <script lang="ts">
-  import type { MetricSourceKind, MetricSourceStatus } from '@logtide/shared';
+  import type { MetricSourceKind } from '@logtide/shared';
   import { metricsV2API } from '$lib/api/metrics-v2';
-  import SourceStatusDot from '$lib/components/metrics/v2/SourceStatusDot.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
   import Server from '@lucide/svelte/icons/server';
   import Box from '@lucide/svelte/icons/box';
@@ -36,8 +36,7 @@
 
   interface Row {
     name: string;
-    status: MetricSourceStatus;
-    statusReason: string | null;
+    live: boolean;
     metricCount: number;
   }
 
@@ -58,15 +57,14 @@
     error = null;
     const to = new Date();
     metricsV2API
-      .getSources({ organizationId: orgId, projectIds: ids, from: new Date(to.getTime() - WINDOW_MS).toISOString(), to: to.toISOString() })
+      .getSourceIndex({ organizationId: orgId, projectIds: ids, from: new Date(to.getTime() - WINDOW_MS).toISOString(), to: to.toISOString() })
       .then((res) => {
         if (cancelled) return;
         // The catalog is about metrics: a source that sent none (traces only) has nothing to show.
         const rows = (list: Row[]) =>
           list
             .filter((s) => s.metricCount > 0)
-            .map((s) => ({ name: s.name, status: s.status, statusReason: s.statusReason, metricCount: s.metricCount }))
-            .sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }));
+            .map((s) => ({ name: s.name, live: s.live, metricCount: s.metricCount }));
         hosts = rows(res.hosts);
         services = rows(res.services);
       })
@@ -141,7 +139,11 @@
                   <button type="button" class="{itemBase} {on ? itemOn : itemIdle}" aria-pressed={on} onclick={() => pick(g.kind, r.name)} data-testid="source-{g.kind}-{r.name}">
                     <g.icon class="h-4 w-4 shrink-0 opacity-70" aria-hidden="true" />
                     <span class="flex-1 truncate" title={r.name}>{r.name}</span>
-                    <SourceStatusDot status={r.status} reason={r.statusReason} />
+                    <span
+                      class="h-2 w-2 shrink-0 rounded-full {r.live ? 'bg-success' : 'bg-muted-foreground/40'}"
+                      title={r.live ? 'Sending data' : 'No data in the last minutes'}
+                      aria-label={r.live ? 'Sending data' : 'Not sending'}
+                    ></span>
                     <span class="w-7 text-right text-xs tabular-nums opacity-70" title="{r.metricCount} metrics">{r.metricCount}</span>
                   </button>
                 </li>

@@ -9,12 +9,15 @@ import {
   HOST_METRIC_PREFIXES,
   HOST_SIGNALS,
   SOURCE_SPARK_POINTS,
+  SOURCE_STALE_AFTER_MS,
   SOURCE_STATUS_RANK,
   SOURCE_TEMPLATES,
   type HostSignal,
   type HostSourceDetail,
   type HostSourceInfo,
   type HostSourceSummary,
+  type MetricSourceIndex,
+  type MetricSourceIndexEntry,
   type MetricSourceKind,
   type MetricSourceStatus,
   type PanelInstance,
@@ -114,6 +117,26 @@ async function fetchSources(
     ...extra,
   });
   return res.sources;
+}
+
+/**
+ * Hosts and services with their metric count and last point, for pickers:
+ * two reservoir reads, nothing else (no signals, RED or hardware).
+ */
+export async function listSourceIndex(ctx: SourcesContext): Promise<MetricSourceIndex> {
+  const [hosts, services] = await Promise.all([
+    fetchSources(ctx, 'host.name'),
+    fetchSources(ctx, 'service.name', { excludeMetricPrefixes: [...HOST_METRIC_PREFIXES] }),
+  ]);
+  const now = ref(ctx);
+  const entry = (s: MetricSource): MetricSourceIndexEntry => ({
+    name: s.value,
+    metricCount: s.metricCount,
+    lastSeen: s.lastSeen.toISOString(),
+    live: now - s.lastSeen.getTime() <= SOURCE_STALE_AFTER_MS,
+  });
+  const byName = (a: MetricSourceIndexEntry, b: MetricSourceIndexEntry) => a.name.localeCompare(b.name, 'en', { numeric: true });
+  return { hosts: hosts.map(entry).sort(byName), services: services.map(entry).sort(byName) };
 }
 
 /**

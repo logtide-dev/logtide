@@ -13,6 +13,7 @@ import {
   getServiceDetail,
   listHosts,
   listServices,
+  listSourceIndex,
   sourceMetricNames,
   type SourcesContext,
 } from './service.js';
@@ -102,6 +103,13 @@ export async function sourcesRoutes(fastify: FastifyInstance) {
     const [hosts, services] = await Promise.all([listHosts(ctx), listServices(ctx)]);
     const body: MetricSourcesResponse = { hosts, services };
     return body;
+  });
+
+  // Names, metric counts and last seen only: for pickers (the catalog side list).
+  fastify.get('/index', async (request: any, reply) => {
+    const ctx = await readContext(request, reply);
+    if (!ctx) return;
+    return listSourceIndex(ctx);
   });
 
   fastify.get('/host/:name', async (request: any, reply) => {
