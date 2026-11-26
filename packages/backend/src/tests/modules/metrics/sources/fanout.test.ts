@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getServiceHealthStats: vi.fn(),
   getOperationStats: vi.fn(),
   querySpans: vi.fn(),
+  getSpanTimeseries: vi.fn(),
 }));
 
 vi.mock('../../../../modules/metrics/query/service.js', () => ({
@@ -22,6 +23,7 @@ vi.mock('../../../../database/reservoir.js', () => ({
     getServiceHealthStats: mocks.getServiceHealthStats,
     getOperationStats: mocks.getOperationStats,
     querySpans: mocks.querySpans,
+    getSpanTimeseries: mocks.getSpanTimeseries,
   },
 }));
 vi.mock('../../../../database/index.js', () => {
@@ -47,6 +49,18 @@ function metricSource(value: string, co: Record<string, string[]> = {}) {
   return { value, projectIds: [P1], lastSeen: new Date(to.getTime() - 30_000), metricCount: 3, pointCount: 10, co };
 }
 
+/** Entry span buckets for `services` (all requested ones when omitted): one call per bucket each. */
+function spanRows(p: any, services?: string[]) {
+  const step = p.bucketSeconds * 1000;
+  const rows: any[] = [];
+  for (let t = Math.floor(p.from.getTime() / step) * step; t <= p.to.getTime(); t += step) {
+    for (const s of services ?? (p.serviceName as string[])) {
+      rows.push({ time: new Date(t), serviceName: s, spanCount: 1, errorCount: 0, p50: 5, p95: 10, p99: 20 });
+    }
+  }
+  return rows;
+}
+
 function op(service: string, count: number, errorCount = 0, p50 = 10, p95 = 100, p99 = 200) {
   return { service, operation: 'GET /x', count, errorCount, avgMs: 20, p50Ms: p50, p95Ms: p95, p99Ms: p99 };
 }
@@ -55,6 +69,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.run.mockResolvedValue({ series: [], interval: '15m', queries: [], warnings: [] });
   mocks.querySpans.mockResolvedValue({ spans: [], total: 0, hasMore: false, limit: 100, offset: 0 });
+  mocks.getSpanTimeseries.mockImplementation(async (p: any) => spanRows(p));
 });
 
 describe('mixturePercentile', () => {
@@ -166,6 +181,9 @@ describe('services fan-out and RED', () => {
       mocks.run.mock.calls.length,
     ];
     expect(big).toEqual(small);
+    // the sparks of every service come from one grouped call
+    expect(mocks.getSpanTimeseries).toHaveBeenCalledTimes(1);
+    expect(mocks.getSpanTimeseries.mock.calls[0][0]).toMatchObject({ groupByService: true, kinds: ['SERVER', 'CONSUMER'] });
   });
 
   it('headline is the window rate of entry spans and the spark comes from entry spans too', async () => {
@@ -181,7 +199,9 @@ describe('services fan-out and RED', () => {
     const [api] = await listServices(ctx);
     expect(api.requestRate.value).toBeCloseTo(36 / (6 * 3600), 6);
     expect(api.requestRate.value).toBeGreaterThan(0);
-    expect(api.requestRate.spark).toHaveLength(24);
+    // buckets aligned to the clock: 24 slices of the window, plus one when it starts mid bucket
+    expect(api.requestRate.spark.length).toBeGreaterThanOrEqual(24);
+    expect(api.requestRate.spark.length).toBeLessThanOrEqual(25);
     expect(api.requestRate.spark.every((v) => v !== null && v > 0)).toBe(true);
     // 1 entry call in a quarter of an hour slice
     expect(api.requestRate.spark[0]).toBeCloseTo(1 / (6 * 3600 / 24), 4);
@@ -345,6 +365,8 @@ describe('entry span stats per service (N3)', () => {
       if (p.service === 'worker') return [op('worker', 50, 5)];
       return [op('api', 100, 0)];
     });
+    // worker has no server or consumer span: its spark falls back to root spans
+    mocks.getSpanTimeseries.mockImplementation(async (p: any) => spanRows(p, ['api']));
     const list = await listServices(ctx);
     const worker = list.find((s) => s.name === 'worker')!;
     expect(worker.requestRate.value).toBeCloseTo(50 / (6 * 3600), 6);

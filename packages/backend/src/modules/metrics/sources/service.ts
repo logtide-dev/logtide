@@ -40,6 +40,7 @@ import {
   pickInterval,
   type HardwareStatusInput,
 } from './status.js';
+import { ENTRY_SPAN_KINDS } from './traces.js';
 import { HTTP_SERVER_METRICS, mixturePercentile, redFromSeries, sliceWindow, type MetricRed } from './red.js';
 
 export interface SourcesContext {
@@ -581,66 +582,121 @@ async function loadSpanData(ctx: SourcesContext, only?: string): Promise<SpanDat
     );
   }
 
-  // Spark: the same entry spans, one call per project and slice for all services at once.
-  const slices = sliceWindow(ctx.from.getTime(), ctx.to.getTime(), SOURCE_SPARK_POINTS);
-  const perSlice: Array<Map<string, Acc>> = slices.map(() => new Map());
-  const jobs: Array<{ projectId: string; slice: number }> = [];
-  for (const projectId of activeProjects) for (let i = 0; i < slices.length; i++) jobs.push({ projectId, slice: i });
-  if (entry.size > 0) {
-    await mapLimit(jobs, CONCURRENCY, async ({ projectId, slice }) => {
-      try {
-        const rows = await reservoir.getOperationStats(
-          opParams(projectId, new Date(slices[slice].from), new Date(slices[slice].to)),
-        );
-        accumulate(perSlice[slice], rows, only, perService.get(projectId));
-      } catch {
-        // A slice that fails stays empty: the spark shows a gap, the headline is unaffected.
-      }
-    });
-    // Services computed one by one for the headline get their spark the same way.
-    const singles: Array<{ projectId: string; svc: string; slice: number }> = [];
-    for (const [projectId, need] of perService) {
-      for (const svc of need) for (let i = 0; i < slices.length; i++) singles.push({ projectId, svc, slice: i });
-    }
-    await mapLimit(singles, CONCURRENCY, async ({ projectId, svc, slice }) => {
-      try {
-        const rows = await reservoir.getOperationStats({
-          projectId,
-          service: svc,
-          from: new Date(slices[slice].from),
-          to: new Date(slices[slice].to),
-          limit: OPERATION_STATS_MAX_LIMIT,
-        });
-        accumulate(perSlice[slice], rows, svc);
-      } catch {
-        // Gap in the spark.
-      }
-    });
-  }
-  const sliceSeconds = slices.map((s) => Math.max(1, (s.to - s.from + 1) / 1000));
+  // Spark: entry spans per service and bucket, one call for every project and
+  // service (it used to be one call per project and time slice).
   const lastActive = new Map<string, number>();
-  for (const svc of entry.keys()) {
+  const spanMs = ctx.to.getTime() - ctx.from.getTime();
+  const step = sparkBucketSeconds(spanMs);
+  const starts: number[] = [];
+  for (let t = Math.floor(ctx.from.getTime() / (step * 1000)) * step * 1000; t <= ctx.to.getTime(); t += step * 1000) starts.push(t);
+  const services = [...entry.keys()];
+  const series = new Map<string, Map<number, { calls: number; errors: number; p95: number | null }>>();
+  if (services.length > 0) {
+    try {
+      const rows = await reservoir.getSpanTimeseries({
+        projectIds: activeProjects,
+        from: ctx.from,
+        to: ctx.to,
+        bucketSeconds: step,
+        kinds: ENTRY_SPAN_KINDS,
+        serviceName: services,
+        groupByService: true,
+      });
+      for (const r of rows) {
+        if (!r.serviceName) continue;
+        const m = series.get(r.serviceName) ?? new Map();
+        m.set(Math.floor(r.time.getTime() / (step * 1000)) * step * 1000, { calls: r.spanCount, errors: r.errorCount, p95: r.p95 });
+        series.set(r.serviceName, m);
+      }
+    } catch {
+      // No spark: the headline is unaffected.
+    }
+  }
+  for (const svc of services) {
+    const m = series.get(svc);
+    // A service measured on its root spans (no server or consumer span) has no
+    // entry span buckets: its spark keeps the per slice operation stats.
+    if (!m || m.size === 0) {
+      result.trends.set(svc, await rootSpanTrend(ctx, svc, perService, lastActive));
+      continue;
+    }
     const rate: Array<number | null> = [];
     const errors: Array<number | null> = [];
     const p95: Array<number | null> = [];
-    perSlice.forEach((m, i) => {
-      const acc = m.get(svc);
-      if (!acc || acc.calls === 0) {
+    for (const t of starts) {
+      const b = m.get(t);
+      if (!b || b.calls === 0) {
         rate.push(0);
         errors.push(null);
         p95.push(null);
-        return;
+        continue;
       }
-      lastActive.set(svc, slices[i].from);
-      rate.push(acc.calls / sliceSeconds[i]);
-      errors.push((acc.errors / acc.calls) * 100);
-      p95.push(mixturePercentile(acc.ops, 0.95));
-    });
+      lastActive.set(svc, t);
+      rate.push(b.calls / step);
+      errors.push((b.errors / b.calls) * 100);
+      p95.push(b.p95 !== null && Number.isFinite(b.p95) ? b.p95 : null);
+    }
     result.trends.set(svc, { rate, errors, p95 });
   }
 
   result.lastSeen = await loadLastSeen(ctx, perProject, lastActive);
   return result;
+}
+
+/** Spark bucket width: about SOURCE_SPARK_POINTS buckets, whole minutes, one day at most. */
+export function sparkBucketSeconds(spanMs: number): number {
+  const raw = Math.ceil(Math.max(60_000, spanMs) / SOURCE_SPARK_POINTS / 60_000) * 60;
+  return Math.min(86_400, Math.max(60, raw));
+}
+
+/** Spark of a service that has no entry spans: per slice operation stats on its root spans. */
+async function rootSpanTrend(
+  ctx: SourcesContext,
+  svc: string,
+  perService: Map<string, Set<string>>,
+  lastActive: Map<string, number>,
+): Promise<{ rate: Array<number | null>; errors: Array<number | null>; p95: Array<number | null> }> {
+  const slices = sliceWindow(ctx.from.getTime(), ctx.to.getTime(), SOURCE_SPARK_POINTS);
+  const projects = [...perService.keys()];
+  const perSlice: Acc[] = slices.map(() => ({ calls: 0, errors: 0, ops: [] }));
+  const jobs = projects.flatMap((projectId) => slices.map((_, i) => ({ projectId, i })));
+  await mapLimit(jobs, CONCURRENCY, async ({ projectId, i }) => {
+    try {
+      const rows = await reservoir.getOperationStats({
+        projectId,
+        service: svc,
+        from: new Date(slices[i].from),
+        to: new Date(slices[i].to),
+        limit: OPERATION_STATS_MAX_LIMIT,
+      });
+      const acc = new Map<string, Acc>();
+      accumulate(acc, rows, svc);
+      const a = acc.get(svc);
+      if (a) {
+        perSlice[i].calls += a.calls;
+        perSlice[i].errors += a.errors;
+        perSlice[i].ops.push(...a.ops);
+      }
+    } catch {
+      // Gap in the spark.
+    }
+  });
+  const rate: Array<number | null> = [];
+  const errors: Array<number | null> = [];
+  const p95: Array<number | null> = [];
+  perSlice.forEach((acc, i) => {
+    if (acc.calls === 0) {
+      rate.push(0);
+      errors.push(null);
+      p95.push(null);
+      return;
+    }
+    lastActive.set(svc, slices[i].from);
+    rate.push(acc.calls / Math.max(1, (slices[i].to - slices[i].from + 1) / 1000));
+    errors.push((acc.errors / acc.calls) * 100);
+    p95.push(mixturePercentile(acc.ops, 0.95));
+  });
+  return { rate, errors, p95 };
 }
 
 /** RED from HTTP server metrics for services without spans (newest semconv first, legacy name for the rest). */
