@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Monitor > Hardware moved into Metrics**: hosts are now listed under Metrics > Sources and their hardware health is the Hardware tab of the host page. Old Hardware links redirect.
+- **Hardware health next to host resources**: Monitor > Hardware still lists every host with its hardware status, components and findings, now across all the projects in scope, and a host opens the Hardware tab of its page in Metrics, next to CPU, memory and disks. The Metrics host list shows the hardware status too, with status tiles to filter by health.
+- **Operating system and CPU count on the host page**: with hardware agent 1.2.0 (released separately) the host header shows the operating system from `os-release` (for example `Debian GNU/Linux 12 (bookworm)`) and the number of logical CPUs. Older agents keep showing the kernel version.
 - **Metric units**: the unit and description sent over OTLP are kept (metric catalog, migration 081) and used everywhere: bytes, rates, durations, temperatures and percentages are formatted on axes, legends and tables.
 
 ### Fixed
