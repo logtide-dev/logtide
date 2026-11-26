@@ -28,6 +28,9 @@ vi.mock('$lib/components/custom-dashboards/panels/TraceVolumePanel.svelte', asyn
 vi.mock('$lib/components/custom-dashboards/panels/TraceLatencyPanel.svelte', async () => ({
   default: (await import('../../../../../test-stubs/TracePanel.stub.svelte')).default,
 }));
+vi.mock('$lib/components/metrics/sources/SourceLogsTab.svelte', async () => ({
+  default: (await import('../../../../../test-stubs/SourceTab.stub.svelte')).default,
+}));
 vi.mock('$lib/components/metrics/v2/MetricSeriesView.svelte', async () => ({
   default: (await import('../../../../../test-stubs/SeriesView.stub.svelte')).default,
 }));
@@ -268,16 +271,14 @@ describe('host page', () => {
     expect(within(rows[0]).getByRole('link', { name: 'api-gateway' }).getAttribute('href')).toBe('/dashboard/metrics/services/api-gateway');
   });
 
-  it('logs tab links to Logs filtered by the host and lists recent lines', async () => {
+  it('logs tab renders the source logs for the host, its projects and the page window', async () => {
     setUrl('?tab=logs');
-    h.getLogs.mockResolvedValue({
-      logs: [{ id: 'l1', time: new Date().toISOString(), projectId: 'p1', service: 'sshd', level: 'error', message: 'boom on vps-app' }],
-    });
     render(Page);
-    expect(await screen.findByText('boom on vps-app')).toBeTruthy();
-    expect(h.getLogs.mock.calls[0][0]).toMatchObject({ projectId: ['p1'], hostname: 'vps-app', limit: 10 });
-    const href = screen.getByRole('link', { name: 'Open in Logs' }).getAttribute('href') ?? '';
-    expect(new URL(href, 'http://x').searchParams.get('q')).toBe('host:vps-app');
+    const tab = await screen.findByTestId('source-tab-stub');
+    expect(tab.dataset.kind).toBe('host');
+    expect(tab.dataset.name).toBe('vps-app');
+    expect(tab.dataset.projects).toBe('p1');
+    expect(Date.parse(tab.dataset.to ?? '')).toBeGreaterThan(Date.parse(tab.dataset.from ?? ''));
   });
 
   it('traces tab links each service to Traces', async () => {

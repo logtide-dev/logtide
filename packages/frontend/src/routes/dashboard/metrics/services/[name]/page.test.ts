@@ -41,6 +41,9 @@ vi.mock('$lib/api/projects', () => ({
   },
 }));
 vi.mock('$lib/api/logs', () => ({ logsAPI: { getLogs: h.getLogs } }));
+vi.mock('$lib/components/metrics/sources/SourceLogsTab.svelte', async () => ({
+  default: (await import('../../../../../test-stubs/SourceTab.stub.svelte')).default,
+}));
 
 import Page from './+page.svelte';
 import { page } from '$app/state';

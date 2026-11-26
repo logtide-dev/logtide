@@ -43,7 +43,7 @@
   import SourceMetricsGrid from './SourceMetricsGrid.svelte';
   import SourceRelatedList from './SourceRelatedList.svelte';
   import SourceLogsTab from './SourceLogsTab.svelte';
-  import { RED_MISSING_HINT, formatRequestRate, buildExploreHref, buildServiceTracesHref, buildSourceLogsHref, redSourceLabel } from './source-model';
+  import { RED_MISSING_HINT, formatRequestRate, buildExploreHref, buildServiceTracesHref, redSourceLabel } from './source-model';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import ExternalLink from '@lucide/svelte/icons/external-link';
@@ -221,7 +221,6 @@
   const exploreHref = $derived(
     buildExploreHref(kind, name, detail?.metricNames ?? [], effectiveProjectIds ?? (detail ? detail.projectIds : null)),
   );
-  const logsHref = $derived(buildSourceLogsHref(kind, name, { projectIds: $scopeStore.projectIds, range: $scopeStore.range }));
 
   let customizing = $state(false);
 
@@ -455,7 +454,7 @@
           to={win.to}
         />
       {:else if activeTab === 'logs'}
-        <SourceLogsTab {kind} {name} projectIds={detailProjectIds} from={win.from} to={win.to} {logsHref} />
+        <SourceLogsTab {kind} {name} projectIds={detailProjectIds} from={win.from} to={win.to} />
       {:else if activeTab === 'traces'}
         <section class="rounded-lg border bg-card" data-testid="source-traces">
           {#if service}
