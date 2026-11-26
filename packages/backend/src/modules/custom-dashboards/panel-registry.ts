@@ -14,8 +14,14 @@
 // No other backend file needs to change.
 
 import { z } from 'zod';
-import { PANEL_TIME_RANGES } from '@logtide/shared';
-import type { PanelType, PanelConfig, PanelLayout } from '@logtide/shared';
+import { PANEL_TIME_RANGES, migrateLegacyMetricPanel } from '@logtide/shared';
+import type {
+  MetricChartConfig,
+  MetricStatConfig,
+  PanelType,
+  PanelConfig,
+  PanelLayout,
+} from '@logtide/shared';
 import { dashboardVariablesSchema, collectVariableRefs } from './variables.js';
 import { metricExplorerQuerySchema } from '../metrics/query/schema.js';
 
@@ -254,10 +260,25 @@ function refineLogTable(cfg: LogTableShape, ctx: z.RefinementCtx): void {
 
 const logTableSchema = logTableBaseSchema.superRefine(refineLogTable);
 
+// API and YAML clients written for 1.7 still send metric_chart / metric_stat.
+// They are upgraded to the metrics panel before validation, the same way
+// stored v1 documents are migrated on read; anything that cannot be upgraded
+// falls through and is rejected by the union.
+function upgradeLegacyMetricPanel(input: unknown): unknown {
+  if (!input || typeof input !== 'object') return input;
+  const type = (input as { type?: unknown }).type;
+  if (type !== 'metric_chart' && type !== 'metric_stat') return input;
+  try {
+    return migrateLegacyMetricPanel(input as MetricChartConfig | MetricStatConfig);
+  } catch {
+    return input;
+  }
+}
+
 // The union members must stay plain ZodObjects (discriminatedUnion cannot
 // contain refined schemas), so log_table's and top_n_table's cross-field rules
 // are re-applied on top of the union.
-export const panelConfigSchema = z
+const currentPanelConfigSchema = z
   .discriminatedUnion('type', [
     timeSeriesSchema,
     singleStatSchema,
@@ -278,6 +299,8 @@ export const panelConfigSchema = z
     if (cfg.type === 'log_table') refineLogTable(cfg, ctx);
     if (cfg.type === 'top_n_table') refineTopNTable(cfg, ctx);
   });
+
+export const panelConfigSchema = z.preprocess(upgradeLegacyMetricPanel, currentPanelConfigSchema);
 
 export interface BackendPanelDefinition {
   readonly type: PanelType;

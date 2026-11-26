@@ -58,10 +58,10 @@ describe('dashboard compatibility', () => {
       ],
     } as unknown as { schema_version: number; panels: PanelInstance[] };
 
-    // Raw v1 no longer validates (metric_chart is not a registered panel type)...
-    expect(() => dashboardDocumentSchema.parse(legacy)).toThrow();
+    // Raw v1 validates too: legacy metric panels are upgraded by the schema.
+    expect(dashboardDocumentSchema.parse(legacy).panels.map((p) => p.config.type)).toEqual(['metrics', 'metrics', 'time_series']);
 
-    // ...but migrates and validates.
+    // The document migration gives the same result.
     const migrated = migrateDashboard(legacy, CURRENT_SCHEMA_VERSION);
     expect(migrated.schema_version).toBe(2);
     const parsed = dashboardDocumentSchema.parse(migrated);
@@ -105,15 +105,58 @@ describe('dashboard compatibility', () => {
     expect(stored.map((p) => p.config.type)).toEqual(['metrics']);
   });
 
-  it('metric_chart and metric_stat can no longer be saved', async () => {
-    for (const config of [LEGACY_CHART, LEGACY_STAT]) {
-      await expect(
-        service.create(
-          { organizationId: ctx.organization.id, name: 'No', panels: [{ id: 'x', layout: LAYOUT, config } as unknown as PanelInstance] },
-          ctx.user.id
-        )
-      ).rejects.toBeInstanceOf(ZodError);
-    }
+  it('metric_chart and metric_stat sent by 1.7 clients are saved as metrics panels', async () => {
+    const created = await service.create(
+      {
+        organizationId: ctx.organization.id,
+        name: 'Old client',
+        panels: [
+          { id: 'x1', layout: LAYOUT, config: LEGACY_CHART },
+          { id: 'x2', layout: LAYOUT, config: LEGACY_STAT },
+        ] as unknown as PanelInstance[],
+      },
+      ctx.user.id
+    );
+    expect(created.schemaVersion).toBe(2);
+    const [chart, stat] = created.panels.map((p) => p.config) as unknown as Array<{
+      type: string;
+      query: { queries: Array<Record<string, unknown>>; display: string; unitOverride: string | null };
+    }>;
+    expect(chart.type).toBe('metrics');
+    expect(chart.query.display).toBe('lines');
+    expect(chart.query.queries[0]).toMatchObject({
+      metricName: 'cpu',
+      filters: [{ scope: 'resource', key: 'service.name', op: 'eq', values: ['api'] }],
+      groupBy: [{ scope: 'metric', key: 'host' }],
+    });
+    expect(stat.type).toBe('metrics');
+    expect(stat.query.display).toBe('stat');
+    expect(stat.query.unitOverride).toBe('%');
+
+    const row = await db.selectFrom('custom_dashboards').select(['panels']).where('id', '=', created.id).executeTakeFirstOrThrow();
+    const stored = (typeof row.panels === 'string' ? JSON.parse(row.panels) : row.panels) as Array<{ config: { type: string } }>;
+    expect(stored.map((p) => p.config.type)).toEqual(['metrics', 'metrics']);
+
+    const updated = await service.update(created.id, ctx.organization.id, ctx.user.id, {
+      panels: [{ id: 'x3', layout: LAYOUT, config: LEGACY_STAT }] as unknown as PanelInstance[],
+    });
+    expect(updated.panels.map((p) => p.config.type)).toEqual(['metrics']);
+
+    const { panel } = await service.addPanel(created.id, ctx.organization.id, ctx.user.id, { config: LEGACY_CHART });
+    expect(panel.config.type).toBe('metrics');
+  });
+
+  it('a legacy metric panel that cannot be upgraded is still a validation error', async () => {
+    await expect(
+      service.create(
+        {
+          organizationId: ctx.organization.id,
+          name: 'Broken',
+          panels: [{ id: 'b', layout: LAYOUT, config: { ...LEGACY_CHART, metricName: undefined, groupBy: 'host' } } as unknown as PanelInstance],
+        },
+        ctx.user.id
+      )
+    ).rejects.toBeInstanceOf(ZodError);
   });
 
   it('yaml export then import round trips every panel type', async () => {
@@ -195,6 +238,28 @@ panels:
       ctx.user.id
     );
     expect(again.panels.map((p) => p.config)).toEqual(imported.panels.map((p) => p.config));
+  });
+
+  it('a yaml marked schema_version 2 with legacy metric panels still imports', async () => {
+    const text = `
+name: Hand written
+schema_version: 2
+panels:
+  - id: h1
+    layout: { x: 0, y: 0, w: 4, h: 3 }
+    config:
+      type: metric_chart
+      title: CPU
+      source: metrics
+      projectId: null
+      metricName: cpu
+      aggregation: avg
+      interval: 5m
+      timeRange: 1h
+      serviceName: null
+`;
+    const imported = await service.importYaml(text, ctx.organization.id, ctx.user.id);
+    expect(imported.panels.map((p) => p.config.type)).toEqual(['metrics']);
   });
 
   it('a panel using a field unknown to this version is rejected with a validation error, not a crash', async () => {
