@@ -36,6 +36,11 @@ async function pickMetric(name: string, id = 'A') {
 
 beforeEach(() => vi.clearAllMocks());
 
+/** Label, how series are combined and remove live in the row menu. */
+async function openMore(id = 'A') {
+  await fireEvent.click(screen.getByRole('button', { name: `More options for query ${id}` }));
+}
+
 describe('MetricQueryBuilder queries', () => {
   it('picks a metric from the catalog showing type and unit', async () => {
     const { onChange } = setup();
@@ -63,7 +68,8 @@ describe('MetricQueryBuilder queries', () => {
     for (let i = 0; i < 5; i++) await fireEvent.click(screen.getByRole('button', { name: 'Add query' }));
     expect(last(onChange).queries.map((q) => q.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F']);
     expect(screen.getByRole('button', { name: 'Add query' })).toBeDisabled();
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove query C' }));
+    await openMore('C');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove query C' }));
     expect(last(onChange).queries.map((q) => q.id)).toEqual(['A', 'B', 'D', 'E', 'F']);
     await fireEvent.click(screen.getByRole('button', { name: 'Add query' }));
     expect(last(onChange).queries.map((q) => q.id)).toContain('C');
@@ -78,7 +84,8 @@ describe('MetricQueryBuilder queries', () => {
 
   it('sets the label', async () => {
     const { onChange } = setup();
-    await fireEvent.input(screen.getByLabelText('Label A'), { target: { value: 'CPU' } });
+    await openMore();
+    await fireEvent.input(await screen.findByLabelText('Label A'), { target: { value: 'CPU' } });
     expect(last(onChange).queries[0].label).toBe('CPU');
   });
 
@@ -86,7 +93,8 @@ describe('MetricQueryBuilder queries', () => {
     const { onChange } = setup();
     await chooseSelectOption(screen.getByRole('combobox', { name: 'Time aggregation A' }), 'p95');
     expect(last(onChange).queries[0].aggregation).toBe('p95');
-    await chooseSelectOption(screen.getByRole('combobox', { name: 'Space aggregation A' }), 'sum');
+    await openMore();
+    await chooseSelectOption(await screen.findByRole('combobox', { name: 'Space aggregation A' }), 'sum');
     expect(last(onChange).queries[0].spaceAggregation).toBe('sum');
   });
 
@@ -94,6 +102,7 @@ describe('MetricQueryBuilder queries', () => {
     vi.useFakeTimers();
     try {
       const { onChange } = setup(defaultExplorerQuery(), { debounceMs: 300 });
+      await openMore();
       await fireEvent.input(screen.getByLabelText('Label A'), { target: { value: 'a' } });
       await fireEvent.input(screen.getByLabelText('Label A'), { target: { value: 'ab' } });
       expect(onChange).not.toHaveBeenCalled();
@@ -116,7 +125,8 @@ describe('MetricQueryBuilder filters', () => {
     await pickMetric('http.requests');
     await openFilter();
     await waitFor(() => expect(api.getAttributes).toHaveBeenCalled());
-    expect(api.getAttributes.mock.calls.at(-1)![0]).toMatchObject({ scope: 'metric', metricName: 'http.requests', organizationId: 'org' });
+    // Source attributes (host.name, service.name) are what people filter on most.
+    expect(api.getAttributes.mock.calls.at(-1)![0]).toMatchObject({ scope: 'resource', metricName: 'http.requests', organizationId: 'org' });
 
     const key = screen.getByRole('combobox', { name: 'Filter key A' });
     await fireEvent.focus(key);
@@ -126,15 +136,15 @@ describe('MetricQueryBuilder filters', () => {
     await fireEvent.click(await screen.findByRole('option', { name: 'web-1' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
-    expect(last(onChange).queries[0].filters).toEqual([{ scope: 'metric', key: 'host.name', op: 'eq', values: ['web-1'] }]);
-    expect(screen.getByText('host.name is web-1')).toBeInTheDocument();
+    expect(last(onChange).queries[0].filters).toEqual([{ scope: 'resource', key: 'host.name', op: 'eq', values: ['web-1'] }]);
+    expect(screen.getByText('host.name = web-1')).toBeInTheDocument();
   });
 
-  it('switching scope to resource reloads keys with that scope', async () => {
+  it('switching scope to data point reloads keys with that scope', async () => {
     const { api } = setup();
     await openFilter();
-    await chooseSelectOption(screen.getByRole('combobox', { name: 'Filter scope A' }), 'Resource');
-    await waitFor(() => expect(api.getAttributes.mock.calls.at(-1)![0]).toMatchObject({ scope: 'resource' }));
+    await chooseSelectOption(screen.getByRole('combobox', { name: 'Filter scope A' }), 'Data point');
+    await waitFor(() => expect(api.getAttributes.mock.calls.at(-1)![0]).toMatchObject({ scope: 'metric' }));
   });
 
   it('exists needs no value and shows no value input', async () => {
@@ -146,7 +156,7 @@ describe('MetricQueryBuilder filters', () => {
     await chooseSelectOption(screen.getByRole('combobox', { name: 'Filter operator A' }), 'exists');
     expect(screen.queryByRole('combobox', { name: 'Filter value A' })).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    expect(last(onChange).queries[0].filters[0]).toEqual({ scope: 'metric', key: 'service.name', op: 'exists' });
+    expect(last(onChange).queries[0].filters[0]).toEqual({ scope: 'resource', key: 'service.name', op: 'exists' });
   });
 
   it('in takes several values', async () => {
@@ -189,7 +199,7 @@ describe('MetricQueryBuilder filters', () => {
     const q = defaultExplorerQuery();
     q.queries[0].filters = [{ scope: 'resource', key: 'host.name', op: 'eq', values: ['a'] }];
     const { onChange } = setup(q);
-    await fireEvent.click(screen.getByRole('button', { name: /Remove filter resource\.host\.name/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Remove filter host\.name = a/ }));
     expect(last(onChange).queries[0].filters).toEqual([]);
   });
 
@@ -211,7 +221,7 @@ describe('MetricQueryBuilder group by and display', () => {
 
   it('groups by a resource source attribute and defaults the display to split', async () => {
     const { onChange } = setup();
-    await addGroup('Resource', 'host.name');
+    await addGroup('Source', 'host.name');
     const q = last(onChange);
     expect(q.queries[0].groupBy).toEqual([{ scope: 'resource', key: 'host.name' }]);
     expect(q.display).toBe('split');
@@ -220,7 +230,7 @@ describe('MetricQueryBuilder group by and display', () => {
 
   it('keeps lines when grouping by a metric attribute', async () => {
     const { onChange } = setup();
-    await addGroup('Metric', 'service.name');
+    await addGroup('Data point', 'service.name');
     expect(last(onChange).display).toBe('lines');
   });
 
@@ -230,7 +240,7 @@ describe('MetricQueryBuilder group by and display', () => {
     q.queries[0].limit = 5;
     q.display = 'split';
     const { onChange } = setup(q);
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove group by resource.host.name' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove group by host.name' }));
     expect(last(onChange).display).toBe('lines');
     expect(last(onChange).queries[0].limit).toBeUndefined();
   });
@@ -239,7 +249,7 @@ describe('MetricQueryBuilder group by and display', () => {
     const { onChange } = setup();
     await fireEvent.click(screen.getByRole('button', { name: 'Table' }));
     expect(last(onChange).display).toBe('table');
-    await addGroup('Resource', 'host.name');
+    await addGroup('Source', 'host.name');
     expect(last(onChange).display).toBe('table');
   });
 
@@ -264,6 +274,13 @@ describe('MetricQueryBuilder group by and display', () => {
 });
 
 describe('MetricQueryBuilder formulas and footer', () => {
+  it('explains how metric queries work in a help popover', async () => {
+    setup();
+    await fireEvent.click(screen.getByRole('button', { name: 'How metric queries work' }));
+    expect(await screen.findByText('Metric queries')).toBeInTheDocument();
+    expect(screen.getByText('A / B * 100')).toBeInTheDocument();
+  });
+
   it('adds a formula with validation hints', async () => {
     const { onChange } = setup();
     await fireEvent.click(screen.getByRole('button', { name: 'Add formula' }));
@@ -272,7 +289,7 @@ describe('MetricQueryBuilder formulas and footer', () => {
     expect(last(onChange).formulas[0]).toMatchObject({ id: 'F1', expression: 'A / Z' });
     expect(screen.getByText('Unknown query Z')).toBeInTheDocument();
     await fireEvent.input(input, { target: { value: 'A * 100' } });
-    expect(screen.getByText(/Use query ids/)).toBeInTheDocument();
+    expect(screen.getByText(/Use query letters/)).toBeInTheDocument();
   });
 
   it('removes a formula and caps at four', async () => {
@@ -302,7 +319,8 @@ describe('MetricQueryBuilder formulas and footer', () => {
     next.queries[0].metricName = 'from.link';
     next.queries[0].label = 'Linked';
     await rerender({ value: next });
-    expect((screen.getByLabelText('Label A') as HTMLInputElement).value).toBe('Linked');
+    await openMore();
+    expect(((await screen.findByLabelText('Label A')) as HTMLInputElement).value).toBe('Linked');
   });
 
   it('loads the catalog itself when none is given', async () => {

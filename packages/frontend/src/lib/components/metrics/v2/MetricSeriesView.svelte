@@ -63,6 +63,8 @@
   const allSeries = $derived(response?.series ?? []);
   const current = $derived(allSeries.filter((s) => !s.comparison));
   const colors = $derived(buildColorMap(allSeries));
+  // With several queries or formulas the legend says which one each series comes from.
+  const showQueryIds = $derived(new Set(allSeries.map((s) => s.queryId)).size > 1);
   const hasData = $derived(allSeries.some((s) => s.points.some((p) => p.v !== null)) || current.length > 0);
   const queryErrors = $derived((response?.queries ?? []).filter((q) => q.error));
   const capped = $derived((response?.queries ?? []).filter((q) => q.seriesTotal > q.seriesShown));
@@ -152,6 +154,9 @@
                         style:opacity={s.comparison ? 0.5 : 1}
                         aria-hidden="true"
                       ></span>
+                      {#if showQueryIds}
+                        <span class="w-5 shrink-0 font-mono text-[10px] font-semibold text-muted-foreground" title="Query {s.queryId}">{s.queryId}</span>
+                      {/if}
                       {#if onSeriesClick}
                         <button type="button" class="truncate text-left hover:underline" onclick={() => onSeriesClick(s)}>
                           {seriesLabel(s)}

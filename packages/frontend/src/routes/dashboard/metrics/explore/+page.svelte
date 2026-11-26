@@ -165,9 +165,17 @@
   // ---- auto refresh ----
   const REFRESH_OPTIONS = [
     { value: '0', label: 'Off' },
-    { value: '30000', label: '30 seconds' },
-    { value: '60000', label: '1 minute' },
-    { value: '300000', label: '5 minutes' },
+    { value: '30000', label: '30s' },
+    { value: '60000', label: '1m' },
+    { value: '300000', label: '5m' },
+  ];
+  const DISPLAYS: Array<{ value: MetricExplorerQuery['display']; label: string }> = [
+    { value: 'lines', label: 'Lines' },
+    { value: 'area', label: 'Area' },
+    { value: 'bars', label: 'Bars' },
+    { value: 'split', label: 'Split' },
+    { value: 'stat', label: 'Stat' },
+    { value: 'table', label: 'Table' },
   ];
   let refreshMs = $state('0');
   $effect(() => {
@@ -212,70 +220,98 @@
 </svelte:head>
 
 <div class="container mx-auto {$containerPadding} {$maxWidthClass}">
-  <PageHeader title="Metrics explorer" description="Query any metric, from any source, grouped the way you need" />
-
+  <PageHeader title="Metrics explorer" description="Query any metric, from any source, grouped the way you need" appliesTo="organization">
+    {#snippet actions()}
+      {#if !(projectsLoaded && projects.length === 0)}
+        <ScopeBar mode="multi" {projects} hideZoneOnMobile />
+        <div class="flex items-center">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            class="h-9 rounded-r-none border-r-0"
+            disabled={!hasMetric || loading}
+            aria-label="Refresh"
+            onclick={() => (tick += 1)}
+          >
+            <RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
+          </Button>
+          <SelectField
+            class="h-9 w-24 rounded-l-none text-xs"
+            aria-label="Auto refresh"
+            bind:value={refreshMs}
+            options={REFRESH_OPTIONS}
+          />
+        </div>
+      {/if}
+    {/snippet}
+  </PageHeader>
 
   {#if projectsLoaded && projects.length === 0}
     <EmptyMetrics />
-  {:else}
+  {:else if $currentOrganization}
     <div class="mb-4">
-      <ScopeBar mode="multi" {projects} hideZoneOnMobile />
+      <MetricQueryBuilder
+        value={effective}
+        onChange={onBuilderChange}
+        organizationId={$currentOrganization.id}
+        from={lookupRange.from}
+        to={lookupRange.to}
+        showDisplay={false}
+      />
     </div>
 
-    {#if $currentOrganization}
-      <div class="mb-3">
-        <MetricQueryBuilder
-          value={effective}
-          onChange={onBuilderChange}
-          organizationId={$currentOrganization.id}
-          from={lookupRange.from}
-          to={lookupRange.to}
-        />
-      </div>
-
-      <div class="mb-4 flex flex-wrap items-center gap-2" role="toolbar" aria-label="Explorer actions">
-        <Button type="button" variant="outline" size="sm" class="gap-2" disabled={!hasMetric || loading} onclick={() => (tick += 1)}>
-          <RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" aria-hidden="true" />
-          Refresh
-        </Button>
-        <span class="text-sm text-muted-foreground">Auto refresh</span>
-        <SelectField size="sm" class="w-32" aria-label="Auto refresh" bind:value={refreshMs} options={REFRESH_OPTIONS} />
-        <div class="ml-auto flex items-center gap-2">
-          <Button type="button" variant="outline" size="sm" class="gap-2" onclick={copyLink}>
-            <Link class="h-4 w-4" aria-hidden="true" />
-            Copy link
-          </Button>
-          <Button type="button" variant="outline" size="sm" class="gap-2" disabled={!hasMetric} onclick={() => (alertOpen = true)}>
-            <BellPlus class="h-4 w-4" aria-hidden="true" />
-            Create alert
-          </Button>
-          <Button type="button" size="sm" class="gap-2" disabled={!hasMetric} onclick={() => (addOpen = true)}>
-            <ChartColumn class="h-4 w-4" aria-hidden="true" />
-            Add to dashboard
-          </Button>
+    {#if !hasMetric}
+      <EmptyState
+        variant="no-data"
+        title="Pick a metric to start"
+        description="Choose a metric above, or browse the catalog to see what your sources send."
+      >
+        {#snippet actions()}
+          <a class="text-sm text-primary hover:underline" href="/dashboard/metrics/catalog?{scopeSearch}">Open the catalog</a>
+        {/snippet}
+      </EmptyState>
+    {:else}
+      {#if showBreakdown}
+        <div class="mb-4">
+          <BreakdownSuggestions
+            metricName={firstQuery.metricName}
+            organizationId={$currentOrganization.id}
+            projectIds={scopeIds}
+            {onAddGroupBy}
+          />
         </div>
-      </div>
-
-      {#if !hasMetric}
-        <EmptyState
-          variant="no-data"
-          title="Pick a metric to start"
-          description="Choose a metric above, or browse the catalog to see what your sources send."
-        >
-          {#snippet actions()}
-            <a class="text-sm text-primary hover:underline" href="/dashboard/metrics/catalog?{scopeSearch}">Open the catalog</a>
-          {/snippet}
-        </EmptyState>
-      {:else}
-        <div class="space-y-4">
-          {#if showBreakdown}
-            <BreakdownSuggestions
-              metricName={firstQuery.metricName}
-              organizationId={$currentOrganization.id}
-              projectIds={scopeIds}
-              {onAddGroupBy}
-            />
-          {/if}
+      {/if}
+      <section class="rounded-lg border border-border bg-card" aria-label="Result">
+        <div class="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2" role="toolbar" aria-label="Explorer actions">
+          <div class="inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Display">
+            {#each DISPLAYS as d (d.value)}
+              <button
+                type="button"
+                class="rounded px-2.5 py-1 text-xs font-medium transition-colors {effective.display === d.value ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+                aria-pressed={effective.display === d.value}
+                onclick={() => (base = { ...base, display: d.value })}
+              >
+                {d.label}
+              </button>
+            {/each}
+          </div>
+          <div class="ml-auto flex items-center gap-2">
+            <Button type="button" variant="ghost" size="sm" class="gap-2" onclick={copyLink}>
+              <Link class="h-4 w-4" aria-hidden="true" />
+              Copy link
+            </Button>
+            <Button type="button" variant="outline" size="sm" class="gap-2" onclick={() => (alertOpen = true)}>
+              <BellPlus class="h-4 w-4" aria-hidden="true" />
+              Create alert
+            </Button>
+            <Button type="button" size="sm" class="gap-2" onclick={() => (addOpen = true)}>
+              <ChartColumn class="h-4 w-4" aria-hidden="true" />
+              Add to dashboard
+            </Button>
+          </div>
+        </div>
+        <div class="p-3">
           <MetricSeriesView
             {response}
             {loading}
@@ -285,21 +321,21 @@
             {onSeriesClick}
           />
         </div>
-      {/if}
-
-      <AddToDashboardDialog
-        bind:open={addOpen}
-        organizationId={$currentOrganization.id}
-        query={effective}
-        range={$scopeStore.range}
-      />
-
-      <CreateMetricAlertDialog
-        bind:open={alertOpen}
-        organizationId={$currentOrganization.id}
-        query={effective}
-        {response}
-      />
+      </section>
     {/if}
+
+    <AddToDashboardDialog
+      bind:open={addOpen}
+      organizationId={$currentOrganization.id}
+      query={effective}
+      range={$scopeStore.range}
+    />
+
+    <CreateMetricAlertDialog
+      bind:open={alertOpen}
+      organizationId={$currentOrganization.id}
+      query={effective}
+      {response}
+    />
   {/if}
 </div>

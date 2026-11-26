@@ -9,15 +9,16 @@ import { chartColors } from '$lib/utils/echarts-theme';
 
 // Pure helpers shared by the v2 metric series components.
 
+/** Eight hues far enough apart to tell neighbours in a legend (amber, orange and yellow are not). */
 export const SERIES_PALETTE: readonly string[] = [
   chartColors.series.blue,
   chartColors.series.green,
-  chartColors.series.amber,
   chartColors.series.purple,
   chartColors.series.orange,
+  '#ec4899', // pink-500
+  '#14b8a6', // teal-500
   chartColors.series.red,
   chartColors.series.yellow,
-  chartColors.series.gray,
 ];
 
 const OTHER_COLOR = '#6b7280';

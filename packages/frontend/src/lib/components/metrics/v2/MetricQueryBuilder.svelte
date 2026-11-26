@@ -34,7 +34,6 @@
   } from '@logtide/shared';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import { Badge } from '$lib/components/ui/badge';
   import { SelectField } from '$lib/components/ui/select';
   import Plus from '@lucide/svelte/icons/plus';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -44,6 +43,7 @@
   import { defaultDisplayForQuery, emptyQuerySpec } from '$lib/utils/metrics-explorer-url';
   import { validateFormula } from '$lib/utils/metrics-formula';
   import QueryRowEditor from './QueryRowEditor.svelte';
+  import MetricQueryHelp from './MetricQueryHelp.svelte';
 
   type LookupApi = Pick<MetricsV2API, 'getCatalog' | 'getAttributes' | 'getAttributeValues'>;
 
@@ -233,105 +233,116 @@
   }
 </script>
 
-<div class="space-y-3">
+<div class="rounded-lg border border-border bg-card" data-testid="query-builder">
   {#if catalogError}
-    <p class="text-xs text-muted-foreground" role="status">{catalogError}. You can still type a metric name.</p>
+    <p class="border-b border-border px-3 py-2 text-xs text-muted-foreground" role="status">{catalogError}. You can still type a metric name.</p>
   {/if}
 
-  {#each draft.queries as spec, i (spec.id)}
-    <QueryRowEditor
-      {spec}
-      {catalog}
-      {variables}
-      {loadKeys}
-      {loadValues}
-      canRemove={draft.queries.length > 1}
-      onChange={(s) => setQuery(i, s)}
-      onRemove={() => removeQuery(i)}
-    />
-  {/each}
+  <div class="divide-y divide-border">
+    {#each draft.queries as spec, i (spec.id)}
+      <QueryRowEditor
+        {spec}
+        {catalog}
+        {variables}
+        {loadKeys}
+        {loadValues}
+        canRemove={draft.queries.length > 1}
+        onChange={(s) => setQuery(i, s)}
+        onRemove={() => removeQuery(i)}
+      />
+    {/each}
 
-  {#each draft.formulas as f, i (f.id)}
-    {@const problem = validateFormula(f.expression, queryIds)}
-    <section class="space-y-1 rounded-lg border border-border bg-card p-3 {f.hidden ? 'opacity-60' : ''}" aria-label="Formula {f.id}">
-      <div class="flex flex-wrap items-center gap-2">
-        <Badge variant="secondary" class="shrink-0 font-mono">{f.id}</Badge>
-        <Input
-          class="h-8 min-w-[220px] flex-1 font-mono"
-          placeholder="A / B * 100"
-          aria-label="Expression {f.id}"
-          aria-invalid={problem !== null && f.expression.trim() !== ''}
-          aria-describedby="formula-hint-{f.id}"
-          value={f.expression}
-          oninput={(e) => setFormula(i, { expression: e.currentTarget.value })}
-        />
-        <Input
-          class="h-8 w-36"
-          placeholder="Label"
-          aria-label="Label {f.id}"
-          value={f.label ?? ''}
-          oninput={(e) => setFormula(i, { label: e.currentTarget.value || undefined })}
-        />
-        <Button
-          variant="ghost"
-          size="icon"
-          class="h-8 w-8"
-          aria-label={f.hidden ? `Show formula ${f.id}` : `Hide formula ${f.id}`}
-          aria-pressed={!!f.hidden}
-          onclick={() => setFormula(i, { hidden: f.hidden ? undefined : true })}
-        >
-          {#if f.hidden}<EyeOff class="h-4 w-4" aria-hidden="true" />{:else}<Eye class="h-4 w-4" aria-hidden="true" />{/if}
-        </Button>
-        <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="Remove formula {f.id}" onclick={() => update((q) => q.formulas.splice(i, 1))}>
-          <Trash2 class="h-4 w-4" aria-hidden="true" />
-        </Button>
-      </div>
-      <p id="formula-hint-{f.id}" class="text-xs {problem ? 'text-warning-text' : 'text-muted-foreground'}">
-        {problem ?? 'Use query ids, numbers, + - * / and parentheses.'}
-      </p>
-    </section>
-  {/each}
+    {#each draft.formulas as f, i (f.id)}
+      {@const problem = validateFormula(f.expression, queryIds)}
+      <section class="px-3 py-2.5 {f.hidden ? 'opacity-60' : ''}" aria-label="Formula {f.id}">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md bg-muted px-1 font-mono text-xs font-semibold text-muted-foreground" aria-hidden="true">{f.id}</span>
+          <Input
+            class="h-8 min-w-[220px] flex-1 font-mono"
+            placeholder="A / B * 100"
+            aria-label="Expression {f.id}"
+            aria-invalid={problem !== null && f.expression.trim() !== ''}
+            aria-describedby="formula-hint-{f.id}"
+            value={f.expression}
+            oninput={(e) => setFormula(i, { expression: e.currentTarget.value })}
+          />
+          <Input
+            class="h-8 w-36"
+            placeholder="Label"
+            aria-label="Label {f.id}"
+            value={f.label ?? ''}
+            oninput={(e) => setFormula(i, { label: e.currentTarget.value || undefined })}
+          />
+          <div class="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8"
+              aria-label={f.hidden ? `Show formula ${f.id}` : `Hide formula ${f.id}`}
+              aria-pressed={!!f.hidden}
+              onclick={() => setFormula(i, { hidden: f.hidden ? undefined : true })}
+            >
+              {#if f.hidden}<EyeOff class="h-4 w-4" aria-hidden="true" />{:else}<Eye class="h-4 w-4" aria-hidden="true" />{/if}
+            </Button>
+            <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="Remove formula {f.id}" onclick={() => update((q) => q.formulas.splice(i, 1))}>
+              <Trash2 class="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+        <p id="formula-hint-{f.id}" class="mt-1 pl-8 text-xs {problem ? 'text-warning-text' : 'text-muted-foreground'}">
+          {problem ?? 'Use query letters, numbers, + - * / and parentheses.'}
+        </p>
+      </section>
+    {/each}
+  </div>
 
-  <div class="flex flex-wrap items-center gap-2">
-    <Button variant="outline" size="sm" disabled={draft.queries.length >= METRIC_MAX_QUERIES} onclick={addQuery}>
+  <div class="flex flex-wrap items-center gap-2 border-t border-border bg-muted/30 px-3 py-2">
+    <Button variant="ghost" size="sm" class="h-8" disabled={draft.queries.length >= METRIC_MAX_QUERIES} onclick={addQuery}>
       <Plus class="mr-1 h-4 w-4" aria-hidden="true" />Add query
     </Button>
-    <Button variant="outline" size="sm" disabled={draft.formulas.length >= METRIC_MAX_FORMULAS} onclick={addFormula}>
+    <Button variant="ghost" size="sm" class="h-8" disabled={draft.formulas.length >= METRIC_MAX_FORMULAS} onclick={addFormula}>
       <Plus class="mr-1 h-4 w-4" aria-hidden="true" />Add formula
     </Button>
 
-    <span class="ml-2 text-sm text-muted-foreground">Interval</span>
-    <SelectField
-      size="sm"
-      class="w-32"
-      aria-label="Interval"
-      value={draft.interval}
-      options={INTERVALS}
-      onValueChange={(v) => update((q) => (q.interval = v as MetricQueryInterval))}
-    />
-    <span class="text-sm text-muted-foreground">Compare to</span>
-    <SelectField
-      size="sm"
-      class="w-40"
-      aria-label="Compare to"
-      value={draft.compareTo}
-      options={COMPARES}
-      onValueChange={(v) => update((q) => (q.compareTo = v as MetricCompareTo))}
-    />
-
-    {#if showDisplay}
-      <div class="ml-auto inline-flex rounded-md border border-border p-0.5" role="group" aria-label="Display">
-        {#each DISPLAYS as d (d.value)}
-          <button
-            type="button"
-            class="rounded px-2.5 py-1 text-xs font-medium {draft.display === d.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}"
-            aria-pressed={draft.display === d.value}
-            onclick={() => setDisplay(d.value)}
-          >
-            {d.label}
-          </button>
-        {/each}
-      </div>
-    {/if}
+    <div class="ml-auto flex flex-wrap items-center gap-2">
+      {#if showDisplay}
+        <div class="inline-flex rounded-md border border-border bg-background p-0.5" role="group" aria-label="Display">
+          {#each DISPLAYS as d (d.value)}
+            <button
+              type="button"
+              class="rounded px-2 py-0.5 text-xs font-medium {draft.display === d.value ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+              aria-pressed={draft.display === d.value}
+              onclick={() => setDisplay(d.value)}
+            >
+              {d.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+      <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+        Interval
+        <SelectField
+          size="sm"
+          class="w-32"
+          aria-label="Interval"
+          value={draft.interval}
+          options={INTERVALS}
+          onValueChange={(v) => update((q) => (q.interval = v as MetricQueryInterval))}
+        />
+      </label>
+      <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+        Compare
+        <SelectField
+          size="sm"
+          class="w-40"
+          aria-label="Compare to"
+          value={draft.compareTo}
+          options={COMPARES}
+          onValueChange={(v) => update((q) => (q.compareTo = v as MetricCompareTo))}
+        />
+      </label>
+      <MetricQueryHelp />
+    </div>
   </div>
 </div>
+
