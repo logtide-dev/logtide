@@ -89,7 +89,7 @@ vi.mock('../../../../modules/metrics/query/units.js', async (importOriginal) => 
   return { ...actual, loadCatalog: vi.fn(async () => catalog) };
 });
 
-import { runMetricQuery, type ResolvedMetricQuery } from '../../../../modules/metrics/query/service.js';
+import { runMetricQuery, type ResolvedMetricQuery, clearLabelKeysCache } from '../../../../modules/metrics/query/service.js';
 import { EXP_CANONICAL_BOUNDS, EXP_GRID_ID, EXP_GRID_MIN_INDEX } from '../../../../modules/otlp/exp-histogram-grid.js';
 import type { MetricQuerySpec } from '@logtide/shared';
 
@@ -135,6 +135,7 @@ function push(minute: number, h: MetricHistogramValue, host = 'a', route = '/x',
 }
 
 beforeEach(() => {
+  clearLabelKeysCache();
   points = [];
   catalog.available = true;
   catalog.entries = new Map();

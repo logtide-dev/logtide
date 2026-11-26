@@ -54,6 +54,8 @@ describe('loadCatalog', () => {
       temporality: 'cumulative',
       isMonotonic: true,
       projectIds: [ctx.project.id, second],
+      // also recorded as a gauge: the query service does not pin a type then
+      multipleTypes: true,
     });
     expect(out.entries.has('missing')).toBe(false);
   });

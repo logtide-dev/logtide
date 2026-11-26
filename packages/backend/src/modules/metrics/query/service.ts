@@ -42,7 +42,7 @@ import type {
   MetricSpaceAggregation,
   MetricTimeAggregation,
 } from '@logtide/shared';
-import { defaultSpaceAggregation, metricAttrLabel, METRIC_DEFAULT_SERIES_LIMIT, METRIC_MAX_SERIES_LIMIT } from '@logtide/shared';
+import { defaultSpaceAggregation, metricAttrLabel, METRIC_DEFAULT_SERIES_LIMIT, METRIC_INSTRUMENT_TYPES, METRIC_MAX_SERIES_LIMIT } from '@logtide/shared';
 import type { MetricAggregationFn, MetricTimeBucket } from '@logtide/reservoir';
 import { reservoir } from '../../../database/reservoir.js';
 import { MetricQueryValidationError, MetricScopeError } from './errors.js';
@@ -254,7 +254,41 @@ function dedupeRefs(refs: MetricAttrRef[]): MetricAttrRef[] {
 
 const byteOrder = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+// Attribute keys of a metric change rarely, and every chart of the sources
+// list and of the source pages rediscovers them: they are kept for a few
+// minutes per metric, projects, scope and a window rounded to the same span.
+const LABEL_KEYS_TTL_MS = 5 * 60_000;
+const LABEL_KEYS_MAX_ENTRIES = 2000;
+const labelKeysCache = new Map<string, { at: number; keys: Promise<string[]> }>();
+
+/** Test hook. */
+export function clearLabelKeysCache(): void {
+  labelKeysCache.clear();
+}
+
 async function labelKeys(
+  ctx: WindowContext,
+  metricName: string,
+  scope: 'metric' | 'resource',
+  limit: number,
+  from: Date,
+  to: Date,
+): Promise<string[]> {
+  const round = (d: Date) => Math.floor(d.getTime() / LABEL_KEYS_TTL_MS);
+  const key = [ctx.organizationId, [...ctx.projectIds].sort().join(','), metricName, scope, limit, round(from), round(to)].join('|');
+  const now = Date.now();
+  const hit = labelKeysCache.get(key);
+  if (hit && now - hit.at < LABEL_KEYS_TTL_MS) return hit.keys;
+  if (labelKeysCache.size >= LABEL_KEYS_MAX_ENTRIES) {
+    for (const [k, v] of labelKeysCache) if (now - v.at >= LABEL_KEYS_TTL_MS) labelKeysCache.delete(k);
+    if (labelKeysCache.size >= LABEL_KEYS_MAX_ENTRIES) labelKeysCache.clear();
+  }
+  const keys = readLabelKeys(ctx, metricName, scope, limit, from, to);
+  labelKeysCache.set(key, { at: now, keys });
+  return keys;
+}
+
+async function readLabelKeys(
   ctx: WindowContext,
   metricName: string,
   scope: 'metric' | 'resource',
@@ -817,7 +851,8 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
   const stepMs = QUERY_INTERVAL_MS[interval];
   const grid = buildGrid(from.getTime(), to.getTime(), stepMs);
 
-  const queries = query.queries ?? [];
+  // copies: the catalog type is filled in below and the caller keeps its own specs
+  const queries = (query.queries ?? []).map((q) => ({ ...q }));
   const formulaSpecs = query.formulas ?? [];
 
   // Variables first: an unknown variable fails the whole request (400).
@@ -842,6 +877,14 @@ export async function runMetricQuery(query: ResolvedMetricQuery, now: Date = new
   }
 
   const catalog: CatalogLookup = await loadCatalog(query.projectIds, [...new Set(queries.map((q) => q.metricName))]);
+  // The engine otherwise asks storage for the type of every metric it reads:
+  // when the catalog knows one type for the name, it is passed along.
+  for (const q of queries) {
+    const info = catalog.entries.get(q.metricName);
+    if (!q.metricType && info?.type && !info.multipleTypes && (METRIC_INSTRUMENT_TYPES as readonly string[]).includes(info.type)) {
+      q.metricType = info.type as MetricQuerySpec['metricType'];
+    }
+  }
 
   const baseCtx: WindowContext = {
     organizationId: query.organizationId,

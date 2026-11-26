@@ -14,6 +14,8 @@ export interface CatalogInfo {
   isMonotonic?: boolean | null;
   /** Projects with a catalog row for the name, most recently seen first. */
   projectIds?: string[];
+  /** The name was recorded with more than one instrument type. */
+  multipleTypes?: boolean;
 }
 
 export interface CatalogLookup {
@@ -63,7 +65,10 @@ export async function loadCatalog(projectIds: string[], metricNames: string[]): 
       // Later rows are older; they only fill what is still unknown, and only
       // for the same type as the most recent one.
       if (entry.unit === null && row.unit) entry.unit = row.unit;
-      if (row.metric_type !== entry.type) continue;
+      if (row.metric_type !== entry.type) {
+        entry.multipleTypes = true;
+        continue;
+      }
       if (!entry.temporality && row.temporality) entry.temporality = row.temporality;
       if (entry.isMonotonic == null && row.is_monotonic != null) entry.isMonotonic = row.is_monotonic;
     }

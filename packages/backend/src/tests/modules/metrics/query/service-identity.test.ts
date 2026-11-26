@@ -155,6 +155,7 @@ import {
   MAX_INTERNAL_RAW_SERIES,
   MAX_ENGINE_CONCURRENCY,
   type ResolvedMetricQuery,
+  clearLabelKeysCache,
 } from '../../../../modules/metrics/query/service.js';
 
 const T0 = Date.parse('2026-11-25T00:00:00.000Z');
@@ -201,6 +202,7 @@ function hist(project: string, minute: number, count: number, resource: Record<s
 }
 
 beforeEach(() => {
+  clearLabelKeysCache();
   points = [];
   engineTypes.clear();
   catalog.available = true;

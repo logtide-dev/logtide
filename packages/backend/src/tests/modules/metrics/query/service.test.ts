@@ -86,7 +86,7 @@ vi.mock('../../../../modules/metrics/query/units.js', async (importOriginal) => 
   return { ...actual, loadCatalog: vi.fn(async () => catalog) };
 });
 
-import { runMetricQuery, metricQueryService, MetricQueryValidationError, type ResolvedMetricQuery } from '../../../../modules/metrics/query/service.js';
+import { runMetricQuery, metricQueryService, MetricQueryValidationError, type ResolvedMetricQuery, clearLabelKeysCache } from '../../../../modules/metrics/query/service.js';
 
 const T0 = Date.parse('2026-11-25T00:00:00.000Z');
 const MIN = 60_000;
@@ -115,6 +115,7 @@ function cpu(host: string, core: string, minute: number, v: number) {
 }
 
 beforeEach(() => {
+  clearLabelKeysCache();
   points = [];
   failing.clear();
   catalog.available = true;
