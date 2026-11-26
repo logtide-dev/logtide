@@ -85,7 +85,7 @@ test.describe('Metrics Journey', () => {
 
   test('explore: pick a metric, group by host and see one chart per host', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/metrics/explore?project=${projectId}`);
-    await expect(page.getByRole('heading', { name: 'Metrics', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Metrics explorer', level: 1 })).toBeVisible();
     await expect(page.getByText('Pick a metric to start')).toBeVisible();
 
     const metric = page.getByRole('combobox', { name: 'Metric A' });

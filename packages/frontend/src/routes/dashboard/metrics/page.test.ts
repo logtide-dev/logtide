@@ -118,7 +118,7 @@ describe('metrics sources page', () => {
     expect(args.projectIds).toBeNull();
     expect(typeof args.from).toBe('string');
     expect(within(hosts).getByText('alpha')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /Hosts/ }).textContent).toContain('4');
+    expect(screen.getByRole('heading', { name: /^Hosts\s+4$/, level: 2 })).toBeTruthy();
   });
 
   it('hosts table drops its wide columns below 2xl so it fits 1280-1440px', async () => {

@@ -26,7 +26,6 @@
   import type { DataTableColumn, DataTableSort } from '$lib/components/app/data-table';
   import Button from '$lib/components/ui/button/button.svelte';
   import Input from '$lib/components/ui/input/input.svelte';
-  import MetricsSubNav from '$lib/components/metrics/v2/MetricsSubNav.svelte';
   import SourceMeterCell from '$lib/components/metrics/sources/SourceMeterCell.svelte';
   import SourceStatusDot from '$lib/components/metrics/v2/SourceStatusDot.svelte';
   import HardwareStatusBadge from '$lib/components/hardware/HardwareStatusBadge.svelte';
@@ -186,7 +185,7 @@
   );
   const tiles = $derived(
     [
-      { id: 'all' as const, label: kind === 'host' ? 'Hosts' : kind === 'service' ? 'Services' : 'Sources', tone: 'text-muted-foreground' },
+      { id: 'all' as const, label: kind === 'host' ? 'Hosts' : kind === 'service' ? 'Services' : 'All', tone: 'text-muted-foreground' },
       { id: 'critical' as const, label: 'Critical', tone: 'text-destructive-text' },
       { id: 'warning' as const, label: 'Warning', tone: 'text-warning-text' },
       { id: 'ok' as const, label: 'Healthy', tone: 'text-success-text' },
@@ -392,11 +391,11 @@
 {/snippet}
 
 <svelte:head>
-  <title>Metrics - LogTide</title>
+  <title>Hosts &amp; services - Metrics - LogTide</title>
 </svelte:head>
 
 <div class="container mx-auto flex flex-col gap-4 {containerPadding} {maxWidthClass}">
-  <PageHeader title="Metrics" description="Hosts and services that send metrics" appliesTo="organization">
+  <PageHeader title="Hosts & services" description="Everything that sends metrics, with its health at a glance" appliesTo="organization">
     {#snippet actions()}
       <ScopeBar mode="multi" {projects} />
       <Button variant="outline" size="sm" onclick={() => void load(false)} aria-label="Refresh">
@@ -405,7 +404,6 @@
     {/snippet}
   </PageHeader>
 
-  <MetricsSubNav />
 
   {#if !projectsLoaded || (loading && !data)}
     <div class="py-16 text-center text-sm text-muted-foreground" role="status">Loading sources</div>

@@ -25,7 +25,6 @@
   import EmptyMetrics from '$lib/components/EmptyMetrics.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import { SelectField } from '$lib/components/ui/select';
-  import MetricsSubNav from '$lib/components/metrics/v2/MetricsSubNav.svelte';
   import MetricQueryBuilder from '$lib/components/metrics/v2/MetricQueryBuilder.svelte';
   import MetricSeriesView from '$lib/components/metrics/v2/MetricSeriesView.svelte';
   import BreakdownSuggestions from '$lib/components/metrics/v2/BreakdownSuggestions.svelte';
@@ -205,7 +204,7 @@
     const { from, to } = resolveRange($scopeStore.range);
     return { from: from.toISOString(), to: to.toISOString() };
   });
-  const subNavSearch = $derived(scopeParamsOf(page.url.searchParams).toString());
+  const scopeSearch = $derived(scopeParamsOf(page.url.searchParams).toString());
 </script>
 
 <svelte:head>
@@ -213,9 +212,8 @@
 </svelte:head>
 
 <div class="container mx-auto {$containerPadding} {$maxWidthClass}">
-  <PageHeader title="Metrics" description="Query any metric, from any source, grouped the way you need" />
+  <PageHeader title="Metrics explorer" description="Query any metric, from any source, grouped the way you need" />
 
-  <div class="mb-4"><MetricsSubNav search={subNavSearch} /></div>
 
   {#if projectsLoaded && projects.length === 0}
     <EmptyMetrics />
@@ -265,7 +263,7 @@
           description="Choose a metric above, or browse the catalog to see what your sources send."
         >
           {#snippet actions()}
-            <a class="text-sm text-primary hover:underline" href="/dashboard/metrics/catalog?{subNavSearch}">Open the catalog</a>
+            <a class="text-sm text-primary hover:underline" href="/dashboard/metrics/catalog?{scopeSearch}">Open the catalog</a>
           {/snippet}
         </EmptyState>
       {:else}

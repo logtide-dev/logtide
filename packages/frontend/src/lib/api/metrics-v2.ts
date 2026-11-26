@@ -130,10 +130,14 @@ export class MetricsV2API {
     );
   }
 
-  getCatalog(p: MetricsScopeParams & { search?: string; prefix?: string }): Promise<MetricCatalogListResponse> {
+  /** `source` is `host:<name>` or `service:<name>`: only the metrics that source sent. */
+  getCatalog(p: MetricsScopeParams & { search?: string; prefix?: string; source?: string }): Promise<MetricCatalogListResponse> {
     return this.get(
       '/metrics/catalog',
-      this.scopeQuery({ organizationId: p.organizationId, projectIds: p.projectIds }, { search: p.search, prefix: p.prefix }),
+      this.scopeQuery(
+        { organizationId: p.organizationId, projectIds: p.projectIds },
+        { search: p.search, prefix: p.prefix, source: p.source },
+      ),
       'Failed to load the metric catalog',
     );
   }

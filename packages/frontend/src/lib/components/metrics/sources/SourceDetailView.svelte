@@ -35,16 +35,15 @@
   import EmptyState from '$lib/components/app/EmptyState.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
   import { Badge } from '$lib/components/ui/badge';
-  import MetricsSubNav from '$lib/components/metrics/v2/MetricsSubNav.svelte';
   import SourceStatusDot from '$lib/components/metrics/v2/SourceStatusDot.svelte';
   import HardwareHostPanel from '$lib/components/hardware/HardwareHostPanel.svelte';
   import HardwareSetup from '$lib/components/hardware/HardwareSetup.svelte';
   import SourceTemplateView from './SourceTemplateView.svelte';
-  import SourceMetricsGrid from './SourceMetricsGrid.svelte';
   import SourceRelatedList from './SourceRelatedList.svelte';
   import SourceLogsTab from './SourceLogsTab.svelte';
   import SourceTracesTab from './SourceTracesTab.svelte';
-  import { RED_MISSING_HINT, formatRequestRate, buildExploreHref, redSourceLabel } from './source-model';
+  import { RED_MISSING_HINT, formatRequestRate, buildExploreHref, catalogHrefForSource, redSourceLabel } from './source-model';
+  import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard';
   import ExternalLink from '@lucide/svelte/icons/external-link';
@@ -58,7 +57,7 @@
 
   const REFRESH_MS = 60_000;
 
-  type TabId = 'resources' | 'overview' | 'hardware' | 'services' | 'hosts' | 'logs' | 'traces' | 'metrics';
+  type TabId = 'resources' | 'overview' | 'hardware' | 'services' | 'hosts' | 'logs' | 'traces';
 
   let maxWidthClass = $state('max-w-7xl');
   let containerPadding = $state('px-6 py-8');
@@ -166,7 +165,6 @@
         { id: 'services', label: `Services${host ? ` (${host.services.length})` : ''}` },
         { id: 'logs', label: 'Logs' },
         { id: 'traces', label: 'Traces' },
-        { id: 'metrics', label: `Metrics${detail ? ` (${detail.metricNames.length})` : ''}` },
       ];
     }
     return [
@@ -174,7 +172,6 @@
       { id: 'hosts', label: `Hosts${service ? ` (${service.hosts.length})` : ''}` },
       { id: 'logs', label: 'Logs' },
       { id: 'traces', label: 'Traces' },
-      { id: 'metrics', label: `Metrics${detail ? ` (${detail.metricNames.length})` : ''}` },
     ];
   });
 
@@ -349,7 +346,6 @@
     {/snippet}
   </PageHeader>
 
-  <MetricsSubNav />
 
   {#if !projectsLoaded || (loading && !detail)}
     <div class="py-16 text-center text-sm text-muted-foreground" role="status">Loading {kind}</div>
@@ -377,6 +373,15 @@
           {tab.label}
         </button>
       {/each}
+      <!-- Every metric of the source lives in the catalog, filtered on it. -->
+      <a
+        class="-mb-px inline-flex items-center gap-1 whitespace-nowrap border-b-2 border-transparent px-0.5 pb-2 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        href={catalogHrefForSource(kind, name)}
+        data-testid="source-catalog-link"
+      >
+        Metrics ({detail.metricNames.length.toLocaleString('en-US')})
+        <ArrowUpRight class="h-3.5 w-3.5" aria-hidden="true" />
+      </a>
     </div>
 
     <div id="source-panel" role="tabpanel" aria-labelledby="source-tab-{activeTab}" class="space-y-4">
@@ -463,16 +468,6 @@
           organizationId={org.id}
           projectIds={detailProjectIds}
           services={host?.services ?? []}
-          from={win.from}
-          to={win.to}
-        />
-      {:else if activeTab === 'metrics'}
-        <SourceMetricsGrid
-          {kind}
-          {name}
-          metricNames={detail.metricNames}
-          organizationId={org.id}
-          projectIds={effectiveProjectIds}
           from={win.from}
           to={win.to}
         />

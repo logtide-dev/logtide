@@ -76,6 +76,19 @@ describe('catalog page', () => {
     expect(h.getCatalog).toHaveBeenCalledWith({ organizationId: 'org1', projectIds: null, search: undefined });
   });
 
+  it('shows only the metrics of a source from ?source=, with a chip to drop the filter', async () => {
+    visit('?source=host:vps-app');
+    render(CatalogPage);
+    await waitFor(() => expect(h.getCatalog).toHaveBeenCalled());
+    expect(h.getCatalog.mock.calls[0][0]).toMatchObject({ source: 'host:vps-app' });
+    const chip = await screen.findByTestId('catalog-source');
+    expect(chip.textContent).toContain('Host');
+    expect(within(chip).getByRole('link', { name: 'vps-app' }).getAttribute('href')).toBe('/dashboard/metrics/hosts/vps-app');
+    await fireEvent.click(within(chip).getByRole('button', { name: 'Show every source' }));
+    await waitFor(() => expect(h.getCatalog.mock.calls.at(-1)?.[0].source).toBeUndefined());
+    expect(screen.queryByTestId('catalog-source')).toBeNull();
+  });
+
   it('derives prefix chips from the data and filters by them', async () => {
     render(CatalogPage);
     await waitFor(() => expect(screen.getAllByTestId('catalog-row')).toHaveLength(4));

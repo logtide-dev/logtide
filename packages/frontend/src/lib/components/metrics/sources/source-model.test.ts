@@ -3,15 +3,15 @@ import type { HostSourceSummary, ServiceSourceSummary } from '@logtide/shared';
 import { decodeExplorerQuery } from '$lib/utils/metrics-explorer-url';
 import {
   buildExploreHref,
-  buildServiceTracesHref,
   formatRequestRate,
-  buildSourceLogsHref,
   filterHostRows,
   filterServiceRows,
   parseKind,
   sortHosts,
   sortServices,
   sourceHref,
+  catalogHrefForSource,
+  parseCatalogSource,
 } from './source-model';
 
 const sig = (value: number | null) => ({ value, unit: '%', spark: [] });
@@ -134,38 +134,14 @@ describe('links', () => {
     expect(q?.projectIds).toBeNull();
   });
 
-  it('builds Logs and Traces links', () => {
-    const scope = { projectIds: ['p1'], range: { kind: 'preset' as const, preset: '6h' as const } };
-    const logs = new URL(buildSourceLogsHref('host', 'vps app', scope), 'http://x');
-    expect(logs.pathname).toBe('/dashboard/logs');
-    expect(logs.searchParams.get('q')).toBe('host:"vps app"');
-    expect(logs.searchParams.get('project')).toBe('p1');
-    const traces = new URL(buildServiceTracesHref('api', scope), 'http://x');
-    expect(traces.pathname).toBe('/dashboard/traces');
-    expect(traces.searchParams.get('service')).toBe('api');
-  });
-});
-
-import { aggregationForCatalogEntry, aggregationsByMetric } from './source-model';
-
-describe('aggregationForCatalogEntry', () => {
-  it('rate for monotonic sums, p95 for histograms, avg otherwise', () => {
-    expect(aggregationForCatalogEntry({ type: 'sum', isMonotonic: true })).toBe('rate');
-    expect(aggregationForCatalogEntry({ type: 'sum', isMonotonic: false })).toBe('avg');
-    expect(aggregationForCatalogEntry({ type: 'sum', isMonotonic: null })).toBe('avg');
-    expect(aggregationForCatalogEntry({ type: 'histogram', isMonotonic: null })).toBe('p95');
-    expect(aggregationForCatalogEntry({ type: 'exp_histogram', isMonotonic: null })).toBe('p95');
-    expect(aggregationForCatalogEntry({ type: 'gauge', isMonotonic: null })).toBe('avg');
-    expect(aggregationForCatalogEntry(undefined)).toBe('avg');
-  });
-
-  it('maps a catalog listing by name', () => {
-    const entry = (name: string, type: string, isMonotonic: boolean | null) =>
-      ({ name, type, isMonotonic }) as Parameters<typeof aggregationsByMetric>[0][number];
-    const map = aggregationsByMetric([entry('a', 'gauge', null), entry('a', 'histogram', null), entry('b', 'sum', true)]);
-    expect(map.get('a')).toBe('p95');
-    expect(map.get('b')).toBe('rate');
-    expect(map.get('zzz')).toBeUndefined();
+  it('links the metric catalog filtered on a source, and reads that filter back', () => {
+    const url = new URL(catalogHrefForSource('host', 'vps app'), 'http://x');
+    expect(url.pathname).toBe('/dashboard/metrics/catalog');
+    expect(url.searchParams.get('source')).toBe('host:vps app');
+    expect(parseCatalogSource(url.searchParams.get('source'))).toEqual({ kind: 'host', name: 'vps app' });
+    expect(parseCatalogSource('service:api:v2')).toEqual({ kind: 'service', name: 'api:v2' });
+    expect(parseCatalogSource('pod:x')).toBeNull();
+    expect(parseCatalogSource(null)).toBeNull();
   });
 });
 

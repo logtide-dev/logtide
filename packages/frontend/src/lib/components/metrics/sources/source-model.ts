@@ -2,10 +2,7 @@ import {
   SOURCE_STATUS_RANK,
   formatMetricValue,
   formatPlainNumber,
-  quoteFieldValue,
   type HostSourceSummary,
-  type MetricCatalogEntry,
-  type MetricTimeAggregation,
   type MetricAttrFilter,
   type MetricSourceKind,
   type MetricSourceStatus,
@@ -14,7 +11,6 @@ import {
 } from '@logtide/shared';
 import type { DataTableSort } from '$lib/components/app/data-table';
 import { defaultExplorerQuery, writeExplorerQuery } from '$lib/utils/metrics-explorer-url';
-import { writeScopeToUrl, type Scope } from '$lib/stores/scope-url';
 
 // Pure helpers of the Metrics Sources pages: kind filter, sorting, filtering
 // and the links that leave a source page.
@@ -59,6 +55,17 @@ export const RED_MISSING_HINT =
 
 export function sourceHref(kind: MetricSourceKind, name: string): string {
   return `/dashboard/metrics/${kind === 'host' ? 'hosts' : 'services'}/${encodeURIComponent(name)}`;
+}
+
+/** `?source=host:<name>` of the catalog; anything else means every source. */
+export function parseCatalogSource(value: string | null | undefined): { kind: MetricSourceKind; name: string } | null {
+  const m = /^(host|service):(.+)$/.exec(value ?? '');
+  return m ? { kind: m[1] as MetricSourceKind, name: m[2] } : null;
+}
+
+/** The metric catalog filtered on one source. */
+export function catalogHrefForSource(kind: MetricSourceKind, name: string): string {
+  return `/dashboard/metrics/catalog?${new URLSearchParams({ source: `${kind}:${name}` }).toString()}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,57 +233,4 @@ export function buildExploreHref(
   };
   const params = writeExplorerQuery(new URLSearchParams(search), query);
   return `/dashboard/metrics/explore?${params.toString()}`;
-}
-
-/** Explorer URL for one metric of a source (Metrics tab cards). */
-export function buildMetricExploreHref(
-  kind: MetricSourceKind,
-  name: string,
-  metricName: string,
-  projectIds: string[] | null,
-  search = '',
-): string {
-  return buildExploreHref(kind, name, [metricName], projectIds, search);
-}
-
-function scopedUrl(path: string, scope: Partial<Scope>, extra: Record<string, string>): string {
-  const url = writeScopeToUrl(new URL(path, 'http://local.invalid'), scope, { explicitAll: true });
-  for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
-  return `${url.pathname}${url.search}`;
-}
-
-
-/** Logs filtered on the host (host:name) or service (service:name) of a source. */
-export function buildSourceLogsHref(kind: MetricSourceKind, name: string, scope: Partial<Scope>): string {
-  return scopedUrl('/dashboard/logs', scope, { q: `${kind === 'host' ? 'host' : 'service'}:${quoteFieldValue(name)}` });
-}
-
-/** Traces page filtered on a service. */
-export function buildServiceTracesHref(service: string, scope: Partial<Scope>): string {
-  return scopedUrl('/dashboard/traces', scope, { service });
-}
-
-/**
- * Time aggregation a source metric card charts by catalog type: rate for
- * monotonic sums, p95 for histograms, avg for everything else (gauges,
- * non-monotonic sums, unknown metrics).
- */
-export function aggregationForCatalogEntry(
-  entry: Pick<MetricCatalogEntry, 'type' | 'isMonotonic'> | null | undefined,
-): MetricTimeAggregation {
-  if (!entry) return 'avg';
-  if (entry.type === 'histogram' || entry.type === 'exp_histogram') return 'p95';
-  if (entry.type === 'sum' && entry.isMonotonic === true) return 'rate';
-  return 'avg';
-}
-
-/** metric name -> aggregation, from a catalog listing. */
-export function aggregationsByMetric(entries: MetricCatalogEntry[]): Map<string, MetricTimeAggregation> {
-  const out = new Map<string, MetricTimeAggregation>();
-  for (const e of entries) {
-    const agg = aggregationForCatalogEntry(e);
-    // a name can exist with several types: a non-default choice wins over avg
-    if (!out.has(e.name) || out.get(e.name) === 'avg') out.set(e.name, agg);
-  }
-  return out;
 }

@@ -16,9 +16,10 @@
   import Timestamp from '$lib/components/app/Timestamp.svelte';
   import { Input } from '$lib/components/ui/input';
   import { Badge } from '$lib/components/ui/badge';
-  import MetricsSubNav from '$lib/components/metrics/v2/MetricsSubNav.svelte';
   import MetricDetailPanel from '$lib/components/metrics/catalog/MetricDetailPanel.svelte';
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
+  import X from '@lucide/svelte/icons/x';
+  import { parseCatalogSource, sourceHref } from '$lib/components/metrics/sources/source-model';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
 
   const maxWidthClass = layoutStore.maxWidthClass;
@@ -37,6 +38,8 @@
   let searchInput = $state(initial.get('search') ?? '');
   let search = $state(initial.get('search') ?? '');
   let prefix = $state(initial.get('prefix') ?? '');
+  /** `host:<name>` or `service:<name>` (from a host or service page): only what that source sent. */
+  let source = $state(parseCatalogSource(initial.get('source')));
   let selectedName = $state<string | null>(initial.get('metric'));
   let sortKey = $state<SortKey>('name');
   let sortDir = $state<'asc' | 'desc'>('asc');
@@ -75,12 +78,13 @@
     const orgId = $currentOrganization?.id;
     const projectIds = scopeIds;
     const term = search;
+    const src = source;
     if (!orgId) return;
     let cancelled = false;
     loading = true;
     error = null;
     metricsV2API
-      .getCatalog({ organizationId: orgId, projectIds, search: term || undefined })
+      .getCatalog({ organizationId: orgId, projectIds, search: term || undefined, source: src ? `${src.kind}:${src.name}` : undefined })
       .then((r) => {
         if (!cancelled) entries = r.metrics;
       })
@@ -145,7 +149,7 @@
 
   // ---- URL state (search, prefix and the open metric) ----
   $effect(() => {
-    const next = { search, prefix, metric: selectedName };
+    const next = { search, prefix, metric: selectedName, source: source ? `${source.kind}:${source.name}` : null };
     untrack(() => {
       const url = new URL(page.url);
       for (const [k, v] of Object.entries(next)) {
@@ -167,9 +171,8 @@
 </svelte:head>
 
 <div class="container mx-auto {$containerPadding} {$maxWidthClass}">
-  <PageHeader title="Metrics" description="Every metric your sources send, with its type, unit and attributes" />
+  <PageHeader title="Metric catalog" description="Every metric your sources send, with its type, unit and attributes" />
 
-  <div class="mb-4"><MetricsSubNav search={scopeSearch.toString()} /></div>
 
   <div class="mb-4">
     <ScopeBar mode="multi" {projects} showTime={false} hideZoneOnMobile />
@@ -183,6 +186,23 @@
       aria-label="Search metrics"
       bind:value={searchInput}
     />
+    {#if source}
+      <span
+        class="inline-flex items-center gap-1 rounded-full border border-primary bg-primary/10 py-0.5 pl-2.5 pr-1 text-xs"
+        data-testid="catalog-source"
+      >
+        <span class="text-muted-foreground">{source.kind === 'host' ? 'Host' : 'Service'}</span>
+        <a class="font-medium hover:underline" href={sourceHref(source.kind, source.name)}>{source.name}</a>
+        <button
+          type="button"
+          class="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-label="Show every source"
+          onclick={() => (source = null)}
+        >
+          <X class="h-3.5 w-3.5" />
+        </button>
+      </span>
+    {/if}
     <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by prefix">
       <button
         type="button"
@@ -212,10 +232,10 @@
     <div class="py-16 text-center text-sm text-muted-foreground" role="status">Loading metrics</div>
   {:else if rows.length === 0}
     <EmptyState
-      variant={search || prefix ? 'no-results' : 'no-data'}
-      title={search || prefix ? 'No metrics match' : 'No metrics yet'}
-      description={search || prefix
-        ? 'Try another search or clear the prefix filter.'
+      variant={search || prefix || source ? 'no-results' : 'no-data'}
+      title={search || prefix || source ? 'No metrics match' : 'No metrics yet'}
+      description={search || prefix || source
+        ? 'Try another search or clear the filters.'
         : 'Metrics show up here as soon as a source sends them.'}
     />
   {:else}

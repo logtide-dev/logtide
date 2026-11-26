@@ -107,16 +107,13 @@ beforeEach(() => {
 });
 
 describe('service page', () => {
-  it('shows the five service tabs with Overview first', async () => {
+  it('shows the service tabs with Overview first, and links its metrics to the catalog', async () => {
     render(Page);
     const tablist = await screen.findByRole('tablist');
-    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual([
-      'Overview',
-      'Hosts (1)',
-      'Logs',
-      'Traces',
-      'Metrics (2)',
-    ]);
+    expect(within(tablist).getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['Overview', 'Hosts (1)', 'Logs', 'Traces']);
+    const catalog = screen.getByTestId('source-catalog-link');
+    expect(catalog.textContent).toContain('Metrics (2)');
+    expect(new URL(catalog.getAttribute('href') ?? '', 'http://x').searchParams.get('source')).toBe('service:checkout-api');
     expect(screen.getByTestId('status-reason').textContent).toContain('Error rate 6.2%');
   });
 

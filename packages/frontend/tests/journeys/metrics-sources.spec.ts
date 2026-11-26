@@ -102,7 +102,7 @@ test.describe('Metrics sources journey', () => {
 
   test('lists both hosts, worst first, and opens a host with its Resources charts', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/metrics`);
-    await expect(page.getByRole('heading', { name: 'Metrics', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Hosts & services', level: 1 })).toBeVisible();
 
     const hostsSection = page.getByTestId('hosts-section');
     await expect(hostsSection).toBeVisible({ timeout: 30000 });

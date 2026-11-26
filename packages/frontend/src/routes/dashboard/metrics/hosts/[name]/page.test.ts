@@ -138,11 +138,14 @@ describe('host page', () => {
     expect(info.textContent).toContain('project production');
   });
 
-  it('shows the six host tabs with counts and Resources first', async () => {
+  it('shows the host tabs with counts and Resources first, and links its metrics to the catalog', async () => {
     render(Page);
     await screen.findByRole('tablist');
     const tabs = within(screen.getByRole('tablist')).getAllByRole('tab').map((t) => t.textContent?.trim());
-    expect(tabs).toEqual(['Resources', 'Hardware', 'Services (2)', 'Logs', 'Traces', 'Metrics (3)']);
+    expect(tabs).toEqual(['Resources', 'Hardware', 'Services (2)', 'Logs', 'Traces']);
+    const catalog = screen.getByTestId('source-catalog-link');
+    expect(catalog.textContent).toContain('Metrics (3)');
+    expect(new URL(catalog.getAttribute('href') ?? '', 'http://x').searchParams.get('source')).toBe('host:vps-app');
     expect(screen.getByRole('tab', { name: 'Resources' }).getAttribute('aria-selected')).toBe('true');
   });
 
@@ -292,17 +295,11 @@ describe('host page', () => {
     expect(tab.dataset.name).toBe('vps-app');
     expect(tab.dataset.projects).toBe('p1');
   });
-  it('metrics tab shows 12 cards first and loads more on demand', async () => {
+  it('an old ?tab=metrics link opens Resources', async () => {
     setUrl('?tab=metrics');
-    const metricNames = Array.from({ length: 30 }, (_, i) => `m.metric.${String(i).padStart(2, '0')}`);
-    h.getHostSource.mockResolvedValue(detail({ metricNames }));
     render(Page);
-    expect(await screen.findAllByTestId('metric-card')).toHaveLength(12);
-    expect(h.query).toHaveBeenCalledTimes(12);
-    await fireEvent.click(screen.getByRole('button', { name: 'Show 12 more' }));
-    expect(screen.getAllByTestId('metric-card')).toHaveLength(24);
-    const explore = screen.getByRole('link', { name: 'Open m.metric.00 in Explore' });
-    expect(explore.getAttribute('href')).toContain('/dashboard/metrics/explore?q=');
+    await screen.findByRole('tablist');
+    expect(screen.getByRole('tab', { name: 'Resources' }).getAttribute('aria-selected')).toBe('true');
   });
 
   it('shows an error with a retry when the host cannot be loaded', async () => {
