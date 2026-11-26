@@ -16,6 +16,7 @@ import {
   sourceMetricNames,
   type SourcesContext,
 } from './service.js';
+import { getSourceTraceSeries } from './traces.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -121,6 +122,15 @@ export async function sourcesRoutes(fastify: FastifyInstance) {
     const detail = await getServiceDetail(ctx, params.data.name);
     if (!detail) return reply.status(404).send({ error: 'Service not found' });
     return detail;
+  });
+
+  // Requests, errors and p95 over time from the entry spans of a host or service.
+  fastify.get('/:kind/:name/traces', async (request: any, reply) => {
+    const params = customizeParamsSchema.safeParse(request.params);
+    if (!params.success) return reply.status(400).send({ error: 'Invalid source' });
+    const ctx = await readContext(request, reply);
+    if (!ctx) return;
+    return getSourceTraceSeries(ctx, params.data.kind, params.data.name);
   });
 
   fastify.post('/:kind/:name/customize', async (request: any, reply) => {

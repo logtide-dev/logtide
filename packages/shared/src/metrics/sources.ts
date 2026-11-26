@@ -14,6 +14,9 @@
 //        -> HostSourceDetail (404 when the host sent nothing in the window)
 //   GET  /api/v1/metrics/sources/service/:name?organizationId&projectIds&from&to
 //        -> ServiceSourceDetail
+//   GET  /api/v1/metrics/sources/:kind/:name/traces?organizationId&projectIds&from&to
+//        -> SourceTraceSeries (requests, errors and p95 of the entry spans of
+//           the source over time: a host by the resource host.name of its spans)
 //   POST /api/v1/metrics/sources/:kind/:name/customize
 //        body { organizationId, projectIds?: string[] | null }
 //        -> { dashboardId } (a new dashboard from the kind's template, its
@@ -116,4 +119,21 @@ export interface HostSourceDetail extends HostSourceSummary {
 
 export interface ServiceSourceDetail extends ServiceSourceSummary {
   metricNames: string[];
+}
+
+/** One bucket of entry spans (server and consumer spans: one per request handled). */
+export interface SourceTraceBucket {
+  /** ISO start of the bucket. */
+  time: string;
+  requests: number;
+  errors: number;
+  /** p95 duration in ms, null without requests. */
+  p95: number | null;
+}
+
+export interface SourceTraceSeries {
+  bucketSeconds: number;
+  /** Every bucket of the window, oldest first; empty buckets have 0 requests. */
+  buckets: SourceTraceBucket[];
+  totals: { requests: number; errors: number };
 }

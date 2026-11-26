@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getServiceHealthStats: vi.fn(),
   getOperationStats: vi.fn(),
   querySpans: vi.fn(),
+  getSpanTimeseries: vi.fn(),
   create: vi.fn(),
   assertWithinLimit: vi.fn(),
   hardwareRows: [] as any[],
@@ -44,6 +45,7 @@ vi.mock('../../../../database/reservoir.js', () => ({
     getServiceHealthStats: mocks.getServiceHealthStats,
     getOperationStats: mocks.getOperationStats,
     querySpans: mocks.querySpans,
+    getSpanTimeseries: mocks.getSpanTimeseries,
   },
 }));
 vi.mock('../../../../database/index.js', () => {
@@ -263,6 +265,69 @@ describe('GET /sources', () => {
     const body = (await f.inject({ method: 'GET', url: `/sources${q()}` })).json();
     expect(body).toEqual({ hosts: [], services: [] });
     expect(mocks.getMetricSources).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /sources/:kind/:name/traces', () => {
+  const window = (fromIso: string, toIso: string) => `&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
+
+  it('host: entry spans with the resource host.name, buckets filled over the window', async () => {
+    mocks.getSpanTimeseries.mockResolvedValue([
+      { time: new Date('2026-11-26T10:05:00.000Z'), spanCount: 10, errorCount: 1, p50: 20, p95: 80, p99: 120 },
+    ]);
+    const f = await app();
+    const res = await f.inject({
+      method: 'GET',
+      url: `/sources/host/vps-app/traces${q(window('2026-11-26T10:00:00.000Z', '2026-11-26T11:00:00.000Z'))}`,
+    });
+    expect(res.statusCode).toBe(200);
+    const call = mocks.getSpanTimeseries.mock.calls[0][0];
+    expect(call).toMatchObject({
+      projectIds: [P1],
+      bucketSeconds: 60,
+      kinds: ['SERVER', 'CONSUMER'],
+      attributeFilters: [{ key: 'resource.host.name', op: 'equals', value: 'vps-app', include_missing: false }],
+    });
+    expect(call.serviceName).toBeUndefined();
+    const body = res.json();
+    expect(body.bucketSeconds).toBe(60);
+    expect(body.buckets).toHaveLength(61);
+    expect(body.buckets[0]).toEqual({ time: '2026-11-26T10:00:00.000Z', requests: 0, errors: 0, p95: null });
+    expect(body.buckets[5]).toEqual({ time: '2026-11-26T10:05:00.000Z', requests: 10, errors: 1, p95: 80 });
+    expect(body.totals).toEqual({ requests: 10, errors: 1 });
+  });
+
+  it('service: filters by service name, wider windows get wider buckets', async () => {
+    mocks.getSpanTimeseries.mockResolvedValue([]);
+    const f = await app();
+    const res = await f.inject({
+      method: 'GET',
+      url: `/sources/service/checkout-api/traces${q(window('2026-11-25T11:00:00.000Z', '2026-11-26T11:00:00.000Z'))}`,
+    });
+    expect(res.statusCode).toBe(200);
+    const call = mocks.getSpanTimeseries.mock.calls[0][0];
+    expect(call.serviceName).toBe('checkout-api');
+    expect(call.attributeFilters).toBeUndefined();
+    expect(call.bucketSeconds).toBe(1800);
+    expect(res.json().totals).toEqual({ requests: 0, errors: 0 });
+  });
+
+  it('rejects an unknown kind and other organizations', async () => {
+    const f = await app();
+    expect((await f.inject({ method: 'GET', url: `/sources/pod/x/traces${q()}` })).statusCode).toBe(400);
+    expect((await f.inject({ method: 'GET', url: `/sources/host/x/traces?organizationId=${OTHER_ORG}` })).statusCode).toBe(403);
+    expect(mocks.getSpanTimeseries).not.toHaveBeenCalled();
+  });
+});
+
+describe('trace bucket rules', () => {
+  it('picks the smallest step within 60 buckets, a day at most', async () => {
+    const { pickTraceBucketSeconds } = await import('../../../../modules/metrics/sources/traces.js');
+    expect(pickTraceBucketSeconds(15 * 60_000)).toBe(60);
+    expect(pickTraceBucketSeconds(3_600_000)).toBe(60);
+    expect(pickTraceBucketSeconds(6 * 3_600_000)).toBe(600);
+    expect(pickTraceBucketSeconds(7 * 86_400_000)).toBe(10800);
+    expect(pickTraceBucketSeconds(365 * 86_400_000)).toBe(86400);
   });
 });
 
