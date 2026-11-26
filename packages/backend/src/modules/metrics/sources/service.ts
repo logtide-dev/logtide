@@ -143,6 +143,8 @@ async function runSignal(
   ctx: SourcesContext,
   def: SourceSignalDef,
   hostNames: string[],
+  /** hostNames is not every host of the scope (a single host page). */
+  subset: boolean,
 ): Promise<SignalMap> {
   const out: SignalMap = new Map();
   const interval = pickInterval(ctx.to.getTime() - ctx.from.getTime(), SOURCE_SPARK_POINTS);
@@ -166,9 +168,11 @@ async function runSignal(
           metricName: def.metricName,
           aggregation: def.aggregation,
           spaceAggregation: def.spaceAggregation,
+          // With `limit` an unscoped query keeps the busiest hosts of the scope, so a
+          // subset (one host page) or a chunk must name its hosts.
           filters: [
             ...(def.filters ?? []),
-            ...(chunks.length > 1 ? [{ scope: 'resource' as const, key: 'host.name', op: 'in' as const, values: chunk }] : []),
+            ...(subset || chunks.length > 1 ? [{ scope: 'resource' as const, key: 'host.name', op: 'in' as const, values: chunk }] : []),
           ],
           groupBy: [{ scope: 'resource', key: 'host.name' }],
           limit: chunk.length,
@@ -189,9 +193,13 @@ async function runSignal(
   return out;
 }
 
-async function loadHostSignals(ctx: SourcesContext, hostNames: string[]): Promise<Record<HostSignal, SignalMap>> {
+async function loadHostSignals(
+  ctx: SourcesContext,
+  hostNames: string[],
+  subset: boolean,
+): Promise<Record<HostSignal, SignalMap>> {
   const keys = Object.keys(HOST_SIGNALS) as HostSignal[];
-  const maps = await Promise.all(keys.map((k) => runSignal(ctx, HOST_SIGNALS[k], hostNames)));
+  const maps = await Promise.all(keys.map((k) => runSignal(ctx, HOST_SIGNALS[k], hostNames, subset)));
   return Object.fromEntries(keys.map((k, i) => [k, maps[i]])) as Record<HostSignal, SignalMap>;
 }
 
@@ -263,7 +271,7 @@ export async function listHosts(ctx: SourcesContext, only?: string): Promise<Hos
   const names = sources.map((s) => s.value);
   const [real, signals, hardware] = await Promise.all([
     realServiceNames(ctx),
-    loadHostSignals(ctx, names),
+    loadHostSignals(ctx, names, only !== undefined),
     loadHardware(ctx, names),
   ]);
   const now = ref(ctx);

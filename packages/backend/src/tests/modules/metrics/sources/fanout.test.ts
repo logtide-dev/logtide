@@ -299,6 +299,29 @@ describe('large fleets (N1)', () => {
     expect(list.every((h) => h.cpu.value === 7)).toBe(true);
   });
 
+  it('a single host page reads the signals of that host, not the busiest one', async () => {
+    // getMetricSources returns every host; the page asks for one of them.
+    mocks.getMetricSources.mockResolvedValue({ sources: ['busy', 'quiet', 'idle'].map((h) => metricSource(h)) });
+    const cpu: Record<string, number> = { busy: 90, quiet: 4, idle: 1 };
+    // Like the engine: without a host filter, limit N keeps the N highest series.
+    mocks.run.mockImplementation(async (q: any) => {
+      const filter = q.queries[0].filters.find((f: any) => f.op === 'in' && f.key === 'host.name');
+      const hosts = (filter ? (filter.values as string[]) : Object.keys(cpu))
+        .sort((a, b) => cpu[b] - cpu[a])
+        .slice(0, q.queries[0].limit);
+      return {
+        series: hosts.map((h) => ({ queryId: 'A', labels: { 'resource.host.name': h }, points: [{ t: 1, v: cpu[h] }], stats: {} })),
+        interval: '15m',
+        queries: [],
+        warnings: [],
+      };
+    });
+    const [quiet] = await listHosts(ctx, 'quiet');
+    expect(quiet.name).toBe('quiet');
+    expect(quiet.cpu.value).toBe(4);
+    expect(quiet.status).toBe('ok');
+  });
+
   it('service metric RED asks for the raw series cap too', async () => {
     const names = Array.from({ length: 80 }, (_, i) => `http-${i}`);
     mocks.getMetricSources.mockResolvedValue({ sources: names.map((n) => metricSource(n)) });
