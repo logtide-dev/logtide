@@ -2,10 +2,11 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { getHardwareHost } from '$lib/api/hardware';
+  import { hardwareHostHref } from '$lib/components/hardware/hardware-meta';
   import EmptyState from '$lib/components/app/EmptyState.svelte';
   import Button from '$lib/components/ui/button/button.svelte';
 
-  // The hardware host page moved to the host page of Metrics (Hardware tab).
+  // The hardware host detail lives in the Hardware tab of the host page (1.8).
   // Only the API knows the host name behind an id, so this redirect is client side.
   let error = $state<string | null>(null);
   const hostId = $derived(page.params.id);
@@ -18,12 +19,12 @@
     getHardwareHost(id)
       .then((res) => {
         if (cancelled) return;
-        const params = new URLSearchParams(page.url.search);
-        params.set('tab', 'hardware');
-        if (res.host.projectId && !params.has('project')) params.set('project', res.host.projectId);
-        void goto(`/dashboard/metrics/hosts/${encodeURIComponent(res.host.hostName)}?${params.toString()}`, {
-          replaceState: true,
-        });
+        // Same target as a row of the Hardware list, keeping the rest of the query.
+        const target = new URL(hardwareHostHref(res.host), page.url);
+        for (const [key, value] of new URLSearchParams(page.url.search)) {
+          if (!target.searchParams.has(key)) target.searchParams.append(key, value);
+        }
+        void goto(`${target.pathname}${target.search}`, { replaceState: true });
       })
       .catch((err) => {
         if (!cancelled) error = err instanceof Error ? err.message : 'Could not load this host';
@@ -42,7 +43,7 @@
   {#if error}
     <EmptyState variant="error" title="Could not open this host" description={error}>
       {#snippet actions()}
-        <Button variant="outline" size="sm" href="/dashboard/metrics?kind=host">Back to hosts</Button>
+        <Button variant="outline" size="sm" href="/dashboard/hardware">Back to Hardware</Button>
       {/snippet}
     </EmptyState>
   {:else}

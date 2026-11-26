@@ -135,8 +135,10 @@ test.describe('Metrics sources journey', () => {
     await expect(page.getByRole('link', { name: 'Open system.cpu.utilization.total in Explore' })).toBeVisible();
   });
 
-  test('the old Hardware URL lands on the Metrics sources', async ({ page }) => {
+  test('Hardware is its own page and lights up in the sidebar', async ({ page }) => {
     await page.goto(`${TEST_FRONTEND_URL}/dashboard/hardware`);
-    await expect(page).toHaveURL(/\/dashboard\/metrics\?.*kind=host/);
+    await expect(page).toHaveURL(/\/dashboard\/hardware$/);
+    await expect(page.getByRole('heading', { name: 'Hardware', level: 1 })).toBeVisible();
+    await expect(page.locator('[data-nav-item="hardware"][aria-current="page"]').first()).toBeVisible();
   });
 });

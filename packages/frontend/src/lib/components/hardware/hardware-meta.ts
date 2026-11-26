@@ -92,6 +92,15 @@ export function sortHosts<T extends Pick<HardwareHostSummary, 'status' | 'hostNa
   );
 }
 
+/**
+ * The Hardware tab of the host page in Metrics (1.8). `hw` picks this hardware
+ * host when the name reports to several projects, without narrowing the scope.
+ */
+export function hardwareHostHref(host: Pick<HardwareHostSummary, 'id' | 'hostName'>): string {
+  const params = new URLSearchParams({ tab: 'hardware', hw: host.id });
+  return `/dashboard/metrics/hosts/${encodeURIComponent(host.hostName)}?${params.toString()}`;
+}
+
 export type HardwareStatusFilter = 'all' | 'ok' | 'warning' | 'critical' | 'stale';
 
 export function filterHosts<T extends Pick<HardwareHostSummary, 'status'>>(
