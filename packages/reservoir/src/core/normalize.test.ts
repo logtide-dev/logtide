@@ -7,6 +7,7 @@ import {
   normalizeDiscoverParams,
   normalizeOperationStatsParams,
   normalizeSpanQueryParams,
+  normalizeSpanTimeseriesParams,
   normalizeTraceQueryParams,
   normalizeListSessionsParams,
 } from './normalize.js';
@@ -229,4 +230,43 @@ it('exports the legacy conversion from the package index', async () => {
   const r = await import('../index.js');
   expect(r.legacySearchToTextQuery('a b')).toEqual({ all: [w('a'), w('b')], anyOf: [], none: [] });
   expect(r.isEmptyTextQuery({ all: [], anyOf: [], none: [] })).toBe(true);
+});
+
+describe('normalizeSpanTimeseriesParams', () => {
+  const ts = { projectIds: ['p'], from: new Date(0), to: new Date(3_600_000) };
+
+  it('keeps a calendar bucket and the legacy shape unchanged', () => {
+    expect(normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', serviceName: 'api' })).toEqual({ ...ts, bucket: 'hour', serviceName: 'api' });
+    expect(normalizeSpanTimeseriesParams({ ...ts, bucket: 'day' })).toEqual({ ...ts, bucket: 'day' });
+  });
+
+  it('bucketSeconds is an integer from 60 to 86,400 and overrides bucket', () => {
+    expect(normalizeSpanTimeseriesParams({ ...ts, bucket: 'day', bucketSeconds: 60 })).toEqual({ ...ts, bucketSeconds: 60 });
+    expect(normalizeSpanTimeseriesParams({ ...ts, bucketSeconds: 86_400 }).bucketSeconds).toBe(86_400);
+    for (const bucketSeconds of [59, 86_401, 90.5, 0, -60, Number.NaN, '300' as never]) {
+      expect(() => normalizeSpanTimeseriesParams({ ...ts, bucketSeconds }), String(bucketSeconds)).toThrow(RangeError);
+    }
+    expect(() => normalizeSpanTimeseriesParams({ ...ts, bucketSeconds: 30 })).toThrow('bucketSeconds must be an integer from 60 to 86,400 (got 30)');
+  });
+
+  it('needs bucket or bucketSeconds', () => {
+    expect(() => normalizeSpanTimeseriesParams(ts)).toThrow(/bucket must be 'hour' or 'day'/);
+    expect(() => normalizeSpanTimeseriesParams({ ...ts, bucket: 'week' as never })).toThrow(RangeError);
+  });
+
+  it('kinds is a non-empty list of known kinds; empty service and filters are dropped', () => {
+    expect(normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', kinds: ['SERVER', 'CONSUMER'] }).kinds).toEqual(['SERVER', 'CONSUMER']);
+    expect(() => normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', kinds: [] })).toThrow(RangeError);
+    expect(() => normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', kinds: ['NOPE' as never] })).toThrow('Unknown span kind NOPE');
+    const out = normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', serviceName: '', attributeFilters: [] });
+    expect('serviceName' in out).toBe(false);
+    expect('attributeFilters' in out).toBe(false);
+    expect(normalizeSpanTimeseriesParams({ ...ts, bucket: 'hour', serviceName: ['a', 'b'] }).serviceName).toEqual(['a', 'b']);
+  });
+
+  it('never mutates its input', () => {
+    const input = { ...ts, bucket: 'hour' as const, bucketSeconds: 300, serviceName: '' };
+    normalizeSpanTimeseriesParams(input);
+    expect(input).toEqual({ ...ts, bucket: 'hour', bucketSeconds: 300, serviceName: '' });
+  });
 });

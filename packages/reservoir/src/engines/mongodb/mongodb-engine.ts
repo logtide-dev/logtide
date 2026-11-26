@@ -95,6 +95,7 @@ import {
   normalizeHistogramParams,
   normalizeListSessionsParams,
   normalizeOperationStatsParams,
+  normalizeSpanTimeseriesParams,
 } from '../../core/normalize.js';
 import { decodeSessionCursor } from '../../core/aggregation-helpers.js';
 import {
@@ -130,6 +131,7 @@ import {
   latencyHistogramPipeline,
   operationStatsPipeline,
   spanSort,
+  spanTimeseriesPipeline,
   traceMatchPipeline,
   traceSort,
   type EntryMode,
@@ -1164,34 +1166,11 @@ export class MongoDBEngine extends StorageEngine {
   }
 
   async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
-    const { projectIds, from, to, bucket, serviceName } = params;
-    if (projectIds.length === 0) return [];
+    // Same validation as the client, for direct engine calls.
+    const normalized = normalizeSpanTimeseriesParams(params);
+    if (normalized.projectIds.length === 0) return [];
 
-    const col = this.spansCol();
-    const match: Document = {
-      project_id: { $in: projectIds },
-      start_time: { $gte: from, $lte: to },
-    };
-    if (serviceName) match.service_name = serviceName;
-
-    // $dateTrunc (Mongo 5.0+) for the bucket; $percentile (Mongo 7.0+, approximate
-    // t-digest) for the latency percentiles - same convention as getServiceHealthStats.
-    const pipeline: Document[] = [
-      { $match: match },
-      {
-        $group: {
-          _id: { $dateTrunc: { date: '$start_time', unit: bucket, binSize: 1 } },
-          span_count: { $sum: 1 },
-          error_count: { $sum: { $cond: [{ $eq: ['$status_code', 'ERROR'] }, 1, 0] } },
-          p: {
-            $percentile: { input: '$duration_ms', p: [0.5, 0.95, 0.99], method: 'approximate' },
-          },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ];
-
-    const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
+    const rows = await this.spansCol().aggregate(spanTimeseriesPipeline(normalized), { ...ctxOpts() }).toArray();
 
     return rows.map((r) => {
       const p = Array.isArray(r.p) ? r.p : [];

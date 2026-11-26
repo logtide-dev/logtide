@@ -10,6 +10,7 @@ import {
   operationStatsSql,
   routeAttributeFilters,
   spanOrderSql,
+  spanTimeseriesSql,
   traceOrderSql,
   traceSpanMatchSql,
 } from './apm-queries.js';
@@ -246,5 +247,67 @@ describe('clickhouse operation stats and latency engine flow', () => {
     expect((await roots.engine.getLatencyHistogram(statsBase)).counts[0]).toBe(1);
     expect(roots.calls()).toHaveLength(2);
     expect(roots.calls()[1].query).toContain("(parent_span_id IS NULL OR parent_span_id = '')");
+  });
+});
+
+describe('clickhouse span timeseries', () => {
+  const tsBase = { projectIds: ['p1', 'p2'], from, to };
+
+  it('a calendar bucket keeps the hour and day truncation', () => {
+    const hour = spanTimeseriesSql({ ...tsBase, bucket: 'hour' });
+    expect(hour.query).toContain('toStartOfHour(start_time) AS bucket');
+    expect(hour.query).toContain('GROUP BY bucket ORDER BY bucket ASC');
+    expect(hour.query).toContain('project_id IN {p_pids:Array(String)}');
+    expect(hour.query).toContain('start_time >= {p_from:DateTime64(3)}');
+    expect(hour.query).not.toContain('kind IN');
+    expect(spanTimeseriesSql({ ...tsBase, bucket: 'day' }).query).toContain('toStartOfDay(start_time) AS bucket');
+  });
+
+  it('bucketSeconds buckets on epoch milliseconds, bound as a parameter', () => {
+    const native = spanTimeseriesSql({ ...tsBase, bucketSeconds: 300 });
+    expect(native.query).toContain('intDiv(toUnixTimestamp64Milli(start_time), {p_bms:Int64}) * {p_bms:Int64} AS bucket_ms');
+    expect(native.query).toContain('GROUP BY bucket_ms ORDER BY bucket_ms ASC');
+    expect(native.parameters![0]).toMatchObject({ p_pids: ['p1', 'p2'], p_bms: 300_000 });
+  });
+
+  it('service, kinds and attribute filters reuse the span predicates', () => {
+    const native = spanTimeseriesSql({
+      ...tsBase,
+      bucketSeconds: 60,
+      serviceName: ['api', 'worker'],
+      kinds: ['SERVER', 'CONSUMER'],
+      attributeFilters: [eq('resource.host.name', 'vps-app'), eq('http.method', 'GET')],
+    });
+    expect(native.query).toContain('service_name IN {p_service:Array(String)}');
+    expect(native.query).toContain('kind IN {p_kinds:Array(String)}');
+    expect(native.query).toContain('JSONHas(resource_attributes, {p_rfk0:String})');
+    expect(native.query).toContain('JSONHas(attributes, {p_afk0:String})');
+    expect(native.parameters![0]).toMatchObject({
+      p_service: ['api', 'worker'],
+      p_kinds: ['SERVER', 'CONSUMER'],
+      p_rfk0: 'host.name',
+      p_afk0: 'http.method',
+    });
+    const single = spanTimeseriesSql({ ...tsBase, bucket: 'hour', serviceName: 'api' });
+    expect(single.query).toContain('service_name = {p_service:String}');
+    expect(single.parameters![0]).toMatchObject({ p_service: 'api' });
+  });
+
+  it('the engine validates, runs one query and maps both bucket columns', async () => {
+    const { engine, calls } = stubEngine([
+      [{ bucket_ms: '1767607200000', span_count: '3', error_count: '1', p50: 10, p95: 20, p99: 30 }],
+      [{ bucket: '2026-01-05 10:00:00', span_count: '2', error_count: '0', p50: 5, p95: null, p99: null }],
+    ]);
+    expect(await engine.getSpanTimeseries({ ...tsBase, bucketSeconds: 300 })).toEqual([
+      { time: new Date('2026-01-05T10:00:00.000Z'), spanCount: 3, errorCount: 1, p50: 10, p95: 20, p99: 30 },
+    ]);
+    expect(await engine.getSpanTimeseries({ ...tsBase, bucket: 'hour' })).toEqual([
+      { time: new Date('2026-01-05T10:00:00.000Z'), spanCount: 2, errorCount: 0, p50: 5, p95: null, p99: null },
+    ]);
+    expect(calls()).toHaveLength(2);
+    await expect(engine.getSpanTimeseries({ ...tsBase, bucketSeconds: 30 })).rejects.toThrow(/bucketSeconds/);
+    await expect(engine.getSpanTimeseries({ ...tsBase, bucket: 'hour', kinds: [] })).rejects.toThrow(/kind/);
+    expect(await engine.getSpanTimeseries({ ...tsBase, projectIds: [], bucket: 'hour' })).toEqual([]);
+    expect(calls()).toHaveLength(2);
   });
 });

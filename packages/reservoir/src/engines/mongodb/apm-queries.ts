@@ -19,6 +19,7 @@ import type {
   OperationStatsParams,
   SpanKind,
   SpanQueryParams,
+  SpanTimeseriesParams,
   TraceQueryParams,
 } from '../../core/types.js';
 import { compileJsonFilters } from './json-path.js';
@@ -375,4 +376,45 @@ export function assembleLatencyHistogram(rows: Document[]): LatencyHistogramResu
   const counts = new Array<number>(LATENCY_HISTOGRAM_BOUNDS_MS.length + 1).fill(0);
   for (const r of rows) counts[toNumber(r._id)] += toNumber(r.n);
   return { bounds: [...LATENCY_HISTOGRAM_BOUNDS_MS], counts };
+}
+
+/**
+ * getSpanTimeseries over spans starting inside `[from, to]` of the projects,
+ * with the optional service, kinds and attribute filters (the querySpans
+ * clauses). `bucketSeconds` buckets start at multiples of it since the Unix
+ * epoch; otherwise `$dateTrunc` (MongoDB 5.0+) truncates to the hour or day.
+ * Latency percentiles use the approximate `$percentile` (MongoDB 7.0+), as
+ * getServiceHealthStats does. Expects params validated by
+ * normalizeSpanTimeseriesParams.
+ */
+export function spanTimeseriesPipeline(params: SpanTimeseriesParams): Document[] {
+  const match: Document = {
+    project_id: { $in: [...params.projectIds] },
+    start_time: { $gte: params.from, $lte: params.to },
+  };
+  if (Array.isArray(params.serviceName)) match.service_name = { $in: [...params.serviceName] };
+  else if (params.serviceName) match.service_name = params.serviceName;
+  if (params.kinds) match.kind = { $in: [...params.kinds] };
+  const clauses = attributeClauses(params.attributeFilters);
+  if (clauses.length > 0) match.$and = clauses;
+
+  let bucket: Document;
+  if (params.bucketSeconds !== undefined) {
+    const ms = { $toLong: '$start_time' };
+    bucket = { $toDate: { $subtract: [ms, { $mod: [ms, params.bucketSeconds * 1000] }] } };
+  } else {
+    bucket = { $dateTrunc: { date: '$start_time', unit: params.bucket === 'day' ? 'day' : 'hour', binSize: 1 } };
+  }
+  return [
+    { $match: match },
+    {
+      $group: {
+        _id: bucket,
+        span_count: { $sum: 1 },
+        error_count: ERROR_COUNT,
+        p: { $percentile: { input: '$duration_ms', p: PERCENTILES, method: 'approximate' } },
+      },
+    },
+    { $sort: { _id: 1 } },
+  ];
 }

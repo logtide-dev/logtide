@@ -89,6 +89,8 @@ import {
   type SpanQueryParams,
   type SpanQueryResult,
   type SpanRecord,
+  type SpanTimeseriesBucket,
+  type SpanTimeseriesParams,
   type StoredLogRecord,
   type TextQuery,
   type TraceQueryParams,
@@ -736,6 +738,52 @@ export class ReferenceEngine {
     });
     rows.sort((a, b) => b.count - a.count || compareByteOrder(a.service, b.service) || compareByteOrder(a.operation, b.operation));
     return rows.slice(0, params.limit ?? OPERATION_STATS_DEFAULT_LIMIT);
+  }
+
+  /**
+   * Spans starting inside [from, to] of the projects, filtered like
+   * querySpans (service, kinds, attribute filters), per bucket: epoch
+   * multiples of `bucketSeconds`, else the UTC start of the hour or day.
+   */
+  async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
+    const services = asList(params.serviceName);
+    const kinds = params.kinds;
+    const bucketStart = (t: number): number => {
+      if (params.bucketSeconds !== undefined) {
+        const ms = params.bucketSeconds * 1000;
+        return Math.floor(t / ms) * ms;
+      }
+      const d = new Date(t);
+      if (params.bucket === 'day') return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours());
+    };
+    const groups = new Map<number, { durations: number[]; errors: number }>();
+    for (const s of this.spans) {
+      const start = s.startTime.getTime();
+      if (!params.projectIds.includes(s.projectId)) continue;
+      if (start < params.from.getTime() || start > params.to.getTime()) continue;
+      if (services && !services.includes(s.serviceName)) continue;
+      if (kinds && (s.kind === undefined || !kinds.includes(s.kind))) continue;
+      if (!spanFiltersMatch(s, params.attributeFilters)) continue;
+      const key = bucketStart(start);
+      const group = groups.get(key) ?? { durations: [], errors: 0 };
+      group.durations.push(s.durationMs);
+      if (s.statusCode === 'ERROR') group.errors++;
+      groups.set(key, group);
+    }
+    return [...groups.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([time, g]) => {
+        const sorted = [...g.durations].sort((a, b) => a - b);
+        return {
+          time: new Date(time),
+          spanCount: sorted.length,
+          errorCount: g.errors,
+          p50: percentileCont(sorted, 0.5),
+          p95: percentileCont(sorted, 0.95),
+          p99: percentileCont(sorted, 0.99),
+        };
+      });
   }
 
   // --------------------------------------------------------------------------

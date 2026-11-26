@@ -1455,6 +1455,37 @@ describe('TimescaleEngine', () => {
       const sql = mockQuery.mock.calls[0][0] as string;
       expect(sql).toContain("date_trunc('day', start_time)");
     });
+
+    it('maps epoch-second buckets of bucketSeconds and validates before querying', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [{ bucket_s: '1767607200', span_count: 3, error_count: 1, p50: 10, p95: 20, p99: 30 }],
+      });
+      await engine.connect();
+      const result = await engine.getSpanTimeseries({
+        projectIds: ['proj-1'],
+        from: new Date('2026-01-05T10:00:00Z'),
+        to: new Date('2026-01-05T11:00:00Z'),
+        bucketSeconds: 300,
+        kinds: ['SERVER', 'CONSUMER'],
+        attributeFilters: [{ key: 'resource.host.name', op: 'equals', value: 'vps-app', include_missing: false }],
+      });
+      expect(result).toEqual([
+        { time: new Date('2026-01-05T10:00:00Z'), spanCount: 3, errorCount: 1, p50: 10, p95: 20, p99: 30 },
+      ]);
+      const sql = mockQuery.mock.calls[0][0] as string;
+      expect(sql).toContain('kind = ANY($4)');
+      expect(sql).toContain('resource_attributes');
+      expect(sql).toContain('::bigint AS bucket_s');
+
+      mockQuery.mockClear();
+      await expect(engine.getSpanTimeseries({
+        projectIds: ['proj-1'],
+        from: new Date('2026-01-05T10:00:00Z'),
+        to: new Date('2026-01-05T11:00:00Z'),
+        bucketSeconds: 86_401,
+      })).rejects.toThrow(/bucketSeconds/);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
   });
 
   describe('deleteSpansByTimeRange', () => {

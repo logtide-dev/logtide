@@ -16,6 +16,7 @@ import type {
   OperationStatsParams,
   SpanKind,
   SpanQueryParams,
+  SpanTimeseriesParams,
   TraceQueryParams,
 } from '../../core/types.js';
 import { compileJsonFilters } from './json-path.js';
@@ -186,6 +187,59 @@ export function traceOrderSql(params: Pick<TraceQueryParams, 'sortBy' | 'sortOrd
   const column = params.sortBy === 'duration' ? 'duration_ms' : 'start_time';
   const direction = String(params.sortOrder ?? '').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   return `ORDER BY ${column} ${direction}, trace_id ASC`;
+}
+
+// ----------------------------------------------------------------------------
+// Span timeseries (volume, errors and latency percentiles per time bucket)
+// ----------------------------------------------------------------------------
+
+/**
+ * getSpanTimeseries over spans starting inside `[from, to]` of the projects,
+ * with the optional service, kinds and attribute filters (the querySpans
+ * predicates). `bucketSeconds` buckets start at multiples of it since the
+ * epoch (`bucket_ms`); otherwise `bucket` truncates to the hour or day
+ * (`bucket`). Expects params validated by normalizeSpanTimeseriesParams.
+ */
+export function spanTimeseriesSql(params: SpanTimeseriesParams): NativeQuery {
+  const queryParams: Record<string, unknown> = {
+    p_pids: [...params.projectIds],
+    p_from: toDateTime64(params.from),
+    p_to: toDateTime64(params.to),
+  };
+  const conditions = [
+    'project_id IN {p_pids:Array(String)}',
+    'start_time >= {p_from:DateTime64(3)}',
+    'start_time <= {p_to:DateTime64(3)}',
+  ];
+  if (Array.isArray(params.serviceName)) {
+    conditions.push('service_name IN {p_service:Array(String)}');
+    queryParams.p_service = [...params.serviceName];
+  } else if (params.serviceName) {
+    conditions.push('service_name = {p_service:String}');
+    queryParams.p_service = params.serviceName;
+  }
+  if (params.kinds) {
+    conditions.push('kind IN {p_kinds:Array(String)}');
+    queryParams.p_kinds = [...params.kinds];
+  }
+  conditions.push(...attributePredicates(params.attributeFilters, queryParams, { attributes: 'p_af', resource: 'p_rf' }));
+
+  let bucketSelect: string;
+  let bucketColumn: string;
+  if (params.bucketSeconds !== undefined) {
+    queryParams.p_bms = params.bucketSeconds * 1000;
+    bucketSelect = 'intDiv(toUnixTimestamp64Milli(start_time), {p_bms:Int64}) * {p_bms:Int64} AS bucket_ms';
+    bucketColumn = 'bucket_ms';
+  } else {
+    bucketSelect = `${params.bucket === 'day' ? 'toStartOfDay' : 'toStartOfHour'}(start_time) AS bucket`;
+    bucketColumn = 'bucket';
+  }
+  const query =
+    `SELECT ${bucketSelect}, count() AS span_count, countIf(status_code = 'ERROR') AS error_count,` +
+    ` quantile(0.5)(duration_ms) AS p50, quantile(0.95)(duration_ms) AS p95, quantile(0.99)(duration_ms) AS p99` +
+    ` FROM spans WHERE ${conditions.join(' AND ')}` +
+    ` GROUP BY ${bucketColumn} ORDER BY ${bucketColumn} ASC`;
+  return { query, parameters: [queryParams] };
 }
 
 // ----------------------------------------------------------------------------

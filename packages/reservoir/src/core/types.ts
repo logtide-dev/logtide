@@ -466,13 +466,32 @@ export interface ServiceHealthStat {
   p95LatencyMs: number | null;
 }
 
-/** Parameters for a time-bucketed span aggregation (volume + latency). */
+/**
+ * Parameters for a time-bucketed span aggregation (volume + latency). Spans
+ * are selected on their start time inside `[from, to]`; only non-empty
+ * buckets are returned, ascending.
+ */
 export interface SpanTimeseriesParams {
   projectIds: string[];
   from: Date;
   to: Date;
-  bucket: 'hour' | 'day';
-  serviceName?: string;
+  /** Calendar bucket (start of hour or day). Required unless `bucketSeconds` is set. */
+  bucket?: 'hour' | 'day';
+  /**
+   * Fixed bucket width in seconds, an integer from 60 to 86,400. Buckets start
+   * at multiples of it since the Unix epoch. Overrides `bucket` when set.
+   */
+  bucketSeconds?: number;
+  /** One service or a list (any of them). An empty string means no filter. */
+  serviceName?: string | string[];
+  /** Keep only spans of these kinds (non-empty), e.g. `['SERVER', 'CONSUMER']` for entry spans. */
+  kinds?: SpanKind[];
+  /**
+   * Filters with the semantics of `SpanQueryParams.attributeFilters`: a key
+   * starting with `resource.` reads `resourceAttributes` with the rest of the
+   * key, any other key reads `attributes`; every filter must hold.
+   */
+  attributeFilters?: MetadataFilter[];
 }
 
 /** One time bucket of span volume + latency percentiles. */

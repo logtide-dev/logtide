@@ -33,6 +33,10 @@ export const LATENCY_HISTOGRAM_BOUNDS_MS: readonly number[] = Object.freeze([
   1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 30000, 60000,
 ]);
 
+/** Bounds of `SpanTimeseriesParams.bucketSeconds` (one minute to one day). */
+export const SPAN_TIMESERIES_MIN_BUCKET_SECONDS = 60;
+export const SPAN_TIMESERIES_MAX_BUCKET_SECONDS = 86_400;
+
 /** Largest sessions page. */
 export const SESSIONS_MAX_LIMIT = 200;
 

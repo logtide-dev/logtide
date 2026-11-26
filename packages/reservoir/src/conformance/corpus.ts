@@ -197,9 +197,11 @@ const TB1 = traceHex(0x401);
 const TX1 = traceHex(0x501);
 const pad2 = (n: number) => String(n).padStart(2, '0');
 // Resource attributes: the orders spans carry a nested service version, the
-// worker spans an OpenTelemetry-style literal dotted key.
-const ORDERS_RESOURCE = { 'deployment.environment': 'prod', service: { version: '1.4.0' } };
-const WORKER_RESOURCE = { 'deployment.environment': 'staging', 'service.version': '2.0.0' };
+// worker spans an OpenTelemetry-style literal dotted key. The host name is
+// the other way round: a literal `host.name` key on the orders spans, a
+// nested `host: { name }` on the worker spans.
+const ORDERS_RESOURCE = { 'deployment.environment': 'prod', service: { version: '1.4.0' }, 'host.name': 'vps-app' };
+const WORKER_RESOURCE = { 'deployment.environment': 'staging', 'service.version': '2.0.0', host: { name: 'vps-worker' } };
 
 function buildSpanRows(): SpanRow[] {
   const rows: SpanRow[] = [];

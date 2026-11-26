@@ -91,6 +91,7 @@ import {
   normalizeHistogramParams,
   normalizeListSessionsParams,
   normalizeOperationStatsParams,
+  normalizeSpanTimeseriesParams,
 } from '../../core/normalize.js';
 import { decodeSessionCursor, encodeSessionCursor } from '../../core/aggregation-helpers.js';
 import { TimescaleQueryTranslator } from './query-translator.js';
@@ -110,6 +111,7 @@ import {
   operationStatRows,
   operationStatsSql,
   spanOrderSql,
+  spanTimeseriesSql,
   traceOrderSql,
   traceSpanMatchSql,
   type EntryMode,
@@ -1237,36 +1239,15 @@ export class TimescaleEngine extends StorageEngine {
   }
 
   async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
-    const { projectIds, from, to, bucket, serviceName } = params;
-    if (projectIds.length === 0) return [];
+    // Same validation as the client, for direct engine calls.
+    const normalized = normalizeSpanTimeseriesParams(params);
+    if (normalized.projectIds.length === 0) return [];
 
-    const s = this.schema;
-    // bucket is a validated union ('hour' | 'day'), safe to inline as a literal.
-    const trunc = bucket === 'day' ? 'day' : 'hour';
-    const values: unknown[] = [projectIds, from, to];
-    let svcFilter = '';
-    if (serviceName) {
-      svcFilter = ` AND service_name = $4`;
-      values.push(serviceName);
-    }
-
-    const result = await this.runQuery(
-      `SELECT
-        date_trunc('${trunc}', start_time) AS bucket,
-        COUNT(*)::int AS span_count,
-        SUM(CASE WHEN status_code = 'ERROR' THEN 1 ELSE 0 END)::int AS error_count,
-        percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50,
-        percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95,
-        percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) AS p99
-      FROM ${s}.spans
-      WHERE project_id = ANY($1) AND start_time >= $2 AND start_time <= $3${svcFilter}
-      GROUP BY bucket
-      ORDER BY bucket ASC`,
-      values,
-    );
+    const native = spanTimeseriesSql(this.schema, normalized);
+    const result = await this.runQuery(native.query as string, native.parameters ?? []);
 
     return result.rows.map((r) => ({
-      time: new Date(r.bucket as unknown as string),
+      time: r.bucket_s != null ? new Date(Number(r.bucket_s) * 1000) : new Date(r.bucket as unknown as string),
       spanCount: Number(r.span_count ?? 0),
       errorCount: Number(r.error_count ?? 0),
       p50: r.p50 != null ? Number(r.p50) : null,

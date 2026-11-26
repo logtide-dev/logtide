@@ -8,7 +8,14 @@
 
 import type { NativeQuery } from '../../core/query-translator.js';
 import { DEFAULT_OPERATION_KINDS, LATENCY_HISTOGRAM_BOUNDS_MS } from '../../core/constants.js';
-import type { MetadataFilter, OperationStat, SpanKind, SpanQueryParams, TraceQueryParams } from '../../core/types.js';
+import type {
+  MetadataFilter,
+  OperationStat,
+  SpanKind,
+  SpanQueryParams,
+  SpanTimeseriesParams,
+  TraceQueryParams,
+} from '../../core/types.js';
 import { compileJsonFilters } from './json-path.js';
 
 export interface SqlConditions {
@@ -130,6 +137,47 @@ export function traceSpanMatchSql(
     values: out.values,
     nextIdx: out.nextIdx,
   };
+}
+
+/**
+ * getSpanTimeseries over spans starting inside `[from, to]` of the projects,
+ * with the optional service, kinds and attribute filters (the querySpans
+ * predicates). `bucketSeconds` buckets start at multiples of it since the
+ * Unix epoch (`bucket_s`, time_bucket would align some sizes to its own
+ * origin instead); otherwise `bucket` goes through `date_trunc` (`bucket`).
+ * Expects params validated by normalizeSpanTimeseriesParams; every value is
+ * bound, the trunc unit comes from the validated union.
+ */
+export function spanTimeseriesSql(schema: string, params: SpanTimeseriesParams): NativeQuery {
+  const out: SqlConditions = { conditions: [], values: [], nextIdx: 1 };
+  const bind = (value: unknown): string => {
+    out.values.push(value);
+    return `$${out.nextIdx++}`;
+  };
+  out.conditions.push(`project_id = ANY(${bind(params.projectIds)})`);
+  out.conditions.push(`start_time >= ${bind(params.from)}`);
+  out.conditions.push(`start_time <= ${bind(params.to)}`);
+  if (Array.isArray(params.serviceName)) out.conditions.push(`service_name = ANY(${bind(params.serviceName)})`);
+  else if (params.serviceName) out.conditions.push(`service_name = ${bind(params.serviceName)}`);
+  if (params.kinds) out.conditions.push(`kind = ANY(${bind(params.kinds)})`);
+  pushAttributeFilters(out, params.attributeFilters, '');
+
+  let bucketSelect: string;
+  if (params.bucketSeconds !== undefined) {
+    const size = bind(params.bucketSeconds);
+    bucketSelect = `(floor(extract(epoch FROM start_time) / ${size}) * ${size})::bigint AS bucket_s`;
+  } else {
+    bucketSelect = `date_trunc('${params.bucket === 'day' ? 'day' : 'hour'}', start_time) AS bucket`;
+  }
+  const query =
+    `SELECT ${bucketSelect}, COUNT(*)::int AS span_count,` +
+    ` SUM(CASE WHEN status_code = 'ERROR' THEN 1 ELSE 0 END)::int AS error_count,` +
+    ' percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50,' +
+    ' percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95,' +
+    ' percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) AS p99' +
+    ` FROM ${schema}.spans WHERE ${out.conditions.join(' AND ')}` +
+    ' GROUP BY 1 ORDER BY 1 ASC';
+  return { query, parameters: out.values };
 }
 
 /** `ORDER BY` of queryTraces: `start_time` (default) or `duration`, default `DESC`, tie-break `trace_id ASC`. */

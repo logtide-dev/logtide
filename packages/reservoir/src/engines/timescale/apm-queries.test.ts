@@ -9,6 +9,7 @@ import {
   operationStatsSql,
   routeAttributeFilters,
   spanOrderSql,
+  spanTimeseriesSql,
   traceOrderSql,
   traceSpanMatchSql,
 } from './apm-queries.js';
@@ -171,5 +172,46 @@ describe('entry span queries', () => {
     expect(counts[0]).toBe(2);
     expect(counts[16]).toBe(1);
     expect(counts.slice(1, 16).every((c) => c === 0)).toBe(true);
+  });
+});
+
+describe('spanTimeseriesSql', () => {
+  const tsBase = { projectIds: ['p1', 'p2'], from, to };
+
+  it('a calendar bucket keeps the date_trunc query and its parameter order', () => {
+    const native = spanTimeseriesSql('public', { ...tsBase, bucket: 'hour', serviceName: 'api' });
+    const sql = native.query as string;
+    expect(sql).toContain("date_trunc('hour', start_time) AS bucket");
+    expect(sql).toContain('FROM public.spans WHERE project_id = ANY($1) AND start_time >= $2 AND start_time <= $3 AND service_name = $4');
+    expect(sql).toContain('GROUP BY 1 ORDER BY 1 ASC');
+    expect(native.parameters).toEqual([['p1', 'p2'], from, to, 'api']);
+    expect(spanTimeseriesSql('public', { ...tsBase, bucket: 'day' }).query).toContain("date_trunc('day', start_time) AS bucket");
+  });
+
+  it('bucketSeconds buckets on epoch seconds, bound as a parameter', () => {
+    const native = spanTimeseriesSql('public', { ...tsBase, bucketSeconds: 300 });
+    expect(native.query).toContain('(floor(extract(epoch FROM start_time) / $4) * $4)::bigint AS bucket_s');
+    expect(native.query).not.toContain('date_trunc');
+    expect(native.parameters).toEqual([['p1', 'p2'], from, to, 300]);
+  });
+
+  it('service list, kinds and attribute filters reuse the span predicates', () => {
+    const native = spanTimeseriesSql('public', {
+      ...tsBase,
+      bucketSeconds: 60,
+      serviceName: ['api', 'worker'],
+      kinds: ['SERVER', 'CONSUMER'],
+      attributeFilters: [eq('resource.host.name', 'vps-app'), eq('http.method', 'GET')],
+    });
+    const sql = native.query as string;
+    expect(sql).toContain('service_name = ANY($4)');
+    expect(sql).toContain('kind = ANY($5)');
+    expect(sql).toContain('COALESCE(attributes -> ($6::text[])[1]');
+    expect(sql).toContain('COALESCE(resource_attributes -> ($8::text[])[1]');
+    expect(sql).toContain('/ $10) * $10)::bigint AS bucket_s');
+    expect(native.parameters).toEqual([
+      ['p1', 'p2'], from, to, ['api', 'worker'], ['SERVER', 'CONSUMER'],
+      ['http.method', 'http', 'method'], 'GET', ['host.name', 'host', 'name'], 'vps-app', 60,
+    ]);
   });
 });

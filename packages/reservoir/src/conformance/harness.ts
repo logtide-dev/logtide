@@ -24,6 +24,7 @@ import { describeMetadataKeysConformance } from './suites/metadata-keys.js';
 import { describeOperationStatsConformance } from './suites/operation-stats.js';
 import { describeLatencyHistogramConformance } from './suites/latency-histogram.js';
 import { describeSpanTraceQueryConformance } from './suites/spans-traces.js';
+import { describeSpanTimeseriesConformance } from './suites/span-timeseries.js';
 import { describeSessionsConformance } from './suites/sessions.js';
 import { describeMetadataPathConformance } from './suites/metadata-paths.js';
 import { describeTopValuesConformance } from './suites/top-values.js';
@@ -57,6 +58,7 @@ export type ConformanceSubject = Pick<
   | 'queryTraces'
   | 'getOperationStats'
   | 'getLatencyHistogram'
+  | 'getSpanTimeseries'
   | 'listSessions'
   | 'hasSessions'
   | 'close'
@@ -262,6 +264,7 @@ export function describeReservoirConformance(engine: ConformanceEngine, options:
     describeOperationStatsConformance(ctx);
     describeLatencyHistogramConformance(ctx);
     describeSpanTraceQueryConformance(ctx);
+    describeSpanTimeseriesConformance(ctx);
     describeSessionsConformance(ctx);
     describeMetadataPathConformance(ctx);
     describeTopValuesConformance(ctx);

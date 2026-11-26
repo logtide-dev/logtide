@@ -74,6 +74,7 @@ import {
   normalizeDiscoverParams,
   normalizeOperationStatsParams,
   normalizeSpanQueryParams,
+  normalizeSpanTimeseriesParams,
   normalizeTraceQueryParams,
   normalizeListSessionsParams,
 } from './core/normalize.js';
@@ -338,7 +339,7 @@ export class Reservoir implements IReservoir {
 
   async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
     this.ensureInitialized();
-    return this.engine.getSpanTimeseries(params);
+    return this.engine.getSpanTimeseries(normalizeSpanTimeseriesParams(params));
   }
 
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {

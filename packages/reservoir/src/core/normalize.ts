@@ -18,6 +18,8 @@ import {
   OPERATION_STATS_DEFAULT_LIMIT,
   OPERATION_STATS_MAX_LIMIT,
   SESSIONS_MAX_LIMIT,
+  SPAN_TIMESERIES_MAX_BUCKET_SECONDS,
+  SPAN_TIMESERIES_MIN_BUCKET_SECONDS,
 } from './constants.js';
 import { decodeSessionCursor, facetFieldName } from './aggregation-helpers.js';
 import { isEmptyTextQuery, legacySearchToTextQuery } from './text-query.js';
@@ -28,8 +30,10 @@ import type {
   LogFacetsParams,
   DiscoverMetadataKeysParams,
   OperationStatsParams,
+  SpanKind,
   SpanQueryParams,
   SpanSortBy,
+  SpanTimeseriesParams,
   TraceQueryParams,
   TraceSortBy,
   ListSessionsParams,
@@ -197,6 +201,46 @@ export function normalizeOperationStatsParams<T extends OperationStatsParams>(pa
     out.kinds = [...params.kinds];
   }
   return out;
+}
+
+/** Non-empty list of known span kinds (`what` names the param in the error). */
+function checkKinds(kinds: unknown, what: string): SpanKind[] {
+  if (!Array.isArray(kinds) || kinds.length === 0) throw new RangeError(`${what} must list at least one span kind`);
+  for (const kind of kinds) {
+    if (!KINDS.has(kind)) throw new RangeError(`Unknown span kind ${String(kind)}`);
+  }
+  return [...kinds] as SpanKind[];
+}
+
+/**
+ * Span timeseries: `bucketSeconds`, when set, is an integer from 60 to
+ * 86,400 and overrides `bucket`; otherwise `bucket` is `'hour'` or `'day'`.
+ * `kinds`, when set, is a non-empty list of known kinds. An empty
+ * `serviceName` string means no service filter (as before 1.8).
+ */
+export function normalizeSpanTimeseriesParams<T extends SpanTimeseriesParams>(params: T): T {
+  const out: SpanTimeseriesParams = { ...params };
+  if (out.bucketSeconds !== undefined) {
+    const b = out.bucketSeconds;
+    if (
+      typeof b !== 'number'
+      || !Number.isInteger(b)
+      || b < SPAN_TIMESERIES_MIN_BUCKET_SECONDS
+      || b > SPAN_TIMESERIES_MAX_BUCKET_SECONDS
+    ) {
+      throw new RangeError(
+        `bucketSeconds must be an integer from ${fmt(SPAN_TIMESERIES_MIN_BUCKET_SECONDS)} to ${fmt(SPAN_TIMESERIES_MAX_BUCKET_SECONDS)} (got ${String(b)})`,
+      );
+    }
+    delete out.bucket;
+  } else if (out.bucket !== 'hour' && out.bucket !== 'day') {
+    throw new RangeError(`bucket must be 'hour' or 'day' when bucketSeconds is not set (got ${String(out.bucket)})`);
+  }
+  if (out.kinds !== undefined) out.kinds = checkKinds(out.kinds, 'kinds');
+  if (out.serviceName === '') delete out.serviceName;
+  else if (Array.isArray(out.serviceName)) out.serviceName = [...out.serviceName];
+  if (out.attributeFilters !== undefined && out.attributeFilters.length === 0) delete out.attributeFilters;
+  return out as T;
 }
 
 /** Spans: `operation` becomes `operationName` (a different operationName is an error), `'duration'` sorts by `'duration_ms'`. */

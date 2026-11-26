@@ -12,6 +12,7 @@ import {
   percentilesFromBuckets,
   routeAttributeFilters,
   spanSort,
+  spanTimeseriesPipeline,
   traceMatchPipeline,
   traceSort,
 } from './apm-queries.js';
@@ -417,5 +418,55 @@ describe('MongoDBEngine operation stats wiring', () => {
   it('latency histogram rejects a reversed range', async () => {
     const engine = new MongoDBEngine(config, { db: fakeSpansDb([]).db as never, skipInitialize: true });
     await expect(engine.getLatencyHistogram({ projectId: PROJECT, from: TO, to: FROM })).rejects.toBeInstanceOf(RangeError);
+  });
+});
+
+describe('spanTimeseriesPipeline', () => {
+  const tsBase = { projectIds: [PROJECT], from: FROM, to: TO };
+
+  it('a calendar bucket keeps $dateTrunc and the plain filters', () => {
+    const [match, group, sort] = spanTimeseriesPipeline({ ...tsBase, bucket: 'day', serviceName: 'api' });
+    expect(match).toEqual({ $match: { project_id: { $in: [PROJECT] }, start_time: { $gte: FROM, $lte: TO }, service_name: 'api' } });
+    expect(group.$group._id).toEqual({ $dateTrunc: { date: '$start_time', unit: 'day', binSize: 1 } });
+    expect(group.$group.p).toEqual({ $percentile: { input: '$duration_ms', p: [0.5, 0.95, 0.99], method: 'approximate' } });
+    expect(sort).toEqual({ $sort: { _id: 1 } });
+  });
+
+  it('bucketSeconds buckets on epoch milliseconds', () => {
+    const [, group] = spanTimeseriesPipeline({ ...tsBase, bucketSeconds: 300 });
+    const ms = { $toLong: '$start_time' };
+    expect(group.$group._id).toEqual({ $toDate: { $subtract: [ms, { $mod: [ms, 300_000] }] } });
+  });
+
+  it('service list, kinds and attribute filters reuse the span clauses', () => {
+    const [{ $match: match }] = spanTimeseriesPipeline({
+      ...tsBase,
+      bucketSeconds: 60,
+      serviceName: ['api', 'worker'],
+      kinds: ['SERVER', 'CONSUMER'],
+      attributeFilters: [equals('resource.host.name', 'vps-app'), equals('http.method', 'GET')],
+    });
+    expect(match.service_name).toEqual({ $in: ['api', 'worker'] });
+    expect(match.kind).toEqual({ $in: ['SERVER', 'CONSUMER'] });
+    expect(match.$and).toHaveLength(2);
+    const json = JSON.stringify(match.$and);
+    expect(json).toContain('"$attributes"');
+    expect(json).toContain('"$resource_attributes"');
+    expect(json).toContain('"host.name"');
+    expect(spanTimeseriesPipeline({ ...tsBase, bucket: 'hour' })[0].$match.$and).toBeUndefined();
+  });
+
+  it('the engine validates before querying and maps epoch buckets', async () => {
+    const { db, calls } = fakeDb([{ _id: new Date('2026-01-05T10:00:00Z'), span_count: 3, error_count: 1, p: [10, 20, 30] }]);
+    const engine = new MongoDBEngine(config, { db: db as never, skipInitialize: true });
+    expect(await engine.getSpanTimeseries({ ...tsBase, bucketSeconds: 300, kinds: ['SERVER'] })).toEqual([
+      { time: new Date('2026-01-05T10:00:00Z'), spanCount: 3, errorCount: 1, p50: 10, p95: 20, p99: 30 },
+    ]);
+    await expect(engine.getSpanTimeseries({ ...tsBase, bucketSeconds: 61.5 })).rejects.toThrow(/bucketSeconds/);
+    await expect(engine.getSpanTimeseries({ ...tsBase, bucket: 'week' as never })).rejects.toThrow(/bucket/);
+    const aggregates = calls.filter((c) => c.op === 'aggregate');
+    expect(aggregates).toHaveLength(1);
+    expect(aggregates[0].col).toBe('spans');
+    expect((aggregates[0].args[0] as Document[])[0].$match.kind).toEqual({ $in: ['SERVER'] });
   });
 });
