@@ -20,6 +20,11 @@ export interface NavItem {
    * links straight to a page (a client route) but owns the whole section.
    */
   activePath?: string;
+  /**
+   * Also active on pages under `pathPrefix` whose query has `param=value`. It
+   * claims the page: the item that owns the path is not active there.
+   */
+  activeQuery?: { pathPrefix: string; param: string; value: string };
   adminOnly?: boolean;
   badge?: {
     id: string;
@@ -58,8 +63,14 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'incidents', label: 'Incidents', href: '/dashboard/incidents', shortcut: 'g i' },
       { id: 'alerts', label: 'Alerts', href: '/dashboard/alerts', shortcut: 'g a' },
       { id: 'uptime', label: 'Uptime', href: '/dashboard/uptime', shortcut: 'g u' },
-      // Hardware health lives in Metrics (1.8): the hosts list with the hardware column.
-      { id: 'hardware', label: 'Hardware', href: '/dashboard/metrics?kind=host', shortcut: 'g h' },
+      {
+        id: 'hardware',
+        label: 'Hardware',
+        href: '/dashboard/hardware',
+        shortcut: 'g h',
+        // A host's detail is the Hardware tab of its page in Metrics.
+        activeQuery: { pathPrefix: '/dashboard/metrics/hosts/', param: 'tab', value: 'hardware' },
+      },
     ],
   },
   {
@@ -113,8 +124,20 @@ export function flatNavItems(): NavItem[] {
   return NAV_SECTIONS.flatMap((s) => s.items);
 }
 
-export function isNavItemActive(item: NavItem, pathname: string): boolean {
+function matchesActiveQuery(item: NavItem, pathname: string, search: string): boolean {
+  const q = item.activeQuery;
+  if (!q || !pathname.startsWith(q.pathPrefix)) return false;
+  return new URLSearchParams(search).get(q.param) === q.value;
+}
+
+/** `search` is the query string of the page (with or without the leading `?`). */
+export function isNavItemActive(item: NavItem, pathname: string, search = ''): boolean {
   if (item.external) return false;
+  if (matchesActiveQuery(item, pathname, search)) return true;
+  const claimed = [...flatNavItems(), ADMIN_NAV_ITEM].some(
+    (other) => other !== item && matchesActiveQuery(other, pathname, search),
+  );
+  if (claimed) return false;
   if (item.exact) return pathname === item.href;
   const base = item.activePath ?? item.href;
   return pathname === base || pathname.startsWith(base + '/') || pathname === item.href;

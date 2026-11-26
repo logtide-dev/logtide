@@ -276,7 +276,7 @@
       </a>
     </div>
 
-    <SidebarNav pathname={page.url.pathname} isAdmin={!!user?.is_admin} />
+    <SidebarNav pathname={page.url.pathname} search={page.url.search} isAdmin={!!user?.is_admin} />
 
     <!-- Onboarding Checklist -->
     <div class="p-4 border-t border-border">
@@ -315,6 +315,7 @@
 
     <SidebarNav
       pathname={page.url.pathname}
+      search={page.url.search}
       isAdmin={!!user?.is_admin}
       onNavigate={() => (mobileMenuOpen = false)}
     />

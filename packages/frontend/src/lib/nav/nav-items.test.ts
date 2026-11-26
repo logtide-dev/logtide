@@ -64,7 +64,7 @@ describe('nav-items', () => {
       i: '/dashboard/incidents',
       a: '/dashboard/alerts',
       u: '/dashboard/uptime',
-      h: '/dashboard/metrics?kind=host',
+      h: '/dashboard/hardware',
       r: '/dashboard/security',
       p: '/dashboard/projects',
     };
@@ -104,14 +104,25 @@ describe('nav-items', () => {
 
   it('marks Metrics active on the sources, host and service pages', () => {
     const items = flatNavItems();
-    const activeIds = (pathname: string) =>
-      items.filter((i) => isNavItemActive(i, pathname)).map((i) => i.id);
+    const activeIds = (pathname: string, search = '') =>
+      items.filter((i) => isNavItemActive(i, pathname, search)).map((i) => i.id);
     expect(activeIds('/dashboard/metrics')).toEqual(['metrics']);
+    expect(activeIds('/dashboard/metrics', '?kind=host')).toEqual(['metrics']);
     expect(activeIds('/dashboard/metrics/hosts/vps-app')).toEqual(['metrics']);
+    expect(activeIds('/dashboard/metrics/hosts/vps-app', '?tab=resources')).toEqual(['metrics']);
     expect(activeIds('/dashboard/metrics/services/api')).toEqual(['metrics']);
-    expect(activeIds('/dashboard/hardware')).toEqual([]);
-    // Hardware links to the hosts list inside Metrics, which owns the highlight.
-    expect(activeIds('/dashboard/metrics')).not.toContain('hardware');
+  });
+
+  it('marks Hardware active on its page and on the Hardware tab of a host, never both', () => {
+    const items = flatNavItems();
+    const activeIds = (pathname: string, search = '') =>
+      items.filter((i) => isNavItemActive(i, pathname, search)).map((i) => i.id);
+    expect(activeIds('/dashboard/hardware')).toEqual(['hardware']);
+    expect(activeIds('/dashboard/hardware/h1')).toEqual(['hardware']);
+    expect(activeIds('/dashboard/metrics/hosts/vps-app', '?tab=hardware&hw=h1')).toEqual(['hardware']);
+    expect(activeIds('/dashboard/metrics/hosts/vps-app', 'tab=hardware')).toEqual(['hardware']);
+    // Only host pages have a Hardware tab.
+    expect(activeIds('/dashboard/metrics/services/api', '?tab=hardware')).toEqual(['metrics']);
   });
 
   it('never marks external links active', () => {

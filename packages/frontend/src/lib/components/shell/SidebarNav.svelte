@@ -6,12 +6,14 @@
 
   interface Props {
     pathname: string;
+    /** Query string of the page: some items are active on a query (Hardware tab). */
+    search?: string;
     isAdmin: boolean;
     /** Called after a link is clicked (the drawer closes itself with it) */
     onNavigate?: () => void;
   }
 
-  let { pathname, isAdmin, onNavigate }: Props = $props();
+  let { pathname, search = '', isAdmin, onNavigate }: Props = $props();
 
   const linkBase =
     'flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors';
@@ -19,7 +21,7 @@
   const linkActive = 'bg-nav-active text-nav-active-foreground';
 
   function linkClass(item: NavItem): string {
-    return `${linkBase} ${isNavItemActive(item, pathname) ? linkActive : linkIdle}`;
+    return `${linkBase} ${isNavItemActive(item, pathname, search) ? linkActive : linkIdle}`;
   }
 </script>
 
@@ -30,7 +32,7 @@
     target={item.external ? '_blank' : undefined}
     rel={item.external ? 'noopener noreferrer' : undefined}
     data-nav-item={item.id}
-    aria-current={isNavItemActive(item, pathname) ? 'page' : undefined}
+    aria-current={isNavItemActive(item, pathname, search) ? 'page' : undefined}
     class={linkClass(item)}
     onclick={() => onNavigate?.()}
   >
